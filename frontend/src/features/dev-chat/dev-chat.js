@@ -706,6 +706,49 @@ const DevChat = {
       : 'Claude Code';
   },
 
+  // #2597: the running row's HEADING stops naming the venue.
+  //
+  // The server writes the in-flight status as "<venue> is running..." —
+  // "Claude Code is running...", "OpenRouter is running..." — so the loudest
+  // row in the transcript said one of two different things about what is, to
+  // the person reading it, the same event: the coding agent is working. The
+  // heading is that one sentence now, and the venue moves underneath it as a
+  // muted caption, the form the run card already uses for its secondary line.
+  //
+  // Rewritten at RENDER time rather than where the status is written, and
+  // deliberately: every row already in the database then reads the new way
+  // too, and the pairing rules that key off `msg.content`
+  // (ACTIVE_CC_STATUS_RE, _isLiveCcRun) keep matching the text the server
+  // actually wrote. Only "<venue> is running" is rewritten — the legacy
+  // "...is making changes", "Scout reading the codebase" and "Syncing with
+  // main" lines say what they say.
+  _RUNNING_VENUE_RE: /^(?:Claude Code|Codex|OpenRouter) is running\b/i,
+
+  // The heading and caption for a "<venue> is running" row, or null when
+  // `msg` is not one. Whatever trailed the venue's sentence (the server's
+  // "...", nothing on the older rows) is carried over untouched.
+  _runningRowLabel(msg) {
+    const content = String(msg?.content || '');
+    const m = DevChat._RUNNING_VENUE_RE.exec(content);
+    if (!m) return null;
+    return {
+      text: `Coding agent is running${content.slice(m[0].length)}`,
+      caption: DevChat._agentName(DevChat._activityAgentBackend(msg)),
+    };
+  },
+
+  // Put that heading on a row built from `msg`. `html` goes with the venue:
+  // the heading is our own copy now, not the row's stored content, so there
+  // is nothing left for the unescaped branch to render.
+  _withRunningLabel(row, msg) {
+    const label = DevChat._runningRowLabel(msg);
+    if (!label) return row;
+    row.text = label.text;
+    row.caption = label.caption;
+    delete row.html;
+    return row;
+  },
+
   _copyActivityAgentMetadata(target, source) {
     if (!target || !source) return target;
     const backend = source.agentBackend
@@ -2040,6 +2083,41 @@ const DevChat = {
     } catch {}
     DevChat.renderBudget();
     DevChat._maybeInjectDemoCreditsCard();
+  },
+
+  // #2598: a model call's cost just landed against this user's weekly pool
+  // and the server pushed the new figures (services/budget-live.js) over the
+  // socket public/js/app.js already holds open. Re-render from them instead
+  // of refetching: a build makes a call every few seconds, and the whole
+  // point of the push is that the figure moves without a request per call.
+  //
+  // MERGED into the existing budget, never replacing it. The pushed payload
+  // is limits.getBudgetSnapshot — the shared snapshot — while GET /api/budget
+  // wraps that with three fields of its own (globalSpentCents,
+  // globalLimitCents, aiEnabled) and its own spelling of the BYOK figure.
+  // Replacing would blank all four, and the exhausted banner's shared-budget
+  // check reads two of them to decide whose budget it blames.
+  //
+  // renderBudget() repaints the composer's meter AND both credits banners, so
+  // an OpenRouter session — whose meter shows the KEY's allowance, not the
+  // pool (#2118) — still gets its low-balance and exhausted banners moved by
+  // the included key's pooled spend (#2571).
+  applyBudgetUpdate(budget) {
+    if (!budget || typeof budget !== 'object') return;
+    // ?demo= and ?shot= pages are showing a fixture on purpose. A real push
+    // arriving underneath would swap out the state a reviewer came to look
+    // at, which is the one thing those flags exist to prevent.
+    if (DevChat._budgetDemo() || DevChat._shotCreditsLowBudget()) return;
+    const previous = DevChat.budget || {};
+    const byokCents = Number(budget.byokCents);
+    DevChat.budget = {
+      ...previous,
+      ...budget,
+      // /api/budget's spelling of the same number, kept in step so the
+      // key-holder branch of the meter can't read a stale "your key $X".
+      byokSpentCents: Number.isFinite(byokCents) ? byokCents : previous.byokSpentCents,
+    };
+    DevChat.renderBudget();
   },
 
   // Staging review aid: with ?demo=1 on a staging page whose demo budget
@@ -6742,7 +6820,7 @@ const DevChat = {
    * copy with markup in it, and escaping them now would be a visible change.
    */
   _statusRow(msg, msgIdx, over) {
-    return {
+    return DevChat._withRunningLabel({
       t: 'status',
       key: DevChat._rowKey(msg, msgIdx),
       icon: msg._active ? 'spinner' : 'check',
@@ -6751,7 +6829,7 @@ const DevChat = {
       elapsed: DevChat._elapsedSpec(msg),
       stamp: DevChat._rowStamp(msg),
       ...over,
-    };
+    }, msg);
   },
 
   // The attachment strip inside a user bubble. It is a SIBLING of the
@@ -7187,7 +7265,7 @@ const DevChat = {
             : { currentLabel: '', steps: 0, phaseLabel: '' };
           const cohortSince = msg._active && msg.created_at
             ? Math.min(new Date(msg.created_at).getTime(), Date.now()) : NaN;
-          rows.push({
+          rows.push(DevChat._withRunningLabel({
             t: 'attached', key,
             // #647: the open default follows the STATUS row, not the attached
             // progress row — keying off `msg` keeps it aligned with the
@@ -7211,7 +7289,7 @@ const DevChat = {
               persistId: DevChat._detailsId(attachedProgress, 'progress'),
               text: (attachedProgress.progressLog || []).join('\n'),
             },
-          });
+          }, msg));
           return;
         }
         // Post-turn ccOutput — the markdown summary the worker emits when the
@@ -7280,10 +7358,10 @@ const DevChat = {
           });
           return;
         }
-        rows.push({
+        rows.push(DevChat._withRunningLabel({
           t: 'status', key, icon: msg._active ? 'spinner' : 'check',
           html: msg.content || '', text: msg.content || '', elapsed, stamp,
-        });
+        }, msg));
         return;
       }
 

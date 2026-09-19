@@ -123,9 +123,27 @@ function Elapsed({ e }: { e: ElapsedSpec }): ReactNode {
   return <span className="dc-status-elapsed" data-elapsed-since={e.since}>{label}</span>;
 }
 
+/**
+ * #2597: the venue, under the heading.
+ *
+ * The running row used to say "Claude Code is running" or "OpenRouter is
+ * running" depending on where the turn happens to be executing — two
+ * sentences for one event, with the reader left to work out that the
+ * difference is plumbing. The heading says the event and this says the
+ * venue, in the muted second-line style the run card already uses for its
+ * guess and its cohort hint.
+ */
+function VenueCaption({ text }: { text: string | undefined }): ReactNode {
+  if (!text) return null;
+  return <span className="dc-status-venue">{text}</span>;
+}
+
 function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): ReactNode {
   return (
-    <div className="dc-status-line" style={r.dim ? { opacity: 0.8 } : undefined}>
+    <div
+      className={r.caption ? 'dc-status-line dc-status-line-captioned' : 'dc-status-line'}
+      style={r.dim ? { opacity: 0.8 } : undefined}
+    >
       <StatusIcon kind={r.icon} />
       {r.html !== undefined
         ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html} ` }} />
@@ -138,6 +156,7 @@ function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): Reac
         >Force stop</button>
       ) : null}
       <Stamp text={r.stamp} />
+      <VenueCaption text={r.caption} />
     </div>
   );
 }
@@ -321,6 +340,7 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
           <span className="dc-cc-attached-chevron" aria-hidden="true"></span>
           <Stamp text={r.stamp} />
         </span>
+        <VenueCaption text={r.caption} />
         <span className="dc-cc-chips">
           {r.progress
             ? <ProgressChips p={r.progress} elapsed={r.elapsed} />

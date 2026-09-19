@@ -838,7 +838,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // POSTED to the app's thread, and seeding one would be a fixture that
   // fabricates activity rather than data. 699 leaves 31 slots against
   // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 699);
+  //
+  // 699 → 701: the running row's heading (#2597) is two assertions about
+  // one seeded transcript, not one — the heading now says what is happening
+  // ("Coding agent is running") and a second line says where ("Homeroom ·
+  // Claude"), and a single check could only pin one of them. Both ride the
+  // 990412 dev-session fixture the coding-run card already uses, so neither
+  // adds a route. 701 leaves 29 slots against MAX_DECLARED_TESTS (730),
+  // clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 701);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

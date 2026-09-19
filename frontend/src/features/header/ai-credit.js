@@ -91,6 +91,26 @@ import { aiBudgetStore } from './ai-budget-store.js';
         }
       },
 
+      // #2598: figures the SERVER volunteered, after a model call's cost was
+      // recorded against this user's weekly pool (services/budget-live.js →
+      // the `budget_updated` case in public/js/app.js). Render them and
+      // nothing else: the throttle above exists to bound POLLING, so holding
+      // back a push would be throttling the thing the throttle was protecting
+      // against. `_lastFetchAt` is deliberately left alone for the same
+      // reason — a push is not a fetch, and must not defer the next one.
+      //
+      // The payload is limits.getBudgetSnapshot, which is what
+      // /api/me/ai-budget answers with, so it replaces `state` wholesale
+      // rather than merging: this row reads no field that route does not send.
+      applyPush: function (budget) {
+        if (!budget || typeof budget.limitCents !== 'number') return;
+        // ?demo=1 is showing a fixture on purpose — see the refresh above.
+        if (typeof location !== 'undefined'
+            && String(location.search || '').indexOf('demo=1') > -1) return;
+        AiCredit.Budget.state = budget;
+        AiCredit.Budget._render();
+      },
+
       // Publishes the meter's view model; ./ai-budget.tsx draws it. Every
       // decision below — the thresholds, the wording, whether a "your key"
       // figure appears — stays here; only the colours are names the

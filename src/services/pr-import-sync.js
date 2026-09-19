@@ -684,6 +684,20 @@ function notifyStagingFailed({ session, app }) {
   }
 }
 
+// #2601/#2558: the connector-submission path reaches the evidence
+// orchestrator through `visuals.captureForSession`, which schedules a run in
+// its own `finally` — so an import whose preview builds does call
+// `scheduleForSession`. The gap was the paths BELOW that never get that far:
+// a preview environment that runs no builds, and a staging build that fails.
+// Neither produced a run and neither wrote anything down, so the proposal
+// kept the 'planned' its submission wrote, with nothing to explain it.
+function noteEvidenceNotStarted(pool, sessionId, reason) {
+  require('./visual-evidence-orchestrator').noteNotStarted(pool, Number(sessionId), reason)
+    .catch((err) => log.warn('pr-import-sync', 'could not record why the preview did not start', {
+      sessionId, reason, err: err.message,
+    }));
+}
+
 // #687 Slice 1 / #846 — the IMPORT-TIME checks kick. Called (un-awaited) by
 // POST /api/apps/:slug/pr-import once the proposal row exists, so the route
 // can answer immediately while the SHA-pinned staging build runs behind it.
@@ -720,6 +734,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
         .catch((err) => log.warn('pr-import-sync', 'import mock storeChecksSkipped failed (non-fatal)', {
           sessionId: session.id, err: err.message,
         }));
+      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }
 
@@ -746,6 +761,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
         sessionId: session.id, err: e.message,
       }));
       notifyStagingFailed({ session, app });
+      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
       throw err;
     }
 
@@ -757,6 +773,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // vote is over.
     if (!(await stillOpenForPreview(pool, session))) {
       await discardStagingResult({ staging, session, app, result });
+      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }
 

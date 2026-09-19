@@ -16315,14 +16315,21 @@ const AppView = {
     const evidence = p.visualEvidence;
     if (evidence && evidence.required !== false
         && !['verified', 'not_required', 'overridden'].includes(evidence.state)) {
-      const running = ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']
-        .includes(evidence.state);
+      // #2601/#2558: 'planned' is only in flight while it is fresh. A run
+      // that has sat there past the idle threshold has not started, so the
+      // tag says so with the recorded reason and stops spinning — the
+      // neutral in-flight tone was the thing reading as "any moment now"
+      // on proposals nothing was ever going to pick up.
+      const notStarted = AppView._evidenceNotStarted(evidence);
+      const running = !notStarted
+        && ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(evidence.state);
       const enforced = AppView.appData?.visualEvidenceEnforced === true;
       out.push({
         key: 'visual_evidence',
-        label: running ? 'Visual change preview in progress'
-          : evidence.state === 'failed' ? 'Visual change preview failed' : 'Visual change preview needed',
-        detail: evidence.failureReason
+        label: running ? 'Visual preview in progress'
+          : notStarted ? 'Visual preview not started'
+            : evidence.state === 'failed' ? 'Visual change preview failed' : 'Visual change preview needed',
+        detail: (notStarted ? AppView._evidenceNotStartedReason(evidence) : evidence.failureReason)
           || (enforced
             ? 'Voting and merging wait for a verified visual change preview of the current proposal commit.'
             : 'This proposal does not yet have a verified visual change preview for its current commit.'),
@@ -16861,12 +16868,41 @@ const AppView = {
   // returns one sanitized view model to every proposal surface; this is the
   // shared HTML adapter for the remaining legacy/React boundaries. It never
   // accepts an absolute URL and never reaches the public /visuals route.
+  // #2601/#2558: a run sits in 'planned' from the moment the intent is
+  // recorded at submission, and nothing moves it on until the orchestrator
+  // actually picks it up. When the pick-up never happens — execution off,
+  // no staging preview to shoot against — the row stayed 'planned' with its
+  // timestamp frozen at submission, and every surface spun on it forever.
+  // So 'planned' is read as two different things: a run that was minted
+  // moments ago is starting, and one this old with nothing under way has
+  // not started. Five minutes is the product owner's threshold.
+  EVIDENCE_IDLE_MS: 5 * 60 * 1000,
+
+  // True when a 'planned' run has sat untouched past that threshold. An
+  // unparseable or missing timestamp reads as "still starting": the spinner
+  // is the safer of the two when the age is unknown.
+  _evidenceNotStarted(evidence) {
+    const e = evidence || {};
+    if (String(e.state || '') !== 'planned') return false;
+    const at = Date.parse(e.updatedAt || '');
+    return Number.isFinite(at) && (Date.now() - at) > AppView.EVIDENCE_IDLE_MS;
+  },
+
+  // The reason the run never started, when the server recorded one.
+  _evidenceNotStartedReason(evidence) {
+    const e = evidence || {};
+    const reason = typeof e.notStartedReason === 'string' ? e.notStartedReason.trim() : '';
+    return reason || 'Nothing has picked this preview up yet.';
+  },
+
   // The words for each evidence state — a label and a sentence — shared by
   // the verified/pending card below and the change page's strip.
   _evidenceStateCopy(evidence) {
     const e = evidence || {};
     return {
-      planned: ['Preview planned', 'The interaction flow is waiting to start.'],
+      planned: AppView._evidenceNotStarted(e)
+        ? ['Visual preview not started', AppView._evidenceNotStartedReason(e)]
+        : ['Visual preview in progress', 'The interaction flow is starting.'],
       provisioning: ['Preparing the preview', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
       exploring: ['Finding the relevant UI state', 'The preview agent is working through the declared user flow on both revisions.'],
       replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
@@ -16892,13 +16928,20 @@ const AppView = {
     const claims = (Array.isArray(evidence.claims) ? evidence.claims : [])
       .slice(0, 3).map((c) => String((c && c.claim) || '').trim()).filter(Boolean);
     const settled = state === 'not_required' || state === 'overridden';
+    // #2601/#2558: a 'planned' run that never started is not in flight, so
+    // it neither spins nor promises captures are being taken. It reads as
+    // its own state, with whatever reason the server recorded.
+    const notStarted = AppView._evidenceNotStarted(evidence);
     return {
       state,
       verified: state === 'verified',
+      notStarted,
       label: state === 'verified' ? 'Verified' : copy[0],
-      sentence: settled
-        ? `${detail}.`
-        : `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom records before-and-after captures of these claims on the exact proposal build.`,
+      sentence: notStarted
+        ? `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Nothing has been captured for this commit yet.`
+        : settled
+          ? `${detail}.`
+          : `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom records before-and-after captures of these claims on the exact proposal build.`,
       claims,
     };
   },
@@ -16928,8 +16971,13 @@ const AppView = {
     if (state !== 'verified') {
       const copy = stateCopy[state] || ['Preview pending', 'The visual change preview has not finished yet.'];
       const declared = claims.map((claim) => `<li>${esc(claim.claim || '')}</li>`).join('');
-      const retry = state === 'failed' && evidence.repairAvailable === true
-        && Number.isInteger(sessionId) && sessionId > 0
+      // #2601/#2558: the same control a failed run offers, on a run that
+      // never started. The rerun route already accepts a 'planned' run (it
+      // reruns the same head), and a stuck run is precisely the case where
+      // a reader needs a way to kick it.
+      const retryable = (state === 'failed' && evidence.repairAvailable === true)
+        || AppView._evidenceNotStarted(evidence);
+      const retry = retryable && Number.isInteger(sessionId) && sessionId > 0
         ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunVisualEvidence(${sessionId}, this)">Retry visual change preview</button>`
         : '';
       const override = state === 'overridden' && evidence.overriddenAt

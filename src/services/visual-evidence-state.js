@@ -746,6 +746,60 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
   return row ? runSummary(row, row.artifact_summary || []) : null;
 }
 
+// ── Why a run never got under way (#2601, #2558) ──────────────────────
+//
+// `recordIntent` writes 'planned' onto the session the moment a proposal
+// declares its claim, and only the orchestrator moves it on. Every reason
+// the orchestrator can decline to start — execution switched off for the
+// deployment, no intent to run, no staging preview to shoot against — used
+// to be a return value the caller logged at warn and dropped. So a
+// proposal nothing was ever going to pick up looked exactly like one about
+// to start, for as long as anybody cared to watch it: the whole of #2558.
+//
+// The reason goes on the PROPOSAL rather than the run, because the refusals
+// that matter most are the ones that happen before any run row exists, and
+// because the proposal is what a reviewer has open.
+//
+// Two deliberate omissions. The write does NOT touch
+// `visual_evidence_updated_at`: that timestamp is how the reviewer surfaces
+// measure "this has sat here long enough to call it not started", and
+// bumping it on every refusal would restart the clock forever. And it only
+// fires while the session still reads 'planned' — a run that has moved on
+// owns its own state and must not be annotated by a late refusal from a
+// schedule attempt something else already superseded.
+async function recordNotStarted(pool, sessionId, reason) {
+  const text = String(reason || '').trim().slice(0, 300);
+  const id = Number(sessionId);
+  if (!text || !Number.isInteger(id) || id <= 0) return { recorded: false };
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions
+        SET visual_evidence_detail = COALESCE(visual_evidence_detail, '{}'::jsonb)
+              || jsonb_build_object('notStartedReason', $2::text)
+      WHERE id = $1
+        AND visual_evidence_state = 'planned'
+        AND visual_evidence_detail->>'notStartedReason' IS DISTINCT FROM $2::text
+      RETURNING id`,
+    [id, text]
+  );
+  return { recorded: rows.length > 0 };
+}
+
+// The counterpart: a run that HAS started carries no reason for not having.
+// Called on the scheduling success path so a retry does not inherit the
+// note left by the attempt before it.
+async function clearNotStarted(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return { cleared: false };
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions
+        SET visual_evidence_detail = visual_evidence_detail - 'notStartedReason'
+      WHERE id = $1 AND jsonb_exists(visual_evidence_detail, 'notStartedReason')
+      RETURNING id`,
+    [id]
+  );
+  return { cleared: rows.length > 0 };
+}
+
 module.exports = {
   STATES,
   TRANSITIONS,
@@ -761,6 +815,8 @@ module.exports = {
   missingIntentDetail,
   recordIntent,
   recordIntentInTransaction,
+  recordNotStarted,
+  clearNotStarted,
   requireIntentForUiChange,
   clearIntent,
   createRun,

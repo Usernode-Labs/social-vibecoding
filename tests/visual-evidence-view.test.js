@@ -96,3 +96,57 @@ test('snapshot serialization is truthful before a durable run exists', () => {
   assert.equal(result.claims[0].baseState, 'not_present');
   assert.deepEqual(result.artifacts, []);
 });
+
+// ── #2601/#2558: the run that never started ──────────────────────────────
+test('a planned run carries the recorded reason it never started, as its own field', () => {
+  const s = session({
+    visual_evidence_state: 'planned',
+    visual_evidence_detail: {
+      impact: 'ui',
+      headSha: HEAD,
+      notStartedReason: 'Visual change previews are not being run on this deployment.',
+    },
+  });
+  const snapshot = view.fromSnapshot(s, HEAD);
+  assert.equal(snapshot.state, 'planned');
+  assert.equal(snapshot.notStartedReason,
+    'Visual change previews are not being run on this deployment.');
+  // It is a SIBLING of failureReason, not a reuse of it: a run that never
+  // started has not failed, and the two reach different copy.
+  assert.equal(snapshot.failureReason, null);
+
+  const serialized = view.serialize(run({ state: 'planned', headSha: HEAD }), s, 'demo', HEAD);
+  assert.equal(serialized.notStartedReason,
+    'Visual change previews are not being run on this deployment.');
+});
+
+test('the not-started reason is dropped once the run moves on, and on a superseded revision', () => {
+  const detail = {
+    impact: 'ui',
+    headSha: HEAD,
+    notStartedReason: 'Visual change previews are not being run on this deployment.',
+  };
+  // A run under way owns its own state; a note about it not starting is
+  // stale the moment it does.
+  assert.equal(view.notStartedReason(
+    { visual_evidence_state: 'exploring', visual_evidence_detail: detail }, false
+  ), null);
+  assert.equal(view.notStartedReason(
+    { visual_evidence_state: 'verified', visual_evidence_detail: detail }, false
+  ), null);
+  // A newer revision superseded the attempt the note describes.
+  assert.equal(view.notStartedReason(
+    { visual_evidence_state: 'planned', visual_evidence_detail: detail }, true
+  ), null);
+  assert.equal(view.notStartedReason(
+    { visual_evidence_state: 'planned', visual_evidence_detail: detail }, false
+  ), detail.notStartedReason);
+});
+
+test('a planned run with nothing recorded reports no reason rather than an empty string', () => {
+  const snapshot = view.fromSnapshot(session({
+    visual_evidence_state: 'planned',
+    visual_evidence_detail: { impact: 'ui', headSha: HEAD, notStartedReason: '   ' },
+  }), HEAD);
+  assert.equal(snapshot.notStartedReason, null);
+});

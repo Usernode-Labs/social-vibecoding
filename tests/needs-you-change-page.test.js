@@ -276,3 +276,117 @@ test('no bare whitespace expression, no em dash in copy, no computed Tailwind cl
   assert.match(tsx, /className="dev-steps rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800\/50"/);
   assert.match(tsx, /className="dev-steps-list border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900"/);
 });
+
+// ── #2601/#2558: "planned" is two different things ───────────────────────
+//
+// `recordIntent` writes 'planned' onto a proposal the moment it declares a
+// claim, and only a scheduled run moves it on. So the same state covers a
+// run minted seconds ago and one nothing ever picked up — and every surface
+// spun on both. Five minutes of an untouched 'planned' is the product
+// owner's line between them.
+const IDLE = 5 * 60 * 1000;
+const ago = (ms) => new Date(Date.now() - ms).toISOString();
+const CLAIM = { claim: 'The preview waits for sign-in', viewports: ['desktop'], steps: ['Open a preview'] };
+
+test('a fresh planned run is in progress, and says so in the words the state uses', () => {
+  const av = context();
+  const evidence = { state: 'planned', updatedAt: ago(30 * 1000), claims: [CLAIM], artifacts: [] };
+  assert.equal(av._evidenceNotStarted(evidence), false);
+  const v = av._evidenceView(evidence);
+  assert.equal(v.label, 'Visual preview in progress');
+  assert.equal(v.notStarted, false);
+  // It is still a run under way, so the page keeps the quiet spinner line
+  // rather than a panel that reads as a verdict.
+  const { html } = render(av, { ...PR, visualEvidence: evidence });
+  assert.match(html, /<p class="dev-topic-hero-evidence" data-evidence-state="planned"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Building before\/after photos<\/span><\/p>/);
+});
+
+test('a planned run untouched past five minutes has not started: no spinner, the reason, and the retry', () => {
+  const av = context();
+  const evidence = {
+    state: 'planned',
+    updatedAt: ago(IDLE + 60 * 1000),
+    notStartedReason: 'Visual change previews are not being run on this deployment.',
+    claims: [CLAIM],
+    artifacts: [],
+  };
+  assert.equal(av._evidenceNotStarted(evidence), true);
+  const v = av._evidenceView(evidence);
+  assert.equal(v.label, 'Visual preview not started');
+  assert.equal(v.notStarted, true);
+  assert.match(v.sentence, /not being run on this deployment/);
+  assert.ok(!/Homeroom records before-and-after captures/.test(v.sentence),
+    'a run that never started is not promising captures are being taken');
+
+  const { html } = render(av, { ...PR, visualEvidence: evidence });
+  assert.ok(!html.includes('dc-status-spinner-arc'), 'nothing spins on a run that is not moving');
+  assert.ok(!html.includes('Building before/after photos'));
+  // The panel, not the one-line strip: this is the pending state with
+  // something for the reader to do.
+  assert.match(html, /data-visual-evidence="1" data-evidence-state="planned"/);
+  assert.match(html, /Visual preview not started/);
+  assert.match(html, /Visual change previews are not being run on this deployment\./);
+  assert.match(html, /onclick="AppView\.rerunVisualEvidence\(4090, this\)">Retry visual change preview<\/button>/);
+});
+
+test('with no reason recorded the not-started state still stands on its own', () => {
+  const av = context();
+  const evidence = { state: 'planned', updatedAt: ago(IDLE + 1000), claims: [CLAIM], artifacts: [] };
+  const v = av._evidenceView(evidence);
+  assert.equal(v.label, 'Visual preview not started');
+  assert.match(v.sentence, /nothing has picked this preview up yet/i);
+});
+
+test('an unknown or missing timestamp reads as still starting, never as stuck', () => {
+  const av = context();
+  for (const updatedAt of [undefined, null, '', 'not a date']) {
+    assert.equal(av._evidenceNotStarted({ state: 'planned', updatedAt }), false,
+      `a ${JSON.stringify(updatedAt)} timestamp must not be read as an idle run`);
+  }
+  // And the threshold itself is the five minutes that was asked for.
+  assert.equal(av.EVIDENCE_IDLE_MS, 5 * 60 * 1000);
+  assert.equal(av._evidenceNotStarted({ state: 'planned', updatedAt: ago(IDLE - 30 * 1000) }), false);
+  // Only 'planned' is ever read this way: the other pending states are
+  // written by a run that is demonstrably executing.
+  for (const state of ['provisioning', 'exploring', 'replaying', 'reviewing', 'failed', 'verified']) {
+    assert.equal(av._evidenceNotStarted({ state, updatedAt: ago(IDLE * 10) }), false, state);
+  }
+});
+
+test('the card tag follows the same split, and only the moving one spins', () => {
+  const av = context();
+  const reasons = (evidence) => av.blockReasons({ ...PR, visualEvidence: evidence })
+    .find((r) => r.key === 'visual_evidence');
+
+  const moving = reasons({ state: 'planned', updatedAt: ago(10 * 1000), required: true });
+  assert.equal(moving.label, 'Visual preview in progress');
+  assert.equal(moving.running, true);
+
+  const stuck = reasons({
+    state: 'planned', updatedAt: ago(IDLE + 1000), required: true,
+    notStartedReason: 'No staging preview was built for this commit.',
+  });
+  assert.equal(stuck.label, 'Visual preview not started');
+  assert.equal(stuck.running, false, 'the neutral in-flight tone is what read as "any moment now"');
+  assert.equal(stuck.detail, 'No staging preview was built for this commit.');
+
+  // #2604's noun stands everywhere else: only the two in-flight states
+  // were renamed.
+  const failed = reasons({ state: 'failed', updatedAt: ago(IDLE * 2), required: true, failureReason: 'The dialog never opened.' });
+  assert.equal(failed.label, 'Visual change preview failed');
+  assert.equal(failed.running, false);
+  const exploring = reasons({ state: 'exploring', updatedAt: ago(IDLE * 2), required: true });
+  assert.equal(exploring.label, 'Visual preview in progress');
+  assert.equal(exploring.running, true);
+});
+
+test('the settled states keep #2604’s wording word for word', () => {
+  const av = context();
+  const copy = (evidence) => av._evidenceStateCopy(evidence);
+  const at = copy({ state: 'planned', updatedAt: ago(10 * 1000) });
+  assert.equal(at.failed[0], 'Visual change preview failed');
+  assert.equal(at.stale[0], 'Visual change preview is stale');
+  assert.equal(at.cancelled[0], 'Visual change preview cancelled');
+  assert.equal(at.not_required[0], 'No visual change preview required');
+  assert.equal(at.overridden[0], 'Preview requirement overridden');
+});

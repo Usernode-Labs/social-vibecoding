@@ -2300,6 +2300,19 @@ const App = {
           case 'app_allowance_changed':
             window.UsernodeReact?.appAllowance?.invalidate?.();
             break;
+          case 'budget_updated':
+            // #2598: a model call's cost just landed against this user's
+            // weekly pool (services/budget-live.js). Both meters repaint from
+            // the figures the event carries — the composer's and the header
+            // drawer's AI-credit row — so "$x left this week" ticks while the
+            // agent works instead of only once the turn ends. No refetch:
+            // the payload IS the snapshot both surfaces read, which is why
+            // this can fire every few seconds during a build.
+            if (typeof DevChat !== 'undefined' && DevChat.applyBudgetUpdate) {
+              DevChat.applyBudgetUpdate(data.budget);
+            }
+            window.AiCredit?.Budget?.applyPush?.(data.budget);
+            break;
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);
             // A mention/reply/reaction may have arrived for a message in
