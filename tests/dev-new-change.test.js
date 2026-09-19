@@ -341,6 +341,9 @@ test('the placeholder has no id and no owner, so nothing owner-scoped is offered
 
   const head = DevChat._sessionHeaderView();
   assert.equal(head.title, 'New change');
+  // #2572: and it says only that — the caption carries no tooltip spelling
+  // out that nothing is created until you send.
+  assert.equal(head.newChangeTitle, '');
   assert.equal(head.sessionId, null);
   assert.equal(head.pr, null);
   assert.equal(head.life, null);
@@ -502,17 +505,16 @@ test('a second click while the first is in flight creates one session, not two',
 
 // ── 5. the copy ───────────────────────────────────────────────────────
 
-test('the empty state says that nothing has been created yet', () => {
-  const unsent = transcriptHtml({
-    rows: [], devFlowHtml: '', activity: null, busy: false, empty: true, unsent: true,
+// #2572: the screen no longer spells out that nothing is created until you
+// send — neither in the transcript's empty state nor in the header strip's
+// tooltip. The empty state itself stays: it is what invites the first
+// message, and it is the same on an unsent change as on any empty session.
+test('the empty state invites the first message and claims nothing about creation', () => {
+  const empty = transcriptHtml({
+    rows: [], devFlowHtml: '', activity: null, busy: false, empty: true,
   });
-  assert.match(unsent, /id="dc-empty-unsent"/);
-  assert.match(unsent, /Nothing is created until you send/);
-  // …and an ordinary empty session does not, because for it the sentence
-  // would simply be false.
-  const created = transcriptHtml({
-    rows: [], devFlowHtml: '', activity: null, busy: false, empty: true, unsent: false,
-  });
-  assert.match(created, /id="dc-empty-state"/);
-  assert.doesNotMatch(created, /dc-empty-unsent/);
+  assert.match(empty, /id="dc-empty-state"/);
+  assert.match(empty, /What should this session change\?/);
+  assert.doesNotMatch(empty, /dc-empty-unsent/);
+  assert.doesNotMatch(empty, /Nothing is created until you send/);
 });

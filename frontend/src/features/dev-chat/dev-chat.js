@@ -7180,8 +7180,6 @@ const DevChat = {
       // stays until the first message lands, so it is persistent rather than
       // a toast.
       empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue(),
-      // #2241: …and nothing has been created for it yet.
-      unsent: !!(session && session.pending),
       activity: DevChat._activitySpec(),
       // #1889: whether a turn is in flight. The transcript keeps the latest
       // Changes card in its turn's slot while the run's tail is painting and
@@ -8523,7 +8521,7 @@ const DevChat = {
         branch: '',
         pr: null,
         prTitle: '',
-        newChangeTitle: 'Nothing is created until you send your first message.',
+        newChangeTitle: '',
         life: null,
         venue: null,
         actions: [],
