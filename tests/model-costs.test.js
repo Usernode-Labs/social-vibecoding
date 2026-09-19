@@ -225,3 +225,81 @@ test('the Model costs section is registered, routed and audited', () => {
   const declared = dapp.tests.filter((t) => t.path === '/#admin/model-costs');
   assert.ok(declared.length >= 1, 'the screen carries a declared check');
 });
+
+// ── 6. A cost is never shown as a bare dollar amount ───────────────────
+//
+// The figure is per TYPICAL CHANGE, not per message, per hour or per
+// month, and "$1.55" beside a model name invites all three readings. The
+// product decision for #2570 is that the amount only ever reaches a person
+// inside the phrase "about $X for a typical change" — on the picker option,
+// on the line under the picker, and in the admin console's save
+// confirmation. The admin TABLE may hold bare numbers, because its column
+// headers carry the unit instead.
+//
+// dev-chat.js is a plain browser script, so this loads it the way
+// model-selector-ui.test.js does: into a vm, reading DevChat back out.
+
+test('a cost only ever reaches a person as "about $X for a typical change"', () => {
+  const vm = require('node:vm');
+  const sandbox = { console, fetch: () => Promise.reject(new Error('no network')) };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  // dev-chat.js wires a few listeners at load. None of them is what this
+  // test reads, so the stubs only have to exist.
+  sandbox.document = { addEventListener() {}, getElementById: () => null };
+  sandbox.addEventListener = () => {};
+  sandbox.navigator = {};
+  sandbox.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${read('frontend/src/features/dev-chat/dev-chat.js')}\n;globalThis.__DevChat = DevChat;`,
+    sandbox,
+  );
+  const DevChat = sandbox.__DevChat;
+
+  // The one place the amount is formatted. A curated row carries its own
+  // estimate; the client never re-derives one it was given.
+  DevChat._modelNotes = {
+    typicalChange: { inputTokens: 250_000, outputTokens: 12_000, source: 'documented_constant' },
+    models: { 'z-ai/glm-5.3-flash': { note: 'quick, cheap changes', estimateCents: 40 } },
+  };
+
+  const cost = DevChat._modelCostNote('z-ai/glm-5.3-flash', null);
+  assert.equal(cost.compact, 'quick, cheap changes · about $0.40 for a typical change');
+  assert.equal(cost.full, 'quick, cheap changes · about $0.40 for a typical change (estimate)');
+  // The prefixed picker value resolves to the same row, so an option and
+  // the line beneath it cannot disagree.
+  assert.equal(DevChat._modelCostNote('openrouter:z-ai/glm-5.3-flash', null).compact, cost.compact);
+
+  // Neither display string may carry an amount that is not inside the
+  // phrase. `estimate` holds the bare figure on purpose, for arithmetic.
+  for (const text of [cost.compact, cost.full]) {
+    for (const match of text.match(/\$[0-9.]+|<\$[0-9.]+/g) || []) {
+      assert.match(text, new RegExp(`about ${match.replace(/[$.]/g, '\\$&')} for a typical change`),
+        `"${text}" shows an amount outside the phrase`);
+    }
+  }
+  assert.equal(cost.estimate, '$0.40');
+
+  // A model nobody published a price for says what it is good for and
+  // stops there, rather than reading as free.
+  DevChat._modelNotes.models['no-price/model'] = { note: 'experimental', estimateCents: null };
+  const priceless = DevChat._modelCostNote('no-price/model', null);
+  assert.equal(priceless.compact, 'experimental');
+  assert.doesNotMatch(priceless.full, /\$/);
+
+  // Under a cent is "<$0.01", still inside the phrase.
+  DevChat._modelNotes.models['tiny/model'] = { note: 'trivial edits', estimateCents: 0.4 };
+  assert.equal(DevChat._modelCostNote('tiny/model', null).compact,
+    'trivial edits · about <$0.01 for a typical change');
+
+  // The admin table's cells are bare, so its headers carry the unit.
+  const admin = read('frontend/src/features/admin/admin-model-costs.tsx');
+  for (const header of ['Shown estimate, per typical change',
+    'Observed average, per typical change',
+    'Observed median, per typical change']) {
+    assert.ok(admin.includes(header), `the table header "${header}" states its unit`);
+  }
+  assert.match(admin, /the picker now says about \$\{money\(cents\)\} for a typical change/,
+    'the save confirmation uses the phrase too');
+});

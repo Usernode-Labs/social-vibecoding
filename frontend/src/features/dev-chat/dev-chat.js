@@ -346,16 +346,24 @@ const DevChat = {
     // something must not read as free.
     const money = cents == null ? ''
       : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
+    // #2570: a bare dollar amount is never shown to anybody. The figure is
+    // per TYPICAL CHANGE, not per message, per hour or per month, and a
+    // naked "$1.55" beside a model name invites all three readings. So the
+    // amount only ever leaves here inside this phrase, and every surface
+    // that shows a cost renders it. "about" carries the estimate; what a
+    // typical change IS stays defined once, in the server's TYPICAL_CHANGE
+    // profile, which the admin screen prints.
+    const perChange = money ? `about ${money} for a typical change` : '';
     return {
       note,
+      // The bare amount, for arithmetic and tests. Not for display on its
+      // own: render `compact` or `full`.
       estimate: money,
-      // "about $1.55 a change (estimate)" — the one sentence, built once.
-      full: [
-        note,
-        money ? `about ${money} a change (estimate)` : '',
-      ].filter(Boolean).join(' · '),
-      // "· $1.55" — what fits beside a name in a closed native control.
-      compact: [note, money].filter(Boolean).join(' · '),
+      // "general coding work · about $1.55 for a typical change (estimate)"
+      full: [note, perChange ? `${perChange} (estimate)` : ''].filter(Boolean).join(' · '),
+      // The same sentence, minus the explicit label, for the one line a
+      // closed native control shows.
+      compact: [note, perChange].filter(Boolean).join(' · '),
     };
   },
 

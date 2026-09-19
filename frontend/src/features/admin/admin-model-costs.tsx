@@ -115,7 +115,8 @@ function ModelCostsSection() {
       setStatus({
         text: cents == null
           ? `${modelId}: the derived estimate is back.`
-          : `${modelId}: the picker now says ${money(cents)}.`,
+          // #2570: never a bare amount in copy a person reads.
+          : `${modelId}: the picker now says about ${money(cents)} for a typical change.`,
         tone: 'ok',
       });
     } catch (err: any) {
@@ -157,9 +158,12 @@ function ModelCostsSection() {
             <tr>
               <th className={AdminUI.th}>Model</th>
               <th className={AdminUI.th}>Good for</th>
-              <th className={AdminUI.th}>Shown estimate</th>
-              <th className={AdminUI.th}>Observed average</th>
-              <th className={AdminUI.th}>Observed median</th>
+              {/* #2570: the cells hold bare amounts, so the headers carry
+                  the unit. Every one of these is per TYPICAL CHANGE, which
+                  the paragraph above defines. */}
+              <th className={AdminUI.th}>Shown estimate, per typical change</th>
+              <th className={AdminUI.th}>Observed average, per typical change</th>
+              <th className={AdminUI.th}>Observed median, per typical change</th>
               <th className={AdminUI.th}>Changes</th>
               {canWrite ? <th className={AdminUI.th}>Override</th> : null}
             </tr>
@@ -184,7 +188,7 @@ function ModelCostsSection() {
                       <input
                         type="number" min="0" step="0.01" inputMode="decimal"
                         className={`${AdminUI.input} w-24`}
-                        aria-label={`Estimate for ${row.modelId} in dollars`}
+                        aria-label={`Estimate for ${row.modelId}, in dollars per typical change`}
                         placeholder={row.derivedCents == null ? 'none' : (Number(row.derivedCents) / 100).toFixed(2)}
                         value={drafts[row.modelId] ?? ''}
                         onChange={(e) => setDrafts((d) => ({ ...d, [row.modelId]: e.target.value }))}
