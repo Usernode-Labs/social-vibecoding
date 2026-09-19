@@ -42,6 +42,7 @@ const { isCliSurfaceEnabled } = require('./cli-auth');
 // advertises the Claude Code / Codex flows (#1049).
 const githubLink = require('../services/github-link');
 const emailSignup = require('../services/email-signup');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
 // The platform's own self-hosted app row. The home screen's Improve button is
 // about the PLATFORM, and the client has no other way to learn that row's slug
 // — GET /api/apps hides self-hosted rows from non-admins on purpose.
@@ -350,6 +351,15 @@ function authRoutes(config) {
           },
         });
       }
+      // #2568: a brand-new account gets its included OpenRouter key here,
+      // the moment the row exists. Best effort by construction —
+      // ensureIncludedKey never throws — so signing up cannot fail because
+      // OpenRouter's management API did; the next new-change screen retries.
+      if (verified.created) {
+        await managedOpenRouter.ensureIncludedKey({
+          pool, userId: verified.userId, config, reason: 'signup_email',
+        });
+      }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
       log.info('email-signup', 'Email code verified, password setup pending', {
         userId: verified.userId,
@@ -430,6 +440,11 @@ function authRoutes(config) {
       // (onboarding flow alignment). Without this, every invited user
       // would land in the waiting room, a regression on the invite flow.
       await waitlist.grantPlatformAccess(pool, userId);
+
+      // #2568: the included OpenRouter key, created with the account.
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId, config, reason: 'signup_activation_code',
+      });
 
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
@@ -558,10 +573,9 @@ function authRoutes(config) {
         keyLast4 = rows[0].anthropic_key_last4 || null;
       }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
-      const inOpenRouterBeta = !config.openrouterBetaUserIds?.length
-        || config.openrouterBetaUserIds.includes(String(req.user.id));
+      // #2568: no allowlist any more — availability is the deployment
+      // switch plus whether this account actually holds a usable key.
       openrouterAvailable = config.codexOpenrouterEnabled === true
-        && inOpenRouterBeta
         && rows[0]?.openrouter_credential_valid === true;
       devFlowPreference = DEV_FLOWS.includes(rows[0]?.dev_flow_preference)
         ? rows[0].dev_flow_preference
@@ -1470,6 +1484,11 @@ function authRoutes(config) {
       // Genesis-ledger registration is invite-equivalent (the genesis
       // allowlist IS the invite) — grant platform access directly.
       await waitlist.grantPlatformAccess(pool, userId);
+
+      // #2568: the included OpenRouter key, created with the account.
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId, config, reason: 'signup_wallet',
+      });
 
       const { token, expiresAt } = await createSession(pool, userId);
       createSessionCookie(res, token, expiresAt);

@@ -490,17 +490,11 @@ function socialIdentityRoutes(config) {
     if (!providerAdapter(provider)) return res.status(404).json({ error: 'not_found' });
     try {
       await socialIdentity.clearIdentity(pool, req.user.id, provider);
-      // When managed-key verification is required, identity loss does not
-      // automatically revoke a paid child key. It creates a deduplicated
-      // admin review notification so a human can decide whether to block or
-      // delete it from the Users console. The default-open policy skips this.
-      await managedOpenRouter.notifyIdentityReview({
-        pool, userId: req.user.id, config,
-      }).catch((err) => {
-        log.warn('social-identity', 'managed OpenRouter review notification failed', {
-          provider, userId: req.user.id, message: err.message,
-        });
-      });
+      // #2568: unlinking an identity no longer touches the included
+      // OpenRouter key. That key is part of creating an account now, not
+      // something a verified identity earned, so losing a proof is not a
+      // reason to ask an admin to review it. Admins can still block or
+      // delete a key from the Users console.
       log.info('social-identity', 'account unlinked', { provider, userId: req.user.id });
       return res.status(204).end();
     } catch (err) {
