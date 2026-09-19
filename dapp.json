@@ -1409,16 +1409,22 @@
       "expectText": "Chat shared. Stop sharing"
     },
     {
-      "name": "A published chat opens in the Build sheet on the shared session’s page",
+      "name": "A shared session’s card page carries no build surface — only the pill that leaves for it",
       "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
-      "expectSelector": "[data-change-conversation] + [data-change-build][data-build-kind=\"published\"]:not([hidden]) [data-transcript-body]",
-      "expectText": "read-only"
+      "expectSelector": "#dev-topic-thread:not(:has([data-change-build])):not(:has([data-transcript-body])) [data-change-conversation=\"990002\"][aria-label=\"Discussion\"]",
+      "expectText": "Read the build"
     },
     {
-      "name": "Shared workspace keeps the published author attribution, in the Build sheet under the Discussion",
-      "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
-      "expectSelector": "[data-change-conversation][aria-label=\"Discussion\"] + [data-change-build][data-build-kind=\"published\"] [data-transcript-section]",
+      "name": "A published chat opens read-only on the dev session’s own page, keeping its author attribution",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990002",
+      "expectSelector": "#dev-section .dev-session-read [data-transcript-section=\"990002\"] .st-readonly-tag",
       "expectText": "Dev chat by staging-demo-user"
+    },
+    {
+      "name": "The published chat renders its messages on the session page, and no composer with them",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990002",
+      "expectSelector": ".dev-session-read [data-transcript-body=\"990002\"] .st-timeline .dc-msg.st-msg .dc-msg-content",
+      "expectText": "read-only"
     },
     {
       "name": "Native-feel UI kit demo renders",
@@ -4352,16 +4358,16 @@
       "expectText": "Staging demo: pills fall back after a build"
     },
     {
-      "name": "A full change page has the Discussion sheet, and the Build sheet behind the card's Open build pill",
+      "name": "A full change page has the Discussion sheet and the Open build pill, and no build surface of its own",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "[data-change-conversation=\"900801\"][aria-label=\"Discussion\"] + [data-change-build=\"900801\"][data-build-kind=\"owner\"]",
+      "expectSelector": "#dev-topic-thread:not(:has([data-change-build])):not(:has(#dc-view)) [data-change-conversation=\"900801\"][aria-label=\"Discussion\"]",
       "expectText": "Open build"
     },
     {
-      "name": "The Build sheet mounts the real dev session under the Discussion when the link asks for it",
+      "name": "An old ?conversation=workspace link on a change page lands on the dev session page",
       "path": "/?conversation=workspace#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "[data-change-build=\"900801\"]:not([hidden]) #dc-view:has(#dc-messages):has(#dc-quick-replies):not(:has(#dc-mode-switch)):not(:has(.dc-pr-card-actions))",
-      "expectText": "Build"
+      "expectSelector": "#dev-section #dc-view:has(#dc-messages):has(#dc-quick-replies)",
+      "expectText": "Change overview"
     },
     {
       "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message in a bubble under their name, a platform notice as a message from the app with one box",
