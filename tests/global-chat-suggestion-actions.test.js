@@ -20,6 +20,34 @@ test('fixed suggestions resolve only to server-owned read steps', () => {
     bodyJson: null,
   });
 
+  const activity = resolveAction({ suggestionId: 'next.apps.activity', parameters: {} });
+  assert.equal(activity.id, 'apps.activity');
+  assert.equal(activity.steps[0].capabilityId, 'apps.activity');
+
+  const unread = resolveAction({ suggestionId: 'next.messages.unread', parameters: {} });
+  assert.equal(unread.id, 'messages.unread');
+  assert.equal(unread.steps[0].capabilityId, 'messages.unread');
+
+  const spending = resolveAction({ suggestionId: 'next.settings.budget', parameters: {} });
+  assert.equal(spending.id, 'settings.spending');
+  assert.equal(spending.steps[0].capabilityId, 'settings.spending');
+
+  const notification = resolveAction({
+    actionId: 'notification.detail', parameters: { notificationId: '42' },
+  });
+  assert.equal(notification.steps[0].input.pathParameters.id, '42');
+
+  const leaderboard = resolveAction({
+    actionId: 'leaderboard.profile', parameters: { userId: '7' },
+  });
+  assert.equal(leaderboard.steps[0].input.pathParameters.userId, '7');
+
+  assert.throws(
+    () => resolveAction({ suggestionId: 'next.governance.votes', parameters: {} }),
+    (error) => error instanceof SuggestionActionError
+      && error.code === 'direct_action_not_found',
+  );
+
   const issue = resolveAction({
     actionId: 'issue.detail',
     parameters: { appSlug: 'social-vibecoding', issueNumber: '2377' },

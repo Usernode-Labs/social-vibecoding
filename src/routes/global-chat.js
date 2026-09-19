@@ -14,6 +14,7 @@ const agentModels = require('../services/agent-models');
 const profileService = require('../services/global-chat/profile');
 const globalChatStore = require('../services/global-chat/store');
 const {
+  directActionIdForSuggestion,
   enrichPresentation,
   firstUsePresentation,
   plainSuggestionsForContext,
@@ -496,20 +497,30 @@ function globalChatRoutes(config) {
     };
   }
 
-  async function directRuntime(userId) {
-    const [profile, development] = await Promise.all([
+  async function directRuntime(userId, { includeAllowance = false } = {}) {
+    const [profile, development, credential] = await Promise.all([
       profileService.readProfile(pool, userId, config),
       developmentProfile(userId),
+      includeAllowance ? credentialForUser(userId) : Promise.resolve(null),
     ]);
     const usage = await profileService.readMonthlyUsage(pool, userId, {
       spendCapUsd: profile.spendCapUsd,
     });
+    let allowance = null;
+    if (includeAllowance && credential?.configured) {
+      try {
+        allowance = await providerAllowance(userId, credential);
+      } catch {
+        // Monthly Global Chat accounting remains useful when OpenRouter's
+        // allowance endpoint is temporarily unavailable.
+      }
+    }
     return {
       profile,
       development,
       usage,
       budget: {
-        overallRemaining: null,
+        overallRemaining: cleanProviderNumber(allowance?.limitRemaining),
         globalChatSpent: usage.spentUsd,
         globalChatCap: usage.capUsd,
         resetAt: usage.resetAt,
@@ -882,7 +893,11 @@ function globalChatRoutes(config) {
       return res.status(400).json({ error: error.message });
     }
     try {
-      const runtime = await directRuntime(req.user.id);
+      const directActionId = input.actionId
+        || directActionIdForSuggestion(input.suggestionId);
+      const runtime = await directRuntime(req.user.id, {
+        includeAllowance: directActionId === 'settings.spending',
+      });
       const completed = await getSuggestionExecutor().execute({
         userId: req.user.id,
         threadId: req.params.id,

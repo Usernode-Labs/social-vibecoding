@@ -209,6 +209,9 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
     canManage: !!user?.canAdminWrite
       || (user?.id != null && app.created_by === user.id)
       || isAppAdmin,
+    messagesLast7Days: parseInt(app.message_count, 10) || 0,
+    activitySecondsLast7Days: parseInt(app.total_seconds, 10) || 0,
+    activeUsers: parseInt(app.active_users, 10) || 0,
     openIssues: parseInt(app.open_issues, 10) || 0,
     openProposals: parseInt(app.open_prs, 10) || 0,
     activeDevelopment: parseInt(app.active_sessions, 10) || 0,

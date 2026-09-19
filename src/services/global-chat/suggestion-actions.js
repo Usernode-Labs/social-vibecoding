@@ -14,6 +14,7 @@ const {
 const ACTION_ID_RE = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
 const APP_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const NUMERIC_ID_RE = /^[1-9]\d{0,18}$/;
+const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 const SETTING_KEYS = new Set(inventory.settings.map((item) => item.key));
 const COMPACT_APP_QUERY = Object.freeze([{ name: 'view', value: 'global-chat' }]);
 
@@ -98,7 +99,6 @@ const ACTIONS = Object.freeze({
     steps: [
       routeStep('GET', '/api/me/active-sessions'),
       manualStep('governance.mine'),
-      routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY),
     ],
   }),
   'apps.list': fixed({
@@ -111,7 +111,7 @@ const ACTIONS = Object.freeze({
     label: 'Recent app activity',
     message: 'Here are your apps with their recent activity.',
     domain: 'apps',
-    steps: [routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY)],
+    steps: [manualStep('apps.activity')],
   }),
   'issues.choose_app': fixed({
     label: 'Open issues',
@@ -122,6 +122,18 @@ const ACTIONS = Object.freeze({
   'development.active': fixed({
     label: 'Active development',
     message: 'Here is your active development work.',
+    domain: 'development',
+    steps: [routeStep('GET', '/api/me/active-sessions')],
+  }),
+  'development.continue': fixed({
+    label: 'Continue work',
+    message: 'Choose development work to continue.',
+    domain: 'development',
+    steps: [routeStep('GET', '/api/me/active-sessions')],
+  }),
+  'development.status': fixed({
+    label: 'Check status',
+    message: 'Choose development work to inspect.',
     domain: 'development',
     steps: [routeStep('GET', '/api/me/active-sessions')],
   }),
@@ -136,6 +148,27 @@ const ACTIONS = Object.freeze({
     message: 'Here are your recent conversations.',
     domain: 'messages',
     steps: [routeStep('GET', '/api/conversations')],
+  }),
+  'messages.unread': fixed({
+    label: 'Unread messages',
+    message: 'Here are your conversations with unread messages.',
+    domain: 'messages',
+    steps: [manualStep('messages.unread')],
+  }),
+  'messages.overview': fixed({
+    label: 'Check messages',
+    message: 'Here are your unread conversations and recent notifications.',
+    domain: 'messages',
+    steps: [
+      manualStep('messages.unread'),
+      routeStep('GET', '/api/notifications', {}, [{ name: 'limit', value: '20' }]),
+    ],
+  }),
+  'messages.choose_app': fixed({
+    label: 'App discussions',
+    message: 'Choose an app to view its discussions.',
+    domain: 'messages',
+    steps: [routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY)],
   }),
   'notifications.list': fixed({
     label: 'Notifications',
@@ -159,7 +192,7 @@ const ACTIONS = Object.freeze({
     label: 'AI spending',
     message: 'Here is your Global Chat usage and spending limit.',
     domain: 'settings',
-    steps: [manualStep('settings.inspect', { group: 'global-chat' })],
+    steps: [manualStep('settings.spending')],
   }),
   'settings.notifications': fixed({
     label: 'Notification settings',
@@ -220,7 +253,7 @@ const ACTIONS = Object.freeze({
   'messages.for_app': Object.freeze({
     label: 'App discussions', message: 'Here are the discussions for this app.', domain: 'messages',
     parameters: (value) => exactParameters(value, { appSlug: APP_SLUG_RE }),
-    steps: ({ appSlug }) => [routeStep('GET', '/api/apps/:slug/messages', { slug: appSlug })],
+    steps: ({ appSlug }) => [manualStep('messages.for_app', { appSlug })],
   }),
   'issue.detail': Object.freeze({
     label: 'Issue details', message: 'Here are the issue details.', domain: 'issues',
@@ -286,6 +319,27 @@ const ACTIONS = Object.freeze({
     label: 'Conversation details', message: 'Here are the conversation details.', domain: 'messages',
     parameters: (value) => exactParameters(value, { conversationId: NUMERIC_ID_RE }),
     steps: ({ conversationId }) => [routeStep('GET', '/api/conversations/:id', { id: conversationId })],
+  }),
+  'notification.detail': Object.freeze({
+    label: 'Notification details', message: 'Here are the notification details.', domain: 'messages',
+    parameters: (value) => exactParameters(value, { notificationId: NUMERIC_ID_RE }),
+    steps: ({ notificationId }) => [routeStep(
+      'GET', '/api/notifications/:id', { id: notificationId },
+    )],
+  }),
+  'leaderboard.profile': Object.freeze({
+    label: 'Profile', message: 'Here is the leaderboard profile.', domain: 'general',
+    parameters: (value) => exactParameters(value, { userId: NUMERIC_ID_RE }),
+    steps: ({ userId }) => [routeStep(
+      'GET', '/api/v4/users/:userId/profile', { userId },
+    )],
+  }),
+  'leaderboard.prs': Object.freeze({
+    label: 'Merged work', message: 'Here is this contributor’s merged work.', domain: 'general',
+    parameters: (value) => exactParameters(value, { username: USERNAME_RE }),
+    steps: ({ username }) => [routeStep(
+      'GET', '/api/leaderboard/users/:username/prs', { username },
+    )],
   }),
 });
 
