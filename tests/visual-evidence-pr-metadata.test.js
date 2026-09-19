@@ -26,7 +26,7 @@ test('PR evidence metadata contains claims and one secure Homeroom link, never p
   const block = metadata.buildEvidenceBlock({
     intent: intent(), appSlug: 'demo-app', sessionId: 42, domain: 'my.onhomeroom.com',
   });
-  assert.match(block, /## Visual evidence/);
+  assert.match(block, /## Visual change preview/);
   assert.match(block, /@\u200beveryone/);
   assert.match(block, /\\\[click\\\]\\\(javascript:alert\\\(1\\\)\\\)/);
   assert.match(block, /https:\/\/my\.onhomeroom\.com\/#app\/demo-app\/dev\/proposals\/42/);

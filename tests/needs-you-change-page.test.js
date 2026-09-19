@@ -239,7 +239,7 @@ test('the picture: verified evidence keeps its card, a run under way is one line
   assert.match(building, /<p class="dev-topic-hero-evidence" data-evidence-state="exploring"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Building before\/after photos<\/span><\/p>/);
   assert.ok(!building.includes('data-visual-evidence="1"'), 'no panel for a run still going');
   const failed = render(av, { ...PR, visualEvidence: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).html;
-  assert.match(failed, /<div class="dev-topic-evidence" data-evidence-state="failed"><span class="dev-badge bg-red-500\/10 text-red-700 dark:text-red-400">Visual evidence failed<\/span>/);
+  assert.match(failed, /<div class="dev-topic-evidence" data-evidence-state="failed"><span class="dev-badge bg-red-500\/10 text-red-700 dark:text-red-400">Visual change preview failed<\/span>/);
   const verified = render(av, { ...PR, visualEvidence: { state: 'verified', claims: [claim], artifacts: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) } }).html;
   assert.match(verified, /<div class="dev-topic-visuals" data-visuals-scope="1"><div class="usn-visuals-body">/);
   assert.ok(!verified.includes('dev-topic-hero-evidence'));

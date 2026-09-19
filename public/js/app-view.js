@@ -3742,7 +3742,7 @@ const AppView = {
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
     const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
       'Continue building', 'Open session', 'Put up for vote', 'View PR on GitHub',
-      'Retry preview', 'Before/after screenshots', 'Visual evidence'];
+      'Retry preview', 'Before/after screenshots', 'Visual change preview'];
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
       .filter((a) => !body.changeId || !shortcuts.some((label) =>
         a.label === label || a.label.startsWith(`${label} (`)));
@@ -6790,8 +6790,8 @@ const AppView = {
       const after = find('head');
       if (!before && !after) return null;
       return {
-        path: claim?.claim || 'Verified visual evidence',
-        claim: claim?.claim || 'Verified visual evidence',
+        path: claim?.claim || 'Verified visual change preview',
+        claim: claim?.claim || 'Verified visual change preview',
         mobile: viewport === 'mobile',
         before: before?.url || null,
         after: after?.url || null,
@@ -11063,7 +11063,7 @@ const AppView = {
     const hasVisualEvidence = !!pr.visualEvidence;
     if (hasVisualEvidence || AppView.visualsTilesHtml(pr.visuals)) {
       items.push({
-        label: hasVisualEvidence ? 'Visual evidence' : 'Before/after screenshots',
+        label: hasVisualEvidence ? 'Visual change preview' : 'Before/after screenshots',
         icon: 'visuals',
         title: hasVisualEvidence
           ? 'Open the claim, exact-revision comparison, and verification details'
@@ -16191,12 +16191,12 @@ const AppView = {
       const enforced = AppView.appData?.visualEvidenceEnforced === true;
       out.push({
         key: 'visual_evidence',
-        label: running ? 'Visual evidence in progress'
-          : evidence.state === 'failed' ? 'Visual evidence failed' : 'Visual evidence needed',
+        label: running ? 'Visual change preview in progress'
+          : evidence.state === 'failed' ? 'Visual change preview failed' : 'Visual change preview needed',
         detail: evidence.failureReason
           || (enforced
-            ? 'Voting and merging wait for verified evidence of the current proposal commit.'
-            : 'This proposal does not yet have verified visual evidence for its current commit.'),
+            ? 'Voting and merging wait for a verified visual change preview of the current proposal commit.'
+            : 'This proposal does not yet have a verified visual change preview for its current commit.'),
         running,
         soft: !enforced,
       });
@@ -16737,16 +16737,16 @@ const AppView = {
   _evidenceStateCopy(evidence) {
     const e = evidence || {};
     return {
-      planned: ['Evidence planned', 'The interaction flow is waiting to start.'],
-      provisioning: ['Preparing evidence', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
-      exploring: ['Finding the relevant UI state', 'The evidence agent is working through the declared user flow on both revisions.'],
+      planned: ['Preview planned', 'The interaction flow is waiting to start.'],
+      provisioning: ['Preparing the preview', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
+      exploring: ['Finding the relevant UI state', 'The preview agent is working through the declared user flow on both revisions.'],
       replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
       reviewing: ['Checking relevance', 'The replay passed its hard checks and is being checked against the author’s claim.'],
-      failed: ['Visual evidence failed', e.failureReason || 'The declared UI state could not be reached or verified.'],
-      stale: ['Visual evidence is stale', e.failureReason || 'A newer proposal revision superseded these artifacts.'],
-      cancelled: ['Visual evidence cancelled', e.failureReason || 'This run was superseded before it finished.'],
-      not_required: ['No visual evidence required', e.rationale || 'The author declared that this change has no user-visible effect.'],
-      overridden: ['Evidence requirement overridden', e.overrideReason || 'An app administrator allowed review to continue without verified evidence.'],
+      failed: ['Visual change preview failed', e.failureReason || 'The declared UI state could not be reached or verified.'],
+      stale: ['Visual change preview is stale', e.failureReason || 'A newer proposal revision superseded these artifacts.'],
+      cancelled: ['Visual change preview cancelled', e.failureReason || 'This run was superseded before it finished.'],
+      not_required: ['No visual change preview required', e.rationale || 'The author declared that this change has no user-visible effect.'],
+      overridden: ['Preview requirement overridden', e.overrideReason || 'An app administrator allowed review to continue without a verified visual change preview.'],
     };
   },
 
@@ -16758,7 +16758,7 @@ const AppView = {
   _evidenceView(evidence) {
     if (!evidence || typeof evidence !== 'object') return null;
     const state = String(evidence.state || 'planned');
-    const copy = AppView._evidenceStateCopy(evidence)[state] || ['Evidence pending', 'Visual evidence has not finished yet.'];
+    const copy = AppView._evidenceStateCopy(evidence)[state] || ['Preview pending', 'The visual change preview has not finished yet.'];
     const detail = String(copy[1] || '').replace(/\.\s*$/, '');
     const claims = (Array.isArray(evidence.claims) ? evidence.claims : [])
       .slice(0, 3).map((c) => String((c && c.claim) || '').trim()).filter(Boolean);
@@ -16769,7 +16769,7 @@ const AppView = {
       label: state === 'verified' ? 'Verified' : copy[0],
       sentence: settled
         ? `${detail}.`
-        : `Visual evidence: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom records before-and-after captures of these claims on the exact proposal build.`,
+        : `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom records before-and-after captures of these claims on the exact proposal build.`,
       claims,
     };
   },
@@ -16793,15 +16793,15 @@ const AppView = {
     const stateCopy = AppView._evidenceStateCopy(evidence);
     const badge = state === 'verified'
       ? '<span class="dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">Verified</span>'
-      : `<span class="dev-badge ${state === 'failed' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Evidence pending'])[0])}</span>`;
+      : `<span class="dev-badge ${state === 'failed' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Preview pending'])[0])}</span>`;
     const provenance = `<span>base <code>${esc(shortSha(evidence.baseSha))}</code></span><span aria-hidden="true">→</span><span>head <code>${esc(shortSha(evidence.headSha))}</code></span>`;
 
     if (state !== 'verified') {
-      const copy = stateCopy[state] || ['Evidence pending', 'Visual evidence has not finished yet.'];
+      const copy = stateCopy[state] || ['Preview pending', 'The visual change preview has not finished yet.'];
       const declared = claims.map((claim) => `<li>${esc(claim.claim || '')}</li>`).join('');
       const retry = state === 'failed' && evidence.repairAvailable === true
         && Number.isInteger(sessionId) && sessionId > 0
-        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunVisualEvidence(${sessionId}, this)">Retry evidence</button>`
+        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunVisualEvidence(${sessionId}, this)">Retry visual change preview</button>`
         : '';
       const override = state === 'overridden' && evidence.overriddenAt
         ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">Overridden ${esc(new Date(evidence.overriddenAt).toLocaleString())}</div>`
@@ -16852,7 +16852,7 @@ const AppView = {
         }
         viewportRows.push(`<div data-evidence-viewport="${attr(viewport)}" class="mt-3">
           <div class="mb-1 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewport)} · ${esc(claim.persona === 'read_only_admin' ? 'read-only admin' : 'member')}</div>
-          <div class="flex flex-wrap items-stretch gap-2">${side(baseAbsent ? 'Before · Not present in base' : 'Before', baseUrl, baseAbsent ? 'Not present in base' : 'Evidence image unavailable')}${side('After', headUrl, 'Evidence image unavailable')}</div>
+          <div class="flex flex-wrap items-stretch gap-2">${side(baseAbsent ? 'Before · Not present in base' : 'Before', baseUrl, baseAbsent ? 'Not present in base' : 'Preview image unavailable')}${side('After', headUrl, 'Preview image unavailable')}</div>
           ${controls.length ? `<div class="mt-2 flex flex-wrap items-start gap-3">${controls.join('')}</div>` : ''}
         </div>`);
       }
@@ -16867,9 +16867,9 @@ const AppView = {
       </article>`);
     }
     if (!rendered.length) {
-      return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">Verified evidence metadata is incomplete; no claim can be displayed.</section>`;
+      return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">Verified visual change preview metadata is incomplete; no claim can be displayed.</section>`;
     }
-    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Verified visual evidence" class="space-y-3">${rendered.join('')}</section>`;
+    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Verified visual change preview" class="space-y-3">${rendered.join('')}</section>`;
   },
 
   // Authenticated evidence uses full relative URLs rather than public
@@ -16882,14 +16882,14 @@ const AppView = {
     const before = urlOk(d.beforeUrl) ? d.beforeUrl : '';
     const head = urlOk(d.headUrl) ? d.headUrl : '';
     if (!before && !head) return;
-    const label = `${d.claim || 'Visual evidence'}${d.viewport ? ` · ${d.viewport}` : ''}`;
+    const label = `${d.claim || 'Visual change preview'}${d.viewport ? ` · ${d.viewport}` : ''}`;
     const baseAbsent = d.baseAbsent === '1';
     const colStyle = 'flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:6px';
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
     const column = (side, url, missing) => `<div style="${colStyle}"><div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${side}</div>${url
-      ? `<img src="${escapeAttr(url)}" alt="${escapeAttr(`${side}: ${d.claim || 'visual evidence'}`)}" style="${mediaStyle}"><a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 dark:text-violet-400">Open original ↗</a>`
+      ? `<img src="${escapeAttr(url)}" alt="${escapeAttr(`${side}: ${d.claim || 'visual change preview'}`)}" style="${mediaStyle}"><a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 dark:text-violet-400">Open original ↗</a>`
       : `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">${missing}</div>`}</div>`;
-    const bodyHtml = `<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column(baseAbsent ? 'Before · Not present in base' : 'Before', before, baseAbsent ? 'Not present in base' : 'Evidence image unavailable')}${column('After', head, 'Evidence image unavailable')}</div>`;
+    const bodyHtml = `<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column(baseAbsent ? 'Before · Not present in base' : 'Before', before, baseAbsent ? 'Not present in base' : 'Preview image unavailable')}${column('After', head, 'Preview image unavailable')}</div>`;
     const compare = AppView._visualCompare();
     compare.open({ label, bodyHtml, openedAt: Date.now() });
     compare.setHandlers({
@@ -16918,10 +16918,10 @@ const AppView = {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `HTTP ${response.status}`);
-      PlatformUI.toast('Visual evidence is running again.');
+      PlatformUI.toast('The visual change preview is running again.');
       AppView.refreshDevData('evidence');
     } catch (error) {
-      PlatformUI.toast(`Could not retry visual evidence: ${error.message}`);
+      PlatformUI.toast(`Could not retry the visual change preview: ${error.message}`);
     } finally {
       if (button) button.disabled = false;
     }

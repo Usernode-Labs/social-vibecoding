@@ -94,7 +94,7 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
   if (!headSha) {
     throw new VisualEvidenceOrchestrationError(
       'missing_evidence_head',
-      'Visual evidence cannot start until the proposal has an exact submitted head commit.'
+      'The visual change preview cannot start until the proposal has an exact submitted head commit.'
     );
   }
   const { owner, repo } = environment.repoParts(session.repo_url);
@@ -251,7 +251,7 @@ async function waitForSessionIdle(pool, sessionId, {
   }
   throw new VisualEvidenceOrchestrationError(
     'evidence_agent_busy',
-    'The proposal agent stayed busy past the visual evidence start window.'
+    'The proposal agent stayed busy past the visual change preview start window.'
   );
 }
 
@@ -283,8 +283,8 @@ function errorCode(error) {
 }
 
 function visibleError(error) {
-  const message = String(error?.message || 'Visual evidence could not be produced.').trim();
-  return message.slice(0, 2000) || 'Visual evidence could not be produced.';
+  const message = String(error?.message || 'The visual change preview could not be produced.').trim();
+  return message.slice(0, 2000) || 'The visual change preview could not be produced.';
 }
 
 function newRunMetrics() {
@@ -413,7 +413,7 @@ async function executeRun(config, options, injected = {}) {
       run = current;
     }
     if (run.current_run_id && run.current_run_id !== run.id) {
-      throw new VisualEvidenceOrchestrationError('stale_evidence_operation', 'This evidence run was superseded before it started.');
+      throw new VisualEvidenceOrchestrationError('stale_evidence_operation', 'This visual change preview run was superseded before it started.');
     }
     const intent = planContract.parseIntent(run.intent || intentForSession(session));
     if (run.state === 'not_required') return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
@@ -563,7 +563,7 @@ async function executeRun(config, options, injected = {}) {
         if (remainingAgentMs <= 0) {
           throw new VisualEvidenceOrchestrationError(
             'evidence_agent_timeout',
-            'The visual evidence agent used its bounded exploration and review time.'
+            'The preview agent used its bounded exploration and review time.'
           );
         }
         const dispatched = await deps.evidenceAgent.dispatch(config, {
@@ -602,7 +602,7 @@ async function executeRun(config, options, injected = {}) {
       const authored = semanticFromFinish(registration.control.finished);
       if (authored) return authored;
       if (!latestHardVerdict || !latestArtifacts) {
-        throw new VisualEvidenceOrchestrationError('missing_evidence_replay', 'The evidence agent did not submit a replay plan.');
+        throw new VisualEvidenceOrchestrationError('missing_evidence_replay', 'The preview agent did not submit a replay plan.');
       }
       progress('Checking whether the replay images prove the declared claim…');
       return deps.reviewer.review({
