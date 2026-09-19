@@ -171,7 +171,14 @@ function statusClass(status: ImportStatus): string {
  * screens — rather than the bordered-inset look the other dialogs still
  * have. The language separates by FIGURE/GROUND, not by rules: a grey pane
  * ground, white cards floating on it with no border, and one high-contrast
- * state, the solid inversion, for "selected".
+ * state for "selected".
+ *
+ * #2566: in THIS dialog that state is the shell's accent — a violet-600
+ * fill with white ink, the same fill its own Create/Import button wears —
+ * and no longer the language's solid inversion, which read as a black
+ * slab rather than as a choice. The rules are in app.css beside the ones
+ * that key off #create-card[data-mode]; the language's inversion is
+ * untouched everywhere else it is stated.
  *
  *   PANE     the card's own ground, for the web presentation. Inside the
  *            kit's modal shell the card is neutralised (`.un-modal
@@ -210,8 +217,8 @@ const PILL_SECONDARY = 'flex-1 h-11 rounded-full bg-white text-[15px] font-semib
 /*
  * #1911: the start step's two choices, one white card each, full width,
  * with a title and a one-line caption and a chevron at the trailing edge.
- * The selection colours (the solid inversion when this is the mode the
- * dialog is in) stay in app.css on `.create-mode-pill`, keyed off
+ * The selection colours (the accent fill when this is the mode the dialog
+ * is in — #2566) stay in app.css on `.create-mode-pill`, keyed off
  * #create-card[data-mode] exactly as the old segmented pills were.
  */
 const CHOICE = 'create-mode-pill w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 transition-colors';
