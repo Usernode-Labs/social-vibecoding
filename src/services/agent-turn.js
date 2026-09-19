@@ -18,6 +18,11 @@ const log = require('./logger');
 const turnLifecycle = require('./turn-lifecycle');
 const llmTelemetry = require('./llm-telemetry');
 
+// The platform's reasoning-effort scale, weakest first. Order matters: it is
+// what picks the strongest level a model advertises when the platform default
+// is not one of them.
+const REASONING_EFFORT_ORDER = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh']);
+
 // Resolve the backend for a turn from the session row (pinned at session
 // creation). Falls back to claude_code for legacy sessions.
 function backendForSession(session) {
@@ -64,7 +69,7 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
   const efforts = Array.isArray(model?.reasoningEfforts)
     ? [...new Set(model.reasoningEfforts
       .map((effort) => String(effort || '').trim())
-      .filter((effort) => ['minimal', 'low', 'medium', 'high', 'xhigh'].includes(effort)))]
+      .filter((effort) => REASONING_EFFORT_ORDER.includes(effort)))]
     : null;
   return {
     name: String(model?.name || requestedModelId || '').trim().slice(0, 300)
@@ -75,6 +80,29 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
     reasoningEfforts: efforts,
     supportsTools: model ? model.supportsTools === true : null,
   };
+}
+
+// #2600: the effort a coding turn runs at when nobody has chosen one. The
+// platform default is 'xhigh' (config.openrouterDefaultCodexReasoning), which
+// is what GLM 5.3 Flash and DeepSeek v4.1 Flash now think at by default.
+//
+// The one adjustment: when OpenRouter publishes an explicit effort list for
+// the model and the platform default is not on it, fall back to the highest
+// level the model does advertise rather than sending a level it never
+// offered. Most models publish no list at all (the capability is a boolean),
+// in which case the default goes through untouched and the Codex runner
+// installs it as a supported level. This clamp applies ONLY to the platform
+// default: a user who chose an effort in Settings gets exactly that.
+function defaultReasoningEffortForModel(catalogModel, config = {}) {
+  const configured = config.openrouterDefaultCodexReasoning || null;
+  if (!configured) return null;
+  const advertised = Array.isArray(catalogModel?.reasoningEfforts)
+    ? catalogModel.reasoningEfforts.filter((effort) => REASONING_EFFORT_ORDER.includes(effort))
+    : null;
+  if (!advertised || !advertised.length || advertised.includes(configured)) return configured;
+  return advertised.reduce((best, effort) => (
+    REASONING_EFFORT_ORDER.indexOf(effort) > REASONING_EFFORT_ORDER.indexOf(best) ? effort : best
+  ), advertised[0]);
 }
 
 // ── Phase 1: resolve runtime context (no DB writes) ───────────────────
@@ -144,7 +172,12 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
     pricingSnapshot = { available: false };
   }
 
-  const requestedReasoningEffort = reasoningEffort || session.agent_reasoning_effort || null;
+  // A user's explicit choice — this turn's, or the one stored on the session
+  // when it was created — always wins. The platform default only fills a
+  // blank, so raising it never overrides anybody's setting (#2600).
+  const requestedReasoningEffort = reasoningEffort
+    || session.agent_reasoning_effort
+    || defaultReasoningEffortForModel(catalogModel, config);
   return {
     agentBackend: 'codex_openrouter',
     agentModel: resolvedModel,

@@ -146,6 +146,8 @@ function ModelCostsSection() {
             + `${tokens(profile.outputTokens)} out (${profile.source === 'recorded_usage'
               ? `measured from ${profile.changes} recorded changes`
               : 'a documented constant, because there is not enough recorded usage yet'}). `
+            + 'They assume a session running at the platform default reasoning effort; a session set to a '
+            + 'different effort reads and writes a different number of tokens, so it costs more or less than this. '
             + 'The observed columns are what changes actually cost; they never rewrite an estimate on their own. '
             + 'Type an override when the two have drifted apart, or clear it to go back to the derived figure.'
           : 'Reading the platform’s per-model spend…'}

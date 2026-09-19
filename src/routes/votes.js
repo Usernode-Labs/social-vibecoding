@@ -3738,6 +3738,14 @@ function voteRoutes(config) {
       // panel, not per row: a red main pauses every merge on the app, and
       // the provisional ledger below names that step off these columns.
       const mainCheck = await require('../services/main-watch').mergePause(pool, appRows[0].id);
+      // And, for the platform's own app, a merged commit that has not become
+      // the running release (services/release-watch.js). Only that row ever
+      // carries one, so a child app's panel does not pay the read; the board
+      // banner draws it.
+      const releaseWatch = require('../services/release-watch');
+      const releaseStall = appRows[0].self_hosted
+        ? await releaseWatch.readStall(pool, appRows[0].id)
+        : releaseWatch.describe(null);
       {
         const freshnessSvc = require('../services/proposal-freshness');
         const integrationSvc = require('../services/integration');
@@ -3776,6 +3784,9 @@ function voteRoutes(config) {
         // services/main-watch.js: the unit suite's verdict on the last
         // merge commit, and whether it is pausing this app's merges.
         mainCheck,
+        // services/release-watch.js: a merged self-app commit that is not
+        // the running release. `stalled: false` everywhere but there.
+        releaseStall,
         activeUsers,
         majority,
         viewerActive,
