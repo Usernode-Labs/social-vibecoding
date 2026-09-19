@@ -246,7 +246,9 @@ test('every server fallback reason becomes a sentence', () => {
   );
   const reasons = new Set();
   for (const m of fn.matchAll(/claudeFallback\('([a-z_]+)'\)/g)) reasons.add(m[1]);
-  assert.deepEqual([...reasons].sort(), ['flag_off', 'not_in_beta']);
+  // #2568 retired `not_in_beta` with the gradual-rollout allowlist, leaving
+  // the deployment switch as the only policy fallback.
+  assert.deepEqual([...reasons].sort(), ['flag_off']);
   for (const reason of reasons) {
     const note = BV.fallbackNote(reason);
     assert.ok(note.length > 0, `reason '${reason}' has no user-facing copy`);

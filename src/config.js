@@ -250,14 +250,6 @@ function load() {
     console.error('[config] NATIVE_SESSION_V2_TESTNET_CHAIN_ID must be a canonical Rust ChainId.');
     process.exit(1);
   }
-  const openrouterManagedRequireVerifiedIdentityValue =
-    process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY || 'false';
-  if (!['true', 'false'].includes(openrouterManagedRequireVerifiedIdentityValue)) {
-    console.error('[config] OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY must be either true or false.');
-    process.exit(1);
-  }
-  const openrouterManagedRequireVerifiedIdentity =
-    openrouterManagedRequireVerifiedIdentityValue === 'true';
   const globalChatDefaultReasoningEffort =
     process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING
       || DEFAULT_GLOBAL_CHAT_REASONING_EFFORT;
@@ -329,8 +321,13 @@ function load() {
     // operators can inspect already-recorded aggregates after disabling new
     // writes. This never changes provider/model/routing behaviour.
     llmTelemetryEnabled: String(process.env.LLM_TELEMETRY_ENABLED || 'true') === 'true',
-    openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
-      .split(',').map((s) => s.trim()).filter(Boolean),
+    // #2568 retired CODEX_OPENROUTER_BETA_USER_IDS and
+    // OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY. Every account is created
+    // with its included OpenRouter key, so there is no allowlist to be on and
+    // no identity to prove first. CODEX_OPENROUTER_ENABLED above remains the
+    // one emergency switch. The deploy workflow still writes the verified-
+    // identity variable; nothing reads it, exactly as with
+    // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
     // Global Chat is a separate profile from repository development. Its
     // inexpensive, minimal-effort defaults never rewrite the coding-agent choice.
@@ -366,7 +363,6 @@ function load() {
     openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
     // Default-open claim policy. Operators may opt into requiring a linked
     // GitHub or X identity before the one lifetime managed key is reserved.
-    openrouterManagedRequireVerifiedIdentity,
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)
     // read their own key from env via services/platform-jwt.js, and a
@@ -824,7 +820,6 @@ function load() {
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
   console.log(`  OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
-  console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
   console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL=${config.openrouterDefaultGlobalChatModel}`);
   console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING=${config.openrouterDefaultGlobalChatReasoning}`);

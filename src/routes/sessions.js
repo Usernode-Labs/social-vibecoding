@@ -1255,14 +1255,11 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     ...(pref ? { fallbackReason: reason } : {}),
   });
 
+  // #2568 retired the gradual-rollout allowlist. CODEX_OPENROUTER_ENABLED is
+  // the one remaining deployment switch.
   if (!config || !config.codexOpenrouterEnabled) {
     log.warn('sessions', 'Codex default not applied: feature disabled', { userId });
     return claudeFallback('flag_off');
-  }
-  if (config.openrouterBetaUserIds?.length
-      && !config.openrouterBetaUserIds.includes(String(userId))) {
-    log.warn('sessions', 'Codex default not applied: beta access revoked', { userId });
-    return claudeFallback('not_in_beta');
   }
 
   const { meta, provisioned } = await ensureOpenRouterCredential(client, userId, config);

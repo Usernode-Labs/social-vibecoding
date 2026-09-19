@@ -16,27 +16,22 @@ const LIMIT_RESET = 'weekly';
 
 // #2119: the included key carries the platform's weekly allowance, the same
 // figure the Claude side enforces as its weekly cap (limits.resolveCaps: an
-// admin's per-user override, else the platform default, else 17500 cents).
-// The two backends do not share a pool (OpenRouter enforces the child key's
-// own limit; Claude spend is metered here); they share the NUMBER, so one
-// place answers "how much does the company give this account a week".
+// admin's per-user override, else the platform default). The two backends do
+// not share a pool (OpenRouter enforces the child key's own limit; Claude
+// spend is metered here); they share the NUMBER, so one place answers "how
+// much does the company give this account a week".
 //
-// Zero refuses a company key rather than minting an unlimited or zero-limit
-// one, and it is zero in two cases: an admin switched the weekly cap off, or
-// the identity tier grants the account nothing at all. The second is read
-// the way checkBudget reads it: an identity-derived daily 0 keeps applying
-// (tiered policy, unverified account), so the Claude side refuses every
-// platform-funded turn for that account, and the included key must not
-// become the way around that gate.
+// #2568 removed the identity gate this used to apply on top: every account
+// gets its included key when the account is created, so an account whose
+// identity tier grants it nothing is no longer refused a key here. Zero is
+// still a refusal, because minting an unlimited or zero-limit key is worse
+// than not minting one — but it now means only what it says: an admin
+// switched this account's weekly cap off.
 async function resolveAllowance(pool, userId) {
-  const [weeklyCents, entitlement] = await Promise.all([
-    limits.getEffectiveUserWeeklyLimitCents(pool, userId),
-    limits.getUserCreditEntitlement(pool, userId),
-  ]);
-  const caps = limits.resolveCaps(entitlement);
-  const identityGated = caps.dailyApplies && caps.dailyLimitCents <= 0;
-  const cents = identityGated ? 0 : Math.max(0, Math.round(Number(weeklyCents) || 0));
-  return { cents, limitUsd: cents / 100, limitReset: LIMIT_RESET, identityGated };
+  const cents = Math.max(0, Math.round(
+    Number(await limits.getEffectiveUserWeeklyLimitCents(pool, userId)) || 0,
+  ));
+  return { cents, limitUsd: cents / 100, limitReset: LIMIT_RESET };
 }
 
 class ManagedOpenRouterError extends Error {
@@ -54,10 +49,6 @@ function managementOptions(config) {
     baseUrl: config.openrouterApiBase,
     origin: config.openrouterOrigin,
   };
-}
-
-function requiresVerifiedIdentity(config) {
-  return config?.openrouterManagedRequireVerifiedIdentity === true;
 }
 
 function publicState(row) {
@@ -165,29 +156,16 @@ async function provision({ pool, userId, config }) {
     throw new ManagedOpenRouterError(
       403,
       'no_allowance',
-      allowance.identityGated
-        ? 'Connect GitHub or X in Settings to unlock included Homeroom credits before claiming a company OpenRouter key.'
-        : 'This account has no included weekly allowance, so there is no company OpenRouter key to create. Add a personal OpenRouter key in Settings instead.',
+      'This account has no included weekly allowance, so there is no company OpenRouter key to create. Add a personal OpenRouter key in Settings instead.',
     );
   }
 
   // Reserve the user's one lifetime issuance before the provider call. The
-  // user row serializes concurrent claims. When the optional verification
-  // policy is enabled, identity proofs are also locked so unlink cannot race
-  // the eligibility decision.
+  // user row serializes concurrent claims. #2568 removed the optional
+  // verified-identity policy that used to lock identity proofs here too: a
+  // key is part of creating an account now, not something an account earns.
   const reservation = await credentialStore.withTransaction(pool, async (client) => {
     await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
-    if (requiresVerifiedIdentity(config)) {
-      const { rows: identityRows } = await client.query(
-        `SELECT id FROM user_social_identities
-          WHERE user_id = $1
-          FOR SHARE`,
-        [userId],
-      );
-      if (!identityRows.length) {
-        throw new ManagedOpenRouterError(403, 'verification_required', 'Connect a verified GitHub or X account first.');
-      }
-    }
     const existingCredential = await credentialStore.readMetadata({
       pool: client, userId, ...OPENROUTER,
     });
@@ -274,15 +252,6 @@ async function provision({ pool, userId, config }) {
     });
 
     agentModels.invalidateUser(userId);
-    // Close the unlink-during-provision race when verification is required.
-    // There is deliberately no automatic revocation; a second, deduplicated
-    // review notification is emitted only if the user lost their final proof
-    // while OpenRouter was creating the key.
-    await notifyIdentityReview({ pool, userId, config }).catch((err) => {
-      log.warn('openrouter-managed', 'post-provision identity review check failed', {
-        userId, managedKeyId: reservation.id, err: err.message,
-      });
-    });
     log.info('openrouter-managed', 'managed child key provisioned', {
       userId, managedKeyId: reservation.id, remoteHash: remote.hash,
     });
@@ -304,6 +273,58 @@ async function provision({ pool, userId, config }) {
       'provisioning_needs_review',
       'The OpenRouter key was created but could not be saved safely. An admin has been notified to reconcile it.',
     );
+  }
+}
+
+// #2568: the ONE place an account's included key is created. Every
+// account-creation path calls it right after the user row is inserted, and
+// the coding-agent preference read calls it again for anybody who arrived
+// without one — an account created before this change, or one created while
+// OpenRouter's management API was down.
+//
+// It never throws and it never blocks the caller's own success: signing up
+// must not fail because a third-party key could not be minted. Every refusal
+// is a named, logged skip, and the next lazy call tries again.
+//
+// Idempotence is provision()'s, not this function's: the reservation row is
+// UNIQUE on user_id, so a second caller gets `already_issued` and a user who
+// pasted a personal key gets `byok_configured`. Both are skips here.
+async function ensureIncludedKey({ pool, userId, config, reason = 'signup' }) {
+  if (!userId) return { created: false, skipped: 'no_user' };
+  if (!config?.openrouterManagementApiKey) {
+    return { created: false, skipped: 'not_configured' };
+  }
+  if (!config.codexOpenrouterEnabled) {
+    return { created: false, skipped: 'backend_disabled' };
+  }
+  try {
+    const meta = await credentialStore.readMetadata({ pool, userId, ...OPENROUTER });
+    if (meta?.status === 'valid') return { created: false, skipped: 'already_configured' };
+  } catch (err) {
+    log.warn('openrouter-managed', 'included-key precheck failed; skipping', {
+      userId, reason, err: err.message,
+    });
+    return { created: false, skipped: 'precheck_failed' };
+  }
+  try {
+    const provisioned = await provision({ pool, userId, config });
+    log.info('openrouter-managed', 'included key created for account', {
+      userId, reason, managedKeyId: provisioned.managed?.id || null,
+      model: provisioned.defaultModel || null,
+    });
+    return { created: true, provisioned };
+  } catch (err) {
+    const code = err instanceof ManagedOpenRouterError ? err.code : 'provision_failed';
+    // `already_issued` and `byok_configured` are the concurrent-caller and
+    // personal-key cases; everything else is a real failure this account will
+    // retry the next time it opens the new-change screen.
+    const expected = code === 'already_issued' || code === 'byok_configured';
+    log[expected ? 'info' : 'warn'](
+      'openrouter-managed',
+      'included key not created',
+      { userId, reason, code, err: err.message },
+    );
+    return { created: false, skipped: code };
   }
 }
 
@@ -395,18 +416,6 @@ async function remove({ pool, id, config, actorId }) {
   return { id: Number(id), status: 'deleted' };
 }
 
-async function notifyIdentityReview({ pool, userId, config }) {
-  if (!requiresVerifiedIdentity(config)) return false;
-  const state = await stateForUser(pool, userId);
-  if (state.verified || !state.managed_key_id
-      || !['active', 'disabled'].includes(state.managed_status)) return false;
-  await notifyReviewAdmins(pool, {
-    sourceUserId: userId,
-    managedKeyId: state.managed_key_id,
-  });
-  return true;
-}
-
 // #2119: the key mirrors an allowance that can change under it: a key issued
 // before the weekly policy still resets daily at OpenRouter, an admin can
 // change the user's weekly cap, the platform default can move. Rather than a
@@ -483,13 +492,12 @@ module.exports = {
   ManagedOpenRouterError,
   OPENROUTER,
   LIMIT_RESET,
-  requiresVerifiedIdentity,
   publicState,
   stateForUser,
   provision,
   resolveAllowance,
+  ensureIncludedKey,
   syncAllowance,
   setDisabled,
   remove,
-  notifyIdentityReview,
 };
