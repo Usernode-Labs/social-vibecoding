@@ -44,8 +44,9 @@ async function mount(t, { authenticated = true, enabled = true } = {}) {
     readSecret: credentialStore.readSecret,
     readProfile: profileService.readProfile,
     readMonthlyUsage: profileService.readMonthlyUsage,
-    ensureThread: globalChatStore.ensureThread,
     currentThread: globalChatStore.currentThread,
+    listThreads: globalChatStore.listThreads,
+    threadForUser: globalChatStore.threadForUser,
     createThread: globalChatStore.createThread,
     listMessages: globalChatStore.listMessages,
     loadToolResults: globalChatStore.loadToolResults,
@@ -66,13 +67,22 @@ async function mount(t, { authenticated = true, enabled = true } = {}) {
     calls.push({ name: 'readMonthlyUsage', userId, options });
     return { spentUsd: '0.02', capUsd: '1', remainingUsd: '0.98' };
   };
-  globalChatStore.ensureThread = async (_pool, userId) => {
-    calls.push({ name: 'ensureThread', userId });
-    return { id: THREAD_ID, summary: null };
-  };
   globalChatStore.currentThread = async (_pool, userId) => {
     calls.push({ name: 'currentThread', userId });
-    return { id: THREAD_ID };
+    return { id: THREAD_ID, title: 'Find open issues', busy: false };
+  };
+  globalChatStore.listThreads = async (_pool, userId, options) => {
+    calls.push({ name: 'listThreads', userId, options });
+    return [
+      { id: THREAD_ID, title: 'Find open issues', busy: false },
+      { id: NEXT_THREAD_ID, title: 'Compare proposals', busy: true },
+    ];
+  };
+  globalChatStore.threadForUser = async (_pool, userId, threadId) => {
+    calls.push({ name: 'threadForUser', userId, threadId });
+    return threadId === THREAD_ID
+      ? { id: THREAD_ID, title: 'Find open issues', busy: false }
+      : null;
   };
   globalChatStore.createThread = async (_pool, userId, options) => {
     calls.push({ name: 'createThread', userId, options });
@@ -124,8 +134,9 @@ async function mount(t, { authenticated = true, enabled = true } = {}) {
     credentialStore.readSecret = originals.readSecret;
     profileService.readProfile = originals.readProfile;
     profileService.readMonthlyUsage = originals.readMonthlyUsage;
-    globalChatStore.ensureThread = originals.ensureThread;
     globalChatStore.currentThread = originals.currentThread;
+    globalChatStore.listThreads = originals.listThreads;
+    globalChatStore.threadForUser = originals.threadForUser;
     globalChatStore.createThread = originals.createThread;
     globalChatStore.listMessages = originals.listMessages;
     globalChatStore.loadToolResults = originals.loadToolResults;
@@ -148,6 +159,7 @@ test('bootstrap keeps Classic as startup and returns separate profiles with comp
   assert.equal(body.parityReady, true);
   assert.equal(body.available, true);
   assert.equal(body.thread.id, THREAD_ID);
+  assert.deepEqual(body.threads.map(({ id }) => id), [THREAD_ID, NEXT_THREAD_ID]);
   assert.equal(body.profiles.globalChat.model, 'cheap/global');
   assert.equal(body.profiles.globalChat.enabled, true);
   assert.equal(body.profiles.globalChat.reasoningEffort, 'low');
@@ -161,7 +173,9 @@ test('bootstrap keeps Classic as startup and returns separate profiles with comp
   );
   assert.ok(body.firstUse.suggestions.every((suggestion) => !Object.hasOwn(suggestion, 'description')));
   assert.equal(JSON.stringify(body).includes('sk-or-private'), false);
-  assert.ok(calls.some((call) => call.name === 'ensureThread' && call.userId === 7));
+  assert.ok(calls.some((call) => call.name === 'listThreads' && call.userId === 7));
+  assert.equal(calls.some((call) => call.name === 'createThread'), false,
+    'opening Improve must not silently create a chat');
 });
 
 test('disabled profiles can inspect bootstrap state but cannot create or use chat threads', async (t) => {
@@ -173,7 +187,8 @@ test('disabled profiles can inspect bootstrap state but cannot create or use cha
   assert.equal(body.available, false);
   assert.equal(body.unavailableReason, 'global_chat_disabled');
   assert.equal(body.thread, null);
-  assert.equal(calls.some((call) => call.name === 'ensureThread'), false);
+  assert.deepEqual(body.threads, []);
+  assert.equal(calls.some((call) => call.name === 'listThreads'), false);
 
   const current = await fetch(`${base}/api/global-chat/threads/current`);
   assert.equal(current.status, 403);
@@ -186,6 +201,16 @@ test('thread endpoints use authenticated ownership and preserve append-only sugg
   const current = await fetch(`${base}/api/global-chat/threads/current`);
   assert.equal(current.status, 200);
   assert.equal((await current.json()).thread.id, THREAD_ID);
+
+  const listed = await fetch(`${base}/api/global-chat/threads?limit=12`);
+  assert.equal(listed.status, 200);
+  assert.deepEqual((await listed.json()).threads.map(({ id }) => id), [THREAD_ID, NEXT_THREAD_ID]);
+  assert.ok(calls.some((call) => call.name === 'listThreads'
+    && call.options?.limit === '12'));
+
+  const selected = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}`);
+  assert.equal(selected.status, 200);
+  assert.equal((await selected.json()).thread.title, 'Find open issues');
 
   const created = await fetch(`${base}/api/global-chat/threads`, { method: 'POST' });
   assert.equal(created.status, 201);
@@ -218,7 +243,7 @@ test('thread endpoints use authenticated ownership and preserve append-only sugg
   assert.equal(deleted.status, 200);
   assert.deepEqual(await deleted.json(), { ok: true });
   assert.ok(calls.some((call) => call.name === 'createThread'
-    && call.userId === 7 && call.options.replace === true));
+    && call.userId === 7 && call.options === undefined));
   assert.ok(calls.some((call) => call.name === 'deleteThread'
     && call.userId === 7 && call.threadId === THREAD_ID));
 });
@@ -228,9 +253,11 @@ test('thread APIs fail closed for unauthenticated requests', async (t) => {
   const responses = await Promise.all([
     fetch(`${base}/api/global-chat/bootstrap`),
     fetch(`${base}/api/global-chat/threads/current`),
+    fetch(`${base}/api/global-chat/threads`),
     fetch(`${base}/api/global-chat/threads`, { method: 'POST' }),
+    fetch(`${base}/api/global-chat/threads/${THREAD_ID}`),
     fetch(`${base}/api/global-chat/threads/${THREAD_ID}/messages`),
     fetch(`${base}/api/global-chat/threads/${THREAD_ID}`, { method: 'DELETE' }),
   ]);
-  assert.deepEqual(responses.map(({ status }) => status), [401, 401, 401, 401, 401]);
+  assert.deepEqual(responses.map(({ status }) => status), [401, 401, 401, 401, 401, 401, 401]);
 });

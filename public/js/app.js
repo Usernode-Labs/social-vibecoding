@@ -70,6 +70,10 @@ const App = {
   _inBrowse: false,
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
+  _inMessages: false,
+  // Experimental Global Chat (#2543), now a normal routed screen with one
+  // stable address per durable session.
+  _inGlobalChat: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -3528,6 +3532,7 @@ const App = {
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
         else if (App._inBrowse) App.navigateHome();
+        else if (App._inGlobalChat) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -3552,7 +3557,8 @@ const App = {
         // regression test for the mode toggle uses (#748).
         App.setChromeless(false);
         if (App.currentApp || App._inLeaderboard || App._inProfile
-          || App._inAdmin || App._inSettings || App._inBrowse) {
+          || App._inAdmin || App._inSettings || App._inBrowse
+          || App._inGlobalChat) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -3708,6 +3714,14 @@ const App = {
           conversationId != null && conversationId <= 2147483647
             ? conversationId : null
         );
+        return;
+      }
+      if (parts[0] === 'chat') {
+        // #2543: Global Chat is an ordinary, resumable platform screen. Its
+        // UUID names the exact session selected from Improve; a bare #chat
+        // resumes the most recent one (and creates the first when needed).
+        App.setChromeless(false);
+        App.navigateToGlobalChat(parts[1] || null);
         return;
       }
       if (parts[0] === 'topochain') {
@@ -4026,7 +4040,7 @@ const App = {
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen', 'messages-screen'],
+    'settings-screen', 'messages-screen', 'global-chat-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and publish the incoming screen's default back slot.
@@ -4063,6 +4077,9 @@ const App = {
     // show and the router says home is, and the router is the one that is
     // right. See Home.publishImproveTarget, whose gate reads both.
     App._revealedScreen = revealId;
+    if (revealId !== 'global-chat-screen' && App._inGlobalChat) {
+      App._exitGlobalChat();
+    }
     // The app-entry breadcrumb's single clearer (see App._appBackHref): every
     // reveal of a screen that is not the app view ends the visit it was about.
     // `app-view` is excluded because navigateToApp does not come through here
@@ -4118,6 +4135,9 @@ const App = {
     // one owner. tests/react-screen-ids-consistency.test.js pins the rule
     // for every screen root at once.
     'messages-screen',
+    // Global Chat (#2543). It is a normal hash-routed screen now, so the
+    // router publishes visibility through the same single-owner seam.
+    'global-chat-screen',
     // Workshop (#workshop). React-owned end to end from the day it shipped —
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
@@ -4737,6 +4757,45 @@ const App = {
   _exitMessages() {
     App._inMessages = false;
     window.UsernodeReact?.messages?.close?.();
+  },
+
+  // Global Chat is a first-class screen whose individual sessions have
+  // stable #chat/<uuid> addresses. The React store owns transcript loading;
+  // this classic router owns the same screen swap and chrome as every other
+  // platform page.
+  navigateToGlobalChat(threadId) {
+    const globalChat = window.UsernodeReact?.globalChat;
+    if (App._inGlobalChat && globalChat?.isOpen?.()) {
+      globalChat.route?.(threadId || null);
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
+    if (App._inMessages) App._exitMessages();
+    const screen = document.getElementById('global-chat-screen');
+    App._inGlobalChat = true;
+    globalChat?.route?.(threadId || null);
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('global-chat-screen');
+      App._enterScreenChrome();
+      if (typeof Home !== 'undefined') Home.publishImproveTarget();
+      App.setHeaderTitle('Chat');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // State-only teardown. _showOnlyScreen has already hidden the React root
+  // in the incoming transition callback before this clears its live request.
+  _exitGlobalChat() {
+    App._inGlobalChat = false;
+    window.UsernodeReact?.globalChat?.deactivate?.();
   },
 
   // The Notifications SHEET's deep-link resolver (Streamlined Concept).
@@ -5712,6 +5771,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
+    case 'chat': return 'global-chat-screen';
     case 'leaderboard': return 'leaderboard-screen';
     default: return null;                    // #notifications is a sheet over home
   }

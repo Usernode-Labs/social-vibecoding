@@ -1,6 +1,6 @@
 'use strict';
 
-// Source-level browser contract for #2377's React-owned mode. The repository
+// Source-level browser contract for #2377/#2543's React-owned screen. The repository
 // does not ship a DOM test runtime for TSX islands, so the shell build verifies
 // compilation/hydration while these checks pin the product decisions that are
 // easy to lose in later visual edits.
@@ -14,6 +14,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const screen = read('frontend', 'src', 'features', 'global-chat', 'index.tsx');
 const newChatButton = read('frontend', 'src', 'features', 'global-chat', 'new-chat-button.tsx');
+const improveSection = read('frontend', 'src', 'features', 'global-chat', 'improve-section.tsx');
 const store = read('frontend', 'src', 'features', 'global-chat', 'store.ts');
 const renderers = read('frontend', 'src', 'features', 'global-chat', 'renderers.tsx');
 const api = read('frontend', 'src', 'features', 'global-chat', 'api.ts');
@@ -22,6 +23,8 @@ const css = read('public', 'css', 'app.css');
 const shell = read('frontend', 'src', 'Shell.tsx');
 const header = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
 const improvePanel = read('frontend', 'src', 'features', 'improve', 'improve-panel.tsx');
+const viewTabs = read('frontend', 'src', 'features', 'improve', 'view-tabs.tsx');
+const appJs = read('public', 'js', 'app.js');
 
 function sourceTree(...parts) {
   const directory = path.join(ROOT, ...parts);
@@ -32,48 +35,50 @@ function sourceTree(...parts) {
   }).join('\n');
 }
 
-test('Global Chat ships as an experimental sibling while Classic remains the startup mode', () => {
+test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   assert.match(shell, /<GlobalChatScreen\s*\/>/);
   assert.match(screen, /id="global-chat-screen"/);
   assert.match(screen, /Chat\s*<span>\(experimental\)<\/span>/);
-  assert.match(screen, /Classic remains the default\./);
-  assert.match(screen, /snapshot\.open \? 'flex' : 'hidden'/);
+  assert.match(screen, /Saved in Improve\./);
+  assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'global-chat-screen', false\)/);
+  assert.match(screen, /className="hidden flex flex-1 min-h-0 overflow-hidden"/);
+  assert.match(appJs, /parts\[0\] === 'chat'/);
+  assert.match(appJs, /navigateToGlobalChat\(threadId\)/);
+  assert.match(appJs, /App\._showOnlyScreen\('global-chat-screen'\)/);
   assert.match(newChatButton, /!snapshot\.bootstrap\?\.parityReady[\s\S]*profiles\.globalChat\.enabled !== true/);
   assert.match(newChatButton, /New chat \(experimental\)/);
 });
 
-test('the experimental chat entry is Improve\'s, heads its section, and starts a new thread', () => {
-  // It rode in the header as a Chat/Classic toggle. The header keeps no chat
-  // control at all now — the screen's own "Use Classic" and "Open in Classic"
-  // own the return trip.
+test('Improve separates resumable chats from coding changes and starts durable sessions', () => {
   assert.doesNotMatch(header, /GlobalChatNewChatButton|GlobalChatModeSwitch/);
-  assert.match(improvePanel, /<GlobalChatNewChatButton onNavigate=\{dismissForNav\} \/>/);
+  assert.match(improvePanel, /<GlobalChatImproveSection/);
 
-  // ABOVE the section heading, which #improve-panel renders only when there
-  // are changes to head. Below it the entry would vanish into the "No changes
-  // in progress." state — the one moment it is most wanted.
   const sessions = improvePanel.slice(improvePanel.indexOf('id="improve-sessions"'));
   assert.ok(
-    sessions.indexOf('<GlobalChatNewChatButton') >= 0
-      && sessions.indexOf('<GlobalChatNewChatButton') < sessions.indexOf('Changes in progress'),
-    'the chat entry must render before the conditional section heading',
+    sessions.indexOf('<GlobalChatImproveSection') >= 0
+      && sessions.indexOf('<GlobalChatImproveSection') < sessions.lastIndexOf('Changes in progress'),
+    'the Chats group must render before the coding-change group',
   );
 
-  // A NEW thread per press, without painting the previous one on the way in.
-  assert.match(newChatButton, /openGlobalChat\(\{ fresh: true \}\)/);
-  assert.match(store, /if \(fresh\) \{\s*await startNewGlobalChat\(\);/);
-
-  // setDocumentMode knows nothing about #improve-panel, so the entry closes
-  // the surface it sits on rather than letting it cover the chat screen.
-  assert.match(newChatButton, /onNavigate\?\.\(\);\s*void openGlobalChat/);
+  assert.match(improveSection, /<span>Chats<\/span>/);
+  assert.match(improveSection, /snapshot\.threads\.map/);
+  assert.match(improveSection, /href=\{`#chat\/\$\{encodeURIComponent\(thread\.id\)\}`\}/);
+  assert.match(improveSection, /data-improve-row="chat"/);
+  assert.match(improveSection, /Working/);
+  assert.match(improveSection, /Current/);
+  assert.match(newChatButton, /void startNewGlobalChat\(\)/);
+  assert.match(store, /`#chat\/\$\{encodeURIComponent\(created\.thread\.id\)\}`/);
+  assert.match(viewTabs, /active === 'chat' \? 'Chat' : 'Change'/);
 });
 
-test('Chat mode is memory-only and leaves every launch in Classic', () => {
-  assert.doesNotMatch(store, /(?:localStorage|sessionStorage|indexedDB)[\s\S]{0,80}(?:global.?chat|chat.?mode)/i);
+test('chat navigation uses the shared screen router instead of a body-wide mode', () => {
   assert.match(store, /open:\s*false/);
-  assert.match(store, /document\.body\.classList\.toggle\('global-chat-mode', open\)/);
-  assert.match(store, /element\.inert = open/);
-  assert.match(store, /setDocumentMode\(false\)/);
+  assert.doesNotMatch(store, /setDocumentMode|CLASSIC_SCREEN_IDS|\.inert\s*=/);
+  assert.doesNotMatch(css, /body\.global-chat-mode/);
+  assert.match(appJs, /'global-chat-screen'/);
+  assert.match(store, /api\.thread\(threadId\)/);
+  assert.match(store, /api\.threads\(\)/);
+  assert.match(store, /deactivateGlobalChat/);
 });
 
 test('Global Chat stays isolated from developer and proposal chat implementations', () => {

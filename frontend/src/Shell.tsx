@@ -269,11 +269,10 @@ export function Shell() {
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
       {/*
-          Global Chat (#2377) is a React-owned sibling surface, but its MODE
-          deliberately is not a route. It ships hidden, Classic remains in
-          place beneath it, and a full reload always starts in Classic. The
-          persistent header control reveals it only after the server's parity
-          contract is ready for every signed-in viewer.
+          Global Chat (#2377, #2543) is a React-owned sibling screen. It ships
+          hidden for hydration parity, then the hash router reveals it at the
+          stable #chat/<uuid> address of a session selected from Improve.
+          App.REACT_SCREEN_IDS keeps visibility single-owned by React.
       */}
       <Island name="GlobalChatScreen"><GlobalChatScreen /></Island>
       {/*

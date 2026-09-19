@@ -8294,8 +8294,12 @@ CREATE TABLE IF NOT EXISTS global_chat_threads (
 );
 ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_id UUID;
 ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_started_at TIMESTAMPTZ;
-CREATE UNIQUE INDEX IF NOT EXISTS global_chat_threads_one_active_user
-  ON global_chat_threads (user_id) WHERE archived_at IS NULL;
+-- #2543: chats are durable sessions in Improve, not a single replaceable
+-- full-application mode. Drop the original one-live-thread constraint so a
+-- user can keep and resume several conversations. Rows archived by the old
+-- replacement flow stay archived; deletion remains the only user-facing
+-- removal operation.
+DROP INDEX IF EXISTS global_chat_threads_one_active_user;
 CREATE INDEX IF NOT EXISTS global_chat_threads_user_updated
   ON global_chat_threads (user_id, updated_at DESC);
 COMMENT ON TABLE global_chat_threads IS 'staging:private';
