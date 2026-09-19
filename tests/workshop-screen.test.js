@@ -303,7 +303,7 @@ test('the empty state is a card that offers the directory, not a grey caption', 
   // The old caption's shape is gone, not merely covered over.
   assert.doesNotMatch(html, /<p[^>]*id="workshop-empty"/,
     'the grey caption paragraph is retired');
-  assert.doesNotMatch(html, /Discover finds the ones you can join/,
+  assert.doesNotMatch(html, /Find apps to add in the Discover section/,
     'and so is its sentence');
 });
 
