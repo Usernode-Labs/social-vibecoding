@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 636,
-    "mappedRoutes": 500,
+    "totalRoutes": 638,
+    "mappedRoutes": 502,
     "exemptRoutes": 136,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 351,
+    "clientApiReferences": 353,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 20,
     "navigationSurfaces": 10
@@ -2679,7 +2679,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 684,
+      "line": 705,
       "method": "GET",
       "path": "/api/me/ai-budget",
       "expression": null,
@@ -2704,7 +2704,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 726,
+      "line": 747,
       "method": "POST",
       "path": "/api/me/api-key",
       "expression": null,
@@ -2729,7 +2729,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 771,
+      "line": 792,
       "method": "DELETE",
       "path": "/api/me/api-key",
       "expression": null,
@@ -2754,7 +2754,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 791,
+      "line": 812,
       "method": "POST",
       "path": "/api/me/password",
       "expression": null,
@@ -2779,7 +2779,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 831,
+      "line": 852,
       "method": "POST",
       "path": "/api/me/ai-progress-estimate",
       "expression": null,
@@ -2804,7 +2804,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 853,
+      "line": 874,
       "method": "POST",
       "path": "/api/me/session-bridge",
       "expression": null,
@@ -2829,7 +2829,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 877,
+      "line": 898,
       "method": "POST",
       "path": "/api/me/dev-flow",
       "expression": null,
@@ -2855,7 +2855,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 909,
+      "line": 930,
       "method": "POST",
       "path": "/api/me/locale",
       "expression": null,
@@ -2880,7 +2880,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 951,
+      "line": 972,
       "method": "POST",
       "path": "/api/me/wallet-link",
       "expression": null,
@@ -2905,7 +2905,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 989,
+      "line": 1010,
       "method": "GET",
       "path": "/api/me/wallet-link/status",
       "expression": null,
@@ -2924,7 +2924,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1003,
+      "line": 1024,
       "method": "DELETE",
       "path": "/api/me/wallet-link",
       "expression": null,
@@ -2949,7 +2949,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1063,
+      "line": 1084,
       "method": "POST",
       "path": "/api/auth/wallet-check",
       "expression": null,
@@ -2971,7 +2971,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1093,
+      "line": 1114,
       "method": "POST",
       "path": "/api/auth/wallet-verify",
       "expression": null,
@@ -2992,7 +2992,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1158,
+      "line": 1179,
       "method": "POST",
       "path": "/api/auth/wallet-reset-verify",
       "expression": null,
@@ -3013,7 +3013,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1253,
+      "line": 1274,
       "method": "POST",
       "path": "/api/auth/password-reset/request",
       "expression": null,
@@ -3032,7 +3032,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1301,
+      "line": 1322,
       "method": "POST",
       "path": "/api/auth/password-reset/confirm",
       "expression": null,
@@ -3051,7 +3051,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1368,
+      "line": 1389,
       "method": "POST",
       "path": "/api/me/wallet-change-password",
       "expression": null,
@@ -3076,7 +3076,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1426,
+      "line": 1447,
       "method": "POST",
       "path": "/api/auth/wallet-register",
       "expression": null,
@@ -3096,7 +3096,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1482,
+      "line": 1503,
       "method": "POST",
       "path": "/api/auth/wallet-link-login",
       "expression": null,
@@ -6740,7 +6740,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 255,
+      "line": 259,
       "method": "GET",
       "path": "/api/me/email",
       "expression": null,
@@ -6764,7 +6764,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 272,
+      "line": 276,
       "method": "POST",
       "path": "/api/me/email/:dynamic",
       "expression": null,
@@ -6782,7 +6782,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 307,
+      "line": 311,
       "method": "PATCH",
       "path": "/api/me/profile",
       "expression": null,
@@ -6807,7 +6807,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 357,
+      "line": 361,
       "method": "POST",
       "path": "/api/me/username",
       "expression": null,
@@ -6832,7 +6832,45 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 456,
+      "line": 465,
+      "method": "GET",
+      "path": "/api/me/username/suggestion",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.username.suggestion.fde733e9",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/auth/username-first-run.js"
+      ]
+    },
+    {
+      "source": "src/routes/profile.js",
+      "line": 521,
+      "method": "POST",
+      "path": "/api/me/username/choose",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.username.choose.7adbb116",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/auth/username-first-run.js"
+      ]
+    },
+    {
+      "source": "src/routes/profile.js",
+      "line": 588,
       "method": "POST",
       "path": "/api/me/avatar",
       "expression": null,
@@ -6857,7 +6895,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 501,
+      "line": 633,
       "method": "DELETE",
       "path": "/api/me/avatar",
       "expression": null,
@@ -6882,7 +6920,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 532,
+      "line": 664,
       "method": "GET",
       "path": "/api/me/challenges/completed",
       "expression": null,

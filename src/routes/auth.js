@@ -526,10 +526,20 @@ function authRoutes(config) {
     // block above: this endpoint already pays for one users lookup, and
     // only this endpoint renders the value.
     let devFlowPreference = null;
+    // #2563: has this account still never picked the handle other members
+    // see? Read in the same users lookup as the block above — it is one
+    // more column on a row this endpoint already fetches.
+    //
+    // Defaults FALSE, and stays FALSE if the lookup below throws. That is
+    // the deliberate failure direction: a gate that cannot be read must let
+    // people in, not strand every signed-in member behind a blocking step
+    // the client cannot dismiss.
+    let needsUsernameChoice = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
                 u.display_name, u.bio, u.dev_flow_preference,
+                u.needs_username_choice,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -556,6 +566,7 @@ function authRoutes(config) {
       devFlowPreference = DEV_FLOWS.includes(rows[0]?.dev_flow_preference)
         ? rows[0].dev_flow_preference
         : null;
+      needsUsernameChoice = rows[0]?.needs_username_choice === true;
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -609,6 +620,16 @@ function authRoutes(config) {
         // waitlist — the waiting room polls this to know when to let
         // the user through.
         hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
+        // First-run username gate (#2563). TRUE means this account has
+        // never picked the handle other members see — email sign-up gave
+        // it a generated one and recorded that the person still has to
+        // choose. The web shell presents a blocking "Choose your username"
+        // step on arrival; the mobile app can follow the same flag later.
+        //
+        // A NEW field: `username` above is untouched and still carries
+        // whatever the account currently holds, so every existing client
+        // renders exactly what it rendered before.
+        needsUsernameChoice,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a

@@ -8491,6 +8491,23 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS conversation_prompted_epoch I
 -- general chat (services/weekly-digest.js). NULL until the first one.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS weekly_digest_at TIMESTAMPTZ;
 
+-- #2563: users.needs_username_choice — this account has never picked the
+-- handle other members see, so the shell must ask before it lets them in.
+--
+-- SERVER STATE, deliberately. The alternative was for the client to look at
+-- the stored username and guess "that looks like an email address", which
+-- makes every surface that renders a handle a second implementation of the
+-- gate and gets a member called `ada.lovelace` wrong. One column, written
+-- where the account is created, read by /api/auth/me and cleared by
+-- POST /api/me/username/choose.
+--
+-- FALSE for everyone the column is added to, then the one-time backfill in
+-- src/db/migrate.js turns it on for the accounts email sign-up gave their
+-- own email address as a username. That backfill matches
+-- `lower(username) = lower(email)` — an exact identity, not a shape test —
+-- so an account that merely has a dotted handle is left alone.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --
 -- Keep this the LAST block in the file: tests/preview-lifecycle.test.js

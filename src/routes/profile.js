@@ -5,6 +5,8 @@
 //
 //   PATCH  /api/me/profile             display name / bio
 //   POST   /api/me/username            change the @handle
+//   GET    /api/me/username/suggestion  prefill for the first-run step
+//   POST   /api/me/username/choose      take the FIRST @handle (#2563)
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
 //   GET    /api/me/challenges/completed  the viewer's OWN completions
@@ -47,7 +49,9 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { sniffImageType } = require('../services/attachments');
-const { profileWriteLimiter, usernameChangeLimiter } = require('../middleware/rate-limits');
+const {
+  profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter,
+} = require('../middleware/rate-limits');
 const usernames = require('../services/usernames');
 const accountEmail = require('../services/account-email');
 const socialIdentity = require('../services/social-identity');
@@ -440,6 +444,134 @@ function profileRoutes(config) {
           return res.status(409).json({ error: 'That username is taken.' });
         }
         log.error('profile', 'Username change failed', {
+          userId: req.user.id, err: err.message,
+        });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+  );
+
+  // ── GET /api/me/username/suggestion ──────────────────────────────────
+  //
+  // What the first-run "Choose your username" step prefills (#2563).
+  //
+  // It is a route rather than a field on /api/auth/me because answering it
+  // costs an availability walk over `users` and `username_history`, and
+  // /api/auth/me is fetched on the boot of every tab by every signed-in
+  // member. The BOOLEAN that decides whether to ask rides that payload;
+  // the suggestion is fetched once, by the one screen that needs it.
+  //
+  // Never the email address, on any branch — that is the whole issue.
+  router.get('/api/me/username/suggestion', requireUser, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        'SELECT username, email FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      const { username: current, email } = rows[0];
+      const isEmailHandle = !!email
+        && String(current).toLowerCase() === String(email).toLowerCase();
+
+      // An account created since #2563 already HOLDS a derived suggestion
+      // (email-signup.js wrote one) — offering it back is both the best
+      // answer and a stable one across reloads of the gate. Accounts the
+      // migration flagged still wear their address, so theirs is derived
+      // here instead.
+      if (!isEmailHandle) {
+        const check = usernames.validateUsername(current);
+        if (check.ok) return res.json({ suggestion: check.value });
+      }
+
+      const suggestion = await usernames.suggestAvailableUsernameFromEmail(
+        pool, email, req.user.id
+      );
+      // null is a real answer: the field simply starts empty and the person
+      // types their own. Better than prefilling something they must delete.
+      return res.json({ suggestion: suggestion || null });
+    } catch (err) {
+      log.error('profile', 'Username suggestion failed', {
+        userId: req.user.id, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── POST /api/me/username/choose ─────────────────────────────────────
+  //
+  // Body: { username }. The FIRST handle an account ever takes (#2563) —
+  // not a rename, and deliberately not POST /api/me/username above.
+  //
+  // Three things that endpoint requires, this one cannot ask for, and the
+  // reasons are not the same reason:
+  //
+  //   • The current password. An email-code account has `password_set =
+  //     FALSE` and a random hash nobody knows, so requiring it would lock
+  //     the gate shut for exactly the accounts the gate exists for.
+  //   • The 30-day cooldown. It prices handle CHURN; a first choice is not
+  //     churn, and charging for it would leave a typo in place for a month.
+  //   • A `username_history` row. See chooseFirstUsername — what is being
+  //     left behind is an email address, and the ledger is read by every
+  //     handle resolver on the platform.
+  //
+  // What replaces the password as the authorization is the flag itself:
+  // the UPDATE only fires while `needs_username_choice` is TRUE, so this
+  // endpoint can be called exactly once per account and a session that
+  // reaches it can do nothing a rename would not already allow.
+  router.post(
+    '/api/me/username/choose',
+    requireUser,
+    usernameChooseLimiter,
+    express.json({ limit: '4kb' }),
+    async (req, res) => {
+      const { username: requested } = req.body || {};
+
+      const check = usernames.validateUsername(requested);
+      if (!check.ok) return res.status(400).json({ error: check.error });
+      const next = check.value;
+
+      try {
+        const { rows } = await pool.query(
+          'SELECT needs_username_choice FROM users WHERE id = $1',
+          [req.user.id]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'User not found' });
+        if (!rows[0].needs_username_choice) {
+          // Already chosen — a replayed submit, or a second tab. Not an
+          // error the person can act on, so the client treats it as "the
+          // gate is done" and closes.
+          return res.status(409).json({
+            error: 'You have already chosen your username.',
+            alreadyChosen: true,
+          });
+        }
+
+        const free = await usernames.checkAvailability(pool, next, req.user.id);
+        if (!free.available) return res.status(409).json({ error: free.error });
+
+        const result = await usernames.chooseFirstUsername(pool, req.user.id, next);
+        // The flag went out from under us between the read and the write —
+        // the other tab won. Same answer as above.
+        if (!result) {
+          return res.status(409).json({
+            error: 'You have already chosen your username.',
+            alreadyChosen: true,
+          });
+        }
+
+        log.info('profile', 'First username chosen', {
+          userId: req.user.id, to: result.username,
+        });
+        return res.json({ username: result.username });
+      } catch (err) {
+        // The unique index on users.username and the two BEFORE triggers
+        // (case-variant and retired-handle, see schema.sql) are the backstop
+        // behind checkAvailability; a race between two people claiming the
+        // same handle lands here.
+        if (err.code === '23505') {
+          return res.status(409).json({ error: 'That username is taken.' });
+        }
+        log.error('profile', 'First username choice failed', {
           userId: req.user.id, err: err.message,
         });
         return res.status(500).json({ error: 'Internal server error' });

@@ -164,6 +164,7 @@ async function migrate(config) {
   await backfillOrphanedSpecDrafts(pool);
   await backfillLinkedIssuesFromPrBodies(pool);
   await backfillProposalIssuerAssignments(pool);
+  await backfillUsernameChoiceForEmailHandles(pool);
   await migrateWaitlistCountryCodes(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
@@ -198,6 +199,34 @@ async function backfillProposalIssuerAssignments(pool) {
   );
   if (result.rowCount) {
     log.info('db', 'Backfilled proposal issuer assignments', { count: result.rowCount });
+  }
+  return result.rowCount || 0;
+}
+
+// #2563: accounts email sign-up gave their own address as a handle get the
+// same first-run "choose your username" step at their next sign-in.
+//
+// The match is `LOWER(username) = LOWER(email)` — an exact identity between
+// two columns of the same row, not a "does this look like an email address"
+// shape test. A member who registered the handle `ada.lovelace` through the
+// activation-code route is not touched by it, and neither is one whose
+// address happens to contain their handle.
+//
+// Safe to re-run on every boot, which is what makes it a backfill rather
+// than a one-shot: choosing a handle clears the flag AND makes the username
+// stop matching the email, so a completed account can never be re-flagged.
+async function backfillUsernameChoiceForEmailHandles(pool) {
+  const result = await pool.query(
+    `UPDATE users
+        SET needs_username_choice = TRUE
+      WHERE needs_username_choice = FALSE
+        AND email IS NOT NULL
+        AND LOWER(username) = LOWER(email)`
+  );
+  if (result.rowCount) {
+    log.info('db', 'Flagged email-as-username accounts for a username choice', {
+      count: result.rowCount,
+    });
   }
   return result.rowCount || 0;
 }

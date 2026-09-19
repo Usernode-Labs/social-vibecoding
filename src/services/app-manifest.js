@@ -189,7 +189,21 @@ const MANIFEST_FILENAME = 'dapp.json';
 // where #1960 left them. The next few bumps are free on the same arithmetic
 // — tests/checks-budget.test.js says so from the other side, and it is the
 // assertion that will stop being satisfied first if that ever changes.
-const MAX_DECLARED_TESTS = 710;
+//
+// Raised 710 → 730 by #2563, whose three checks for the first-run
+// "Choose your username" step put the manifest at 693 against the 690
+// floor. Eighth crossing, and the floor was ALREADY met before those three
+// landed: main stood at 690 exactly, so any proposal declaring a single
+// check was red before it started — the same state #1824 and #2201 found,
+// and the same reason, which is that clearing a floor by zero is
+// indistinguishable from crossing it.
+//
+// STILL NOT A COUPLED MOVE, same arithmetic as the two bumps above: the
+// pool is 16, so 730 checks at ~3.9s over 16 is ~178s, and the UNCHANGED
+// 650s TESTS_DEADLINE_MS clears the 2x margin by ~294s. The deadline and
+// RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 17
+// slots over the 693 declared here.
+const MAX_DECLARED_TESTS = 730;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

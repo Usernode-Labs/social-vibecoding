@@ -25,6 +25,12 @@
 //     (NativeChrome.firstRunSheetSettled) and RE-EVALUATED on throttled
 //     foreground/online transitions until the current version is answered.
 //
+// Order against the other first-run gate (#2563): the "Choose your
+// username" step goes first and this one waits on
+// ../auth/username-first-run.js's `settled()`. Both present from the same
+// authed boot, and a handle nobody chose is already visible to other
+// members, while a terms ask that waits simply returns on the next load.
+//
 // Classic IIFE like ../settings/settings.js, imported from ./mount.ts so it
 // ships in the shell bundle — no new public/js/** script, so SHELL_ASSETS,
 // the script-order test and the markup baseline are untouched. The boot
@@ -90,6 +96,27 @@
 
     async _check() {
       const native = TermsFirstRun._isNative();
+
+      // Sequenced behind the first-run username gate (#2563), on every
+      // host. Both are presented from the authed boot, so without this they
+      // would stack in the same tick — and of the two, the username step is
+      // the one that cannot be deferred: terms asks again on the next load
+      // (web) or the next foreground (native), while a handle nobody chose
+      // is on every message the person sends in the meantime.
+      //
+      // Guarded on `applies()` rather than simply awaiting `settled()`,
+      // because the SETTLE_DELAY_MS below is a ghost-click window and not a
+      // free 450ms to spend on the overwhelming majority of accounts that
+      // never see that screen at all.
+      if (window.UsernameFirstRun &&
+          typeof UsernameFirstRun.applies === 'function' &&
+          UsernameFirstRun.applies()) {
+        try {
+          await UsernameFirstRun.settled();
+          await new Promise((resolve) =>
+            setTimeout(resolve, TermsFirstRun.SETTLE_DELAY_MS));
+        } catch (_) { /* a broken gate must not block the terms ask */ }
+      }
 
       // Sequenced, not skipped (#1328): a fresh install used to defer the
       // terms ask to the NEXT launch whenever the "Set up your device"
