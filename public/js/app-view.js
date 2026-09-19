@@ -6138,6 +6138,11 @@ const AppView = {
         // read per panel; the board banner (_renderMainPauseNotice) draws it.
         mainCheck: promotedData.mainCheck && typeof promotedData.mainCheck === 'object'
           ? promotedData.mainCheck : null,
+        // services/release-watch.js: a merged commit of the platform's own
+        // app that has not become the running release. Stalled only ever on
+        // that app; the board banner (_renderReleaseStallNotice) draws it.
+        releaseStall: promotedData.releaseStall && typeof promotedData.releaseStall === 'object'
+          ? promotedData.releaseStall : null,
       };
       AppView._merged = merged;
       AppView._mergedCtx = { majority, activeUsers };
@@ -6201,6 +6206,7 @@ const AppView = {
     }
     AppView._renderLockedNotice();
     AppView._renderMainPauseNotice();
+    AppView._renderReleaseStallNotice();
     AppView._repaintDevBodyKeepingPosition();
     // The themes ride in behind the board's own data: the Workshop paints
     // first from what it has (every item under "Everything on the board")
@@ -6371,6 +6377,29 @@ const AppView = {
       canResume: paused && !AppView.readOnly
         && !!(typeof App !== 'undefined' && App.user && App.user.canAdminWrite),
       slug: (AppView.appData && AppView.appData.slug) || null,
+    });
+  },
+
+  // The "merged but not released" banner (features/dev-board/
+  // release-stall-store.ts), from the promoted list's `releaseStall` block:
+  // services/release-watch.js's finding that a merged commit of the
+  // platform's own app is not the build that is serving. App state, said once
+  // above the cards; the merged card itself can only say "merged", which is
+  // exactly what was true and not enough while #2589 sat unreleased. The run
+  // link is offered only for a github.com URL, which the server already
+  // enforces; the check here is the client's own.
+  _renderReleaseStallNotice() {
+    const rs = AppView._proposalsCtx && AppView._proposalsCtx.releaseStall;
+    const stalled = !!(rs && rs.stalled);
+    const runUrl = stalled && typeof rs.runUrl === 'string' && /^https:\/\/github\.com\//.test(rs.runUrl)
+      ? rs.runUrl : null;
+    AppView._reactDevBoard()?.publishReleaseStall?.({
+      stalled,
+      kind: stalled ? (rs.kind || 'unknown') : null,
+      sha: stalled && rs.sha ? String(rs.sha).slice(0, 7) : null,
+      prNumber: stalled && rs.prNumber ? Number(rs.prNumber) : null,
+      running: stalled && rs.running ? String(rs.running).slice(0, 7) : null,
+      runUrl,
     });
   },
 

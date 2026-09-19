@@ -30,6 +30,21 @@ runtime permissions. The platform owns generated apps, previews, workers and
 check Jobs. Keep each change with its owner; source commits do not themselves
 change the cluster. Review the normal release/GitOps diff before deployment.
 
+A merged platform PR is therefore "merged" on its card before it is running,
+and nothing in that chain reports back to the platform when a link fails. The
+platform watches the gap itself: `services/release-watch.js` compares the
+self-hosted app row's `main_sha` (the running build) with GitHub's `main` on the
+drift poller's cadence, reads the `Build Kubernetes images` run for the merged
+commit, and once (per commit and verdict) records the stall on
+`apps.release_stall`, posts to the app's group chat, and notifies the app's
+admins. The Dev board shows an amber banner with the workflow run linked until
+the running build catches up. A red run is reported at once; a run still going,
+a run that succeeded without a rollout, or no run at all is reported after
+`RELEASE_GRACE_MS` (default ten minutes). Re-running the failed workflow jobs,
+or the next merge, releases the commit; the poller clears the record on the new
+build's first tick. A token without `actions:read` degrades to the time-based
+verdict rather than failing.
+
 When a stable release changes `KUBERNETES_WORKER_IMAGE`, an existing warm
 worker is compared with that immutable digest before its next dispatch. An
 idle worker on the old digest is recreated while its per-session PVC is kept,
