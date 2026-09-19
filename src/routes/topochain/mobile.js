@@ -52,7 +52,9 @@ const { clientIp } = require('../../services/client-ip');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
-const { mobileWalletClaimLimiter } = require('../../middleware/rate-limits');
+const {
+  mobileWalletClaimLimiter, topochainMobileReadLimiter, topochainChallengeCompletionLimiter,
+} = require('../../middleware/rate-limits');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
@@ -731,7 +733,7 @@ function topochainMobileRoutes(config) {
   router.use(mobilePushRegistrationRoutes(config));
 
   // ── GET /me (SPEC 1748-1767) ─────────────────────────────────────────
-  router.get('/api/v4/mobile/me', mobileTokenAuth(config), async (req, res) => {
+  router.get('/api/v4/mobile/me', mobileTokenAuth(config), topochainMobileReadLimiter, async (req, res) => {
     try {
       const { rows } = await pool.query(
         `SELECT id, email, display_name, email_confirmed, is_in_waitlist, github, x, password_set,
@@ -949,7 +951,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/me/ranking', mobileTokenAuth(config), meRankingHandler);
+  router.get('/api/v4/mobile/me/ranking', mobileTokenAuth(config), topochainMobileReadLimiter, meRankingHandler);
 
   // ── GET /me/breakdown (SPEC 1821-1865) ───────────────────────────────
   const meBreakdownHandler = async (req, res) => {
@@ -1043,7 +1045,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/me/breakdown', mobileTokenAuth(config), meBreakdownHandler);
+  router.get('/api/v4/mobile/me/breakdown', mobileTokenAuth(config), topochainMobileReadLimiter, meBreakdownHandler);
 
   // ── GET /event/points (SPEC 1867-1893) ───────────────────────────────
   // Rename #1: `event_id` -> `season_event_id`. Rename #2:
@@ -1051,7 +1053,7 @@ function topochainMobileRoutes(config) {
   // at the field below). SPEC 1893: v4 paginates `total_points_per_user`
   // (unpaginated + unfiltered in the source, flagged as a data-exposure
   // note) via the shared page/per_page + `meta` envelope.
-  router.get('/api/v4/mobile/event/points', mobileTokenAuth(config), async (req, res) => {
+  router.get('/api/v4/mobile/event/points', mobileTokenAuth(config), topochainMobileReadLimiter, async (req, res) => {
     try {
       const seasonEventId = toIntId(req.query.season_event_id);
       if (!seasonEventId) {
@@ -1200,7 +1202,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/leaderboard', mobileTokenAuth(config), leaderboardHandler);
+  router.get('/api/v4/mobile/leaderboard', mobileTokenAuth(config), topochainMobileReadLimiter, leaderboardHandler);
 
   // ── GET /challenges (SPEC 1934-1974) ─────────────────────────────────
   // Scope resolution: season_event_id > season_id > the current active
@@ -1328,7 +1330,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/challenges', mobileTokenAuth(config), challengesHandler);
+  router.get('/api/v4/mobile/challenges', mobileTokenAuth(config), topochainMobileReadLimiter, challengesHandler);
 
   // ── GET /seasons (SPEC 1976-2029) ────────────────────────────────────
   const seasonsHandler = async (req, res) => {
@@ -1423,7 +1425,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/seasons', mobileTokenAuth(config), seasonsHandler);
+  router.get('/api/v4/mobile/seasons', mobileTokenAuth(config), topochainMobileReadLimiter, seasonsHandler);
 
   // ── /challenges-api (SV web shell reads) ─────────────────────────────
   // The SV chrome screens (#challenges and #profile — public/js/
@@ -1442,11 +1444,11 @@ function topochainMobileRoutes(config) {
     if (!req.user) return fail(res, 401, 'Unauthenticated.');
     return next();
   };
-  router.get('/challenges-api/seasons', webSessionAuth, requireSessionUser, seasonsHandler);
-  router.get('/challenges-api/challenges', webSessionAuth, requireSessionUser, challengesHandler);
-  router.get('/challenges-api/leaderboard', webSessionAuth, requireSessionUser, leaderboardHandler);
-  router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, meRankingHandler);
-  router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, meBreakdownHandler);
+  router.get('/challenges-api/seasons', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, seasonsHandler);
+  router.get('/challenges-api/challenges', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, challengesHandler);
+  router.get('/challenges-api/leaderboard', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, leaderboardHandler);
+  router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meRankingHandler);
+  router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meBreakdownHandler);
   // Terms review + consent (thin-shell migration): the native terms
   // screen is gone; SV settings renders the current terms and posts the
   // consent with the platform session. The handlers are hoisted function
@@ -1606,243 +1608,248 @@ function topochainMobileRoutes(config) {
   //      state; this mirrors the §4.10 "challenge_progress placeholder"
   //      precedent of reporting the honest absence of a mechanism rather
   //      than a fabricated success.
-  router.post('/api/v4/mobile/zkpassport/complete', mobileTokenAuth(config), async (req, res) => {
-    try {
-      const body = req.body || {};
-      const details = {};
-
-      const challengeId = toIntId(body.challenge_id);
-      if (!challengeId) details.challenge_id = ['The challenge_id field is required.'];
-
-      const sessionId = typeof body.session_id === 'string' ? body.session_id.trim() : '';
-      if (!sessionId || sessionId.length > 255) {
-        details.session_id = ['The session_id field is required and must be at most 255 characters.'];
-      }
-
-      const nullifierHex = typeof body.nullifier_hex === 'string' ? body.nullifier_hex.trim() : '';
-      if (!nullifierHex || nullifierHex.length > 255 || !/^0x[0-9a-fA-F]+$/.test(nullifierHex)) {
-        details.nullifier_hex = ['The nullifier_hex field is required and must match 0x[0-9a-fA-F]+.'];
-      }
-
-      const walletAddress = typeof body.wallet_address === 'string' ? body.wallet_address.trim() : '';
-      if (!walletAddress || walletAddress.length > 255) {
-        details.wallet_address = ['The wallet_address field is required and must be at most 255 characters.'];
-      }
-
-      let requestedCompletedAt = null;
-      if (body.completed_at !== undefined && body.completed_at !== null && body.completed_at !== '') {
-        const parsed = new Date(body.completed_at);
-        if (Number.isNaN(parsed.getTime())) {
-          details.completed_at = ['The completed_at field must be a valid date.'];
-        } else {
-          requestedCompletedAt = parsed;
-        }
-      }
-
-      if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
-
-      // ── 404: challenge has no event (judgment call #1 above) ─────────
-      const { rows: challengeRows } = await pool.query(
-        `SELECT c.id, c.season_event_id, c.enabled, c.completed,
-                c.schedule_start, c.schedule_end, c.reward,
-                ct.category AS t_category, ct.schedule_start AS t_schedule_start,
-                ct.schedule_end AS t_schedule_end, ct.reward AS t_reward,
-                se.season_id
-           FROM challenges c
-           JOIN season_events se ON se.id = c.season_event_id
-           LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-          WHERE c.id = $1`,
-        [challengeId]
-      );
-      const challenge = challengeRows[0];
-      if (!challenge) return fail(res, 404, 'Challenge not found.');
-
-      // ── 422: challenge disabled ───────────────────────────────────────
-      if (!challenge.enabled) return fail(res, 422, 'This challenge is disabled.');
-
-      // ── 409: challenge no longer accepting completions ────────────────
-      if (challenge.completed) return fail(res, 409, 'This challenge is no longer accepting completions.');
-
-      // ── 422: window not started / already ended (effective schedule,
-      // override ?? template — same merge rule GET /challenges applies) ─
-      const effStart = challenge.schedule_start != null ? challenge.schedule_start : challenge.t_schedule_start;
-      const effEnd = challenge.schedule_end != null ? challenge.schedule_end : challenge.t_schedule_end;
-      const now = new Date();
-      if (effStart != null && now < new Date(effStart)) {
-        return fail(res, 422, 'This challenge has not started yet.');
-      }
-      if (effEnd != null && now > new Date(effEnd)) {
-        return fail(res, 422, 'This challenge has already ended.');
-      }
-
-      // ── 422: user not enrolled (event-scoped OR season-wide, same
-      // two-partial-unique shape partner.js's own enrollment check uses) ─
-      const { rows: enrollRows } = await pool.query(
-        `SELECT id FROM user_enrollments
-          WHERE user_id = $1
-            AND (season_event_id = $2 OR (season_event_id IS NULL AND season_id = $3))
-          LIMIT 1`,
-        [req.user.id, challenge.season_event_id, challenge.season_id]
-      );
-      if (!enrollRows.length) return fail(res, 422, 'You are not enrolled in this event.');
-
-      // ── 422: wallet mismatch vs the user's account for this event ────
-      const { rows: acctRows } = await pool.query(
-        `SELECT id FROM onchain_accounts
-          WHERE user_id = $1 AND address = $2
-            AND (season_event_id = $3 OR (season_event_id IS NULL AND season_id = $4))
-          LIMIT 1`,
-        [req.user.id, walletAddress, challenge.season_event_id, challenge.season_id]
-      );
-      if (!acctRows.length) return fail(res, 422, 'This wallet does not match your account for this event.');
-
-      // ── Idempotent short-circuit (SPEC note): BEFORE any bridge call ──
-      const { rows: existingRows } = await pool.query(
-        `SELECT id, metadata, activity_at, created_at
-           FROM user_activities
-          WHERE user_id = $1 AND challenge_id = $2 AND metadata->>'kind' = 'challenge_completion'
-          LIMIT 1`,
-        [req.user.id, challengeId]
-      );
-      if (existingRows.length) {
-        const existing = existingRows[0];
-        const md = existing.metadata || {};
-        return ok(res, {
-          data: {
-            completion_id: Number(existing.id),
-            user_id: Number(req.user.id),
-            season_event_id: Number(challenge.season_event_id),
-            challenge_id: challengeId,
-            activity_id: Number(existing.id),
-            session_id: md.session_id || null,
-            nullifier_hex: md.nullifier_hex || null,
-            completed_at: iso(existing.activity_at),
-            verified_at: iso(existing.created_at),
-            leaderboard_refreshed: false,
-            already_recorded: true,
-          },
-        });
-      }
-
-      // ── 409: this zkPassport session already used — a DIFFERENT
-      // (user, challenge) pair, since the idempotency check above already
-      // excluded a match on THIS pair ─────────────────────────────────
-      const { rows: sessionRows } = await pool.query(
-        `SELECT id FROM user_activities
-          WHERE metadata->>'kind' = 'challenge_completion' AND metadata->>'session_id' = $1
-          LIMIT 1`,
-        [sessionId]
-      );
-      if (sessionRows.length) return fail(res, 409, 'This zkPassport session has already been used.');
-
-      // ── 409: this proof already claimed for this challenge ────────────
-      const { rows: nullifierRows } = await pool.query(
-        `SELECT id FROM user_activities WHERE challenge_id = $1 AND metadata->>'nullifier_hex' = $2 LIMIT 1`,
-        [challengeId, nullifierHex]
-      );
-      if (nullifierRows.length) return fail(res, 409, 'This proof has already been claimed for this challenge.');
-
-      // ── 500: challenge reward missing / non-numeric / not positive ────
-      const effReward = challenge.reward != null ? challenge.reward : challenge.t_reward;
-      const points = Number(effReward);
-      if (!Number.isFinite(points) || points <= 0) {
-        return fail(res, 500, "This challenge's reward is not a valid positive number.");
-      }
-
-      // ── Call the bridge — 500 "not configured" (zk-bridge.js's own
-      // ZkBridgeError), 502 request-or-payload failure, 422 not-verified ─
-      let bridgeResult;
+  router.post(
+    '/api/v4/mobile/zkpassport/complete',
+    mobileTokenAuth(config),
+    topochainChallengeCompletionLimiter,
+    async (req, res) => {
       try {
-        bridgeResult = await verifyCompletion(config, {
-          challengeId, sessionId, nullifierHex, walletAddress,
-        });
-      } catch (err) {
-        if (err instanceof ZkBridgeError) return fail(res, err.status, err.message);
-        throw err;
-      }
-      if (!bridgeResult.verified) {
-        return fail(res, 422, 'The zkPassport bridge did not report a successful verification.');
-      }
+        const body = req.body || {};
+        const details = {};
 
-      const verifiedAt = new Date();
-      const completedAt = requestedCompletedAt || bridgeResult.completedAt || verifiedAt;
-      const activityType = challenge.t_category || 'zkpassport_completion';
-      const metadata = {
-        kind: 'challenge_completion', session_id: sessionId, nullifier_hex: nullifierHex, wallet_address: walletAddress,
-      };
+        const challengeId = toIntId(body.challenge_id);
+        if (!challengeId) details.challenge_id = ['The challenge_id field is required.'];
 
-      // ── One transaction: the activity row IS the completion row (no
-      // separate completions table — SPEC §4.10). A unique-violation on
-      // either replay index (a race the pre-checks above didn't catch)
-      // maps to the same two 409s those pre-checks already report.
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        // Verification can outlive the middleware lookup. Revalidate and hold
-        // the exact protocol-2 credential at the final write boundary so
-        // logout either waits for this completion or makes it fail closed.
-        const { rows: credentialRows } = await client.query(
-          `SELECT c.credential_reference
-             FROM native_session_credentials c
-             JOIN mobile_auth_tokens t
-               ON t.id = c.mobile_auth_token_id AND t.user_id = c.user_id
-            WHERE c.mobile_auth_token_id = $1 AND c.user_id = $2
-              AND c.state = 'valid' AND c.expires_at > NOW()
-              AND t.ability = 'session' AND t.expires_at > NOW()
-            FOR SHARE OF c`,
-          [req.mobileAuth.tokenId, req.user.id]
-        );
-        if (!credentialRows.length) {
-          await client.query('ROLLBACK');
-          return fail(res, 401, 'Unauthenticated.');
+        const sessionId = typeof body.session_id === 'string' ? body.session_id.trim() : '';
+        if (!sessionId || sessionId.length > 255) {
+          details.session_id = ['The session_id field is required and must be at most 255 characters.'];
         }
-        const { rows: insertRows } = await client.query(
-          `INSERT INTO user_activities
-             (user_id, season_event_id, activity_type, points, description, metadata,
-              activity_at, source, challenge_id, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'zkpassport', $8, $9, $9)
-           RETURNING id`,
-          [req.user.id, challenge.season_event_id, activityType, points, null,
-            JSON.stringify(metadata), completedAt, challengeId, verifiedAt]
-        );
-        await client.query('COMMIT');
 
-        return res.status(201).json({
-          success: true,
-          data: {
-            completion_id: Number(insertRows[0].id),
-            user_id: Number(req.user.id),
-            season_event_id: Number(challenge.season_event_id),
-            challenge_id: challengeId,
-            activity_id: Number(insertRows[0].id),
-            session_id: sessionId,
-            nullifier_hex: nullifierHex,
-            completed_at: iso(completedAt),
-            verified_at: iso(verifiedAt),
-            leaderboard_refreshed: false,
-            already_recorded: false,
-          },
-        });
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        if (err.code === '23505') {
-          if (err.constraint === 'user_activities_nullifier_unique') {
-            return fail(res, 409, 'This proof has already been claimed for this challenge.');
+        const nullifierHex = typeof body.nullifier_hex === 'string' ? body.nullifier_hex.trim() : '';
+        if (!nullifierHex || nullifierHex.length > 255 || !/^0x[0-9a-fA-F]+$/.test(nullifierHex)) {
+          details.nullifier_hex = ['The nullifier_hex field is required and must match 0x[0-9a-fA-F]+.'];
+        }
+
+        const walletAddress = typeof body.wallet_address === 'string' ? body.wallet_address.trim() : '';
+        if (!walletAddress || walletAddress.length > 255) {
+          details.wallet_address = ['The wallet_address field is required and must be at most 255 characters.'];
+        }
+
+        let requestedCompletedAt = null;
+        if (body.completed_at !== undefined && body.completed_at !== null && body.completed_at !== '') {
+          const parsed = new Date(body.completed_at);
+          if (Number.isNaN(parsed.getTime())) {
+            details.completed_at = ['The completed_at field must be a valid date.'];
+          } else {
+            requestedCompletedAt = parsed;
           }
-          // Any other unique-violation on this insert is the completion
-          // index (user_id, challenge_id) — the only other one this table
-          // carries.
-          return fail(res, 409, 'This challenge has already been completed.');
         }
-        throw err;
-      } finally {
-        client.release();
+
+        if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
+
+        // ── 404: challenge has no event (judgment call #1 above) ─────────
+        const { rows: challengeRows } = await pool.query(
+          `SELECT c.id, c.season_event_id, c.enabled, c.completed,
+                  c.schedule_start, c.schedule_end, c.reward,
+                  ct.category AS t_category, ct.schedule_start AS t_schedule_start,
+                  ct.schedule_end AS t_schedule_end, ct.reward AS t_reward,
+                  se.season_id
+             FROM challenges c
+             JOIN season_events se ON se.id = c.season_event_id
+             LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+            WHERE c.id = $1`,
+          [challengeId]
+        );
+        const challenge = challengeRows[0];
+        if (!challenge) return fail(res, 404, 'Challenge not found.');
+
+        // ── 422: challenge disabled ───────────────────────────────────────
+        if (!challenge.enabled) return fail(res, 422, 'This challenge is disabled.');
+
+        // ── 409: challenge no longer accepting completions ────────────────
+        if (challenge.completed) return fail(res, 409, 'This challenge is no longer accepting completions.');
+
+        // ── 422: window not started / already ended (effective schedule,
+        // override ?? template — same merge rule GET /challenges applies) ─
+        const effStart = challenge.schedule_start != null ? challenge.schedule_start : challenge.t_schedule_start;
+        const effEnd = challenge.schedule_end != null ? challenge.schedule_end : challenge.t_schedule_end;
+        const now = new Date();
+        if (effStart != null && now < new Date(effStart)) {
+          return fail(res, 422, 'This challenge has not started yet.');
+        }
+        if (effEnd != null && now > new Date(effEnd)) {
+          return fail(res, 422, 'This challenge has already ended.');
+        }
+
+        // ── 422: user not enrolled (event-scoped OR season-wide, same
+        // two-partial-unique shape partner.js's own enrollment check uses) ─
+        const { rows: enrollRows } = await pool.query(
+          `SELECT id FROM user_enrollments
+            WHERE user_id = $1
+              AND (season_event_id = $2 OR (season_event_id IS NULL AND season_id = $3))
+            LIMIT 1`,
+          [req.user.id, challenge.season_event_id, challenge.season_id]
+        );
+        if (!enrollRows.length) return fail(res, 422, 'You are not enrolled in this event.');
+
+        // ── 422: wallet mismatch vs the user's account for this event ────
+        const { rows: acctRows } = await pool.query(
+          `SELECT id FROM onchain_accounts
+            WHERE user_id = $1 AND address = $2
+              AND (season_event_id = $3 OR (season_event_id IS NULL AND season_id = $4))
+            LIMIT 1`,
+          [req.user.id, walletAddress, challenge.season_event_id, challenge.season_id]
+        );
+        if (!acctRows.length) return fail(res, 422, 'This wallet does not match your account for this event.');
+
+        // ── Idempotent short-circuit (SPEC note): BEFORE any bridge call ──
+        const { rows: existingRows } = await pool.query(
+          `SELECT id, metadata, activity_at, created_at
+             FROM user_activities
+            WHERE user_id = $1 AND challenge_id = $2 AND metadata->>'kind' = 'challenge_completion'
+            LIMIT 1`,
+          [req.user.id, challengeId]
+        );
+        if (existingRows.length) {
+          const existing = existingRows[0];
+          const md = existing.metadata || {};
+          return ok(res, {
+            data: {
+              completion_id: Number(existing.id),
+              user_id: Number(req.user.id),
+              season_event_id: Number(challenge.season_event_id),
+              challenge_id: challengeId,
+              activity_id: Number(existing.id),
+              session_id: md.session_id || null,
+              nullifier_hex: md.nullifier_hex || null,
+              completed_at: iso(existing.activity_at),
+              verified_at: iso(existing.created_at),
+              leaderboard_refreshed: false,
+              already_recorded: true,
+            },
+          });
+        }
+
+        // ── 409: this zkPassport session already used — a DIFFERENT
+        // (user, challenge) pair, since the idempotency check above already
+        // excluded a match on THIS pair ─────────────────────────────────
+        const { rows: sessionRows } = await pool.query(
+          `SELECT id FROM user_activities
+            WHERE metadata->>'kind' = 'challenge_completion' AND metadata->>'session_id' = $1
+            LIMIT 1`,
+          [sessionId]
+        );
+        if (sessionRows.length) return fail(res, 409, 'This zkPassport session has already been used.');
+
+        // ── 409: this proof already claimed for this challenge ────────────
+        const { rows: nullifierRows } = await pool.query(
+          `SELECT id FROM user_activities WHERE challenge_id = $1 AND metadata->>'nullifier_hex' = $2 LIMIT 1`,
+          [challengeId, nullifierHex]
+        );
+        if (nullifierRows.length) return fail(res, 409, 'This proof has already been claimed for this challenge.');
+
+        // ── 500: challenge reward missing / non-numeric / not positive ────
+        const effReward = challenge.reward != null ? challenge.reward : challenge.t_reward;
+        const points = Number(effReward);
+        if (!Number.isFinite(points) || points <= 0) {
+          return fail(res, 500, "This challenge's reward is not a valid positive number.");
+        }
+
+        // ── Call the bridge — 500 "not configured" (zk-bridge.js's own
+        // ZkBridgeError), 502 request-or-payload failure, 422 not-verified ─
+        let bridgeResult;
+        try {
+          bridgeResult = await verifyCompletion(config, {
+            challengeId, sessionId, nullifierHex, walletAddress,
+          });
+        } catch (err) {
+          if (err instanceof ZkBridgeError) return fail(res, err.status, err.message);
+          throw err;
+        }
+        if (!bridgeResult.verified) {
+          return fail(res, 422, 'The zkPassport bridge did not report a successful verification.');
+        }
+
+        const verifiedAt = new Date();
+        const completedAt = requestedCompletedAt || bridgeResult.completedAt || verifiedAt;
+        const activityType = challenge.t_category || 'zkpassport_completion';
+        const metadata = {
+          kind: 'challenge_completion', session_id: sessionId, nullifier_hex: nullifierHex, wallet_address: walletAddress,
+        };
+
+        // ── One transaction: the activity row IS the completion row (no
+        // separate completions table — SPEC §4.10). A unique-violation on
+        // either replay index (a race the pre-checks above didn't catch)
+        // maps to the same two 409s those pre-checks already report.
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          // Verification can outlive the middleware lookup. Revalidate and hold
+          // the exact protocol-2 credential at the final write boundary so
+          // logout either waits for this completion or makes it fail closed.
+          const { rows: credentialRows } = await client.query(
+            `SELECT c.credential_reference
+               FROM native_session_credentials c
+               JOIN mobile_auth_tokens t
+                 ON t.id = c.mobile_auth_token_id AND t.user_id = c.user_id
+              WHERE c.mobile_auth_token_id = $1 AND c.user_id = $2
+                AND c.state = 'valid' AND c.expires_at > NOW()
+                AND t.ability = 'session' AND t.expires_at > NOW()
+              FOR SHARE OF c`,
+            [req.mobileAuth.tokenId, req.user.id]
+          );
+          if (!credentialRows.length) {
+            await client.query('ROLLBACK');
+            return fail(res, 401, 'Unauthenticated.');
+          }
+          const { rows: insertRows } = await client.query(
+            `INSERT INTO user_activities
+               (user_id, season_event_id, activity_type, points, description, metadata,
+                activity_at, source, challenge_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'zkpassport', $8, $9, $9)
+             RETURNING id`,
+            [req.user.id, challenge.season_event_id, activityType, points, null,
+              JSON.stringify(metadata), completedAt, challengeId, verifiedAt]
+          );
+          await client.query('COMMIT');
+
+          return res.status(201).json({
+            success: true,
+            data: {
+              completion_id: Number(insertRows[0].id),
+              user_id: Number(req.user.id),
+              season_event_id: Number(challenge.season_event_id),
+              challenge_id: challengeId,
+              activity_id: Number(insertRows[0].id),
+              session_id: sessionId,
+              nullifier_hex: nullifierHex,
+              completed_at: iso(completedAt),
+              verified_at: iso(verifiedAt),
+              leaderboard_refreshed: false,
+              already_recorded: false,
+            },
+          });
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          if (err.code === '23505') {
+            if (err.constraint === 'user_activities_nullifier_unique') {
+              return fail(res, 409, 'This proof has already been claimed for this challenge.');
+            }
+            // Any other unique-violation on this insert is the completion
+            // index (user_id, challenge_id) — the only other one this table
+            // carries.
+            return fail(res, 409, 'This challenge has already been completed.');
+          }
+          throw err;
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        log.error('topochain-mobile', 'POST /zkpassport/complete failed', { message: err.message });
+        return fail(res, 500, 'Internal server error.');
       }
-    } catch (err) {
-      log.error('topochain-mobile', 'POST /zkpassport/complete failed', { message: err.message });
-      return fail(res, 500, 'Internal server error.');
     }
-  });
+  );
 
   // ── POST /wallet/claim ────────────────────────────────────────────────
   // A platform account can predate the mobile/social identity merge. In

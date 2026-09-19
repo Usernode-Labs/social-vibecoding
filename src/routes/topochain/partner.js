@@ -58,6 +58,9 @@ const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { partnerApiKey } = require('../../middleware/topochain-auth');
 const {
+  topochainPartnerActivityLimiter, topochainPartnerActivityTargetLimiter,
+} = require('../../middleware/rate-limits');
+const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { readDelegationState } = require('../../services/topochain/delegations');
@@ -98,158 +101,174 @@ function topochainPartnerRoutes(config) {
   // every call inserts a new user_activities row, so a retried request
   // awards the points twice. v4 keeps this behavior verbatim; there is no
   // client-supplied idempotency key in this task's scope.
-  router.post('/api/v4/user-activities', partnerApiKey(config), async (req, res) => {
-    try {
-      const body = req.body || {};
-      const details = {};
+  //
+  // #2526 BOUNDS that quirk without removing it. Two limiters, mounted
+  // AFTER partnerApiKey so a 401/500 from the key check never consumes a
+  // bucket: a 300/minute ceiling per presented API key, and a 20/hour
+  // ceiling per (identifier_type, participant, season_event_id) that caps
+  // how far one participant's total can be inflated by replay. Neither
+  // DEDUPLICATES: an honest retry after a timeout still awards twice, which
+  // is what an Idempotency-Key would fix and this change deliberately does
+  // not attempt. Sizing and reasoning live with the limiters in
+  // middleware/rate-limits.js.
+  router.post(
+    '/api/v4/user-activities',
+    partnerApiKey(config),
+    topochainPartnerActivityLimiter,
+    topochainPartnerActivityTargetLimiter,
+    async (req, res) => {
+      try {
+        const body = req.body || {};
+        const details = {};
 
-      const participantIdentifier = typeof body.participant_identifier === 'string'
-        ? body.participant_identifier.trim() : '';
-      if (!participantIdentifier) details.participant_identifier = ['The participant_identifier field is required.'];
+        const participantIdentifier = typeof body.participant_identifier === 'string'
+          ? body.participant_identifier.trim() : '';
+        if (!participantIdentifier) details.participant_identifier = ['The participant_identifier field is required.'];
 
-      const identifierType = body.identifier_type;
-      if (!IDENTIFIER_COLUMNS[identifierType]) {
-        details.identifier_type = ['The identifier_type field must be one of: email, telegram, discord.'];
-      }
-
-      const seasonEventId = toIntId(body.season_event_id);
-      if (!seasonEventId) details.season_event_id = ['The season_event_id field is required.'];
-
-      const activityType = body.activity_type;
-      if (typeof activityType !== 'string' || activityType.length === 0 || activityType.length > 100) {
-        details.activity_type = ['The activity_type field is required and must be a string of at most 100 characters.'];
-      }
-
-      // `points` is numeric and negatives are accepted (SPEC 1330) — only
-      // reject non-numeric input, not sign or magnitude.
-      const points = Number(body.points);
-      if (body.points === undefined || body.points === null || body.points === '' || Number.isNaN(points)) {
-        details.points = ['The points field is required and must be numeric.'];
-      }
-
-      const description = body.description == null ? null : String(body.description);
-
-      let metadata = null;
-      if (body.metadata !== undefined && body.metadata !== null) {
-        if (typeof body.metadata !== 'object') {
-          details.metadata = ['The metadata field must be an object.'];
-        } else {
-          metadata = body.metadata;
+        const identifierType = body.identifier_type;
+        if (!IDENTIFIER_COLUMNS[identifierType]) {
+          details.identifier_type = ['The identifier_type field must be one of: email, telegram, discord.'];
         }
-      }
 
-      let activityAt = null;
-      if (body.activity_at === undefined || body.activity_at === null || body.activity_at === '') {
-        details.activity_at = ['The activity_at field is required and must be a valid date.'];
-      } else {
-        const parsed = new Date(body.activity_at);
-        if (Number.isNaN(parsed.getTime())) {
+        const seasonEventId = toIntId(body.season_event_id);
+        if (!seasonEventId) details.season_event_id = ['The season_event_id field is required.'];
+
+        const activityType = body.activity_type;
+        if (typeof activityType !== 'string' || activityType.length === 0 || activityType.length > 100) {
+          details.activity_type = ['The activity_type field is required and must be a string of at most 100 characters.'];
+        }
+
+        // `points` is numeric and negatives are accepted (SPEC 1330) — only
+        // reject non-numeric input, not sign or magnitude.
+        const points = Number(body.points);
+        if (body.points === undefined || body.points === null || body.points === '' || Number.isNaN(points)) {
+          details.points = ['The points field is required and must be numeric.'];
+        }
+
+        const description = body.description == null ? null : String(body.description);
+
+        let metadata = null;
+        if (body.metadata !== undefined && body.metadata !== null) {
+          if (typeof body.metadata !== 'object') {
+            details.metadata = ['The metadata field must be an object.'];
+          } else {
+            metadata = body.metadata;
+          }
+        }
+
+        let activityAt = null;
+        if (body.activity_at === undefined || body.activity_at === null || body.activity_at === '') {
           details.activity_at = ['The activity_at field is required and must be a valid date.'];
         } else {
-          activityAt = parsed;
+          const parsed = new Date(body.activity_at);
+          if (Number.isNaN(parsed.getTime())) {
+            details.activity_at = ['The activity_at field is required and must be a valid date.'];
+          } else {
+            activityAt = parsed;
+          }
         }
-      }
 
-      // `challenge_id` (renamed from v1's `phase_available_activity_id` —
-      // see judgment call #1 above) is structurally optional but, per that
-      // same judgment call, is functionally required in practice: an
-      // absent value always falls into the 422 "not available" branch
-      // below rather than any fallback.
-      const challengeId = toIntId(body.challenge_id);
+        // `challenge_id` (renamed from v1's `phase_available_activity_id` —
+        // see judgment call #1 above) is structurally optional but, per that
+        // same judgment call, is functionally required in practice: an
+        // absent value always falls into the 422 "not available" branch
+        // below rather than any fallback.
+        const challengeId = toIntId(body.challenge_id);
 
-      if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
+        if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
 
-      // SPEC 1330: `season_event_id` must `exists:season_events,id`.
-      const { rows: eventRows } = await pool.query(
-        'SELECT id, season_id FROM season_events WHERE id = $1',
-        [seasonEventId]
-      );
-      const event = eventRows[0];
-      if (!event) {
-        return fail(res, 422, 'The given data was invalid.', {
-          details: { season_event_id: ['The selected season_event_id is invalid.'] },
-        });
-      }
-
-      // Judgment call #2: identifier_type used directly as the column
-      // name, no onchain-address fallback for this endpoint.
-      const column = IDENTIFIER_COLUMNS[identifierType];
-      const { rows: userRows } = await pool.query(
-        `SELECT id FROM users WHERE ${column} = $1 LIMIT 1`,
-        [participantIdentifier]
-      );
-      if (!userRows.length) {
-        return fail(res, 404, 'Participant not found with the given identifier.');
-      }
-      const userId = Number(userRows[0].id);
-
-      // Judgment call #3: event-scoped OR season-wide enrollment.
-      const { rows: enrollRows } = await pool.query(
-        `SELECT id FROM user_enrollments
-          WHERE user_id = $1
-            AND (season_event_id = $2 OR (season_event_id IS NULL AND season_id = $3))
-          LIMIT 1`,
-        [userId, seasonEventId, event.season_id]
-      );
-      if (!enrollRows.length) {
-        return fail(res, 400, 'Participant is not registered for this event.');
-      }
-
-      // SPEC 1349's 422 ("challenge missing or belongs to another event")
-      // is a BARE error object (no `details` key) — `fail()` already omits
-      // `details`/`code` when not passed, so this one call produces that
-      // exact shape. Judgment call #1: an absent challengeId lands here
-      // too (nothing left to fall back to in v4).
-      let challenge = null;
-      if (challengeId) {
-        const { rows: challengeRows } = await pool.query(
-          `SELECT c.id, c.season_event_id, ct.category
-             FROM challenges c
-             LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-            WHERE c.id = $1`,
-          [challengeId]
+        // SPEC 1330: `season_event_id` must `exists:season_events,id`.
+        const { rows: eventRows } = await pool.query(
+          'SELECT id, season_id FROM season_events WHERE id = $1',
+          [seasonEventId]
         );
-        challenge = challengeRows[0] || null;
+        const event = eventRows[0];
+        if (!event) {
+          return fail(res, 422, 'The given data was invalid.', {
+            details: { season_event_id: ['The selected season_event_id is invalid.'] },
+          });
+        }
+
+        // Judgment call #2: identifier_type used directly as the column
+        // name, no onchain-address fallback for this endpoint.
+        const column = IDENTIFIER_COLUMNS[identifierType];
+        const { rows: userRows } = await pool.query(
+          `SELECT id FROM users WHERE ${column} = $1 LIMIT 1`,
+          [participantIdentifier]
+        );
+        if (!userRows.length) {
+          return fail(res, 404, 'Participant not found with the given identifier.');
+        }
+        const userId = Number(userRows[0].id);
+
+        // Judgment call #3: event-scoped OR season-wide enrollment.
+        const { rows: enrollRows } = await pool.query(
+          `SELECT id FROM user_enrollments
+            WHERE user_id = $1
+              AND (season_event_id = $2 OR (season_event_id IS NULL AND season_id = $3))
+            LIMIT 1`,
+          [userId, seasonEventId, event.season_id]
+        );
+        if (!enrollRows.length) {
+          return fail(res, 400, 'Participant is not registered for this event.');
+        }
+
+        // SPEC 1349's 422 ("challenge missing or belongs to another event")
+        // is a BARE error object (no `details` key) — `fail()` already omits
+        // `details`/`code` when not passed, so this one call produces that
+        // exact shape. Judgment call #1: an absent challengeId lands here
+        // too (nothing left to fall back to in v4).
+        let challenge = null;
+        if (challengeId) {
+          const { rows: challengeRows } = await pool.query(
+            `SELECT c.id, c.season_event_id, ct.category
+               FROM challenges c
+               LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+              WHERE c.id = $1`,
+            [challengeId]
+          );
+          challenge = challengeRows[0] || null;
+        }
+        if (!challenge || Number(challenge.season_event_id) !== seasonEventId) {
+          return fail(res, 422, 'Activity type is not available for the specified event.');
+        }
+
+        // The stored activity_type comes from the challenge's template
+        // category; the submitted value is only a fallback for the (FK-
+        // guarded, effectively unreachable) case where the template join
+        // came back empty — mirrors public.js's own guard comment on the
+        // same LEFT JOIN shape.
+        const storedActivityType = challenge.category || activityType;
+
+        const { rows: insertRows } = await pool.query(
+          `INSERT INTO user_activities
+             (user_id, season_event_id, activity_type, points, description, metadata,
+              activity_at, source, challenge_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'api', $8, NOW(), NOW())
+           RETURNING id, user_id, season_event_id, activity_type, points`,
+          [userId, seasonEventId, storedActivityType, points, description,
+            metadata ? JSON.stringify(metadata) : null, activityAt, challengeId]
+        );
+        const row = insertRows[0];
+
+        return res.status(201).json({
+          success: true,
+          data: {
+            id: Number(row.id),
+            user_id: Number(row.user_id),
+            season_event_id: Number(row.season_event_id),
+            activity_type: row.activity_type,
+            // SPEC 1358: v4 returns points as a number (source: string, from
+            // the decimal cast).
+            points: num(row.points),
+          },
+        });
+      } catch (err) {
+        log.error('topochain-partner', 'POST /user-activities failed', { message: err.message });
+        return fail(res, 500, 'Internal server error.');
       }
-      if (!challenge || Number(challenge.season_event_id) !== seasonEventId) {
-        return fail(res, 422, 'Activity type is not available for the specified event.');
-      }
-
-      // The stored activity_type comes from the challenge's template
-      // category; the submitted value is only a fallback for the (FK-
-      // guarded, effectively unreachable) case where the template join
-      // came back empty — mirrors public.js's own guard comment on the
-      // same LEFT JOIN shape.
-      const storedActivityType = challenge.category || activityType;
-
-      const { rows: insertRows } = await pool.query(
-        `INSERT INTO user_activities
-           (user_id, season_event_id, activity_type, points, description, metadata,
-            activity_at, source, challenge_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'api', $8, NOW(), NOW())
-         RETURNING id, user_id, season_event_id, activity_type, points`,
-        [userId, seasonEventId, storedActivityType, points, description,
-          metadata ? JSON.stringify(metadata) : null, activityAt, challengeId]
-      );
-      const row = insertRows[0];
-
-      return res.status(201).json({
-        success: true,
-        data: {
-          id: Number(row.id),
-          user_id: Number(row.user_id),
-          season_event_id: Number(row.season_event_id),
-          activity_type: row.activity_type,
-          // SPEC 1358: v4 returns points as a number (source: string, from
-          // the decimal cast).
-          points: num(row.points),
-        },
-      });
-    } catch (err) {
-      log.error('topochain-partner', 'POST /user-activities failed', { message: err.message });
-      return fail(res, 500, 'Internal server error.');
     }
-  });
+  );
 
   // ── GET /delegations (SPEC 1360-1389, v1 GET /delegations) ─────────
   //

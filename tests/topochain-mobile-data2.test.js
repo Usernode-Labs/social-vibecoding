@@ -390,6 +390,13 @@ function makeMockPool() {
 function withApp(configOverrides, fn) {
   const poolModulePath = require.resolve('../src/db/pool');
   const mobileModulePath = require.resolve('../src/routes/topochain/mobile');
+  // Dropped alongside the route module so every isolated app gets fresh
+  // limiter buckets. The limiters in rate-limits.js hold their counters in
+  // a per-instance MemoryStore, so a cached module would carry one case's
+  // requests into the next: #2526 put a 10/min per-user ceiling on
+  // zkpassport/complete, and these suites reuse one identity across a dozen
+  // unrelated cases.
+  const rateLimitsModulePath = require.resolve('../src/middleware/rate-limits');
   const mockPool = makeMockPool();
   const original = require.cache[poolModulePath];
   require.cache[poolModulePath] = {
@@ -397,6 +404,7 @@ function withApp(configOverrides, fn) {
     loaded: true, id: poolModulePath, filename: poolModulePath, paths: original ? original.paths : [],
   };
   delete require.cache[mobileModulePath];
+  delete require.cache[rateLimitsModulePath];
   try {
     const { topochainMobileRoutes } = require('../src/routes/topochain/mobile');
     const app = express();
@@ -407,6 +415,7 @@ function withApp(configOverrides, fn) {
     if (original) require.cache[poolModulePath] = original;
     else delete require.cache[poolModulePath];
     delete require.cache[mobileModulePath];
+    delete require.cache[rateLimitsModulePath];
   }
 }
 

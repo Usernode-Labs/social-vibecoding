@@ -31,7 +31,17 @@ function retryPhrase(seconds) {
 // a falsy value to fall through to the keyByUser / IP default below. That
 // fallthrough is load-bearing: the waitlist token bucket keys on the path
 // token, and one route in the same family carries no token.
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null }) {
+//
+// `v4Envelope` switches the 429 body to the /api/v4 (topochain) error
+// envelope that routes/topochain/helpers.js's `fail()` produces —
+// `success: false` plus a `code` tag — and sets an explicit `Retry-After`
+// header. It is opt-in per limiter rather than the default BECAUSE of the
+// `code` note above: the platform surface must stay code-free so clients
+// can keep discriminating billing 429s by their tag (#463). The v4 surface
+// has no billing 429, its own envelope already carries an optional `code`,
+// and its internal siblings (routes/internal.js's pushLimiter/debugLimiter)
+// already answer `code: 'rate_limited'` — so there the tag is unambiguous.
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null, v4Envelope = false }) {
   const options = {
     windowMs,
     max,
@@ -60,14 +70,22 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
         userId: req.user?.id,
         path: req.path,
       });
+      const error = typeof message === 'function'
+        ? message(retryAfterSeconds)
+        : (message || 'Too many requests, please slow down');
+      if (v4Envelope) {
+        // `Retry-After` is set explicitly rather than left to the library's
+        // header handling, mirroring conversationInviteLimiter's own 429
+        // further down this file.
+        res.set('Retry-After', String(retryAfterSeconds));
+        res.status(429).json({
+          success: false, error, code: 'rate_limited', retryAfterSeconds,
+        });
+        return;
+      }
       // No `code` field here — clients discriminate billing 429s by
       // their code tag (#463), so throttles must stay code-free.
-      res.status(429).json({
-        error: typeof message === 'function'
-          ? message(retryAfterSeconds)
-          : (message || 'Too many requests, please slow down'),
-        retryAfterSeconds,
-      });
+      res.status(429).json({ error, retryAfterSeconds });
     },
   };
   if (exemptAdmins) options.skip = (req) => !!req.user?.canAdminWrite;
@@ -631,12 +649,152 @@ const dbExportLimiter = makeLimiter({
 // Authenticated device-state synchronization. Normal lifecycle traffic is a
 // handful of writes; this prevents a stolen bearer from churning encrypted
 // registrations and delivery FKs in a tight loop.
+//
+// v4Envelope is additive here (#2526): `error` and `retryAfterSeconds` keep
+// the names and values they already had, and the body gains the
+// `success: false` / `code` keys every other /api/v4 error carries, so the
+// whole v4 mobile surface now refuses with ONE shape.
 const topochainMobilePushRegistrationLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
   name: 'topochain-mobile-push-registration',
   keyByUser: true,
+  v4Envelope: true,
   message: 'Too many push registration updates. Slow down for a minute.',
+});
+
+// ── The rest of the credentialed topochain surface (#2526) ─────────────
+//
+// Reported by snait: every other credentialed route in this family is
+// bucketed (mobileWalletClaimLimiter above, the push registration limiter
+// just above, routes/internal.js's pushLimiter/debugLimiter), while the
+// heavy mobile reads and the partner point-award carried no limiter at all.
+// The sizing below is deliberately set well ABOVE any plausible honest
+// cadence: snait's own report rates confidence in "warrants action" as only
+// medium (the design may intentionally trust the shared partner secret and
+// the expected volume), so each of these is a BOUND on a runaway loop or a
+// stolen credential rather than a change of policy that a real client could
+// notice.
+
+// The seven heavy mobile reads (GET /api/v4/mobile/{me, me/ranking,
+// me/breakdown, event/points, leaderboard, challenges, seasons}): 120 /
+// minute / user. Sized like userDirectoryLimiter and
+// publicProfileReadLimiter, this file's two existing per-user READ buckets.
+// These are the expensive ones — /me/breakdown in global scope walks every
+// public season x event with a per-event query, and /leaderboard fetches the
+// whole scoped standing and slices the page in JS — so the ceiling caps a
+// loop at about two of those fan-outs per second while leaving an app that
+// reloads several screens per navigation nowhere near it.
+//
+// Mounted AFTER mobileTokenAuth (and after the /challenges-api twins' own
+// requireSessionUser), so req.user is populated when the key is computed —
+// the same ordering constraint mobileWalletClaimLimiter documents above.
+// ONE limiter instance covers both surfaces on purpose: the five
+// /challenges-api web twins in routes/topochain/mobile.js run the SAME
+// handler consts under a session cookie, so a separate bucket there would
+// hand one account a second, unthrottled path to the identical queries.
+const topochainMobileReadLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'topochain-mobile-read',
+  keyByUser: true,
+  v4Envelope: true,
+  message: (s) => `Too many requests. Try again ${retryPhrase(s)}.`,
+});
+
+// POST /api/v4/mobile/zkpassport/complete: 10 / minute / user. A completion
+// is a deliberate one-off that makes an outbound zk-bridge call, so honest
+// use never approaches ten in a minute. Deliberately NOT skipFailedRequests:
+// an attempt that ends >= 400 may still have cost a bridge round-trip, and
+// failures are exactly the shape abuse takes here. Replaying a completion
+// for a challenge already completed stays idempotent in the route itself
+// (it returns the original row with already_recorded: true); this bucket
+// bounds the RATE, not the duplicate.
+const topochainChallengeCompletionLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 10,
+  name: 'topochain-challenge-completion',
+  keyByUser: true,
+  v4Envelope: true,
+  message: (s) => `Too many challenge completions. Try again ${retryPhrase(s)}.`,
+});
+
+// POST /api/v4/user-activities, bucket 1 of 2: the partner CLIENT ceiling,
+// 300 / minute. Roughly five awards a second, far above any integration's
+// cadence (each call runs five queries and an INSERT) and low enough that a
+// leaked key is a bounded faucet rather than an open one — the same
+// "per client, always" shape waitlistJoinClientLimiter uses.
+//
+// The key is a SHA-256 PREFIX of the presented X-API-Key, never the secret
+// itself: limiter keys live in memory as plain strings, and hashing keeps
+// the shared partner secret out of that while still bucketing exactly (the
+// reason identifierKey above hashes too). partnerApiKey runs first and
+// rejects anything that isn't the configured secret, so with today's single
+// shared key this is effectively ONE global ceiling for the endpoint;
+// hashing the PRESENTED key means it splits per partner by itself if the
+// per-partner keys/scopes noted as future work in middleware/topochain-auth.js
+// ever land. A request that somehow arrives without a string header falls
+// through to the IP bucket rather than sharing one key with everyone.
+const topochainPartnerActivityLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 300,
+  name: 'topochain-partner-activity',
+  v4Envelope: true,
+  key: (req) => {
+    const provided = req.headers['x-api-key'];
+    if (typeof provided !== 'string' || !provided) return null;
+    return `partner:${crypto.createHash('sha256').update(provided).digest('hex').slice(0, 16)}`;
+  },
+  message: (s) => `Too many activity submissions. Try again ${retryPhrase(s)}.`,
+});
+
+// POST /api/v4/user-activities, bucket 2 of 2: the TARGET ceiling, 20 /
+// hour per (identifier_type, participant, season_event_id). This is the one
+// that answers snait's actual finding — the endpoint is non-idempotent by
+// contract (SPEC 1350's carried quirk: every call inserts a user_activities
+// row and awards the points again), so without a per-target bound one
+// participant's total can be inflated without limit. Twenty awards to one
+// person in one event in an hour is far past any real awarding cadence.
+//
+// Negative `points` are legal on this endpoint (partner.js's own comment,
+// SPEC 1330), so this bounds deliberate point DEFLATION by the same amount.
+//
+// skipFailedRequests refunds everything >= 400 — a partner working out its
+// payload (422 validation, 404 unknown participant, 400 not enrolled) must
+// never burn a real participant's budget. That refund is also what keeps
+// the ~30 submissions in tests/topochain-partner-api.test.js viable: only
+// four of them are 201s.
+//
+// The key is a SHA-256 of the triple, hashed for the reason identifierKey
+// documents (limiter keys live in memory as plain strings; a digest buckets
+// exactly without holding the participant's email or handle). The
+// identifier is normalized first, and that is deliberately TIGHTER than the
+// route: partner.js resolves the participant with a plain `WHERE <column> =
+// $1`, which in Postgres is case-sensitive, so `Alice@x` and `alice@x` are
+// two different lookups there but ONE bucket here. Erring tight is the safe
+// direction — the alternative hands a caller a fresh 20 awards for every
+// spelling of the same target. A missing/malformed field yields null and
+// falls through to the IP bucket, which is harmless: such a request 422s in
+// the route and is refunded here.
+const topochainPartnerActivityTargetLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  name: 'topochain-partner-activity-target',
+  v4Envelope: true,
+  skipFailedRequests: true,
+  key: (req) => {
+    const body = req.body || {};
+    const type = typeof body.identifier_type === 'string' ? body.identifier_type.trim().toLowerCase() : '';
+    const identifier = typeof body.participant_identifier === 'string'
+      ? body.participant_identifier.trim().toLowerCase() : '';
+    const eventId = body.season_event_id;
+    if (!type || !identifier || eventId === undefined || eventId === null || eventId === '') return null;
+    const digest = crypto.createHash('sha256')
+      .update(`${type}|${identifier}|${String(eventId).trim()}`)
+      .digest('hex');
+    return `pa:${digest}`;
+  },
+  message: (s) => `Too many activity submissions for this participant. Try again ${retryPhrase(s)}.`,
 });
 
 const WAITLIST_WINDOW_MS = 15 * 60 * 1000;
@@ -924,4 +1082,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups. Please slow down.',
 });
 
-module.exports = { appAllowanceRequestLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };
+module.exports = { appAllowanceRequestLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, topochainMobileReadLimiter, topochainChallengeCompletionLimiter, topochainPartnerActivityLimiter, topochainPartnerActivityTargetLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };
