@@ -10536,12 +10536,21 @@ html.in-native-webview {
    (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
    while presented, so selectors rooted at the modal stop matching.
 
-   THE LOOK IS THE LANGUAGE'S SELECTION IDIOM (#1910): the selected segment
-   is the solid inversion — near-black fill, page-coloured ink — the same
-   treatment @/components/ui/chip.tsx and the Leaderboard's section strip
-   state. The raised-face-on-a-recessed-track look these pills used to
-   share with the drawer's theme selector lives on in `.members-vis-pill`
-   and `.theme-seg` above; this dialog left it. */
+   THE SELECTED FILL IS THE SHELL'S ACCENT (#2566). It was the language's
+   solid inversion — a near-black fill inverting to near-white in dark —
+   and read as "black", not as "chosen": people asked for the colour the
+   product uses for selection instead. That colour is violet-600, the fill
+   this dialog's own Create/Import button already wears
+   (`Button variant="pillAccent"` → `bg-violet-600`), with white ink.
+   It is written as a literal here for the same reason the button carries
+   no `dark:` step: violet-600 clears AA against white in BOTH themes
+   (5.70:1), where violet-500 — the usual dark lift — measures 4.24:1 and
+   would fail the 15px choice title. The inversion lives on unchanged
+   elsewhere: @/components/ui/chip.tsx, the Leaderboard's section strip
+   and the Improve rail's view toggle all still state it. The
+   raised-face-on-a-recessed-track look these pills used to share with the
+   drawer's theme selector lives on in `.members-vis-pill` and `.theme-seg`
+   above; this dialog left it. */
 #create-card .create-mode-pill {
   color: var(--text-muted);
   cursor: pointer;
@@ -10551,15 +10560,18 @@ html.in-native-webview {
 }
 #create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
 #create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
-  background: var(--text-primary);
-  color: var(--bg-primary);
+  background: #7c3aed; /* violet-600 */
+  color: #ffffff;
   cursor: default;
 }
 
 /* Visibility segmented pills (create modal). Active state is a
    JS-toggled .active class — unlike the mode pills there are two
    independent controls per surface, so an attribute on the modal root
-   doesn't fit. Same inversion as .create-mode-pill. */
+   doesn't fit. Same accent fill as .create-mode-pill (#2566): one
+   dialog, one selected colour — leaving these inverted would have put a
+   black "Public" on the access step of a dialog whose first step had
+   just gone violet. */
 .create-vis-pill {
   color: var(--text-muted);
   cursor: pointer;
@@ -10568,8 +10580,8 @@ html.in-native-webview {
   color: var(--text-primary);
 }
 .create-vis-pill.active {
-  background: var(--text-primary);
-  color: var(--bg-primary);
+  background: #7c3aed; /* violet-600 */
+  color: #ffffff;
 }
 .create-vis-pill:disabled {
   opacity: 0.45;
@@ -10629,7 +10641,7 @@ html.in-native-webview {
 }
 
 /* The start step's two choice rows carry .create-mode-pill, so the rule
-   above paints the chosen one in the inversion; unchosen rows read as
+   above paints the chosen one in the accent; unchosen rows read as
    plain white cards in the primary ink with a muted caption. Once a
    choice is made the step COLLAPSES to the chosen row: the other row and
    the captions fold away, the chevron gives way to "Change", and pressing
@@ -10640,10 +10652,15 @@ html.in-native-webview {
 #create-card [data-create-step="start"] .create-choice-caption {
   color: var(--text-muted);
 }
+/* 0.9, not the 0.8 this carried: the caption is 12px, and on the accent
+   fill (#2566) white at 0.8 measures 4.18:1 — below AA — where 0.9 reads
+   at 4.90:1. On the near-black fill it replaced, 0.8 was 12.6:1, so the
+   step was free there and is not here. It still sits plainly under the
+   title, which is the full white. */
 #create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
 #create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] .create-choice-caption {
   color: inherit;
-  opacity: 0.8;
+  opacity: 0.9;
 }
 #create-card[data-step="start"] .create-choice-change { display: none; }
 #create-card:not([data-step="start"]) .create-choice-chevron,

@@ -116,6 +116,31 @@ test('app.css unfolds the steps in place and shapes the footer', () => {
   assert.match(CSS, /#create-card\[data-mode="import"\]\[data-import-state="ok"\] #create-name-block \{ display: block; \}/);
 });
 
+// #2566: the selected choice was the language's solid inversion — a
+// near-black fill — and read as "black" rather than as "chosen". It wears
+// the shell's accent now: violet-600 with white ink, the same fill this
+// dialog's own Create/Import button carries. Both of the dialog's selected
+// states move together; nothing else in the shell does.
+test('the selected choice wears the shell accent, not the solid inversion', () => {
+  assert.match(CSS, /#create-card\[data-mode="new"\]\s+\.create-mode-pill\[data-mode-pill="new"\],\n#create-card\[data-mode="import"\] \.create-mode-pill\[data-mode-pill="import"\] \{\n  background: #7c3aed; \/\* violet-600 \*\/\n  color: #ffffff;\n  cursor: default;\n\}/);
+  // The access step's visibility pills are the same dialog and the same
+  // selected state, so they carry the same fill.
+  assert.match(CSS, /\.create-vis-pill\.active \{\n  background: #7c3aed; \/\* violet-600 \*\/\n  color: #ffffff;\n\}/);
+  // The caption on the selected row needs the extra step on the accent:
+  // white at 0.8 measures 4.18:1 against violet-600, below AA at 12px.
+  assert.match(CSS, /\.create-mode-pill\[data-mode-pill="import"\] \.create-choice-caption \{\n  color: inherit;\n  opacity: 0\.9;\n\}/);
+  // The fill is a literal in both themes: violet-600 clears AA against
+  // white in each, and the dialog's own accent button carries no `dark:`
+  // step either. A .dark override for these would be the regression.
+  const invert = /background: var\(--text-primary\);\n  color: var\(--bg-primary\);/g;
+  const createBlock = CSS.slice(CSS.indexOf('#create-card .create-mode-pill {'), CSS.indexOf('.members-vis-pill {'));
+  assert.doesNotMatch(createBlock, invert, 'no selected state in the create dialog is still the inversion');
+  // Only this dialog moved: the language states the inversion elsewhere
+  // and those statements are untouched.
+  const CHIP = read('frontend/@/components/ui/chip.tsx');
+  assert.match(CHIP, /selected: \{\n        true: 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900',/);
+});
+
 test('the shot links land on the step they name', () => {
   assert.match(SRC, /if \(shot === 'create-import' \|\| shot === 'create-details'\) return 'details';/);
   assert.match(SRC, /if \(shot === 'create-access'\) return 'access';/);
