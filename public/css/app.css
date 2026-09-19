@@ -11975,6 +11975,38 @@ body.is-offline [data-offline-disabled] {
   color: rgb(161 161 170); /* zinc-400 */
   padding: 0.15rem 0;
 }
+/* A long comment shows four lines and a "Show more" under them (#2556).
+   -webkit-line-clamp is the only cross-browser way to ellipsise at a line
+   COUNT; the standard `line-clamp` is listed alongside it, the same pair
+   this stylesheet already writes elsewhere.
+
+   The clamp is on a span WRAPPING the author and the body, not on the body:
+   the body renders inline after the name here (see the rule above), so
+   clamping it alone would count its first line from the wrong left edge.
+   The React comment surfaces reach the same four lines through Tailwind's
+   `line-clamp-4`; this one is hand-written because the slot is filled by
+   innerHTML from public/js/app-view.js, which is not React's to reconcile. */
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-clamp.is-expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
+/* The control ships `hidden` and only a measurement reveals it, so the rule
+   that hides it has to be here rather than left to a utility that may or may
+   not win against the flex layout above. */
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-toggle[hidden] { display: none; }
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-toggle {
+  margin-top: 4px;
+  cursor: pointer;
+}
 
 /* ── The Activity feed's inline discussion ─────────────────────────────
    Indented to the same 22px as #dev-workshop .dev-feed-comments above it, so

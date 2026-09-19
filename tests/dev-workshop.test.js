@@ -2597,6 +2597,24 @@ test('the open sheet is a DIRECT child of the wrapper, the way the check selects
     'the compressed row is gone while the card is up');
 });
 
+test('the Workshop\'s inline comments clamp a long one at four lines (#2556)', () => {
+  const AppView = makeAppView();
+  const long = AppView._feedCommentsHtml([
+    { author: 'alice', body: 'short one', createdAt: at(1) },
+    { author: 'bob', body: 'word '.repeat(400), createdAt: at(1) },
+  ]);
+  // The clamp wraps the author AND the body, because the body renders inline
+  // after the name on this surface — see the rule in app.css.
+  assert.equal((long.match(/class="dev-feed-comment-clamp"/g) || []).length, 2,
+    'every comment in the tail is clamped, long or short');
+  assert.match(long, /<span class="dev-feed-comment-clamp">\s*<span class="dev-feed-comment-author">alice/);
+  // The control ships hidden: only `_clampFeedComments` has a laid-out box,
+  // and a comment that fits in four lines never gets one at all.
+  assert.equal((long.match(/class="dev-feed-comment-toggle [^"]+" aria-expanded="false" hidden>Show more<\/button>/g) || []).length, 2);
+  // The age still lands outside the clamp, where the #1585 check looks.
+  assert.match(long, /<\/span>\s*<span class="dev-feed-comment-time"/);
+});
+
 test('the sheet CSS moved host with the entry, and the Workshop has its own', () => {
   const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => /^\s*(\.dark\s+)?#dev-feed\b/.test(l));
   assert.deepEqual(rules, [], 'no rule is scoped to the retired #dev-feed');

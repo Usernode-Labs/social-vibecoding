@@ -8065,6 +8065,27 @@ const AppView = {
   // cost an order of magnitude under the thirty the comment above is about.
   FEED_COMMENT_EAGER: 3,
 
+  // #2556: how many lines of one comment the preview shows before the
+  // "Show more" under it. The same four the two React comment surfaces
+  // clamp at (frontend/src/features/dev-board/comment-clamp.tsx); the number
+  // itself lives in public/css/app.css, on `.dev-feed-comment-clamp`.
+  FEED_COMMENT_CLAMP_LINES: 4,
+
+  // The Browse screen's "Show more", transcribed.
+  //
+  // That control is `<Button variant="neutral" ink="neutral" size="xsText">`
+  // (frontend/src/features/apps/browse-list.tsx), and this preview is filled
+  // by innerHTML from this file rather than by React, so the primitive is
+  // not reachable here. The string below is what that call site's cva table
+  // emits, group by group, and tests/dev-comment-clamp.test.js holds the two
+  // to each other so they cannot drift apart silently.
+  //
+  // Every class is a COMPLETE literal: Tailwind's extractor is a regex over
+  // source text and a name assembled from fragments compiles to nothing.
+  FEED_COMMENT_TOGGLE_CLASS:
+    'rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700'
+    + ' px-3 py-1 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors',
+
   _feedCommentsHtml(comments) {
     const list = Array.isArray(comments) ? comments : [];
     if (!list.length) return '';
@@ -8087,10 +8108,19 @@ const AppView = {
       const ageHtml = age.text
         ? `<span class="dev-feed-comment-time" title="${escapeAttr(age.title)}">${escapeHtml(age.text)}</span>`
         : '';
+      // #2556: the author and the body share one clamped box, because the
+      // body renders INLINE after the name here — clamping the body alone
+      // would count its lines from the wrong left edge. The control is the
+      // clamp's sibling so it is never inside what it hides, and it ships
+      // `hidden`: only a measurement can say whether this comment is long,
+      // and only `_clampFeedComments` below has a laid-out box to measure.
       return `<div class="dev-feed-comment">
           <span class="dev-feed-comment-main">
-            <span class="dev-feed-comment-author">${author}</span>${botTag}
-            <span class="dev-feed-comment-body">${renderMd(c.body || '')}</span>
+            <span class="dev-feed-comment-clamp">
+              <span class="dev-feed-comment-author">${author}</span>${botTag}
+              <span class="dev-feed-comment-body">${renderMd(c.body || '')}</span>
+            </span>
+            <button type="button" class="dev-feed-comment-toggle ${AppView.FEED_COMMENT_TOGGLE_CLASS}" aria-expanded="false" hidden>Show more</button>
           </span>
           ${ageHtml}
         </div>`;
@@ -8113,10 +8143,19 @@ const AppView = {
   // the container's innerHTML, which detaches every node it was watching.
   _feedCommentObserver: null,
 
+  // #2556's companion, rebuilt on the same schedule and for the same reason:
+  // it watches the clamped boxes so "Show more" appears and disappears with
+  // the width, and a repaint detaches every node it was watching.
+  _feedClampObserver: null,
+
   _wireFeedComments(root) {
     if (AppView._feedCommentObserver) {
       AppView._feedCommentObserver.disconnect();
       AppView._feedCommentObserver = null;
+    }
+    if (AppView._feedClampObserver) {
+      AppView._feedClampObserver.disconnect();
+      AppView._feedClampObserver = null;
     }
     if (!root) return;
     const slots = [...root.querySelectorAll('.dev-feed-comments[data-comments-for]')];
@@ -8159,6 +8198,64 @@ const AppView = {
     AppView._feedCommentObserver = observer;
   },
 
+  // ── "Show more" on a long comment (#2556) ─────────────────────────
+  //
+  // MEASURED, never counted. The same comment is three lines inside a
+  // desktop card and nine in a phone's column, and a character threshold
+  // gets one of those wrong whichever number it picks -- so the control
+  // appears only when the clamped box is actually hiding something, and a
+  // comment of exactly four short lines keeps the markup it has always had.
+  //
+  // `scrollHeight` is the whole content and `clientHeight` the four lines on
+  // screen. The 1px slack is for sub-pixel line heights: a body that lands a
+  // fraction over four lines must not offer a "Show more" that reveals
+  // nothing.
+  _syncFeedCommentToggle(clamp) {
+    const main = clamp && clamp.parentElement;
+    const btn = main && main.querySelector('.dev-feed-comment-toggle');
+    if (!btn) return;
+    // An expanded comment keeps its control: it is the way back.
+    if (clamp.classList.contains('is-expanded')) { btn.hidden = false; return; }
+    btn.hidden = !(clamp.scrollHeight - clamp.clientHeight > 1);
+  },
+
+  _clampFeedComments(root) {
+    if (!root) return;
+    const clamps = [...root.querySelectorAll('.dev-feed-comment-clamp')];
+    if (!clamps.length) return;
+    for (const clamp of clamps) {
+      const btn = clamp.parentElement
+        && clamp.parentElement.querySelector('.dev-feed-comment-toggle');
+      if (!btn) continue;
+      // One listener per node, and the nodes are fresh on every paint --
+      // `_fillFeedComments` replaces the slot's innerHTML outright.
+      btn.addEventListener('click', (e) => {
+        // The row sits under #dev-body's delegated handler, which opens the
+        // topic for a click anywhere on a card. Expanding a comment is not
+        // a request to leave the feed.
+        e.preventDefault();
+        e.stopPropagation();
+        const expanded = clamp.classList.toggle('is-expanded');
+        btn.setAttribute('aria-expanded', String(expanded));
+        btn.textContent = expanded ? 'Show less' : 'Show more';
+      });
+      AppView._syncFeedCommentToggle(clamp);
+    }
+    // The first measurement above is right only if the slot already has a
+    // box. A card that is still folded gives every clamp a zero height, and
+    // `#dev-workshop .dev-feed-comments:empty` hides an unfilled slot
+    // outright -- the same deadlock the observer note above is about. The
+    // ResizeObserver is what re-measures once the box exists, and what
+    // tracks the width afterwards.
+    if (typeof ResizeObserver !== 'function') return;
+    if (!AppView._feedClampObserver) {
+      AppView._feedClampObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) AppView._syncFeedCommentToggle(entry.target);
+      });
+    }
+    for (const clamp of clamps) AppView._feedClampObserver.observe(clamp);
+  },
+
   async _fillFeedComments(slot) {
     if (!slot) return;
     const number = parseInt(slot.getAttribute('data-comments-for'), 10);
@@ -8177,7 +8274,10 @@ const AppView = {
       const live = document.querySelectorAll(
         `.dev-feed-comments[data-comments-for="${number}"]`
       );
-      for (const node of live) node.innerHTML = html;
+      for (const node of live) {
+        node.innerHTML = html;
+        AppView._clampFeedComments(node);
+      }
     };
 
     const cached = AppView._ghComments[number];

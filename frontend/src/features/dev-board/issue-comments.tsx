@@ -8,6 +8,7 @@ import { useMemo } from 'react';
 import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { swatchFor } from '../messages/format';
+import { ClampedComment } from './comment-clamp';
 import {
   issueCommentsStore,
   type IssueCommentsState,
@@ -25,8 +26,12 @@ import {
  */
 function Body({ html }: { html: string }) {
   const wrapper = useMemo(() => ({ __html: html }), [html]);
+  // #2556: four lines, then a "Show more". The clamp sits on this same node
+  // rather than a wrapper around it, so the sanitized markup keeps the box
+  // its CSS is written against — `#dev-issue-comments .dev-feed-msg-text`
+  // sets the font size, and `.dev-issue-body` the markdown treatment.
   return (
-    <div className="dev-feed-msg-text dev-issue-body" dangerouslySetInnerHTML={wrapper} />
+    <ClampedComment className="dev-feed-msg-text dev-issue-body" contentKey={html} html={wrapper} />
   );
 }
 
