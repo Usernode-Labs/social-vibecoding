@@ -470,7 +470,10 @@ test('once "OpenRouter is running…" arrives the log moves under it and the spi
 
   const attached = rows().filter((r) => r.t === 'attached');
   assert.equal(attached.length, 1);
-  assert.match(attached[0].text, /^OpenRouter is running/, 'the running line owns the log (forward pairing wins)');
+  // The stored content is still "OpenRouter is running..." (the pairing
+  // rules key off it); the heading is rewritten at render time to the
+  // venue-neutral sentence (#2597, DevChat._runningRowLabel).
+  assert.match(attached[0].text, /^Coding agent is running/, 'the running line owns the log (forward pairing wins)');
   assert.equal(attached[0].icon, 'spinner');
   const spinUp = rows().find((r) => r.t === 'status' && /^Starting OpenRouter/.test(r.text));
   assert.ok(spinUp, 'the spin-up line is a plain status row again');
