@@ -167,6 +167,24 @@ test('the inline reply preview preserves composer line breaks', () => {
   assert.match(html, /class="dev-feed-msg-avatar" aria-hidden="true" style="background-color:#[0-9a-f]{6}">B</);
 });
 
+test('a long reply in the panel shows four lines and a way to see the rest', () => {
+  // #2556. The panel previews the last two replies under a card; one reply
+  // pasted from somewhere else used to push the next card off the screen.
+  const html = renderToHtml(createElement(mod().MessageLine, {
+    m: {
+      id: 43,
+      author: 'bob',
+      content: 'word '.repeat(400),
+      createdAt: '2026-09-04T11:00:00Z',
+    },
+  }));
+  assert.match(html, /class="dev-feed-msg-text whitespace-pre-wrap break-words line-clamp-4"/,
+    'the clamp joins the classes the reply text already carried');
+  // The control is measured into place by an effect — renderToStaticMarkup
+  // runs none, and an island's first paint must match the prerendered shell.
+  assert.doesNotMatch(html, /Show more|Show less/);
+});
+
 test('the Workshop staging route requires both the textarea and arrow', () => {
   const check = dapp.tests.find((entry) => entry.name.includes('#1584'));
   assert.ok(check, 'a declared check names this change');

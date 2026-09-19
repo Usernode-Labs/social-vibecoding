@@ -4021,6 +4021,27 @@
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
+      "id": "dev-board.long-comment-show-more",
+      "name": "A long comment in a card's recent comments shows four lines and a Show more (#2556)",
+      "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-clamp + button.dev-feed-comment-toggle:not([hidden])",
+      "expectText": "Show more",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/dev-board/comment-clamp.tsx",
+        "frontend/src/features/dev-board/issue-comments.tsx",
+        "frontend/src/features/dev-board/card/feed-thread.tsx",
+        "public/css/app.css",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "name": "A long comment in an issue's discussion is clamped and offers a Show more (#2556)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#dev-issue-comments .dev-issue-comment .dev-feed-msg-text.dev-issue-body.line-clamp-4 + button.dev-comment-more",
+      "expectText": "Show more"
+    },
+    {
       "name": "The page ground carries the reskin's grey, not the old white (#1400)",
       "path": "/",
       "expectSelector": "body.bg-zinc-100"

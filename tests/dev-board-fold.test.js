@@ -827,7 +827,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // holds every one of them: 693 + 2 + 2 = 697. The ceiling is untouched:
   // 697 leaves 33 slots against MAX_DECLARED_TESTS (730), clear of the
   // 20-slot floor.
-  assert.equal(DAPP.tests.length, 697);
+  //
+  // 697 → 699: the comment clamp (#2556) declares one check per surface it
+  // can actually reach from a URL — the Workshop's inline recent comments
+  // (the ?shot=feed-comments route, which already unfolds an issue row) and
+  // an issue's Discussion. Both assert the REVEALED control rather than the
+  // clamp alone, because the control is what a measurement puts there and a
+  // clamp with no control is the bug, not the feature. The third surface,
+  // the card's own reply thread, gets no check: it would need a long reply
+  // POSTED to the app's thread, and seeding one would be a fixture that
+  // fabricates activity rather than data. 699 leaves 31 slots against
+  // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 699);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

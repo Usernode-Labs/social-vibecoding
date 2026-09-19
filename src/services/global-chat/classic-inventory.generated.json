@@ -5774,7 +5774,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 635,
+      "line": 663,
       "method": "GET",
       "path": "/api/apps/:slug/issues",
       "expression": null,
@@ -5799,7 +5799,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 737,
+      "line": 765,
       "method": "GET",
       "path": "/api/apps/:slug/governance/:id",
       "expression": null,
@@ -5818,7 +5818,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 852,
+      "line": 880,
       "method": "POST",
       "path": "/api/apps/:slug/issues",
       "expression": null,
@@ -5843,7 +5843,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1192,
+      "line": 1220,
       "method": "POST",
       "path": "/api/issues/:id/vote",
       "expression": null,
@@ -5862,7 +5862,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1333,
+      "line": 1361,
       "method": "GET",
       "path": "/api/apps/:slug/board-search",
       "expression": null,
@@ -5885,7 +5885,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1372,
+      "line": 1400,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues",
       "expression": null,
@@ -5908,7 +5908,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1934,
+      "line": 1962,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number",
       "expression": null,
@@ -5927,7 +5927,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2048,
+      "line": 2076,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number/comments",
       "expression": null,
@@ -5946,7 +5946,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2126,
+      "line": 2154,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/title",
       "expression": null,
@@ -5966,7 +5966,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2233,
+      "line": 2261,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/body",
       "expression": null,
@@ -5986,7 +5986,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2340,
+      "line": 2368,
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/bounty",
       "expression": null,
@@ -6005,7 +6005,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2427,
+      "line": 2455,
       "method": "POST",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6025,7 +6025,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2488,
+      "line": 2516,
       "method": "DELETE",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6045,7 +6045,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2549,
+      "line": 2577,
       "method": "POST",
       "path": "/api/issues/:id/admin-apply",
       "expression": null,
@@ -6064,7 +6064,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2627,
+      "line": 2655,
       "method": "POST",
       "path": "/api/issues/:id/close",
       "expression": null,
