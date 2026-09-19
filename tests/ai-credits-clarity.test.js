@@ -166,11 +166,12 @@ test('both budget reads carry the remainder, the reset and the threshold', () =>
   const snapshot = LIMITS_SRC.slice(
     LIMITS_SRC.indexOf('async function getBudgetSnapshot'),
     LIMITS_SRC.indexOf('// Shared BYOK key lookup'));
-  // #1788: still one helper per boundary, chosen by which cap is binding —
-  // so the instant the payload promises is the instant that cap resets on.
-  assert.match(snapshot, /resetsAt: weeklyBinds \? weeklyResetAt\(\) : dailyResetAt\(\)/);
-  assert.match(snapshot, /resetLabel: weeklyBinds \? WEEKLY_RESET_LABEL : DAILY_RESET_LABEL/,
-    'and the words match the instant, from the same choice');
+  // #2571: one cap, one boundary — the instant the payload promises is the
+  // week's, and the words beside it come from the same constant.
+  assert.match(snapshot, /resetsAt: weeklyResetAt\(\)/);
+  assert.match(snapshot, /resetLabel: WEEKLY_RESET_LABEL/,
+    'and the words match the instant');
+  assert.match(snapshot, /windowLabel: 'This week'/);
   assert.match(snapshot, /lowBalancePct: LOW_BALANCE_PCT/);
 });
 
@@ -330,8 +331,10 @@ test('?shot=credits-low paints the warning without a fetch or a write', () => {
   DevChat.budget = fixture;
   assert.equal(DevChat._creditsLow(), true);
   DevChat.renderBudget();
-  assert.match(meterHtml(), /\$20\.00/, 'the meter paints the fixture spend');
-  assert.match(lowBannerHtml(), /\$5\.00 of \$25\.00 left today/,
+  assert.match(meterHtml(), /\$40\.00/, 'the meter paints the fixture spend');
+  // #2571: the allowance is the week's $50, so the headroom sentence is
+  // the week's too.
+  assert.match(lowBannerHtml(), /\$10\.00 of \$50\.00 left this week/,
     'and the WARNING is what states the headroom (#1353)');
 
   // Pure UI: no environment gate (a production "before" shot has to be

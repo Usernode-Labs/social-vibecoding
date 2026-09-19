@@ -8,16 +8,19 @@ const turnEffects = require('./turn-effects');
 // window use, and it agrees with Postgres date_trunc('week', ...).
 const { weekStartUtc } = require('./leaderboard-users');
 
-// Daily LLM-spend caps. Both values live in `platform_settings` and are
+// LLM-spend caps. The values live in `platform_settings` and are
 // admin-tunable from /admin (see src/routes/admin.js endpoints
-// /api/admin/limits + /api/admin/users/:id/daily-limit). Reads here are
+// /api/admin/limits + /api/admin/users/:id/weekly-limit). Reads here are
 // cached for CACHE_TTL_MS so a chat-heavy hour doesn't hammer Postgres
-// for the same two rows on every turn; admin writes call invalidate()
+// for the same rows on every turn; admin writes call invalidate()
 // to flip the cache forward immediately.
 //
-// Per-user override: users.daily_limit_cents (NULL = use platform
-// default). Lets admins grant trusted users a higher cap without
-// raising it for everyone.
+// #2571: the per-user DAILY cap is SWITCHED OFF. One account has one
+// allowance, it is weekly, and it is the same pool wherever the spend
+// happens — the platform's Claude key or the company-funded OpenRouter
+// child key issued to that account. The key and the `users.daily_limit_cents`
+// column are retained (an operator's historical values are not destroyed
+// and nothing reads them), but resolveCaps() never applies them again.
 
 const KEY_USER  = 'user_daily_limit_cents';
 const KEY_GLOBAL = 'global_daily_limit_cents';
@@ -149,12 +152,15 @@ async function getDefaultUserLimitCents(pool) {
   return readSettingCents(pool, KEY_USER, 2500);
 }
 
-// #1788: the platform-default weekly cap. The fallback is seven times the
-// daily fallback, matching what the schema seeds on a fresh deploy — so a
-// platform_settings read failure degrades to the same allowance the row
-// would have held rather than to an accidental cut-off.
+// #1788: the platform-default weekly cap. #2571 makes it the ONLY per-user
+// cap and sets the code default to $50 — the same literal the schema seeds
+// on a fresh deploy, so a platform_settings read failure degrades to the
+// allowance the row would have held rather than to an accidental cut-off.
+// Production's live value is whatever an admin set on the Limits page; the
+// seed only ever inserts when the row is absent.
+const DEFAULT_WEEKLY_LIMIT_CENTS = 5000;
 async function getDefaultUserWeeklyLimitCents(pool) {
-  return readSettingCents(pool, KEY_WEEKLY, 17500);
+  return readSettingCents(pool, KEY_WEEKLY, DEFAULT_WEEKLY_LIMIT_CENTS);
 }
 
 // #361: the system-tokens daily cap (cents). Same 10s-cached read as the
@@ -406,28 +412,27 @@ async function resolveWeeklyEntitlement(pool, row, userId) {
   };
 }
 
-// #1788: the whole daily/weekly interaction, in one place, so checkBudget,
-// getBudgetSnapshot, the worker Anthropic proxy and the app LLM proxy can
-// never disagree about it. Four cases:
+// #1788 introduced a daily/weekly interaction; #2571 collapses it. The
+// per-user DAILY cap no longer applies to anybody — `dailyApplies` is
+// always false — so there are two cases left:
 //
-//   daily > 0, weekly > 0  → both apply; the turn stops at whichever is
-//                            exhausted first.
-//   daily 0/unset          → weekly only. No daily ceiling at all: the
-//                            week's allowance may be spent in one day.
-//   weekly 0/unset         → daily only. Today's behaviour, unchanged.
-//   both 0/unset           → NOTHING applies, so nothing is granted. With
-//                            no ceiling of either kind the safe reading is
-//                            "no platform credits", not "unlimited".
+//   weekly > 0    → the weekly cap is the account's allowance, spent from
+//                   one pool wherever the spend happens, and it resets at
+//                   the platform's week boundary (Monday 00:00 UTC).
+//   weekly 0/unset→ NOTHING applies, so nothing is granted. With no ceiling
+//                   of any kind the safe reading is "no platform credits",
+//                   not "unlimited".
 //
-// The zero-means-disabled reinterpretation is deliberately scoped to caps
-// an admin actually set: only `admin_override` and `default` sources may be
-// switched off that way. An identity-derived 0 (tiered policy, unverified
-// account) keeps applying, so a weekly allowance can never unlock credits
-// that identity verification is meant to gate.
+// `dailyLimitCents`/`dailySource` are still reported because the stored
+// value still exists and the admin console and diagnostics read it; no gate
+// consults them any more. The zero-means-disabled reading stays scoped to
+// caps an admin actually set: only `admin_override`, `default` and (#838) a
+// tier's own value may be switched off that way. An identity-derived 0
+// (tiered policy, unverified account) is not a switched-off cap — see
+// isIdentityGated() below, which is now the only reader of that distinction.
 function resolveCaps(entitlement = {}) {
   const dailyLimitCents = Number(entitlement.limitCents) || 0;
   const dailySource = entitlement.source;
-  const dailyOptional = dailySource === 'admin_override' || dailySource === 'default';
 
   const weeklyLimitCents = Number(entitlement.weeklyLimitCents) || 0;
   const weeklySource = entitlement.weeklySource;
@@ -437,7 +442,7 @@ function resolveCaps(entitlement = {}) {
     || weeklySource === 'tier';
 
   return {
-    dailyApplies: dailyOptional ? dailyLimitCents > 0 : true,
+    dailyApplies: false,
     dailyLimitCents,
     dailySource: dailySource || null,
     weeklyApplies: weeklyOptional ? weeklyLimitCents > 0 : false,
@@ -446,18 +451,44 @@ function resolveCaps(entitlement = {}) {
   };
 }
 
-// Week-to-date platform-key spend for one user (cents), over the current
-// Monday-00:00-UTC week. Reads the SAME daily ledger the daily cap reads —
-// llm_usage is one row per (user_id, date), so a weekly figure is a sum,
-// not a second table. BYOK spend is excluded, exactly as it is daily.
-async function getWeeklySpentCents(pool, userId, { now = new Date() } = {}) {
+// #2571: "this account has been granted nothing by IDENTITY" used to be
+// spelled `caps.dailyApplies && caps.dailyLimitCents <= 0` — a reading that
+// only worked while a non-admin-set daily cap still applied. resolveCaps now
+// answers dailyApplies:false for everyone, so the question is asked directly
+// here instead: an entitlement whose allowance came from identity (the
+// tiered policy's unverified tier) or could not be read at all, and is zero.
+// An admin-set cap of 0 is a switched-off cap, never an identity gate.
+function isIdentityGated(entitlement = {}) {
+  const source = entitlement.source;
+  const adminSet = source === 'admin_override' || source === 'default';
+  return !adminSet && !(Number(entitlement.limitCents) > 0);
+}
+
+// Week-to-date spend for one user (cents), over the current Monday-00:00-UTC
+// week, split by who paid. llm_usage is one row per (user_id, date), so a
+// weekly figure is a sum, not a second table.
+//   platformCents  what the cap is measured against: platform-funded spend,
+//                  which since #2571 means Claude turns AND turns run on the
+//                  account's included (company-funded) OpenRouter key alike.
+//   byokCents      the user's own key, display only — no cap has ever
+//                  counted it (#119).
+async function getWeeklyTotalsCents(pool, userId, { now = new Date() } = {}) {
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(total_cost_cents), 0) AS total
+    `SELECT COALESCE(SUM(total_cost_cents), 0) AS total,
+            COALESCE(SUM(byok_cost_cents), 0)  AS byok
        FROM llm_usage
       WHERE user_id = $1 AND date >= $2`,
     [userId, weekStartUtc(now)]
   );
-  return parseFloat(rows[0]?.total || 0);
+  return {
+    platformCents: parseFloat(rows[0]?.total || 0),
+    byokCents: parseFloat(rows[0]?.byok || 0),
+  };
+}
+
+// The capped half of the above, which is what every gate wants.
+async function getWeeklySpentCents(pool, userId, opts = {}) {
+  return (await getWeeklyTotalsCents(pool, userId, opts)).platformCents;
 }
 
 // The per-user weekly cap actually in force (cents), for the two proxies'
@@ -487,6 +518,19 @@ async function checkBudget(pool, userId) {
       ...entitlement,
     };
   }
+  // #2571: identity gating is no longer expressed as "the daily cap is zero
+  // and it applies" — the daily cap applies to nobody now. An account the
+  // tiered policy has granted nothing is refused here, before any window
+  // arithmetic, which is exactly when the old daily branch refused it (its
+  // limit was 0, so today's spend was always at or over it).
+  if (entitlement.verificationRequired) {
+    return {
+      error: 'Connect GitHub or X in Settings to unlock $10.00/day of Homeroom credits.',
+      reason: 'verification_required',
+      ...entitlement,
+    };
+  }
+
   const globalLimit = await getGlobalLimitCents(pool);
   const caps = resolveCaps(entitlement);
 
@@ -495,23 +539,11 @@ async function checkBudget(pool, userId) {
     [userId]
   );
   const userSpent = parseFloat(userRows[0]?.total_cost_cents || 0);
-  if (caps.dailyApplies && userSpent >= userLimit) {
-    if (entitlement.verificationRequired) {
-      return {
-        error: 'Connect GitHub or X in Settings to unlock $10.00/day of Homeroom credits.',
-        reason: 'verification_required',
-        ...entitlement,
-      };
-    }
-    return {
-      error: `Daily limit reached ($${(userLimit / 100).toFixed(2)}). Resets at ${DAILY_RESET_LABEL}.`,
-      reason: 'user_limit',
-      ...entitlement,
-    };
-  }
 
-  // #1788: the weekly ceiling, checked after the daily one so a user who is
-  // out on BOTH is told about the shorter wait first.
+  // #2571: the weekly ceiling is the only per-user ceiling. It counts every
+  // platform-funded turn in the ledger — Claude spend and spend through the
+  // account's included (company-funded) OpenRouter key alike, which
+  // src/routes/sessions.js debits into the same `llm_usage` rows.
   let weeklySpent = 0;
   if (caps.weeklyApplies) {
     try {
@@ -533,12 +565,12 @@ async function checkBudget(pool, userId) {
     }
   }
 
-  // Neither cap applies. Not "unlimited" — an account with no ceiling of
-  // any kind has no allowance to draw on, so it fails closed. BYOK still
-  // works: resolveBillingPath resolves the user's own key after this gate.
-  if (!caps.dailyApplies && !caps.weeklyApplies) {
+  // No cap applies. Not "unlimited" — an account with no ceiling has no
+  // allowance to draw on, so it fails closed. BYOK still works:
+  // resolveBillingPath resolves the user's own key after this gate.
+  if (!caps.weeklyApplies) {
     return {
-      error: 'No AI allowance is configured for this account. An admin can set a daily or weekly cap in the admin console.',
+      error: 'No AI allowance is configured for this account. An admin can set a weekly cap in the admin console.',
       reason: 'no_allowance',
       ...entitlement,
     };
@@ -583,6 +615,7 @@ async function checkBudget(pool, userId) {
 //
 // byokCents is reported but is NOT subtracted from the allowance: that
 // spend went to the user's own key and no cap has ever counted it (#119).
+// Since #2571 it covers the same week the allowance does.
 async function getBudgetSnapshot(pool, userId) {
   const entitlement = await getUserCreditEntitlement(pool, userId);
   const caps = resolveCaps(entitlement);
@@ -611,27 +644,27 @@ async function getBudgetSnapshot(pool, userId) {
     // spent" — the limit itself is still accurate.
     log.warn('limits', 'budget snapshot read failed', { userId, err: err.message });
   }
-  if (caps.weeklyApplies) {
-    try {
-      weeklySpentCents = await getWeeklySpentCents(pool, userId);
-    } catch (err) {
-      log.warn('limits', 'weekly snapshot read failed', { userId, err: err.message });
-    }
+  // #2571: the weekly figure is now THE figure, so it is read on every
+  // snapshot rather than only when a weekly cap happens to apply — an
+  // account with no cap still needs an honest "spent" number. The BYOK
+  // figure beside it moves to the same window: one card cannot state a
+  // week's platform spend next to a day's own-key spend and be read right.
+  try {
+    const week = await getWeeklyTotalsCents(pool, userId);
+    weeklySpentCents = week.platformCents;
+    byokCents = week.byokCents;
+  } catch (err) {
+    log.warn('limits', 'weekly snapshot read failed', { userId, err: err.message });
   }
 
-  // #1788: report the BINDING cap in the fields the client already reads.
-  // The meter, the drawer row and the warning banner all key off
-  // limitCents/spentCents/remainingCents, and public/js/credit-options.js
-  // maps limitCents === 0 to the red "exhausted" state — so a user whose
-  // daily cap is deliberately switched off must never see a literal 0 here
-  // while their weekly allowance still has headroom. Whichever applicable
-  // cap has the least room left is the one that will actually stop the next
-  // turn, so that is the one worth showing.
-  const dailyRemaining = Math.max(0, limitCents - spentCents);
+  // #2571: the weekly cap is the only one that can bind, so the fields the
+  // client already reads (limitCents/spentCents/remainingCents) describe the
+  // WEEK. An account with no weekly cap has no allowance at all, and
+  // public/js/credit-options.js reads a limit of 0 as the red "exhausted"
+  // state — which is exactly what that account is.
   const weeklyRemaining = Math.max(0, caps.weeklyLimitCents - weeklySpentCents);
-  const weeklyBinds = caps.weeklyApplies
-    && (!caps.dailyApplies || weeklyRemaining < dailyRemaining);
-  const capWindow = weeklyBinds ? 'weekly' : (caps.dailyApplies ? 'daily' : 'none');
+  const weeklyBinds = caps.weeklyApplies;
+  const capWindow = weeklyBinds ? 'weekly' : 'none';
 
   return {
     creditPolicy: entitlement.policy,
@@ -644,20 +677,22 @@ async function getBudgetSnapshot(pool, userId) {
     // that cap came from ('admin_override' | 'tier' | 'default').
     identityTier: entitlement.identityTier ?? null,
     weeklySource: entitlement.weeklySource ?? null,
-    limitCents: weeklyBinds ? caps.weeklyLimitCents : limitCents,
-    spentCents: weeklyBinds ? weeklySpentCents : spentCents,
-    remainingCents: weeklyBinds ? weeklyRemaining : dailyRemaining,
+    limitCents: weeklyBinds ? caps.weeklyLimitCents : 0,
+    spentCents: weeklySpentCents,
+    remainingCents: weeklyBinds ? weeklyRemaining : 0,
     byokCents,
     hasByokKey,
     // The boundary the binding cap actually resets on, matching the
     // sentence checkBudget's message promises for that same cap.
-    resetsAt: weeklyBinds ? weeklyResetAt() : dailyResetAt(),
+    resetsAt: weeklyResetAt(),
     lowBalancePct: LOW_BALANCE_PCT,
     // #1788: which window the figures above describe, and the breakdown
-    // behind them, so a caller that wants both can have both.
+    // behind them, so a caller that wants both can have both. #2571: the
+    // window is always the week now; the daily fields below report the
+    // retained-but-unenforced setting and today's spend.
     capWindow,
-    windowLabel: weeklyBinds ? 'This week' : 'Today',
-    resetLabel: weeklyBinds ? WEEKLY_RESET_LABEL : DAILY_RESET_LABEL,
+    windowLabel: 'This week',
+    resetLabel: WEEKLY_RESET_LABEL,
     dailyApplies: caps.dailyApplies,
     dailyLimitCents: limitCents,
     dailySpentCents: spentCents,
@@ -909,7 +944,10 @@ module.exports = {
   getEffectiveUserLimitCents,
   getEffectiveUserWeeklyLimitCents,
   getWeeklySpentCents,
+  getWeeklyTotalsCents,
   resolveCaps,
+  isIdentityGated,
+  DEFAULT_WEEKLY_LIMIT_CENTS,
   getUserCreditEntitlement,
   identityCreditPolicy,
   getBudgetSnapshot,

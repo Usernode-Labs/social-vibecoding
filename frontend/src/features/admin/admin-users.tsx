@@ -551,13 +551,13 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
               type="text" spellCheck={false} placeholder="none" disabled={!canWrite}
               committed={walletAddr} onCommit={commitWallet} />
           </div>
-          <div className={CONTROL} title="Per-user daily cap in dollars. Blank = use platform default. 0 switches the daily window off.">
-            <span className={TINY_LABEL}>Cap $</span>
+          <div className={CONTROL} title="Per-user DAILY cap in dollars. No longer enforced (#2571): the weekly cap beside it is this account's only limit. Kept so an existing value is not lost.">
+            <span className={TINY_LABEL}>Daily $ (off)</span>
             <CommitField className={`admin-user-limit-input w-20 ${SMALL_INPUT}`}
               type="number" inputMode="decimal" placeholder="default" disabled={!canWrite}
               committed={overrideDollars} onCommit={commitCap} />
           </div>
-          <div className={CONTROL} title="Per-user weekly cap in dollars, enforced on top of the daily one. Blank = use the platform default for this account's identity tier. 0 switches the weekly window off.">
+          <div className={CONTROL} title="Per-user weekly cap in dollars: the account's only AI limit, covering platform Claude spend and included-OpenRouter-key spend alike. Blank = use the platform default for this account's identity tier. 0 leaves the account no allowance.">
             <span className={TINY_LABEL}>Weekly $</span>
             <CommitField className={`admin-user-weekly-limit-input w-20 ${SMALL_INPUT}`}
               type="number" inputMode="decimal" placeholder="default" disabled={!canWrite}

@@ -35,7 +35,7 @@
  *
  * #593 widened it from "you ran out" to the whole allowance story, because
  * the states are one story and were told in different words in each place:
- * the composer meter said `$13.60/$20.00` and hid the remainder and the
+ * the composer meter said `$13.60/$50.00` and hid the remainder and the
  * reset in a tooltip, the drawer row said the same thing in its own
  * formatting, and nothing at all was said as the allowance ran low. So
  * `creditState()` (normalise either budget payload → one state), plus the
@@ -105,9 +105,11 @@
   }
 
   // The one sentence every surface uses to answer "when do I get them
-  // back?". Names the boundary the server names (midnight UTC — the
-  // llm_usage date rollover), then translates it, because almost nobody
-  // reading it is on UTC and "tomorrow" was the old, wrong shorthand.
+  // back?". Names the boundary the server names (#2571: Monday 00:00 UTC,
+  // the week the one account-wide allowance runs over), then translates a
+  // daily one, because almost nobody reading it is on UTC and "tomorrow"
+  // was the old, wrong shorthand. A payload with no window at all keeps
+  // the pre-#1788 daily spelling.
   function resetSentence(state, nowMs) {
     var s = state || {};
     if (s.level === 'locked') {
@@ -204,10 +206,12 @@
       hasByokKey: !!s.hasByokKey,
       globalOut: globalOut,
       resetsAt: s.resetsAt || null,
-      // #1788: the allowance is two windows now, and the server reports
-      // whichever one is BINDING in the legacy limit/spent/remaining
-      // fields. These three say which window that was, so every sentence
-      // below names the right boundary instead of assuming "daily".
+      // #1788 gave the allowance two windows and reported whichever was
+      // BINDING in the legacy limit/spent/remaining fields; #2571 leaves
+      // one, and the server always names it. These three still say which
+      // window the figures describe, so every sentence below names the
+      // right boundary; the daily spellings survive only as the fallback
+      // for a payload that carries no window at all.
       capWindow: s.capWindow || 'daily',
       windowLabel: s.windowLabel || 'Today',
       resetLabel: s.resetLabel || 'midnight UTC',
@@ -336,8 +340,8 @@
         ? "Your saved key couldn't be used"
         : 'Use your own Anthropic API key',
       blurb: hasApiKey
-        ? 'Homeroom has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. The daily allowance is bypassed entirely while a working key is on file.'
-        : 'Paste a key in Settings → API key and Homeroom keeps working exactly as it does now, billed to your Anthropic account instead of your daily allowance.',
+        ? 'Homeroom has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. Your weekly allowance is bypassed entirely while a working key is on file.'
+        : 'Paste a key in Settings → API key and Homeroom keeps working exactly as it does now, billed to your Anthropic account instead of your weekly allowance.',
       cta: hasApiKey ? 'Check API key' : 'Add API key',
       hash: SETTINGS_HASHES.apiKey,
       developer: false,
@@ -443,15 +447,19 @@
 
   // Lead sentence. `globalOut` means the PLATFORM's shared daily budget is
   // spent rather than this user's own allowance — all three routes bypass
-  // it either way, so only the explanation changes.
+  // it either way, so only the explanation changes. That operator cap is
+  // still a DAILY one and is named as such; the user's own allowance is
+  // weekly since #2571, so `capWindow` decides the second sentence and the
+  // daily spelling remains only for a caller that omits it.
   function lead(state) {
     var s = state || {};
     if (s.verificationRequired) {
       return 'Connect GitHub or X to unlock $10/day of Homeroom credits.';
     }
-    return s.globalOut
-      ? "The platform's shared daily AI budget is used up."
-      : "You're out of today's free AI credits.";
+    if (s.globalOut) return "The platform's shared daily AI budget is used up.";
+    return s.capWindow === 'daily'
+      ? "You're out of today's free AI credits."
+      : "You're out of this week's free AI credits.";
   }
 
   function optionRowHtml(opt) {
@@ -499,7 +507,7 @@
   // DevChat.renderMessages when a message carries `creditsCard`.
   //
   // `state.error` is the platform's own billing message (limits.checkBudget
-  // → "Daily limit reached ($20.00). Resets at midnight UTC."). It is
+  // → "Weekly limit reached ($50.00). Resets Monday 00:00 UTC."). It is
   // escaped, never injected — it is server text, but the card must not be
   // an HTML sink regardless.
   function cardHtml(state) {
