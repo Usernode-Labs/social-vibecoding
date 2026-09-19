@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 631,
+    "totalRoutes": 633,
     "mappedRoutes": 500,
-    "exemptRoutes": 131,
+    "exemptRoutes": 133,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 346,
+    "clientApiReferences": 348,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 20,
     "navigationSurfaces": 10
@@ -5290,7 +5290,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 509,
+      "line": 510,
       "method": "GET",
       "path": "/api/global-chat/threads/current",
       "expression": null,
@@ -5299,7 +5299,16 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 520,
+      "line": 521,
+      "method": "GET",
+      "path": "/api/global-chat/threads",
+      "expression": null,
+      "status": "exempt",
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "source": "src/routes/global-chat.js",
+      "line": 535,
       "method": "POST",
       "path": "/api/global-chat/threads",
       "expression": null,
@@ -5308,7 +5317,16 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 532,
+      "line": 547,
+      "method": "GET",
+      "path": "/api/global-chat/threads/:id",
+      "expression": null,
+      "status": "exempt",
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "source": "src/routes/global-chat.js",
+      "line": 563,
       "method": "GET",
       "path": "/api/global-chat/threads/:id/messages",
       "expression": null,
@@ -5317,7 +5335,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 568,
+      "line": 599,
       "method": "POST",
       "path": "/api/global-chat/threads/:id/turns",
       "expression": null,
@@ -5326,7 +5344,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 572,
+      "line": 603,
       "method": "POST",
       "path": "/api/global-chat/threads/:id/more-suggestions",
       "expression": null,
@@ -5335,7 +5353,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 576,
+      "line": 607,
       "method": "POST",
       "path": "/api/global-chat/actions/:token/confirm",
       "expression": null,
@@ -5344,7 +5362,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 644,
+      "line": 675,
       "method": "DELETE",
       "path": "/api/global-chat/threads/:id",
       "expression": null,
@@ -5353,7 +5371,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 660,
+      "line": 691,
       "method": "GET",
       "path": "/api/me/global-chat",
       "expression": null,
@@ -5362,7 +5380,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 681,
+      "line": 712,
       "method": "PATCH",
       "path": "/api/me/global-chat",
       "expression": null,
@@ -5371,7 +5389,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 705,
+      "line": 736,
       "method": "GET",
       "path": "/api/me/global-chat/models",
       "expression": null,
@@ -5380,7 +5398,7 @@
     },
     {
       "source": "src/routes/global-chat.js",
-      "line": 727,
+      "line": 758,
       "method": "GET",
       "path": "/api/me/global-chat/usage",
       "expression": null,
@@ -11783,6 +11801,13 @@
       "reason": "dynamic client composition represented by the mapped development-flow routes"
     },
     {
+      "path": "/api/global-chat/:param",
+      "sources": [
+        "frontend/src/features/global-chat/api.ts"
+      ],
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
       "path": "/api/global-chat/actions/:param/confirm",
       "sources": [
         "frontend/src/features/global-chat/api.ts"
@@ -11798,6 +11823,13 @@
     },
     {
       "path": "/api/global-chat/threads",
+      "sources": [
+        "frontend/src/features/global-chat/api.ts"
+      ],
+      "reason": "Global Chat infrastructure cannot recursively expose itself"
+    },
+    {
+      "path": "/api/global-chat/threads/:param",
       "sources": [
         "frontend/src/features/global-chat/api.ts"
       ],
