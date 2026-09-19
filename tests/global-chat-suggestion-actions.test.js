@@ -1,0 +1,115 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const test = require('node:test');
+
+const { resolveAction, SuggestionActionError } = require('../src/services/global-chat/suggestion-actions');
+const { createSuggestionExecutor } = require('../src/services/global-chat/suggestion-executor');
+
+const THREAD_ID = '95df0790-4873-43cc-9608-728f3349da50';
+const RESULT_ID = '00000000-0000-4000-8000-000000000001';
+
+test('fixed suggestions resolve only to server-owned read steps', () => {
+  const apps = resolveAction({ suggestionId: 'next.general.apps', parameters: {} });
+  assert.equal(apps.id, 'apps.list');
+  assert.equal(apps.steps.length, 1);
+  assert.match(apps.steps[0].capabilityId, /^apps\.get\.apps\./);
+  assert.deepEqual(apps.steps[0].input, {
+    pathParameters: {}, query: [], bodyJson: null,
+  });
+
+  const issue = resolveAction({
+    actionId: 'issue.detail',
+    parameters: { appSlug: 'social-vibecoding', issueNumber: '2377' },
+  });
+  assert.equal(issue.steps[0].input.pathParameters.slug, 'social-vibecoding');
+  assert.equal(issue.steps[0].input.pathParameters.number, '2377');
+
+  assert.throws(
+    () => resolveAction({
+      actionId: 'issue.detail',
+      parameters: { appSlug: '../admin', issueNumber: '2377' },
+    }),
+    (error) => error instanceof SuggestionActionError
+      && error.code === 'invalid_direct_action',
+  );
+  assert.throws(
+    () => resolveAction({ actionId: 'issues.delete', parameters: {} }),
+    (error) => error instanceof SuggestionActionError
+      && error.code === 'direct_action_not_found',
+  );
+});
+
+test('a direct suggestion persists authoritative results with zero model invocations', async () => {
+  const calls = [];
+  let messageId = 0;
+  const store = {
+    async claimTurn() { calls.push('claim'); return 'turn-1'; },
+    async releaseTurn() { calls.push('release'); return true; },
+    async insertMessage(_pool, value) {
+      messageId += 1;
+      calls.push({ type: 'message', value });
+      return { id: String(messageId), ...value };
+    },
+    async startToolRun(_pool, value) {
+      calls.push({ type: 'start', value });
+      return RESULT_ID;
+    },
+    async finishToolRun(_pool, value) {
+      calls.push({ type: 'finish', value });
+      return true;
+    },
+    async loadToolResults() {
+      return [{
+        id: RESULT_ID,
+        capabilityId: 'apps.get.apps.b3dd6aff',
+        authoritativeResult: { ok: true, status: 200, data: { apps: [] } },
+        renderer: 'app',
+        classicPath: '#apps',
+        status: 'completed',
+      }];
+    },
+  };
+  const registry = {
+    get(id) {
+      return {
+        id,
+        risk: 'read',
+        confirmation: 'never',
+        access: () => true,
+      };
+    },
+    async execute(id, input) {
+      calls.push({ type: 'execute', id, input });
+      return {
+        authoritativeResult: { ok: true, status: 200, data: { apps: [] } },
+        modelResult: { ok: true, status: 200, data: { apps: [] } },
+        renderer: 'app',
+        classicPath: '#apps',
+      };
+    },
+  };
+  const executor = createSuggestionExecutor({
+    pool: {},
+    config: { dataEncryptionKey: 'test-key' },
+    registry,
+    store,
+  });
+  const result = await executor.execute({
+    userId: 7,
+    threadId: THREAD_ID,
+    suggestionId: 'next.general.apps',
+    parameters: {},
+    excludedSuggestionIds: ['next.general.apps'],
+    client: { surface: 'web', viewport: 'regular' },
+    executionContext: { actor: { signedIn: true } },
+  });
+
+  assert.equal(result.modelInvocations, 0);
+  assert.equal(result.results[0].id, RESULT_ID);
+  assert.deepEqual(result.presentation.resultRefs, [RESULT_ID]);
+  assert.equal(result.presentation.suggestions.length, 5);
+  assert.ok(result.presentation.suggestions.some((item) => item.actionId));
+  assert.equal(calls.filter((entry) => entry?.type === 'execute').length, 1);
+  assert.deepEqual(calls.slice(-1), ['release']);
+});

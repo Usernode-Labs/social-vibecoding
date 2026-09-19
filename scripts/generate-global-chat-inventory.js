@@ -421,7 +421,9 @@ function classicPathFor(domain, routePath) {
     return inApp ? appRoot + '/workshop' : '#workshop';
   }
   if (domain === 'governance') {
-    const proposal = value.match(/\/(?:proposals|governance)\/:(id|sessionId)(?:\/|$)/);
+    const governance = value.match(/\/governance\/:(id)(?:\/|$)/);
+    if (inApp && governance) return appRoot + '/dev/governance/:' + governance[1];
+    const proposal = value.match(/\/proposals\/:(id|sessionId)(?:\/|$)/);
     if (inApp && proposal) return appRoot + '/dev/proposals/:' + proposal[1];
     return inApp ? appRoot + '/workshop' : '#workshop';
   }

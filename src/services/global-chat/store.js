@@ -366,6 +366,21 @@ async function releaseTurn(pool, { userId: requestedUserId, threadId, turnId }) 
   return result.rowCount === 1;
 }
 
+async function turnState(pool, { userId: requestedUserId, threadId }) {
+  const { rows } = await pool.query(
+    `SELECT active_turn_id, active_turn_started_at
+       FROM global_chat_threads
+      WHERE id = $1 AND user_id = $2 AND archived_at IS NULL`,
+    [uuid(threadId, 'thread id'), userId(requestedUserId)],
+  );
+  if (!rows[0]) throw new GlobalChatStoreError('thread_not_found', 'That Global Chat thread is unavailable.');
+  return {
+    active: !!rows[0].active_turn_id,
+    turnId: rows[0].active_turn_id || null,
+    startedAt: iso(rows[0].active_turn_started_at),
+  };
+}
+
 async function startToolRun(pool, {
   userId: requestedUserId,
   threadId,
@@ -504,4 +519,5 @@ module.exports = {
   startToolRun,
   threadForUser,
   threadShape,
+  turnState,
 };

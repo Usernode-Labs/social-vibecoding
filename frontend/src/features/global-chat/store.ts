@@ -7,6 +7,7 @@ import type {
   GlobalChatPresentation,
   GlobalChatResult,
   GlobalChatThread,
+  GlobalChatSuggestion,
 } from './types';
 
 type Phase = 'idle' | 'booting' | 'loading' | 'ready' | 'sending' | 'error';
@@ -73,6 +74,86 @@ function resultsById(results: GlobalChatResult[], current = state.results) {
   const next = { ...current };
   for (const result of results || []) if (result?.id) next[result.id] = result;
   return next;
+}
+
+function numericMessageId(value: string | null | undefined): bigint {
+  return typeof value === 'string' && /^\d+$/.test(value) ? BigInt(value) : 0n;
+}
+
+function lastPersistedMessageId(messages: GlobalChatMessage[]) {
+  return messages.reduce((latest, message) => {
+    const id = numericMessageId(message.id);
+    return id > latest ? id : latest;
+  }, 0n);
+}
+
+function shownSuggestionIds() {
+  const ids = new Set<string>();
+  for (const suggestion of state.bootstrap?.firstUse.suggestions || []) ids.add(suggestion.id);
+  for (const message of state.messages) {
+    const presentation = message.payload?.presentation as GlobalChatPresentation | undefined;
+    for (const suggestion of presentation?.suggestions || []) ids.add(suggestion.id);
+  }
+  return [...ids];
+}
+
+function mergePersistedMessages(current: GlobalChatMessage[], incoming: GlobalChatMessage[]) {
+  const withoutOptimistic = current.filter((message) => !message.pending);
+  const ids = new Set(withoutOptimistic.map((message) => message.id));
+  return [
+    ...withoutOptimistic,
+    ...incoming.filter((message) => !ids.has(message.id)),
+  ];
+}
+
+async function recoverInterruptedTurn(
+  threadId: string,
+  afterMessageId: bigint,
+  signal: AbortSignal,
+) {
+  const deadline = Date.now() + 55_000;
+  let inactivePolls = 0;
+  const restore = (page: Awaited<ReturnType<typeof api.messages>>) => {
+    if (state.bootstrap?.thread?.id !== threadId) return false;
+    const newer = page.messages.filter(
+      (message) => numericMessageId(message.id) > afterMessageId,
+    );
+    if (!newer.some((message) => message.role === 'assistant')) return false;
+    publish((current) => current.bootstrap?.thread?.id === threadId
+      ? {
+        phase: 'ready',
+        activity: '',
+        error: '',
+        messages: mergePersistedMessages(current.messages, newer),
+        results: resultsById(page.results, current.results),
+      }
+      : {});
+    return true;
+  };
+  while (!signal.aborted && Date.now() < deadline) {
+    try {
+      const page = await api.messages(threadId, { limit: 20, signal });
+      if (restore(page)) return true;
+      const status = await api.turnStatus(threadId, signal);
+      if (!status.active) {
+        // Close the race where the assistant is committed after the first
+        // message read but immediately before the lease is released. Two
+        // inactive samples also cover a disconnect just before claimTurn.
+        const finalPage = await api.messages(threadId, { limit: 20, signal });
+        if (restore(finalPage)) return true;
+        inactivePolls += 1;
+        if (inactivePolls >= 2) return false;
+      } else {
+        inactivePolls = 0;
+      }
+    } catch (error) {
+      if (signal.aborted) return false;
+      // A short network interruption is exactly why this recovery path
+      // exists. Keep polling until the durable turn completes or times out.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  return false;
 }
 
 function errorText(error: unknown, fallback = 'Global Chat could not complete that request.') {
@@ -213,6 +294,7 @@ export async function openGlobalChat({ threadId = null }: {
     if (previousThreadId && previousThreadId !== thread.id && activeAbort) {
       activeAbort.abort();
       activeAbort = null;
+      void api.cancelTurn(previousThreadId).catch(() => {});
     }
     selectThread(thread, { first: !state.threads.some((item) => item.id === thread.id) });
     if (window.location.hash === '#chat') {
@@ -231,16 +313,16 @@ export async function openGlobalChat({ threadId = null }: {
 }
 
 export function deactivateGlobalChat() {
+  const activeThreadId = activeAbort ? state.bootstrap?.thread?.id : null;
   navigationVersion += 1;
   if (activeAbort) activeAbort.abort();
   activeAbort = null;
+  if (activeThreadId) void api.cancelTurn(activeThreadId).catch(() => {});
   publish({ open: false, phase: state.bootstrap ? 'ready' : 'idle', activity: '', error: '' });
 }
 
 export function closeGlobalChat(classicPath?: string | null) {
-  navigationVersion += 1;
-  if (activeAbort) activeAbort.abort();
-  activeAbort = null;
+  deactivateGlobalChat();
 
   const aliases: Record<string, string> = {
     '#browse': '#apps',
@@ -330,14 +412,19 @@ async function runTurn({ text, more = false, topic }: {
     publish({ error: 'Enable experimental Global Chat in Settings first.' });
     return;
   }
-  if (!boot.available) {
+  // Curated More pages are zero-model server actions and remain useful before
+  // an OpenRouter key is configured. Once those pages are exhausted, the
+  // server returns the normal model-unavailable explanation for generated
+  // suggestions. Free-form turns still require a configured model up front.
+  if (!boot.available && !more) {
     publish({ error: 'Add or claim an OpenRouter key in Settings to use Global Chat.' });
     return;
   }
+  const messageBoundary = lastPersistedMessageId(state.messages);
   appendOptimisticUser(more ? 'More suggestions' : text);
   const controller = new AbortController();
   activeAbort = controller;
-  publish({ phase: 'sending', activity: 'Thinking…', error: '' });
+  publish({ phase: 'sending', activity: more ? 'Loading options…' : 'Thinking…', error: '' });
   let completed = false;
   try {
     await api.streamTurn({
@@ -345,6 +432,7 @@ async function runTurn({ text, more = false, topic }: {
       text,
       more,
       topic,
+      shownSuggestionIds: more ? shownSuggestionIds() : undefined,
       signal: controller.signal,
       onEvent(event) {
         if (event.type === 'tool.started') {
@@ -401,23 +489,48 @@ async function runTurn({ text, more = false, topic }: {
     });
     if (!completed && !controller.signal.aborted) {
       publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? { activity: 'Reconnecting…' }
+        : {});
+      completed = await recoverInterruptedTurn(thread.id, messageBoundary, controller.signal);
+      if (!completed && !controller.signal.aborted) {
+        publish((current) => current.bootstrap?.thread?.id === thread.id
+          ? {
+            phase: 'error',
+            activity: '',
+            error: 'The connection was interrupted before an answer was saved. Please try again.',
+            messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+          }
+          : {});
+      }
+    }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      publish((current) => current.bootstrap?.thread?.id === thread.id
         ? {
-          phase: 'error',
+          phase: 'ready',
           activity: '',
-          error: 'The response ended before it was complete.',
           messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
         }
         : {});
-    }
-  } catch (error) {
-    publish((current) => current.bootstrap?.thread?.id === thread.id
-      ? {
-        phase: controller.signal.aborted ? 'ready' : 'error',
-        activity: '',
-        ...(controller.signal.aborted ? {} : { error: errorText(error) }),
-        messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+    } else if (!completed) {
+      // A broken fetch/read rejects instead of reaching the clean-EOF branch
+      // above, but the server may still be finishing the same durable turn.
+      // Recover it in exactly the same way before showing a retry error.
+      publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? { activity: 'Reconnecting…' }
+        : {});
+      completed = await recoverInterruptedTurn(thread.id, messageBoundary, controller.signal);
+      if (!completed && !controller.signal.aborted) {
+        publish((current) => current.bootstrap?.thread?.id === thread.id
+          ? {
+            phase: 'error',
+            activity: '',
+            error: errorText(error),
+            messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+          }
+          : {});
       }
-      : {});
+    }
   } finally {
     if (activeAbort === controller) activeAbort = null;
     setThreadBusy(thread.id, false);
@@ -432,12 +545,109 @@ export async function sendGlobalChatMessage(text: string) {
   await runTurn({ text: value });
 }
 
+async function runDirectAction({
+  label,
+  suggestionId,
+  actionId,
+  parameters,
+}: {
+  label: string;
+  suggestionId?: string;
+  actionId?: string;
+  parameters?: Record<string, string>;
+}) {
+  const boot = state.bootstrap || await initializeGlobalChat();
+  if (!boot || state.phase === 'sending') return;
+  const thread = boot.thread;
+  if (!boot.profiles.globalChat.enabled || !thread) {
+    publish({ error: 'Enable experimental Global Chat in Settings first.' });
+    return;
+  }
+  const messageBoundary = lastPersistedMessageId(state.messages);
+  appendOptimisticUser(label);
+  const controller = new AbortController();
+  activeAbort = controller;
+  publish({ phase: 'sending', activity: 'Loading…', error: '' });
+  try {
+    const response = await api.executeDirectAction(thread.id, {
+      ...(suggestionId ? { suggestionId } : { actionId }),
+      parameters,
+      shownSuggestionIds: shownSuggestionIds(),
+    }, controller.signal);
+    publish((current) => current.bootstrap?.thread?.id === thread.id
+      ? {
+        phase: 'ready',
+        activity: '',
+        error: '',
+        messages: mergePersistedMessages(current.messages, [
+          response.userMessage,
+          response.message,
+        ]),
+        results: resultsById(response.results, current.results),
+      }
+      : {});
+  } catch (error) {
+    if (controller.signal.aborted) {
+      publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? {
+          phase: 'ready',
+          activity: '',
+          messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+        }
+        : {});
+    } else {
+      publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? { activity: 'Reconnecting…' }
+        : {});
+      const recovered = await recoverInterruptedTurn(
+        thread.id,
+        messageBoundary,
+        controller.signal,
+      );
+      if (!recovered && !controller.signal.aborted) {
+        publish((current) => current.bootstrap?.thread?.id === thread.id
+          ? {
+            phase: 'error',
+            activity: '',
+            error: errorText(error, 'That direct action could not be completed.'),
+            messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+          }
+          : {});
+      }
+    }
+  } finally {
+    if (activeAbort === controller) activeAbort = null;
+    setThreadBusy(thread.id, false);
+    void refreshGlobalChatThreads();
+    void refreshGlobalChatUsage();
+  }
+}
+
+export async function selectGlobalChatSuggestion(suggestion: GlobalChatSuggestion) {
+  if (suggestion.actionId) {
+    await runDirectAction({ label: suggestion.label, suggestionId: suggestion.id });
+    return;
+  }
+  await sendGlobalChatMessage(suggestion.prompt);
+}
+
+export async function executeGlobalChatResultAction(
+  label: string,
+  actionId: string,
+  parameters: Record<string, string>,
+) {
+  await runDirectAction({ label, actionId, parameters });
+}
+
 export async function requestMoreSuggestions(topic?: string) {
   await runTurn({ text: 'More suggestions', more: true, topic });
 }
 
 export function stopGlobalChatTurn() {
+  const threadId = activeAbort ? state.bootstrap?.thread?.id : null;
   activeAbort?.abort();
+  activeAbort = null;
+  if (threadId) void api.cancelTurn(threadId).catch(() => {});
 }
 
 export async function loadOlderGlobalChatMessages() {
@@ -462,8 +672,10 @@ export async function loadOlderGlobalChatMessages() {
 
 export async function startNewGlobalChat() {
   const version = ++navigationVersion;
+  const activeThreadId = activeAbort ? state.bootstrap?.thread?.id : null;
   if (activeAbort) activeAbort.abort();
   activeAbort = null;
+  if (activeThreadId) void api.cancelTurn(activeThreadId).catch(() => {});
   publish({ phase: 'loading', error: '' });
   try {
     const created = await api.createThread();

@@ -104,9 +104,27 @@ test('suggestions stay compact, button-like, and append through a separate More 
   assert.match(screen, />\s*More suggestions\s*<\/button>/s);
   assert.doesNotMatch(screen, /suggestion\.description|Fewer suggestions|Hide suggestions/);
   assert.match(store, /\.\.\.current\.messages\.map[\s\S]*assistant,/);
+  assert.match(screen, /Hold an option for related suggestions\./);
+  assert.match(screen, /onPointerDown/);
+  assert.match(screen, /onContextMenu/);
+  assert.match(screen, /event\.shiftKey && event\.key === 'F10'/);
+  assert.match(screen, /global-chat-related-suggestions/);
+  assert.match(screen, /selectGlobalChatSuggestion\(suggestion\)/);
+  assert.match(screen, /requestMoreSuggestions\(context\)/);
+  assert.match(store, /if \(!boot\.available && !more\)/);
+  assert.match(screen, /The direct options below still work without it\./);
+  assert.match(screen, /snapshot\.bootstrap && !snapshot\.messages\.length/);
 });
 
-test('authoritative results never execute model HTML and retain a Classic escape', () => {
+test('authoritative results never execute model HTML and retain exact Classic escapes', () => {
+  const directItemActionSource = renderers.slice(
+    renderers.indexOf('function directItemActions'),
+    renderers.indexOf('function itemClassicPath'),
+  );
+  const classicPathSource = renderers.slice(
+    renderers.indexOf('function itemClassicPath'),
+    renderers.indexOf('function compactMetadata'),
+  );
   assert.doesNotMatch(renderers, /dangerouslySetInnerHTML|innerHTML|eval\s*\(/);
   assert.match(renderers, /result\.authoritativeResult/);
   assert.match(renderers, /Open in Classic/);
@@ -115,6 +133,26 @@ test('authoritative results never execute model HTML and retain a Classic escape
   assert.match(renderers, /confirmGlobalChatAction\(result, token\)/);
   assert.match(renderers, /payload\.preview/);
   assert.match(renderers, /items\.slice\(0, 3\)/);
+  assert.match(renderers, /#apps\/\$\{segment\(slug\)\}/);
+  assert.match(renderers, /#app\/\$\{segment\(slug\)\}\/dev\/issues\/\$\{segment\(issueNumber\)\}/);
+  assert.match(renderers, /#app\/\$\{segment\(slug\)\}\/dev\/governance\/\$\{segment\(governanceId\)\}/);
+  assert.match(renderers, /#settings\/\$\{segment\(group\)\}/);
+  assert.match(renderers, /github_issue_number/);
+  assert.match(renderers, /githubIssueCapability/);
+  assert.match(renderers, /executeGlobalChatResultAction/);
+  assert.match(renderers, /actionId: 'issues\.for_app'/);
+  assert.match(renderers, /actionId: 'issue\.comments'/);
+  assert.match(renderers, /actionId: 'session\.checks'/);
+  assert.match(directItemActionSource, /proposalType === 'governance'[\s\S]*actionId: 'governance\.detail'/);
+  assert.doesNotMatch(directItemActionSource, /return `#app\//);
+  assert.match(classicPathSource, /proposalType === 'governance'[\s\S]*return `#app\/\$\{segment\(slug\)\}\/dev\/governance/);
+});
+
+test('app results reuse the platform icon primitive for images, emoji, and fallback letters', () => {
+  assert.match(renderers, /AppIconContent, appIconKind/);
+  assert.match(renderers, /result\.renderer === 'app'/);
+  assert.match(renderers, /<AppIconContent app=\{item\} \/>/);
+  assert.match(renderers, /data-icon=\{appIconKind\(item\)\}/);
 });
 
 test('the browser transport uses authenticated POST SSE and same-origin client actions', () => {
@@ -128,6 +166,14 @@ test('the browser transport uses authenticated POST SSE and same-origin client a
   assert.match(store, /transport === 'development_handoff'/);
   assert.match(store, /action\.transport === 'local_setting'/);
   assert.match(store, /drainResponse\(response\.body\)/);
+  assert.match(api, /\/turn-status/);
+  assert.match(api, /\/cancel/);
+  assert.match(api, /\/direct-actions/);
+  assert.match(store, /recoverInterruptedTurn/);
+  assert.match(store, /Reconnecting…/);
+  assert.match(store, /executeDirectAction/);
+  assert.match(api, /modelInvocations:\s*0/);
+  assert.doesNotMatch(store, /The response ended before it was complete\./);
 });
 
 test('Global Chat has a mobile/native layout and accessible composer controls', () => {

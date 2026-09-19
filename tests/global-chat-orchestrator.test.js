@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const { CapabilityRegistry } = require('../src/services/global-chat/capability-registry');
 const {
+  canFastCompleteRead,
   createGlobalChatOrchestrator,
   GlobalChatOrchestrationError,
 } = require('../src/services/global-chat/orchestrator');
@@ -60,10 +61,15 @@ function call(id, name, args) {
   };
 }
 
-function presentation(resultRefs = [], suggestions = [
+const DEFAULT_SUGGESTIONS = [
   { id: 'issue.open', label: 'Open issue', prompt: 'Open issue 1.', capabilityHint: 'issues.get' },
   { id: 'issue.edit', label: 'Edit issue', prompt: 'Edit issue 1.', capabilityHint: 'issues.edit' },
-]) {
+  { id: 'issue.comment', label: 'Add comment', prompt: 'Comment on issue 1.', capabilityHint: 'issues.comment' },
+  { id: 'issue.vote', label: 'Vote', prompt: 'Vote on issue 1.', capabilityHint: 'issues.vote' },
+  { id: 'issue.develop', label: 'Start development', prompt: 'Start development for issue 1.', capabilityHint: 'development.start' },
+];
+
+function presentation(resultRefs = [], suggestions = DEFAULT_SUGGESTIONS) {
   return {
     message: resultRefs.length ? 'I found one issue.' : 'What next?',
     resultRefs,
@@ -190,16 +196,22 @@ function turnInput(overrides = {}) {
   };
 }
 
+test('the one-call shortcut accepts ordinary read phrasing but never write or multi-step intent', () => {
+  const calls = [{ call: { id: 'read_1' }, definition: { risk: 'read' } }];
+  const success = new Map([['read_1', { ok: true, data: { ok: true, status: 200 } }]]);
+  assert.equal(canFastCompleteRead('Could you show my apps?', calls, success), true);
+  assert.equal(canFastCompleteRead('Help me search issues by tag.', calls, success), true);
+  assert.equal(canFastCompleteRead('Show my apps and then delete one.', calls, success), false);
+  assert.equal(canFastCompleteRead('Show my apps.', calls, new Map([
+    ['read_1', { ok: true, data: { ok: false, status: 503 } }],
+  ])), false);
+});
+
 test('the first call preloads matching capabilities and auto-attaches authoritative results', async () => {
   const resultId = '00000000-0000-4000-8000-000000000001';
-  const compactPresentation = presentation();
-  compactPresentation.message = 'I found one issue.';
   const responses = [
     providerResponse([
       call('list_1', capabilityToolName('issues.list'), { query: 'open' }),
-    ]),
-    providerResponse([
-      call('present_1', 'present_response', compactPresentation),
     ]),
   ];
   const state = harness({ responses });
@@ -208,14 +220,14 @@ test('the first call preloads matching capabilities and auto-attaches authoritat
     emit: async (event) => { events.push(event); },
   }));
 
-  assert.equal(result.presentation.message, 'I found one issue.');
+  assert.equal(result.presentation.message, 'Here’s what I found.');
   assert.deepEqual(result.presentation.resultRefs, [resultId]);
   assert.equal(result.results[0].authoritativeResult.items[0].title, 'open');
-  assert.equal(result.presentation.suggestions.length, 2);
+  assert.equal(result.presentation.suggestions.length, 5);
   assert.equal(state.messages.filter((message) => message.role === 'assistant').length, 1);
 
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
-  assert.equal(modelCalls.length, 2);
+  assert.equal(modelCalls.length, 1);
   assert.ok(modelCalls[0].input.tools.some(
     (tool) => tool.function.name === capabilityToolName('issues.list'),
   ));
@@ -223,14 +235,12 @@ test('the first call preloads matching capabilities and auto-attaches authoritat
   assert.equal(modelCalls[0].input.tools.some(
     (tool) => tool.function.name === 'present_response',
   ), false);
-  assert.ok(modelCalls[1].input.tools.some(
-    (tool) => tool.function.name === 'present_response',
-  ));
   assert.equal(modelCalls[0].input.tools.some(
     (tool) => tool.function.name === 'request_more_suggestions',
   ), false);
   assert.equal(modelCalls[0].input.reasoningEffort, 'low');
   assert.equal(modelCalls[0].input.model.id, 'cheap/global');
+  assert.equal(modelCalls[0].input.maxOutputTokens, 800);
   assert.match(modelCalls[0].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
   assert.doesNotMatch(JSON.stringify(modelCalls[0].input.messages), /never-forwarded-outside-accounting/);
   assert.deepEqual(modelCalls[0].input.providerAllowance, { limitRemaining: 2 });
@@ -238,6 +248,28 @@ test('the first call preloads matching capabilities and auto-attaches authoritat
   assert.equal(events.at(-1).type, 'turn.completed');
   assert.ok(state.calls.some((entry) => entry.type === 'release'));
   assert.equal(state.calls.find((entry) => entry.type === 'turn.outcome').input.outcome, 'success');
+});
+
+test('a failed Classic read stays in the model loop instead of using the fast completion', async () => {
+  const failedRead = definition({
+    handler: async () => ({
+      modelResult: { ok: false, status: 503, data: { error: 'Unavailable' } },
+      authoritativeResult: { ok: false, status: 503, data: { error: 'Unavailable' } },
+    }),
+  });
+  const state = harness({
+    definitions: [failedRead],
+    responses: [
+      providerResponse([call('list_1', capabilityToolName('issues.list'), { query: 'open' })]),
+      providerResponse([call('present_1', 'present_response', presentation())]),
+    ],
+  });
+
+  const result = await state.orchestrator.runTurn(turnInput());
+  assert.equal(result.presentation.message, 'What next?');
+  const modelCalls = state.calls.filter((entry) => entry.type === 'model');
+  assert.equal(modelCalls.length, 2);
+  assert.match(modelCalls[1].input.messages[0].content, /Inspect the newest tool result/);
 });
 
 test('an incomplete platform request can ask for one missing value instead of looping', async () => {
@@ -250,6 +282,18 @@ test('an incomplete platform request can ask for one missing value instead of lo
       },
       {
         id: 'clarify.active', label: 'Use demo', prompt: 'List open issues in the demo app.',
+        capabilityHint: 'issues.list',
+      },
+      {
+        id: 'clarify.recent', label: 'Recent apps', prompt: 'Show my recently used apps.',
+        capabilityHint: 'apps.list',
+      },
+      {
+        id: 'clarify.search', label: 'Search apps', prompt: 'Help me search for an app by name.',
+        capabilityHint: 'apps.list',
+      },
+      {
+        id: 'clarify.all', label: 'All issues', prompt: 'List open issues across all apps I can access.',
         capabilityHint: 'issues.list',
       },
     ],
@@ -330,6 +374,8 @@ test('protected writes prepare an exact one-use confirmation without executing t
     .join('\n');
   assert.doesNotMatch(allModelRequests, /browser-only-confirmation-token/);
   assert.ok(events.some((event) => event.type === 'confirmation.required'));
+  const modelCalls = state.calls.filter((entry) => entry.type === 'model');
+  assert.match(modelCalls[1].input.messages[0].content, /Continue the current turn/);
 });
 
 test('shown suggestions cannot repeat and a rejected presentation stays inside the tool loop', async () => {
@@ -342,6 +388,9 @@ test('shown suggestions cannot repeat and a rejected presentation stays inside t
     payload: { presentation: presentation([], [
       oldSuggestion,
       { id: 'issue.edit', label: 'Edit issue', prompt: 'Edit issue 1.', capabilityHint: 'issues.edit' },
+      { id: 'issue.details', label: 'Issue details', prompt: 'Show issue 1 details.', capabilityHint: 'issues.get' },
+      { id: 'issue.develop', label: 'Start development', prompt: 'Start development for issue 1.', capabilityHint: 'development.start' },
+      { id: 'issue.share', label: 'Share issue', prompt: 'Show options to share issue 1.', capabilityHint: null },
     ]) },
   }];
   const state = harness({
@@ -350,17 +399,23 @@ test('shown suggestions cannot repeat and a rejected presentation stays inside t
       providerResponse([call('present_bad', 'present_response', presentation([], [
         oldSuggestion,
         { id: 'issue.close', label: 'Close issue', prompt: 'Close issue 1.', capabilityHint: 'issues.close' },
+        { id: 'issue.assign', label: 'Assign issue', prompt: 'Assign issue 1.', capabilityHint: 'issues.assign' },
+        { id: 'issue.history', label: 'Issue history', prompt: 'Show issue 1 history.', capabilityHint: null },
+        { id: 'issue.related', label: 'Related work', prompt: 'Show work related to issue 1.', capabilityHint: null },
       ]))]),
       providerResponse([call('present_good', 'present_response', presentation([], [
         { id: 'issue.comment', label: 'Add comment', prompt: 'Comment on issue 1.', capabilityHint: 'issues.comment' },
         { id: 'issue.vote', label: 'Vote', prompt: 'Vote on issue 1.', capabilityHint: 'issues.vote' },
+        { id: 'issue.claim', label: 'Claim issue', prompt: 'Claim issue 1.', capabilityHint: 'issues.claim' },
+        { id: 'issue.labels', label: 'Issue labels', prompt: 'Show labels for issue 1.', capabilityHint: null },
+        { id: 'issue.proposals', label: 'Related proposals', prompt: 'Show proposals related to issue 1.', capabilityHint: null },
       ]))]),
     ],
   });
   const result = await state.orchestrator.runTurn(turnInput({ text: 'Help me choose.' }));
   assert.deepEqual(
     result.presentation.suggestions.map((suggestion) => suggestion.id),
-    ['issue.comment', 'issue.vote'],
+    ['issue.comment', 'issue.vote', 'issue.claim', 'issue.labels', 'issue.proposals'],
   );
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
   assert.equal(modelCalls.length, 2);
@@ -434,4 +489,6 @@ test('More suggestions is one forced presentation call without a recursive More 
   assert.deepEqual(modelCalls[0].input.toolChoice, {
     type: 'function', function: { name: 'present_response' },
   });
+  assert.equal(modelCalls[0].input.maxOutputTokens, 800);
+  assert.match(modelCalls[0].input.messages[0].content, /selected More suggestions/);
 });

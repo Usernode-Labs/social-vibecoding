@@ -1,13 +1,13 @@
 'use strict';
 
-// The model can choose text, existing result references, and two next-step
+// The model can choose text, existing result references, and five next-step
 // suggestions. It cannot choose component code, Classic URLs, arbitrary
 // actions, or the always-present More suggestions control; the server/client
 // derive those from the capability registry.
 
 const MAX_MESSAGE_CHARS = 600;
 const MAX_RESULT_REFS = 5;
-const SUGGESTIONS_PER_RESPONSE = 2;
+const SUGGESTIONS_PER_RESPONSE = 5;
 const MAX_SUGGESTION_LABEL_CHARS = 36;
 const MAX_SUGGESTION_PROMPT_CHARS = 500;
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
@@ -176,25 +176,180 @@ function validatePresentation(value, {
   };
 }
 
-function firstUsePresentation() {
+// The fourth tuple item is an allowlisted direct-action id. The fifth is the
+// context opened by press-and-hold. Neither value is accepted from a model:
+// they are attached only after the model-facing presentation has passed the
+// strict four-field validator above.
+const SUGGESTION_CATALOG = Object.freeze({
+  apps: Object.freeze([
+    ['next.general.apps', 'Explore apps', 'Show me apps I can explore.', 'apps.list', 'apps'],
+    ['next.apps.mine', 'Show my apps', 'Show the apps I currently work with.', 'apps.list', 'apps'],
+    ['next.apps.activity', 'Recent app activity', 'Show recent activity across my apps.', 'apps.activity', 'apps'],
+    ['next.apps.issues', 'Find app issues', 'Show open issues across apps I can access.', 'issues.choose_app', 'issues'],
+    ['next.apps.development', 'Active development', 'Show active development work across my apps.', 'development.active', 'development'],
+  ]),
+  issues: Object.freeze([
+    ['next.issues.open', 'Open issues', 'Show open issues I can work on.', 'issues.choose_app', 'issues'],
+    ['next.issues.search', 'Search issues', 'Help me search issues by text, tag, or status.'],
+    ['next.issues.mine', 'My issue work', 'Show issues connected to my current work.', 'issues.choose_app', 'issues'],
+    ['next.issues.proposals', 'Related proposals', 'Show proposals related to open issues.', 'governance.mine', 'governance'],
+    ['next.issues.development', 'Start development', 'Help me choose an issue and start development work.'],
+  ]),
+  governance: Object.freeze([
+    ['next.governance.review', 'Review proposals', 'Show proposals that need my attention.', 'governance.mine', 'governance'],
+    ['next.governance.votes', 'My votes', 'Show proposals I can vote on.', 'governance.mine', 'governance'],
+    ['next.governance.recent', 'Recent proposals', 'Show recently updated proposals.', 'governance.mine', 'governance'],
+    ['next.governance.issues', 'Related issues', 'Show issues related to current proposals.', 'issues.choose_app', 'issues'],
+    ['next.governance.completed', 'Completed work', 'Show recently completed proposals.'],
+  ]),
+  development: Object.freeze([
+    ['next.development.active', 'Active development', 'Show my active development work.', 'development.active', 'development'],
+    ['next.development.continue', 'Continue work', 'Help me choose development work to continue.', 'development.active', 'development'],
+    ['next.development.issues', 'Choose an issue', 'Show issues ready for development.', 'issues.choose_app', 'issues'],
+    ['next.development.proposals', 'View proposals', 'Show proposals created from development work.', 'governance.mine', 'governance'],
+    ['next.development.status', 'Check status', 'Show the status of my current development work.', 'development.active', 'development'],
+  ]),
+  messages: Object.freeze([
+    ['next.messages.unread', 'Unread messages', 'Show my unread messages.', 'messages.recent', 'messages'],
+    ['next.messages.recent', 'Recent conversations', 'Show my recent conversations.', 'messages.recent', 'messages'],
+    ['next.messages.search', 'Find a conversation', 'Help me find a conversation.'],
+    ['next.messages.notifications', 'Notifications', 'Show my recent notifications.', 'notifications.list', 'messages'],
+    ['next.messages.apps', 'App discussions', 'Show recent app discussions I can access.', 'apps.list', 'apps'],
+  ]),
+  settings: Object.freeze([
+    ['next.settings.global-chat', 'Chat settings', 'Show my Global Chat settings.', 'settings.global_chat', 'settings'],
+    ['next.settings.development', 'Development AI', 'Show my Development AI settings.', 'settings.development', 'settings'],
+    ['next.settings.budget', 'AI spending', 'Show my AI usage and spending limits.', 'settings.spending', 'settings'],
+    ['next.settings.notifications', 'Notification settings', 'Show my notification settings.', 'settings.notifications', 'settings'],
+    ['next.settings.more', 'Other settings', 'Show other settings I can configure.', 'settings.catalog', 'settings'],
+  ]),
+  general: Object.freeze([
+    ['next.general.work', 'Show my work', 'Show my current work across Homeroom.', 'work.overview', 'development'],
+    ['next.general.apps', 'Explore apps', 'Show me apps I can explore.', 'apps.list', 'apps'],
+    ['next.general.issues', 'Find issues', 'Show open issues I can work on.', 'issues.choose_app', 'issues'],
+    ['next.general.proposals', 'Review proposals', 'Show proposals that need my attention.', 'governance.mine', 'governance'],
+    ['next.general.messages', 'Check messages', 'Show my recent conversations and unread messages.', 'messages.recent', 'messages'],
+    ['next.general.notifications', 'Notifications', 'Show my recent notifications.', 'notifications.list', 'messages'],
+    ['next.general.development', 'Development work', 'Show my active development work.', 'development.active', 'development'],
+    ['next.general.settings', 'Open settings', 'Show settings I can configure.', 'settings.catalog', 'settings'],
+    ['next.general.profile', 'View my profile', 'Show my Homeroom profile.', 'profile.me', 'general'],
+    ['next.general.leaderboard', 'View leaderboard', 'Show the Homeroom leaderboard.', 'leaderboard.users', 'general'],
+  ]),
+});
+
+const SUGGESTIONS_BY_ID = new Map(
+  Object.values(SUGGESTION_CATALOG).flat().map((value) => [value[0], value]),
+);
+
+function plainSuggestion(value) {
   return {
+    id: value[0],
+    label: value[1],
+    prompt: value[2],
+    capabilityHint: null,
+  };
+}
+
+function directActionIdForSuggestion(suggestionId) {
+  return SUGGESTIONS_BY_ID.get(suggestionId)?.[3] || null;
+}
+
+function suggestionLabelForId(suggestionId) {
+  return SUGGESTIONS_BY_ID.get(suggestionId)?.[1] || null;
+}
+
+function relatedSuggestions(value) {
+  const context = value?.[4];
+  if (!context || !SUGGESTION_CATALOG[context]) return [];
+  return [...SUGGESTION_CATALOG[context], ...SUGGESTION_CATALOG.general]
+    .filter((candidate, index, all) => (
+      candidate[0] !== value[0]
+      && all.findIndex((entry) => entry[0] === candidate[0]) === index
+    ))
+    .slice(0, SUGGESTIONS_PER_RESPONSE)
+    .map((candidate) => ({
+      ...plainSuggestion(candidate),
+      actionId: candidate[3] || null,
+    }));
+}
+
+function enrichSuggestion(value) {
+  const trusted = SUGGESTIONS_BY_ID.get(value?.id);
+  if (!trusted
+      || value.label !== trusted[1]
+      || value.prompt !== trusted[2]) return value;
+  return {
+    ...value,
+    actionId: trusted[3] || null,
+    relatedSuggestions: relatedSuggestions(trusted),
+  };
+}
+
+function enrichPresentation(value, { context = 'general' } = {}) {
+  return {
+    ...value,
+    suggestionContext: SUGGESTION_CATALOG[context] ? context : 'general',
+    suggestions: value.suggestions.map(enrichSuggestion),
+  };
+}
+
+function plainSuggestionsForContext(domain = 'general', excludedSuggestionIds = []) {
+  const excluded = new Set(excludedSuggestionIds || []);
+  const primary = SUGGESTION_CATALOG[domain] || SUGGESTION_CATALOG.general;
+  const choices = [...primary, ...SUGGESTION_CATALOG.general]
+    .filter((value, index, all) => (
+      !excluded.has(value[0])
+      && all.findIndex((candidate) => candidate[0] === value[0]) === index
+    ))
+    .slice(0, SUGGESTIONS_PER_RESPONSE)
+    .map(plainSuggestion);
+  if (choices.length !== SUGGESTIONS_PER_RESPONSE) {
+    throw new PresentationError(
+      'suggestions_exhausted',
+      'No complete built-in suggestion batch remains for this conversation.',
+    );
+  }
+  return choices;
+}
+
+function suggestionsForContext(domain = 'general', excludedSuggestionIds = []) {
+  return plainSuggestionsForContext(domain, excludedSuggestionIds).map(enrichSuggestion);
+}
+
+function automaticPresentation({
+  domain = 'general',
+  resultRefs = [],
+  excludedSuggestionIds = [],
+  confirmationRequired = false,
+  message = null,
+} = {}) {
+  const validated = validatePresentation({
+    message: message || (confirmationRequired ? 'Review this action before confirming.' : 'Here\u2019s what I found.'),
+    resultRefs,
+    suggestions: plainSuggestionsForContext(domain, excludedSuggestionIds),
+  }, { availableResultIds: resultRefs, excludedSuggestionIds });
+  return enrichPresentation(validated, { context: domain });
+}
+
+function firstUsePresentation() {
+  return enrichPresentation(validatePresentation({
     message: 'What would you like to do?',
     resultRefs: [],
-    suggestions: [
-      {
-        id: 'first.show-my-work',
-        label: 'Show my work',
-        prompt: 'Show my current work across Homeroom.',
-        capabilityHint: null,
-      },
-      {
-        id: 'first.explore-apps',
-        label: 'Explore apps',
-        prompt: 'Show me apps I can explore.',
-        capabilityHint: null,
-      },
-    ],
-  };
+    suggestions: plainSuggestionsForContext('general'),
+  }), { context: 'general' });
+}
+
+function nextPredeterminedPresentation({ domain = 'general', excludedSuggestionIds = [] } = {}) {
+  try {
+    return enrichPresentation(validatePresentation({
+      message: 'Here are more options.',
+      resultRefs: [],
+      suggestions: plainSuggestionsForContext(domain, excludedSuggestionIds),
+    }, { excludedSuggestionIds }), { context: domain });
+  } catch (error) {
+    if (error instanceof PresentationError && error.code === 'suggestions_exhausted') return null;
+    throw error;
+  }
 }
 
 module.exports = {
@@ -203,7 +358,14 @@ module.exports = {
   MAX_SUGGESTION_LABEL_CHARS,
   MAX_SUGGESTION_PROMPT_CHARS,
   SUGGESTIONS_PER_RESPONSE,
+  automaticPresentation,
+  directActionIdForSuggestion,
+  enrichPresentation,
+  nextPredeterminedPresentation,
   PresentationError,
   firstUsePresentation,
+  plainSuggestionsForContext,
+  suggestionLabelForId,
+  suggestionsForContext,
   validatePresentation,
 };

@@ -1640,6 +1640,22 @@ function parseImportVisualEvidence(body) {
   return visualEvidencePlan.parseIntent(body.visualEvidence);
 }
 
+// Keep internal failures opaque, but name the import boundary a caller can
+// act on. The connector turns these fields into an `import_failed` response,
+// so an agent can retry the SAME open pull request instead of manufacturing a
+// fresh one without knowing whether parsing, persistence, or evidence failed.
+function prImportFailureBody(err) {
+  if (err?.prImportStage === 'visual_evidence_intent') {
+    return {
+      error: 'PR import failed while recording visualEvidence.',
+      stage: 'visual_evidence_intent',
+      field: 'visualEvidence',
+      retryable: true,
+    };
+  }
+  return { error: 'Internal server error' };
+}
+
 // The linked-issue set an import may carry (#1217). Bounded and sanitized by
 // pr-metadata's own helper — the one that renders `Closes #N` — so the column
 // and the PR body can never disagree about what counts as a linked issue.
@@ -2714,12 +2730,23 @@ function voteRoutes(config) {
           importClient, app.id, inserted[0].id, req.user
         );
         if (config.visualEvidence?.collect && importVisualEvidence) {
-          visualEvidenceResult = await visualEvidenceState.recordIntent(
-            importClient,
-            inserted[0].id,
-            importVisualEvidence,
-            visualEvidenceState.validSha(headSha) ? { headSha } : {}
-          );
+          try {
+            visualEvidenceResult = await visualEvidenceState.recordIntentInTransaction(
+              importClient,
+              inserted[0].id,
+              importVisualEvidence,
+              visualEvidenceState.validSha(headSha) ? { headSha } : {}
+            );
+          } catch (err) {
+            // This transaction owns `importClient`; recordIntent must neither
+            // reconnect nor release it. Preserve a safe boundary marker for
+            // the outer HTTP error without exposing the database exception.
+            if (err && typeof err === 'object') {
+              err.prImportStage = 'visual_evidence_intent';
+              err.prImportField = 'visualEvidence';
+            }
+            throw err;
+          }
         }
         await importClient.query('COMMIT');
       } catch (err) {
@@ -2808,8 +2835,12 @@ function voteRoutes(config) {
       const appForBuild = { id: app.id, slug: app.slug, name: app.name, repo_url: app.repo_url };
       kickImportedChecks(session, appForBuild, headSha);
     } catch (err) {
-      log.error('votes', 'PR-import failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
+      log.error('votes', 'PR-import failed', {
+        message: err.message,
+        stage: err?.prImportStage || null,
+        field: err?.prImportField || null,
+      });
+      res.status(500).json(prImportFailureBody(err));
     }
   });
 
@@ -6602,6 +6633,7 @@ module.exports = {
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
   parseImportVisualEvidence,
+  prImportFailureBody,
   visualEvidenceGateForSession,
   readVisualEvidenceGate,
   // The request an imported pull request implements (#1217), likewise.

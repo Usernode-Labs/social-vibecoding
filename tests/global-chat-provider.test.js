@@ -154,6 +154,26 @@ test('OpenRouter SSE parsing preserves Unicode split across network chunks', asy
   assert.equal(result.content, '€');
 });
 
+test('an unterminated or length-capped provider stream is retryable instead of accepted as a partial turn', async () => {
+  for (const part of [
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"issues.list","arguments":"{\\"query\\":\\"open"}}]}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n',
+  ]) {
+    await assert.rejects(
+      provider.streamChat({
+        apiKey: 'key',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model: MODEL.id,
+        reasoning: 'low',
+        messages: [],
+        tools: [],
+        fetchImpl: async () => responseFromParts([part]),
+      }),
+      (error) => error.code === 'stream_error' && error.dispatched === true,
+    );
+  }
+});
+
 test('provider HTTP failures expose status but never echo response or credential content', async () => {
   await assert.rejects(
     provider.streamChat({
