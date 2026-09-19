@@ -2455,7 +2455,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 168,
+      "line": 169,
       "method": "POST",
       "path": "/api/auth/login",
       "expression": null,
@@ -2464,7 +2464,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 168,
+      "line": 169,
       "method": "POST",
       "path": "/api/auth/otp/verify",
       "expression": null,
@@ -2473,7 +2473,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 168,
+      "line": 169,
       "method": "POST",
       "path": "/api/auth/otp/set-password",
       "expression": null,
@@ -2482,7 +2482,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 168,
+      "line": 169,
       "method": "POST",
       "path": "/api/auth/register",
       "expression": null,
@@ -2491,7 +2491,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 168,
+      "line": 169,
       "method": "POST",
       "path": "/api/auth/wallet-verify",
       "expression": null,
@@ -2500,7 +2500,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 168,
+      "line": 169,
       "method": "POST",
       "path": "/api/auth/wallet-reset-verify",
       "expression": null,
@@ -2509,7 +2509,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 168,
+      "line": 169,
       "method": "POST",
       "path": "/api/auth/wallet-register",
       "expression": null,
@@ -2518,7 +2518,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 168,
+      "line": 169,
       "method": "POST",
       "path": "/api/auth/wallet-link-login",
       "expression": null,
@@ -2527,7 +2527,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 191,
+      "line": 192,
       "method": "POST",
       "path": "/api/auth/login",
       "expression": null,
@@ -2548,7 +2548,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 312,
+      "line": 313,
       "method": "POST",
       "path": "/api/auth/otp/request",
       "expression": null,
@@ -2568,7 +2568,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 325,
+      "line": 326,
       "method": "POST",
       "path": "/api/auth/otp/verify",
       "expression": null,
@@ -2587,7 +2587,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 368,
+      "line": 369,
       "method": "POST",
       "path": "/api/auth/otp/set-password",
       "expression": null,
@@ -2606,7 +2606,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 398,
+      "line": 399,
       "method": "POST",
       "path": "/api/auth/register",
       "expression": null,
@@ -2627,7 +2627,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 460,
+      "line": 461,
       "method": "POST",
       "path": "/api/auth/logout",
       "expression": null,
@@ -2650,7 +2650,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 492,
+      "line": 493,
       "method": "GET",
       "path": "/api/auth/me",
       "expression": null,
@@ -2679,7 +2679,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 684,
+      "line": 685,
       "method": "GET",
       "path": "/api/me/ai-budget",
       "expression": null,
@@ -2704,7 +2704,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 726,
+      "line": 727,
       "method": "POST",
       "path": "/api/me/api-key",
       "expression": null,
@@ -2729,7 +2729,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 771,
+      "line": 772,
       "method": "DELETE",
       "path": "/api/me/api-key",
       "expression": null,
@@ -2754,7 +2754,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 791,
+      "line": 792,
       "method": "POST",
       "path": "/api/me/password",
       "expression": null,
@@ -2779,7 +2779,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 831,
+      "line": 832,
       "method": "POST",
       "path": "/api/me/ai-progress-estimate",
       "expression": null,
@@ -2804,7 +2804,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 853,
+      "line": 854,
       "method": "POST",
       "path": "/api/me/session-bridge",
       "expression": null,
@@ -2829,7 +2829,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 877,
+      "line": 878,
       "method": "POST",
       "path": "/api/me/dev-flow",
       "expression": null,
@@ -2855,7 +2855,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 909,
+      "line": 910,
       "method": "POST",
       "path": "/api/me/locale",
       "expression": null,
@@ -2880,7 +2880,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 951,
+      "line": 952,
       "method": "POST",
       "path": "/api/me/wallet-link",
       "expression": null,
@@ -2905,7 +2905,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 989,
+      "line": 990,
       "method": "GET",
       "path": "/api/me/wallet-link/status",
       "expression": null,
@@ -2924,7 +2924,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1003,
+      "line": 1004,
       "method": "DELETE",
       "path": "/api/me/wallet-link",
       "expression": null,
@@ -2949,7 +2949,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1063,
+      "line": 1064,
       "method": "POST",
       "path": "/api/auth/wallet-check",
       "expression": null,
@@ -2971,7 +2971,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1093,
+      "line": 1106,
       "method": "POST",
       "path": "/api/auth/wallet-verify",
       "expression": null,
@@ -2992,7 +2992,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1158,
+      "line": 1190,
       "method": "POST",
       "path": "/api/auth/wallet-reset-verify",
       "expression": null,
@@ -3013,7 +3013,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1253,
+      "line": 1303,
       "method": "POST",
       "path": "/api/auth/password-reset/request",
       "expression": null,
@@ -3032,7 +3032,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1301,
+      "line": 1351,
       "method": "POST",
       "path": "/api/auth/password-reset/confirm",
       "expression": null,
@@ -3051,7 +3051,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1368,
+      "line": 1418,
       "method": "POST",
       "path": "/api/me/wallet-change-password",
       "expression": null,
@@ -3076,7 +3076,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1426,
+      "line": 1484,
       "method": "POST",
       "path": "/api/auth/wallet-register",
       "expression": null,
@@ -3096,7 +3096,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1482,
+      "line": 1540,
       "method": "POST",
       "path": "/api/auth/wallet-link-login",
       "expression": null,
