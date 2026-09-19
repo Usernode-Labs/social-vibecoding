@@ -10,7 +10,7 @@ const appAccess = require('../services/app-access');
 const { placeBounty } = require('../services/bounties');
 const { getPool } = require('../db/pool');
 const { sniffImageType } = require('../services/attachments');
-const { feedbackTitleLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
+const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
 
 // #683: feedback-modal screenshot attachments. Uploads are raw bytes
 // (application/octet-stream — deliberately sidesteps the global 100 KB
@@ -323,7 +323,14 @@ function feedbackRoutes(config) {
     }
   );
 
-  router.post('/api/feedback', async (req, res) => {
+  // #2520: the submission route files a real GitHub issue and may spend a
+  // Haiku call naming it, so it carries a limiter like both of its
+  // siblings above (feedbackTitleLimiter, issueScreenshotLimiter). 10 per
+  // hour per user, sized in rate-limits.js. Authorization is unchanged and
+  // deliberately open: filing against a collab-private repo is by design
+  // and nothing private is read back, so this bounds the outbound cost
+  // only.
+  router.post('/api/feedback', feedbackSubmitLimiter, async (req, res) => {
     const { description, appSlug } = req.body;
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
       return res.status(400).json({ error: 'Description is required' });
