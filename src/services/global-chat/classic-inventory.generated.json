@@ -3807,7 +3807,7 @@
     },
     {
       "source": "src/routes/collaborators.js",
-      "line": 61,
+      "line": 82,
       "method": "GET",
       "path": "/api/users/search",
       "expression": null,
@@ -3828,7 +3828,7 @@
     },
     {
       "source": "src/routes/collaborators.js",
-      "line": 109,
+      "line": 131,
       "method": "GET",
       "path": "/api/apps/:slug/collaborators",
       "expression": null,
@@ -3851,7 +3851,7 @@
     },
     {
       "source": "src/routes/collaborators.js",
-      "line": 148,
+      "line": 170,
       "method": "POST",
       "path": "/api/apps/:slug/invites",
       "expression": null,
@@ -3874,7 +3874,7 @@
     },
     {
       "source": "src/routes/collaborators.js",
-      "line": 224,
+      "line": 246,
       "method": "POST",
       "path": "/api/invites/:appId/accept",
       "expression": null,
@@ -3892,7 +3892,7 @@
     },
     {
       "source": "src/routes/collaborators.js",
-      "line": 292,
+      "line": 314,
       "method": "POST",
       "path": "/api/invites/:appId/decline",
       "expression": null,
@@ -3910,7 +3910,7 @@
     },
     {
       "source": "src/routes/collaborators.js",
-      "line": 316,
+      "line": 338,
       "method": "DELETE",
       "path": "/api/apps/:slug/collaborators/:userId",
       "expression": null,
