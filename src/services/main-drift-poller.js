@@ -8,6 +8,12 @@
  * (the import-existing flow) and for any out-of-band pushes by the bot
  * to its own repos.
  *
+ * The platform's own row (apps.self_hosted) is polled too, but never
+ * rebuilt from here: its main_sha is the build that is serving, and its
+ * releases come from the repository's Actions workflow through Argo CD.
+ * Drift on that row means "merged, not released", and goes to
+ * services/release-watch.js, which says so once the release is late.
+ *
  * Why polling and not webhooks?
  *   Webhooks would be lower-latency but require a public callback URL
  *   and the bot to register them on every repo. Polling at a 5-minute
@@ -37,6 +43,7 @@ const github = require('./github');
 const staging = require('./staging');
 const { broadcastGlobal } = require('./ws');
 const { checkAndResolveConflicts } = require('./conflict-resolver');
+const releaseWatch = require('./release-watch');
 
 // 5 minutes default. GitHub's rest API has a 5000 req/hr limit per token,
 // so even with ~100 imported apps polling every minute we'd be at ~6000
@@ -86,7 +93,10 @@ function noteFailure(appId, sha) {
   return { failures, delayMs };
 }
 
-async function fetchRemoteHeadSha(owner, repo) {
+// main's tip: its sha, and — for the self-hosted row's release watch — when
+// it landed and what it says, so a stall can be dated from the merge and
+// name its PR. Both are null when the API shape lacks them.
+async function fetchRemoteHead(owner, repo) {
   const octokit = await github.getOctokit(owner);
   // `repos.getBranch` returns the tip commit; cheaper than listing
   // commits and authoritative for "what would `git clone` get right
@@ -95,7 +105,13 @@ async function fetchRemoteHeadSha(owner, repo) {
   // we'd need to read the repo's default_branch otherwise — not
   // worth the extra call.
   const { data } = await octokit.rest.repos.getBranch({ owner, repo, branch: 'main' });
-  return data.commit?.sha || null;
+  const commit = data.commit || {};
+  return {
+    sha: commit.sha || null,
+    committedAt: commit.commit?.committer?.date || commit.commit?.author?.date || null,
+    subject: commit.commit?.message || null,
+    octokit,
+  };
 }
 
 // Returns a structured result so callers (the periodic poll loop, and
@@ -113,6 +129,10 @@ async function fetchRemoteHeadSha(owner, repo) {
 //   backing_off      — drift detected, but the same commit failed to rebuild
 //                      recently; not retried until `retryInMs` has passed
 //   first_seen       — main_sha was NULL; backfilled, no redeploy
+//   release_pending  — the self-hosted row: main is ahead of the running
+//                      build, within a release's normal time
+//   release_stalled  — the self-hosted row: main is ahead and the release
+//                      has not come (services/release-watch.js)
 //
 // `manual: true` (the admin's "Check for updates") skips the backoff wait.
 async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
@@ -126,15 +146,16 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
     return { status: 'invalid_repo', slug: app.slug, repoUrl: app.repo_url };
   }
 
-  let remoteSha;
+  let head;
   try {
-    remoteSha = await fetchRemoteHeadSha(parsed.owner, parsed.repo);
+    head = await fetchRemoteHead(parsed.owner, parsed.repo);
   } catch (err) {
     log.debug('drift-poller', 'Failed to fetch remote HEAD', {
       slug: app.slug, repo: `${parsed.owner}/${parsed.repo}`, err: err.message,
     });
     return { status: 'fetch_failed', slug: app.slug, error: err.message };
   }
+  const remoteSha = head.sha;
   if (!remoteSha) return { status: 'fetch_failed', slug: app.slug, error: 'GitHub returned no SHA' };
 
   // First-time backfill: no prior SHA recorded → just save it. This
@@ -153,7 +174,22 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
     // Converged, by us or by some other path (a merge, a manual redeploy);
     // whatever was failing is no longer what main points at.
     failedAttempts.delete(app.id);
+    // For the platform's own row this is the new build's first look after
+    // a release: close out a stall the previous build recorded, if any.
+    if (app.self_hosted) await releaseWatch.converged(config, pool, app);
     return { status: 'no_drift', slug: app.slug, sha: remoteSha };
+  }
+
+  // The platform's own row. Its main_sha is the build that is serving
+  // (seedSelfApp writes GIT_SHA at boot), and its releases come from the
+  // repository's Actions workflow through Argo CD, never from here:
+  // rebuildProduction on this row can only fail — it did, every tick, during
+  // the #2589 gap ("missing required secrets", because the platform's
+  // dapp.json declares secrets a child app would hold in app_secrets). What
+  // main ahead of the running build means here is "merged, not released",
+  // and the watch says so once it is late (services/release-watch.js).
+  if (app.self_hosted) {
+    return releaseWatch.observe(config, pool, app, head, { octokit: head.octokit });
   }
 
   const retryInMs = manual ? 0 : backoffRemaining(app.id, remoteSha);
@@ -230,7 +266,7 @@ async function poll(config) {
   // Snapshot the candidate set once. Apps whose status changes during
   // the loop are filtered by the per-row claim above, not here.
   const { rows } = await pool.query(
-    `SELECT id, slug, repo_url, main_sha
+    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall
        FROM apps
       WHERE repo_url IS NOT NULL AND status = 'running'`
   );

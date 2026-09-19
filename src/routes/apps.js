@@ -1342,6 +1342,11 @@ function appRoutes(config) {
         // The whole-tree verdict under direct merges (services/main-watch.js):
         // is main green, and are this app's merges paused because it is not?
         mainCheck: require('../services/main-watch').describe(appRow),
+        // A merged commit of the platform's own app that has not become the
+        // running release (services/release-watch.js). Never stalled for a
+        // child app. The raw column rides along in the allowlist; this is
+        // the shape clients read.
+        releaseStall: require('../services/release-watch').describe(appRow),
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };

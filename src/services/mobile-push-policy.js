@@ -351,6 +351,14 @@ function buildCopy(kind, context, now) {
           body: 'The latest change did not go live. Open the app to see what failed',
         };
       }
+      // The platform's own app: merged, but the release outside the platform
+      // (the image workflow, Argo CD, the rollout) has not delivered it.
+      if (detail === 'release_stalled') {
+        return {
+          title: withApp('Merged but not released'),
+          body: 'A merged change is not running yet. Open the board to see where the release stopped',
+        };
+      }
       return {
         title: withApp('App needs attention'),
         body: 'Open the app to see what needs attention',

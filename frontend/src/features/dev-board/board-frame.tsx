@@ -77,6 +77,7 @@ import { discussionStore, type DiscussionState } from './discussion-store';
 import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
 import { lockedNoticeStore, lockedNoticeText, type LockedNoticeState } from './locked-notice-store';
 import { mainPauseStore, mainPauseText, type MainPauseState } from './main-pause-store';
+import { releaseStallStore, releaseStallText, type ReleaseStallState } from './release-stall-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
@@ -255,6 +256,46 @@ function MainPauseNotice(): ReactNode {
   );
 }
 
+/**
+ * The "merged but not released" banner (./release-stall-store.ts), for the
+ * platform's own app. Amber like the pause banner: a merged proposal reads
+ * "merged" on its card while production still serves the previous commit,
+ * and the people who can re-run the release need to hear it from the board
+ * rather than from a user asking why the fix is not live. The workflow run
+ * is a plain link: the URL is GitHub's own `html_url`, and the store only
+ * carries it when it is on github.com.
+ */
+function ReleaseStallNotice(): ReactNode {
+  const s = useStoreState<ReleaseStallState>(releaseStallStore);
+  if (!s.stalled) return null;
+  return (
+    <Alert
+      variant="notice"
+      density="compact"
+      data-release-stall={s.kind || 'unknown'}
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex-1 min-w-0">
+          {/* One text child, then the link with its own leading margin: a
+              bare {' '} between them would be two adjacent text runs, which
+              hydration rejects (React #418; tests/shell-build.test.js). */}
+          {releaseStallText(s)}
+          {s.runUrl ? (
+            <a
+              href={s.runUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-1 underline underline-offset-2"
+            >
+              Open the workflow run
+            </a>
+          ) : null}
+        </span>
+      </div>
+    </Alert>
+  );
+}
+
 export function DevBoardFrame({
   illustrationApp,
   canManageIllustration,
@@ -267,6 +308,7 @@ export function DevBoardFrame({
 }: DevBoardFrameProps) {
   const { locked, inviteOnly } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   const mainPaused = useStoreState<MainPauseState>(mainPauseStore).paused;
+  const releaseStalled = useStoreState<ReleaseStallState>(releaseStallStore).stalled;
   // The toolbar's home depends on the surface — see the DevActionsRow render
   // below. Subscribing the frame to the mode is safe for the one node this
   // file hands to the module: `#dev-body`'s `dangerouslySetInnerHTML` object
@@ -355,6 +397,13 @@ export function DevBoardFrame({
         */}
         <div id="dev-main-pause-notice" className={mainPaused ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
           <MainPauseNotice />
+        </div>
+        {/*
+            The merged-but-not-released banner (services/release-watch.js),
+            for the platform's own app. Same arrangement again.
+        */}
+        <div id="dev-release-stall-notice" className={releaseStalled ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
+          <ReleaseStallNotice />
         </div>
         <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
         {/* Body region: the Workshop mounts #dev-workshop here; Kanban mounts
