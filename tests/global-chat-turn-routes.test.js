@@ -158,6 +158,17 @@ async function mount(t, { failTurn = false, holdTurn = false, failDirect = false
         modelInvocations: 0,
       };
     },
+    async executeInline(input) {
+      calls.push({ type: 'inline-action', input });
+      return {
+        results: [{
+          id: RESULT_ID,
+          renderer: 'session',
+          authoritativeResult: { ok: true, status: 200, data: { id: 4365 } },
+        }],
+        modelInvocations: 0,
+      };
+    },
   });
 
   const routePath = require.resolve('../src/routes/global-chat');
@@ -232,6 +243,18 @@ test('turn and More suggestions endpoints stream typed events with separate mode
   assert.equal(generatedMore.status, 200);
   await generatedMore.text();
 
+  const contextualMore = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/more-suggestions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      topic: 'Usernode app (usernode-2d5619)',
+      shownSuggestionIds: ['context.apps.detail.about.usernode-2d5619'],
+      client: { surface: 'web', viewport: 'regular' },
+    }),
+  });
+  assert.equal(contextualMore.status, 200);
+  await contextualMore.text();
+
   const turns = calls.filter((entry) => entry.type === 'turn');
   assert.equal(turns[0].input.kind, 'user_turn');
   assert.equal(turns[0].input.globalChatProfile.model, 'cheap/global');
@@ -244,6 +267,9 @@ test('turn and More suggestions endpoints stream typed events with separate mode
   assert.equal(turns[1].input.suggestionContext, 'settings');
   assert.equal(turns[1].input.excludedSuggestionIds.length, 10);
   assert.ok(turns[1].input.actor.roles.includes('native'));
+  assert.equal(turns[2].input.kind, 'more_suggestions');
+  assert.equal(turns[2].input.text, 'Show more suggestions about Usernode app (usernode-2d5619).');
+  assert.equal(turns[2].input.suggestionContext, 'Usernode app (usernode-2d5619)');
   assert.equal(calls.filter((entry) => entry.type === 'suggestion-page').length, 2);
   assert.equal(calls.filter((entry) => entry.type === 'catalog').length, 1);
   assert.equal(calls.filter((entry) => entry.type === 'allowance').length, 1);
@@ -278,6 +304,7 @@ test('fixed suggestions execute directly without invoking the Global Chat model'
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       suggestionId: 'next.general.apps',
+      targetLabel: 'My apps',
       shownSuggestionIds: ['next.general.apps'],
       client: { surface: 'native_android', viewport: 'compact', classicReturnPath: '#home' },
       context: { locale: 'en-US', timezone: 'America/Montevideo' },
@@ -291,9 +318,35 @@ test('fixed suggestions execute directly without invoking the Global Chat model'
   assert.equal(calls.filter((entry) => entry.type === 'turn').length, 0);
   const direct = calls.find((entry) => entry.type === 'direct-action');
   assert.equal(direct.input.suggestionId, 'next.general.apps');
+  assert.equal(direct.input.targetLabel, 'My apps');
   assert.deepEqual(direct.input.excludedSuggestionIds, ['next.general.apps']);
   assert.equal(direct.input.executionContext.client.surface, 'native_android');
   assert.equal(calls.filter((entry) => entry.type === 'allowance').length, 0);
+});
+
+test('inline detail actions stay outside the transcript and carry exact context', async (t) => {
+  const { base, calls } = await mount(t);
+  const response = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/inline-actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      actionId: 'session.detail',
+      parameters: { sessionId: '4365' },
+      targetLabel: 'test (development #4365)',
+      client: { surface: 'native_ios', viewport: 'compact' },
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.modelInvocations, 0);
+  assert.equal(body.results[0].id, RESULT_ID);
+  assert.equal(calls.filter((entry) => entry.type === 'turn').length, 0);
+  assert.equal(calls.filter((entry) => entry.type === 'direct-action').length, 0);
+  const inline = calls.find((entry) => entry.type === 'inline-action');
+  assert.equal(inline.input.actionId, 'session.detail');
+  assert.equal(inline.input.parameters.sessionId, '4365');
+  assert.equal(inline.input.targetLabel, 'test (development #4365)');
+  assert.equal(inline.input.executionContext.client.surface, 'native_ios');
 });
 
 test('the direct spending option fetches allowance while other direct reads stay fast', async (t) => {

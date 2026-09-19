@@ -91,6 +91,245 @@ function fixed({ label, message, domain, steps }) {
   });
 }
 
+function displayTarget(value, fallback) {
+  if (value == null || value === '') return fallback;
+  if (typeof value !== 'string' || !value.trim() || value.length > 160
+      || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new SuggestionActionError('invalid_direct_action', 'The action target is invalid.');
+  }
+  return value.trim();
+}
+
+function fallbackTarget(actionId, parameters) {
+  if (parameters.appSlug && parameters.issueNumber) {
+    return `issue #${parameters.issueNumber} in ${parameters.appSlug}`;
+  }
+  if (parameters.appSlug) return parameters.appSlug;
+  if (parameters.sessionId) return `development #${parameters.sessionId}`;
+  if (parameters.proposalId) return `proposal #${parameters.proposalId}`;
+  if (parameters.governanceId) return `governance item #${parameters.governanceId}`;
+  if (parameters.conversationId) return `conversation #${parameters.conversationId}`;
+  if (parameters.notificationId) return `notification #${parameters.notificationId}`;
+  if (parameters.username) return parameters.username;
+  if (parameters.userId) return `profile #${parameters.userId}`;
+  if (parameters.group) return `${parameters.group.replace(/-/g, ' ')} settings`;
+  return actionId;
+}
+
+function contextualCopy(actionId, definition, parameters, requestedTarget) {
+  const target = displayTarget(requestedTarget, fallbackTarget(actionId, parameters));
+  const copies = {
+    'apps.detail': [`About ${target}`, `Here are the details for ${target}.`],
+    'issues.for_app': [`Issues for ${target}`, `Here are the issues for ${target}.`],
+    'development.for_app': [`Development in ${target}`, `Here is the development work for ${target}.`],
+    'governance.for_app': [`Proposals for ${target}`, `Here are the proposals for ${target}.`],
+    'messages.for_app': [`Discussions in ${target}`, `Here are the discussions for ${target}.`],
+    'issue.detail': [`Open ${target}`, `Here are the details for ${target}.`],
+    'issue.comments': [`Comments on ${target}`, `Here are the comments on ${target}.`],
+    'governance.detail': [`Open ${target}`, `Here are the details for ${target}.`],
+    'proposal.detail': [`Open ${target}`, `Here are the details for ${target}.`],
+    'proposal.evidence': [`Evidence for ${target}`, `Here is the evidence for ${target}.`],
+    'session.detail': [`Details for ${target}`, `Here are the details for ${target}.`],
+    'session.checks': [`Checks for ${target}`, `Here are the checks for ${target}.`],
+    'conversation.detail': [`Open ${target}`, `Here are the details for ${target}.`],
+    'notification.detail': [`Open ${target}`, `Here are the details for ${target}.`],
+    'leaderboard.profile': [`Profile for ${target}`, `Here is the profile for ${target}.`],
+    'leaderboard.prs': [`Merged work by ${target}`, `Here is the merged work by ${target}.`],
+    'settings.inspect': [`Open ${target}`, `Here are the current values for ${target}.`],
+  };
+  const [label, message] = copies[actionId] || [definition.label, definition.message];
+  return { label, message, targetLabel: target };
+}
+
+function shortLabel(prefix, target) {
+  const available = Math.max(8, 36 - prefix.length - 1);
+  let compact = target;
+  if (target.length > available) {
+    const identifier = target.match(/#\d{1,18}/)?.[0] || '';
+    const identifierSuffix = identifier && identifier.length + 4 <= available ? ` ${identifier}` : '';
+    const headLength = Math.max(2, available - identifierSuffix.length - 1);
+    compact = `${target.slice(0, headLength).trimEnd()}…${identifierSuffix}`;
+  }
+  return `${prefix} ${compact}`;
+}
+
+function contextualId(action, suffix) {
+  const key = Object.values(action.parameters || {}).join('.')
+    .replace(/[^A-Za-z0-9._:-]+/g, '-')
+    .slice(0, 64) || 'current';
+  return `context.${action.id}.${suffix}.${key}`.slice(0, 160);
+}
+
+function trustedSuggestion(action, suffix, value) {
+  return {
+    id: contextualId(action, suffix),
+    label: value.label,
+    prompt: value.prompt,
+    capabilityHint: null,
+    ...(value.actionId ? { actionId: value.actionId } : {}),
+    // Contextual suggestions are not part of the fixed presentation catalog.
+    // Keep an explicit (possibly empty) parameter object so the client sends
+    // their allowlisted action id instead of trying to resolve their dynamic
+    // suggestion id as a fixed catalog entry.
+    ...(value.actionId ? { parameters: value.parameters || {} } : {}),
+    ...(value.targetLabel ? { targetLabel: value.targetLabel } : {}),
+  };
+}
+
+function contextualSuggestionSet(action) {
+  const target = action.targetLabel;
+  const parameters = action.parameters || {};
+  let topic = null;
+  let candidates = [];
+
+  if (parameters.appSlug && [
+    'apps.detail', 'issues.for_app', 'development.for_app',
+    'governance.for_app', 'messages.for_app',
+  ].includes(action.id)) {
+    const app = target || parameters.appSlug;
+    topic = `${app} app (${parameters.appSlug})`;
+    const exact = { appSlug: parameters.appSlug };
+    candidates = [
+      trustedSuggestion(action, 'about', {
+        label: shortLabel('About', app),
+        prompt: `Show details for the ${app} app (slug ${parameters.appSlug}).`,
+        actionId: 'apps.detail', parameters: exact, targetLabel: app,
+      }),
+      trustedSuggestion(action, 'issues', {
+        label: shortLabel('Issues in', app),
+        prompt: `Show open issues for the ${app} app (slug ${parameters.appSlug}).`,
+        actionId: 'issues.for_app', parameters: exact, targetLabel: app,
+      }),
+      trustedSuggestion(action, 'development', {
+        label: shortLabel('Work in', app),
+        prompt: `Show development work for the ${app} app (slug ${parameters.appSlug}).`,
+        actionId: 'development.for_app', parameters: exact, targetLabel: app,
+      }),
+      trustedSuggestion(action, 'proposals', {
+        label: shortLabel('Proposals in', app),
+        prompt: `Show proposals for the ${app} app (slug ${parameters.appSlug}).`,
+        actionId: 'governance.for_app', parameters: exact, targetLabel: app,
+      }),
+      trustedSuggestion(action, 'discussions', {
+        label: shortLabel('Discuss', app),
+        prompt: `Show recent discussions for the ${app} app (slug ${parameters.appSlug}).`,
+        actionId: 'messages.for_app', parameters: exact, targetLabel: app,
+      }),
+      trustedSuggestion(action, 'search', {
+        label: shortLabel('Search', app),
+        prompt: `Help me search within the ${app} app (slug ${parameters.appSlug}). Ask what I want to find if needed.`,
+      }),
+    ];
+  } else if (parameters.sessionId && ['session.detail', 'session.checks'].includes(action.id)) {
+    const session = target || `development #${parameters.sessionId}`;
+    topic = `${session} (development session ${parameters.sessionId})`;
+    const exact = { sessionId: parameters.sessionId };
+    candidates = [
+      trustedSuggestion(action, 'details', {
+        label: shortLabel('Details for', session),
+        prompt: `Show details for ${session} (session ${parameters.sessionId}).`,
+        actionId: 'session.detail', parameters: exact, targetLabel: session,
+      }),
+      trustedSuggestion(action, 'checks', {
+        label: shortLabel('Checks for', session),
+        prompt: `Show checks for ${session} (session ${parameters.sessionId}).`,
+        actionId: 'session.checks', parameters: exact, targetLabel: session,
+      }),
+      trustedSuggestion(action, 'continue', {
+        label: shortLabel('Continue', session),
+        prompt: `Help me continue ${session} using development session ${parameters.sessionId}.`,
+      }),
+      trustedSuggestion(action, 'issues', {
+        label: shortLabel('Issues for', session),
+        prompt: `Show issues related to ${session} (development session ${parameters.sessionId}).`,
+      }),
+      trustedSuggestion(action, 'proposals', {
+        label: shortLabel('Proposals for', session),
+        prompt: `Show proposals related to ${session} (development session ${parameters.sessionId}).`,
+      }),
+      trustedSuggestion(action, 'active', {
+        label: 'All active work', prompt: 'Show all of my active development work.',
+        actionId: 'development.active',
+      }),
+    ];
+  } else if (parameters.appSlug && parameters.issueNumber
+      && ['issue.detail', 'issue.comments'].includes(action.id)) {
+    const issue = target || `issue #${parameters.issueNumber}`;
+    topic = `${issue} in app ${parameters.appSlug}`;
+    const exact = { appSlug: parameters.appSlug, issueNumber: parameters.issueNumber };
+    candidates = [
+      trustedSuggestion(action, 'details', {
+        label: shortLabel('Open', issue),
+        prompt: `Show details for ${issue} in app ${parameters.appSlug}.`,
+        actionId: 'issue.detail', parameters: exact, targetLabel: issue,
+      }),
+      trustedSuggestion(action, 'comments', {
+        label: shortLabel('Comments on', issue),
+        prompt: `Show comments on ${issue} in app ${parameters.appSlug}.`,
+        actionId: 'issue.comments', parameters: exact, targetLabel: issue,
+      }),
+      trustedSuggestion(action, 'start', {
+        label: shortLabel('Start', issue),
+        prompt: `Start development work for ${issue} in app ${parameters.appSlug}.`,
+      }),
+      trustedSuggestion(action, 'proposals', {
+        label: shortLabel('Proposals for', issue),
+        prompt: `Show proposals related to ${issue} in app ${parameters.appSlug}.`,
+      }),
+      trustedSuggestion(action, 'similar', {
+        label: shortLabel('Similar to', issue),
+        prompt: `Find issues similar to ${issue} in app ${parameters.appSlug}.`,
+      }),
+      trustedSuggestion(action, 'app', {
+        label: 'All app issues',
+        prompt: `Show all open issues for app ${parameters.appSlug}.`,
+        actionId: 'issues.for_app', parameters: { appSlug: parameters.appSlug },
+        targetLabel: parameters.appSlug,
+      }),
+    ];
+  } else if (action.id === 'settings.inspect' && parameters.group) {
+    const setting = target || `${parameters.group.replace(/-/g, ' ')} settings`;
+    topic = `${setting} (settings group ${parameters.group})`;
+    candidates = [
+      trustedSuggestion(action, 'change', {
+        label: shortLabel('Change', setting),
+        prompt: `Help me change ${setting} (settings group ${parameters.group}). Preserve values I do not ask to change and show confirmation before saving.`,
+      }),
+      trustedSuggestion(action, 'chat', {
+        label: 'Chat settings', prompt: 'Show my Global Chat settings.',
+        actionId: 'settings.global_chat',
+      }),
+      trustedSuggestion(action, 'development', {
+        label: 'Development AI', prompt: 'Show my Development AI settings.',
+        actionId: 'settings.development',
+      }),
+      trustedSuggestion(action, 'spending', {
+        label: 'AI spending', prompt: 'Show my AI usage and spending limits.',
+        actionId: 'settings.spending',
+      }),
+      trustedSuggestion(action, 'notifications', {
+        label: 'Notification settings', prompt: 'Show my notification settings.',
+        actionId: 'settings.notifications',
+      }),
+      trustedSuggestion(action, 'other', {
+        label: 'Other settings', prompt: 'Show other settings I can configure.',
+        actionId: 'settings.catalog',
+      }),
+    ];
+  }
+
+  if (!topic || candidates.length < 5) return null;
+  const suggestions = candidates.filter((candidate) => candidate.actionId !== action.id).slice(0, 5);
+  if (suggestions.length !== 5) return null;
+  return {
+    topic: topic.slice(0, 240),
+    suggestions: suggestions.map((suggestion) => ({
+      ...suggestion,
+      relatedSuggestions: suggestions.filter((related) => related.id !== suggestion.id),
+    })),
+  };
+}
+
 const ACTIONS = Object.freeze({
   'work.overview': fixed({
     label: 'Show my work',
@@ -343,7 +582,12 @@ const ACTIONS = Object.freeze({
   }),
 });
 
-function resolveAction({ suggestionId = null, actionId = null, parameters = null } = {}) {
+function resolveAction({
+  suggestionId = null,
+  actionId = null,
+  parameters = null,
+  targetLabel = null,
+} = {}) {
   let resolvedActionId = actionId;
   let suggestionLabel = null;
   if (suggestionId != null) {
@@ -365,18 +609,21 @@ function resolveAction({ suggestionId = null, actionId = null, parameters = null
   if (!Array.isArray(steps) || !steps.length || steps.length > 5) {
     throw new SuggestionActionError('invalid_direct_action', 'That direct action is invalid.');
   }
+  const copy = contextualCopy(resolvedActionId, definition, normalized, targetLabel);
   return {
     id: resolvedActionId,
-    label: suggestionLabel || definition.label,
-    message: definition.message,
+    label: suggestionLabel || copy.label,
+    message: copy.message,
     domain: definition.domain,
     parameters: normalized,
+    targetLabel: copy.targetLabel,
     steps,
   };
 }
 
 module.exports = {
   ACTIONS,
+  contextualSuggestionSet,
   SuggestionActionError,
   resolveAction,
   routeCapability,

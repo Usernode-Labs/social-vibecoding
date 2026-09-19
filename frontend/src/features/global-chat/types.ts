@@ -4,6 +4,8 @@ export interface GlobalChatSuggestion {
   prompt: string;
   capabilityHint: string | null;
   actionId?: string | null;
+  parameters?: Record<string, string>;
+  targetLabel?: string | null;
   relatedSuggestions?: GlobalChatSuggestion[];
 }
 export interface GlobalChatPresentation {
