@@ -23,6 +23,7 @@ import {
   useGlobalChatState,
 } from './store';
 import type {
+  GlobalChatItemSelection,
   GlobalChatMessage,
   GlobalChatPresentation,
   GlobalChatProgress,
@@ -209,23 +210,28 @@ function AssistantTurn({
 }) {
   const snapshot = useGlobalChatState();
   const presentation = message.payload?.presentation as GlobalChatPresentation | undefined;
+  const itemSelection = presentation?.itemSelection as GlobalChatItemSelection | undefined;
   const copy = presentation?.message ?? message.text;
   return (
     <article className="global-chat-turn global-chat-turn-assistant">
       {copy ? <p className="global-chat-assistant-copy">{copy}</p> : null}
       {presentation?.resultRefs?.map((id) => {
         const result = snapshot.results[id];
-        return result ? <GlobalChatResultBlock key={id} result={result} /> : (
+        return result ? (
+          <GlobalChatResultBlock key={id} result={result} itemSelection={itemSelection} />
+        ) : (
           <div key={id} className="global-chat-result-loading" aria-label="Loading result">
             <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
           </div>
         );
       })}
-      <Suggestions
-        suggestions={presentation?.suggestions || []}
-        latest={latest}
-        context={presentation?.suggestionContext}
-      />
+      {!itemSelection ? (
+        <Suggestions
+          suggestions={presentation?.suggestions || []}
+          latest={latest}
+          context={presentation?.suggestionContext}
+        />
+      ) : null}
     </article>
   );
 }

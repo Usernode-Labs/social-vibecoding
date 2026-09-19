@@ -146,7 +146,11 @@ test('authoritative results never execute model HTML and retain exact Classic es
   assert.match(renderers, /status === 'confirmation_required'/);
   assert.match(renderers, /confirmGlobalChatAction\(result, token\)/);
   assert.match(renderers, /payload\.preview/);
-  assert.match(renderers, /items\.slice\(0, 3\)/);
+  assert.match(renderers, /result\.renderer === 'app' \? 6 : 3/);
+  assert.match(renderers, /items\.slice\(0, visibleCount\)/);
+  assert.match(renderers, /Math\.min\(count \+ pageSize, items\.length\)/);
+  assert.match(renderers, />\s*Show more\s*<ChevronDownIcon/s);
+  assert.doesNotMatch(renderers, /Show \{items\.length - visible\.length\} more/);
   assert.match(renderers, /#apps\/\$\{segment\(slug\)\}/);
   assert.match(renderers, /#app\/\$\{segment\(slug\)\}\/dev\/issues\/\$\{segment\(issueNumber\)\}/);
   assert.match(renderers, /#app\/\$\{segment\(slug\)\}\/dev\/governance\/\$\{segment\(governanceId\)\}/);
@@ -182,6 +186,17 @@ test('app results reuse the platform icon primitive for images, emoji, and fallb
   assert.match(renderers, /result\.renderer === 'app'/);
   assert.match(renderers, /<AppIconContent app=\{item\} \/>/);
   assert.match(renderers, /data-icon=\{appIconKind\(item\)\}/);
+  assert.match(css, /\.global-chat-result\[data-renderer="app"\] \.global-chat-result-items[\s\S]*grid-template-columns: repeat\(2/);
+});
+
+test('single-purpose app choosers select directly without unrelated controls', () => {
+  assert.match(screen, /itemSelection=\{itemSelection\}/);
+  assert.match(screen, /!itemSelection \? \(/);
+  assert.match(renderers, /itemSelection\?\.renderer === result\.renderer/);
+  assert.match(renderers, /selectionAction\.actionId/);
+  assert.match(renderers, /aria-expanded=\{selectionAction \? undefined : expanded\}/);
+  assert.match(renderers, /!selectionAction \? <ChevronDownIcon/);
+  assert.match(renderers, /!selectionAction && expanded \? \(/);
 });
 
 test('the browser transport uses authenticated POST SSE and same-origin client actions', () => {
@@ -247,7 +262,7 @@ test('Settings keeps navigation AI separate from development AI and reports spen
 });
 
 test('rendered rows disclose locally and settings can be edited and saved in place', () => {
-  assert.match(renderers, /aria-expanded=\{expanded\}/);
+  assert.match(renderers, /aria-expanded=\{selectionAction \? undefined : expanded\}/);
   assert.match(renderers, /className="global-chat-item-toggle"/);
   assert.match(renderers, /action\.mode === 'inline'/);
   assert.match(renderers, /loadGlobalChatInlineResults/);

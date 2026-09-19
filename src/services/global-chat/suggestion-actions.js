@@ -81,13 +81,14 @@ function settingParameters(value) {
   return result;
 }
 
-function fixed({ label, message, domain, steps }) {
+function fixed({ label, message, domain, steps, itemSelection = null }) {
   return Object.freeze({
     label,
     message,
     domain,
     parameters: noParameters,
     steps: () => steps,
+    ...(itemSelection ? { itemSelection: Object.freeze(itemSelection) } : {}),
   });
 }
 
@@ -413,6 +414,12 @@ const ACTIONS = Object.freeze({
     message: 'Choose an app to view its issues.',
     domain: 'issues',
     steps: [routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY)],
+    itemSelection: {
+      renderer: 'app',
+      actionId: 'issues.for_app',
+      parameter: 'appSlug',
+      label: 'Issues for',
+    },
   }),
   'development.active': fixed({
     label: 'Active development',
@@ -464,6 +471,12 @@ const ACTIONS = Object.freeze({
     message: 'Choose an app to view its discussions.',
     domain: 'messages',
     steps: [routeStep('GET', '/api/apps', {}, COMPACT_APP_QUERY)],
+    itemSelection: {
+      renderer: 'app',
+      actionId: 'messages.for_app',
+      parameter: 'appSlug',
+      label: 'Discussions in',
+    },
   }),
   'notifications.list': fixed({
     label: 'Notifications',
@@ -674,6 +687,7 @@ function resolveAction({
     parameters: normalized,
     targetLabel: copy.targetLabel,
     steps,
+    ...(definition.itemSelection ? { itemSelection: definition.itemSelection } : {}),
   };
 }
 

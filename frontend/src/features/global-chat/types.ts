@@ -8,11 +8,20 @@ export interface GlobalChatSuggestion {
   targetLabel?: string | null;
   relatedSuggestions?: GlobalChatSuggestion[];
 }
+
+export interface GlobalChatItemSelection {
+  renderer: 'app';
+  actionId: string;
+  parameter: 'appSlug';
+  label: string;
+}
+
 export interface GlobalChatPresentation {
   message: string;
   resultRefs: string[];
   suggestions: GlobalChatSuggestion[];
   suggestionContext?: string;
+  itemSelection?: GlobalChatItemSelection;
 }
 
 export interface GlobalChatMessage {
