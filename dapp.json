@@ -3568,9 +3568,9 @@
       "expectText": "Spinning the preview back up…"
     },
     {
-      "name": "The bounty row says what a kudos bounty does (#1582)",
+      "name": "The kudos row says a kudos thanks whoever solves it (#2586)",
       "path": "/?shot=feedback",
-      "expectText": "encourages someone to take it up and solve it"
+      "expectText": "to thank whoever solves it"
     },
     {
       "name": "A spent allowance says so instead of showing a count (#964)",
