@@ -4481,9 +4481,14 @@
       "expectText": "What should this session change?"
     },
     {
-      "name": "#2241: the unsent change has a live composer, and no controls for a session that does not exist",
+      "name": "#2241/#2607: the unsent change has a live composer and the venue dropdown, and no controls for a session that does not exist",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#dc-session-header:not(:has(#dc-venue-select)):not(:has(#dc-session-actions)) ~ .dc-session-body #dc-form #dc-input:not([disabled])"
+      "expectSelector": "#dc-session-header:has(> button#dc-venue-select[data-venue-change]):not(:has(#dc-session-actions)) ~ .dc-session-body #dc-form #dc-input:not([disabled])"
+    },
+    {
+      "name": "#2607: the venue dropdown on a new change names the venue it would be built in, and opens the sheet that changes it",
+      "path": "/#app/usernode-2d5619/dev/sessions/new",
+      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:not([disabled]) > .dc-venue-name"
     },
     {
       "name": "Waitlist connect callback shows a status page, not the home page, and says when a link has expired",

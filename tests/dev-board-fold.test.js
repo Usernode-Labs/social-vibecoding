@@ -838,7 +838,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // POSTED to the app's thread, and seeding one would be a fixture that
   // fabricates activity rather than data. 699 leaves 31 slots against
   // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 699);
+  //
+  // 699 → 700: #2607 put the venue dropdown on the unsent-change screen, so
+  // the check that pinned its ABSENCE there was retargeted to the new truth
+  // rather than deleted, and ONE check was added beside it — the dropdown
+  // is an enabled, direct-child control that names a venue and opens the
+  // sheet, which is the part a retargeted :not() cannot assert. The pick
+  // itself gets no check: every answer but the in-chat one creates a session
+  // row, and a declared check that creates one on every run would seed the
+  // staging clone with sessions nobody asked for. 700 leaves 30 slots
+  // against MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 700);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
