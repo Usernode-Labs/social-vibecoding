@@ -5,6 +5,8 @@ import type {
   GlobalChatBootstrap,
   GlobalChatMessage,
   GlobalChatPresentation,
+  GlobalChatProgress,
+  GlobalChatProgressOperation,
   GlobalChatResult,
   GlobalChatThread,
   GlobalChatSuggestion,
@@ -36,6 +38,7 @@ export interface GlobalChatState {
   error: string;
   retryRequest: RetryRequest | null;
   activity: string;
+  progress: GlobalChatProgress | null;
   overallAllowance: {
     configured: boolean;
     limitUsd?: number | null;
@@ -60,6 +63,7 @@ const INITIAL_STATE: GlobalChatState = {
   error: '',
   retryRequest: null,
   activity: '',
+  progress: null,
   overallAllowance: null,
   dismissedConfirmations: {},
   consumedConfirmations: {},
@@ -77,6 +81,92 @@ function publish(next: Partial<GlobalChatState> | ((current: GlobalChatState) =>
   const patch = typeof next === 'function' ? next(state) : next;
   state = { ...state, ...patch };
   for (const listener of [...listeners]) listener();
+}
+
+function eventString(value: unknown, fallback = '') {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function eventNumber(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function progressOperations(value: unknown): GlobalChatProgressOperation[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    const toolCallId = eventString(item.toolCallId);
+    const capabilityId = eventString(item.capabilityId);
+    const title = eventString(item.title);
+    if (!toolCallId || !capabilityId || !title) return [];
+    return [{
+      toolCallId,
+      capabilityId,
+      title,
+      risk: eventString(item.risk) || undefined,
+      status: 'planned' as const,
+    }];
+  });
+}
+
+function applyProgressEvent(event: Record<string, unknown>) {
+  publish((current) => {
+    const existing = current.progress || {
+      phase: 'understanding',
+      message: 'Understanding your request…',
+      model: null,
+      reasoningEffort: null,
+      elapsedMs: 0,
+      startedAt: Date.now(),
+      steps: [],
+      operations: [],
+    };
+    const phase = eventString(event.phase, existing.phase);
+    const message = eventString(event.message, existing.message);
+    const elapsedMs = eventNumber(event.elapsedMs, existing.elapsedMs);
+    const last = existing.steps.at(-1);
+    const steps = last?.phase === phase && last.message === message
+      ? existing.steps
+      : [...existing.steps, { phase, message, elapsedMs }].slice(-12);
+    const announced = progressOperations(event.operations);
+    return {
+      activity: message,
+      progress: {
+        ...existing,
+        phase,
+        message,
+        elapsedMs,
+        model: eventString(event.model) || existing.model,
+        reasoningEffort: eventString(event.reasoningEffort) || existing.reasoningEffort,
+        attempt: eventNumber(event.attempt, existing.attempt || 1),
+        steps,
+        operations: announced.length ? announced : existing.operations,
+      },
+    };
+  });
+}
+
+function applyToolProgress(event: Record<string, unknown>, status: GlobalChatProgressOperation['status']) {
+  const toolCallId = eventString(event.toolCallId);
+  const capabilityId = eventString(event.capabilityId);
+  if (!toolCallId || !capabilityId) return;
+  publish((current) => {
+    if (!current.progress) return {};
+    const existing = current.progress.operations.find((item) => item.toolCallId === toolCallId);
+    const operation: GlobalChatProgressOperation = {
+      toolCallId,
+      capabilityId,
+      title: eventString(event.title, existing?.title || capabilityId),
+      risk: existing?.risk,
+      status,
+      ...(eventNumber(event.durationMs) ? { durationMs: eventNumber(event.durationMs) } : {}),
+    };
+    const operations = current.progress.operations.some((item) => item.toolCallId === toolCallId)
+      ? current.progress.operations.map((item) => item.toolCallId === toolCallId ? operation : item)
+      : [...current.progress.operations, operation];
+    return { progress: { ...current.progress, operations } };
+  });
 }
 
 function subscribe(listener: () => void) {
@@ -141,6 +231,7 @@ async function recoverInterruptedTurn(
       ? {
         phase: failed ? 'error' : 'ready',
         activity: '',
+        progress: null,
         error: failed ? assistant.text : '',
         retryRequest: failed ? retryRequest : null,
         messages: mergePersistedMessages(current.messages, newer),
@@ -254,6 +345,7 @@ async function loadThread(thread: GlobalChatThread, version: number) {
     before: null,
     error: '',
     retryRequest: null,
+    progress: null,
   });
   try {
     const page = await api.messages(thread.id, { limit: 40 });
@@ -268,6 +360,7 @@ async function loadThread(thread: GlobalChatThread, version: number) {
       before: page.before,
       error: '',
       retryRequest: null,
+      progress: null,
     });
   } catch (error) {
     if (version !== navigationVersion
@@ -348,6 +441,7 @@ export function deactivateGlobalChat() {
     open: false,
     phase: state.bootstrap ? 'ready' : 'idle',
     activity: '',
+    progress: null,
     error: '',
     retryRequest: null,
   });
@@ -462,6 +556,20 @@ async function runTurn({ text, more = false, topic }: {
   publish({
     phase: 'sending',
     activity: more ? 'Loading options…' : 'Thinking…',
+    progress: more ? null : {
+      phase: 'understanding',
+      message: 'Understanding your request…',
+      model: boot.profiles.globalChat.model,
+      reasoningEffort: boot.profiles.globalChat.reasoningEffort,
+      elapsedMs: 0,
+      startedAt: Date.now(),
+      steps: [{
+        phase: 'understanding',
+        message: 'Understanding your request…',
+        elapsedMs: 0,
+      }],
+      operations: [],
+    },
     error: '',
     retryRequest: null,
   });
@@ -475,10 +583,15 @@ async function runTurn({ text, more = false, topic }: {
       shownSuggestionIds: more ? shownSuggestionIds() : undefined,
       signal: controller.signal,
       onEvent(event) {
-        if (event.type === 'tool.started') {
+        if (event.type === 'turn.progress') {
+          applyProgressEvent(event);
+        } else if (event.type === 'tool.started') {
+          applyToolProgress(event, 'running');
           publish((current) => current.bootstrap?.thread?.id === thread.id
-            ? { activity: 'Working…' }
+            ? { activity: eventString(event.title, 'Working…') }
             : {});
+        } else if (event.type === 'tool.completed') {
+          applyToolProgress(event, event.status === 'failed' ? 'failed' : 'completed');
         } else if (event.type === 'confirmation.required') {
           publish((current) => current.bootstrap?.thread?.id === thread.id
             ? { activity: 'Preparing confirmation…' }
@@ -507,6 +620,7 @@ async function runTurn({ text, more = false, topic }: {
             ? {
               phase: 'ready',
               activity: '',
+              progress: null,
               messages: [
                 ...current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
                 assistant,
@@ -521,6 +635,7 @@ async function runTurn({ text, more = false, topic }: {
             ? {
               phase: 'error',
               activity: '',
+              progress: null,
               error: message,
               retryRequest,
               messages: [
@@ -534,7 +649,11 @@ async function runTurn({ text, more = false, topic }: {
     });
     if (!completed && !controller.signal.aborted) {
       publish((current) => current.bootstrap?.thread?.id === thread.id
-        ? { activity: 'Reconnecting…' }
+        ? { activity: 'Reconnecting…', progress: current.progress ? {
+          ...current.progress,
+          phase: 'reconnecting',
+          message: 'Reconnecting to the saved turn…',
+        } : null }
         : {});
       completed = await recoverInterruptedTurn(
         thread.id, messageBoundary, controller.signal, retryRequest,
@@ -544,6 +663,7 @@ async function runTurn({ text, more = false, topic }: {
           ? {
             phase: 'error',
             activity: '',
+            progress: null,
             error: 'The connection was interrupted before an answer was saved. Please try again.',
             retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
@@ -557,6 +677,7 @@ async function runTurn({ text, more = false, topic }: {
         ? {
           phase: 'ready',
           activity: '',
+          progress: null,
           messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
         }
         : {});
@@ -565,7 +686,11 @@ async function runTurn({ text, more = false, topic }: {
       // above, but the server may still be finishing the same durable turn.
       // Recover it in exactly the same way before showing a retry error.
       publish((current) => current.bootstrap?.thread?.id === thread.id
-        ? { activity: 'Reconnecting…' }
+        ? { activity: 'Reconnecting…', progress: current.progress ? {
+          ...current.progress,
+          phase: 'reconnecting',
+          message: 'Reconnecting to the saved turn…',
+        } : null }
         : {});
       completed = await recoverInterruptedTurn(
         thread.id, messageBoundary, controller.signal, retryRequest,
@@ -575,6 +700,7 @@ async function runTurn({ text, more = false, topic }: {
           ? {
             phase: 'error',
             activity: '',
+            progress: null,
             error: errorText(error),
             retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
@@ -628,7 +754,9 @@ async function runDirectAction({
   appendOptimisticUser(label);
   const controller = new AbortController();
   activeAbort = controller;
-  publish({ phase: 'sending', activity: 'Loading…', error: '', retryRequest: null });
+  publish({
+    phase: 'sending', activity: 'Loading…', progress: null, error: '', retryRequest: null,
+  });
   try {
     const response = await api.executeDirectAction(thread.id, {
       ...(suggestionId ? { suggestionId } : { actionId }),

@@ -1737,6 +1737,54 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   color: var(--text-muted);
   font-size: 13px;
 }
+.global-chat-progress {
+  margin: 9px 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  color: var(--text-muted);
+  background: var(--dc-raised);
+  font-size: 12px;
+}
+.global-chat-progress-current {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 22px;
+}
+.global-chat-progress-current span {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.global-chat-progress-current time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.global-chat-progress details { margin-top: 5px; }
+.global-chat-progress summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 650;
+}
+.global-chat-progress-details {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-light);
+}
+.global-chat-progress-details ol,
+.global-chat-progress-details ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+}
+.global-chat-progress-details li[data-status="completed"] { color: var(--text-secondary); }
+.global-chat-progress-details li[data-status="failed"] { color: var(--danger, #b91c1c); }
 .global-chat-history { margin: 0 auto 10px; }
 .global-chat-error {
   display: flex;
@@ -1821,12 +1869,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .global-chat-item-toggle { min-height: 36px; }
   .global-chat-setting-instruction input,
   .global-chat-setting-instruction button { min-height: 42px; }
+  .global-chat-progress { padding: 9px 10px; }
   .global-chat-composer { width: calc(100% - 16px); }
 }
 @media (prefers-reduced-motion: reduce) {
   .global-chat-result-loading svg,
   .global-chat-loading svg,
   .global-chat-activity svg { animation: none; }
+  .global-chat-progress-current svg { animation: none; }
 }
 
 

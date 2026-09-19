@@ -28,6 +28,7 @@ function context(overrides = {}) {
       }),
     },
     dispatchClientAction: async () => ({ ok: true, status: 200, data: { opened: true } }),
+    queryUserHistory: async () => ({ items: [] }),
     ...overrides,
   };
 }
@@ -38,7 +39,7 @@ test('the registry contains every mapped route, Settings section, and navigation
   const expected = inventory.summary.mappedRoutes
     + inventory.summary.settingsSections
     + inventory.summary.navigationSurfaces
-    + 9; // inspect/catalog, proposals, activity, unread, discussions, spending, two updates
+    + 11; // focused settings/activity reads, two updates, and two cross-app history reads
   assert.equal(definitions.length, expected);
   assert.equal(registry.size, expected);
   for (const route of inventory.routes.filter((item) => item.status === 'mapped')) {
@@ -65,6 +66,14 @@ test('natural user wording discovers the intended read and development tools', (
     registry.search('list the current issues', execution)[0]?.id,
     'issues.get.apps.item.issues.bcb11122',
   );
+  const history = registry.search(
+    'Show me the last issues I closed and what I merged', execution, { limit: 8 },
+  ).map((entry) => entry.id);
+  assert.ok(history.includes('issues.closed_by_me'));
+  assert.ok(history.includes('governance.merged_by_me'));
+  assert.deepEqual(registry.search('list unicorns', execution), []);
+  assert.deepEqual(registry.search('delete unicorns', execution), []);
+  assert.deepEqual(registry.search('merge bananas', execution), []);
   assert.equal(
     registry.search('start developing issue 2377', execution)[0]?.id,
     'development.post.apps.item.sessions.5206fad0',

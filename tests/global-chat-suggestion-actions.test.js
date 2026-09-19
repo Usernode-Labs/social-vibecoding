@@ -95,9 +95,19 @@ test('contextual actions preserve the exact target in transcript copy and every 
   assert.ok(contextual.suggestions.every((suggestion) => (
     !suggestion.actionId || Object.hasOwn(suggestion, 'parameters')
   )));
-  assert.ok(contextual.suggestions.every((suggestion) => (
-    suggestion.relatedSuggestions.length === 4
+  const appIssues = contextual.suggestions.find((suggestion) => (
+    suggestion.actionId === 'issues.for_app'
+  ));
+  assert.equal(appIssues.relatedSuggestions.length, 5);
+  assert.ok(appIssues.relatedSuggestions.every((suggestion) => (
+    /Global Chat interface \(#2377\)|usernode-2d5619/.test(suggestion.prompt)
   )));
+  assert.equal(
+    appIssues.relatedSuggestions.some((suggestion) => (
+      contextual.suggestions.some((sibling) => sibling.id === suggestion.id)
+    )),
+    false,
+  );
 });
 
 test('a direct suggestion persists authoritative results with zero model invocations', async () => {

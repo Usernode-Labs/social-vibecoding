@@ -1,12 +1,17 @@
 'use strict';
 
-// The model can choose text, existing result references, and five next-step
+// The model can choose text, existing result references, and a small set of next-step
 // suggestions. It cannot choose component code, Classic URLs, arbitrary
 // actions, or the always-present More suggestions control; the server/client
 // derive those from the capability registry.
 
 const MAX_MESSAGE_CHARS = 600;
 const MAX_RESULT_REFS = 5;
+const MIN_SUGGESTIONS_PER_RESPONSE = 5;
+const MAX_SUGGESTIONS_PER_RESPONSE = 6;
+// Kept as the deterministic page size for older callers. Model responses may
+// use five or six; curated first-use pages use six when six distinct actions
+// are genuinely available.
 const SUGGESTIONS_PER_RESPONSE = 5;
 const MAX_SUGGESTION_LABEL_CHARS = 36;
 const MAX_SUGGESTION_PROMPT_CHARS = 500;
@@ -143,15 +148,20 @@ function validatePresentation(value, {
   }
 
   if (!Array.isArray(value.suggestions)
-      || value.suggestions.length !== SUGGESTIONS_PER_RESPONSE) {
+      || value.suggestions.length < MIN_SUGGESTIONS_PER_RESPONSE
+      || value.suggestions.length > MAX_SUGGESTIONS_PER_RESPONSE) {
     throw new PresentationError(
       'invalid_presentation',
-      `suggestions must contain exactly ${SUGGESTIONS_PER_RESPONSE} options`,
+      `suggestions must contain ${MIN_SUGGESTIONS_PER_RESPONSE} to ${MAX_SUGGESTIONS_PER_RESPONSE} options`,
     );
   }
   const suggestions = value.suggestions.map(normalizeSuggestion);
   const seenSuggestions = new Set();
+  const seenLabels = new Set();
+  const seenPrompts = new Set();
   for (const suggestion of suggestions) {
+    const labelKey = suggestion.label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const promptKey = suggestion.prompt.toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     if (seenSuggestions.has(suggestion.id)) {
       throw new PresentationError(
         'duplicate_suggestion',
@@ -166,7 +176,16 @@ function validatePresentation(value, {
         { suggestionId: suggestion.id },
       );
     }
+    if (seenLabels.has(labelKey) || seenPrompts.has(promptKey)) {
+      throw new PresentationError(
+        'duplicate_suggestion',
+        `Suggestion ${suggestion.id} repeats another option`,
+        { suggestionId: suggestion.id },
+      );
+    }
     seenSuggestions.add(suggestion.id);
+    seenLabels.add(labelKey);
+    seenPrompts.add(promptKey);
   }
 
   return {
@@ -183,7 +202,6 @@ function validatePresentation(value, {
 const SUGGESTION_CATALOG = Object.freeze({
   apps: Object.freeze([
     ['next.general.apps', 'Explore apps', 'Show me apps I can explore.', 'apps.list', 'apps'],
-    ['next.apps.mine', 'Show my apps', 'Show the apps I currently work with.', 'apps.list', 'apps'],
     ['next.apps.activity', 'Recent app activity', 'Show recent activity across my apps.', 'apps.activity', 'apps'],
     ['next.apps.issues', 'Find app issues', 'Show open issues across apps I can access.', 'issues.choose_app', 'issues'],
     ['next.apps.development', 'Active development', 'Show active development work across my apps.', 'development.active', 'development'],
@@ -191,7 +209,7 @@ const SUGGESTION_CATALOG = Object.freeze({
   issues: Object.freeze([
     ['next.issues.open', 'Open issues', 'Show open issues I can work on.', 'issues.choose_app', 'issues'],
     ['next.issues.search', 'Search issues', 'Help me search issues by text, tag, or status.'],
-    ['next.issues.mine', 'My issue work', 'Show issues connected to my current work.', 'issues.choose_app', 'issues'],
+    ['next.issues.mine', 'Issues in my work', 'Show issues linked to my active development sessions or proposals.', null, 'issues'],
     ['next.issues.proposals', 'Related proposals', 'Show proposals related to open issues.'],
     ['next.issues.development', 'Start development', 'Help me choose an issue and start development work.'],
   ]),
@@ -229,9 +247,11 @@ const SUGGESTION_CATALOG = Object.freeze({
     ['next.general.issues', 'Find issues', 'Show open issues I can work on.', 'issues.choose_app', 'issues'],
     ['next.general.proposals', 'Review proposals', 'Show my current proposals.', 'governance.mine', 'governance'],
     ['next.general.messages', 'Check messages', 'Show my recent conversations and unread messages.', 'messages.overview', 'messages'],
-    ['next.general.notifications', 'Notifications', 'Show my recent notifications.', 'notifications.list', 'messages'],
+    ['next.general.activity', 'Recent activity', 'Show recent activity across my apps.', 'apps.activity', 'apps'],
     ['next.general.development', 'Development work', 'Show my active development work.', 'development.active', 'development'],
+    ['next.general.notifications', 'Notifications', 'Show my recent notifications.', 'notifications.list', 'messages'],
     ['next.general.settings', 'Open settings', 'Show settings I can configure.', 'settings.catalog', 'settings'],
+    ['next.general.spending', 'AI spending', 'Show my Global Chat usage and spending limits.', 'settings.spending', 'settings'],
     ['next.general.profile', 'View my profile', 'Show my Homeroom profile.', 'profile.me', 'general'],
     ['next.general.leaderboard', 'View leaderboard', 'Show the Homeroom leaderboard.', 'leaderboard.users', 'general'],
   ]),
@@ -258,13 +278,37 @@ function suggestionLabelForId(suggestionId) {
   return SUGGESTIONS_BY_ID.get(suggestionId)?.[1] || null;
 }
 
+const RELATED_SUGGESTION_IDS = Object.freeze({
+  'next.general.work': ['next.development.active', 'next.issues.mine', 'next.governance.review', 'next.apps.activity', 'next.messages.unread'],
+  'next.general.apps': ['next.apps.activity', 'next.apps.issues', 'next.apps.development', 'next.messages.apps', 'next.general.work'],
+  'next.general.issues': ['next.issues.search', 'next.issues.mine', 'next.issues.proposals', 'next.issues.development', 'next.apps.activity'],
+  'next.general.proposals': ['next.governance.votes', 'next.governance.recent', 'next.governance.completed', 'next.governance.issues', 'next.development.active'],
+  'next.general.messages': ['next.messages.unread', 'next.messages.recent', 'next.messages.search', 'next.messages.apps', 'next.general.notifications'],
+  'next.general.activity': ['next.apps.issues', 'next.apps.development', 'next.governance.recent', 'next.messages.apps', 'next.general.work'],
+  'next.general.development': ['next.development.continue', 'next.development.status', 'next.development.issues', 'next.development.proposals', 'next.general.work'],
+  'next.general.settings': ['next.settings.global-chat', 'next.settings.development', 'next.settings.budget', 'next.settings.notifications', 'next.settings.more'],
+  'next.general.spending': ['next.settings.global-chat', 'next.settings.development', 'next.settings.budget', 'next.settings.more', 'next.general.settings'],
+  'next.apps.activity': ['next.apps.issues', 'next.apps.development', 'next.governance.recent', 'next.messages.apps', 'next.general.work'],
+  'next.apps.issues': ['next.issues.search', 'next.issues.mine', 'next.issues.development', 'next.issues.proposals', 'next.apps.activity'],
+  'next.issues.open': ['next.issues.search', 'next.issues.mine', 'next.issues.proposals', 'next.issues.development', 'next.general.apps'],
+  'next.governance.review': ['next.governance.votes', 'next.governance.recent', 'next.governance.completed', 'next.governance.issues', 'next.development.active'],
+  'next.development.active': ['next.development.continue', 'next.development.status', 'next.development.issues', 'next.development.proposals', 'next.general.work'],
+  'next.settings.global-chat': ['next.settings.budget', 'next.settings.development', 'next.settings.notifications', 'next.settings.more', 'next.general.settings'],
+});
+
 function relatedSuggestions(value) {
   const context = value?.[4];
-  if (!context || !SUGGESTION_CATALOG[context]) return [];
-  return [...SUGGESTION_CATALOG[context], ...SUGGESTION_CATALOG.general]
+  const explicit = RELATED_SUGGESTION_IDS[value?.[0]] || [];
+  const fallbacks = context && SUGGESTION_CATALOG[context]
+    ? [...SUGGESTION_CATALOG[context], ...SUGGESTION_CATALOG.general].map((entry) => entry[0])
+    : [];
+  return [...explicit, ...fallbacks]
+    .map((suggestionId) => SUGGESTIONS_BY_ID.get(suggestionId))
     .filter((candidate, index, all) => (
-      candidate[0] !== value[0]
-      && all.findIndex((entry) => entry[0] === candidate[0]) === index
+      candidate
+      && candidate[0] !== value[0]
+      && all.findIndex((entry) => entry?.[0] === candidate[0]) === index
+      && candidate[3] !== value[3]
     ))
     .slice(0, SUGGESTIONS_PER_RESPONSE)
     .map((candidate) => ({
@@ -293,17 +337,28 @@ function enrichPresentation(value, { context = 'general' } = {}) {
   };
 }
 
-function plainSuggestionsForContext(domain = 'general', excludedSuggestionIds = []) {
+function plainSuggestionsForContext(domain = 'general', excludedSuggestionIds = [], {
+  limit = SUGGESTIONS_PER_RESPONSE,
+  excludedActionIds = [],
+} = {}) {
   const excluded = new Set(excludedSuggestionIds || []);
+  const excludedActions = new Set(excludedActionIds || []);
+  const boundedLimit = Math.max(
+    MIN_SUGGESTIONS_PER_RESPONSE,
+    Math.min(MAX_SUGGESTIONS_PER_RESPONSE, Number(limit) || SUGGESTIONS_PER_RESPONSE),
+  );
   const primary = SUGGESTION_CATALOG[domain] || SUGGESTION_CATALOG.general;
   const choices = [...primary, ...SUGGESTION_CATALOG.general]
     .filter((value, index, all) => (
       !excluded.has(value[0])
+      && !excludedActions.has(value[3])
       && all.findIndex((candidate) => candidate[0] === value[0]) === index
+      && (!value[3]
+        || all.findIndex((candidate) => candidate[3] === value[3]) === index)
     ))
-    .slice(0, SUGGESTIONS_PER_RESPONSE)
+    .slice(0, boundedLimit)
     .map(plainSuggestion);
-  if (choices.length !== SUGGESTIONS_PER_RESPONSE) {
+  if (choices.length < MIN_SUGGESTIONS_PER_RESPONSE) {
     throw new PresentationError(
       'suggestions_exhausted',
       'No complete built-in suggestion batch remains for this conversation.',
@@ -312,8 +367,8 @@ function plainSuggestionsForContext(domain = 'general', excludedSuggestionIds = 
   return choices;
 }
 
-function suggestionsForContext(domain = 'general', excludedSuggestionIds = []) {
-  return plainSuggestionsForContext(domain, excludedSuggestionIds).map(enrichSuggestion);
+function suggestionsForContext(domain = 'general', excludedSuggestionIds = [], options = {}) {
+  return plainSuggestionsForContext(domain, excludedSuggestionIds, options).map(enrichSuggestion);
 }
 
 function automaticPresentation({
@@ -322,11 +377,16 @@ function automaticPresentation({
   excludedSuggestionIds = [],
   confirmationRequired = false,
   message = null,
+  excludedActionIds = [],
+  suggestionLimit = SUGGESTIONS_PER_RESPONSE,
 } = {}) {
   const validated = validatePresentation({
     message: message || (confirmationRequired ? 'Review this action before confirming.' : 'Here\u2019s what I found.'),
     resultRefs,
-    suggestions: plainSuggestionsForContext(domain, excludedSuggestionIds),
+    suggestions: plainSuggestionsForContext(domain, excludedSuggestionIds, {
+      limit: suggestionLimit,
+      excludedActionIds,
+    }),
   }, { availableResultIds: resultRefs, excludedSuggestionIds });
   return enrichPresentation(validated, { context: domain });
 }
@@ -335,7 +395,9 @@ function firstUsePresentation() {
   return enrichPresentation(validatePresentation({
     message: 'What would you like to do?',
     resultRefs: [],
-    suggestions: plainSuggestionsForContext('general'),
+    suggestions: plainSuggestionsForContext('general', [], {
+      limit: MAX_SUGGESTIONS_PER_RESPONSE,
+    }),
   }), { context: 'general' });
 }
 
@@ -344,7 +406,9 @@ function nextPredeterminedPresentation({ domain = 'general', excludedSuggestionI
     return enrichPresentation(validatePresentation({
       message: 'Here are more options.',
       resultRefs: [],
-      suggestions: plainSuggestionsForContext(domain, excludedSuggestionIds),
+      suggestions: plainSuggestionsForContext(domain, excludedSuggestionIds, {
+        limit: MAX_SUGGESTIONS_PER_RESPONSE,
+      }),
     }, { excludedSuggestionIds }), { context: domain });
   } catch (error) {
     if (error instanceof PresentationError && error.code === 'suggestions_exhausted') return null;
@@ -355,6 +419,8 @@ function nextPredeterminedPresentation({ domain = 'general', excludedSuggestionI
 module.exports = {
   MAX_MESSAGE_CHARS,
   MAX_RESULT_REFS,
+  MAX_SUGGESTIONS_PER_RESPONSE,
+  MIN_SUGGESTIONS_PER_RESPONSE,
   MAX_SUGGESTION_LABEL_CHARS,
   MAX_SUGGESTION_PROMPT_CHARS,
   SUGGESTIONS_PER_RESPONSE,

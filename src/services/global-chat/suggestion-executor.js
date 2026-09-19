@@ -216,6 +216,7 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
           domain: action.domain,
           resultRefs: outcomes,
           excludedSuggestionIds,
+          excludedActionIds: [action.id],
           message: action.message,
         });
       } catch (error) {
@@ -229,6 +230,7 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
         presentation = automaticPresentation({
           domain: action.domain,
           resultRefs: outcomes,
+          excludedActionIds: [action.id],
           message: action.message,
         });
       }

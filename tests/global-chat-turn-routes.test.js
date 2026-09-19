@@ -275,7 +275,7 @@ test('turn and More suggestions endpoints stream typed events with separate mode
   assert.equal(calls.filter((entry) => entry.type === 'allowance').length, 1);
 });
 
-test('confirmation endpoint persists five compact button-only next steps', async (t) => {
+test('confirmation endpoint persists compact context-specific button-only next steps', async (t) => {
   const { base, calls } = await mount(t);
   const response = await fetch(`${base}/api/global-chat/actions/token_value/confirm`, {
     method: 'POST',
@@ -289,7 +289,7 @@ test('confirmation endpoint persists five compact button-only next steps', async
   assert.deepEqual(body.presentation.resultRefs, [RESULT_ID]);
   assert.deepEqual(
     body.presentation.suggestions.map(({ label }) => label),
-    ['View result', 'Related work', 'Open issues', 'Search issues', 'My issue work'],
+    ['View result', 'Related work', 'Open issues', 'Search issues', 'Issues in my work'],
   );
   assert.ok(body.presentation.suggestions.every((item) => !Object.hasOwn(item, 'description')));
   assert.equal(body.results[0].classicPath, '#app/demo/dev/issues/7');

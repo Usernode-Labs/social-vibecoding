@@ -218,10 +218,17 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
   assert.match(screen, /aria-label="Chat \(experimental\)"/);
   assert.match(screen, /aria-label="Message Global Chat"/);
   assert.match(screen, /aria-label=\{sending \? 'Stop response' : 'Send message'\}/);
+  assert.match(screen, /className="global-chat-progress"/);
+  assert.match(screen, /<summary>Activity<\/summary>/);
+  assert.match(screen, /Model: \{progress\.model\}/);
+  assert.match(screen, /Reasoning: \{progress\.reasoningEffort\} effort/);
+  assert.match(store, /event\.type === 'turn\.progress'/);
+  assert.match(store, /event\.type === 'tool\.completed'/);
   assert.match(css, /\.global-chat-composer[\s\S]*var\(--platform-safe-bottom/);
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-suggestions button \{ min-height: 42px; \}/);
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-new-chat-btn \{ min-height: 44px; \}/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.global-chat-activity svg \{ animation: none; \}/);
+  assert.match(css, /\.global-chat-progress-current/);
 });
 
 test('Settings keeps navigation AI separate from development AI and reports spend', () => {

@@ -212,6 +212,11 @@ function normalizeDefinition(definition) {
     title: requiredText(definition.title, `${id}.title`, 80),
     summary: requiredText(definition.summary, `${id}.summary`, 400),
     keywords: Object.freeze(stringList(definition.keywords || [], `${id}.keywords`)),
+    searchRequires: Object.freeze(stringList(
+      definition.searchRequires || [],
+      `${id}.searchRequires`,
+      { maxItems: 8, maxChars: 40 },
+    ).map(searchTerm).filter(Boolean)),
     inputSchema: Object.freeze(strictObjectSchema(definition.inputSchema, `${id}.inputSchema`)),
     resultSchema: Object.freeze(strictObjectSchema(definition.resultSchema, `${id}.resultSchema`)),
     renderer,
@@ -242,6 +247,7 @@ function descriptorForHash(definition) {
     title: definition.title,
     summary: definition.summary,
     keywords: definition.keywords,
+    searchRequires: definition.searchRequires,
     inputSchema: definition.inputSchema,
     resultSchema: definition.resultSchema,
     renderer: definition.renderer,
@@ -284,7 +290,10 @@ const SEARCH_STOP_WORDS = new Set([
   'would', 'you',
 ]);
 const SEARCH_TERM_ALIASES = Object.freeze({
+  closed: 'close',
   closing: 'close',
+  completed: 'complete',
+  completing: 'complete',
   configuring: 'configure',
   creating: 'create',
   deleting: 'delete',
@@ -294,6 +303,7 @@ const SEARCH_TERM_ALIASES = Object.freeze({
   development: 'develop',
   editing: 'edit',
   listing: 'list',
+  merged: 'merge',
   merging: 'merge',
   opening: 'open',
   searching: 'search',
@@ -301,7 +311,7 @@ const SEARCH_TERM_ALIASES = Object.freeze({
   voting: 'vote',
 });
 const SEARCH_ACTION_TERMS = new Set([
-  'change', 'close', 'configure', 'continue', 'create', 'delete', 'edit',
+  'change', 'close', 'complete', 'configure', 'continue', 'create', 'delete', 'edit',
   'find', 'get', 'list', 'merge', 'open', 'remove', 'run', 'search', 'start',
   'update', 'view', 'vote',
 ]);
@@ -329,6 +339,8 @@ function searchScore(definition, terms, { hasNumericIdentifier = false } = {}) {
   // particular, sorting an empty query by capability id used to expose delete
   // operations first and then force the model to call one.
   if (!terms.length) return 0;
+  if (definition.searchRequires.length
+      && !definition.searchRequires.every((required) => terms.includes(required))) return 0;
   const fields = {
     id: new Set(searchTerms(definition.id)),
     title: new Set(searchTerms(definition.title)),
@@ -348,11 +360,11 @@ function searchScore(definition, terms, { hasNumericIdentifier = false } = {}) {
     if (matched) matchedTerms += 1;
   }
   if (!matchedTerms) return 0;
+  const requestedActions = terms.filter((term) => SEARCH_ACTION_TERMS.has(term));
   const requestedObjects = terms.filter((term) => !SEARCH_ACTION_TERMS.has(term));
   if (requestedObjects.length && !requestedObjects.some(
     (term) => Object.values(fields).some((field) => field.has(term)),
   )) return 0;
-  const requestedActions = terms.filter((term) => SEARCH_ACTION_TERMS.has(term));
   for (const action of requestedActions) {
     const actionMatched = Object.values(fields).some((field) => field.has(action));
     // Action verbs carry more intent than object nouns. Without this boost,

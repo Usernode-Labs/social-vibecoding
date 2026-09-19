@@ -176,6 +176,62 @@ function trustedSuggestion(action, suffix, value) {
   };
 }
 
+function contextualBranches(parent, topic) {
+  const exactTopic = String(topic || '').slice(0, 240);
+  const templates = {
+    'apps.detail': [
+      ['Recent changes', `Show recent changes and activity for ${exactTopic}.`],
+      ['App members', `Show the people currently active in ${exactTopic}.`],
+      ['Open work', `Show all open issues, proposals, and development work for ${exactTopic}.`],
+      ['App discussions', `Show recent discussions for ${exactTopic}.`],
+      ['App settings', `Show settings and permissions available for ${exactTopic}.`],
+    ],
+    'issues.for_app': [
+      ['Newest issues', `Show the newest open issues for ${exactTopic}.`],
+      ['Search issues', `Ask me for text or tags, then search issues in ${exactTopic}.`],
+      ['My issue work', `Show issues connected to my work in ${exactTopic}.`],
+      ['Recently closed', `Show recently closed issues in ${exactTopic}.`],
+      ['Start issue work', `Help me choose an issue and start development in ${exactTopic}.`],
+    ],
+    'development.for_app': [
+      ['Active work', `Show active development sessions for ${exactTopic}.`],
+      ['Needs attention', `Show development work that needs my attention in ${exactTopic}.`],
+      ['Check failures', `Show development work with failing checks in ${exactTopic}.`],
+      ['Recently merged', `Show recently merged development work in ${exactTopic}.`],
+      ['Start new work', `Help me start new development work in ${exactTopic}.`],
+    ],
+    'governance.for_app': [
+      ['Needs my vote', `Show proposals awaiting my vote in ${exactTopic}.`],
+      ['Newest proposals', `Show the newest proposals in ${exactTopic}.`],
+      ['Recently merged', `Show recently merged proposals in ${exactTopic}.`],
+      ['Proposal issues', `Show issues linked to current proposals in ${exactTopic}.`],
+      ['Proposal status', `Summarize the current proposal states in ${exactTopic}.`],
+    ],
+    'messages.for_app': [
+      ['Unread discussion', `Show unread discussion messages in ${exactTopic}.`],
+      ['Recent discussion', `Show the newest discussion messages in ${exactTopic}.`],
+      ['My mentions', `Show discussion messages that mention me in ${exactTopic}.`],
+      ['Discussion people', `Show who recently participated in discussions for ${exactTopic}.`],
+      ['Related work', `Show issues or proposals discussed recently in ${exactTopic}.`],
+    ],
+    'settings.inspect': [
+      ['Current values', `Show the current readable values for ${exactTopic}.`],
+      ['Change a value', `Ask which value I want to change in ${exactTopic}, preserve every other value, and show confirmation before saving.`],
+      ['Available controls', `Show which values can be changed in ${exactTopic}.`],
+      ['Related settings', `Show settings groups directly related to ${exactTopic}.`],
+      ['Reset options', `Show safe reset or default options available for ${exactTopic}; do not change anything yet.`],
+    ],
+  };
+  const branch = templates[parent.actionId];
+  if (!branch) return [];
+  return branch.map(([label, prompt], index) => ({
+    id: `${parent.id}.branch.${index + 1}`.slice(0, 160),
+    label,
+    prompt,
+    capabilityHint: null,
+  }));
+}
+
 function contextualSuggestionSet(action) {
   const target = action.targetLabel;
   const parameters = action.parameters || {};
@@ -325,7 +381,7 @@ function contextualSuggestionSet(action) {
     topic: topic.slice(0, 240),
     suggestions: suggestions.map((suggestion) => ({
       ...suggestion,
-      relatedSuggestions: suggestions.filter((related) => related.id !== suggestion.id),
+      relatedSuggestions: contextualBranches(suggestion, topic),
     })),
   };
 }
