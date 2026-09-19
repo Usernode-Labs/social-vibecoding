@@ -312,54 +312,74 @@ test('the seed MODELS map carries no price and no measured figures', () => {
   assert.ok(!('claude-haiku-4-5' in DevChat.MODELS));
 });
 
-// ── 2. one grouped selector, with explicit key provenance ───────────
+// ── 2. ONE FLAT LIST (#2569) ────────────────────────────────────────
+//
+// The picker used to be two optgroups, "OpenRouter key" and "Anthropic
+// key", with every label repeating its key source — so the first question
+// it asked was whose key pays, rather than which model. It is one list
+// now, and the key survives as a `title` on each option.
 
-test('the composer renders OpenRouter first and Anthropic second', () => {
+test('the composer renders one flat list with no provider headings', () => {
   const { html, view } = render();
   assert.match(html, /<select[^>]*id="dc-model-select"[^>]*aria-label="Chat model and API key"/);
-  const openRouterAt = html.indexOf('<optgroup label="OpenRouter key">');
-  const anthropicAt = html.indexOf('<optgroup label="Anthropic key">');
-  assert.ok(openRouterAt >= 0, 'the OpenRouter group is missing');
-  assert.ok(anthropicAt > openRouterAt, 'Anthropic must follow OpenRouter');
-  assert.equal(view().models.groups[0].id, 'openrouter');
-  assert.equal(view().models.groups[1].id, 'anthropic');
+  assert.ok(!html.includes('<optgroup'), 'no headings at all');
+  assert.equal(view().models.groups, undefined, 'the grouped shape is gone');
+  assert.ok(Array.isArray(view().models.options));
 });
 
-test('every closed-control label names the key that will be used', () => {
+test('no label names a provider; the key is a title instead', () => {
   const { html, view } = render();
-  const groups = view().models.groups;
-  assert.ok(groups[0].options.every((option) => (
-    option.value.endsWith('__add_more__') || option.label.startsWith('OpenRouter key ·')
-  )));
-  assert.ok(groups[1].options.every((option) => option.label.startsWith('Anthropic key ·')));
-  assert.match(html, /OpenRouter key · Claude Sonnet 4\.5/,
-    'an Anthropic-authored OpenRouter model still says which key pays');
-  assert.match(html, /Anthropic key · Opus 5/);
+  for (const option of view().models.options) {
+    assert.ok(!/^OpenRouter key ·|^Anthropic key ·/.test(option.label),
+      `"${option.label}" still carries a key prefix`);
+  }
+  // An Anthropic-authored model reached through OpenRouter reads as its own
+  // name, and its title is what says which key pays.
+  const sonnet = view().models.options.find(
+    (o) => o.value === 'openrouter:anthropic/claude-sonnet-4.5');
+  assert.equal(sonnet.label, 'Claude Sonnet 4.5');
+  assert.equal(sonnet.title, 'Runs on your OpenRouter key');
+  const opus = view().models.options.find((o) => o.value === 'anthropic:claude-opus-5');
+  assert.equal(opus.label, 'Opus 5');
+  assert.match(opus.title, /platform Claude allowance/);
+  assert.match(html, /title="Runs on your OpenRouter key"/);
   assert.ok(!html.includes('general coding work'),
     '#1589: verbose guidance must not widen the closed native control');
 });
 
-test('the OpenRouter shortlist starts with saved choice, otherwise GLM', () => {
-  const fallback = render();
-  assert.equal(
-    fallback.view().models.groups[0].options[0].value,
+test('the five starting models come first, in the documented order', () => {
+  const { view } = render();
+  // The curated OpenRouter pair (the server's recommendation first), then
+  // the three Anthropic models. Whatever else the account uses follows.
+  assert.deepEqual(view().models.options.slice(0, 5).map((o) => o.value), [
     'openrouter:z-ai/glm-5.3-flash',
-    'the server-recommended GLM is the first-use fallback',
-  );
-
-  const savedData = pickerData({
-    backends: {
-      codex_openrouter: {
-        model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'medium',
-      },
-    },
-  });
-  const saved = render({ pickerData: savedData });
-  assert.equal(
-    saved.view().models.groups[0].options[0].value,
+    'anthropic:claude-sonnet-5',
+    'anthropic:claude-opus-5',
+    'anthropic:claude-fable-5-1',
     'openrouter:anthropic/claude-sonnet-4.5',
-    'a valid saved model outranks GLM',
-  );
+  ].slice(0, 5));
+  assert.equal(view().models.options[0].value, 'openrouter:z-ai/glm-5.3-flash',
+    'the server-recommended GLM leads');
+  // The catalog door is last, always.
+  const last = view().models.options[view().models.options.length - 1];
+  assert.equal(last.value, 'openrouter:__add_more__');
+});
+
+test('a saved OpenRouter model is offered even when it is not a starter', () => {
+  const saved = render({
+    pickerData: pickerData({
+      backends: {
+        codex_openrouter: {
+          model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'medium',
+        },
+      },
+    }),
+  });
+  const values = saved.view().models.options.map((o) => o.value);
+  assert.ok(values.includes('openrouter:anthropic/claude-sonnet-4.5'),
+    'a saved model the picker would otherwise not list is still selectable');
+  assert.equal(values[0], 'openrouter:z-ai/glm-5.3-flash',
+    'the starting pair still leads — a saved choice does not reorder the list');
 });
 
 test('an unsent change displays the saved OpenRouter default before creation', () => {
@@ -410,18 +430,26 @@ test('the saved OpenRouter default ships through a fresh shell cache', () => {
     `expected the OpenRouter-default shell cache, got ${SW_VERSION}`);
 });
 
-test('the declared checks follow the grouped native selector', () => {
+test('the declared checks follow the flat native selector', () => {
   const dapp = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const picker = dapp.tests.filter(
     (t) => (t.expectSelector || '').includes('dc-model-select'));
   assert.equal(picker.length, 3, 'direct selection, catalog door, and OpenRouter selection are guarded');
-  assert.ok(picker.some((t) => /optgroup\[label="Anthropic key"\]/.test(t.expectSelector)
-    && /Anthropic key/.test(t.expectText || '')), 'the direct key source is guarded');
+  // #2569: no check may depend on an optgroup, and one of them asserts
+  // there is none.
+  for (const t of picker) {
+    assert.ok(!/optgroup\[label=/.test(t.expectSelector),
+      `${t.name} still selects inside a provider heading`);
+    assert.ok(!/(?:OpenRouter|Anthropic) key ·/.test(t.expectText || ''),
+      `${t.name} still expects a key prefix in an option label`);
+  }
+  assert.ok(picker.some((t) => /:not\(:has\(optgroup\)\)/.test(t.expectSelector)
+    && /Opus 5/.test(t.expectText || '')), 'the flat shape and a direct model are guarded');
   assert.ok(picker.some((t) => /__add_more__/.test(t.expectSelector)
     && /Add more OpenRouter/.test(t.expectText || '')), 'the catalog action is guarded');
   assert.ok(picker.some((t) => /openai\/gpt-5\.3-codex/.test(t.expectSelector)
-    && /OpenRouter key/.test(t.expectText || '')), 'the OpenRouter key source is guarded');
+    && /Runs on your OpenRouter key/.test(t.expectSelector)), 'the key hint is guarded');
 });
 
 test('the guidance copy survives on the helper and proposal summaries stay concise', () => {
@@ -443,7 +471,7 @@ test('the guidance copy survives on the helper and proposal summaries stay conci
     'the dialog no longer builds a verbose select label');
 });
 
-test('OpenRouter sessions select their pinned model in the same grouped control', () => {
+test('OpenRouter sessions select their pinned model in the same flat control', () => {
   const { html, view } = render({
     session: {
       id: 7,
@@ -455,10 +483,9 @@ test('OpenRouter sessions select their pinned model in the same grouped control'
   });
 
   assert.match(html, /id="dc-model-select"/);
-  assert.match(html, /OpenRouter key · Claude Sonnet 4\.5/);
+  assert.match(html, />Claude Sonnet 4\.5</);
   assert.equal(view().models.selected, 'openrouter:anthropic/claude-sonnet-4.5');
-  assert.equal(view().models.groups[0].id, 'openrouter');
-  assert.equal(view().models.groups[1].id, 'anthropic');
+  assert.ok(!html.includes('<optgroup'));
   assert.doesNotMatch(html, /id="dc-openrouter-model"/,
     'the separate row above the composer is retired');
   assert.doesNotMatch(html, /id="dc-openrouter-model-change"/);
@@ -639,15 +666,18 @@ test('the Fable option owns difficult coding without displacing Opus as the gene
 // ── 4. missing guidance degrades, never crashes ─────────────────────
 
 test('a model with no guidance renders a bare label', () => {
-  // The key source is intentionally appended; missing editorial guidance
-  // must still leave a useful model name rather than an empty option.
+  // Missing editorial guidance must still leave a useful model name rather
+  // than an empty option. #2569: the label is the name alone.
   const models = { 'claude-opus-5': { label: 'Opus 5' } };
   const { html, view } = render({ models });
 
-  assert.ok(html.includes('Anthropic key · Opus 5'),
-    'expected the model and key source in the control');
-  assert.deepEqual(view().models.groups[1].options, [
-    { value: 'anthropic:claude-opus-5', label: 'Anthropic key · Opus 5' }]);
+  assert.ok(html.includes('>Opus 5<'), 'expected the model name in the control');
+  const direct = view().models.options.filter((o) => o.value.startsWith('anthropic:'));
+  assert.deepEqual(direct, [{
+    value: 'anthropic:claude-opus-5',
+    label: 'Opus 5',
+    title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+  }]);
   assert.ok(!html.includes('best for'));
 });
 
@@ -655,7 +685,7 @@ test('an option with no label at all falls back to the model id', () => {
   // The composer reads `meta.label` directly now instead of going through
   // modelOptionText, so its own empty case has to be its own.
   const { html } = render({ models: { 'claude-opus-5': {} } });
-  assert.ok(html.includes('Anthropic key · claude-opus-5'),
+  assert.ok(html.includes('>claude-opus-5<'),
     'an id is a worse name than "Opus 5" and a much better one than nothing');
 });
 

@@ -414,8 +414,8 @@
       "key": "OPENROUTER_RECOMMENDED_MODELS",
       "group": "AI & coding agents",
       "required": false,
-      "default": "deepseek/deepseek-v4.1-flash,z-ai/glm-5.3-flash,openai/gpt-6-astra,moonshotai/kimi-k3,anthropic/claude-opus-5",
-      "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag and begin starred in model pickers. Each user's explicit star or unstar wins. Set none to remove all platform recommendations."
+      "default": "z-ai/glm-5.3-flash,deepseek/deepseek-v4.1-flash",
+      "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag, begin starred in model pickers, and are the OpenRouter models the composer's flat picker starts with, in this order. Each user's explicit star or unstar wins. Set none to remove all platform recommendations."
     },
     {
       "key": "GITHUB_LINK_CLIENT_ID",
@@ -2356,15 +2356,15 @@
       "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
-      "name": "The in-composer selector names the Anthropic key for a direct model (#2117)",
+      "name": "The in-composer selector is one flat list of models, with no provider headings (#2117, #2569)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"] optgroup[label=\"Anthropic key\"] option[value=\"anthropic:claude-opus-5\"]:checked",
-      "expectText": "Anthropic key · Opus 5"
+      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)) option[value=\"anthropic:claude-opus-5\"]:checked",
+      "expectText": "Opus 5"
     },
     {
-      "name": "The first group can open the full OpenRouter catalog (#2117)",
+      "name": "The flat list ends with the door to the full OpenRouter catalog (#2117, #2569)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "select#dc-model-select > optgroup:first-child[label=\"OpenRouter key\"] option[value=\"openrouter:__add_more__\"]",
+      "expectSelector": "select#dc-model-select > option[value=\"openrouter:__add_more__\"]:last-child",
       "expectText": "Add more OpenRouter models…"
     },
     {
@@ -3799,10 +3799,10 @@
       "expectText": "Homeroom · Claude"
     },
     {
-      "name": "A pinned OpenRouter session shows its model and key inside the composer (#1086, #2117)",
+      "name": "A pinned OpenRouter session shows its model inside the composer (#1086, #2117, #2569)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
-      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail select#dc-model-select option[value=\"openrouter:openai/gpt-5.3-codex\"]:checked",
-      "expectText": "OpenRouter key"
+      "expectSelector": "body:has(#dc-venue-select[data-venue-current=\"usernode-openrouter\"]) #dc-tab-chat #dc-venue-detail select#dc-model-select option[value=\"openrouter:openai/gpt-5.3-codex\"][title=\"Runs on your OpenRouter key\"]:checked",
+      "expectText": "openai/gpt-5.3-codex"
     },
     {
       "name": "An OpenRouter session's composer says what is left on its key (#2118)",

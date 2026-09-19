@@ -49,18 +49,19 @@
 
 import { createStore } from '../../lib/plain-store.js';
 
-/** One entry of the chat-model picker, already labelled with its key source. */
+/**
+ * One entry of the chat-model picker.
+ *
+ * #2569: the label is the MODEL's name and nothing else. Which key is
+ * charged used to be a prefix on every label and an optgroup heading above
+ * it; it is `title` now — there on hover, absent from the list itself.
+ */
 export interface ModelOptionView {
   value: string;
   label: string;
+  /** The secondary "whose key pays" hint. Rendered as the option's title. */
+  title?: string;
   disabled?: boolean;
-}
-
-/** A native optgroup. OpenRouter is deliberately the first group. */
-export interface ModelGroupView {
-  id: 'openrouter' | 'anthropic';
-  label: string;
-  options: ModelOptionView[];
 }
 
 /**
@@ -109,9 +110,10 @@ export interface ComposerState {
   venueNoteHtml: string;
   /** #1281: a launchpad stands in the composer's place, so it is hidden. */
   hidden: boolean;
-  /** The unified in-chat model/key selector. Null on off-platform venues. */
+  /** The unified in-chat model selector. Null on off-platform venues. */
   models: {
-    groups: ModelGroupView[];
+    /** #2569: ONE flat list, in DevChat._flatModelOptions' order. */
+    options: ModelOptionView[];
     selected: string;
     changeDisabled: boolean;
   } | null;
