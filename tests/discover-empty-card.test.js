@@ -16,11 +16,25 @@ const { renderComponent } = require('./lib/render-tsx');
 const CSS = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
 const ENTRY = 'frontend/src/features/home/panels/discover.tsx';
 
-function render(featured, popular) {
+function render(featured, popular, fallback) {
   return renderComponent(ENTRY, 'DiscoverPanel', {
-    view: { key: 'discover', featured, popular: popular || [] },
+    view: {
+      key: 'discover', featured, popular: popular || [], ...(fallback ? { fallback } : null),
+    },
   });
 }
+
+const tile = (slug) => ({
+  slug,
+  name: slug,
+  status: 'running',
+  demo: false,
+  added: false,
+  icon: { kind: 'letter', letter: slug.charAt(0).toUpperCase() },
+  illustration: null,
+  blurb: null,
+  contributors: 0,
+});
 
 test('nothing to discover renders one card that links to the directory', () => {
   const html = render([]);
@@ -64,4 +78,33 @@ test('the card is drawn as a card: tint plate, hairline, radius', () => {
   assert.match(body, /background: var\(--tint-bg\);/);
   assert.match(body, /border: 1px solid var\(--tint-line\);/);
   assert.match(body, /border-radius: 0\.875rem;/, 'the Discover card radius');
+});
+
+// ── #2565: the note means what it says now ────────────────────────────
+//
+// With both lanes empty the block used to say "Nothing to discover right
+// now" whether or not there was anything to join — on a platform where
+// nothing had been curated yet, that was every brand-new account. The view
+// model fills a third lane for exactly that case, and the note is what is
+// left when even that is empty.
+
+test('a fallback card keeps the note away, and draws in the same rail', () => {
+  const html = render([], [], [tile('gamma')]);
+  assert.doesNotMatch(html, /home-discover-empty/);
+  assert.doesNotMatch(html, /Nothing to discover/);
+  assert.match(html, /home-discover-rail/, 'one lane, drawn the way the other two are');
+  assert.match(html, /data-slug="gamma"/);
+});
+
+test('an empty fallback still leaves the note: there really is nothing to join', () => {
+  const html = render([], [], []);
+  assert.match(html, /home-discover-empty/);
+  assert.match(html, /Nothing to discover right now/);
+});
+
+test('the fallback comes LAST, after anything curated or popular', () => {
+  const html = render([tile('alpha')], [tile('pop')], [tile('gamma')]);
+  assert.ok(html.indexOf('data-slug="alpha"') < html.indexOf('data-slug="pop"'));
+  assert.ok(html.indexOf('data-slug="pop"') < html.indexOf('data-slug="gamma"'),
+    'the fallback can never reorder or displace a card a viewer already saw');
 });

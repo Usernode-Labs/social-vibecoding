@@ -34,6 +34,9 @@ export interface PanelStamps {
   /** Discover's two lane counts, mirrored so one selector can ask for both. */
   featured?: number;
   popular?: number;
+  /** How many cards Discover drew from its fallback lane (#2565) — 0 unless
+   *  the two lanes above were both empty and the server had apps to offer. */
+  fallback?: number;
   /** The Challenges block's composition: how many challenge rows it drew. */
   rows?: number;
   /** The Create block's quota state. */
@@ -72,6 +75,14 @@ export interface DiscoverView {
   title: string;
   featured: DiscoverTileView[];
   popular: DiscoverTileView[];
+  /**
+   * The lane of last resort (#2565): public, joinable apps the viewer does
+   * not have yet, most recently active first, chosen by the server. NON-EMPTY
+   * ONLY when `featured` and `popular` are both empty — it is what Discover
+   * draws instead of "Nothing to discover right now" while there is still an
+   * app to join. Optional because a view built before it existed has none.
+   */
+  fallback?: DiscoverTileView[];
 }
 
 // ── Challenges ────────────────────────────────────────────────────────

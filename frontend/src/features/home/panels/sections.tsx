@@ -102,7 +102,11 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
       action={<BrowseLink />}
       painted={painted}
       stamps={discover
-        ? { featured: discover.featured.length, popular: discover.popular.length }
+        ? {
+          featured: discover.featured.length,
+          popular: discover.popular.length,
+          fallback: (discover.fallback || []).length,
+        }
         : undefined}
     >
       {discover ? <DiscoverPanel view={discover} /> : null}

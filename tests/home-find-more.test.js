@@ -219,6 +219,80 @@ test('featuredApps: ?shot=discover-empty still wins over a kept slug', () => {
   assert.equal(Home.featuredApps(apps).length, 0);
 });
 
+// ── #2565: the lane of last resort ─────────────────────────────────
+//
+// Both lanes above want an app an admin has REVIEWED as working on its
+// current deployment, so a platform where nothing has been curated yet showed
+// a brand-new account "Nothing to discover right now" while there were public
+// apps to join the whole time. `discoverFallbackApps` is what Discover draws
+// instead — and the server, not this function, decides which apps and in what
+// order (the `fallback` slugs on the Discover panel). What is tested here is
+// everything this side owns: resolution against the launcher's own rows, the
+// order it must NOT touch, and the two rules it shares with the real lanes.
+
+test('discoverFallbackApps: resolves the server\'s slugs, in the server\'s order', () => {
+  const Home = makeHome();
+  const apps = [app({ slug: 'alfa' }), app({ slug: 'bravo' }), app({ slug: 'charlie' })];
+  assert.deepEqual(
+    Home.discoverFallbackApps(apps, ['charlie', 'alfa']).map((a) => a.slug),
+    ['charlie', 'alfa'],
+    'recency is the server\'s answer; re-sorting here would be a second, drifting copy'
+  );
+});
+
+test('discoverFallbackApps: a slug the viewer has no row for is skipped, not faked', () => {
+  const Home = makeHome();
+  const apps = [app({ slug: 'alfa' })];
+  assert.deepEqual(
+    Home.discoverFallbackApps(apps, ['ghost', 'alfa']).map((a) => a.slug), ['alfa'],
+    'the card is built from the launcher\'s own row or not at all');
+});
+
+test('discoverFallbackApps: it does NOT require a review, which is the whole point', () => {
+  const Home = makeHome();
+  // Exactly the rows the two curated lanes refuse: never reviewed, and with
+  // no active users to its name. Both lanes are empty for this viewer, and
+  // this app is still perfectly joinable.
+  const apps = [app({ slug: 'plain', directory: { tier: 'unreviewed', state: 'unreviewed' } })];
+  assert.equal(Home.featuredApps(apps).length, 0);
+  assert.equal(Home.popularApps(apps).length, 0);
+  assert.deepEqual(Home.discoverFallbackApps(apps, ['plain']).map((a) => a.slug), ['plain']);
+});
+
+test('discoverFallbackApps: apps already in "Your apps" stay out, and _discoverKeep holds a tapped card', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'member', is_collaborator: true }),
+    app({ slug: 'added', is_favorited: true }),
+    app({ slug: 'fresh' }),
+  ];
+  const slugs = ['member', 'added', 'fresh'];
+  assert.deepEqual(Home.discoverFallbackApps(apps, slugs).map((a) => a.slug), ['fresh'],
+    'the server already excluded these; the client agrees rather than re-offering them');
+  // The payload has a TTL, so a card added mid-visit is still in `slugs`.
+  Home._discoverKeep.add('added');
+  assert.deepEqual(Home.discoverFallbackApps(apps, slugs).map((a) => a.slug), ['added', 'fresh'],
+    'the card under the finger holds its place, ticked, so the tap is reversible');
+});
+
+test('discoverFallbackApps: ?shot=discover-empty empties this lane too', () => {
+  const Home = makeHome({ search: '?shot=discover-empty' });
+  Home._discoverKeep.add('kept');
+  const apps = [app({ slug: 'kept' })];
+  assert.equal(Home.discoverFallbackApps(apps, ['kept']).length, 0,
+    'the shot state is the WHOLE category\'s empty state, or nothing could reach the note');
+});
+
+test('discoverFallbackApps: no payload, no lane', () => {
+  const Home = makeHome();
+  const apps = [app({ slug: 'alfa' })];
+  for (const slugs of [undefined, null, [], 'alfa']) {
+    assert.equal(Home.discoverFallbackApps(apps, slugs).length, 0,
+      'before the panels payload lands there is nothing to fall back to');
+  }
+  assert.equal(Home.discoverFallbackApps(undefined, ['alfa']).length, 0);
+});
+
 test('_wireDiscoveryCards binds each badge once, however often the lane re-runs it', () => {
   const Home = makeHome();
   let toggles = 0;

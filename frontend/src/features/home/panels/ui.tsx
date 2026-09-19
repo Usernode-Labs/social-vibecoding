@@ -39,6 +39,7 @@ export function stampProps(stamps: PanelStamps | undefined) {
   const out: Record<string, string> = {};
   if (stamps.featured !== undefined) out['data-featured'] = String(stamps.featured);
   if (stamps.popular !== undefined) out['data-popular'] = String(stamps.popular);
+  if (stamps.fallback !== undefined) out['data-fallback'] = String(stamps.fallback);
   if (stamps.rows !== undefined) out['data-rows'] = String(stamps.rows);
   if (stamps.createEnabled !== undefined) {
     out['data-create-enabled'] = String(stamps.createEnabled);

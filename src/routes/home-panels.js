@@ -634,9 +634,89 @@ function demoChallengesPanel(opts) {
   };
 }
 
+// ─── Discover's fallback lane (#2565) ────────────────────────────────
+//
+// Discover's two lanes are derived CLIENT-side from the /api/apps payload
+// the launcher already holds: the admin-curated apps (Home.featuredApps,
+// by `featured_order`) and then the most-used ones this viewer does not
+// have yet (Home.popularApps, by active users). Both ask for an app an
+// admin has reviewed as working on its current deployment, so on a fresh
+// platform — or for a brand-new account before anything has been curated —
+// BOTH come out empty and the whole section is the "Nothing to discover
+// right now" note. There were apps to join the entire time; nothing had
+// been featured.
+//
+// So this panel carries one list now: what the client draws when it has
+// nothing else. It is computed HERE rather than in the client because the
+// question is a database one — which public apps have been used lately,
+// minus the ones this viewer already keeps — and the client's own payload
+// has no ordering that answers it. The two real lanes are untouched: a
+// viewer who sees a curated or a popular card never reaches this list, and
+// its presence in the payload changes nothing about their block.
+//
+// VISIBILITY IS THE POPULAR LANE'S, no wider. View-public apps only, never
+// a self-hosted platform row, and never an app already in the viewer's
+// "Your apps" — a member pin they have not hidden, or an explicit favorite,
+// which is exactly the predicate Home.isYours applies client-side.
+// `status = 'running'` is the joinable half: an app that is not running
+// cannot be opened, so offering it is worse than offering nothing.
+//
+// "RECENT ACTIVITY" is the directory's own ordering (the ORDER BY of GET
+// /api/apps): chat messages plus time spent over the last seven days, ties
+// broken by the newest app. Sharing that definition is the point — the
+// fallback and the #apps directory cannot disagree about what is active.
+//
+// SLUGS, not rows. The client already holds every one of these apps with
+// its icon, blurb and contributor count (they are view-public, so they are
+// in its /api/apps list by construction), and it turns them into cards
+// through the same `discoverTileView` the other two lanes use. Sending
+// whole rows would be a second serialization of the same app that could
+// drift from the first.
+const DISCOVER_FALLBACK_LIMIT = 6;
+
+const DISCOVER_FALLBACK_SQL = `
+  SELECT a.slug
+  FROM apps a
+  LEFT JOIN app_collaborators me
+    ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
+  LEFT JOIN (
+    SELECT app_id, hidden FROM app_favorites WHERE user_id = $1
+  ) favs ON favs.app_id = a.id
+  LEFT JOIN (
+    SELECT app_id, COUNT(*) AS cnt
+    FROM chat_messages
+    WHERE created_at > NOW() - INTERVAL '7 days'
+    GROUP BY app_id
+  ) msg_counts ON msg_counts.app_id = a.id
+  LEFT JOIN (
+    SELECT app_id, SUM(seconds_spent) AS total_seconds
+    FROM app_activity
+    WHERE date > CURRENT_DATE - 7
+    GROUP BY app_id
+  ) activity ON activity.app_id = a.id
+  WHERE NOT a.self_hosted
+    AND a.view_visibility = 'public'
+    AND a.status = 'running'
+    -- Home.isYours, in SQL: a membership or a favorite row, unless the
+    -- viewer has hidden it out of "Your apps" again (#618).
+    AND NOT ((me.user_id IS NOT NULL OR favs.app_id IS NOT NULL)
+             AND NOT COALESCE(favs.hidden, FALSE))
+  ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC,
+           a.created_at DESC
+  LIMIT $2
+`;
+
+async function buildDiscoverPanel(pool, user) {
+  const { rows } = await pool.query(DISCOVER_FALLBACK_SQL, [
+    user.id, DISCOVER_FALLBACK_LIMIT,
+  ]);
+  return { fallback: rows.map((r) => r.slug).filter((s) => typeof s === 'string') };
+}
+
 // The registry is unconditional; app creation permission controls the Create
-// app section's action, never its presence. Discover and Create app need no
-// additional queries: their data is already supplied by the home screen.
+// app section's action, never its presence. Create app needs no query of its
+// own; Discover's two real lanes are still derived from the home screen's
+// /api/apps payload, and the one query it does run is the fallback above.
 const PANEL_REGISTRY = [
   {
     key: 'challenges',
@@ -647,7 +727,11 @@ const PANEL_REGISTRY = [
   {
     key: 'discover',
     title: 'Discover',
-    build: async () => ({}),
+    build: buildDiscoverPanel,
+    // The staging demo payload needs no fallback: its /api/apps fixture
+    // seeds both a curated and a popular lane, so the client never reaches
+    // one. Sending a list nothing draws would only invite a reader to
+    // believe the demo exercises this path.
     demo: () => ({ demo: true }),
   },
   {
@@ -740,4 +824,9 @@ module.exports = {
   OPEN_CHALLENGE_WHERE,
   ALL_CHALLENGE_WHERE,
   demoChallengesPanel,
+  // Discover's fallback lane (#2565), exported so the route test can read
+  // the cap and the statement without going through the HTTP surface.
+  DISCOVER_FALLBACK_LIMIT,
+  DISCOVER_FALLBACK_SQL,
+  buildDiscoverPanel,
 };

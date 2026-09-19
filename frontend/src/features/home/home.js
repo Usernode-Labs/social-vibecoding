@@ -368,6 +368,55 @@ const Home = {
       .slice(0, Home.POPULAR_LIMIT);
   },
 
+  // THE LANE OF LAST RESORT (#2565).
+  //
+  // Both lanes above require `isDiscoveryReady` — an admin's review of the
+  // app's CURRENT deployment. That is the right bar for something the
+  // platform is recommending, and it is why a brand-new account on a
+  // platform where nothing has been curated yet saw "Nothing to discover
+  // right now" while there were public apps to join the whole time.
+  //
+  // So when both come out empty, Discover draws this instead: the public,
+  // running apps the viewer does not already have, most recently active
+  // first. WHICH apps, and in what order, is the server's answer — the
+  // `fallback` slug list on the Discover panel of /api/home-panels, whose
+  // comment explains the rules — and this resolves those slugs against the
+  // launcher's own app list so the cards are built from exactly the same
+  // rows, by exactly the same `discoverTileView`, as the other two lanes.
+  // A slug the viewer can't see isn't in `apps` and is skipped; there is no
+  // second visibility rule here to disagree with the server's.
+  //
+  // It answers to `_discoverKeep` and to ?shot=discover-empty for the same
+  // reasons the other two do: a card tapped mid-visit holds its place with
+  // its badge ticked, and the shot state is the WHOLE category's empty
+  // state, so it must empty this lane too or nothing could reach the note.
+  discoverFallbackApps(apps, slugs) {
+    if (Home._shotDiscoverEmpty()) return [];
+    if (!Array.isArray(slugs) || !slugs.length) return [];
+    // The server's position for each slug, which is the whole of the lane's
+    // ordering. Filter-then-sort rather than walking `slugs` and looking each
+    // one up: a slug with no row is dropped by the same pass that drops an
+    // app the viewer already has, and the result is built from the caller's
+    // own list.
+    const rank = new Map();
+    slugs.forEach((slug, i) => { if (!rank.has(slug)) rank.set(slug, i); });
+    return (apps || [])
+      .filter((a) => a && rank.has(a.slug)
+        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
+      .sort((x, y) => rank.get(x.slug) - rank.get(y.slug));
+  },
+
+  // The fallback slugs the server sent for this viewer, or null before the
+  // panels payload has landed. Read off `window.HomePanels` rather than
+  // imported: home.js and home-panels.js are separate modules that already
+  // reach each other this way, and every read here happens inside a handler.
+  _discoverFallbackSlugs() {
+    const panels = typeof window !== 'undefined' ? window.HomePanels : null;
+    const panel = panels && typeof panels.panelFor === 'function'
+      ? panels.panelFor('discover') : null;
+    return (panel && Array.isArray(panel.fallback)) ? panel.fallback : null;
+  },
+
   // ===== Free-form grid layout =====
   //
   // The viewer's arrangement, per column count: { "4": [item…], "5": […] }.
@@ -1790,7 +1839,11 @@ const Home = {
     // is: an app currently in a rail stays in it for the rest of the visit.
     if (!Home.isYours(app)) {
       const inLane = Home.featuredApps(Home._apps || []).some((a) => a.slug === slug)
-        || Home.popularApps(Home._apps || []).some((a) => a.slug === slug);
+        || Home.popularApps(Home._apps || []).some((a) => a.slug === slug)
+        // The fallback lane is a lane: a card added from it has to hold its
+        // place under the finger too, or the row reflows mid-tap (#2565).
+        || Home.discoverFallbackApps(Home._apps || [], Home._discoverFallbackSlugs())
+          .some((a) => a.slug === slug);
       if (inLane) Home._discoverKeep.add(slug);
     }
     app.is_favorited = desired;

@@ -1,9 +1,10 @@
 // Home-screen sections (issue #911) — the three blocks stacked under the
 // launcher grid. THE UI OVERHAUL fixed their order and their hosts:
 //
-//   discover   — the admin-curated featured tiles, the Popular lane, and
-//                "Browse all apps". The shell's ONLY door to the app
-//                directory, which is why it cannot be hidden.
+//   discover   — the admin-curated featured tiles, the Popular lane, the
+//                server-chosen fallback lane that stands in when those two
+//                are empty (#2565), and "Browse all apps". The shell's ONLY
+//                door to the app directory, which is why it cannot be hidden.
 //   challenges — the season's open challenges with the viewer's progress,
 //                and under them the LEADERBOARD standings preview. That
 //                preview is where the standings live on the home screen now
@@ -650,11 +651,30 @@ const HomePanels = {
     // Discover rather than being a strip of curated tiles.
     const popular = (hasHome && typeof Home.popularApps === 'function')
       ? Home.popularApps(Home._apps || []) : [];
+    // THE LANE OF LAST RESORT (#2565), and ONLY when there is nothing else
+    // to draw. Both lanes above want an app an admin has reviewed as working
+    // on its current deployment, so a platform with nothing curated yet
+    // showed a brand-new account "Nothing to discover right now" while there
+    // were public apps to join the whole time. The server sends the slugs
+    // (`fallback` on this panel — public, running, not already the viewer's,
+    // most recently active first); Home resolves them against the launcher's
+    // own app list so these cards are built from the same rows, by the same
+    // tile builder, as the other two.
+    //
+    // The emptiness test is HERE rather than on the server because the two
+    // lanes are derived here: the server would have to re-derive both to know
+    // whether they came out empty, and a second copy of that rule is a second
+    // chance for the two to disagree. A viewer who sees a curated or a
+    // popular card never reaches this branch, so their block is untouched.
+    const fallback = (!featured.length && !popular.length
+      && hasHome && typeof Home.discoverFallbackApps === 'function')
+      ? Home.discoverFallbackApps(Home._apps || [], panel.fallback) : [];
     return {
       key: panel.key,
       title: panel.title || 'Discover',
       featured: featured.map((a) => HomePanels.discoverTileView(a)),
       popular: popular.map((a) => HomePanels.discoverTileView(a)),
+      fallback: fallback.map((a) => HomePanels.discoverTileView(a)),
     };
   },
 

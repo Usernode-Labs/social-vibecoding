@@ -2169,6 +2169,114 @@ test('discoverTileView.added follows the cached flags, with no refetch (#1567)',
   assert.equal(fetches, 0);
 });
 
+// ── #2565: Discover falls back rather than going empty ───────────────
+//
+// Both lanes above want an app an admin has reviewed as working on its
+// current deployment, so a brand-new account on a platform with nothing
+// curated yet saw "Nothing to discover right now" while there were public
+// apps to join the whole time. The server now sends the slugs of those apps
+// on the Discover panel and the block draws them — LAST, and only when it has
+// nothing else, so a viewer who already sees a curated or a popular card gets
+// exactly the block they got before.
+
+// A Home whose two curated lanes are empty and whose launcher holds the rows
+// the server's fallback slugs name — which is the brand-new account.
+function fallbackHome(over = {}) {
+  const apps = [
+    { slug: 'gamma', name: 'Gamma', icon_emoji: '🇬' },
+    { slug: 'delta', name: 'Delta' },
+  ];
+  const Home = {
+    featuredApps: () => [],
+    popularApps: () => [],
+    isYours: () => false,
+    _apps: apps,
+    _discoverKeep: new Set(),
+    _shotDiscoverEmpty: () => false,
+    ...over,
+  };
+  // The REAL selection, not a stub: what this test is about is the block
+  // rendering whatever that function returns, so a copy of it here would
+  // assert nothing.
+  Home.discoverFallbackApps = (list, slugs) => {
+    if (Home._shotDiscoverEmpty()) return [];
+    if (!Array.isArray(slugs) || !slugs.length) return [];
+    const rank = new Map();
+    slugs.forEach((slug, i) => { if (!rank.has(slug)) rank.set(slug, i); });
+    return (list || [])
+      .filter((a) => a && rank.has(a.slug)
+        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
+      .sort((x, y) => rank.get(x.slug) - rank.get(y.slug));
+  };
+  return Home;
+}
+
+const discoverPayload = (over = {}) => ({
+  registry: [
+    { key: 'discover', title: 'Discover', removable: false },
+    { key: 'challenges', title: 'Challenges', removable: false },
+    { key: 'create', title: 'Create app', removable: false },
+  ],
+  hidden: [],
+  panels: [{ key: 'discover', title: 'Discover', ...over }],
+});
+
+test('a fallback-only Discover draws real cards instead of the empty note (#2565)', () => {
+  const { html } = renderWith(discoverPayload({ fallback: ['delta', 'gamma'] }),
+    { home: fallbackHome() });
+  assert.doesNotMatch(html, /Nothing to discover right now/,
+    'there ARE apps to join, so the note would be a lie');
+  assert.match(html, /home-discover-rail/, 'the rail, drawn exactly as the other lanes draw it');
+  assert.match(html, /class="app-card home-discover-card [^"]*" data-slug="delta"/);
+  assert.match(html, /data-slug="gamma"/);
+  // The server's order, not the launcher's: `delta` is second in `_apps` and
+  // first in the payload, and the payload wins.
+  assert.ok(html.indexOf('data-slug="delta"') < html.indexOf('data-slug="gamma"'));
+  // The block's composition, on the article AND on its host, which is what a
+  // selector asking "is this lane the fallback?" reads.
+  assert.match(html, /data-featured="0"/);
+  assert.match(html, /data-popular="0"/);
+  assert.match(html, /data-fallback="2"/);
+  // The way on to the directory is unconditional and still there.
+  assert.match(html, /Browse all apps/);
+});
+
+test('with nothing joinable either, the empty note is still what Discover says', () => {
+  const { html } = renderWith(discoverPayload({ fallback: [] }), { home: fallbackHome() });
+  assert.match(html, /Nothing to discover right now/);
+  assert.match(html, /data-fallback="0"/);
+  assert.doesNotMatch(html, /home-discover-rail/);
+});
+
+test('a payload with no fallback at all renders exactly as it did before', () => {
+  // A cached client, or the staging demo marker: `fallback` is simply absent.
+  const { html } = renderWith(discoverPayload(), { home: fallbackHome() });
+  assert.match(html, /Nothing to discover right now/);
+  assert.match(html, /data-fallback="0"/, 'absent reads as zero, never as undefined');
+  assert.doesNotMatch(html, /undefined/);
+});
+
+test('one curated card is enough to keep the fallback lane away entirely', () => {
+  const home = fallbackHome({
+    featuredApps: () => [{ slug: 'alpha', name: 'Alpha', featured: true }],
+  });
+  const { html } = renderWith(discoverPayload({ fallback: ['delta', 'gamma'] }), { home });
+  assert.match(html, /data-slug="alpha"/);
+  assert.doesNotMatch(html, /data-slug="delta"/,
+    'a viewer who already sees Discover must get the block they got before');
+  assert.doesNotMatch(html, /data-slug="gamma"/);
+  assert.match(html, /data-fallback="0"/);
+});
+
+test('a popular card alone keeps it away too', () => {
+  const home = fallbackHome({
+    popularApps: () => [{ slug: 'pop', name: 'Popular One', active_users: 9 }],
+  });
+  const { html } = renderWith(discoverPayload({ fallback: ['delta'] }), { home });
+  assert.match(html, /data-slug="pop"/);
+  assert.doesNotMatch(html, /data-slug="delta"/);
+});
+
 // ── Discover: ONE shape, at every width ───────────────────────────────
 //
 // It used to be two (#949). The widget's grid footprint was asymmetric — 4x1

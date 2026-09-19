@@ -126,6 +126,15 @@ function makeMockPool(state) {
         if (state.fillThrows) throw new Error('leaderboard exploded');
         return { rows: state.fillUsers || [] };
       }
+      // Discover's fallback lane (#2565): the public, running apps this
+      // viewer hasn't added, most recently active first. `discoverApps` is
+      // the fixture; absent means "nothing to fall back to", which is the
+      // answer most of the tests here want.
+      if (sql.includes('FROM apps a')) {
+        if (state.discoverThrows) throw new Error('discover fallback exploded');
+        const limit = Number(params[1]) || (state.discoverApps || []).length;
+        return { rows: (state.discoverApps || []).slice(0, limit) };
+      }
       // The row query.
       if (sql.includes('FROM challenges c')) {
         // Honour the real LIMIT the route passes ($3) rather than a
@@ -356,9 +365,9 @@ test('GET /api/home-panels: no live season -> an empty panel, not an error', asy
   const { status, body } = await get(app, '/api/home-panels');
   assert.equal(status, 200);
   assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'discover', 'create']);
-  // Three built entries: the challenges payload plus the two MARKER widgets
-  // (discover / create), which build nothing but still ride the response so
-  // the client can find every renderable in one place.
+  // Three built entries: the challenges payload, Discover's fallback lane
+  // (#2565) and the `create` MARKER, which builds nothing but still rides the
+  // response so the client can find every renderable in one place.
   assert.deepEqual(body.panels.map((p) => p.key), ['challenges', 'discover', 'create']);
   const ch = body.panels.find((p) => p.key === 'challenges');
   assert.equal(ch.total, 0);
@@ -1085,4 +1094,100 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
   assert.ok(kept.some((t) => t.path === '/?demo=1'
     && /home-panel-expand/.test(t.expectSelector)),
     'and a truncated list still declares the toggle it keeps');
+});
+
+// ─── Discover's fallback lane (#2565) ─────────────────────────────────
+//
+// Discover's two real lanes are derived in the CLIENT from /api/apps —
+// admin-curated first, then most-used — and both want an app an admin has
+// reviewed as working on its current deployment. On a platform where nothing
+// has been curated yet that leaves a brand-new account looking at "Nothing to
+// discover right now" while there were public apps to join the whole time.
+//
+// So the Discover panel carries one list now: the slugs the client draws when
+// it has nothing else. These tests pin WHICH apps it may name and in WHAT
+// order, because that is the whole of the server's half.
+
+const FALLBACK_STATE = {
+  season: SEASON,
+  rows: [],
+  discoverApps: [{ slug: 'bravo' }, { slug: 'alfa' }],
+};
+
+test('discover: the panel carries the fallback slugs, in the order the query returned', async () => {
+  const { app } = makeApp({ ...FALLBACK_STATE }, { user: USER });
+  const { status, body } = await get(app, '/api/home-panels');
+  assert.equal(status, 200);
+  const discover = body.panels.find((p) => p.key === 'discover');
+  assert.deepEqual(discover.fallback, ['bravo', 'alfa'],
+    'the server owns the ordering; the client must not re-sort it');
+});
+
+test('discover: nothing joinable -> an empty list, not a missing panel', async () => {
+  const { app } = makeApp({ season: SEASON, rows: [] }, { user: USER });
+  const { body } = await get(app, '/api/home-panels');
+  const discover = body.panels.find((p) => p.key === 'discover');
+  assert.deepEqual(discover.fallback, [],
+    'an empty lane is what makes the client draw "Nothing to discover right now"');
+});
+
+test('discover: the fallback query is me-scoped and capped', async () => {
+  const { app, calls } = makeApp({ ...FALLBACK_STATE }, { user: USER });
+  await get(app, '/api/home-panels');
+  const q = calls.find((c) => c.sql.includes('FROM apps a'));
+  assert.ok(q, 'the panel really does ask the database');
+  assert.deepEqual(q.params, [USER.id, 6],
+    'the viewer\'s own id, and the six-card cap the rail has room for');
+  const { DISCOVER_FALLBACK_LIMIT } = require('../src/routes/home-panels');
+  assert.equal(DISCOVER_FALLBACK_LIMIT, 6);
+});
+
+test('discover: the fallback offers only what the popular lane could have offered', () => {
+  const { DISCOVER_FALLBACK_SQL } = require('../src/routes/home-panels');
+  const sql = collapse(DISCOVER_FALLBACK_SQL);
+  // Visibility, which is the half that must never be wider than the lane it
+  // stands in for: a view-private app, a self-hosted platform row or an app
+  // this viewer cannot see must not reach the rail through the back door.
+  assert.match(sql, /NOT a\.self_hosted/);
+  assert.match(sql, /a\.view_visibility = 'public'/);
+  // Joinable: an app that isn't running can't be opened, so offering it is
+  // worse than offering nothing.
+  assert.match(sql, /a\.status = 'running'/);
+  // Home.isYours, in SQL — a membership or a favorite, unless the viewer has
+  // hidden it back out of "Your apps" (#618), in which case it IS offerable.
+  assert.match(sql, /me\.user_id IS NOT NULL OR favs\.app_id IS NOT NULL/);
+  assert.match(sql, /NOT COALESCE\(favs\.hidden, FALSE\)/);
+  // Recent activity is the DIRECTORY's own definition (the ORDER BY of GET
+  // /api/apps): messages plus time spent over the last seven days. The two
+  // must not drift into disagreeing about what is active.
+  assert.match(sql, /ORDER BY \(COALESCE\(msg_counts\.cnt, 0\) \+ COALESCE\(activity\.total_seconds, 0\)\) DESC/);
+  assert.match(sql, /a\.created_at DESC/);
+  assert.match(sql, /LIMIT \$2/);
+});
+
+test('discover: a broken fallback drops its panel, it does not blank the home screen', async () => {
+  const { app } = makeApp(
+    { season: SEASON, rows: [row()], discoverThrows: true }, { user: USER }
+  );
+  const { status, body } = await get(app, '/api/home-panels');
+  assert.equal(status, 200);
+  assert.deepEqual(body.panels.map((p) => p.key), ['challenges', 'create'],
+    'the other sections are served; the registry still lists all three');
+  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'discover', 'create']);
+});
+
+test('discover: ?demo=1 serves the demo marker, and asks the database nothing', async () => {
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  try {
+    const { app, calls } = makeApp({ ...FALLBACK_STATE }, { user: USER });
+    const { body } = await get(app, '/api/home-panels?demo=1');
+    const discover = body.panels.find((p) => p.key === 'discover');
+    assert.equal(discover.demo, true);
+    assert.equal(discover.fallback, undefined,
+      'the demo /api/apps fixture fills both real lanes, so nothing draws this');
+    assert.ok(!calls.some((c) => c.sql.includes('FROM apps a')));
+  } finally {
+    process.env.USERNODE_ENV = prev;
+  }
 });

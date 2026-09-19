@@ -1,6 +1,7 @@
 /**
  * The Discover block: the admin-curated apps, the most-used apps this viewer
- * doesn't have yet, and the way into the `#apps` directory.
+ * doesn't have yet, the public apps it falls back to when there are neither
+ * (#2565), and the way into the `#apps` directory.
  *
  * ── The lane is a RAIL OF CARDS now, not a grid of icons ──────────────
  *
@@ -29,8 +30,9 @@
  *
  * What did NOT change: the ORDER. Curated first (by `featured_order`), then
  * popular (by active users) — exactly the sequence the two rails drew in,
- * concatenated. `discoverView` still derives the two lists separately and
- * both counts are still stamped on the article, because they describe the
+ * concatenated, with the fallback lane (#2565) after both and only ever
+ * instead of both. `discoverView` still derives the lists separately and
+ * every count is still stamped on the article, because they describe the
  * block's composition and dapp.json selects on them; only the rendering is
  * flat.
  *
@@ -266,8 +268,14 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
   // as one list. Deduped by slug because the two derivations are independent:
   // `popularApps` excludes `featured` today, but a flat lane is where that
   // would show up as the same card twice rather than as one card per rail.
+  //
+  // Then the FALLBACK (#2565), last and normally absent: the view model fills
+  // it only when the two lanes above are both empty, so it can neither
+  // reorder nor displace a curated or popular card. What it replaces is the
+  // "Nothing to discover right now" note below, which now means what it says
+  // — there is genuinely nothing to join.
   const seen = new Set<string>();
-  const tiles = [...view.featured, ...view.popular]
+  const tiles = [...view.featured, ...view.popular, ...(view.fallback || [])]
     .filter((tile) => (seen.has(tile.slug) ? false : (seen.add(tile.slug), true)));
 
   return (
@@ -275,7 +283,11 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       panelKey={view.key}
       expanded={false}
       plate="none"
-      stamps={{ featured: view.featured.length, popular: view.popular.length }}
+      stamps={{
+        featured: view.featured.length,
+        popular: view.popular.length,
+        fallback: (view.fallback || []).length,
+      }}
     >
       {tiles.length ? (
         <Lane tiles={tiles} />
