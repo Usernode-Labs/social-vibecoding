@@ -283,6 +283,90 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
+  // #2570: what each model is good for and what a change on it is expected
+  // to cost. One read per page, cached on the module: the payload is the
+  // platform's own editorial table plus a token profile, and neither moves
+  // inside a session. A failure leaves it null, which is the pre-#2570
+  // picker — a note nobody can fetch is not an error a builder has to see.
+  _modelNotes: null,
+  _modelNotesPromise: null,
+
+  async _ensureModelNotes() {
+    if (DevChat._modelNotes) return DevChat._modelNotes;
+    if (DevChat._modelNotesPromise) return DevChat._modelNotesPromise;
+    const request = (async () => {
+      try {
+        const res = await fetch('/api/model-notes', { credentials: 'same-origin' });
+        if (!res.ok) return null;
+        const body = await res.json();
+        return (body && typeof body === 'object' && body.models) ? body : null;
+      } catch {
+        return null;
+      }
+    })();
+    DevChat._modelNotesPromise = request;
+    const notes = await request;
+    if (notes) {
+      DevChat._modelNotes = notes;
+      DevChat._publishComposer();
+    }
+    DevChat._modelNotesPromise = null;
+    return notes;
+  },
+
+  /**
+   * #2570: the note and the estimated cost for one model, as the picker
+   * states them. ONE helper, because the same two facts appear in three
+   * places — the compact text beside an option, the full line under the
+   * selected one, and (through the same call) any later surface.
+   *
+   * `catalogModel` is the user's own OpenRouter catalogue entry when there
+   * is one. The server cannot read that catalogue (it holds no key), so a
+   * model the platform does not curate gets its estimate here instead:
+   * the catalogue's published per-token prices times the server's token
+   * profile for a typical change. Same arithmetic, same profile, either
+   * side of the wire.
+   */
+  _modelCostNote(modelId, catalogModel) {
+    const notes = DevChat._modelNotes;
+    const id = String(modelId || '').replace(/^openrouter:|^anthropic:/, '');
+    const entry = notes?.models?.[id] || null;
+    let note = entry?.note || '';
+    let cents = entry && entry.estimateCents != null ? Number(entry.estimateCents) : null;
+    if (cents == null && notes?.typicalChange && catalogModel) {
+      const input = Number(catalogModel.inputPricePerMillion);
+      const output = Number(catalogModel.outputPricePerMillion);
+      if (Number.isFinite(input) && Number.isFinite(output)) {
+        const dollars = (Number(notes.typicalChange.inputTokens) / 1_000_000) * input
+          + (Number(notes.typicalChange.outputTokens) / 1_000_000) * output;
+        cents = Math.round(dollars * 100 * 100) / 100;
+      }
+    }
+    // Under a cent is "<$0.01" rather than "$0.00": a model that costs
+    // something must not read as free.
+    const money = cents == null ? ''
+      : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
+    // #2570: a bare dollar amount is never shown to anybody. The figure is
+    // per TYPICAL CHANGE, not per message, per hour or per month, and a
+    // naked "$1.55" beside a model name invites all three readings. So the
+    // amount only ever leaves here inside this phrase, and every surface
+    // that shows a cost renders it. "about" carries the estimate; what a
+    // typical change IS stays defined once, in the server's TYPICAL_CHANGE
+    // profile, which the admin screen prints.
+    const perChange = money ? `about ${money} for a typical change` : '';
+    return {
+      note,
+      // The bare amount, for arithmetic and tests. Not for display on its
+      // own: render `compact` or `full`.
+      estimate: money,
+      // "general coding work · about $1.55 for a typical change (estimate)"
+      full: [note, perChange ? `${perChange} (estimate)` : ''].filter(Boolean).join(' · '),
+      // The same sentence, minus the explicit label, for the one line a
+      // closed native control shows.
+      compact: [note, perChange].filter(Boolean).join(' · '),
+    };
+  },
+
   /** Load the saved OpenRouter choice and its key-visible model shortlist. */
   async _ensureModelPickerData({ forceRefresh = false } = {}) {
     if (!DevChat.currentSession) return null;
@@ -293,6 +377,11 @@ const DevChat = {
       return DevChat._modelPickerDataPromise;
     }
 
+    // #2570: the notes ride along with the picker's own read. They are a
+    // separate endpoint because they are platform-wide rather than
+    // per-user, and not awaited here because the picker must paint whether
+    // or not they land.
+    DevChat._ensureModelNotes();
     const request = DevChat._loadCodingAgentChoiceData({ forceRefresh });
     DevChat._modelPickerDataPromise = request;
     try {
@@ -328,9 +417,12 @@ const DevChat = {
       if (!id || seen.has(`${OPENROUTER_MODEL_PREFIX}${id}`)) return;
       seen.add(`${OPENROUTER_MODEL_PREFIX}${id}`);
       const model = byId.get(id);
+      // #2570: the compact cost/note text rides beside the name so it is
+      // visible while the menu is open, not only once a model is picked.
+      const cost = disabled ? null : DevChat._modelCostNote(id, model);
       options.push({
         value: `${OPENROUTER_MODEL_PREFIX}${id}`,
-        label: label || model?.name || id,
+        label: label || `${model?.name || id}${cost?.compact ? ` · ${cost.compact}` : ''}`,
         // The secondary hint, not part of the label (#2569).
         title: 'Runs on your OpenRouter key',
         ...(disabled ? { disabled: true } : null),
@@ -343,9 +435,11 @@ const DevChat = {
 
     // 2. The three Anthropic models, by their DevChat.MODELS labels.
     for (const [id, meta] of Object.entries(DevChat.MODELS)) {
+      const cost = DevChat._modelCostNote(id, null);
+      const label = (meta && meta.label) || id;
       options.push({
         value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
-        label: (meta && meta.label) || id,
+        label: cost.compact ? `${label} · ${cost.compact}` : label,
         title: 'Runs on the platform Claude allowance, or your own Anthropic key',
       });
     }
@@ -447,22 +541,34 @@ const DevChat = {
     const openRouterUsable = !data || data.codexAvailable || data.loadError || openRouterSelected;
     const options = openRouterUsable
       ? DevChat._flatModelOptions({ data, byId, starterIds, extraIds })
-      : Object.entries(DevChat.MODELS).map(([id, meta]) => ({
-        value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
-        label: (meta && meta.label) || id,
-        title: 'Runs on the platform Claude allowance, or your own Anthropic key',
-      }));
+      : Object.entries(DevChat.MODELS).map(([id, meta]) => {
+        const cost = DevChat._modelCostNote(id, null);
+        const label = (meta && meta.label) || id;
+        return {
+          value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+          label: cost.compact ? `${label} · ${cost.compact}` : label,
+          title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+        };
+      });
 
     const directId = Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat.selectedModel)
       ? DevChat.selectedModel
       : (Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat._defaultModel)
         ? DevChat._defaultModel
         : (Object.keys(DevChat.MODELS)[0] || ''));
+    // #2570: one line UNDER the picker with the full note for whichever
+    // model is selected. A native closed select shows one line of text, so
+    // the compact form above has to fit beside a name; this is where the
+    // sentence gets to be a sentence.
+    const selectedNote = openRouterSelected
+      ? DevChat._modelCostNote(selectedOpenRouterId, byId.get(selectedOpenRouterId))
+      : DevChat._modelCostNote(directId, null);
     return {
       options,
       selected: openRouterSelected
         ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
         : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
+      note: selectedNote.full || '',
       changeDisabled: !!DevChat._composerBusy || DevChat._modelPickerChanging,
     };
   },

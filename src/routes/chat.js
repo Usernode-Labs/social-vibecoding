@@ -4,6 +4,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const models = require('../services/models');
+const modelCosts = require('../services/model-costs');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
 const attachmentsSvc = require('../services/attachments');
@@ -128,6 +129,30 @@ function chatRoutes(config) {
   // breaking change for anything else reading this endpoint.
   router.get('/api/models', (_req, res) => {
     res.json({ models: models.list(), default: models.DEFAULT_MODEL });
+  });
+
+  // #2570: what each model is good for, and what a change on it is
+  // expected to cost. The picker reads this once per session open and
+  // renders the note beside each option and under the selected one.
+  //
+  // `models` carries the platform's CURATED ids — the three Anthropic ones
+  // and the OpenRouter models it recommends — because this process has no
+  // user key to read an OpenRouter catalogue with. `typicalChange` is what
+  // lets the client finish the job for every other model: it already holds
+  // that user's catalogue, prices and all, and the estimate is per-token
+  // pricing times this profile. One definition of "a typical change", two
+  // places that can apply it.
+  //
+  // Every figure is an ESTIMATE and is labelled one wherever it is shown.
+  router.get('/api/model-notes', async (_req, res) => {
+    try {
+      res.json(await modelCosts.pickerPayload(pool));
+    } catch (err) {
+      log.warn('chat', 'model notes read failed', { err: err.message });
+      // A picker without notes is the pre-#2570 picker, which is a fine
+      // thing to degrade to. It is never an error the user has to see.
+      res.json({ typicalChange: modelCosts.TYPICAL_CHANGE, models: {} });
+    }
   });
 
   router.get('/api/apps/:slug/messages', async (req, res) => {

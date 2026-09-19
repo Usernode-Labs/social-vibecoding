@@ -227,6 +227,10 @@ test('both in-chat venues share one flat selector, and off-platform venues get n
       },
     ],
     selected: 'anthropic:claude-opus-5',
+    // #2570: the selected model's note. Empty here because this harness
+    // never answers GET /api/model-notes, which is exactly the degraded
+    // state the composer has to paint — the pre-#2570 picker.
+    note: '',
     changeDisabled: false,
   });
 
