@@ -85,6 +85,7 @@ declare global {
       } | null;
       eventsWs?: WebSocket | null;
       navigateHome?(): void;
+      restoreFromHash?(): void;
       navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
       openAppTab?(slug: string, tab?: string, opts?: unknown): void;
       _appUrl?(slug: string, tab?: string, ref?: unknown, subTab?: string | null,
@@ -236,9 +237,10 @@ declare global {
         refresh(): Promise<void> | void;
       };
       globalChat?: {
-        open(): Promise<void> | void;
+        open(options?: { threadId?: string | null }): Promise<void> | void;
+        route(threadId?: string | null): Promise<void> | void;
         close(classicPath?: string | null): void;
-        toggle(): Promise<void> | void;
+        deactivate(): void;
         isOpen(): boolean;
         send(text: string): Promise<void> | void;
       };

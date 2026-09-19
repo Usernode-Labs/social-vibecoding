@@ -8,6 +8,8 @@ const MAX_PAYLOAD_BYTES = 256 * 1024;
 const MAX_RESULT_IDS = 50;
 const DEFAULT_PAGE_SIZE = 30;
 const MAX_PAGE_SIZE = 100;
+const DEFAULT_THREAD_LIST_SIZE = 20;
+const MAX_THREAD_LIST_SIZE = 50;
 const MAX_THREAD_SUMMARY_CHARS = 1_800;
 const SUMMARY_MESSAGE_LIMIT = 120;
 const TURN_STALE_MS = 10 * 60 * 1000;
@@ -82,6 +84,8 @@ function threadShape(row) {
   if (!row) return null;
   return {
     id: row.id,
+    title: summaryText(row.title, 120) || 'New chat',
+    busy: row.busy === true,
     summary: row.summary || null,
     summaryCursor: row.summary_cursor == null ? null : String(row.summary_cursor),
     createdAt: iso(row.created_at),
@@ -128,9 +132,19 @@ function compactSummary(existing, messages) {
 
 async function threadForUser(pool, requestedUserId, threadId) {
   const { rows } = await pool.query(
-    `SELECT id, summary, summary_cursor, created_at, updated_at
-       FROM global_chat_threads
-      WHERE id = $1 AND user_id = $2 AND archived_at IS NULL`,
+    `SELECT t.id, t.summary, t.summary_cursor, t.created_at, t.updated_at,
+            first_user.plain_text AS title,
+            (t.active_turn_id IS NOT NULL
+             AND t.active_turn_started_at >= NOW() - INTERVAL '10 minutes') AS busy
+       FROM global_chat_threads t
+       LEFT JOIN LATERAL (
+         SELECT m.plain_text
+           FROM global_chat_messages m
+          WHERE m.thread_id = t.id AND m.role = 'user'
+          ORDER BY m.id ASC
+          LIMIT 1
+       ) first_user ON TRUE
+      WHERE t.id = $1 AND t.user_id = $2 AND t.archived_at IS NULL`,
     [uuid(threadId, 'thread id'), userId(requestedUserId)],
   );
   return threadShape(rows[0]);
@@ -138,57 +152,60 @@ async function threadForUser(pool, requestedUserId, threadId) {
 
 async function currentThread(pool, requestedUserId) {
   const { rows } = await pool.query(
-    `SELECT id, summary, summary_cursor, created_at, updated_at
-       FROM global_chat_threads
-      WHERE user_id = $1 AND archived_at IS NULL
-      ORDER BY created_at DESC
+    `SELECT t.id, t.summary, t.summary_cursor, t.created_at, t.updated_at,
+            first_user.plain_text AS title,
+            (t.active_turn_id IS NOT NULL
+             AND t.active_turn_started_at >= NOW() - INTERVAL '10 minutes') AS busy
+       FROM global_chat_threads t
+       LEFT JOIN LATERAL (
+         SELECT m.plain_text
+           FROM global_chat_messages m
+          WHERE m.thread_id = t.id AND m.role = 'user'
+          ORDER BY m.id ASC
+          LIMIT 1
+       ) first_user ON TRUE
+      WHERE t.user_id = $1 AND t.archived_at IS NULL
+      ORDER BY t.updated_at DESC
       LIMIT 1`,
     [userId(requestedUserId)],
   );
   return threadShape(rows[0]);
 }
 
-async function createThread(pool, requestedUserId, { replace = false } = {}) {
-  const owner = userId(requestedUserId);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    if (replace) {
-      await client.query(
-        `UPDATE global_chat_threads
-            SET archived_at = NOW(), active_turn_id = NULL, active_turn_started_at = NULL
-          WHERE user_id = $1 AND archived_at IS NULL`,
-        [owner],
-      );
-    }
-    const id = crypto.randomUUID();
-    const inserted = await client.query(
-      `INSERT INTO global_chat_threads (id, user_id)
-       VALUES ($1, $2)
-       ON CONFLICT DO NOTHING
-       RETURNING id, summary, summary_cursor, created_at, updated_at`,
-      [id, owner],
-    );
-    let row = inserted.rows[0];
-    if (!row) {
-      const existing = await client.query(
-        `SELECT id, summary, summary_cursor, created_at, updated_at
-           FROM global_chat_threads
-          WHERE user_id = $1 AND archived_at IS NULL
-          ORDER BY created_at DESC LIMIT 1`,
-        [owner],
-      );
-      row = existing.rows[0];
-    }
-    await client.query('COMMIT');
-    if (!row) throw new GlobalChatStoreError('thread_unavailable', 'Could not create a Global Chat thread.');
-    return threadShape(row);
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw error;
-  } finally {
-    client.release();
+async function listThreads(pool, requestedUserId, { limit = DEFAULT_THREAD_LIST_SIZE } = {}) {
+  const size = Math.max(1, Math.min(MAX_THREAD_LIST_SIZE, Number(limit) || DEFAULT_THREAD_LIST_SIZE));
+  const { rows } = await pool.query(
+    `SELECT t.id, t.summary, t.summary_cursor, t.created_at, t.updated_at,
+            first_user.plain_text AS title,
+            (t.active_turn_id IS NOT NULL
+             AND t.active_turn_started_at >= NOW() - INTERVAL '10 minutes') AS busy
+       FROM global_chat_threads t
+       LEFT JOIN LATERAL (
+         SELECT m.plain_text
+           FROM global_chat_messages m
+          WHERE m.thread_id = t.id AND m.role = 'user'
+          ORDER BY m.id ASC
+          LIMIT 1
+       ) first_user ON TRUE
+      WHERE t.user_id = $1 AND t.archived_at IS NULL
+      ORDER BY t.updated_at DESC
+      LIMIT $2`,
+    [userId(requestedUserId), size],
+  );
+  return rows.map(threadShape);
+}
+
+async function createThread(pool, requestedUserId) {
+  const { rows } = await pool.query(
+    `INSERT INTO global_chat_threads (id, user_id)
+     VALUES ($1, $2)
+     RETURNING id, summary, summary_cursor, created_at, updated_at`,
+    [crypto.randomUUID(), userId(requestedUserId)],
+  );
+  if (!rows[0]) {
+    throw new GlobalChatStoreError('thread_unavailable', 'Could not create a Global Chat thread.');
   }
+  return threadShape(rows[0]);
 }
 
 async function ensureThread(pool, requestedUserId) {
@@ -474,9 +491,11 @@ async function loadToolResults(pool, {
 
 module.exports = {
   DEFAULT_PAGE_SIZE,
+  DEFAULT_THREAD_LIST_SIZE,
   MAX_MESSAGE_CHARS,
   MAX_PAGE_SIZE,
   MAX_PAYLOAD_BYTES,
+  MAX_THREAD_LIST_SIZE,
   MAX_THREAD_SUMMARY_CHARS,
   SUMMARY_MESSAGE_LIMIT,
   TURN_STALE_MS,
@@ -491,6 +510,7 @@ module.exports = {
   finishToolRun,
   insertMessage,
   listMessages,
+  listThreads,
   loadToolResults,
   messageShape,
   openJson,

@@ -36,6 +36,26 @@ export async function messages(
   }));
 }
 
+export async function threads(options: {
+  limit?: number;
+  signal?: AbortSignal;
+} = {}): Promise<{ threads: GlobalChatThread[] }> {
+  const query = new URLSearchParams();
+  if (options.limit) query.set('limit', String(options.limit));
+  const suffix = query.size ? `?${query.toString()}` : '';
+  return json(await fetch(`/api/global-chat/threads${suffix}`, {
+    credentials: 'same-origin', cache: 'no-store', signal: options.signal,
+  }));
+}
+
+export async function thread(threadId: string, signal?: AbortSignal): Promise<{
+  thread: GlobalChatThread;
+}> {
+  return json(await fetch(`/api/global-chat/threads/${encodeURIComponent(threadId)}`, {
+    credentials: 'same-origin', cache: 'no-store', signal,
+  }));
+}
+
 export async function createThread(): Promise<{
   thread: GlobalChatThread;
   firstUse: GlobalChatPresentation;

@@ -1,16 +1,16 @@
 import { useEffect } from 'react';
 
-import { ChatIcon } from '@/components/ui/icons';
+import { PlusIcon } from '@/components/ui/icons';
 
 import {
   initializeGlobalChat,
-  openGlobalChat,
+  startNewGlobalChat,
   useGlobalChatState,
 } from './store';
 
 /**
  * The way IN to the experimental chat interface after a user opts in — from
- * Improve, at the head of "Changes in progress".
+ * Improve, at the head of its dedicated Chats group.
  *
  * ── It is an entry point now, not a mode switch ────────────────────────
  *
@@ -23,20 +23,18 @@ import {
  * this button is behind it, so the `is-chat` active state it wore has no
  * state left to show and is gone with it.
  *
- * ── Why it sits with the changes in flight ─────────────────────────────
+ * ── Why it sits beside the changes in flight ───────────────────────────
  *
  * Improve is the surface for everything you can do *to* the app, and a chat
- * that proposes changes is another way to start one. Reading directly against
- * the panel's own "New change", "New chat (experimental)" says what it is: the
- * experimental sibling of that same act, offered in the same breath.
+ * that proposes changes is another way to start one. Its own Chats heading
+ * keeps conversations distinct from coding changes while leaving both kinds
+ * of work in the same sidebar.
  *
- * ── A NEW thread on every press ────────────────────────────────────────
+ * ── A NEW durable session on every press ───────────────────────────────
  *
- * `openGlobalChat({ fresh: true })`, which is why that option exists. Opening
- * and THEN starting a new chat would fetch the previous thread's messages,
- * paint them, and clear them a moment later — a "New chat" button has no
- * business flashing last week's conversation on the way in. Resuming is what
- * the screen's own history control is for.
+ * The thread is created first and its `#chat/<uuid>` route is then opened.
+ * Existing sessions stay in the Chats group immediately below this button,
+ * so New never replaces or flashes a previous conversation.
  *
  * ── First render is still the prerender ────────────────────────────────
  *
@@ -72,14 +70,13 @@ export function GlobalChatNewChatButton({ onNavigate }: {
       aria-label="New chat (experimental)"
       title="New chat (experimental)"
       onClick={() => {
-        // Dismiss FIRST: setDocumentMode closes the notifications and
-        // app-context sheets but knows nothing about #improve-panel, which
-        // would otherwise sit over the screen it just opened.
+        // Dismiss first so the route opens as a page, not underneath the
+        // Improve sheet that launched it.
         onNavigate?.();
-        void openGlobalChat({ fresh: true });
+        void startNewGlobalChat();
       }}
     >
-      <ChatIcon className="w-4 h-4" aria-hidden="true" />
+      <PlusIcon className="w-4 h-4" aria-hidden="true" />
       <span>New chat <span>(experimental)</span></span>
     </button>
   );

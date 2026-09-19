@@ -1288,19 +1288,9 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 
 /* ── Global Chat (experimental) ────────────────────────────────────────
-   A mode, not a route. Classic stays mounted with its exact state while this
-   React-owned sibling takes the flex slot; the body class removes the Classic
-   roots from layout without changing their router-owned hidden state. A reload
-   has no class and therefore always starts in Classic. */
-body.global-chat-mode > :is(
-  #app-view, #home-screen, #browse-screen, #workshop-screen,
-  #leaderboard-screen, #profile-screen, #admin-screen, #settings-screen,
-  #messages-screen, #auth-landing-screen, #auth-login-screen,
-  #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen,
-  #auth-more-screen
-) {
-  display: none !important;
-}
+   A normal hash-routed, React-owned sibling screen. App._showOnlyScreen owns
+   mutual exclusion with the other roots, so this surface needs no body mode
+   or cross-screen inert writes. Each durable session has a #chat/<uuid> URL. */
 #global-chat-screen {
   position: relative;
   z-index: 8;
@@ -1316,8 +1306,8 @@ body.global-chat-mode > :is(
   overflow: hidden;
 }
 /*
- * The experimental chat entry, at the head of Improve's "Changes in progress"
- * (frontend/src/features/global-chat/new-chat-button.tsx).
+ * The experimental chat entry, at the head of Improve's dedicated Chats
+ * section (frontend/src/features/global-chat/new-chat-button.tsx).
  *
  * It wore `.global-chat-mode-switch` and a header bar's 28px while it was a
  * toggle up there. The `.is-chat` fill went with the toggle rather than being

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { ArrowPathIcon, ArrowUpIcon, PlusIcon, SpinnerArcIcon } from '@/components/ui/icons';
 
+import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { GlobalChatResultBlock } from './renderers';
 import {
   closeGlobalChat,
@@ -238,12 +239,16 @@ function Composer() {
 }
 
 function Unavailable() {
+  const snapshot = useGlobalChatState();
+  const disabled = snapshot.bootstrap?.unavailableReason === 'global_chat_disabled';
   return (
     <section className="global-chat-unavailable">
-      <h3>Free-form chat needs OpenRouter</h3>
-      <p>The direct options below still work without it.</p>
+      <h3>{disabled ? 'Enable Global Chat to start' : 'Free-form chat needs OpenRouter'}</h3>
+      <p>{disabled
+        ? 'Global Chat is an optional experimental feature.'
+        : 'The direct options below still work without it.'}</p>
       <div className="global-chat-suggestions">
-        <button type="button" onClick={() => closeGlobalChat('#settings/openrouter')}>Open Settings</button>
+        <button type="button" onClick={() => closeGlobalChat(disabled ? '#settings/global-chat' : '#settings/openrouter')}>Open Settings</button>
         <button type="button" onClick={() => closeGlobalChat()}>Use Classic</button>
       </div>
     </section>
@@ -252,11 +257,24 @@ function Unavailable() {
 
 export function GlobalChatScreen() {
   const snapshot = useGlobalChatState();
+  const screenRef = useRef<HTMLElement | null>(null);
   const scroll = useRef<HTMLDivElement | null>(null);
+  useVisibilityHiddenClass(screenRef, 'global-chat-screen', false);
   const assistantIds = useMemo(() => snapshot.messages
     .filter((message) => message.role === 'assistant')
     .map((message) => message.id), [snapshot.messages]);
   const latestAssistantId = assistantIds.at(-1) || null;
+
+  // app.js normally dispatches the route after authentication. On a cold
+  // deep link the boot-screen hint can reveal this island before that bridge
+  // exists, so hydration also resolves the address once as a race-safe seam.
+  useEffect(() => {
+    if (snapshot.open || !window.location.hash.startsWith('#chat')) return;
+    const encoded = window.location.hash.slice(1).split('/')[1] || null;
+    let threadId: string | null = null;
+    try { threadId = encoded ? decodeURIComponent(encoded) : null; } catch { return; }
+    void openGlobalChat({ threadId });
+  }, [snapshot.open]);
 
   useEffect(() => {
     if (!snapshot.open || !scroll.current) return;
@@ -265,15 +283,16 @@ export function GlobalChatScreen() {
 
   return (
     <main
+      ref={screenRef}
       id="global-chat-screen"
-      className={`${snapshot.open ? 'flex' : 'hidden'} flex-1 min-h-0 overflow-hidden`}
+      className="hidden flex flex-1 min-h-0 overflow-hidden"
       aria-label="Chat (experimental)"
     >
       <div className="global-chat-shell dc-lift dc-lift-strip">
         <header className="global-chat-toolbar">
           <div className="min-w-0">
             <h2>Chat <span>(experimental)</span></h2>
-            <p>Classic remains the default.</p>
+            <p>Saved in Improve.</p>
           </div>
           <BudgetLabel />
           <button
@@ -329,3 +348,5 @@ export function GlobalChatScreen() {
 }
 
 export { GlobalChatNewChatButton } from './new-chat-button';
+export { GlobalChatImproveSection } from './improve-section';
+export { useGlobalChatState } from './store';

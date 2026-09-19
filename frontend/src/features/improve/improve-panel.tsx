@@ -71,7 +71,7 @@ import {
 } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
 import { useStoreState } from '../../lib/use-store-state';
-import { GlobalChatNewChatButton } from '../global-chat';
+import { GlobalChatImproveSection, useGlobalChatState } from '../global-chat';
 import { iconViewFor } from '../apps/app-card.js';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -373,6 +373,7 @@ function TargetIcon({ name, iconUrl, iconEmoji }: {
 
 export function ImprovePanel() {
   const state = useStoreState(improveStore);
+  const globalChat = useGlobalChatState();
   const {
     open, adopted, target, name, slug, selfHosted, sessions, otherSessions,
     iconUrl, iconEmoji,
@@ -533,6 +534,7 @@ export function ImprovePanel() {
             ids={IMPROVE_VIEW_IDS}
             onNavigate={dismissForNav}
             className="mx-4 mb-2"
+            activeChat={globalChat.open}
           />
 
           {/*
@@ -551,15 +553,13 @@ export function ImprovePanel() {
             className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
           >
             {/*
-                THE EXPERIMENTAL CHAT ENTRY, above the heading and not under
-                it — which is the one placement decision this needed.
+                DIRECTION A (#2543): CHAT SESSIONS, THEN CODING CHANGES.
 
-                It reads as the section's action, and it has to outlive the
-                section's contents: the heading below is conditional on there
-                being changes to head, and "nothing is running" is exactly the
-                moment someone wants to start something. A button that
-                vanished with the empty state would be absent precisely when
-                it was useful.
+                The child renders New chat plus a titled, resumable Chats
+                group. Coding work keeps its existing Changes in progress /
+                Changes in other apps hierarchy below, so two different kinds
+                of session never collapse into one ambiguous chronological
+                feed. A chat row has its own stable #chat/<uuid> address.
 
                 Inside #improve-sessions rather than beside it. dapp.json's
                 band-order check selects `#improve-body > #improve-quick-actions
@@ -568,11 +568,15 @@ export function ImprovePanel() {
                 of the scroller is invisible to it. It scrolls with the list,
                 as the section's own first line should.
 
-                Renders null until both the parity gate and the user's
-                Settings opt-in are open — see
-                ../global-chat/new-chat-button.tsx.
+                The New button mounts early so it can fetch bootstrap state;
+                the Chats label and rows appear only after both the parity
+                gate and the user's Settings opt-in are open.
             */}
-            <GlobalChatNewChatButton onNavigate={dismissForNav} />
+            <GlobalChatImproveSection
+              onNavigate={dismissForNav}
+              labelClass={SECTION_LABEL_CLASS}
+              groupClass={GROUP_CLASS}
+            />
             {/* THE HEADING ONLY EARNS ITS LINE WHEN THERE IS A LIST UNDER IT.
                 A section label over an empty section is a label describing
                 nothing, and it was the reason the empty state read as

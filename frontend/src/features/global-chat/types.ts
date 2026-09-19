@@ -44,6 +44,8 @@ export interface GlobalChatResult {
 
 export interface GlobalChatThread {
   id: string;
+  title: string;
+  busy: boolean;
   summary?: string | null;
   summaryCursor?: string | null;
   createdAt?: string | null;
@@ -84,6 +86,7 @@ export interface GlobalChatBootstrap {
   capabilityRegistryVersion: string;
   capabilityCount: number;
   thread: GlobalChatThread | null;
+  threads: GlobalChatThread[];
   firstUse: GlobalChatPresentation;
   profiles: {
     globalChat: GlobalChatProfile;

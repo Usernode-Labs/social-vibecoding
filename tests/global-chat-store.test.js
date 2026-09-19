@@ -165,6 +165,52 @@ test('messages are bounded and returned chronologically with an opaque cursor', 
   );
 });
 
+test('chat sessions list newest activity first with prompt titles and live turn state', async () => {
+  const pool = {
+    async query(sql, params) {
+      assert.match(sql, /LEFT JOIN LATERAL/);
+      assert.match(sql, /m\.role = 'user'/);
+      assert.match(sql, /ORDER BY t\.updated_at DESC/);
+      assert.match(sql, /active_turn_started_at >= NOW\(\) - INTERVAL '10 minutes'/);
+      assert.deepEqual(params, [7, 12]);
+      return { rows: [
+        {
+          id: THREAD,
+          title: '  Find\nopen   issues  ',
+          busy: true,
+          summary: null,
+          summary_cursor: null,
+          created_at: '2026-09-18T12:00:00Z',
+          updated_at: '2026-09-18T12:03:00Z',
+        },
+      ] };
+    },
+  };
+  const threads = await store.listThreads(pool, 7, { limit: 12 });
+  assert.equal(threads[0].title, 'Find open issues');
+  assert.equal(threads[0].busy, true);
+});
+
+test('starting a chat inserts a new session without archiving existing ones', async () => {
+  let statement = '';
+  const pool = {
+    async query(sql, params) {
+      statement = sql;
+      assert.match(params[0], /^[0-9a-f-]{36}$/);
+      assert.equal(params[1], 7);
+      return { rows: [{
+        id: params[0], summary: null, summary_cursor: null,
+        created_at: '2026-09-18T12:00:00Z', updated_at: '2026-09-18T12:00:00Z',
+      }] };
+    },
+  };
+  const thread = await store.createThread(pool, 7);
+  assert.equal(thread.title, 'New chat');
+  assert.equal(thread.busy, false);
+  assert.match(statement, /INSERT INTO global_chat_threads/);
+  assert.doesNotMatch(statement, /UPDATE global_chat_threads|SET archived_at/i);
+});
+
 test('rolling transcript summaries are bounded, one-line, and prefer recent context', () => {
   const summary = store.compactSummary('Earlier context', [
     { role: 'user', text: 'Please inspect\nthis issue.' },
@@ -186,7 +232,7 @@ test('thread compaction reads only owned older messages and advances its cursor'
   const pool = {
     async query(sql, params) {
       calls.push({ sql, params });
-      if (/FROM global_chat_threads\s+WHERE id/.test(sql)) {
+      if (/FROM global_chat_threads t[\s\S]+WHERE t\.id/.test(sql)) {
         return { rows: [{
           id: THREAD, summary: 'Previous', summary_cursor: 4,
           created_at: '2026-09-18T12:00:00Z', updated_at: '2026-09-18T12:00:00Z',
@@ -222,4 +268,6 @@ test('schema carries restart-safe turn leases above the standalone tail', () => 
   assert.ok(table > 0 && table < marker);
   assert.match(schema.slice(table, marker), /active_turn_id\s+UUID/);
   assert.match(schema.slice(table, marker), /active_turn_started_at\s+TIMESTAMPTZ/);
+  assert.match(schema.slice(table, marker), /DROP INDEX IF EXISTS global_chat_threads_one_active_user/);
+  assert.doesNotMatch(schema.slice(table, marker), /CREATE UNIQUE INDEX IF NOT EXISTS global_chat_threads_one_active_user/);
 });

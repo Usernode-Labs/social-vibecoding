@@ -169,8 +169,10 @@ export const IMPROVE_VIEW_IDS = {
  * else". The strip grows a third, inert segment for exactly as long as you
  * are in one; see AppViewTabs.
  *
- * The general chat (`chat`) still selects nothing. It is a different kind of
- * place and giving it a segment here is its own decision, not this one's.
+ * Global Chat is the same kind of conditional location. Direction A in #2543
+ * makes it a platform page and appends an inert Chat segment while that page
+ * is current; it disappears elsewhere, so the strip never promises Chat as a
+ * permanent third destination while the experiment is gated.
  */
 export function activeAppView(
   tab: string | null,
@@ -182,14 +184,15 @@ export function activeAppView(
   return null;
 }
 
-export function AppViewTabs({ ids, onNavigate, className }: {
+export function AppViewTabs({ ids, onNavigate, className, activeChat = false }: {
   /** Element ids for the track and its two segments. */
   ids: { root: string; app: string; workshop: string };
   onNavigate: () => void;
   className?: string;
+  activeChat?: boolean;
 }): ReactNode {
   const { name, slug, selfHosted, tab, subTab } = useStoreState(improveStore);
-  const active = activeAppView(tab, subTab);
+  const active = activeChat ? 'chat' : activeAppView(tab, subTab);
 
   // The platform's own row is not an iframe, so its first segment is Home —
   // the same relabelling the row it replaces carried (#1386).
@@ -241,13 +244,13 @@ export function AppViewTabs({ ids, onNavigate, className }: {
           is not in the built document and the shell's id inventory is a list
           of the ones that are.
       */}
-      {active === 'session' ? (
+      {active === 'session' || active === 'chat' ? (
         <span
-          data-context-row="session"
+          data-context-row={active}
           aria-current="page"
           className={segClass(true)}
         >
-          <span className="min-w-0 truncate">Change</span>
+          <span className="min-w-0 truncate">{active === 'chat' ? 'Chat' : 'Change'}</span>
         </span>
       ) : null}
     </div>

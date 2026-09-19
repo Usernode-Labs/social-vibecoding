@@ -6,8 +6,8 @@ import type {
   GlobalChatMessage,
   GlobalChatPresentation,
   GlobalChatResult,
+  GlobalChatThread,
   GlobalChatSuggestion,
-  GlobalChatUsage,
 } from './types';
 
 type Phase = 'idle' | 'booting' | 'loading' | 'ready' | 'sending' | 'error';
@@ -16,6 +16,7 @@ export interface GlobalChatState {
   open: boolean;
   phase: Phase;
   bootstrap: GlobalChatBootstrap | null;
+  threads: GlobalChatThread[];
   messages: GlobalChatMessage[];
   results: Record<string, GlobalChatResult>;
   hasMoreHistory: boolean;
@@ -34,18 +35,11 @@ export interface GlobalChatState {
   clientActionStates: Record<string, 'running' | 'done' | 'error'>;
 }
 
-const CLASSIC_SCREEN_IDS = [
-  'app-view', 'home-screen', 'browse-screen', 'workshop-screen',
-  'leaderboard-screen', 'profile-screen', 'admin-screen', 'settings-screen',
-  'messages-screen', 'auth-landing-screen', 'auth-login-screen',
-  'auth-register-screen', 'auth-waiting-screen', 'auth-waitlist-screen',
-  'auth-more-screen',
-];
-
 const INITIAL_STATE: GlobalChatState = {
   open: false,
   phase: 'idle',
   bootstrap: null,
+  threads: [],
   messages: [],
   results: {},
   hasMoreHistory: false,
@@ -63,6 +57,7 @@ const listeners = new Set<() => void>();
 let bootstrapPromise: Promise<GlobalChatBootstrap | null> | null = null;
 let loadedThreadId: string | null = null;
 let activeAbort: AbortController | null = null;
+let navigationVersion = 0;
 
 function publish(next: Partial<GlobalChatState> | ((current: GlobalChatState) => Partial<GlobalChatState>)) {
   const patch = typeof next === 'function' ? next(state) : next;
@@ -119,17 +114,20 @@ async function recoverInterruptedTurn(
   const deadline = Date.now() + 55_000;
   let inactivePolls = 0;
   const restore = (page: Awaited<ReturnType<typeof api.messages>>) => {
+    if (state.bootstrap?.thread?.id !== threadId) return false;
     const newer = page.messages.filter(
       (message) => numericMessageId(message.id) > afterMessageId,
     );
     if (!newer.some((message) => message.role === 'assistant')) return false;
-    publish((current) => ({
-      phase: 'ready',
-      activity: '',
-      error: '',
-      messages: mergePersistedMessages(current.messages, newer),
-      results: resultsById(page.results, current.results),
-    }));
+    publish((current) => current.bootstrap?.thread?.id === threadId
+      ? {
+        phase: 'ready',
+        activity: '',
+        error: '',
+        messages: mergePersistedMessages(current.messages, newer),
+        results: resultsById(page.results, current.results),
+      }
+      : {});
     return true;
   };
   while (!signal.aborted && Date.now() < deadline) {
@@ -162,19 +160,6 @@ function errorText(error: unknown, fallback = 'Global Chat could not complete th
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-function setDocumentMode(open: boolean) {
-  document.body.classList.toggle('global-chat-mode', open);
-  for (const id of CLASSIC_SCREEN_IDS) {
-    const element = document.getElementById(id);
-    if (element) element.inert = open;
-  }
-  if (open) {
-    void window.NotificationsSheet?.close?.();
-    const appContext = (window as unknown as { AppContextSheet?: { close?: () => void } }).AppContextSheet;
-    appContext?.close?.();
-  }
-}
-
 export function useGlobalChatState() {
   return useSyncExternalStore(subscribe, () => state, () => INITIAL_STATE);
 }
@@ -188,8 +173,17 @@ export async function initializeGlobalChat({ force = false } = {}): Promise<Glob
   if (bootstrapPromise && !force) return bootstrapPromise;
   publish({ phase: state.open ? 'booting' : state.phase, error: '' });
   bootstrapPromise = api.bootstrap().then((value) => {
-    publish({ bootstrap: value, phase: state.open ? 'loading' : 'idle' });
-    return value;
+    const selected = state.open && state.bootstrap?.thread
+      ? value.threads.find((thread) => thread.id === state.bootstrap?.thread?.id)
+        || state.bootstrap.thread
+      : value.thread;
+    const next = { ...value, thread: selected };
+    publish({
+      bootstrap: next,
+      threads: value.threads,
+      phase: state.open ? 'loading' : 'idle',
+    });
+    return next;
   }).catch((error) => {
     // A boot-time 401 is expected before app.js has established the session.
     // sv:authed retries it; keep Classic untouched and do not surface a dead
@@ -202,19 +196,49 @@ export async function initializeGlobalChat({ force = false } = {}): Promise<Glob
   return bootstrapPromise;
 }
 
-async function loadCurrentThread(bootstrap: GlobalChatBootstrap) {
-  const thread = bootstrap.thread;
-  if (!thread) {
-    publish({ phase: 'idle', error: '' });
-    return;
-  }
+function mergeThread(
+  threads: GlobalChatThread[],
+  thread: GlobalChatThread,
+  { first = false } = {},
+): GlobalChatThread[] {
+  const existing = threads.findIndex((item) => item.id === thread.id);
+  if (existing < 0) return first ? [thread, ...threads] : [...threads, thread];
+  const next = [...threads];
+  next[existing] = thread;
+  if (!first || existing === 0) return next;
+  next.splice(existing, 1);
+  return [thread, ...next];
+}
+
+function selectThread(thread: GlobalChatThread, { first = false } = {}) {
+  publish((current) => {
+    const threads = mergeThread(current.threads, thread, { first });
+    return {
+      threads,
+      bootstrap: current.bootstrap
+        ? { ...current.bootstrap, thread, threads }
+        : current.bootstrap,
+    };
+  });
+}
+
+async function loadThread(thread: GlobalChatThread, version: number) {
   if (loadedThreadId === thread.id) {
-    publish({ phase: 'ready', error: '' });
+    if (version === navigationVersion) publish({ phase: 'ready', error: '' });
     return;
   }
-  publish({ phase: 'loading', error: '' });
+  publish({
+    phase: 'loading',
+    messages: [],
+    results: {},
+    hasMoreHistory: false,
+    before: null,
+    error: '',
+  });
   try {
     const page = await api.messages(thread.id, { limit: 40 });
+    if (version !== navigationVersion
+        || state.bootstrap?.thread?.id !== thread.id) return;
     loadedThreadId = thread.id;
     publish({
       phase: 'ready',
@@ -225,48 +249,88 @@ async function loadCurrentThread(bootstrap: GlobalChatBootstrap) {
       error: '',
     });
   } catch (error) {
+    if (version !== navigationVersion
+        || state.bootstrap?.thread?.id !== thread.id) return;
     publish({ phase: 'error', error: errorText(error, 'Could not load this chat.') });
   }
 }
 
 /**
- * `fresh` opens ON a new thread rather than the last one, for the entry point
- * that offers a new chat (../global-chat/new-chat-button.tsx). It is an option
- * here rather than two calls at the call site because the obvious sequencing —
- * open, then start a new chat — resolves `loadCurrentThread` first and paints
- * the previous conversation for as long as `createThread` takes to replace it.
- * `startNewGlobalChat` does its own focus pass, so this one is skipped.
+ * Resolve a durable chat route. The shell owns visibility and history; this
+ * store owns the selected thread and its transcript. A bare #chat resumes the
+ * most recent session (or creates the first one), while #chat/<uuid> resolves
+ * that exact owned thread so reloads and copied links are stable.
  */
-export async function openGlobalChat({ fresh = false } = {}) {
+export async function openGlobalChat({ threadId = null }: {
+  threadId?: string | null;
+} = {}) {
+  const version = ++navigationVersion;
+  publish({ open: true, phase: state.bootstrap ? 'loading' : 'booting', error: '' });
   const boot = await initializeGlobalChat();
-  if (!boot?.profiles.globalChat.enabled || !boot.thread) return;
-  setDocumentMode(true);
-  publish({ open: true, error: '' });
-  if (fresh) {
-    await startNewGlobalChat();
-    void refreshGlobalChatUsage();
+  if (version !== navigationVersion) return;
+  if (!boot?.profiles.globalChat.enabled) {
+    publish({ phase: 'ready' });
     return;
   }
-  await loadCurrentThread(boot);
+  try {
+    let thread = threadId
+      ? state.threads.find((item) => item.id === threadId) || null
+      : boot.thread;
+    if (threadId && !thread) thread = (await api.thread(threadId)).thread;
+    if (version !== navigationVersion) return;
+    if (!thread) {
+      const created = await api.createThread();
+      if (version !== navigationVersion) return;
+      thread = created.thread;
+      if (state.bootstrap) {
+        publish((current) => ({
+          bootstrap: current.bootstrap
+            ? { ...current.bootstrap, firstUse: created.firstUse }
+            : current.bootstrap,
+        }));
+      }
+    }
+    const previousThreadId = state.bootstrap?.thread?.id;
+    if (previousThreadId && previousThreadId !== thread.id && activeAbort) {
+      activeAbort.abort();
+      activeAbort = null;
+      void api.cancelTurn(previousThreadId).catch(() => {});
+    }
+    selectThread(thread, { first: !state.threads.some((item) => item.id === thread.id) });
+    if (window.location.hash === '#chat') {
+      try {
+        history.replaceState(null, '', `#chat/${encodeURIComponent(thread.id)}`);
+      } catch { /* the selected session still works without canonicalising */ }
+    }
+    await loadThread(thread, version);
+  } catch (error) {
+    if (version !== navigationVersion) return;
+    publish({ phase: 'error', error: errorText(error, 'Could not load this chat.') });
+  }
+  if (version !== navigationVersion) return;
   void refreshGlobalChatUsage();
   requestAnimationFrame(() => document.getElementById('global-chat-composer')?.focus());
 }
 
-export function closeGlobalChat(classicPath?: string | null) {
+export function deactivateGlobalChat() {
   const activeThreadId = activeAbort ? state.bootstrap?.thread?.id : null;
+  navigationVersion += 1;
   if (activeAbort) activeAbort.abort();
   activeAbort = null;
   if (activeThreadId) void api.cancelTurn(activeThreadId).catch(() => {});
-  setDocumentMode(false);
   publish({ open: false, phase: state.bootstrap ? 'ready' : 'idle', activity: '', error: '' });
-  if (!classicPath) return;
+}
+
+export function closeGlobalChat(classicPath?: string | null) {
+  deactivateGlobalChat();
 
   const aliases: Record<string, string> = {
     '#browse': '#apps',
     '#challenges': '#leaderboard/challenges',
     '#dev': '#workshop',
   };
-  const target = aliases[classicPath] || classicPath;
+  const requested = classicPath || '#home';
+  const target = aliases[requested] || requested;
   requestAnimationFrame(() => {
     if (target === '#home') {
       window.App?.navigateHome?.();
@@ -282,12 +346,8 @@ export function closeGlobalChat(classicPath?: string | null) {
   });
 }
 
-export async function toggleGlobalChat() {
-  if (state.open) closeGlobalChat();
-  else await openGlobalChat();
-}
-
 function appendOptimisticUser(text: string) {
+  const title = text.replace(/\s+/g, ' ').trim().slice(0, 120) || 'New chat';
   const message: GlobalChatMessage = {
     id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     threadId: state.bootstrap?.thread?.id || '',
@@ -297,7 +357,47 @@ function appendOptimisticUser(text: string) {
     createdAt: new Date().toISOString(),
     pending: true,
   };
-  publish((current) => ({ messages: [...current.messages, message] }));
+  publish((current) => {
+    const selected = current.bootstrap?.thread;
+    if (!selected) return { messages: [...current.messages, message] };
+    const thread = {
+      ...selected,
+      title: selected.title === 'New chat' ? title : selected.title,
+      busy: true,
+      updatedAt: new Date().toISOString(),
+    };
+    const threads = mergeThread(current.threads, thread, { first: true });
+    return {
+      messages: [...current.messages, message],
+      threads,
+      bootstrap: current.bootstrap
+        ? { ...current.bootstrap, thread, threads }
+        : current.bootstrap,
+    };
+  });
+}
+
+function setThreadBusy(threadId: string, busy: boolean) {
+  publish((current) => {
+    const indexed = current.threads.find((thread) => thread.id === threadId);
+    const selected = current.bootstrap?.thread?.id === threadId
+      ? current.bootstrap.thread
+      : null;
+    const source = indexed || selected;
+    if (!source) return {};
+    const thread = { ...source, busy };
+    const threads = mergeThread(current.threads, thread);
+    return {
+      threads,
+      bootstrap: current.bootstrap
+        ? {
+          ...current.bootstrap,
+          thread: selected ? thread : current.bootstrap.thread,
+          threads,
+        }
+        : current.bootstrap,
+    };
+  });
 }
 
 async function runTurn({ text, more = false, topic }: {
@@ -336,14 +436,18 @@ async function runTurn({ text, more = false, topic }: {
       signal: controller.signal,
       onEvent(event) {
         if (event.type === 'tool.started') {
-          publish({ activity: 'Working…' });
+          publish((current) => current.bootstrap?.thread?.id === thread.id
+            ? { activity: 'Working…' }
+            : {});
         } else if (event.type === 'confirmation.required') {
-          publish({ activity: 'Preparing confirmation…' });
+          publish((current) => current.bootstrap?.thread?.id === thread.id
+            ? { activity: 'Preparing confirmation…' }
+            : {});
         } else if (event.type === 'result.attached' && event.result) {
           const attached = event.result as GlobalChatResult;
-          publish((current) => ({
-            results: resultsById([attached], current.results),
-          }));
+          publish((current) => current.bootstrap?.thread?.id === thread.id
+            ? { results: resultsById([attached], current.results) }
+            : {});
           if (clientAction(attached)?.transport === 'local_setting') {
             void runGlobalChatClientAction(attached);
           }
@@ -359,62 +463,78 @@ async function runTurn({ text, more = false, topic }: {
             payload: { kind: more ? 'more_suggestions' : 'user_turn', presentation },
             createdAt: new Date().toISOString(),
           };
-          publish((current) => ({
-            phase: 'ready',
-            activity: '',
-            messages: [
-              ...current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
-              assistant,
-            ],
-          }));
+          publish((current) => current.bootstrap?.thread?.id === thread.id
+            ? {
+              phase: 'ready',
+              activity: '',
+              messages: [
+                ...current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+                assistant,
+              ],
+            }
+            : {});
         } else if (event.type === 'turn.failed') {
           completed = true;
           const message = typeof event.message === 'string' ? event.message : 'That request could not be completed.';
-          publish((current) => ({
-            phase: 'error',
-            activity: '',
-            error: message,
-            messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
-          }));
+          publish((current) => current.bootstrap?.thread?.id === thread.id
+            ? {
+              phase: 'error',
+              activity: '',
+              error: message,
+              messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+            }
+            : {});
         }
       },
     });
     if (!completed && !controller.signal.aborted) {
-      publish({ activity: 'Reconnecting…' });
+      publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? { activity: 'Reconnecting…' }
+        : {});
       completed = await recoverInterruptedTurn(thread.id, messageBoundary, controller.signal);
       if (!completed && !controller.signal.aborted) {
-        publish((current) => ({
-          phase: 'error',
-          activity: '',
-          error: 'The connection was interrupted before an answer was saved. Please try again.',
-          messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
-        }));
+        publish((current) => current.bootstrap?.thread?.id === thread.id
+          ? {
+            phase: 'error',
+            activity: '',
+            error: 'The connection was interrupted before an answer was saved. Please try again.',
+            messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+          }
+          : {});
       }
     }
   } catch (error) {
     if (controller.signal.aborted) {
-      publish((current) => ({
-        phase: 'ready',
-        activity: '',
-        messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
-      }));
+      publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? {
+          phase: 'ready',
+          activity: '',
+          messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+        }
+        : {});
     } else if (!completed) {
       // A broken fetch/read rejects instead of reaching the clean-EOF branch
       // above, but the server may still be finishing the same durable turn.
       // Recover it in exactly the same way before showing a retry error.
-      publish({ activity: 'Reconnecting…' });
+      publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? { activity: 'Reconnecting…' }
+        : {});
       completed = await recoverInterruptedTurn(thread.id, messageBoundary, controller.signal);
       if (!completed && !controller.signal.aborted) {
-        publish((current) => ({
-          phase: 'error',
-          activity: '',
-          error: errorText(error),
-          messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
-        }));
+        publish((current) => current.bootstrap?.thread?.id === thread.id
+          ? {
+            phase: 'error',
+            activity: '',
+            error: errorText(error),
+            messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+          }
+          : {});
       }
     }
   } finally {
     if (activeAbort === controller) activeAbort = null;
+    setThreadBusy(thread.id, false);
+    void refreshGlobalChatThreads();
     void refreshGlobalChatUsage();
   }
 }
@@ -454,41 +574,52 @@ async function runDirectAction({
       parameters,
       shownSuggestionIds: shownSuggestionIds(),
     }, controller.signal);
-    publish((current) => ({
-      phase: 'ready',
-      activity: '',
-      error: '',
-      messages: mergePersistedMessages(current.messages, [
-        response.userMessage,
-        response.message,
-      ]),
-      results: resultsById(response.results, current.results),
-    }));
-  } catch (error) {
-    if (controller.signal.aborted) {
-      publish((current) => ({
+    publish((current) => current.bootstrap?.thread?.id === thread.id
+      ? {
         phase: 'ready',
         activity: '',
-        messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
-      }));
+        error: '',
+        messages: mergePersistedMessages(current.messages, [
+          response.userMessage,
+          response.message,
+        ]),
+        results: resultsById(response.results, current.results),
+      }
+      : {});
+  } catch (error) {
+    if (controller.signal.aborted) {
+      publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? {
+          phase: 'ready',
+          activity: '',
+          messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+        }
+        : {});
     } else {
-      publish({ activity: 'Reconnecting…' });
+      publish((current) => current.bootstrap?.thread?.id === thread.id
+        ? { activity: 'Reconnecting…' }
+        : {});
       const recovered = await recoverInterruptedTurn(
         thread.id,
         messageBoundary,
         controller.signal,
       );
       if (!recovered && !controller.signal.aborted) {
-        publish((current) => ({
-          phase: 'error',
-          activity: '',
-          error: errorText(error, 'That direct action could not be completed.'),
-          messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
-        }));
+        publish((current) => current.bootstrap?.thread?.id === thread.id
+          ? {
+            phase: 'error',
+            activity: '',
+            error: errorText(error, 'That direct action could not be completed.'),
+            messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+          }
+          : {});
       }
     }
   } finally {
     if (activeAbort === controller) activeAbort = null;
+    setThreadBusy(thread.id, false);
+    void refreshGlobalChatThreads();
+    void refreshGlobalChatUsage();
   }
 }
 
@@ -525,6 +656,7 @@ export async function loadOlderGlobalChatMessages() {
   publish({ phase: 'loading', error: '' });
   try {
     const page = await api.messages(threadId, { before: state.before, limit: 40 });
+    if (state.bootstrap?.thread?.id !== threadId) return;
     publish((current) => ({
       phase: 'ready',
       messages: [...page.messages, ...current.messages],
@@ -533,20 +665,35 @@ export async function loadOlderGlobalChatMessages() {
       before: page.before,
     }));
   } catch (error) {
+    if (state.bootstrap?.thread?.id !== threadId) return;
     publish({ phase: 'error', error: errorText(error, 'Could not load earlier messages.') });
   }
 }
 
 export async function startNewGlobalChat() {
-  if (state.phase === 'sending') return;
+  const version = ++navigationVersion;
+  const activeThreadId = activeAbort ? state.bootstrap?.thread?.id : null;
+  if (activeAbort) activeAbort.abort();
+  activeAbort = null;
+  if (activeThreadId) void api.cancelTurn(activeThreadId).catch(() => {});
   publish({ phase: 'loading', error: '' });
   try {
     const created = await api.createThread();
+    if (version !== navigationVersion) {
+      void refreshGlobalChatThreads();
+      return;
+    }
     loadedThreadId = created.thread.id;
     publish((current) => ({
       phase: 'ready',
+      threads: mergeThread(current.threads, created.thread, { first: true }),
       bootstrap: current.bootstrap
-        ? { ...current.bootstrap, thread: created.thread, firstUse: created.firstUse }
+        ? {
+          ...current.bootstrap,
+          thread: created.thread,
+          threads: mergeThread(current.threads, created.thread, { first: true }),
+          firstUse: created.firstUse,
+        }
         : current.bootstrap,
       messages: [],
       results: {},
@@ -556,8 +703,16 @@ export async function startNewGlobalChat() {
       consumedConfirmations: {},
       clientActionStates: {},
     }));
+    const target = `#chat/${encodeURIComponent(created.thread.id)}`;
+    if (window.location.hash === target) {
+      const restore = window.App?.restoreFromHash;
+      if (typeof restore === 'function') restore.call(window.App);
+    } else {
+      window.location.hash = target;
+    }
     requestAnimationFrame(() => document.getElementById('global-chat-composer')?.focus());
   } catch (error) {
+    if (version !== navigationVersion) return;
     publish({ phase: 'error', error: errorText(error, 'Could not start a new chat.') });
   }
 }
@@ -574,17 +729,25 @@ export async function confirmGlobalChatAction(result: GlobalChatResult, token: s
   publish({ activity: 'Applying…', error: '' });
   try {
     const response = await api.confirmAction(token, threadId, api.clientMetadata());
-    publish((current) => ({
-      phase: 'ready',
-      activity: '',
-      consumedConfirmations: { ...current.consumedConfirmations, [result.id]: true },
-      results: resultsById(response.results, current.results),
-      messages: [...current.messages, response.message as GlobalChatMessage],
-    }));
+    publish((current) => current.bootstrap?.thread?.id === threadId
+      ? {
+        phase: 'ready',
+        activity: '',
+        consumedConfirmations: { ...current.consumedConfirmations, [result.id]: true },
+        results: resultsById(response.results, current.results),
+        messages: [...current.messages, response.message as GlobalChatMessage],
+      }
+      : {});
     const pending = response.results.find((item) => clientAction(item));
     if (pending) await runGlobalChatClientAction(pending);
   } catch (error) {
-    publish({ phase: 'error', activity: '', error: errorText(error, 'That action could not be completed.') });
+    publish((current) => current.bootstrap?.thread?.id === threadId
+      ? {
+        phase: 'error',
+        activity: '',
+        error: errorText(error, 'That action could not be completed.'),
+      }
+      : {});
   } finally {
     void refreshGlobalChatUsage();
   }
@@ -760,10 +923,33 @@ export async function refreshGlobalChatUsage() {
   }
 }
 
+export async function refreshGlobalChatThreads() {
+  if (!state.bootstrap?.profiles.globalChat.enabled) return;
+  try {
+    const response = await api.threads();
+    publish((current) => {
+      const selectedId = current.bootstrap?.thread?.id;
+      const selected = response.threads.find((thread) => thread.id === selectedId)
+        || current.bootstrap?.thread
+        || response.threads[0]
+        || null;
+      return {
+        threads: response.threads,
+        bootstrap: current.bootstrap
+          ? { ...current.bootstrap, thread: selected, threads: response.threads }
+          : current.bootstrap,
+      };
+    });
+  } catch {
+    // The transcript remains usable when its Improve index cannot refresh.
+  }
+}
+
 export const globalChatController = {
   open: openGlobalChat,
+  route: (threadId?: string | null) => openGlobalChat({ threadId }),
   close: closeGlobalChat,
-  toggle: toggleGlobalChat,
+  deactivate: deactivateGlobalChat,
   isOpen: () => state.open,
   send: sendGlobalChatMessage,
 };
