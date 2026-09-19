@@ -3029,6 +3029,34 @@
       "expectText": "Decline"
     },
     {
+      "id": "auth.choose-username-first-run",
+      "name": "First sign-in asks for a username in a blocking modal, with a suggestion already in the field (#2563)",
+      "path": "/?shot=choose-username",
+      "expectSelector": ".un-modal [data-choose-username] input#choose-username-input[data-username-suggested=\"ada_lovelace\"] ~ [data-choose-username-save]",
+      "expectText": "Choose your username",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/auth/username-first-run.js",
+        "frontend/src/features/settings/terms-first-run.js",
+        "src/services/usernames.js",
+        "src/services/email-signup.js",
+        "src/routes/profile.js",
+        "src/routes/auth.js"
+      ]
+    },
+    {
+      "name": "The first-run username step offers no way out but choosing one (#2563)",
+      "path": "/?shot=choose-username",
+      "expectSelector": ".un-modal [data-choose-username] [data-choose-username-save]",
+      "expectText": "Continue"
+    },
+    {
+      "name": "The first-run username step says what a username may be (#2563)",
+      "path": "/?shot=choose-username",
+      "expectSelector": ".un-modal [data-choose-username] p",
+      "expectText": "Letters, numbers and underscores, 3 to 32 characters."
+    },
+    {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
       "path": "/?shot=settings-back#settings",
       "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"theme\"]:not(.hidden)"

@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const log = require('./logger');
 const mail = require('./mail');
+const usernames = require('./usernames');
 const waitlist = require('./waitlist');
 
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -130,6 +131,58 @@ const PASSWORD_REQUIRED_MESSAGE =
 const ADMIN_PASSWORD_REQUIRED_MESSAGE =
   'This admin account signs in with a password. Enter it below to continue.';
 
+// How many times a colliding suggestion is replaced before the insert gives
+// up on deriving anything and takes an opaque placeholder.
+const USERNAME_INSERT_ATTEMPTS = 3;
+
+/**
+ * Create the account an email code just proved the mailbox for (#2563).
+ *
+ * `username` is a SUGGESTION, never the address. `needs_username_choice`
+ * is TRUE, so the shell asks before Home and the person can replace it
+ * with anything the platform's rules allow.
+ *
+ * The retry loop is not belt-and-braces. `suggestAvailableUsernameFromEmail`
+ * reads the table and the INSERT writes it, so two people signing up from
+ * `ada@` addresses at different domains in the same instant can both be
+ * handed `ada`. SAVEPOINT, because a failed statement poisons the whole
+ * transaction otherwise and this one still has the consumed OTP in it.
+ * A collision on the EMAIL index is a different race with a different
+ * answer — a new username would not resolve it — so it is re-thrown.
+ */
+async function insertEmailUser(client, email, passwordHash) {
+  let candidate = await usernames.suggestAvailableUsernameFromEmail(client, email)
+    || usernames.placeholderUsername();
+
+  for (let attempt = 0; ; attempt += 1) {
+    await client.query('SAVEPOINT email_signup_username');
+    try {
+      const { rows } = await client.query(
+        `INSERT INTO users
+           (username, password, email, email_confirmed, email_confirmed_at,
+            password_set, is_admin, needs_username_choice)
+         VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE, TRUE)
+         RETURNING id, is_admin, password_set`,
+        [candidate, passwordHash, email]
+      );
+      await client.query('RELEASE SAVEPOINT email_signup_username');
+      return rows[0];
+    } catch (error) {
+      const emailCollision = typeof error.constraint === 'string'
+        && error.constraint.includes('email');
+      if (error.code !== '23505' || emailCollision
+          || attempt >= USERNAME_INSERT_ATTEMPTS) {
+        throw error;
+      }
+      await client.query('ROLLBACK TO SAVEPOINT email_signup_username');
+      log.warn('email-signup', 'Suggested username was taken; retrying', {
+        attempt: attempt + 1,
+      });
+      candidate = usernames.placeholderUsername();
+    }
+  }
+}
+
 async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
   const email = normalizeEmail(rawEmail);
   const code = typeof rawCode === 'string' ? rawCode.trim() : '';
@@ -211,15 +264,18 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
         crypto.randomBytes(32).toString('hex'),
         12
       );
-      const { rows: createdRows } = await client.query(
-        `INSERT INTO users
-           (username, password, email, email_confirmed, email_confirmed_at,
-            password_set, is_admin)
-         VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE)
-         RETURNING id, is_admin, password_set`,
-        [email, unusablePasswordHash, email]
-      );
-      user = createdRows[0];
+      // #2563: the address is NOT the handle. It used to be — `VALUES
+      // ($1, …)` with `email` in both slots — so every member who signed
+      // up by email code wore their own address in front of everyone else
+      // on the platform. What goes in now is a suggestion derived from the
+      // local part (src/services/usernames.js), or an opaque placeholder
+      // when nothing valid can be derived from it, and the row is marked
+      // `needs_username_choice` so the shell asks before Home.
+      //
+      // The flag, not the string, is what drives the gate: the server
+      // knows this account has never chosen, and no client has to infer it
+      // from what the name looks like.
+      user = await insertEmailUser(client, email, unusablePasswordHash);
       created = true;
     } else if (!user.email_confirmed) {
       // Reading the code proves the mailbox. Stamping it here stops
