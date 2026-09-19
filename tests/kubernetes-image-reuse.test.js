@@ -4,7 +4,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { resolveImage } = require('../scripts/resolve-kubernetes-image');
+const { resolveImage, isTransientRegistryError } = require('../scripts/resolve-kubernetes-image');
 
 const digest = `sha256:${'a'.repeat(64)}`;
 const manifest = { digest, manifests: [{
@@ -30,7 +30,10 @@ function repository(t) {
   return { cwd, git, write, revision };
 }
 
-function resolve(repo, options = {}, inspect = () => JSON.stringify(manifest)) {
+// `retry` collects the resolver's retry behaviour: every registry lookup, the
+// delay before each retry and the warning it printed. Tests that do not care
+// omit it; the sleep is always a no-op so a retrying test does not wait.
+function resolve(repo, options = {}, inspect = () => JSON.stringify(manifest), retry = null) {
   return resolveImage({
     component: 'worker', owner: 'Usernode-Labs', revision: repo.revision(),
     ref: 'refs/heads/main', claudeCodeVersion: '2.1.251', ...options,
@@ -41,10 +44,26 @@ function resolve(repo, options = {}, inspect = () => JSON.stringify(manifest)) {
       assert.equal(file, 'docker');
       assert.deepEqual(args.slice(0, 3), ['buildx', 'imagetools', 'inspect']);
       assert.deepEqual(args.slice(4), ['--format', '{{json .Manifest}}']);
+      if (retry) retry.lookups += 1;
       return inspect(args[3]);
     },
+    sleep(ms) { if (retry) retry.delays.push(ms); },
+    warn(message) { if (retry) retry.warnings.push(message); },
   });
 }
+
+function retryLog() {
+  return { lookups: 0, delays: [], warnings: [] };
+}
+
+function registryError(stderr) {
+  return Object.assign(new Error(`Command failed: docker buildx imagetools inspect\n${stderr}`), { stderr });
+}
+
+// The exact failure that skipped #2589's release.
+const CONNECTION_RESET = 'ERROR: failed to copy: httpReadSeeker: failed open: failed to do request: '
+  + 'Get "https://pkg-containers.githubusercontent.com/ghcrblobs07/blobs/sha256:603f39f2": '
+  + 'read tcp 10.1.0.217:39248->185.199.110.154:443: read: connection reset by peer';
 
 test('unchanged component reuses the index digest across unrelated source changes', t => {
   const repo = repository(t);
@@ -194,6 +213,87 @@ test('registry authentication and transport failures stop release resolution', t
       throw Object.assign(new Error(stderr), { stderr });
     }), new RegExp(stderr));
   }
+});
+
+test('a dropped registry connection is retried and the reused digest still resolves', t => {
+  const repo = repository(t);
+  const retry = retryLog();
+  let failuresLeft = 2;
+  const result = resolve(repo, {}, () => {
+    if (failuresLeft-- > 0) throw registryError(CONNECTION_RESET);
+    return JSON.stringify(manifest);
+  }, retry);
+  assert.equal(result.digest, digest);
+  assert.equal(result.reason, 'matching-build-inputs');
+  assert.equal(retry.lookups, 3);
+  assert.deepEqual(retry.delays, [2000, 4000]); // Backs off; never sleeps after the last attempt.
+  assert.equal(retry.warnings.length, 2);
+  assert.match(retry.warnings[0], /attempt 1\/3.*retrying in 2000ms.*connection reset by peer/);
+  assert.match(retry.warnings[0], /^ghcr\.io\/usernode-labs\/social-vibecoding-worker:inputs-/);
+});
+
+test('a registry that keeps failing exhausts three attempts and then fails the release', t => {
+  const repo = repository(t);
+  for (const stderr of [CONNECTION_RESET, '429 Too Many Requests', 'TLS handshake timeout',
+    'unexpected status: 503 Service Unavailable', 'dial tcp: lookup ghcr.io: no such host']) {
+    const retry = retryLog();
+    assert.throws(() => resolve(repo, {}, () => { throw registryError(stderr); }, retry),
+      error => error.stderr === stderr);
+    assert.equal(retry.lookups, 3, stderr);
+    assert.deepEqual(retry.delays, [2000, 4000], stderr);
+  }
+  // execFileSync's own deadline, which arrives as a code rather than as stderr.
+  const retry = retryLog();
+  assert.throws(() => resolve(repo, {}, () => {
+    throw Object.assign(new Error('spawnSync docker ETIMEDOUT'), { code: 'ETIMEDOUT', stderr: '' });
+  }, retry), /ETIMEDOUT/);
+  assert.equal(retry.lookups, 3);
+});
+
+test('authentication failures and cache misses are not retried', t => {
+  const repo = repository(t);
+  for (const stderr of ['401 Unauthorized', '403 Forbidden', 'denied: permission_denied']) {
+    const retry = retryLog();
+    assert.throws(() => resolve(repo, {}, () => { throw registryError(stderr); }, retry), new RegExp(stderr));
+    assert.equal(retry.lookups, 1, stderr);
+    assert.deepEqual(retry.delays, [], stderr);
+  }
+  const retry = retryLog();
+  const result = resolve(repo, {}, () => { throw registryError('manifest unknown'); }, retry);
+  assert.equal(result.reason, 'image-not-found');
+  assert.equal(retry.lookups, 1);
+  assert.deepEqual(retry.delays, []);
+});
+
+test('a transient error on a later attempt still counts against the same budget', t => {
+  const repo = repository(t);
+  const retry = retryLog();
+  const failures = [CONNECTION_RESET, '401 Unauthorized'];
+  assert.throws(() => resolve(repo, {}, () => { throw registryError(failures.shift()); }, retry),
+    /401 Unauthorized/);
+  // Retried the reset once, then stopped at the deterministic failure.
+  assert.equal(retry.lookups, 2);
+  assert.deepEqual(retry.delays, [2000]);
+});
+
+test('transient registry errors are recognised by what the registry client says', () => {
+  for (const transient of [CONNECTION_RESET, 'connection refused', 'write: broken pipe',
+    'unexpected EOF', 'i/o timeout', 'TLS handshake timeout', 'context deadline exceeded (Client.Timeout)',
+    'lookup ghcr.io: no such host', 'lookup ghcr.io: server misbehaving',
+    'unexpected status: 429 Too Many Requests', 'unexpected status: 502 Bad Gateway',
+    'unexpected status code 503', 'received unexpected HTTP status: 500 Internal Server Error']) {
+    assert.equal(isTransientRegistryError(registryError(transient)), true, transient);
+  }
+  assert.equal(isTransientRegistryError({ code: 'ETIMEDOUT' }), true);
+  for (const deterministic of ['401 Unauthorized', '403 Forbidden', 'denied: permission_denied',
+    'unexpected status: 400 Bad Request', 'manifest unknown', 'not found',
+    'invalid reference format', '']) {
+    assert.equal(isTransientRegistryError(registryError(deterministic)), false, deterministic);
+  }
+  // A digest or a URL that happens to contain three digits is not a status code.
+  assert.equal(isTransientRegistryError(registryError(
+    'ERROR: blobs/sha256:603f39f28e36ae7e13d3ae817d27aa5722275ab0927c12196fda0c282275946b: denied')), false);
+  assert.equal(isTransientRegistryError(null), false);
 });
 
 test('invalid registry responses and incompatible platforms cannot become release digests', t => {

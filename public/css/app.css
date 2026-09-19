@@ -4519,6 +4519,30 @@ body:has(#platform-header.hidden) #app-frame-host {
   gap: 6px;
 }
 
+/* #2597: the venue caption under a running row's heading.
+   The heading says what is happening ("Coding agent is running"); this says
+   where, in the same muted second-line treatment .dc-cc-note already gives
+   the run card's guess and cohort hint.
+
+   .dc-status-line is a single centred flex ROW, and every other row in the
+   transcript depends on it staying one — so the wrap is opted into by the
+   captioned rows alone, and the caption claims a whole line by basis rather
+   than by leaving the flow. The 20px indent is the icon (14px) plus the
+   row's gap (6px), which lands it under the first letter of the heading.
+   Inside .dc-cc-attached-summary the summary is already a COLUMN, so the
+   caption is a row of it and neither rule applies. */
+.dc-status-venue {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  min-width: 0;
+}
+.dc-status-line-captioned { flex-wrap: wrap; }
+.dc-status-line-captioned > .dc-status-venue {
+  flex: 0 0 100%;
+  padding-left: 20px;
+}
+
 /* Explicit square box with centered glyph is required for the
    rotation animation to spin around the glyph's visual center. Without
    width/height/line-height, the span's transform-origin ends up wherever

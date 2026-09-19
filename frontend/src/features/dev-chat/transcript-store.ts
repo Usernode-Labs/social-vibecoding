@@ -88,6 +88,11 @@ export type TranscriptRow =
     text: string;
     /** `msg.content` reaches some rows as trusted html — see the builder. */
     html?: string;
+    /**
+     * #2597: a muted second line under the heading. The running row's
+     * heading no longer names the venue, so the venue is here instead.
+     */
+    caption?: string;
     elapsed: ElapsedSpec;
     stamp: string;
     dim?: boolean;
@@ -177,6 +182,8 @@ export type TranscriptRow =
     icon: 'spinner' | 'check';
     text: string;
     html?: string;
+    /** #2597's venue caption, under the card's head row. */
+    caption?: string;
     elapsed: ElapsedSpec;
     stamp: string;
     /** The live run's four summary spans; absent on the other two shapes. */
