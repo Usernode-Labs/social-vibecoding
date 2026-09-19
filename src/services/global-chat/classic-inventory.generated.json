@@ -4666,7 +4666,7 @@
     },
     {
       "source": "src/routes/credentials.js",
-      "line": 404,
+      "line": 412,
       "method": "PATCH",
       "path": "/api/me/coding-agent",
       "expression": null,
@@ -4693,7 +4693,7 @@
     },
     {
       "source": "src/routes/credentials.js",
-      "line": 481,
+      "line": 489,
       "method": "GET",
       "path": "/api/me/coding-agent/models",
       "expression": null,
@@ -4715,7 +4715,7 @@
     },
     {
       "source": "src/routes/credentials.js",
-      "line": 507,
+      "line": 515,
       "method": "PATCH",
       "path": "/api/me/coding-agent/models/favorite",
       "expression": null,

@@ -3081,6 +3081,21 @@
       this._syncOpenRouterModelDetails();
     },
 
+    // #2600: the reasoning-effort picker's first choice is a real level, not
+    // an absence of one, so name the level the platform runs at when nobody
+    // has chosen. The server is the only thing that knows it; if the read
+    // fails the option keeps its plain wording rather than inventing a level.
+    _labelOpenRouterDefaultEffort(effort) {
+      const select = document.getElementById('settings-openrouter-reasoning');
+      const option = Array.from(select?.options || []).find((item) => item.value === '');
+      if (!option) return;
+      const names = {
+        minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high',
+      };
+      const name = names[String(effort || '')] || null;
+      option.textContent = name ? `Default (${name})` : 'Default';
+    },
+
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
       const effort = document.getElementById('settings-openrouter-reasoning');
@@ -3121,7 +3136,7 @@
         if (effort.disabled) effort.value = '';
         effort.title = effort.disabled
           ? 'This model does not expose reasoning-effort controls.'
-          : 'Optional OpenRouter reasoning effort for this model.';
+          : 'How long this model thinks before it answers. Default is the level the platform runs at; your choice overrides it.';
       }
     },
 
@@ -3155,6 +3170,7 @@
           if (modelsWrap) modelsWrap.classList.add('hidden');
           return;
         }
+        this._labelOpenRouterDefaultEffort(prefs.defaultReasoningEffort);
       } catch {}
       try {
         const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
