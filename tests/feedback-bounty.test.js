@@ -1,5 +1,5 @@
 // Tests for the `bounty` flag on POST /api/feedback (#964) — the Send
-// Feedback dialog's "Put a kudos bounty on this" checkbox.
+// Feedback dialog's "Put a kudos on this" checkbox.
 //
 // The governing rule this file exists to protect: THE ISSUE IS ALWAYS FILED.
 // A bounty that can't be placed — allowance spent, repo isn't an app, the
