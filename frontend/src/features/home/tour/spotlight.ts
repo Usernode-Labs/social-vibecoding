@@ -146,3 +146,64 @@ export function shadeBoxes(
     { top, left: 0, width: left, height: band },
   ];
 }
+
+/**
+ * The Improve panel's box, or null when there is nothing presented.
+ *
+ * Measured on the kit's sheet when the panel has been ADOPTED into one (the
+ * touch path, see ../../improve/improve-controller.js), because that wrapper
+ * is the surface the viewer sees; on desktop the kit refuses and the panel is
+ * its own surface. Only ever called for a step that needs the panel open, so
+ * a closed panel's off-screen rect never reaches the caller.
+ */
+export function panelBox(
+  doc: Document | null = typeof document === 'undefined' ? null : document,
+): Box | null {
+  const panel = doc?.getElementById('improve-panel');
+  if (!panel) return null;
+  const surface = panel.closest('.un-sheet') ?? panel;
+  const rect = surface.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
+}
+
+/** Is there room for the card between the viewport's left edge and the panel? */
+export function roomLeftOfPanel(card: { width: number }, panel: Box): boolean {
+  return panel.left - CARD_GAP - card.width >= VIEWPORT_MARGIN;
+}
+
+/**
+ * Where to put the card while the Improve panel is open.
+ *
+ * The card must not sit ON the panel: a tooltip drawn over the thing it is
+ * pointing at hides the row it is describing, and on the platform's own
+ * sheet it reads as part of the panel rather than as the tour.
+ *
+ * DESKTOP, where the panel is a right-side sheet: the card's RIGHT edge goes
+ * against the panel's LEFT edge with one gap between them, and it lines up
+ * vertically with the middle of the highlighted row, so the eye travels
+ * straight across from the sentence to the control. Clamped to the viewport
+ * like everything else here.
+ *
+ * NARROW, where the panel takes the whole width: there is no "beside" left,
+ * so the rule relaxes to the weaker one the design asks for — clear of the
+ * ROW rather than clear of the panel. That is exactly what `placeCard`
+ * already does (below the hole when it fits, above it when it does not), so
+ * the fallback is a call to it rather than a second arrangement to maintain.
+ */
+export function placeCardForPanel(
+  viewport: { width: number; height: number },
+  card: { width: number; height: number },
+  hole: Box | null,
+  panel: Box | null,
+): { top: number; left: number } {
+  if (!hole || !panel || !roomLeftOfPanel(card, panel)) {
+    return placeCard(viewport, card, hole);
+  }
+  const maxTop = Math.max(VIEWPORT_MARGIN, viewport.height - card.height - VIEWPORT_MARGIN);
+  const centred = hole.top + hole.height / 2 - card.height / 2;
+  return {
+    top: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxTop))),
+    left: Math.round(Math.max(VIEWPORT_MARGIN, panel.left - CARD_GAP - card.width)),
+  };
+}

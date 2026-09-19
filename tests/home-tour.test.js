@@ -219,6 +219,92 @@ test('a narrow viewport shrinks the card rather than overflowing', () => {
   assert.equal(spotlight.cardWidth(1280), 340);
 });
 
+test('while the panel is open the card sits BESIDE it, never on it', () => {
+  // Desktop: the panel is a right-side sheet, so the card's right edge goes
+  // one gap from its left edge and the card lines up with the middle of the
+  // highlighted row. A tooltip drawn over the row it describes hides the
+  // thing it is pointing at, which is the whole defect this avoids.
+  const viewport = { width: 1280, height: 800 };
+  const card = { width: 340, height: 200 };
+  const panel = { top: 0, left: 860, width: 420, height: 800 };
+  const hole = { top: 300, left: 880, width: 380, height: 44 };
+
+  const placed = spotlight.placeCardForPanel(viewport, card, hole, panel);
+  assert.equal(placed.left + card.width, panel.left - spotlight.CARD_GAP,
+    'the card\'s right edge is one gap from the panel\'s left edge');
+  assert.equal(placed.top, 322 - card.height / 2 + 0, 'centred on the row');
+  assert.ok(placed.left + card.width <= panel.left, 'no overlap with the panel');
+});
+
+test('the beside-the-panel card is still clamped to the viewport', () => {
+  const viewport = { width: 1280, height: 800 };
+  const card = { width: 340, height: 300 };
+  const panel = { top: 0, left: 860, width: 420, height: 800 };
+
+  // A row at the very top of the panel would centre the card off the screen.
+  const high = spotlight.placeCardForPanel(viewport, card, {
+    top: 4, left: 880, width: 380, height: 44,
+  }, panel);
+  assert.ok(high.top >= spotlight.VIEWPORT_MARGIN, `top ${high.top} is on screen`);
+
+  // And one at the very bottom would run it off the other end.
+  const low = spotlight.placeCardForPanel(viewport, card, {
+    top: 770, left: 880, width: 380, height: 44,
+  }, panel);
+  assert.ok(low.top + card.height <= viewport.height - spotlight.VIEWPORT_MARGIN + 0.5,
+    `bottom ${low.top + card.height} is on screen`);
+});
+
+test('a full-width panel has no beside, so the card clears the ROW instead', () => {
+  // A phone: the panel takes the whole width, so there is nowhere to the left
+  // of it. The rule relaxes to the weaker one the design asks for, which is
+  // what placeCard already does: below the row when it fits, above it when it
+  // does not, and never over it.
+  const viewport = { width: 390, height: 844 };
+  const card = { width: spotlight.cardWidth(390), height: 200 };
+  const panel = { top: 0, left: 0, width: 390, height: 844 };
+  assert.equal(spotlight.roomLeftOfPanel(card, panel), false);
+
+  const hole = { top: 200, left: 12, width: 366, height: 44 };
+  const placed = spotlight.placeCardForPanel(viewport, card, hole, panel);
+  assert.deepEqual(placed, spotlight.placeCard(viewport, card, hole),
+    'the fallback is the ordinary placement, not a second arrangement');
+  assert.ok(placed.top >= hole.top + hole.height, 'below the row, clear of it');
+
+  // Near the bottom it goes above the row rather than covering it.
+  const low = { top: 700, left: 12, width: 366, height: 44 };
+  const above = spotlight.placeCardForPanel(viewport, card, low, panel);
+  assert.ok(above.top + card.height <= low.top, 'above the row, clear of it');
+});
+
+test('roomLeftOfPanel is the whole desktop/narrow decision', () => {
+  const card = { width: 340 };
+  // 340 + 12 gap + 12 margin = 364 is the least a panel can start at.
+  assert.equal(spotlight.roomLeftOfPanel(card, { top: 0, left: 364, width: 100, height: 10 }), true);
+  assert.equal(spotlight.roomLeftOfPanel(card, { top: 0, left: 363, width: 100, height: 10 }), false);
+  // No panel at all, or no hole, falls straight through to placeCard.
+  const viewport = { width: 1280, height: 800 };
+  const c = { width: 340, height: 200 };
+  const hole = { top: 100, left: 600, width: 80, height: 40 };
+  assert.deepEqual(
+    spotlight.placeCardForPanel(viewport, c, hole, null),
+    spotlight.placeCard(viewport, c, hole),
+  );
+  assert.deepEqual(
+    spotlight.placeCardForPanel(viewport, c, null, { top: 0, left: 860, width: 420, height: 800 }),
+    spotlight.placeCard(viewport, c, null),
+  );
+});
+
+test('only the panel steps consult the panel, and the overlay uses the pair', () => {
+  assert.match(OVERLAY_SRC, /const panel = stepAt\(indexRef\.current\)\.needsPanel && panelOpenNow\(\) \? panelBox\(\) : null;/);
+  assert.match(OVERLAY_SRC, /placeCardForPanel\(viewport, \{ width, height: card\.offsetHeight \}, hole, panel\)/);
+  // The panel is measured on the kit's sheet when it has been adopted into
+  // one, because that wrapper is the surface the viewer sees.
+  const SPOT_SRC = read(`${TOUR_DIR}/spotlight.ts`);
+  assert.match(SPOT_SRC, /panel\.closest\('\.un-sheet'\) \?\? panel/);
+});
+
 test('the four shades tile the viewport minus the hole', () => {
   const viewport = { width: 1000, height: 800 };
   const [top, right, bottom, left] = spotlight.shadeBoxes(viewport, {

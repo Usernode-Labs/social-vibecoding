@@ -51,6 +51,17 @@
  * Nothing in `public/js/**` writes into this subtree, so the region is
  * React-owned end to end and may hold state (AGENTS.md).
  *
+ * ── Where the card goes while the panel is open ────────────────────────
+ *
+ * Beside the panel, never on it. On desktop, where the panel is a right-side
+ * sheet, the card's right edge sits one gap from the panel's left edge and
+ * lines up vertically with the middle of the highlighted row, so the eye
+ * travels straight across from the sentence to the control. On a narrow
+ * viewport the panel takes the whole width and there is no "beside" left, so
+ * the rule relaxes to the weaker one: clear of the ROW, above or below it,
+ * rather than clear of the panel. ./spotlight.ts's `placeCardForPanel` is
+ * both halves, and the fallback is a call to the ordinary `placeCard`.
+ *
  * ── Why four shades and not one box-shadow ─────────────────────────────
  *
  * A `box-shadow` spread paints a dim but receives no pointer events, so it
@@ -106,7 +117,9 @@ import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../..
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
-import { cardWidth, findTarget, padRect, placeCard, shadeBoxes, type Box } from './spotlight';
+import {
+  cardWidth, findTarget, padRect, placeCardForPanel, panelBox, shadeBoxes, type Box,
+} from './spotlight';
 import { useTourRequest } from './tour-request';
 import {
   clampIndex, hasNext, IMPROVE_STEP_INDEX, isLastStep, stepAt, stepCounter, TOUR_LENGTH,
@@ -431,7 +444,12 @@ export function OnboardingTour() {
 
     const width = cardWidth(viewport.width);
     card.style.width = `${width}px`;
-    const placed = placeCard(viewport, { width, height: card.offsetHeight }, hole);
+    // The card must not sit ON the Improve panel while it is open: a tooltip
+    // over the row it describes hides the thing it is pointing at. Only the
+    // three panel steps consult it, so a closed panel's off-screen rect never
+    // reaches the arithmetic.
+    const panel = stepAt(indexRef.current).needsPanel && panelOpenNow() ? panelBox() : null;
+    const placed = placeCardForPanel(viewport, { width, height: card.offsetHeight }, hole, panel);
     card.style.top = `${placed.top}px`;
     card.style.left = `${placed.left}px`;
   }, []);
