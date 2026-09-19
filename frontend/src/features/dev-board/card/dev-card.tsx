@@ -784,7 +784,7 @@ export function VotePicker({
 }
 
 /** A Yes or No spec — the vote pair the band demotes into `VoteButton`. */
-function isVoteSpec(a: ActionSpec, side: 'yes' | 'no'): boolean {
+export function isVoteSpec(a: ActionSpec, side: 'yes' | 'no'): boolean {
   return new RegExp(`\\bgc-vote-btn-${side}\\b`).test(a.cls || '');
 }
 
@@ -859,7 +859,7 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
  * hook, same `dev-card-menu-btn` class: `_openCardMenu`, `_reanchorCardMenu`
  * and the declared checks find it where they always did.
  */
-function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
+export function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
   return (
     <button
       type="button"
@@ -899,7 +899,7 @@ function MetaPartView({ p }: { p: MetaPart }): ReactNode {
 }
 
 /** The title band's content: lead/trail runs, the edit pencil, the editor. */
-function TitleContent({ t }: { t: TitleSpec }): ReactNode {
+export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
   if (t.editing) {
     const session = 'session' in t.editing;
     const n = session ? t.editing.session : t.editing.issue;
@@ -1165,6 +1165,54 @@ export function metaLineNodes(m: DevCardModel): ReactNode[] {
   return nodes;
 }
 
+/**
+ * The action band: every pill the card has, then the caller's `actionEnd`
+ * control, then Preview, then the hamburger closing the band. The band's
+ * measurement (useFoldedActions) shows as many pills as fit its one line
+ * and folds the rest, from the end, into the menu behind the hamburger;
+ * the controls after the pills are fixed children it folds around, and so
+ * is `lead` — the change page's Vote button, which opens the band.
+ *
+ * The old cap of three text pills is gone: the line is the cap now. That
+ * is the seat both surfaces use for "Open card" (card/fold.tsx), so an
+ * open card on the Board and on the Workshop is one drawing — and the
+ * change page's hero (topic/topic-head.tsx) is the same band again, under
+ * a Needs-you title instead of a card's.
+ *
+ * (A second seat, the right end of the facts line with the card's own
+ * pills moved up beside it, existed for a round and had no caller left;
+ * the band is the one seat now.)
+ */
+export function ActionBand({ actions, menuKey, preview, lead, actionEnd, dense }: {
+  actions: ActionSpec[];
+  menuKey: string;
+  preview: PreviewSpec | null;
+  /** A fixed control before the pills; it never folds. */
+  lead?: ReactNode;
+  actionEnd?: ReactNode;
+  /** The dense (board) band holds its row open even with nothing in it. */
+  dense: boolean;
+}): ReactNode {
+  const previewSpec = preview ? { ...preview, iconOnly: false } : null;
+  const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
+  const bandPrimary = actions;
+  const menuTrigger = menuKey ? <MenuTrigger menuKey={menuKey} /> : null;
+  const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger || !!bandPreview;
+  const folded = useFoldedActions(bandPrimary, menuKey || '', !!bandPreview);
+  if (!hasActions && !lead) return dense ? <div className="gc-card-actions"></div> : null;
+  return (
+    <div className="gc-card-actions" ref={folded.ref} data-band-measured={folded.measured ? '1' : undefined}>
+      {lead}
+      {bandPrimary.map((a, i) => (
+        <ActionButton key={a.key} a={a} fold={a.kudos == null ? i + 1 : undefined} hidden={i >= bandPrimary.length - folded.n} />
+      ))}
+      {actionEnd}
+      {bandPreview}
+      {menuTrigger}
+    </div>
+  );
+}
+
 /** The whole card. `m.attrs` carries the outer element's data-*, role and title. */
 export function DevCard(
   { model: m, actionEnd, headEnd }: {
@@ -1221,30 +1269,10 @@ export function DevCard(
   // and before that sat as a bare eye in the corner rail; the board's
   // builders still hand it over as `rail.preview`, the detail head's as
   // `actionPreview`, and the model did not move.)
-  const previewSource = m.actionPreview || m.rail.preview;
-  const previewSpec = previewSource ? { ...previewSource, iconOnly: false } : null;
-  const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
-
-  // ── Where the primary actions go ──────────────────────────────────
   //
-  // Every action the card has goes in the band, then the caller's
-  // `actionEnd` control, then Preview, then the hamburger closing the band.
-  // The band's measurement (useFoldedActions) shows as many pills as fit
-  // its one line and folds the rest, from the end, into the menu behind the
-  // hamburger; the three controls after the pills are fixed children it
-  // folds around.
-  // The old cap of three text pills is gone: the line is the cap now. That
-  // is the seat both surfaces use for "Open card" (card/fold.tsx), so an
-  // open card on the Board and on the Workshop is one drawing.
-  //
-  // (A second seat, the right end of the facts line with the card's own
-  // pills moved up beside it, existed for a round and had no caller left;
-  // the band is the one seat now.)
-  const bandPrimary = bandActions;
-  const menuTrigger = m.rail.menuKey ? <MenuTrigger menuKey={m.rail.menuKey} /> : null;
-  const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger || !!bandPreview;
-  const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', !!bandPreview);
-
+  // The band itself is `ActionBand` below — one drawing for the card here
+  // and for the change page's hero (topic/topic-head.tsx), which composes
+  // the same pills, Preview and hamburger under a Needs-you title.
   // ── The status row, then the facts row ──
   //
   // Two rows, not one wrapping band with a break in it: the bar spans the
@@ -1265,16 +1293,15 @@ export function DevCard(
     <div className="dev-card-badges dev-card-facts">{kept.map((b) => <Badge key={b.key} b={b} />)}</div>
   ) : null;
 
-  const actionRow = hasActions ? (
-    <div className="gc-card-actions" ref={folded.ref} data-band-measured={folded.measured ? '1' : undefined}>
-      {bandPrimary.map((a, i) => (
-        <ActionButton key={a.key} a={a} fold={a.kudos == null ? i + 1 : undefined} hidden={i >= bandPrimary.length - folded.n} />
-      ))}
-      {actionEnd}
-      {bandPreview}
-      {menuTrigger}
-    </div>
-  ) : (dense ? <div className="gc-card-actions"></div> : null);
+  const actionRow = (
+    <ActionBand
+      actions={bandActions}
+      menuKey={m.rail.menuKey || ''}
+      preview={m.actionPreview || m.rail.preview || null}
+      actionEnd={actionEnd}
+      dense={dense}
+    />
+  );
   const edge = edgeFor(m);
 
   // The meta line. Dense reserves the line even when empty; the detail head

@@ -83,10 +83,14 @@ test('both live and completed proposal rows include the full PR body', () => {
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'topic-head.tsx'),
     'utf8'
   );
+  // On the page the summary leads the hero, the steps sheet (the detail
+  // view's ledger) follows it, and the full body is the sheet the ⋯ menu's
+  // "Technical details" row opens (topic-head.tsx DetailsSheet) — reached
+  // from the page, never drawn on it.
   assert.match(
     HEAD_SRC,
-    /body\.summaryHtml[\s\S]*?body\.proposalBody[\s\S]*?body\.details/,
-    'and the component draws them in that order'
+    /body\.summaryHtml[\s\S]*?body\.details[\s\S]*?<DetailsSheet id=\{Number\(id\)\} html=\{body\.proposalBody\.html\} \/>/,
+    'and the component draws the summary, then the steps, with the body behind the ⋯'
   );
 });
 
