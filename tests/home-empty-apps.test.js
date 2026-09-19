@@ -39,7 +39,7 @@ const COPY = 'frontend/src/features/apps/no-apps-yet.ts';
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-const SENTENCE = 'No apps yet. Discover finds the ones you can join.';
+const SENTENCE = 'No apps added yet. Find apps to add in the Discover section.';
 
 // ── rendering AppGrid at an arbitrary state ───────────────────────────
 //

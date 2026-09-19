@@ -15,4 +15,4 @@
  * "Discover" is capitalised because it names the section directly below the
  * launcher, which is where the sentence is pointing.
  */
-export const NO_APPS_YET = 'No apps yet. Discover finds the ones you can join.';
+export const NO_APPS_YET = 'No apps added yet. Find apps to add in the Discover section.';
