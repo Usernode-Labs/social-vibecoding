@@ -112,3 +112,25 @@ test('the reviewed first-version artifact enables the all-user experimental rele
   ].filter(fs.existsSync).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.doesNotMatch(shellSource, /data-global-chat-switch/);
 });
+
+test('reviewed route exemptions are keyed on registration shape, never on a line number', () => {
+  // A line-keyed exemption stops matching the moment an unrelated edit shifts
+  // the file, which silently flips reviewed routes back to "mapped" and fails
+  // the freshness check above with a diff that looks like noise. Exemptions
+  // must name what the registration IS (an array of paths, a middleware
+  // shadowing the concrete route below it), not where it currently sits.
+  const source = fs.readFileSync(
+    path.join(ROOT, 'scripts/generate-global-chat-inventory.js'),
+    'utf8',
+  );
+  const start = source.indexOf('const REVIEWED_ROUTE_EXEMPTIONS = [');
+  assert.ok(start !== -1, 'REVIEWED_ROUTE_EXEMPTIONS must exist');
+  const end = source.indexOf('\n];', start);
+  assert.ok(end !== -1, 'REVIEWED_ROUTE_EXEMPTIONS must be terminated');
+  const block = source.slice(start, end);
+  assert.doesNotMatch(
+    block,
+    /\.line\b/,
+    'exemption matchers must not depend on a route line number',
+  );
+});
