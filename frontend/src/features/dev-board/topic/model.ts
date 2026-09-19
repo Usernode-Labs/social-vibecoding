@@ -33,8 +33,8 @@ export type NoteTone = 'neutral' | 'ok' | 'warn' | 'error';
  * A run of prose, with the emphasised spans called out.
  *
  * Several of these sentences name a person or a tool mid-sentence in
- * `font-medium` — "…imported by **maya**…", "Built with **Claude Code** by
- * **maya**…" — and a plain string could not carry that. `{ b }` is the
+ * `font-medium` — "…imported by **maya**…", "Changed on both sides:
+ * **7 files**…" — and a plain string could not carry that. `{ b }` is the
  * emphasised run; a bare string is ordinary text.
  */
 export type TextRun = string | {
@@ -143,8 +143,11 @@ export type DetailBlock =
  * it, a sentence, and at most a couple of controls. It replaces four
  * things that used to stack under the card in four box styles: the "Why
  * this can't merge yet" reasons, the checks panel, the roster line and the
- * amber provenance notes. `key` is the row's `data-note`, which is what the
- * declared checks address a row by (`mergeability`, `checks`, `env`, …).
+ * amber provenance notes — the last of which #2588 dropped again, because a
+ * fact about where the change came from is not a step, and the hero line
+ * above the card already says it. `key` is the row's `data-note`, which is
+ * what the declared checks address a row by (`mergeability`, `checks`,
+ * `env`, …).
  */
 /** The repo unit suite (`npm test`), run alongside the browser checks. */
 export interface LedgerUnitProgress {
@@ -372,8 +375,8 @@ export type StepState = 'done' | 'active' | 'waiting' | 'blocked' | 'pending';
  * address a fact by it still find it; `gate` is the merge gate's key, as
  * `data-req-gate`, where the step is one. A row with a gate and no ledger
  * row says the gate's own note; a ledger row with no gate — a failed
- * preview, console errors, the provenance notes, and every row of a change
- * still under way — draws in the same shape with its tone as its mark.
+ * preview, console errors, and every row of a change still under way —
+ * draws in the same shape with its tone as its mark.
  */
 export interface StepRow {
   key: string;

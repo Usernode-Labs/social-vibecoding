@@ -123,9 +123,16 @@ test('an imported Underway topic reuses proposal details without opening voting'
   // not a line under the card; the model still carries it.
   assert.equal(view.meta[0].href, 'https://github.example/pull/88');
   assert.doesNotMatch(html, /View PR on GitHub/);
-  assert.match(html, /authored by.*contributor/);
-  assert.match(html, /checks and proposal details are available now/);
-  assert.match(html, /voting begins only after it is put up for vote/);
+  // #2588: the imported note is no longer one of the steps. "Imported pull
+  // request, authored by contributor …" said where the change came from
+  // inside the x/y progress indicator, where every other row is a gate
+  // somebody has to clear. The hero line above the card says it instead,
+  // and the checks row below is untouched.
+  assert.doesNotMatch(html, /authored by.*contributor/);
+  assert.doesNotMatch(html, /Imported pull request/);
+  assert.doesNotMatch(html, /voting begins only after it is put up for vote/);
+  assert.equal(AppView._topicHeroView('session', item).provenance,
+    'imported from GitHub (contributor)', 'where the reader finds it now');
   assert.match(html, /Imported proposal details/);
   assert.match(html, /assignee chip was missing/);
   assert.doesNotMatch(html, /How voting works|Who can vote/);

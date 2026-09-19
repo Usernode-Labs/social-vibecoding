@@ -205,6 +205,29 @@ test('a proposal that is only behind main says the platform is doing it', () => 
     'what the reader needs, with the commit count: the change page draws no chip to carry it');
 });
 
+// #2588: the provenance notes are off the ledger, and the x/y figure the
+// steps sheet draws is unchanged by their going.
+//
+// They were never steps — `_topicLedgerPath` numbers the sync, the checks
+// and the vote, and nothing else — so an imported, connector-built proposal
+// has exactly the path a native one has. This is the assertion that keeps
+// the count honest: the two rows leave, the figure does not move.
+test('an imported, agent-built proposal has the same path as any other', () => {
+  const AppView = makeAppView();
+  const IMPORTED = {
+    ...GAVE_UP,
+    source: 'imported', imported_pr_author: 'octo', external_agent: 'claude-code',
+  };
+  const d = AppView._proposalDetailsView(IMPORTED);
+  assert.equal(d.pathSteps, 3, 'the same three steps a native proposal has');
+  assert.equal(d.pathLeft, 3);
+  assert.deepEqual(plain(d.ledger.filter((r) => r.step).map((r) => r.key)),
+    ['mergeability', 'checks', 'votes']);
+  const keys = plain(d.ledger).map((r) => r.key);
+  assert.ok(!keys.includes('imported') && !keys.includes('agent'),
+    'and no provenance row padding the list under them');
+});
+
 test('with nothing to sync the ledger is left exactly as it was', () => {
   // The path only earns its numbering when a sync step orders the others.
   // "Checks, step 1 of 1" would say less than "Checks".

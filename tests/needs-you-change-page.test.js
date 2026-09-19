@@ -191,7 +191,13 @@ test('a failing check sits under the blocked Checks step with its door, and the 
   assert.match(html, /Expected app, received login/);
 });
 
-test('rows no gate claims draw after the gates in the same shape: a failed preview beside the checks, the provenance notes last and quiet', () => {
+// #2588 retired the tail this test used to end on. The sheet's rows are the
+// merge gates and the states of the change — a failed preview, console
+// errors — and nothing else: the provenance notes that used to draw after
+// them said where the change came from, which the hero line above the card
+// says, and inside an x/y progress indicator that read as a step nobody
+// could ever clear. The hero's own words are asserted here unchanged.
+test('rows no gate claims draw after the gates in the same shape: a failed preview beside the checks, and no provenance note after them', () => {
   const av = context();
   const item = { ...PR, source: 'imported', imported_pr_author: 'octo', staging_url: null, staging_error: 'container never came up', check_state: 'error' };
   const { v } = render(av, item);
@@ -199,7 +205,9 @@ test('rows no gate claims draw after the gates in the same shape: a failed previ
   const keys = s.rows.map((r) => `${r.key}:${r.state}`);
   const i = (k) => keys.findIndex((x) => x.startsWith(`${k}:`));
   assert.ok(i('preview') > i('checks') && i('preview') < i('main_healthy'), `the failed preview sits beside the checks: ${keys}`);
-  assert.equal(keys[keys.length - 1], 'imported:pending', `the provenance note is last, with the quiet ring: ${keys}`);
+  assert.equal(i('imported'), -1, `no imported row on the sheet: ${keys}`);
+  assert.equal(i('agent'), -1, `no built-with row either: ${keys}`);
+  assert.equal(keys[keys.length - 1], 'github:pending', `the last row is a gate, as every row now is: ${keys}`);
   assert.equal(v.body.hero.verb, 'imported');
   assert.equal(v.body.hero.provenance, 'imported from GitHub (octo)');
 });

@@ -10228,9 +10228,11 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
 // .external_agent, so these fixtures exist to make the provenance surfaces
 // reviewable in a staging preview without a real GitHub fork round-trip:
 //
-//   1. claude-code — "Built with Claude Code" chip on the vote card, and the
-//      "on their own coding-agent subscription, from a branch in their GitHub
-//      fork" line in the proposal detail, alongside the "Imported PR" badge.
+//   1. claude-code — "built with Claude Code" in the card's meta line and on
+//      the change page's hero, beside "imported from GitHub". (#2588 retired
+//      the longer "on their own coding-agent subscription, from a branch in
+//      their GitHub fork" note that used to repeat it as a row of the steps
+//      sheet; the provenance itself is still on both surfaces.)
 //   2. codex — the same surfaces with the other agent, proving the label is
 //      driven by the column rather than hardcoded, and that two agent chips
 //      can sit side by side in one vote panel.
