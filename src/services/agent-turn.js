@@ -87,11 +87,8 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
 async function resolveCodexRuntimeContext({ pool, session, userId, model, reasoningEffort, resumeThreadId, config = {} }) {
   if (registry.resolveBackend(session?.agent_backend) !== 'codex_openrouter') return null;
 
+  // #2568 retired the gradual-rollout allowlist; the emergency switch stays.
   if (!config.codexOpenrouterEnabled) return { error: 'backend_disabled' };
-  if (config.openrouterBetaUserIds?.length
-      && !config.openrouterBetaUserIds.includes(String(userId))) {
-    return { error: 'backend_not_available' };
-  }
 
   const meta = await credentialStore.readMetadata({
     pool, userId, provider: 'openrouter', purpose: 'coding_agent',

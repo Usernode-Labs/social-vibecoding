@@ -58,6 +58,12 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #2568: the included key is not claimed, it is created ────────
+  // Every account is created with its included OpenRouter key, so the
+  // three ids that existed to ASK for one have nothing left to do. The
+  // card they sat in is replaced by #settings-openrouter-included, a
+  // status line (ADDED_IDS below).
+  'settings-openrouter-beta-gated': 'The "Codex/OpenRouter is being rolled out gradually" notice. There is no gradual rollout any more — CODEX_OPENROUTER_ENABLED is a deployment switch, not a per-account allowlist, and with it off the section renders nothing rather than an explanation of a queue nobody is in.',
   // ── #2304: app access moved to App settings ─────────────────────
   'members-visibility-section': 'The duplicate visibility editor in Members & visibility. App settings is the canonical access surface now; Members keeps collaborators, app admins and proposal approvals.',
   'members-vis-hint': 'The dependent build/view hint belonged to the retired two-axis editor. App settings presents only the three valid access combinations, so an invalid combination cannot be selected.',
@@ -656,9 +662,14 @@ const ADDED_IDS = {
   // four plaintext reveal controls originally added here were removed when
   // company-funded credentials became internal-only; like other post-baseline
   // ids, they leave this map rather than entering RETIRED_IDS.
-  'settings-openrouter-managed-card': 'Included managed OpenRouter key status and claim card (#1344).',
-  'settings-openrouter-managed-message': 'Eligibility/ownership/status copy for the included key (#1344).',
-  'settings-openrouter-claim': 'One-time managed child-key provisioning action (#1344).',
+  // #2568 replaced the claim card with a status line: the key exists
+  // before anybody opens this screen, so #settings-openrouter-managed-card,
+  // #settings-openrouter-managed-message and #settings-openrouter-claim
+  // went with the act of claiming. They were never in the baseline (they
+  // arrived with #1344, after it was cut), so they leave this map rather
+  // than entering RETIRED_IDS.
+  'settings-openrouter-included': 'Included OpenRouter key status card (#2568) — the key\'s state, its last four and its allowance, with nothing to press.',
+  'settings-openrouter-included-status': 'The sentence inside it, written from the credential and managed-key state (#2568).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
   // #1383 — the #apps directory's Sort control. It rides INSIDE
   // #browse-search-bar rather than in a strip of its own: both narrow the
