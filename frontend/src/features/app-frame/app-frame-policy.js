@@ -98,3 +98,36 @@ export function isSafeAppFrameSrc(src, platformOrigin) {
     return false;
   }
 }
+
+/**
+ * ── Which URLs an app frame may be pointed at (#2514) ──────────────────
+ *
+ * Absolute http(s), and NEVER the platform's own origin. The second half is
+ * the load-bearing one: `src=""` or a platform URL loads the shell inside its
+ * own app frame, and on the staging path the URL carries the app-identity
+ * JWT as `?token=`, so a frame pointed at the platform would put that token
+ * in a document that can read the session cookie.
+ *
+ * The production frame has always checked this (`_isSafeAppIframeSrc` in
+ * public/js/app-view.js). The STAGING preview did not — `setSrc` was a bare
+ * `el.src = src` — so a server-side regression that set `staging_url` to the
+ * platform origin would have been framed without complaint.
+ *
+ * This is the browser-bundle copy, for the same reason the `allow` policy
+ * above has two: one runs in a classic `public/js/**` script that cannot
+ * import, and one in the bundle. tests/client-trust-gaps.test.js pins them
+ * against each other, exactly as tests/app-permissions.test.js does for the
+ * other pair — change one and the test names the other.
+ */
+export function isSafeAppIframeSrc(src, platformOrigin) {
+  if (!src || !platformOrigin) return false;
+  try {
+    const target = new URL(src);
+    const platform = new URL(platformOrigin);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+    if (platform.protocol !== 'http:' && platform.protocol !== 'https:') return false;
+    return target.origin !== platform.origin;
+  } catch {
+    return false;
+  }
+}

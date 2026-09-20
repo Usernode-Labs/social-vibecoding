@@ -1,3 +1,4 @@
+import { isSafeAppIframeSrc } from '../app-frame/app-frame-policy.js';
 /**
  * The staging-preview / visual-compare bridge bodies (#1085 chunk H, step 1).
  *
@@ -121,6 +122,14 @@ export const stagingBridge = {
   setSrc(src) {
     const el = stagingRefs.iframe;
     if (!el || !src) return false;
+    // #2514: the same gate the production app frame has always applied.
+    // This URL carries the app-identity JWT as `?token=`, so pointing the
+    // preview at the platform's own origin would load the shell inside its
+    // own frame WITH that token in the address — a document that can also
+    // read the session cookie. Absolute http(s), never the platform origin.
+    if (!isSafeAppIframeSrc(src, typeof location !== 'undefined' ? location.origin : '')) {
+      return false;
+    }
     navigations += 1;
     el.src = src;
     return true;

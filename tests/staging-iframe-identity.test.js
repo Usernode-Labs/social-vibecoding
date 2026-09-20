@@ -27,6 +27,15 @@
 //
 // Run with: node --test tests/staging-iframe-identity.test.js
 
+// #2514: the staging bridge now applies the same iframe-src policy the
+// production app frame always has, and it reads the platform origin from
+// `location` the way browser code does. This file imports the bridge as a
+// real module into Node's realm — the sandbox `location` below belongs to
+// the app-view script, not to the module — so the module needs the global a
+// browser would always have given it.
+globalThis.location = globalThis.location
+  || { origin: 'https://platform.example', hostname: 'platform.example' };
+
 const test = require('node:test');
 
 const assert = require('node:assert/strict');

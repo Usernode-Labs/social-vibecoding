@@ -53,6 +53,30 @@ export interface DevConsoleEntry {
 
 const MAX_ENTRIES = 500;
 
+
+// Is `source` the contentWindow of an iframe in THIS document?
+//
+// #2514: the same `e.source === iframe.contentWindow` test the bridge
+// handlers in public/js/app-view.js use. Fails closed — no document, no
+// enumerable frames, or a sender we cannot match means ignore the message.
+function isOwnedFrameWindow(source: unknown): boolean {
+  if (!source || typeof document === 'undefined') return false;
+  let frames: HTMLCollectionOf<HTMLIFrameElement>;
+  try {
+    frames = document.getElementsByTagName('iframe');
+  } catch {
+    return false;
+  }
+  for (let i = 0; i < frames.length; i += 1) {
+    // Reading contentWindow across origins is allowed; comparing the
+    // WindowProxy is the point. Guarded anyway — a detached frame can throw.
+    try {
+      if (frames[i] && frames[i].contentWindow === source) return true;
+    } catch { /* keep looking */ }
+  }
+  return false;
+}
+
 export class DevConsoleStore {
   readonly SENTINEL = '__usernodeDevConsole';
 
@@ -191,9 +215,22 @@ export class DevConsoleStore {
 
   // ── Receiving ────────────────────────────────────────────────────────
 
-  _onMessage(event: { data?: unknown }): void {
+  // #2514: the sentinel is not a credential — it is a routing tag, and an app
+  // frame can read it and send it back. The whole guard used to be
+  // `data.sentinel !== this.SENTINEL`, so any frame able to reach this window
+  // could post a forged console entry and have it rendered in the dev
+  // console as though the app had logged it.
+  //
+  // The impact is log spoofing rather than script injection — index.tsx
+  // renders `args` as an escaped React text child — but a developer reading
+  // a console they cannot trust is the thing the console is for.
+  //
+  // The gate is the one every other bridge handler in public/js/app-view.js
+  // already applies: the sender must be a frame THIS document owns.
+  _onMessage(event: { data?: unknown; source?: unknown }): void {
     const data = event.data as Record<string, unknown> | null | undefined;
     if (!data || data.sentinel !== this.SENTINEL) return;
+    if (!isOwnedFrameWindow(event.source)) return;
 
     const entry: DevConsoleEntry = {
       level: (data.level as string) || 'log',

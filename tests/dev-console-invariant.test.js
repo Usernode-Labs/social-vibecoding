@@ -20,6 +20,31 @@ const { DevConsoleStore } = require(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-console', 'store.ts'),
 );
 
+// #2514: the receiver now requires the sender to be a frame THIS document
+// owns — the `e.source === iframe.contentWindow` gate every other bridge
+// handler applies — because the sentinel is a routing tag an app can read
+// and echo back, not a credential.
+//
+// So the harness has to describe an event that can actually happen: in a
+// browser a MessageEvent always carries a `source`, and there is always a
+// document to enumerate frames from. `APP_FRAME` stands in for the app
+// iframe's contentWindow; `FOREIGN_WINDOW` is any other window, which is
+// what the gate exists to refuse.
+const APP_FRAME = { name: 'app-iframe-contentWindow' };
+const FOREIGN_WINDOW = { name: 'some-other-window' };
+// Enough document for the store to run, not just to enumerate frames:
+// `_updateBadge` reaches for `getElementById`, and it used to be skipped
+// entirely because there was no document at all. Defining one turns that
+// branch on, so it needs the rest of the surface too.
+globalThis.document = {
+  getElementsByTagName(tag) {
+    return tag === 'iframe' ? [{ contentWindow: APP_FRAME }] : [];
+  },
+  getElementById: () => null,
+  querySelector: () => null,
+  querySelectorAll: () => [],
+};
+
 // A fresh receiver per test. The module also exports a singleton and installs
 // it as window.DevConsole in a browser, but the class is what the behaviour
 // lives on — and instantiating it keeps the tests independent.
@@ -30,6 +55,7 @@ function loadDevConsole() {
 test('an invariant-failure message is stored and bumps the error badge', () => {
   const DevConsole = loadDevConsole();
   DevConsole._onMessage({
+    source: APP_FRAME,
     data: {
       sentinel: '__usernodeDevConsole',
       level: 'error',
@@ -51,6 +77,7 @@ test('an invariant-failure message is stored and bumps the error badge', () => {
 test('an invariant recovery (info level) is stored but does not badge', () => {
   const DevConsole = loadDevConsole();
   DevConsole._onMessage({
+    source: APP_FRAME,
     data: {
       sentinel: '__usernodeDevConsole',
       level: 'info',
@@ -66,8 +93,8 @@ test('an invariant recovery (info level) is stored but does not badge', () => {
 
 test('messages without the sentinel are ignored', () => {
   const DevConsole = loadDevConsole();
-  DevConsole._onMessage({ data: { level: 'error', kind: 'invariant', args: ['nope'] } });
-  DevConsole._onMessage({ data: null });
+  DevConsole._onMessage({ source: APP_FRAME, data: { level: 'error', kind: 'invariant', args: ['nope'] } });
+  DevConsole._onMessage({ source: APP_FRAME, data: null });
   assert.equal(DevConsole.entries.length, 0);
   assert.equal(DevConsole.unseenErrors, 0);
 });
@@ -81,6 +108,7 @@ test('each app keeps its own buffer, and entries arrays are replaced not mutated
   const DevConsole = loadDevConsole();
   DevConsole.setCurrentApp('alpha');
   const post = (level) => DevConsole._onMessage({
+    source: APP_FRAME,
     data: { sentinel: '__usernodeDevConsole', level, args: [level], ts: 1 },
   });
   post('log');
@@ -99,6 +127,7 @@ test('the ring buffer is capped at MAX_ENTRIES', () => {
   const DevConsole = loadDevConsole();
   for (let i = 0; i < DevConsole.MAX_ENTRIES + 25; i += 1) {
     DevConsole._onMessage({
+      source: APP_FRAME,
       data: { sentinel: '__usernodeDevConsole', level: 'log', args: [String(i)], ts: i },
     });
   }
@@ -110,6 +139,7 @@ test('the filter and counts summary the panel header renders', () => {
   const DevConsole = loadDevConsole();
   for (const level of ['log', 'error', 'error', 'warn']) {
     DevConsole._onMessage({
+      source: APP_FRAME,
       data: { sentinel: '__usernodeDevConsole', level, args: [level], ts: 1 },
     });
   }
@@ -131,6 +161,7 @@ test('every change bumps the version the island subscribes to', () => {
   const unsubscribe = DevConsole.subscribe(() => { notified += 1; });
   const before = DevConsole.getSnapshot();
   DevConsole._onMessage({
+    source: APP_FRAME,
     data: { sentinel: '__usernodeDevConsole', level: 'log', args: ['x'], ts: 1 },
   });
   assert.ok(DevConsole.getSnapshot() > before, 'an appended entry must change the snapshot');
@@ -151,4 +182,30 @@ test('setMode normalises anything that is not MODE_ALWAYS', () => {
   DevConsole.setMode('true');
   assert.equal(DevConsole.getMode(), 'errors-only',
     'a truthy string from an older caller must not read as "always"');
+});
+
+// #2514: the gate itself. Without it, any frame able to reach the shell
+// could post a forged console entry carrying the sentinel — which is a
+// routing tag it can simply read, not a secret.
+test('a message from a window this document does not own is ignored', () => {
+  const DevConsole = loadDevConsole();
+  DevConsole._onMessage({
+    source: FOREIGN_WINDOW,
+    data: {
+      sentinel: '__usernodeDevConsole',
+      level: 'error',
+      args: ['spoofed from a nested frame'],
+      url: 'https://evil.example/',
+    },
+  });
+  const all = Object.values(DevConsole.entriesByApp || {}).flat();
+  assert.equal(all.length, 0, 'a forged entry must never reach the store');
+  assert.equal(DevConsole.unseenErrors, 0, 'nor badge an error that never happened');
+});
+
+test('a message with no source at all is ignored', () => {
+  const DevConsole = loadDevConsole();
+  DevConsole._onMessage({ data: { sentinel: '__usernodeDevConsole', level: 'log', args: ['x'] } });
+  const all = Object.values(DevConsole.entriesByApp || {}).flat();
+  assert.equal(all.length, 0);
 });

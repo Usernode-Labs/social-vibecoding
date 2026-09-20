@@ -1826,6 +1826,42 @@ const AppView = {
   // Absolute HTTP(S), and never the platform's own origin. App URLs are built
   // server-side, but this is the last boundary before untrusted app code enters
   // the shell; a proxy or deployment regression must fail closed here.
+  // #2514: reply to the origin that ASKED, not to '*'.
+  //
+  // Every one of these handlers already gates the REQUEST on
+  // `e.source === iframe.contentWindow`, so an app cannot forge one. The
+  // REPLY was the asymmetry: `postMessage(payload, '*')` delivers to whatever
+  // origin the frame holds when it lands, and a frame can navigate itself
+  // between asking and being answered. No reply carries a token (checked),
+  // but directory lookups and file URLs go out this way.
+  //
+  // `e.origin` is captured from the inbound event, so it is the origin that
+  // asked rather than anything the frame can claim afterwards.
+  //
+  // An origin that is not addressable — an opaque `"null"` from a sandboxed
+  // or `srcdoc` document — falls back to `'*'` rather than going unanswered.
+  // Dropping it would be the more "secure-looking" choice and the wrong one:
+  // a frame with an opaque origin CANNOT be addressed at all, so refusing is
+  // not a narrower reply, it is no reply. This file already carries the scar
+  // — see the note above handleLlmBridgeMessage's tests, where an over-tight
+  // frame allow-list dropped the landing viewer's request before the ack and
+  // the app was told fifteen seconds later that it was not running inside
+  // the platform at all.
+  //
+  // So: address the reply whenever the asker has an address, which is every
+  // frame the shell actually mounts (all of them carry `allow-same-origin`),
+  // and broadcast only where there is no alternative.
+  _replyToFrame(e, payload) {
+    const origin = e && typeof e.origin === 'string' ? e.origin : '';
+    const addressable = /^https?:\/\//.test(origin);
+    try {
+      e.source.postMessage(payload, addressable ? origin : '*');
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
   _isSafeAppIframeSrc(src, platformOrigin = location.origin) {
     if (!src || !platformOrigin) return false;
     try {
@@ -19566,10 +19602,17 @@ const AppView = {
     setSrc(src) {
       const el = this.frame();
       if (!el || !src) return false;
+      // #2514: the SAME gate the React staging bridge applies. This is the
+      // fallback used when the bundle fails to load, and it is a supported
+      // path — guarding only the React side would leave the whole point of
+      // the fix reachable whenever the bundle is the thing that broke.
+      if (!AppView._isSafeAppIframeSrc(src)) return false;
       el.src = src;
       return true;
     },
     clearSrc() {
+      // `''` is not a navigation and deliberately skips the policy: it drops
+      // the previous preview without pointing the frame anywhere.
       const el = this.frame();
       if (el) el.src = '';
     },
@@ -19835,12 +19878,7 @@ const AppView = {
     if (!fromApp && !fromStaging) return;
 
     const locale = (typeof App !== 'undefined' && App.user) ? (App.user.locale || null) : null;
-    try {
-      e.source.postMessage(
-        { __usernode_locale: 'response', id: data.id, value: { locale } },
-        '*'
-      );
-    } catch {}
+    AppView._replyToFrame(e, { __usernode_locale: 'response', id: data.id, value: { locale } });
   },
 
   // Push a locale change into any open app/staging iframe so the bridge
@@ -20187,12 +20225,7 @@ const AppView = {
     const value = AppView.safeAreaForFrame(match) || AppView._zeroInsets();
     // Record it so the next broadcast doesn't re-post the same numbers.
     AppView._safeAreaSent[match] = `${value.top},${value.right},${value.bottom},${value.left}`;
-    try {
-      e.source.postMessage(
-        { __usernode_safe_area: 'response', id: data.id, value },
-        '*'
-      );
-    } catch {}
+    AppView._replyToFrame(e, { __usernode_safe_area: 'response', id: data.id, value });
   },
 
   // #1581: WebKit exposes the IFRAME ELEMENT's background during a child
@@ -20238,20 +20271,14 @@ const AppView = {
     const frameId = AppView.ownedFrameFor(e.source);
     if (!frameId) return;
 
-    const reply = (value, error) => {
-      try {
-        e.source.postMessage(
-          { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
-        );
-      } catch {}
-    };
+    const reply = (value, error) => AppView._replyToFrame(e,
+      { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null });
     // Ack immediately so the bridge stops its "no shell here" timer —
     // the user may take minutes on the dialog below. Before anything that
     // can decline to answer, too: the shell has RECOGNISED this request, so
     // every path from here owes the app a reply rather than the silence that
     // leaves it waiting out the bridge's 15s "there is no shell" timeout.
-    try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+    AppView._replyToFrame(e, { __usernode_llm: 'ack', id: data.id });
 
     const slug = AppView.appSlugForFrame(frameId);
     if (!slug) {
@@ -20402,20 +20429,14 @@ const AppView = {
     const frameId = AppView.ownedFrameFor(e.source);
     if (!frameId) return;
 
-    const reply = (value, error) => {
-      try {
-        e.source.postMessage(
-          { __usernode_permission: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
-        );
-      } catch {}
-    };
+    const reply = (value, error) => AppView._replyToFrame(e,
+      { __usernode_permission: 'response', id: data.id, value: value ?? null, error: error ?? null });
     // Ack before anything that can decline to answer: the shell has
     // RECOGNISED this request, so every path from here owes the app a reply
     // rather than the silence that leaves it waiting out the bridge's 15s
     // "there is no shell" timeout. The user may sit on the dialog for
     // minutes.
-    try { e.source.postMessage({ __usernode_permission: 'ack', id: data.id }, '*'); } catch {}
+    AppView._replyToFrame(e, { __usernode_permission: 'ack', id: data.id });
 
     const slug = AppView.appSlugForFrame(frameId);
     if (!slug) {
@@ -20559,17 +20580,11 @@ const AppView = {
     const slug = AppView.appData?.slug;
     if (!slug) return;
 
-    const reply = (value, error) => {
-      try {
-        e.source.postMessage(
-          { __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
-        );
-      } catch {}
-    };
+    const reply = (value, error) => AppView._replyToFrame(e,
+      { __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null });
     // Ack immediately so the bridge stops its "no shell here" timer —
     // a multi-MB upload POST can take a while on a slow link.
-    try { e.source.postMessage({ __usernode_storage: 'ack', id: data.id }, '*'); } catch {}
+    AppView._replyToFrame(e, { __usernode_storage: 'ack', id: data.id });
 
     try {
       if (type === 'upload') {
@@ -20658,15 +20673,9 @@ const AppView = {
     const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
     if (!fromApp && !fromStaging) return;
 
-    const reply = (value, error) => {
-      try {
-        e.source.postMessage(
-          { __usernode_directory: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
-        );
-      } catch {}
-    };
-    try { e.source.postMessage({ __usernode_directory: 'ack', id: data.id }, '*'); } catch {}
+    const reply = (value, error) => AppView._replyToFrame(e,
+      { __usernode_directory: 'response', id: data.id, value: value ?? null, error: error ?? null });
+    AppView._replyToFrame(e, { __usernode_directory: 'ack', id: data.id });
 
     try {
       let url;
