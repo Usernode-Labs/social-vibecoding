@@ -9326,12 +9326,31 @@ const DevChat = {
     const status = session.status;
     if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return null;
     const proposed = status === 'promoted' || status === 'merging';
+    // #2602: the card this session became. Offered in every state this
+    // banner renders in, not only the proposed one — the banner only exists
+    // once there is a PR, and a merged change's card is still where its
+    // discussion and its checks are.
+    const slug = DevChat._sessionAppSlug(session);
     return {
       stateLabel: proposed
         ? `proposed to the group (PR #${session.pr_number})`
         : `merged (PR #${session.pr_number})`,
       pending: !!DevChat._newChangePending,
+      cardHref: slug && session.id != null
+        ? `#app/${slug}/dev/proposals/${session.id}`
+        : null,
     };
+  },
+
+  // The app a session belongs to. `AppView.appData` is the screen the user is
+  // actually on; `app_slug` is what a session row carries when the screen has
+  // not loaded one. Extracted because startNewChange resolved it inline and
+  // #2602 needed the same answer — two spellings of "which app is this" is
+  // how they drift.
+  _sessionAppSlug(session) {
+    return (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || (session && session.app_slug)
+      || null;
   },
 
   // Open a fresh change for the same app. Intentionally does NOT carry over
@@ -9352,8 +9371,7 @@ const DevChat = {
   _newChangePending: false,
 
   async startNewChange() {
-    const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
-      || (DevChat.currentSession && DevChat.currentSession.app_slug);
+    const slug = DevChat._sessionAppSlug(DevChat.currentSession);
     if (!slug) return;
     DevChat._newChangePending = true;
     DevChat._publishBanners();
