@@ -3537,6 +3537,12 @@
       "expectText": "Estimates are per-token pricing times a typical change"
     },
     {
+      "name": "Model costs says what one change is and that it counts the coding agent (#2592)",
+      "path": "/#admin/model-costs",
+      "expectSelector": "#admin-model-costs-profile",
+      "expectText": "One change is one dev session"
+    },
+    {
       "name": "Limits offers the default per-user WEEKLY cap beside the daily one (#1788)",
       "path": "/#admin/limits",
       "expectSelector": "#admin-limit-weekly",
