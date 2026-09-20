@@ -869,7 +869,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // attribution, and those now sit on two different pages, so the body
   // needs a check of its own. 27 slots left against MAX_DECLARED_TESTS
   // (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 703);
+  //
+  // 703 → 704: #2492 added one check on the Challenges tab — every card's
+  // progress rail carries a spoken value. Block production used to reach
+  // the rail with an empty label and draw a ring with nothing beside it, and
+  // nothing declared caught it; the Home rail has had the same
+  // `[aria-valuetext]` check since Iteration 03. 26 slots left against
+  // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 704);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
