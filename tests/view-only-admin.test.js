@@ -127,6 +127,11 @@ test('DELETE /api/apps/:slug — view-only admin 403, full admin passes the gate
     id: 17,
     slug: 'demo',
     created_by: NORMAL.id,
+    // #2523: the route resolves through appAccess.getAppForUser now, which
+    // reads the visibility columns. Real rows always carry them (NOT NULL
+    // DEFAULT 'public'); this stub was hand-built without them.
+    view_visibility: 'public',
+    collab_visibility: 'public',
     runtime_name: null,
     container_id: null,
   };

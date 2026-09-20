@@ -2416,7 +2416,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2979,
+      "line": 3014,
       "method": "POST",
       "path": "/api/apps/:slug/retry",
       "expression": null,
@@ -2442,7 +2442,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3054,
+      "line": 3089,
       "method": "POST",
       "path": "/api/apps/:slug/favorite",
       "expression": null,
@@ -2465,7 +2465,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3128,
+      "line": 3163,
       "method": "PUT",
       "path": "/api/favorites/order",
       "expression": null,
@@ -2483,7 +2483,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3175,
+      "line": 3210,
       "method": "POST",
       "path": "/api/apps/:slug/activity",
       "expression": null,

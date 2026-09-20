@@ -2818,9 +2818,44 @@ function appRoutes(config) {
   //      The vote-backed path for shared apps is request #1898.
   router.delete('/api/apps/:slug', async (req, res) => {
     try {
-      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!rows.length) return res.status(404).json({ error: 'App not found' });
-      const app = rows[0];
+      // #2523: resolve through the access wall, not a bare slug lookup.
+      // This used to `SELECT * FROM apps WHERE slug = $1` with no check and
+      // then branch on the row, so the three answers below were readable by
+      // anyone: a 404 meant the slug was free, `reason: 'core'` meant it
+      // existed and was a core app, and `reason: 'not_owner'` meant it
+      // existed and was somebody else's. That is an existence-and-coreness
+      // oracle for PRIVATE apps, reachable by any signed-in account, on a
+      // verb where probing looks like nothing in particular.
+      //
+      // `getAppForUser` returns null both for a slug that does not exist and
+      // for one this caller cannot see, so the two now answer identically.
+      // 'view' rather than 'collab': the leak is about apps you cannot SEE.
+      // Once an app is visible to you, that it is core — or not yours — is
+      // not a secret, and a 404 there would be a lie about a row on screen.
+      // Admins are unaffected (checkAppAccess short-circuits on isAdmin); a
+      // VIEW-ONLY admin still passes here and is still refused by the
+      // canAdminWrite eligibility check below, exactly as before.
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      // The core app carries its own gate, and `view_visibility` does not
+      // express it: the seeded row is 'public', so the wall above lets a
+      // non-admin through even when SELF_APP_PUBLIC_VOTING is off and the
+      // platform app is meant to be admin-only. Without this the oracle
+      // survives for the one app most worth probing — `reason: 'core'` would
+      // still confirm it. Four other routes already stand behind this check
+      // (lines ~1284, ~1690, ~1899, ~2507); this is the fifth.
+      //
+      // Keyed on `isCoreApp`, NOT on `self_hosted` alone. Those are not the
+      // same test: isCoreApp also recognises a row by the configured
+      // `selfAppSlug`, which is how a historical or staging platform row can
+      // be core without the flag set. Using the narrower condition here
+      // would leave exactly that row answering `reason: 'core'` to a
+      // stranger — one definition of "core", used by both the gate and the
+      // refusal it guards.
+      if (isCoreApp(app, config.selfAppSlug)
+        && !req.user?.isAdmin && !config.selfAppPublicVoting) {
+        return res.status(404).json({ error: 'App not found' });
+      }
 
       if (isCoreApp(app, config.selfAppSlug)) {
         return res.status(403).json({
