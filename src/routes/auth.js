@@ -24,6 +24,7 @@ const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
+const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
 const { shapeProfile } = require('./profile');
@@ -1125,6 +1126,18 @@ function authRoutes(config) {
     }
   });
 
+  // Wallet sign-in. The entire proof is "this caller controls the key THIS
+  // account linked", so the order below is load-bearing (issue #2502):
+  //   1. consume the challenge, which is bound to one address and expires;
+  //   2. resolve the account from that address, server-side;
+  //   3. take the verification key from the account's own stored
+  //      usernode_pubkey. A caller-supplied `publicKey` is never forwarded to
+  //      the verifier: it is only an assertion about which key signed, and one
+  //      that names any other key is refused here;
+  //   4. only then ask the node whether the signature is valid.
+  // Verifying an arbitrary caller-named key first and resolving the account
+  // afterwards is what let a genuine signature by ANY key mint a session for
+  // ANY linked address.
   router.post('/api/auth/wallet-verify', walletAuthLimiter, async (req, res) => {
     const { pubkey, publicKey, challenge, signature } = req.body || {};
     if (!pubkey || !challenge || !signature) {
@@ -1135,9 +1148,37 @@ function authRoutes(config) {
     if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
       return res.status(401).json({ error: 'Invalid or expired challenge' });
     }
+    // Single-use, and consumed before any outbound call so neither a slow
+    // verification nor a failed one leaves a replayable challenge behind.
     walletChallenges.delete(challenge);
 
-    const cryptoKey = (publicKey || pubkey).trim();
+    let user;
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin, admin_readonly, usernode_pubkey FROM users WHERE usernode_pubkey = $1',
+        [pubkey.trim()]
+      );
+      // usernode_pubkey carries no unique constraint (see the admin wallet
+      // handler), so an ambiguous match fails closed instead of silently
+      // signing somebody in as rows[0].
+      if (rows.length !== 1) {
+        if (rows.length > 1) {
+          log.warn('wallet-auth', 'Ambiguous wallet address, refusing login', { count: rows.length });
+        }
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+      user = rows[0];
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-verify lookup failed', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
+    const cryptoKey = verificationKeyFor(user.usernode_pubkey, publicKey);
+    if (!cryptoKey) {
+      log.warn('wallet-auth', 'Signing key is not the key this account linked', { userId: user.id });
+      return res.status(401).json({ error: 'Signature verification failed' });
+    }
+
     const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
     try {
       const verifyBody = {
@@ -1158,15 +1199,6 @@ function authRoutes(config) {
         return res.status(401).json({ error: 'Signature verification failed' });
       }
 
-      const { rows } = await pool.query(
-        'SELECT id, username, is_admin, admin_readonly FROM users WHERE usernode_pubkey = $1',
-        [pubkey.trim()]
-      );
-      if (rows.length === 0) {
-        return res.status(401).json({ error: 'No account linked to this pubkey' });
-      }
-
-      const user = rows[0];
       const { token, expiresAt } = await createSession(pool, user.id);
       createSessionCookie(res, token, expiresAt);
 
@@ -1205,7 +1237,34 @@ function authRoutes(config) {
     }
     walletChallenges.delete(challenge);
 
-    const cryptoKey = (publicKey || pubkey).trim();
+    // Resolve the account and its signing key BEFORE the verifier is asked
+    // anything, exactly as wallet-verify does above (issue #2502) — this
+    // endpoint writes a password, so a signature by a key the account never
+    // linked must never reach the verifier as if it were the account's.
+    let user;
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin, admin_readonly, usernode_pubkey FROM users WHERE usernode_pubkey = $1',
+        [pubkey.trim()]
+      );
+      if (rows.length !== 1) {
+        if (rows.length > 1) {
+          log.warn('wallet-auth', 'Ambiguous wallet address, refusing reset', { count: rows.length });
+        }
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+      user = rows[0];
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-reset-verify lookup failed', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
+    const cryptoKey = verificationKeyFor(user.usernode_pubkey, publicKey);
+    if (!cryptoKey) {
+      log.warn('wallet-auth', 'Reset signing key is not the key this account linked', { userId: user.id });
+      return res.status(401).json({ error: 'Signature verification failed' });
+    }
+
     const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
     try {
       const verifyResp = await httpJson('POST', verifyUrl, {
@@ -1219,15 +1278,6 @@ function authRoutes(config) {
         return res.status(401).json({ error: 'Signature verification failed' });
       }
 
-      const { rows } = await pool.query(
-        'SELECT id, username, is_admin, admin_readonly FROM users WHERE usernode_pubkey = $1',
-        [pubkey.trim()]
-      );
-      if (rows.length === 0) {
-        return res.status(401).json({ error: 'No account linked to this pubkey' });
-      }
-
-      const user = rows[0];
       const hash = await bcrypt.hash(newPassword, 12);
       const recovery = await withTransaction(pool, (client) => accountRecovery(client, {
         userId: user.id,
@@ -1433,7 +1483,15 @@ function authRoutes(config) {
     }
     walletChallenges.delete(challenge);
 
-    const cryptoKey = (publicKey || linkedPubkey).trim();
+    // Same binding rule as wallet-verify (issue #2502): the key the verifier
+    // checks against comes from this account's stored usernode_pubkey, and a
+    // caller-supplied `publicKey` that is not that key is refused outright
+    // rather than forwarded.
+    const cryptoKey = verificationKeyFor(linkedPubkey, publicKey);
+    if (!cryptoKey) {
+      log.warn('wallet-auth', 'Change-password signing key is not the key this account linked', { userId: req.user.id });
+      return res.status(401).json({ error: 'Signature verification failed' });
+    }
     const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
     try {
       const verifyResp = await httpJson('POST', verifyUrl, {

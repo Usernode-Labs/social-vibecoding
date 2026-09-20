@@ -28,6 +28,19 @@ const CLIENT_SOURCE_EXEMPTIONS = new Map([
 ]);
 const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
 
+// Registration shape the exemptions below need but the generated file must
+// not carry. A Symbol key survives the object spread in buildInventory() and
+// is skipped by JSON.stringify, so this stays internal to the generator.
+//
+// `pathCount` is how many paths one router call registered: >1 means an array
+// of paths, which is how a shared boundary middleware is written.
+// `shadowsLaterRoute` means the same method and path is registered again
+// further down the same file, which is what "duplicated by the concrete
+// route" actually means. Both replace hard-coded line numbers, which broke
+// the --check run every time an unrelated edit shifted the file (#2502 added
+// one require and moved the auth.js boundary from line 168 to 169).
+const REGISTRATION = Symbol('registration');
+
 const FILE_EXEMPTIONS = new Map([
   ['src/routes/anthropic-proxy.js', 'provider proxy used by development agents, not a Classic control'],
   ['src/routes/app-llm-proxy.js', 'child-app provider proxy, not a Classic control'],
@@ -71,25 +84,9 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'credential mint used by the app iframe transport, never a model-visible capability',
   },
   {
-    // The `router.post(SESSION_MINT_PATHS, ...)` guard in src/routes/auth.js.
-    // It registers one handler for several paths, each of which ALSO has a
-    // concrete route of its own further down the file — so the boundary is
-    // identified by its line, and the line moves whenever anything above it
-    // in that file does (#2568 added an import and moved it from 168 to 169).
-    // The path list is checked too, so a stale line number exempts nothing
-    // rather than silently exempting whatever moved into its place.
     matches: (route) => route.source === 'src/routes/auth.js'
-      && route.line === 169
-      && [
-        '/api/auth/login',
-        '/api/auth/otp/verify',
-        '/api/auth/otp/set-password',
-        '/api/auth/register',
-        '/api/auth/wallet-verify',
-        '/api/auth/wallet-reset-verify',
-        '/api/auth/wallet-register',
-        '/api/auth/wallet-link-login',
-      ].includes(route.path),
+      && route[REGISTRATION].pathCount > 1
+      && route[REGISTRATION].shadowsLaterRoute,
     reason: 'session-mint boundary middleware duplicated by the concrete signed-out authentication routes',
   },
   {
@@ -109,7 +106,8 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
   },
   {
     matches: (route) => route.source === 'src/routes/cli-auth.js'
-      && route.line === 916 && route.path === '/api/me/cli-tokens',
+      && route.path === '/api/me/cli-tokens'
+      && route[REGISTRATION].shadowsLaterRoute,
     reason: 'staging empty-state middleware represented by the concrete CLI-token list capability',
   },
   {
@@ -362,6 +360,7 @@ function discoverRoutes() {
               method: method.toUpperCase(),
               path: route.path,
               expression: route.expression,
+              [REGISTRATION]: { pathCount: discovered.length, shadowsLaterRoute: false },
             });
           }
         }
@@ -370,7 +369,26 @@ function discoverRoutes() {
     };
     visit(sf);
   }
+  markShadowedRegistrations(routes);
   return routes;
+}
+
+// A middleware registered ahead of the handler it guards produces two records
+// with the same source, method and path. Mark the earlier one so an exemption
+// can name that relationship instead of the line it happens to sit on.
+function markShadowedRegistrations(routes) {
+  const lastLine = new Map();
+  for (const route of routes) {
+    if (!route.path) continue;
+    const key = `${route.source}\0${route.method}\0${route.path}`;
+    const seen = lastLine.get(key);
+    if (seen === undefined || route.line > seen) lastLine.set(key, route.line);
+  }
+  for (const route of routes) {
+    if (!route.path) continue;
+    const key = `${route.source}\0${route.method}\0${route.path}`;
+    route[REGISTRATION].shadowsLaterRoute = route.line < lastLine.get(key);
+  }
 }
 
 function pathSegments(value) {
