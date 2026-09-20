@@ -102,7 +102,23 @@ export function appendTranscriptMessage(message: TranscriptMessage, key = 'main'
       const view = s.byKey[key] || EMPTY_VIEW;
       return {
         ready: true,
-        byKey: { ...s.byKey, [key]: { ...view, messages: [...view.messages, message] } },
+        byKey: {
+          ...s.byKey,
+          [key]: {
+            ...view,
+            messages: [...view.messages, message],
+            // #2498: a transcript with a message in it has no empty state.
+            // This spread carried `lead` through untouched, so the line
+            // `renderThread` published while the thread was empty — "No
+            // messages yet. Start the thread." — stayed on screen ABOVE the
+            // message you had just sent, until something re-published the
+            // whole view. Nothing does on this path, so it survived until
+            // the next mount, i.e. a reload. Rebuilt only when there is a
+            // placeholder to drop, so the common append still changes one
+            // field.
+            lead: view.lead.placeholder ? { ...view.lead, placeholder: null } : view.lead,
+          },
+        },
       };
     });
   });
