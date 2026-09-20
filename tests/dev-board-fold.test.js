@@ -869,7 +869,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // attribution, and those now sit on two different pages, so the body
   // needs a check of its own. 27 slots left against MAX_DECLARED_TESTS
   // (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 703);
+  //
+  // 703 → 705: #2603 put a line on a governance vote, and nothing in the
+  // manifest pinned either half of it. TWO checks, because they are two
+  // facts on two screens and no selector spans both: one that a governance
+  // card's vote is the picker button (the box opens with it, which is what
+  // makes a line possible at all), one that a close proposal's own page
+  // lists the votes cast on it with each voter's words. 25 slots left
+  // against MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 705);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

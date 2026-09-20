@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 642,
-    "mappedRoutes": 505,
+    "totalRoutes": 643,
+    "mappedRoutes": 506,
     "exemptRoutes": 137,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 356,
+    "clientApiReferences": 357,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -5774,7 +5774,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 663,
+      "line": 692,
       "method": "GET",
       "path": "/api/apps/:slug/issues",
       "expression": null,
@@ -5799,7 +5799,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 765,
+      "line": 794,
       "method": "GET",
       "path": "/api/apps/:slug/governance/:id",
       "expression": null,
@@ -5818,7 +5818,26 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 880,
+      "line": 911,
+      "method": "GET",
+      "path": "/api/apps/:slug/governance/:id/votes",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "governance.get.apps.item.governance.item.votes.eb246773",
+      "domain": "governance",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/governance/:id",
+      "clientReferences": [
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/issues.js",
+      "line": 957,
       "method": "POST",
       "path": "/api/apps/:slug/issues",
       "expression": null,
@@ -5843,7 +5862,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1220,
+      "line": 1303,
       "method": "POST",
       "path": "/api/issues/:id/vote",
       "expression": null,
@@ -5862,7 +5881,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1361,
+      "line": 1470,
       "method": "GET",
       "path": "/api/apps/:slug/board-search",
       "expression": null,
@@ -5885,7 +5904,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1400,
+      "line": 1509,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues",
       "expression": null,
@@ -5908,7 +5927,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1962,
+      "line": 2071,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number",
       "expression": null,
@@ -5927,7 +5946,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2076,
+      "line": 2185,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number/comments",
       "expression": null,
@@ -5946,7 +5965,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2154,
+      "line": 2263,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/title",
       "expression": null,
@@ -5966,7 +5985,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2261,
+      "line": 2370,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/body",
       "expression": null,
@@ -5986,7 +6005,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2368,
+      "line": 2477,
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/bounty",
       "expression": null,
@@ -6005,7 +6024,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2455,
+      "line": 2564,
       "method": "POST",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6025,7 +6044,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2516,
+      "line": 2625,
       "method": "DELETE",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6045,7 +6064,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2577,
+      "line": 2686,
       "method": "POST",
       "path": "/api/issues/:id/admin-apply",
       "expression": null,
@@ -6064,7 +6083,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2655,
+      "line": 2764,
       "method": "POST",
       "path": "/api/issues/:id/close",
       "expression": null,
