@@ -2130,7 +2130,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       <section className="dev-ws-sheet-card" data-ws-comments="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
         <div className="dev-ws-sheet-head">
-          <span><span className="dev-ws-sheet-title">{commentCount ? `${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}` : 'Comments'}</span><span className="dev-ws-sheet-sub">{row.kind === 'vote' ? 'on this proposal' : 'on this issue'}</span></span>
+          <span><span className="dev-ws-sheet-title">{commentCount ? `${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}` : 'Comments'}</span><span className="dev-ws-sheet-sub">{row.kind === 'vote' ? 'on this change' : 'on this issue'}</span></span>
           <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
         </div>
         <div className="dev-ws-sheet-body" ref={commentsRef}>

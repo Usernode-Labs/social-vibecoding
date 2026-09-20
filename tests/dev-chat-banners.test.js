@@ -361,3 +361,46 @@ test('CreditOptions is wired from the component, and its guard makes that safe',
   assert.match(BANNERS_TSX, /CO\?\.wire\?\.\(el, \{/);
   assert.doesNotMatch(DEV_CHAT_SRC, /CreditOptions\.wire\(banner/);
 });
+
+// ── #2602: the way back to the card ────────────────────────────────────
+
+test('the new-change banner offers the proposal card, in every state it shows', () => {
+  const { DevChat, view } = makeDevChat();
+  for (const status of ['promoted', 'merging', 'merged']) {
+    DevChat.currentSession = { ...SESSION, status, pr_number: 7, app_slug: 'demo-app' };
+    assert.equal(view().newChange.cardHref, '#app/demo-app/dev/proposals/5', status);
+  }
+});
+
+test('no slug, no link — the banner still renders the rest', () => {
+  const { DevChat, view } = makeDevChat();
+  DevChat.currentSession = { ...SESSION, status: 'promoted', pr_number: 7 };
+  const got = view().newChange;
+  assert.equal(got.cardHref, null, 'a dead href is worse than no link');
+  assert.match(got.stateLabel, /proposed to the group/, 'the rest of the banner is unaffected');
+
+  const html = bannersHtml({ sync: null, newChange: got, credits: null, creditsLow: null });
+  assert.doesNotMatch(html, /dc-open-card-link/);
+  assert.match(html, /id="dc-new-change-btn"/, 'and Start a new change is still there');
+});
+
+test('the link is an anchor to the hash route, not a button', () => {
+  const html = bannersHtml({
+    sync: null,
+    newChange: { stateLabel: 'proposed to the group (PR #7)', pending: false, cardHref: '#app/demo-app/dev/proposals/5' },
+    credits: null, creditsLow: null,
+  });
+  assert.match(html, /<a id="dc-open-card-link" href="#app\/demo-app\/dev\/proposals\/5"/);
+  assert.match(html, />Open proposal card</);
+  // An anchor so it middle-clicks and copies, and so the byte-for-byte
+  // <button> assertion above still reads the primary action.
+  assert.doesNotMatch(html, /<button[^>]*dc-open-card-link/);
+});
+
+test('both doors onto "which app is this" read the same helper', () => {
+  // They were two inline copies of the same fallback chain; #2602 needed the
+  // answer in a second place, and two spellings is how they drift.
+  assert.match(DEV_CHAT_SRC, /_sessionAppSlug\(session\) \{/);
+  assert.match(DEV_CHAT_SRC, /const slug = DevChat\._sessionAppSlug\(DevChat\.currentSession\);/);
+  assert.match(DEV_CHAT_SRC, /const slug = DevChat\._sessionAppSlug\(session\);/);
+});
