@@ -186,6 +186,23 @@ async function typicalChange(pool, { days = OBSERVED_DAYS } = {}) {
 // ledger, is deliberately NOT here: it has no model dimension at all (see
 // its schema comment), so its spend cannot be attributed to a model without
 // inventing the attribution.
+//
+// #2592 — WHAT "PER CHANGE" HAS TO MEAN HERE. This sits beside "Shown
+// estimate, per typical change", which is a WHOLE-change figure: pricing
+// times `typicalChange`'s profile, and that profile groups agent_turns by
+// session_id alone. An admin reads the two columns against each other, so
+// the observed one has to be the same unit or the comparison is nonsense.
+//
+// It was not. It grouped by (model, session_id), which is a change's slice
+// per model, and counted each slice as its own change. A session almost
+// always has more than one model in it — the conversation runs on one and
+// the coding turns on another, which is the ordinary shape, not a rarity —
+// so nearly every change was counted twice at part of its cost, and the
+// average and median both read LOW against the estimate beside them.
+//
+// So the change is measured whole and attributed to the model that spent
+// the most in it. That is the question the estimate answers too: you pick a
+// model, and the change costs what it costs.
 async function observedPerModel(pool, { days = OBSERVED_DAYS } = {}) {
   const { rows } = await pool.query(
     `WITH turn_costs AS (
@@ -199,17 +216,35 @@ async function observedPerModel(pool, { days = OBSERVED_DAYS } = {}) {
         WHERE requested_model IS NOT NULL AND estimated_cost_usd > 0
           AND started_at >= NOW() - ($1 || ' days')::interval
      ),
-     per_change AS (
-       SELECT model, session_id, SUM(cents) AS cents
+     -- #2592: what each model spent WITHIN a change. An intermediate now,
+     -- not the answer: grouping by (model, session_id) and reporting that
+     -- as "per change" counted a change once PER MODEL and gave each copy
+     -- only that model's slice of it.
+     per_model AS (
+       SELECT session_id, model, SUM(cents) AS cents
          FROM turn_costs
-        GROUP BY model, session_id
+        GROUP BY session_id, model
+     ),
+     -- What the change cost, whole, across every model it touched.
+     per_change AS (
+       SELECT session_id, SUM(cents) AS cents
+         FROM per_model
+        GROUP BY session_id
+     ),
+     -- The model the change is attributed to: the one that spent the most
+     -- in it. The model id breaks a tie so the pick is deterministic.
+     leading_model AS (
+       SELECT DISTINCT ON (session_id) session_id, model
+         FROM per_model
+        ORDER BY session_id, cents DESC, model
      )
-     SELECT model,
+     SELECT lm.model AS model,
             COUNT(*) AS changes,
-            AVG(cents) AS avg_cents,
-            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cents) AS median_cents
-       FROM per_change
-      GROUP BY model`,
+            AVG(pc.cents) AS avg_cents,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY pc.cents) AS median_cents
+       FROM per_change pc
+       JOIN leading_model lm ON lm.session_id = pc.session_id
+      GROUP BY lm.model`,
     [String(days)],
   );
   // The label prefixes are stripped here rather than in SQL so one model

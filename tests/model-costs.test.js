@@ -155,7 +155,17 @@ test('the observed aggregate reads both per-turn records, per change, over the w
   const sql = pool.calls[0].sql;
   assert.match(sql, /FROM chat_session_messages/, 'the Mayor and direct-reply record');
   assert.match(sql, /FROM agent_turns/, 'the OpenRouter coding-turn record');
-  assert.match(sql, /GROUP BY model, session_id/, 'per CHANGE, not per turn');
+  // #2592: the change is summed WHOLE and attributed to one model, rather
+  // than sliced per model and counted once per slice. `per_model` survives
+  // as the intermediate that picks the attribution.
+  assert.match(sql, /GROUP BY session_id, model/, 'each model\u2019s slice, as an intermediate');
+  assert.match(sql, /per_change AS \(\s*SELECT session_id, SUM\(cents\) AS cents\s*FROM per_model\s*GROUP BY session_id/,
+    'the change is summed whole, across every model it touched');
+  assert.match(sql, /DISTINCT ON \(session_id\) session_id, model/,
+    'and attributed to the model that spent the most in it');
+  assert.match(sql, /ORDER BY session_id, cents DESC, model/, 'deterministic on a tie');
+  assert.doesNotMatch(sql, /GROUP BY model, session_id\b/,
+    'the old shape counted one change once per model, at part of its cost');
   assert.match(sql, /PERCENTILE_CONT\(0\.5\)/, 'a median, because a mean is the long session');
   assert.doesNotMatch(sql, /agent_cost_cents/,
     'the Claude coding ledger has no model dimension and must not be guessed at');
@@ -325,4 +335,33 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
   }
   assert.match(admin, /the picker now says about \$\{money\(cents\)\} for a typical change/,
     'the save confirmation uses the phrase too');
+});
+
+// ── #2592: the observed columns are per CHANGE, like the estimate beside them
+
+test('a change that used two models is counted once, at its whole cost', async () => {
+  // The ordinary shape of a session: the conversation on one model, the
+  // coding turns on another. Grouping by (model, session_id) reported that
+  // as TWO changes, each carrying only its own model's slice — which is why
+  // both observed columns read low against the estimate they sit beside.
+  const pool = poolFor([[/turn_costs/, [
+    // What the fixed query returns: one row per model, counting whole
+    // changes attributed to it.
+    { model: 'claude-opus-5', changes: '2', avg_cents: '210', median_cents: '205' },
+  ]]]);
+  const observed = await modelCosts.observedPerModel(pool, { days: 30 });
+  const opus = observed.get('claude-opus-5');
+  assert.equal(opus.changes, 2);
+  assert.equal(opus.avgCents, 210);
+  assert.equal(opus.medianCents, 205);
+});
+
+test('the observed unit matches the estimate’s unit', async () => {
+  // typicalChange — which the estimate column is built from — groups
+  // agent_turns by session_id ALONE. The observed query has to answer the
+  // same question or the two columns cannot be read against each other.
+  const pool = poolFor([[/per_change/, [{ changes: '40', input_tokens: '9', output_tokens: '3' }]]]);
+  await modelCosts.typicalChange(pool, { days: 30 });
+  assert.match(pool.calls[0].sql, /GROUP BY session_id\s*\)/,
+    'the estimate profile is whole-change');
 });
