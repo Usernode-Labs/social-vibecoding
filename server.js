@@ -11,6 +11,7 @@ const {
   buildScopedAssetHandler,
 } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
+const { errorHandler } = require('./src/middleware/error-handler');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
@@ -931,6 +932,20 @@ app.get('*', (req, res) => {
     res.status(404).json({ error: 'Not found' });
   }
 });
+
+// ── The error handler, LAST ──────────────────────────────────────────────
+//
+// #2508: there was no error-handling middleware at all, so anything thrown
+// out of a route reached express's own default handler — which writes
+// `err.stack` into the response body unless NODE_ENV is 'production', and
+// the Dockerfile never set NODE_ENV. See src/middleware/error-handler.js for
+// the whole argument; the short version is that a stack trace was one
+// unhandled throw away from any client.
+//
+// It is registered here because express picks the error handler by ARRIVAL
+// ORDER: only middleware mounted after a route can catch that route's
+// errors. Anything added below this line is outside its reach.
+app.use(errorHandler);
 
 // Leadership coordinator for blue-green deploys (assigned in start()).
 // During a rollout both colors serve HTTP, but singleton background work
