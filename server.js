@@ -12,6 +12,7 @@ const {
 } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { errorHandler } = require('./src/middleware/error-handler');
+const { baseSecurityHeaders, applyShellFramingHeaders } = require('./src/middleware/security-headers');
 const { explorerProxyRoutes } = require('./src/routes/explorer-proxy');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
@@ -160,6 +161,14 @@ app.use(trustedProxyClientIp({
 // parser, so a preflight is a 204 that depends on nothing: no cookie, no
 // bearer, no parser, no route. See src/middleware/public-cors.js for why a
 // wildcard origin with no credentials is the safe shape for this prefix.
+// #2507: the floor for every response this process returns — nosniff and a
+// Referrer-Policy that stops a full URL (and any `?token=` on it) riding a
+// cross-origin `Referer`. Mounted here, ahead of every gate and router, so
+// nothing can be served without them; a route that sets its own policy runs
+// later and still wins. The FRAMING headers are deliberately not here — see
+// src/middleware/security-headers.js for why they cannot be global.
+app.use(baseSecurityHeaders());
+
 app.use(publicApiCors());
 
 // Global CLI authentication has a hard staging/enablement gate before any
@@ -817,6 +826,12 @@ app.use(express.static(path.join(__dirname, 'public'), {
     // Same asset set as the Cache-Control above — see static-cache.js.
     if (cc && path.basename(filePath) === 'index.html') {
       applyShellDocumentHeaders(res, filePath);
+      // #2507: the shell document is the frameable surface that carries the
+      // session cookie and the destructive one-click actions. Called here
+      // rather than inside applyShellDocumentHeaders because that returns
+      // early when there is no build id, and the framing rule must not
+      // depend on whether this happens to be a built image.
+      applyShellFramingHeaders(res);
     } else if (cc) {
       applyShellBuildHeader(res);
     }
@@ -869,6 +884,7 @@ app.get('*', (req, res) => {
     // worker compares every cached asset against on this load.
     const indexPath = path.join(__dirname, 'public', 'index.html');
     applyShellDocumentHeaders(res, indexPath);
+    applyShellFramingHeaders(res);   // #2507, same document by another route
     res.sendFile(indexPath);
   } else {
     res.status(404).json({ error: 'Not found' });

@@ -268,7 +268,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 245,
+      "line": 254,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -277,7 +277,7 @@
     },
     {
       "source": "server.js",
-      "line": 281,
+      "line": 290,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -304,7 +304,7 @@
     },
     {
       "source": "server.js",
-      "line": 311,
+      "line": 320,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -313,7 +313,7 @@
     },
     {
       "source": "server.js",
-      "line": 351,
+      "line": 360,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -339,7 +339,7 @@
     },
     {
       "source": "server.js",
-      "line": 356,
+      "line": 365,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -358,7 +358,7 @@
     },
     {
       "source": "server.js",
-      "line": 378,
+      "line": 387,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -367,7 +367,7 @@
     },
     {
       "source": "server.js",
-      "line": 660,
+      "line": 669,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +376,7 @@
     },
     {
       "source": "server.js",
-      "line": 842,
+      "line": 857,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +385,7 @@
     },
     {
       "source": "server.js",
-      "line": 846,
+      "line": 861,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +394,7 @@
     },
     {
       "source": "server.js",
-      "line": 850,
+      "line": 865,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +403,7 @@
     },
     {
       "source": "server.js",
-      "line": 854,
+      "line": 869,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +412,7 @@
     },
     {
       "source": "server.js",
-      "line": 858,
+      "line": 873,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,7 +421,7 @@
     },
     {
       "source": "server.js",
-      "line": 862,
+      "line": 877,
       "method": "GET",
       "path": "*",
       "expression": null,
