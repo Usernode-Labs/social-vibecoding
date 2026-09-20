@@ -5843,7 +5843,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1220,
+      "line": 1222,
       "method": "POST",
       "path": "/api/issues/:id/vote",
       "expression": null,
@@ -5862,7 +5862,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1361,
+      "line": 1363,
       "method": "GET",
       "path": "/api/apps/:slug/board-search",
       "expression": null,
@@ -5885,7 +5885,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1400,
+      "line": 1402,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues",
       "expression": null,
@@ -5908,7 +5908,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1962,
+      "line": 1964,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number",
       "expression": null,
@@ -5927,7 +5927,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2076,
+      "line": 2078,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number/comments",
       "expression": null,
@@ -5946,7 +5946,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2154,
+      "line": 2156,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/title",
       "expression": null,
@@ -5966,7 +5966,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2261,
+      "line": 2263,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/body",
       "expression": null,
@@ -5986,7 +5986,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2368,
+      "line": 2370,
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/bounty",
       "expression": null,
@@ -6005,7 +6005,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2455,
+      "line": 2457,
       "method": "POST",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6025,7 +6025,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2516,
+      "line": 2518,
       "method": "DELETE",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6045,7 +6045,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2577,
+      "line": 2579,
       "method": "POST",
       "path": "/api/issues/:id/admin-apply",
       "expression": null,
@@ -6064,7 +6064,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2655,
+      "line": 2657,
       "method": "POST",
       "path": "/api/issues/:id/close",
       "expression": null,
@@ -11569,7 +11569,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 1939,
+      "line": 1940,
       "method": "POST",
       "path": "/api/sessions/:id/promote",
       "expression": null,
@@ -11590,7 +11590,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2514,
+      "line": 2515,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/candidates",
       "expression": null,
@@ -11609,7 +11609,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2551,
+      "line": 2552,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/preview",
       "expression": null,
@@ -11627,7 +11627,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2614,
+      "line": 2615,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import",
       "expression": null,
@@ -11650,7 +11650,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2874,
+      "line": 2875,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import/_mock/advance",
       "expression": null,
@@ -11659,7 +11659,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2912,
+      "line": 2915,
       "method": "POST",
       "path": "/api/sessions/:id/vote",
       "expression": null,
@@ -11680,7 +11680,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3205,
+      "line": 3208,
       "method": "GET",
       "path": "/api/sessions/:id/votes",
       "expression": null,
@@ -11701,7 +11701,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3271,
+      "line": 3274,
       "method": "GET",
       "path": "/api/me/proposals",
       "expression": null,
@@ -11725,7 +11725,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3468,
+      "line": 3471,
       "method": "GET",
       "path": "/api/apps/:slug/promoted",
       "expression": null,
@@ -11749,7 +11749,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3842,
+      "line": 3845,
       "method": "GET",
       "path": "/api/apps/:slug/merged",
       "expression": null,
@@ -11772,7 +11772,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4157,
+      "line": 4160,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:id",
       "expression": null,
@@ -11792,7 +11792,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4228,
+      "line": 4231,
       "method": "POST",
       "path": "/api/sessions/:id/undo",
       "expression": null,
@@ -11813,7 +11813,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4314,
+      "line": 4317,
       "method": "POST",
       "path": "/api/sessions/:id/admin-merge",
       "expression": null,

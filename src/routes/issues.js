@@ -11,7 +11,7 @@ const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
 const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
-const { issueKindLimiter } = require('../middleware/rate-limits');
+const { issueKindLimiter, governanceVoteLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
 const { placeBounty } = require('../services/bounties');
@@ -1217,7 +1217,9 @@ function issueRoutes(config) {
   });
 
   // Vote on an issue — for rename proposals, a passing up-vote auto-applies.
-  router.post('/api/issues/:id/vote', async (req, res) => {
+  // #2525: same bucket as proposal votes — a changed issue vote posts a
+  // system line into the issue's thread, so flipping is the spam shape.
+  router.post('/api/issues/:id/vote', governanceVoteLimiter, async (req, res) => {
     const { vote } = req.body;
     if (!['up', 'down'].includes(vote)) {
       return res.status(400).json({ error: 'Vote must be "up" or "down"' });

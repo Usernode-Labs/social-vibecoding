@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { connectionExhaustionMessage } = require('../db/connection-census');
+const { governanceVoteLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const github = require('../services/github');
 const githubMock = require('../services/github-mock');
@@ -2909,7 +2910,9 @@ function voteRoutes(config) {
   });
 
   // Cast a vote on a promoted PR
-  router.post('/api/sessions/:id/vote', async (req, res) => {
+  // #2525: rate-limited because a CHANGED vote posts a system line into the
+  // proposal's thread and notifies; flipping yes/no is the spam shape.
+  router.post('/api/sessions/:id/vote', governanceVoteLimiter, async (req, res) => {
     const { vote } = req.body;
     if (!['yes', 'no'].includes(vote)) {
       return res.status(400).json({ error: 'Vote must be "yes" or "no"' });
