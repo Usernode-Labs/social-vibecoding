@@ -2,7 +2,7 @@
 
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
-const { clientIp } = require('../services/client-ip');
+const { clientIp, isPrivateIp, isDirectInternalCall } = require('../services/client-ip');
 
 // Authenticates worker → platform Anthropic-proxy requests
 // (POST /api/internal/anthropic/v1/messages, etc.).
@@ -23,24 +23,19 @@ const { clientIp } = require('../services/client-ip');
 // tokens. Keeping the headers segregated keeps the auth surface small
 // and easy to reason about.
 
-function isPrivateIp(ip) {
-  if (!ip) return false;
-  const v4 = ip.replace(/^::ffff:/, '');
-  if (v4 === '127.0.0.1' || v4 === '::1') return true;
-  if (/^10\./.test(v4)) return true;
-  if (/^192\.168\./.test(v4)) return true;
-  const m = v4.match(/^172\.(\d+)\./);
-  if (m) {
-    const oct = parseInt(m[1], 10);
-    return oct >= 16 && oct <= 31;
-  }
-  return false;
-}
+// #2506: the predicate is canonical in services/client-ip.js now — it was
+// duplicated character for character here and in internal-auth.js. Still
+// re-exported below, because app-storage-auth.js and app-llm-auth.js import
+// it from this module.
 
 function anthropicProxyAuth(req, res, next) {
-  const ip = clientIp(req);
-  if (!isPrivateIp(ip)) {
-    log.warn('anthropic-proxy-auth', 'Rejected non-private source IP', { ip, path: req.path });
+  // #2506: ask whether this came DIRECTLY from inside, not whether the
+  // RESOLVED address happens to be private. On a trusted-proxy DNS failure
+  // `clientIp` falls back to the socket peer — the ingress's own private
+  // address — and the old question then answered yes for an external caller.
+  if (!isDirectInternalCall(req)) {
+    log.warn('anthropic-proxy-auth', 'Rejected non-direct internal call',
+      { ip: clientIp(req), path: req.path });
     return res.status(403).json({ ok: false, code: 'forbidden_ip' });
   }
 

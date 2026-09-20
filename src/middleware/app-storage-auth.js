@@ -1,10 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
-const { isPrivateIp } = require('./anthropic-proxy-auth');
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
-const { clientIp } = require('../services/client-ip');
+const { clientIp, isDirectInternalCall } = require('../services/client-ip');
 
 // Authenticates dapp → platform app-storage requests (#752):
 // POST/DELETE/GET under /api/app-storage/.
@@ -49,9 +48,12 @@ async function resolveApp(pool, token) {
 
 function appStorageAuth(pool, config) {
   return async function appStorageAuthMiddleware(req, res, next) {
-    const ip = clientIp(req);
-    if (!isPrivateIp(ip)) {
-      log.warn('app-storage-auth', 'Rejected non-private source IP', { ip, path: req.path });
+    // #2506: "is the resolved address private" is not the same question as
+    // "did this come from inside" — on a trusted-proxy DNS failure clientIp
+    // falls back to the ingress's own private address.
+    if (!isDirectInternalCall(req)) {
+      log.warn('app-storage-auth', 'Rejected non-direct internal call',
+        { ip: clientIp(req), path: req.path });
       return res.status(403).json({ ok: false, code: 'forbidden_ip' });
     }
 

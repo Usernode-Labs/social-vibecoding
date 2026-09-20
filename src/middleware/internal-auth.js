@@ -2,7 +2,7 @@
 
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
-const { clientIp } = require('../services/client-ip');
+const { clientIp, isDirectInternalCall } = require('../services/client-ip');
 
 // Authenticates requests from worker containers calling back into the
 // platform's internal API surface (see src/routes/internal.js). Worker
@@ -28,23 +28,7 @@ const { clientIp } = require('../services/client-ip');
 // private IP, so even if Caddy ever leaked the path externally the
 // internal API stays unreachable.
 
-function isPrivateIp(ip) {
-  if (!ip) return false;
-  // Normalize IPv6-mapped IPv4 (`::ffff:172.18.0.5` -> `172.18.0.5`).
-  const v4 = ip.replace(/^::ffff:/, '');
-  // Docker bridge networks land in 172.16.0.0/12 by default; user-
-  // defined networks can also use 10/8 or 192.168/16. Loopback covers
-  // local-dev runs where the platform and "worker" both run on the host.
-  if (v4 === '127.0.0.1' || v4 === '::1') return true;
-  if (/^10\./.test(v4)) return true;
-  if (/^192\.168\./.test(v4)) return true;
-  const m = v4.match(/^172\.(\d+)\./);
-  if (m) {
-    const oct = parseInt(m[1], 10);
-    return oct >= 16 && oct <= 31;
-  }
-  return false;
-}
+// #2506: the predicate is canonical in services/client-ip.js now.
 
 // Accepts one of the given worker purposes. `worker:session` (the general
 // claude_code token) is always allowed for backwards-compat on the legacy
@@ -55,9 +39,12 @@ function verifier(purposes) {
   return function internalAuth(req, res, next) {
     // IP gate first — if this somehow leaks externally, fail fast before
     // even parsing the JWT.
-    const ip = clientIp(req);
-    if (!isPrivateIp(ip)) {
-      log.warn('internal-auth', 'Rejected non-private source IP', { ip, path: req.path });
+    // #2506: a private RESOLVED address is not the same question as "came
+    // from inside" — on a trusted-proxy DNS failure clientIp falls back to
+    // the ingress's own private address. Ask about the direct peer instead.
+    if (!isDirectInternalCall(req)) {
+      log.warn('internal-auth', 'Rejected non-direct internal call',
+        { ip: clientIp(req), path: req.path });
       return res.status(403).json({ ok: false, code: 'forbidden_ip' });
     }
 
