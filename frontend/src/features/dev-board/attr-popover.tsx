@@ -45,6 +45,14 @@ export function AttrOptionRow({ option, field }: { option: AttrOptionView; field
       className="attr-opt"
       data-attr-opt-value={option.value}
       data-attr-opt-mine={option.mine ? '1' : '0'}
+      // #2479: the tick beside this row is decorative now, so the state it
+      // used to be the only carrier of moves onto the control. `mine` was
+      // announced to nobody before: it lived in the violet check and in
+      // `data-attr-opt-mine`, and a data attribute reaches no assistive
+      // technology. Pressed reads correctly for both shapes — the assignee
+      // row is a real toggle, and on priority/category the check "doubles
+      // as my current pick" (see #1187 below).
+      aria-pressed={!!option.mine}
       // #1187: the assignee row is a TOGGLE — clicking the name you already
       // voted for withdraws it. Priority and category keep the idempotent
       // re-vote: their check doubles as "my current pick", and un-picking
@@ -62,7 +70,7 @@ export function AttrOptionRow({ option, field }: { option: AttrOptionView; field
       <span className="attr-opt-right">
         {option.count ? <span className="attr-opt-count">{option.count}</span> : null}
         {option.mine ? (
-          <CheckIcon className="w-3.5 h-3.5 text-violet-700 shrink-0 dark:text-violet-400" strokeWidth="3" />
+          <CheckIcon className="w-3.5 h-3.5 text-violet-700 shrink-0 dark:text-violet-400" strokeWidth="3" aria-hidden="true" />
         ) : null}
       </span>
     </button>

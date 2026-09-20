@@ -60,6 +60,7 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
       >
         <ChevronRightIcon
           data-archived-caret=""
+          aria-hidden="true"
           className="w-3 h-3 transition-transform"
           style={open ? { transform: 'rotate(90deg)' } : undefined}
         />

@@ -659,6 +659,39 @@ async function sweepStuckCreatingApps(pool) {
   }
 }
 
+// #2524: how much time ONE activity heartbeat may report, and how much a
+// single (user, app, day) row may ever hold.
+//
+// These bound a column that RANKS: the home screen orders the directory by
+// `SUM(seconds_spent)` over the last seven days, so whatever reaches this
+// column decides which apps people are shown first.
+//
+// The per-post ceiling is generous on purpose. The browser client counts one
+// second at a time and flushes at 30 (`AppView.startActivityTracking`), so a
+// real body is 1..30; an hour leaves room for a caller that batches — a
+// native app returning from the background, say — without leaving the door
+// open. It is the DAILY cap that actually holds the line, because a ceiling
+// on one request is defeated by sending many.
+const ACTIVITY_MAX_PER_POST = 3600;
+const ACTIVITY_MAX_PER_DAY = 86400;
+
+/**
+ * The seconds to credit for one heartbeat, or `null` to refuse the body.
+ *
+ * Refuses anything that is not a finite number RATHER THAN COERCING IT. The
+ * old guard was `!seconds || seconds < 0`, which let a string through: 'abc'
+ * is truthy and `'abc' < 0` is false, so it reached `Math.round('abc')` →
+ * NaN → an INTEGER column rejecting NaN, i.e. a 500 where the honest answer
+ * was a 400. `Infinity` took the same route. A numeric STRING is refused too:
+ * this body comes from our own client, which sends a number.
+ */
+function activitySeconds(raw) {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+  const rounded = Math.round(raw);
+  if (rounded <= 0) return null;
+  return Math.min(rounded, ACTIVITY_MAX_PER_POST);
+}
+
 function appRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -3140,9 +3173,9 @@ function appRoutes(config) {
   });
 
   router.post('/api/apps/:slug/activity', async (req, res) => {
-    const { seconds } = req.body;
+    const seconds = activitySeconds(req.body?.seconds);
 
-    if (!seconds || seconds < 0) {
+    if (seconds === null) {
       return res.status(400).json({ error: 'Invalid seconds value' });
     }
 
@@ -3163,12 +3196,20 @@ function appRoutes(config) {
       // append-only events log. This matches the one-row-per-active-day
       // shape the migrate.js backfill produces from app_activity.
       const { rows: activityRows } = await pool.query(
+        // #2524: the accumulated total is clamped to a day's worth of
+        // seconds. The per-request ceiling above bounds ONE body; this is
+        // what bounds the column, because a caller that wanted to inflate
+        // its app's rank would simply post many times. A day cannot contain
+        // more than 86400 seconds, so no honest row is ever touched by it —
+        // and with the total bounded, the INTEGER column can no longer be
+        // driven to overflow.
         `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
          VALUES ($1, $2, $3, CURRENT_DATE)
          ON CONFLICT (app_id, user_id, date)
-         DO UPDATE SET seconds_spent = app_activity.seconds_spent + EXCLUDED.seconds_spent
+         DO UPDATE SET seconds_spent = LEAST(
+           app_activity.seconds_spent + EXCLUDED.seconds_spent, $4)
          RETURNING (xmax = 0) AS inserted`,
-        [appRows[0].id, req.user.id, Math.round(seconds)]
+        [appRows[0].id, req.user.id, seconds, ACTIVITY_MAX_PER_DAY]
       );
 
       if (activityRows[0]?.inserted) {
@@ -3195,4 +3236,7 @@ module.exports = {
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
   deleteBlockReason, isCoreApp,
+  // #2524: the activity guard and its two bounds, so the contract is
+  // unit-testable without standing up the whole app router.
+  activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,
 };
