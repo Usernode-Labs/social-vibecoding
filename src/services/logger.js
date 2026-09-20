@@ -2,44 +2,13 @@ const LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
 
 let currentLevel = LEVELS[process.env.LOG_LEVEL] ?? LEVELS.INFO;
 
-// #30: patterns scrubbed from every log line + every ring-buffer entry
-// before they're persisted. These are defense in depth — callers
-// SHOULD avoid passing secrets in the first place, but a single
-// `log.warn('docker', err.message)` where `err.cmd` happens to contain
-// a key shouldn't be a security incident. Order matters: more
-// specific patterns first so generic ones don't pre-scrub them.
-// Each entry is [pattern, replacement]; the replacement defaults to a flat
-// '****' when omitted, which is right for anything whose every byte is
-// secret. A pattern that matches surrounding context to find the secret
-// supplies its own replacement so the context survives.
-const SENSITIVE_PATTERNS = [
-  [/sk-or-v1-[A-Za-z0-9_-]+/g],           // OpenRouter API keys
-  [/sk-ant-[A-Za-z0-9_-]+/g],             // Anthropic API keys (user + admin)
-  [/ghp_[A-Za-z0-9]{20,}/g],              // GitHub personal access tokens
-  [/ghs_[A-Za-z0-9]{20,}/g],              // GitHub app installation tokens
-  [/x-access-token:[^@\s]+@/g],           // credentialed git URLs
-  // URI-embedded credentials — `postgres://role:secret@host:5432/db`. A
-  // staging boot failure that logs its DATABASE_URL put a live database
-  // password in cleartext into the ring buffer the /status dashboard
-  // serves. Mask only the password: the scheme, role, host, port and
-  // database name are exactly what makes such a line diagnosable, and a
-  // flat '****' over the whole URL would throw them away. Must stay ahead
-  // of the generic `password` rule below.
-  [/(\w+:\/\/[^:@\s/]+):[^@\s/]+@/g, '$1:****@'],
-  [/password["']?\s*[:=]\s*["']?\S+/gi],
-];
+const { redactString } = require('./log-redaction');
 
-// Ring buffer of recent events, consumed by the /status dashboard.
+// Ring buffer of recent events, consumed by the /status dashboard. This is
+// logger STATE, not a redaction rule — it stays here with the code that
+// pushes to it and with tail().
 const RING_SIZE = 200;
 const ring = [];
-
-function redactString(str) {
-  if (typeof str !== 'string' || !str) return str;
-  for (const [pattern, replacement] of SENSITIVE_PATTERNS) {
-    str = str.replace(pattern, replacement === undefined ? '****' : replacement);
-  }
-  return str;
-}
 
 // Recursively redact any string values inside an object/array so the
 // ring buffer (served over the /status dashboard) never holds raw
@@ -105,6 +74,9 @@ module.exports = {
   error: (cat, msg, data) => log('ERROR', cat, msg, data),
   setLevel,
   redact,
+  // #2504: deploy-failure records go to the DATABASE, not through a log
+  // line, so they need the same scrubbing applied directly.
+  redactString,
   // redactString scrubs a single string against SENSITIVE_PATTERNS;
   // redactDeep walks an object/array doing the same to every string value.
   // Exported so the merge-debug capture (services/merge-debug.js) can apply
