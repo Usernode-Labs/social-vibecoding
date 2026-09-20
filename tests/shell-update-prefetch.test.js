@@ -43,13 +43,22 @@
 //     by the gesture most likely to be used. The pull now waits for the same
 //     prefetch to settle, and — like the button — reloads anyway when it
 //     fails, so a pull can never become a dead gesture.
+//  6. A TAB LEFT OPEN ACROSS THE DEPLOY SWITCHES ITSELF (#2545). The cold
+//     stale boot already did (#1669); a tab that fell behind later only got
+//     the button, so the platform "updated" whenever its owner next found it.
+//     It now reloads at the first QUIET MOMENT — hidden, or untouched for
+//     SHELL_AUTO_RELOAD_QUIET_MS with no sheet or modal up — on the same
+//     terms as the cold boot: a complete prefetch, no draft, the session
+//     latch. Never from `failed`, never with a child app's frame on screen,
+//     never under the `?shot=` painting. The button stays for every case the
+//     automatic switch declines.
 //
-// Points 1-4 are executed, not grepped: both methods touch only `App`,
-// `document`, `navigator` and `MessageChannel`, so they run in a vm against
-// stubs. The worker half is source-pinned (it lives in sw.js's browser-only
-// branch, which Node never evaluates) and proven end-to-end by hand against a
-// real service worker: cached BUILD-1, deployed BUILD-2, posted the message,
-// cache held BUILD-2.
+// Points 1-4 and 6 are executed, not grepped: the methods touch only `App`,
+// `document`, `navigator`, `Date` and `MessageChannel`, so they run in a vm
+// against stubs. The worker half is source-pinned (it lives in sw.js's
+// browser-only branch, which Node never evaluates) and proven end-to-end by
+// hand against a real service worker: cached BUILD-1, deployed BUILD-2,
+// posted the message, cache held BUILD-2.
 //
 // Run with: node --test tests/shell-update-prefetch.test.js
 
@@ -80,8 +89,10 @@ function sliceMethod(src, signature, indent = '  ') {
 }
 
 const METHODS = `({
+${sliceMethod(appJs, '_isShellQuiet() {')},
+${sliceMethod(appJs, '_switchToPrefetchedShellIfQuiet() {')},
 ${sliceMethod(appJs, '_hasUnsavedShellInput() {')},
-${sliceMethod(appJs, '_reloadPrefetchedShellIfSafe(sha, { force = false } = {}) {')},
+${sliceMethod(appJs, '_reloadPrefetchedShellIfSafe(sha, { force = false, quiet = false } = {}) {')},
 ${sliceMethod(appJs, '_ensureShellPrefetch(sha) {')},
 ${sliceMethod(appJs, 'async loadVersion() {')},
 ${sliceMethod(appJs, 'async platformMovedOn() {')},
@@ -90,8 +101,14 @@ ${sliceMethod(appJs, '_announceRefreshIntent() {')},
 ${sliceMethod(appJs, 'renderPlatformVersionPill(info) {')}
 })`;
 
-// A minimal world: the pill's slot, a controller that hands us its port, and
-// a setTimeout we fire by hand so the 30s bail-out is testable in no time.
+// A minimal world: the pill's slot, a controller that hands us its port, a
+// setTimeout we fire by hand so the 30s bail-out is testable in no time, and
+// a clock we advance by hand so the quiet window is too.
+//
+// The tab starts BUSY — its owner touched it this instant — because that is
+// the state every offer-shaped assertion below was written against, and it
+// keeps "the button is there" and "the tab switched itself" from being the
+// same test. `pause()` is how a test makes the moment quiet.
 function harness({
   controller = true, postThrows = false, serverSha = null, controls = [],
 } = {}) {
@@ -101,10 +118,25 @@ function harness({
   const reloads = [];
   const session = new Map();
   let port = null;
+  const clock = { now: 1_700_000_000_000 };
+  class FakeDate extends Date {
+    static now() { return clock.now; }
+  }
+  const doc = {
+    hidden: false,
+    surfaces: [],
+    getElementById: (id) => (id === 'platform-version-pill-slot' ? slot : null),
+    querySelectorAll: () => controls,
+    querySelector: (selector) => {
+      assert.equal(selector, '.un-backdrop, [id$="-overlay"][data-open]',
+        'the quiet check asks for a presented surface by the two marks one leaves');
+      return doc.surfaces[0] || null;
+    },
+  };
 
   const ctx = {
     console,
-    Date,
+    Date: FakeDate,
     Promise,
     // /api/version, as pull-to-refresh sees it. `serverSha` null means the
     // endpoint is not part of the test and must not be called.
@@ -119,10 +151,7 @@ function harness({
       setItem: (key, value) => { session.set(key, String(value)); },
     },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
-    document: {
-      getElementById: (id) => (id === 'platform-version-pill-slot' ? slot : null),
-      querySelectorAll: () => controls,
-    },
+    document: doc,
     navigator: {
       serviceWorker: controller ? {
         controller: {
@@ -156,8 +185,15 @@ function harness({
     _shellReloadStarted: null,
     _shellPrefetchSettled: null,
     _lastVersionInfo: null,
+    _platformUpdateShot: false,
+    _dirtyShellControls: null,
+    currentApp: null,
+    currentTab: 'app',
     SHELL_PREFETCH_TIMEOUT_MS: 30_000,
     SHELL_AUTO_RELOAD_KEY: 'usernode-shell-auto-reload',
+    SHELL_AUTO_RELOAD_QUIET_MS: 10_000,
+    SHELL_SURFACE_UP_SELECTOR: '.un-backdrop, [id$="-overlay"][data-open]',
+    _lastShellInteractionAt: clock.now,
     ImproveStatus: { refreshDeployDot() { App.dotRefreshes = (App.dotRefreshes || 0) + 1; } },
   }, vm.runInContext(METHODS, ctx));
   ctx.App = App;
@@ -173,6 +209,16 @@ function harness({
     reply: (data) => port.postMessage(data),
     /** Fire the longest pending timer — the bail-out. */
     fireTimeouts: () => { const t = timers.splice(0); t.forEach(({ fn }) => fn()); },
+    /** Time passes with nobody touching the tab. */
+    pause: (ms) => { clock.now += ms; },
+    /** The owner touches the tab — what the foot-of-file listeners record. */
+    touch: () => { App._lastShellInteractionAt = clock.now; },
+    /** The tab goes to the background (or comes back). */
+    hide: (hidden = true) => { doc.hidden = hidden; },
+    /** A sheet, panel or modal is presented over the screen (or dismissed). */
+    surface: (up = true) => { doc.surfaces = up ? [{ className: 'un-backdrop' }] : []; },
+    /** The version poll fires: what loadVersion does on its 10s timer. */
+    poll: () => App.renderPlatformVersionPill(App._lastVersionInfo),
   };
 }
 
@@ -294,6 +340,8 @@ test('every branch of the version row names the update state it represents', () 
 // ─── 3. Ready: the reload is real now ───────────────────────────────────
 
 test('the worker reporting success turns the row into the reload button', () => {
+  // The tab is busy (its owner touched it this instant), so the automatic
+  // switch of section 3b stands aside and the offer is what shows.
   const h = harness();
   h.App.loadedPlatformSha = BOOTED;
   h.App._lastVersionInfo = STALE;
@@ -301,6 +349,7 @@ test('the worker reporting success turns the row into the reload button', () => 
   h.reply({ ok: true, sha: STALE.sha });
 
   assert.equal(h.App.shellUpdate.state, 'ready');
+  assert.equal(h.reloads.length, 0, 'not under somebody\'s hands');
   // Repainted from the reply itself — nothing waits for the next poll.
   assert.match(h.slot.innerHTML, /<button/);
   assert.match(h.slot.innerHTML, /onclick="location\.reload\(\)"/);
@@ -341,18 +390,15 @@ test('automatic switching never discards a draft', async () => {
   assert.equal(h.App.shellUpdate.state, 'ready');
   assert.match(h.slot.innerHTML, /<button/,
     'the explicit reload offer remains available after the draft is safe');
-});
 
-test('a tab that becomes stale later offers the update without reloading itself', async () => {
-  const h = harness({ serverSha: STALE.sha });
-  h.App.loadedPlatformSha = BOOTED;
-  h.App._lastVersionInfo = { sha: BOOTED };
-
-  await h.App.loadVersion();
-  h.reply({ ok: true, sha: STALE.sha });
-  assert.equal(h.reloads.length, 0,
-    'automatic recovery is only for a document that was already stale at boot');
-  assert.match(h.slot.innerHTML, /<button/);
+  // Nor does the quiet switch, however long the pause: a draft is a draft.
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.poll();
+  assert.equal(h.reloads.length, 0, 'thinking about a reply is not a quiet moment');
+  // Sent — the field is empty — and the next poll takes the update up.
+  draft.value = '';
+  h.poll();
+  assert.equal(h.reloads.length, 1, 'the draft deferred the switch; it did not cancel it');
 });
 
 test('the cross-reload latch turns a repeated stale boot into a visible offer, not a loop', async () => {
@@ -364,6 +410,179 @@ test('the cross-reload latch turns a repeated stale boot into a visible offer, n
   h.reply({ ok: true, sha: STALE.sha });
   assert.equal(h.reloads.length, 0);
   assert.match(h.slot.innerHTML, /<button/);
+
+  // The quiet switch reads the same latch: a document this tab already
+  // reloaded itself onto, and is somehow still behind, is offered — not
+  // reloaded again ten seconds later, and again ten seconds after that.
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.poll();
+  h.hide();
+  h.App._switchToPrefetchedShellIfQuiet();
+  assert.equal(h.reloads.length, 0, 'latched is latched, on both automatic paths');
+  assert.match(h.slot.innerHTML, /<button/);
+});
+
+// ─── 3b. A tab open across the deploy switches at a quiet moment (#2545) ─
+
+// Every test here is a tab that booted current (loadVersion has answered
+// BOOTED once) and finds the platform on STALE later — the shape of the tab
+// belonging to whoever just watched the merge land.
+function tabOpenAcrossDeploy(opts) {
+  const h = harness(opts);
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = STALE;
+  h.App.renderPlatformVersionPill(STALE);
+  return h;
+}
+
+test('a tab that becomes stale later switches itself once it has been quiet', () => {
+  const h = tabOpenAcrossDeploy();
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 0, 'the build landed under a busy tab: the button, for now');
+  assert.match(h.slot.innerHTML, /<button/);
+
+  // Still busy at the next poll…
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS - 1);
+  h.poll();
+  assert.equal(h.reloads.length, 0);
+
+  // …and quiet at the one after. This is the whole of #2545: nobody found
+  // a button in Settings; the tab is on the new build by itself.
+  h.pause(1);
+  h.poll();
+  assert.equal(h.reloads.length, 1, 'switched at the first quiet poll');
+  assert.equal(h.session.get(h.App.SHELL_AUTO_RELOAD_KEY), STALE.sha,
+    'through the same latch as the cold boot, so a served-again old document is offered, not looped');
+
+  // Once is once: the poll keeps firing until the reload tears the page down.
+  h.poll();
+  h.poll();
+  assert.equal(h.reloads.length, 1);
+});
+
+test('a touch inside the quiet window starts it over', () => {
+  const h = tabOpenAcrossDeploy();
+  h.reply({ ok: true, sha: STALE.sha });
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS - 1);
+  h.touch();
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS - 1);
+  h.poll();
+  assert.equal(h.reloads.length, 0, 'the last touch is what the window is measured from');
+  h.pause(1);
+  h.poll();
+  assert.equal(h.reloads.length, 1);
+});
+
+test('a quiet tab switches the moment the build lands, with no poll to wait for', () => {
+  const h = tabOpenAcrossDeploy();
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 1, 'the settle itself is the first try');
+});
+
+test('a hidden tab is a quiet tab, whatever its owner was doing a second ago', () => {
+  const h = tabOpenAcrossDeploy();
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 0);
+
+  // What the visibilitychange listener at the foot of app.js does.
+  h.hide();
+  h.App._switchToPrefetchedShellIfQuiet();
+  assert.equal(h.reloads.length, 1, 'nobody is looking, and the tab comes back current');
+});
+
+test('a sheet, panel or modal on screen holds the switch until it is dismissed', () => {
+  const h = tabOpenAcrossDeploy();
+  h.reply({ ok: true, sha: STALE.sha });
+  h.surface();
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.poll();
+  assert.equal(h.reloads.length, 0, 'reading a sheet is not a quiet moment, however still the hands');
+  assert.match(h.slot.innerHTML, /<button/, 'the offer stands meanwhile');
+
+  h.surface(false);
+  h.poll();
+  assert.equal(h.reloads.length, 1);
+});
+
+test('a child app on screen holds the switch, hidden or not, until the tab leaves it', () => {
+  const h = tabOpenAcrossDeploy();
+  h.App.currentApp = 'some-app';
+  h.App.currentTab = 'app';
+  h.reply({ ok: true, sha: STALE.sha });
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.poll();
+  h.hide();
+  h.App._switchToPrefetchedShellIfQuiet();
+  assert.equal(h.reloads.length, 0,
+    'the frame\'s state is the one thing the shell cannot see, so it is never discarded on a guess');
+
+  // Its Dev board is the shell's own screen; leaving the frame is enough.
+  h.App.currentTab = 'dev';
+  h.App._switchToPrefetchedShellIfQuiet();
+  assert.equal(h.reloads.length, 1);
+});
+
+test('a failed prefetch is never switched to automatically, however quiet', () => {
+  const h = tabOpenAcrossDeploy();
+  h.reply({ ok: false });
+  assert.equal(h.App.shellUpdate.state, 'failed');
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.poll();
+  h.hide();
+  h.App._switchToPrefetchedShellIfQuiet();
+  assert.equal(h.reloads.length, 0,
+    'that reload may serve the old document back — a loop with a latch on it, not an update');
+  assert.match(h.slot.innerHTML, /onclick="location\.reload\(\)"/, 'so it stays a button');
+});
+
+test('the screenshot painting of the ready state is never reloaded out from under the camera', () => {
+  const h = tabOpenAcrossDeploy();
+  h.reply({ ok: true, sha: STALE.sha });
+  h.App._platformUpdateShot = true;
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.hide();
+  h.App._switchToPrefetchedShellIfQuiet();
+  assert.equal(h.reloads.length, 0, '?shot=platform-update-ready is a picture, not a state');
+});
+
+test('a field somebody typed into is a draft even when its framework hides the difference', () => {
+  // A React-controlled input keeps defaultValue in step with value, so the
+  // value-versus-default comparison sees nothing. The `input` events it
+  // fired are recorded in _dirtyShellControls by the foot-of-file listener.
+  const composer = {
+    tagName: 'TEXTAREA', type: 'textarea', value: 'half a message', defaultValue: 'half a message',
+    disabled: false, isContentEditable: false,
+  };
+  const h = tabOpenAcrossDeploy({ controls: [composer] });
+  h.App._dirtyShellControls = new WeakSet([composer]);
+  h.reply({ ok: true, sha: STALE.sha });
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.poll();
+  assert.equal(h.reloads.length, 0, 'typed into and still holding something: a draft');
+
+  // Sent: the framework emptied it. Typed into once is not a draft forever.
+  composer.value = '';
+  composer.defaultValue = '';
+  h.poll();
+  assert.equal(h.reloads.length, 1);
+});
+
+test('the foot of app.js records what quiet is measured against', () => {
+  const foot = appJs.slice(appJs.indexOf('App._noteShellInteraction ='));
+  assert.ok(foot.length > 0, 'the interaction listener is installed at the foot of app.js');
+  // A person's inputs, capture-phase and passive — noting a gesture must
+  // never delay or cancel it.
+  assert.match(foot, /\['pointerdown', 'keydown', 'touchstart', 'wheel'\]/);
+  assert.match(foot, /App\._noteShellInteraction, \{ capture: true, passive: true \}/);
+  // Typing is remembered per control, for the draft check above.
+  assert.match(foot, /App\._dirtyShellControls = new WeakSet\(\)/);
+  assert.match(foot, /addEventListener\('input', \(event\) => \{\s*\n\s*if \(event\.target\) App\._dirtyShellControls\.add\(event\.target\);/);
+  // And going hidden is tried at once rather than at the next poll.
+  assert.match(foot, /addEventListener\('visibilitychange', \(\) => \{\s*\n\s*if \(document\.hidden\) App\._switchToPrefetchedShellIfQuiet\(\);/);
+  // Guarded like the listeners above it: several unit tests load app.js into
+  // bare vm sandboxes with no `document` at all.
+  assert.match(foot, /if \(typeof document !== 'undefined' && document\.addEventListener\) \{\s*\n\s*App\._dirtyShellControls = new WeakSet\(\)/);
 });
 
 // ─── 4. Every failure still ends at a way forward ───────────────────────

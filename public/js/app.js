@@ -1685,6 +1685,71 @@ const App = {
   _shellReloadStarted: null,
   SHELL_AUTO_RELOAD_KEY: 'usernode-shell-auto-reload',
 
+  // ── A tab that was open across the deploy switches too (#2545) ────────
+  //
+  // The cold-boot switch above covers a document that was already stale when
+  // it loaded. A tab simply left open — which is where the person who just
+  // watched their merge land is standing — used to get the reload button and
+  // nothing else, so the platform "updated" whenever they next found that
+  // button or reloaded for some other reason, typically minutes after the
+  // build was live. It now switches itself, on the cold boot's terms (the
+  // complete prefetch, no draft, the session latch) plus one more: a QUIET
+  // MOMENT. A reload under somebody's hands is exactly what #1015 removed the
+  // forced reload for, and this must not be that again.
+  //
+  // Quiet is: the tab is hidden — nobody is looking, and it comes back
+  // current — or nobody has touched it for SHELL_AUTO_RELOAD_QUIET_MS with no
+  // sheet, panel or modal up. Never while a child app's frame is on screen:
+  // its state is the one thing the shell cannot see, so that tab keeps the
+  // button until it navigates away. Tried when the prefetch settles, on every
+  // 10s version poll while the tab stays behind, and as the tab is hidden;
+  // that cadence is the retry, so nothing here owns a timer.
+  //
+  // A prefetch that FAILED is never switched to on its own. That reload may
+  // serve the old document straight back, and an automatic one would be a
+  // loop with a latch on it rather than an update. It stays a button.
+  //
+  // Ten seconds: longer than the gap between two taps of one intention, so a
+  // reload never lands between them, and no longer than the poll that
+  // retries it, so a tab left alone is on the new build within a poll or two
+  // of the deploy — which is what "auto update" has to mean to be noticed.
+  SHELL_AUTO_RELOAD_QUIET_MS: 10_000,
+  _lastShellInteractionAt: 0,
+
+  // Something is dimming the scene: a surface the kit presented (sheet, panel,
+  // modal, action sheet — every one of them puts a `.un-backdrop` under
+  // itself), or a sheet's own web overlay where the kit declined
+  // (#improve-overlay, #notifications-sheet-overlay, … — each `<id>-overlay`
+  // with `data-open` on, see their rules in app.css).
+  SHELL_SURFACE_UP_SELECTOR: '.un-backdrop, [id$="-overlay"][data-open]',
+
+  _isShellQuiet() {
+    try {
+      if (App.currentApp && App.currentTab === 'app') return false;
+      if (document.hidden) return true;
+      if (document.querySelector(App.SHELL_SURFACE_UP_SELECTOR)) return false;
+      return Date.now() - App._lastShellInteractionAt >= App.SHELL_AUTO_RELOAD_QUIET_MS;
+    } catch {
+      return false;
+    }
+  },
+
+  _switchToPrefetchedShellIfQuiet() {
+    const update = App.shellUpdate;
+    if (!update || update.state !== 'ready') return false;
+    // `?shot=platform-update-ready` paints this state for a photograph; a
+    // reload out from under the camera is the one thing it must not do.
+    if (App._platformUpdateShot) return false;
+    return App._reloadPrefetchedShellIfSafe(update.sha, { quiet: true });
+  },
+
+  // Controls the person has typed into since this document loaded. A React
+  // controlled field keeps `defaultValue` in step with `value`, so the
+  // dirty-versus-default comparison below cannot see a draft in one; the
+  // `input` events it fired can. Filled by the listener at the foot of this
+  // file; absent in the bare vm sandboxes the unit tests build.
+  _dirtyShellControls: null,
+
   _hasUnsavedShellInput() {
     let controls = [];
     try {
@@ -1715,15 +1780,26 @@ const App = {
         continue;
       }
       if (String(control.value || '') !== String(control.defaultValue || '')) return true;
+      // Typed into and still holding something. A field a send has emptied is
+      // not a draft any more, whatever was typed into it before.
+      if (App._dirtyShellControls && App._dirtyShellControls.has(control)
+          && String(control.value || '').trim()) return true;
     }
     return false;
   },
 
-  _reloadPrefetchedShellIfSafe(sha, { force = false } = {}) {
+  // `force` is pull-to-refresh: the person asked, so nothing below applies.
+  // Otherwise one of two automatic modes — the cold stale boot, armed by
+  // loadVersion's first answer and switched at once, or `quiet`, a tab that
+  // fell behind later and switches only at a quiet moment (#2545).
+  _reloadPrefetchedShellIfSafe(sha, { force = false, quiet = false } = {}) {
     if (!sha || App._shellReloadStarted) return false;
-    if (!force && App._shellAutoReloadSha !== sha) return false;
+    if (!force && !quiet && App._shellAutoReloadSha !== sha) return false;
+    if (!force && quiet && !App._isShellQuiet()) return false;
     if (!force && App._hasUnsavedShellInput()) {
-      App._shellAutoReloadSha = null;
+      // A draft cancels the cold-boot switch outright; nothing re-arms it. The
+      // quiet switch is simply tried again by the next poll, once it is sent.
+      if (!quiet) App._shellAutoReloadSha = null;
       return false;
     }
     if (!force) {
@@ -1782,7 +1858,11 @@ const App = {
       // Repaint from the last answer rather than re-polling: the pill is the
       // only thing this changes, and /api/version is already on a 10s timer.
       if (App._lastVersionInfo) App.renderPlatformVersionPill(App._lastVersionInfo);
-      if (state === 'ready') App._reloadPrefetchedShellIfSafe(sha);
+      // A cold stale boot switches now; a tab open across the deploy at the
+      // first quiet moment, which may well be this one.
+      if (state === 'ready' && !App._reloadPrefetchedShellIfSafe(sha)) {
+        App._switchToPrefetchedShellIfQuiet();
+      }
     };
 
     const controller = navigator.serviceWorker && navigator.serviceWorker.controller;
@@ -2102,6 +2182,9 @@ const App = {
       // behind — see _ensureShellPrefetch for why the reload was a lie
       // without it.
       App._ensureShellPrefetch(runningSha);
+      // And once it is down, switch at the first quiet moment (#2545). This
+      // poll is that check's retry; if it reloads, the paint below is moot.
+      if (App._switchToPrefetchedShellIfQuiet()) return;
       const update = App.shellUpdate;
       if (update && update.sha === runningSha && update.state === 'fetching') {
         // Downloading. NOT a button: a reload right now is the exact thing
@@ -2124,7 +2207,7 @@ const App = {
       const failed = !!(update && update.state === 'failed');
       const tip = failed
         ? `Platform updated from ${oldShort} to ${newShort}. Click to reload (the update could not be pre-downloaded, so this may take two tries).`
-        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload.`;
+        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload, or leave this tab alone for a moment and it switches by itself.`;
       paint(`
         <button type="button"
                 class="drawer-ver drawer-ver--stale"
@@ -5703,6 +5786,28 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 }
 if (typeof window !== 'undefined' && window.addEventListener) {
   window.addEventListener('focus', App._foregroundResync);
+}
+
+// #2545: what the quiet switch onto a new build reads (App._isShellQuiet,
+// App._hasUnsavedShellInput). Interaction is a pointer, a key, a touch or a
+// wheel — the things a person does, not the scrolls a streaming chat does to
+// itself. Capture-phase and passive: nothing here may delay or cancel the
+// gesture it is noting. The `input` listener is the draft detector's second
+// sense, for fields whose framework keeps `defaultValue` in step with what
+// was typed. And a tab going hidden is the quiet moment par excellence, so
+// it is tried at once rather than at the next poll.
+App._noteShellInteraction = () => { App._lastShellInteractionAt = Date.now(); };
+if (typeof document !== 'undefined' && document.addEventListener) {
+  App._dirtyShellControls = new WeakSet();
+  for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel']) {
+    document.addEventListener(type, App._noteShellInteraction, { capture: true, passive: true });
+  }
+  document.addEventListener('input', (event) => {
+    if (event.target) App._dirtyShellControls.add(event.target);
+  }, true);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) App._switchToPrefetchedShellIfQuiet();
+  });
 }
 
 // ── The FIRST screen, decided before anything hydrates ─────────────────
