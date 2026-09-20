@@ -186,7 +186,11 @@ test('platform node RPC egress is restricted to the configured namespace and Pod
 
 test('all explorer consumers honor the explicit internal HTTP transport', () => {
   for (const sourcePath of [
-    'server.js',
+    // #2505: the explorer passthrough moved out of server.js into its own
+    // module so it could be bounded and tested. The property this test pins
+    // moved with it — it is still exactly one transport decision, in exactly
+    // one place, just no longer inline in server.js.
+    'src/routes/explorer-proxy.js',
     'src/services/node-status.js',
     'src/services/chain-poller.js',
     'src/services/genesis-accounts.js',

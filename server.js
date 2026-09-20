@@ -12,6 +12,7 @@ const {
 } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { errorHandler } = require('./src/middleware/error-handler');
+const { explorerProxyRoutes } = require('./src/routes/explorer-proxy');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
@@ -177,72 +178,13 @@ app.use(mcpConnectGate(config));
 app.use(mcpPreAuthRoutes(config));
 
 // ── Explorer API passthrough ───────────────────────────────────────────────
-// Social owns transaction receipt observation. Its trusted top-frame bridge
-// observes both direct and relayed embedded-dapp submissions through
-// `GET /explorer-api/active_chain` + `POST /explorer-api/<chain>/transactions`
-// after native submission returns an authoritative txId. On per-dapp
-// subdomains the dapp template server (`proxyExplorer`) proxies that prefix to
-// the explorer; on the launcher origin the path used to fall through the JWT
-// gate and 302 to /login.html, so observation received
-// HTML instead of explorer JSON. Mounting the same public passthrough here —
-// before the JSON body parser so the raw body streams through, and before
-// authMiddleware so it isn't redirected — makes receipt observation work
-// without giving Flutter explorer authority. Matches
-// the documented PUBLIC_PREFIXES = ['/explorer-api/'] convention
-// (src/prompts/app-conventions.md).
-const EXPLORER_UPSTREAM =
-  process.env.EXPLORER_UPSTREAM || 'testnet-explorer.usernodelabs.org';
-const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
-const EXPLORER_USE_HTTP = process.env.EXPLORER_USE_HTTP === 'true'
-  || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01]))/.test(
-    EXPLORER_UPSTREAM.replace(/:\d+$/, '')
-  );
-
-app.use('/explorer-api', (req, res) => {
-  const transport = EXPLORER_USE_HTTP ? require('http') : require('https');
-  // req.url is the path *after* the /explorer-api mount point, e.g.
-  // "/active_chain" or "/<chain>/transactions" (query string preserved).
-  const subPath = req.url.replace(/^\/+/, '');
-  const upstreamPath = `${EXPLORER_UPSTREAM_BASE}/${subPath}`;
-  const [hostname, portStr] = EXPLORER_UPSTREAM.split(':');
-  const port = portStr ? Number(portStr) : EXPLORER_USE_HTTP ? 80 : 443;
-
-  const chunks = [];
-  req.on('data', (c) => chunks.push(c));
-  req.on('end', () => {
-    const bodyBuf = chunks.length ? Buffer.concat(chunks) : null;
-    const upReq = transport.request(
-      {
-        hostname,
-        port,
-        path: upstreamPath,
-        method: req.method,
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-          ...(bodyBuf ? { 'content-length': bodyBuf.length } : {}),
-        },
-      },
-      (upRes) => {
-        const rChunks = [];
-        upRes.on('data', (c) => rChunks.push(c));
-        upRes.on('end', () => {
-          res.writeHead(upRes.statusCode || 502, {
-            'content-type': upRes.headers['content-type'] || 'application/json',
-            'access-control-allow-origin': '*',
-          });
-          res.end(Buffer.concat(rChunks));
-        });
-      }
-    );
-    upReq.on('error', (err) => {
-      log.error('explorer-proxy', 'upstream error', { err: err.message });
-      res.status(502).type('text/plain').send(`Explorer proxy error: ${err.message}`);
-    });
-    if (bodyBuf) upReq.write(bodyBuf);
-    upReq.end();
-  });
-});
+// #2505: lifted into src/routes/explorer-proxy.js, which carries the full
+// rationale. Still mounted HERE — before the JSON body parser so the raw
+// body streams through, and before authMiddleware so it isn't redirected to
+// the login page. What changed is that it is now bounded: a capped request
+// body, a capped upstream response, an upstream timeout, an IP-keyed rate
+// limit, an allow-list of methods and a path-traversal refusal.
+app.use(explorerProxyRoutes(config));
 
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
