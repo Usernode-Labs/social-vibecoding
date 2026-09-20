@@ -100,25 +100,16 @@ export function appendTranscriptMessage(message: TranscriptMessage, key = 'main'
   flushSync(() => {
     transcriptStore.set((s: TranscriptState) => {
       const view = s.byKey[key] || EMPTY_VIEW;
+      // `lead` is carried through deliberately: this is a single-row append,
+      // not a re-publish, and rebuilding it here is not how the empty-state
+      // line is cleared. A placeholder published for an empty thread stops
+      // rendering because `TranscriptRows` derives it from the rows
+      // (`view.lead.placeholder && !rows.length`), the same way the quiet
+      // card does — see #2498 and tests/group-chat-thread-placeholder.test.js,
+      // which pins that the append leaves `lead` alone.
       return {
         ready: true,
-        byKey: {
-          ...s.byKey,
-          [key]: {
-            ...view,
-            messages: [...view.messages, message],
-            // #2498: a transcript with a message in it has no empty state.
-            // This spread carried `lead` through untouched, so the line
-            // `renderThread` published while the thread was empty — "No
-            // messages yet. Start the thread." — stayed on screen ABOVE the
-            // message you had just sent, until something re-published the
-            // whole view. Nothing does on this path, so it survived until
-            // the next mount, i.e. a reload. Rebuilt only when there is a
-            // placeholder to drop, so the common append still changes one
-            // field.
-            lead: view.lead.placeholder ? { ...view.lead, placeholder: null } : view.lead,
-          },
-        },
+        byKey: { ...s.byKey, [key]: { ...view, messages: [...view.messages, message] } },
       };
     });
   });
