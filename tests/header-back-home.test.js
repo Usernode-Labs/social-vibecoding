@@ -12,7 +12,9 @@
 //
 // ── The three modes, and why 'home' was redefined rather than added to ──
 //
-//   'none'   hidden. Home and the Browse list (#1569).
+//   'none'   hidden. Home alone. The Browse list was here too until #2639:
+//            you navigate INTO it from Home, so it takes the house like
+//            every other such screen.
 //   'home'   the house, to home. THE DEFAULT — `_showOnlyScreen` publishes it
 //            on other screen swaps, so secondary screens keep a way out.
 //   'arrow'  the chevron, one level UP to its own href.
@@ -93,15 +95,21 @@ test('setBackIcon maps the three modes and toggles both glyphs', () => {
 
 // ── 2. Home and Browse share one root-header rule ──────────────────────
 
-test('Home and Browse get their root back state from the shared screen reveal', () => {
+test('Home is the only root, and it gets that from the shared screen reveal', () => {
   // navigateHome is the obvious one. The other is the unrecognised-hash
   // branch of restoreFromHash, and it is not an edge case: an EMPTY hash is
   // an unrecognised one, so `/` takes it on every cold boot. Miss it and the
   // most-visited screen in the product is the one with the bug.
   const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
-    'one rule owns both roots, including cold boots and history navigation');
+  // #2639: Browse used to be grouped with Home here. It is not a root you
+  // arrive at, it is one you go to from Home's "Find more apps", and landing
+  // there with an empty bar left the chip menu's Home row as the only way
+  // back. One rule still owns the answer, and now only Home is exempt.
+  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
+    'one rule, including cold boots and history navigation');
+  assert.doesNotMatch(body, /browse-screen/,
+    'Browse takes the default like every other screen you navigate into');
   assert.doesNotMatch(APP_JS, /App\.setBackIcon\('none'\)/,
     'no per-entry override briefly shows the house before hiding it');
 
@@ -395,4 +403,50 @@ test('the bell renders BEFORE Improve, to its left', () => {
   // the title can overlap it.
   assert.ok(HEADER.indexOf('id="notifications-btn"') > HEADER.indexOf('<div ref={rightGroupRef}'),
     'the bell is inside the measured right group');
+});
+
+// ── #2639: the Browse list shows the house ─────────────────────────────
+//
+// TWO writers own the bar across this one transition, and the LATER one
+// wins. `navigateToBrowse` calls `_showOnlyScreen('browse-screen')` and then
+// `Browse.syncChrome()`, whose `_syncChrome` calls `setBackIcon`
+// unconditionally. A first attempt at this issue changed only app.js and was
+// a complete no-op for that reason: the house was published and overwritten
+// inside the same transition, and the header stayed empty exactly as
+// reported.
+//
+// So this asserts BOTH writers agree, not just the one that reads first.
+
+test('both writers of the bar agree that the Browse list gets the house', () => {
+  const browse = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
+  );
+
+  // Writer 1: the screen reveal.
+  const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
+  const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
+  assert.match(body, /revealId === 'home-screen' \? 'none' : 'home'/);
+
+  // Writer 2: Browse's own chrome sync, which runs after it.
+  assert.match(browse, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,
+    'the list level must not publish none over the reveal');
+  assert.doesNotMatch(browse, /: 'none';/,
+    'no remaining none in the chrome sync');
+
+  // And the order that makes the second one decisive is still the order.
+  const nav = APP_JS.slice(APP_JS.indexOf('navigateToBrowse'));
+  const reveal = nav.indexOf("_showOnlyScreen('browse-screen')");
+  const sync = nav.indexOf('syncChrome()');
+  assert.ok(reveal > -1 && sync > -1 && sync > reveal,
+    'syncChrome still runs after the reveal, so it is the value that survives');
+});
+
+test('the detail level keeps its own two answers', () => {
+  const browse = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
+  );
+  // Unchanged by #2639: up to the list normally, home when the detail was
+  // opened from a Home card and there is no list behind it.
+  assert.match(browse, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/);
+  assert.match(browse, /App\.setBackIcon\(backMode, upToList \? '#apps' : undefined\)/);
 });

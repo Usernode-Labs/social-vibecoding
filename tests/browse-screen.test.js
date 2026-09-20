@@ -944,10 +944,11 @@ test('showDetail / showList publish the level, which drives both containers', ()
 
   Browse.showList();
   assert.equal(state.level, 'list');
-  // #1569: the list shares Home's root header; only detail pages need the
-  // extra back slot. Home remains a destination in the shared menu.
-  assert.equal(chrome.backIcon, 'none');
-  assert.equal(chrome.backHref, undefined);
+  // #2639: the list gets the house. #1569 shared Home's bare root header
+  // here, which left the directory with no way out but the chip menu. The
+  // detail level is unchanged above: a drill-in still borrows the chevron.
+  assert.equal(chrome.backIcon, 'home');
+  assert.equal(chrome.backHref, undefined, 'the house needs no explicit target');
   assert.equal(chrome.title, 'All apps');
 });
 
