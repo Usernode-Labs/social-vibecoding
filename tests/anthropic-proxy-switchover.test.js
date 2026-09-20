@@ -563,9 +563,27 @@ test('mid-stream: a weekly crossing kills a keyless call, same as a daily one', 
   }
 });
 
-// The gate's whole purpose is refusing spend, so a bookkeeping read that
-// fails must not be what does the refusing.
-test('a weekly ledger read that throws fails OPEN', async () => {
+// #2513 REVERSES THIS, deliberately, and the old expectation is recorded
+// rather than deleted.
+//
+// This test used to be named "a weekly ledger read that throws fails OPEN",
+// and it asserted `200` with the reasoning: "the gate's whole purpose is
+// refusing spend, so a bookkeeping read that fails must not be what does the
+// refusing." That is a real argument, and it was the intended behaviour —
+// this was never an oversight.
+//
+// The security audit in #2513 weighed it the other way, and the deciding
+// point is what each failure mode costs. Failing open on a cap over REAL
+// MONEY means a Postgres blip removes the spending limit rather than the
+// traffic — for the full cache TTL, on every replica independently, while
+// the caller is free to spend as fast as they can issue calls. Failing
+// closed costs a 429 that a caller retries a second later.
+//
+// The refusal is also softened by the rest of the fix: a previous reading is
+// kept and reused rather than discarded, so this hard refusal only happens
+// when NOTHING is known about the payer yet, and the retry window is one
+// second rather than the full ten.
+test('a weekly ledger read that throws fails CLOSED (#2513)', async () => {
   const pool = makePool({ userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500 });
   const inner = pool.query.bind(pool);
   pool.query = async (sql, params) => {
@@ -577,8 +595,9 @@ test('a weekly ledger read that throws fails OPEN', async () => {
   const p = loadProxy(pool);
   try {
     const r = await p.call();
-    assert.equal(r.status, 200, 'a broken read is treated as zero spend, not as an exhausted cap');
-    assert.equal(p.state.forwards[0].apiKey, PLATFORM_KEY);
+    assert.equal(r.status, 429,
+      'an unreadable ledger must not be treated as zero spend on a money cap');
+    assert.equal(p.state.forwards.length, 0, 'and nothing is forwarded upstream');
   } finally {
     p.restore();
   }
