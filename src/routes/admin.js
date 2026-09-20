@@ -22,6 +22,7 @@ const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
+const modelCosts = require('../services/model-costs');
 const {
   accountRecovery,
   withTransaction,
@@ -770,15 +771,17 @@ function adminRoutes(config) {
   // ── LLM Spend Limits ───────────────────────────────────────
   //
   // Admin-tunable caps on LLM spend. Backed by the `platform_settings`
-  // table (default per-user daily + per-user weekly + global) plus the
-  // `users.daily_limit_cents` / `users.weekly_limit_cents` per-user
-  // overrides. Reads are cached for 10s in src/services/limits.js; PUTs
-  // invalidate that cache so the new value takes effect on the next
-  // request from any worker.
+  // table (default per-user weekly + global + system) plus the
+  // `users.weekly_limit_cents` per-user override. Reads are cached for 10s
+  // in src/services/limits.js; PUTs invalidate that cache so the new value
+  // takes effect on the next request from any worker.
   //
-  // #1788: the weekly cap layers on top of the daily one — a turn stops at
-  // whichever is exhausted first, and either set to 0 means that cap does
-  // not apply. limits.resolveCaps owns the full interaction.
+  // #2571: the per-user DAILY cap is switched off. `user_daily_limit_cents`
+  // and `users.daily_limit_cents` are still readable and still writable
+  // here — an operator's stored figures are not destroyed and the API shape
+  // does not break — but no gate consults them, the Limits page no longer
+  // offers the field, and the weekly cap is the account's only limit.
+  // limits.resolveCaps owns the interaction.
 
   // #838: the weekly cap comes in three identity tiers. `user_weekly_limit_cents`
   // is the unverified tier (the base); the social and zkPassport keys are
@@ -879,6 +882,56 @@ function adminRoutes(config) {
       res.json(await readLimitsPayload());
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Model costs (#2570) ────────────────────────────────────
+  //
+  // One row per model: the note the picker shows, the estimate it shows
+  // beside it, what changes on that model ACTUALLY cost over the last 30
+  // days, and an override an admin types when the two have drifted apart.
+  //
+  // The observed figure never rewrites the estimate by itself — see the
+  // header of services/model-costs.js for why a median over a handful of
+  // changes is not a number to put in front of everybody automatically.
+  //
+  // PERMISSIONS: the read is open to view-only admins, like /limits and
+  // /storage — the figures are the point of the screen. The write is
+  // requireAdminWrite, like every other mutation here.
+  router.get('/api/admin/model-costs', async (_req, res) => {
+    try {
+      res.json(await modelCosts.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read model costs failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/model-costs', requireAdminWrite, async (req, res) => {
+    const { modelId, cents } = req.body || {};
+    const id = modelCosts.normalizeModelId(modelId);
+    if (!id) return res.status(400).json({ error: 'modelId is required' });
+    // null clears the override and puts the derived estimate back, which is
+    // the only way back once one is set.
+    if (cents !== null) {
+      const n = Number(cents);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: 'cents must be a non-negative number, or null to clear the override' });
+      }
+    }
+    try {
+      await modelCosts.writeOverride(pool, {
+        modelId: id,
+        cents: cents === null ? null : Number(cents),
+        actorId: req.user.id,
+      });
+      log.info('admin', 'Model cost estimate updated', {
+        modelId: id, cents: cents === null ? null : Number(cents), by: req.user.username,
+      });
+      res.json(await modelCosts.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Update model cost failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

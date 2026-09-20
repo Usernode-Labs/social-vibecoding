@@ -164,6 +164,7 @@ async function migrate(config) {
   await backfillOrphanedSpecDrafts(pool);
   await backfillLinkedIssuesFromPrBodies(pool);
   await backfillProposalIssuerAssignments(pool);
+  await backfillUsernameChoiceForEmailHandles(pool);
   await migrateWaitlistCountryCodes(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
@@ -198,6 +199,34 @@ async function backfillProposalIssuerAssignments(pool) {
   );
   if (result.rowCount) {
     log.info('db', 'Backfilled proposal issuer assignments', { count: result.rowCount });
+  }
+  return result.rowCount || 0;
+}
+
+// #2563: accounts email sign-up gave their own address as a handle get the
+// same first-run "choose your username" step at their next sign-in.
+//
+// The match is `LOWER(username) = LOWER(email)` — an exact identity between
+// two columns of the same row, not a "does this look like an email address"
+// shape test. A member who registered the handle `ada.lovelace` through the
+// activation-code route is not touched by it, and neither is one whose
+// address happens to contain their handle.
+//
+// Safe to re-run on every boot, which is what makes it a backfill rather
+// than a one-shot: choosing a handle clears the flag AND makes the username
+// stop matching the email, so a completed account can never be re-flagged.
+async function backfillUsernameChoiceForEmailHandles(pool) {
+  const result = await pool.query(
+    `UPDATE users
+        SET needs_username_choice = TRUE
+      WHERE needs_username_choice = FALSE
+        AND email IS NOT NULL
+        AND LOWER(username) = LOWER(email)`
+  );
+  if (result.rowCount) {
+    log.info('db', 'Flagged email-as-username accounts for a username choice', {
+      count: result.rowCount,
+    });
   }
   return result.rowCount || 0;
 }
@@ -10199,9 +10228,11 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
 // .external_agent, so these fixtures exist to make the provenance surfaces
 // reviewable in a staging preview without a real GitHub fork round-trip:
 //
-//   1. claude-code — "Built with Claude Code" chip on the vote card, and the
-//      "on their own coding-agent subscription, from a branch in their GitHub
-//      fork" line in the proposal detail, alongside the "Imported PR" badge.
+//   1. claude-code — "built with Claude Code" in the card's meta line and on
+//      the change page's hero, beside "imported from GitHub". (#2588 retired
+//      the longer "on their own coding-agent subscription, from a branch in
+//      their GitHub fork" note that used to repeat it as a row of the steps
+//      sheet; the provenance itself is still on both surfaces.)
 //   2. codex — the same surfaces with the other agent, proving the label is
 //      driven by the column rather than hardcoded, and that two agent chips
 //      can sit side by side in one vote panel.

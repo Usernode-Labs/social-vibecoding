@@ -534,6 +534,14 @@ export interface DevWorkshopView {
     /** The merged history is paged; true means the week counts are floors. */
     partial: boolean;
     /**
+     * #2573: whether anything has EVER landed on this app, over its whole
+     * history rather than `shippedWeek`'s window — the server's Done-column
+     * total, so it is exact however little of that column is loaded. False
+     * plus `open: 0` is an app nobody has started on, which is the one
+     * state the status tab offers to start.
+     */
+    everShipped: boolean;
+    /**
      * The model's three windowed lines, drawn as cards under the tiles. A
      * field is '' when that window held nothing, and its card is then not
      * drawn at all — which is why these are strings rather than optional.

@@ -24,6 +24,7 @@ const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
+const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
 const { shapeProfile } = require('./profile');
@@ -42,6 +43,7 @@ const { isCliSurfaceEnabled } = require('./cli-auth');
 // advertises the Claude Code / Codex flows (#1049).
 const githubLink = require('../services/github-link');
 const emailSignup = require('../services/email-signup');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
 // The platform's own self-hosted app row. The home screen's Improve button is
 // about the PLATFORM, and the client has no other way to learn that row's slug
 // — GET /api/apps hides self-hosted rows from non-admins on purpose.
@@ -350,6 +352,15 @@ function authRoutes(config) {
           },
         });
       }
+      // #2568: a brand-new account gets its included OpenRouter key here,
+      // the moment the row exists. Best effort by construction —
+      // ensureIncludedKey never throws — so signing up cannot fail because
+      // OpenRouter's management API did; the next new-change screen retries.
+      if (verified.created) {
+        await managedOpenRouter.ensureIncludedKey({
+          pool, userId: verified.userId, config, reason: 'signup_email',
+        });
+      }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
       log.info('email-signup', 'Email code verified, password setup pending', {
         userId: verified.userId,
@@ -430,6 +441,11 @@ function authRoutes(config) {
       // (onboarding flow alignment). Without this, every invited user
       // would land in the waiting room, a regression on the invite flow.
       await waitlist.grantPlatformAccess(pool, userId);
+
+      // #2568: the included OpenRouter key, created with the account.
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId, config, reason: 'signup_activation_code',
+      });
 
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
@@ -526,10 +542,20 @@ function authRoutes(config) {
     // block above: this endpoint already pays for one users lookup, and
     // only this endpoint renders the value.
     let devFlowPreference = null;
+    // #2563: has this account still never picked the handle other members
+    // see? Read in the same users lookup as the block above — it is one
+    // more column on a row this endpoint already fetches.
+    //
+    // Defaults FALSE, and stays FALSE if the lookup below throws. That is
+    // the deliberate failure direction: a gate that cannot be read must let
+    // people in, not strand every signed-in member behind a blocking step
+    // the client cannot dismiss.
+    let needsUsernameChoice = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
                 u.display_name, u.bio, u.dev_flow_preference,
+                u.needs_username_choice,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -548,14 +574,14 @@ function authRoutes(config) {
         keyLast4 = rows[0].anthropic_key_last4 || null;
       }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
-      const inOpenRouterBeta = !config.openrouterBetaUserIds?.length
-        || config.openrouterBetaUserIds.includes(String(req.user.id));
+      // #2568: no allowlist any more — availability is the deployment
+      // switch plus whether this account actually holds a usable key.
       openrouterAvailable = config.codexOpenrouterEnabled === true
-        && inOpenRouterBeta
         && rows[0]?.openrouter_credential_valid === true;
       devFlowPreference = DEV_FLOWS.includes(rows[0]?.dev_flow_preference)
         ? rows[0].dev_flow_preference
         : null;
+      needsUsernameChoice = rows[0]?.needs_username_choice === true;
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -609,6 +635,16 @@ function authRoutes(config) {
         // waitlist — the waiting room polls this to know when to let
         // the user through.
         hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
+        // First-run username gate (#2563). TRUE means this account has
+        // never picked the handle other members see — email sign-up gave
+        // it a generated one and recorded that the person still has to
+        // choose. The web shell presents a blocking "Choose your username"
+        // step on arrival; the mobile app can follow the same flag later.
+        //
+        // A NEW field: `username` above is untouched and still carries
+        // whatever the account currently holds, so every existing client
+        // renders exactly what it rendered before.
+        needsUsernameChoice,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a
@@ -688,29 +724,29 @@ function authRoutes(config) {
     // (plus BYOK spillover) so a reviewer sees the real layout.
     if (IS_STAGING && req.query.demo === '1') {
       const reset = new Date();
-      reset.setUTCHours(24, 0, 0, 0);
+      reset.setUTCDate(reset.getUTCDate() + (((8 - reset.getUTCDay()) % 7) || 7));
+      reset.setUTCHours(0, 0, 0, 0);
       return res.json({
-        limitCents: 2000,
+        limitCents: 5000,
         spentCents: 1360,
-        remainingCents: 640,
+        remainingCents: 3640,
         byokCents: 450,
         hasByokKey: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
-        // #1788: the allowance has two windows now, and the row's copy
-        // follows whichever one is binding. The daily cap binds in this
-        // fixture — the weekly one still has room — so the reviewed row
-        // reads exactly as it did before, with the window now stated
-        // rather than assumed.
-        capWindow: 'daily',
-        windowLabel: 'Today',
-        resetLabel: 'midnight UTC',
-        dailyApplies: true,
-        dailyLimitCents: 2000,
-        dailySpentCents: 1360,
+        // #1788 stated which window the row's copy follows; #2571 leaves
+        // one: the account's single weekly allowance, reset Monday 00:00
+        // UTC. The daily figures below are the retained-but-unenforced
+        // setting and today's share of the same spend.
+        capWindow: 'weekly',
+        windowLabel: 'This week',
+        resetLabel: 'Monday 00:00 UTC',
+        dailyApplies: false,
+        dailyLimitCents: 2500,
+        dailySpentCents: 480,
         weeklyApplies: true,
-        weeklyLimitCents: 17500,
-        weeklySpentCents: 4820,
+        weeklyLimitCents: 5000,
+        weeklySpentCents: 1360,
         demo: true,
       });
     }
@@ -1090,6 +1126,18 @@ function authRoutes(config) {
     }
   });
 
+  // Wallet sign-in. The entire proof is "this caller controls the key THIS
+  // account linked", so the order below is load-bearing (issue #2502):
+  //   1. consume the challenge, which is bound to one address and expires;
+  //   2. resolve the account from that address, server-side;
+  //   3. take the verification key from the account's own stored
+  //      usernode_pubkey. A caller-supplied `publicKey` is never forwarded to
+  //      the verifier: it is only an assertion about which key signed, and one
+  //      that names any other key is refused here;
+  //   4. only then ask the node whether the signature is valid.
+  // Verifying an arbitrary caller-named key first and resolving the account
+  // afterwards is what let a genuine signature by ANY key mint a session for
+  // ANY linked address.
   router.post('/api/auth/wallet-verify', walletAuthLimiter, async (req, res) => {
     const { pubkey, publicKey, challenge, signature } = req.body || {};
     if (!pubkey || !challenge || !signature) {
@@ -1100,9 +1148,37 @@ function authRoutes(config) {
     if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
       return res.status(401).json({ error: 'Invalid or expired challenge' });
     }
+    // Single-use, and consumed before any outbound call so neither a slow
+    // verification nor a failed one leaves a replayable challenge behind.
     walletChallenges.delete(challenge);
 
-    const cryptoKey = (publicKey || pubkey).trim();
+    let user;
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin, admin_readonly, usernode_pubkey FROM users WHERE usernode_pubkey = $1',
+        [pubkey.trim()]
+      );
+      // usernode_pubkey carries no unique constraint (see the admin wallet
+      // handler), so an ambiguous match fails closed instead of silently
+      // signing somebody in as rows[0].
+      if (rows.length !== 1) {
+        if (rows.length > 1) {
+          log.warn('wallet-auth', 'Ambiguous wallet address, refusing login', { count: rows.length });
+        }
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+      user = rows[0];
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-verify lookup failed', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
+    const cryptoKey = verificationKeyFor(user.usernode_pubkey, publicKey);
+    if (!cryptoKey) {
+      log.warn('wallet-auth', 'Signing key is not the key this account linked', { userId: user.id });
+      return res.status(401).json({ error: 'Signature verification failed' });
+    }
+
     const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
     try {
       const verifyBody = {
@@ -1123,15 +1199,6 @@ function authRoutes(config) {
         return res.status(401).json({ error: 'Signature verification failed' });
       }
 
-      const { rows } = await pool.query(
-        'SELECT id, username, is_admin, admin_readonly FROM users WHERE usernode_pubkey = $1',
-        [pubkey.trim()]
-      );
-      if (rows.length === 0) {
-        return res.status(401).json({ error: 'No account linked to this pubkey' });
-      }
-
-      const user = rows[0];
       const { token, expiresAt } = await createSession(pool, user.id);
       createSessionCookie(res, token, expiresAt);
 
@@ -1170,7 +1237,34 @@ function authRoutes(config) {
     }
     walletChallenges.delete(challenge);
 
-    const cryptoKey = (publicKey || pubkey).trim();
+    // Resolve the account and its signing key BEFORE the verifier is asked
+    // anything, exactly as wallet-verify does above (issue #2502) — this
+    // endpoint writes a password, so a signature by a key the account never
+    // linked must never reach the verifier as if it were the account's.
+    let user;
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin, admin_readonly, usernode_pubkey FROM users WHERE usernode_pubkey = $1',
+        [pubkey.trim()]
+      );
+      if (rows.length !== 1) {
+        if (rows.length > 1) {
+          log.warn('wallet-auth', 'Ambiguous wallet address, refusing reset', { count: rows.length });
+        }
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+      user = rows[0];
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-reset-verify lookup failed', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
+    const cryptoKey = verificationKeyFor(user.usernode_pubkey, publicKey);
+    if (!cryptoKey) {
+      log.warn('wallet-auth', 'Reset signing key is not the key this account linked', { userId: user.id });
+      return res.status(401).json({ error: 'Signature verification failed' });
+    }
+
     const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
     try {
       const verifyResp = await httpJson('POST', verifyUrl, {
@@ -1184,15 +1278,6 @@ function authRoutes(config) {
         return res.status(401).json({ error: 'Signature verification failed' });
       }
 
-      const { rows } = await pool.query(
-        'SELECT id, username, is_admin, admin_readonly FROM users WHERE usernode_pubkey = $1',
-        [pubkey.trim()]
-      );
-      if (rows.length === 0) {
-        return res.status(401).json({ error: 'No account linked to this pubkey' });
-      }
-
-      const user = rows[0];
       const hash = await bcrypt.hash(newPassword, 12);
       const recovery = await withTransaction(pool, (client) => accountRecovery(client, {
         userId: user.id,
@@ -1398,7 +1483,15 @@ function authRoutes(config) {
     }
     walletChallenges.delete(challenge);
 
-    const cryptoKey = (publicKey || linkedPubkey).trim();
+    // Same binding rule as wallet-verify (issue #2502): the key the verifier
+    // checks against comes from this account's stored usernode_pubkey, and a
+    // caller-supplied `publicKey` that is not that key is refused outright
+    // rather than forwarded.
+    const cryptoKey = verificationKeyFor(linkedPubkey, publicKey);
+    if (!cryptoKey) {
+      log.warn('wallet-auth', 'Change-password signing key is not the key this account linked', { userId: req.user.id });
+      return res.status(401).json({ error: 'Signature verification failed' });
+    }
     const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
     try {
       const verifyResp = await httpJson('POST', verifyUrl, {
@@ -1449,6 +1542,11 @@ function authRoutes(config) {
       // Genesis-ledger registration is invite-equivalent (the genesis
       // allowlist IS the invite) — grant platform access directly.
       await waitlist.grantPlatformAccess(pool, userId);
+
+      // #2568: the included OpenRouter key, created with the account.
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId, config, reason: 'signup_wallet',
+      });
 
       const { token, expiresAt } = await createSession(pool, userId);
       createSessionCookie(res, token, expiresAt);

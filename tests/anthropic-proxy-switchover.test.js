@@ -45,12 +45,13 @@ function stubModule(id, exports) {
 
 // Mock pool answering every SQL shape the proxy + real limits issue.
 function makePool({
+  // The retained-but-unenforced per-user daily figure (#2571).
   userLimit = 2500,
   userSpent = 0,
-  // #1788: the weekly layer. Defaulted OFF (0 = "this cap does not
-  // apply", per limits.resolveCaps), so every pre-existing case below
-  // still describes a daily-only account and behaves exactly as it did.
-  weeklyLimit = 0,
+  // #2571: the account's one allowance, and therefore what every case
+  // below is written against. $25 a week by default — the figure the
+  // pre-existing cases assume, now read over the week rather than the day.
+  weeklyLimit = 2500,
   weeklySpent = 0,
   weeklyOverride = null,
   globalLimit = 20000,
@@ -94,7 +95,7 @@ function makePool({
       // Week-to-date for one user. Matched BEFORE the global sum below,
       // which is the same aggregate without the user predicate.
       if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
-        return { rows: [{ total: weeklySpent }] };
+        return { rows: [{ total: weeklySpent, byok: 0 }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
         return { rows: [{ total: globalSpent }] };
@@ -226,7 +227,7 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
 test.beforeEach(() => limits.invalidate());
 
 test('allowance headroom → forwards on the platform key, no key lookup', async () => {
-  const pool = makePool({ userSpent: 100, keyEnc: GOOD_KEY_ENC });
+  const pool = makePool({ weeklySpent: 100, keyEnc: GOOD_KEY_ENC });
   const p = loadProxy(pool);
   try {
     const r = await p.call();
@@ -242,7 +243,7 @@ test('allowance headroom → forwards on the platform key, no key lookup', async
 });
 
 test('user cap exhausted + key on file → forwards on the USER key, notice once, spillover tallied', async () => {
-  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
+  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
   const p = loadProxy(pool);
   try {
     const r1 = await p.call();
@@ -284,7 +285,7 @@ test('user cap exhausted + key on file → forwards on the USER key, notice once
 // resets on every dispatch, so before the day claim the notice re-fired
 // on every chat for the rest of the day.
 test('LATER turn, same UTC day → still switches keys, but does NOT re-notify', async () => {
-  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
+  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
   const p = loadProxy(pool);
   try {
     await p.call();
@@ -308,7 +309,7 @@ test('LATER turn, same UTC day → still switches keys, but does NOT re-notify',
 });
 
 test('next UTC day → the user is told again (the marker expires with the credits)', async () => {
-  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
+  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC });
   const p = loadProxy(pool);
   try {
     await p.call();
@@ -327,7 +328,7 @@ test('next UTC day → the user is told again (the marker expires with the credi
 });
 
 test('a claim that already belongs to another caller suppresses the notice from the first call', async () => {
-  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC, noticeClaimedToday: true });
+  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC, noticeClaimedToday: true });
   const p = loadProxy(pool);
   try {
     const r = await p.call();
@@ -342,7 +343,7 @@ test('a claim that already belongs to another caller suppresses the notice from 
 });
 
 test('a failing claim suppresses the notice but never fails the call', async () => {
-  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC, claimThrows: true });
+  const pool = makePool({ weeklySpent: 2500, keyEnc: GOOD_KEY_ENC, claimThrows: true });
   const p = loadProxy(pool);
   try {
     const r = await p.call();
@@ -356,13 +357,13 @@ test('a failing claim suppresses the notice but never fails the call', async () 
 });
 
 test('user cap exhausted + NO key → the unchanged 429 budget_exceeded', async () => {
-  const pool = makePool({ userSpent: 2500 });
+  const pool = makePool({ weeklySpent: 2500 });
   const p = loadProxy(pool);
   try {
     const r = await p.call();
     assert.equal(r.status, 429);
     assert.equal(r.body.code, 'budget_exceeded');
-    assert.equal(r.body.message, 'Daily limit reached ($25.00). Resets at midnight UTC.');
+    assert.equal(r.body.message, 'Weekly limit reached ($25.00). Resets Monday 00:00 UTC.');
     assert.equal(p.state.forwards.length, 0);
     assert.equal(pool.notices.length, 0);
   } finally {
@@ -371,7 +372,7 @@ test('user cap exhausted + NO key → the unchanged 429 budget_exceeded', async 
 });
 
 test('GLOBAL cap exhausted + key on file → switches to the user key mid-turn', async () => {
-  const pool = makePool({ userSpent: 100, globalSpent: 20000, keyEnc: GOOD_KEY_ENC });
+  const pool = makePool({ weeklySpent: 100, globalSpent: 20000, keyEnc: GOOD_KEY_ENC });
   const p = loadProxy(pool);
   try {
     const r = await p.call();
@@ -384,7 +385,7 @@ test('GLOBAL cap exhausted + key on file → switches to the user key mid-turn',
 });
 
 test('GLOBAL cap exhausted + NO key → non-regressive: forwards on the platform key', async () => {
-  const pool = makePool({ userSpent: 100, globalSpent: 20000 });
+  const pool = makePool({ weeklySpent: 100, globalSpent: 20000 });
   const p = loadProxy(pool);
   try {
     const r = await p.call();
@@ -415,7 +416,7 @@ test('mid-stream kill suppressed for key-holders on the boundary call, active fo
   // Key-holder, allowance nearly gone: the platform-billed call goes out,
   // and its shouldKill must return null even when the running cost
   // crosses the cap (the NEXT call's gate does the switch).
-  const keyedPool = makePool({ userSpent: 2400, keyEnc: GOOD_KEY_ENC });
+  const keyedPool = makePool({ weeklySpent: 2400, keyEnc: GOOD_KEY_ENC });
   const keyed = loadProxy(keyedPool);
   try {
     await keyed.call();
@@ -430,7 +431,7 @@ test('mid-stream kill suppressed for key-holders on the boundary call, active fo
   limits.invalidate();
 
   // Keyless user at the same spend: the kill fires exactly as today.
-  const keylessPool = makePool({ userSpent: 2400 });
+  const keylessPool = makePool({ weeklySpent: 2400 });
   const keyless = loadProxy(keylessPool);
   try {
     await keyless.call();
@@ -442,17 +443,16 @@ test('mid-stream kill suppressed for key-holders on the boundary call, active fo
   }
 });
 
-// ── #1788: the weekly cap is a second ceiling on the same gate ──────────
+// ── #1788/#2571: the weekly cap is the gate ─────────────────────────────
 //
-// Every case above describes a daily-only account (makePool defaults
-// weeklyLimit to 0, which resolveCaps reads as "does not apply") and none
-// of them changed. These cover the new axis: it refuses, it spills onto a
+// #1788 added the weekly ceiling beside a daily one; #2571 switched the
+// daily one off, so every case above is already a weekly-only account.
+// These cover the axis at a different figure: it refuses, it spills onto a
 // BYOK key with its own copy, it kills mid-stream, and it stays entirely
-// out of the way of sync turns.
+// out of the way of sync turns — which still bill the daily system bucket.
 
 test('weekly cap exhausted + NO key → 429 naming the WEEK, not the day', async () => {
-  // Nothing spent today, so the daily cap has full headroom. Only the
-  // week-to-date sum refuses this call.
+  // Nothing spent today; only the week-to-date sum refuses this call.
   const pool = makePool({ userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500 });
   const p = loadProxy(pool);
   try {
@@ -482,7 +482,7 @@ test('a weekly cap with headroom left costs one read and then gets out of the wa
 });
 
 test('no weekly cap → the weekly ledger is never queried at all', async () => {
-  const pool = makePool({ userSpent: 100 });
+  const pool = makePool({ weeklyLimit: 0, weeklyOverride: 0 });
   const p = loadProxy(pool);
   try {
     await p.call();

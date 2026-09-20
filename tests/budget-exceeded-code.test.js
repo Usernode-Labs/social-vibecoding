@@ -77,8 +77,8 @@ test('checkBudget names the weekly refusal and the no-allowance one', () => {
     'and its sentence names the weekly boundary, from the shared label constant');
 
   assert.match(src, /reason: 'no_allowance'/,
-    'both caps switched off fails closed under its own reason');
-  assert.match(src, /An admin can set a daily or weekly cap in the admin console\./,
+    'the weekly cap switched off fails closed under its own reason');
+  assert.match(src, /An admin can set a weekly cap in the admin console\./,
     'whose copy points at the fix rather than at identity verification');
   assert.doesNotMatch(src, /no_allowance'[\s\S]{0,400}Connect GitHub or X/,
     'an admin decision is not an identity problem');

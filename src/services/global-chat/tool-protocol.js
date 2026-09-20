@@ -12,7 +12,8 @@ const {
   MAX_RESULT_REFS,
   MAX_SUGGESTION_LABEL_CHARS,
   MAX_SUGGESTION_PROMPT_CHARS,
-  SUGGESTIONS_PER_RESPONSE,
+  MAX_SUGGESTIONS_PER_RESPONSE,
+  MIN_SUGGESTIONS_PER_RESPONSE,
 } = require('./presentation');
 
 const BASE_TOOL_NAMES = Object.freeze({
@@ -67,10 +68,10 @@ const PRESENTATION_SCHEMA = Object.freeze({
     },
     suggestions: {
       type: 'array',
-      minItems: SUGGESTIONS_PER_RESPONSE,
-      maxItems: SUGGESTIONS_PER_RESPONSE,
+      minItems: MIN_SUGGESTIONS_PER_RESPONSE,
+      maxItems: MAX_SUGGESTIONS_PER_RESPONSE,
       items: SUGGESTION_SCHEMA,
-      description: 'Exactly five relevant, new button options. Never include More suggestions, Fewer suggestions, Back, Cancel, or Open in Classic.',
+      description: 'Five or six distinct, relevant, new button options. Never add filler or repeat the action just completed. Never include More suggestions, Fewer suggestions, Back, Cancel, or Open in Classic.',
     },
   },
   required: ['message', 'resultRefs', 'suggestions'],
@@ -86,10 +87,10 @@ const CLARIFICATION_SCHEMA = Object.freeze({
     },
     suggestions: {
       type: 'array',
-      minItems: SUGGESTIONS_PER_RESPONSE,
-      maxItems: SUGGESTIONS_PER_RESPONSE,
+      minItems: MIN_SUGGESTIONS_PER_RESPONSE,
+      maxItems: MAX_SUGGESTIONS_PER_RESPONSE,
       items: SUGGESTION_SCHEMA,
-      description: 'Exactly five compact answer or discovery options relevant to the question.',
+      description: 'Five or six compact, distinct answer or discovery options relevant to the question.',
     },
   },
   required: ['question', 'suggestions'],
@@ -151,7 +152,7 @@ const BASE_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: BASE_TOOL_NAMES.PRESENT,
-      description: 'Finish the turn after all required platform tools have completed. Call exactly once. Keep the message compact, leave resultRefs empty for this turn, and supply exactly five new button suggestions. Homeroom renders authoritative results and adds More suggestions and Open in Classic controls itself.',
+      description: 'Finish the turn after all required platform tools have completed. Call exactly once. Keep the message compact, leave resultRefs empty for this turn, and supply five or six useful new button suggestions without repeating the completed action. Homeroom renders authoritative results and adds More suggestions and Open in Classic controls itself.',
       strict: true,
       parameters: PRESENTATION_SCHEMA,
     },

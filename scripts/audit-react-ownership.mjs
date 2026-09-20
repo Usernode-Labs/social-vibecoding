@@ -316,6 +316,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/limits' },  // features/admin/admin-limits.tsx
   { sel: '#admin-section-content', when: '#admin/rollover' }, // features/admin/admin-rollover.tsx
   { sel: '#admin-section-content', when: '#admin/staging-reap' }, // features/admin/admin-staging-reap.tsx
+  { sel: '#admin-section-content', when: '#admin/model-costs' }, // features/admin/admin-model-costs.tsx
   // The programme console's screens convert one at a time (#1120 slice 24).
   // The host is #admin-topo-content, not the section host: admin-topochain.js
   // still owns the shell around it and recreates that node on every screen
@@ -359,6 +360,7 @@ const ROUTES = [
   // than dropping the route.
   '#app/recipebot/dev/issues/900001',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
+  '#admin/model-costs',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/challenge-scoring', '#admin/seasons', '#admin/season-events',
 ];

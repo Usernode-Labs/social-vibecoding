@@ -1,8 +1,9 @@
 'use strict';
 
 // Minimal OpenRouter Chat Completions transport for Global Chat. It accepts
-// only server-built messages and strict tools, streams SSE safely, and returns a
-// bounded OpenAI-compatible assistant message plus content-free usage facts.
+// only server-built messages and strict tools, asks OpenRouter for the
+// lowest-latency compatible provider, and returns a bounded OpenAI-compatible
+// assistant message plus content-free usage facts.
 
 const { platformHeaders } = require('../openrouter-client');
 const { modelId, reasoningEffort } = require('./profile');
@@ -15,17 +16,26 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 800;
 const MAX_OUTPUT_TOKENS = 4_096;
 const MAX_MESSAGES = 100;
 const MAX_TOOLS = 80;
-const MAX_STREAM_BYTES = 2 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_CONTENT_CHARS = 512 * 1024;
 const MAX_TOOL_ARGUMENT_CHARS = 256 * 1024;
 
 class GlobalChatProviderError extends Error {
-  constructor(code, message, { status = null, dispatched = false } = {}) {
+  constructor(code, message, {
+    status = null,
+    dispatched = false,
+    provider = null,
+    generationId = null,
+    timings = null,
+  } = {}) {
     super(message);
     this.name = 'GlobalChatProviderError';
     this.code = code;
     this.status = status;
     this.dispatched = dispatched;
+    this.provider = provider;
+    this.generationId = generationId;
+    this.timings = timings;
   }
 }
 
@@ -97,14 +107,23 @@ function buildRequest({
       MAX_OUTPUT_TOKENS,
       'maxOutputTokens',
     ),
-    stream: true,
-    // OpenRouter adds token and cost accounting to the stream when requested.
+    // Global Chat consumes tool calls only after the complete response. An
+    // atomic response lets OpenRouter fail over before exposing a partial tool
+    // envelope and avoids the interrupted SSE streams that previously caused
+    // a second 15-second application retry.
+    stream: false,
     usage: { include: true },
     // Tool schemas already provide the strict structured-output boundary.
     // Sending response_format at the same time is redundant and excludes or
     // destabilizes providers that reliably implement tools but not the two
     // output modes together.
-    provider: { require_parameters: true },
+    provider: {
+      require_parameters: true,
+      allow_fallbacks: true,
+      // These are short interactive planning calls, so time to first output is
+      // more important than sustained token throughput.
+      sort: 'latency',
+    },
   };
   if (parallelToolCalls != null) request.parallel_tool_calls = parallelToolCalls === true;
   if (temperature != null) {
@@ -179,49 +198,43 @@ function appendToolCall(map, raw) {
   map.set(index, existing);
 }
 
-async function* sseData(body) {
+function timingSnapshot(startedAt, state = {}) {
+  return {
+    headersMs: state.headersMs == null ? null : state.headersMs,
+    firstByteMs: state.firstByteMs == null ? null : state.firstByteMs,
+    durationMs: Math.max(0, Date.now() - startedAt),
+  };
+}
+
+async function readJsonBody(body, { startedAt, state }) {
   if (!body || typeof body[Symbol.asyncIterator] !== 'function') {
-    throw new GlobalChatProviderError('invalid_response', 'Provider returned no stream', {
+    throw new GlobalChatProviderError('invalid_response', 'Provider returned no response body', {
       dispatched: true,
+      timings: timingSnapshot(startedAt, state),
     });
   }
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let dataLines = [];
+  const chunks = [];
   let bytes = 0;
-
-  function* consumeLines(final = false) {
-    const lines = buffer.split('\n');
-    buffer = final ? '' : lines.pop();
-    for (let line of lines) {
-      if (line.endsWith('\r')) line = line.slice(0, -1);
-      if (line === '') {
-        if (dataLines.length) yield dataLines.join('\n');
-        dataLines = [];
-      } else if (line.startsWith('data:')) {
-        dataLines.push(line.slice(5).trimStart());
-      }
-    }
-  }
-
   for await (const chunk of body) {
-    const byteLength = chunk?.byteLength ?? Buffer.byteLength(String(chunk || ''));
-    bytes += byteLength;
-    if (bytes > MAX_STREAM_BYTES) {
-      throw new GlobalChatProviderError('response_too_large', 'Provider stream exceeded the limit', {
+    if (state.firstByteMs == null) state.firstByteMs = Math.max(0, Date.now() - startedAt);
+    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += value.byteLength;
+    if (bytes > MAX_RESPONSE_BYTES) {
+      throw new GlobalChatProviderError('response_too_large', 'Provider response exceeded the limit', {
         dispatched: true,
+        timings: timingSnapshot(startedAt, state),
       });
     }
-    buffer += decoder.decode(chunk, { stream: true });
-    yield* consumeLines(false);
+    chunks.push(value);
   }
-  buffer += decoder.decode();
-  yield* consumeLines(true);
-  if (buffer) {
-    let line = buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer;
-    if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new GlobalChatProviderError('invalid_response', 'Provider returned invalid JSON', {
+      dispatched: true,
+      timings: timingSnapshot(startedAt, state),
+    });
   }
-  if (dataLines.length) yield dataLines.join('\n');
 }
 
 function providerErrorCode(status) {
@@ -253,6 +266,8 @@ async function streamChat({
     throw new GlobalChatProviderError('invalid_request', 'Fetch implementation is unavailable');
   }
   const body = buildRequest(requestInput);
+  const startedAt = Date.now();
+  const timingState = { headersMs: null, firstByteMs: null };
   const timeoutController = new AbortController();
   const timer = setTimeout(() => timeoutController.abort(), boundedInteger(
     timeoutMs, DEFAULT_TIMEOUT_MS, 1_000, 300_000, 'timeoutMs',
@@ -272,13 +287,14 @@ async function streamChat({
       body: JSON.stringify(body),
       signal: combinedSignal,
     });
+    timingState.headersMs = Math.max(0, Date.now() - startedAt);
   } catch (err) {
     clearTimeout(timer);
     const timedOut = timeoutController.signal.aborted && !signal?.aborted;
     throw new GlobalChatProviderError(
       timedOut ? 'timeout' : (signal?.aborted ? 'cancelled' : 'network'),
       timedOut ? 'Global Chat model timed out' : (signal?.aborted ? 'Global Chat model cancelled' : 'Could not reach Global Chat model'),
-      { dispatched: true },
+      { dispatched: true, timings: timingSnapshot(startedAt, timingState) },
     );
   }
 
@@ -287,70 +303,64 @@ async function streamChat({
     throw new GlobalChatProviderError(
       providerErrorCode(response.status),
       `Global Chat model request failed (HTTP ${response.status})`,
-      { status: response.status, dispatched: true },
+      {
+        status: response.status,
+        dispatched: true,
+        timings: timingSnapshot(startedAt, timingState),
+      },
     );
   }
 
-  const toolCalls = new Map();
-  let content = '';
-  let finishReason = null;
   let servedModel = null;
   let provider = null;
-  let usage = usageFrom(null);
   let generationId = response.headers?.get?.('x-generation-id') || null;
 
   try {
-    for await (const data of sseData(response.body)) {
-      if (!data || data === '[DONE]') continue;
-      let event;
-      try {
-        event = JSON.parse(data);
-      } catch {
-        throw new GlobalChatProviderError('invalid_response', 'Provider returned invalid stream data', {
-          dispatched: true,
-        });
-      }
-      if (event.error) {
-        throw new GlobalChatProviderError('provider_error', 'Provider reported a generation error', {
-          dispatched: true,
-        });
-      }
-      generationId ||= typeof event.id === 'string' ? event.id : null;
-      servedModel = typeof event.model === 'string' ? event.model : servedModel;
-      provider = typeof event.provider === 'string' ? event.provider : provider;
-      if (event.usage) usage = usageFrom(event.usage);
-      const choice = Array.isArray(event.choices) ? event.choices[0] : null;
-      if (!choice) continue;
-      const delta = choice.delta || {};
-      const fragment = contentDelta(delta.content);
-      if (fragment) {
-        content += fragment;
-        if (content.length > MAX_CONTENT_CHARS) {
-          throw new GlobalChatProviderError('response_too_large', 'Provider response exceeded the limit', {
-            dispatched: true,
-          });
-        }
-        if (typeof onContent === 'function') await onContent(fragment);
-      }
-      for (const call of delta.tool_calls || []) appendToolCall(toolCalls, call);
-      if (choice.finish_reason) finishReason = choice.finish_reason;
+    const completion = await readJsonBody(response.body, { startedAt, state: timingState });
+    generationId ||= typeof completion?.id === 'string' ? completion.id : null;
+    servedModel = typeof completion?.model === 'string' ? completion.model : null;
+    provider = typeof completion?.provider === 'string' ? completion.provider : null;
+    if (completion?.error) {
+      throw new GlobalChatProviderError('provider_error', 'Provider reported a generation error', {
+        dispatched: true,
+        provider,
+        generationId,
+        timings: timingSnapshot(startedAt, timingState),
+      });
     }
-
-    const orderedToolCalls = [...toolCalls.entries()]
+    const choice = Array.isArray(completion?.choices) ? completion.choices[0] : null;
+    const message = choice?.message || {};
+    const content = contentDelta(message.content);
+    if (content.length > MAX_CONTENT_CHARS) {
+      throw new GlobalChatProviderError('response_too_large', 'Provider response exceeded the limit', {
+        dispatched: true,
+        provider,
+        generationId,
+        timings: timingSnapshot(startedAt, timingState),
+      });
+    }
+    if (content && typeof onContent === 'function') await onContent(content);
+    const toolCallParts = new Map();
+    for (const call of message.tool_calls || []) appendToolCall(toolCallParts, call);
+    const orderedToolCalls = [...toolCallParts.entries()]
       .sort(([left], [right]) => left - right)
       .map(([, call]) => call);
-    // A provider/proxy can close an otherwise valid HTTP stream without the
-    // terminal choice. Returning the partial tool arguments makes the next
-    // layer report a misleading schema error and skips its transient retry.
-    // Surface this as a stream failure instead. A length cutoff is equally
-    // incomplete for a tool-only protocol and is safe to retry once.
+    const finishReason = choice?.finish_reason || null;
+
+    // A missing terminal reason or a length cutoff is incomplete for the
+    // tool-only protocol and must never be accepted as a partial action.
     if (!finishReason || finishReason === 'length') {
       throw new GlobalChatProviderError(
         'stream_error',
         finishReason === 'length'
           ? 'Global Chat model response reached its output limit'
-          : 'Global Chat model stream ended before completion',
-        { dispatched: true },
+          : 'Global Chat model response ended before completion',
+        {
+          dispatched: true,
+          provider,
+          generationId,
+          timings: timingSnapshot(startedAt, timingState),
+        },
       );
     }
     return {
@@ -366,15 +376,26 @@ async function streamChat({
         content: content || null,
         ...(orderedToolCalls.length ? { tool_calls: orderedToolCalls } : {}),
       },
-      usage,
+      usage: usageFrom(completion.usage),
+      timings: timingSnapshot(startedAt, timingState),
     };
   } catch (err) {
-    if (err instanceof GlobalChatProviderError) throw err;
+    if (err instanceof GlobalChatProviderError) {
+      err.provider ||= provider;
+      err.generationId ||= generationId;
+      err.timings ||= timingSnapshot(startedAt, timingState);
+      throw err;
+    }
     const timedOut = timeoutController.signal.aborted && !signal?.aborted;
     throw new GlobalChatProviderError(
       timedOut ? 'timeout' : (signal?.aborted ? 'cancelled' : 'stream_error'),
-      timedOut ? 'Global Chat model timed out' : (signal?.aborted ? 'Global Chat model cancelled' : 'Global Chat model stream failed'),
-      { dispatched: true },
+      timedOut ? 'Global Chat model timed out' : (signal?.aborted ? 'Global Chat model cancelled' : 'Global Chat model response failed'),
+      {
+        dispatched: true,
+        provider,
+        generationId,
+        timings: timingSnapshot(startedAt, timingState),
+      },
     );
   } finally {
     clearTimeout(timer);
@@ -387,6 +408,5 @@ module.exports = {
   GlobalChatProviderError,
   buildRequest,
   usageFrom,
-  sseData,
   streamChat,
 };

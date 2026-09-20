@@ -221,3 +221,78 @@ test('paired resets are fenced by both exact revisions and immutable fixture pro
   assert.equal(orchestrator.sameProvenance({ ...provenance, headSha: 'c'.repeat(40) }, provenance), false);
   assert.equal(orchestrator.sameProvenance({ ...provenance, baseImageDigest: 'sha256:other' }, provenance), false);
 });
+
+// ── #2601/#2558: a run that never starts says why ────────────────────────
+//
+// Every proposal submitted through the connector sat at 'planned' from
+// submission to merge, because `recordIntent` writes that state and only a
+// scheduled run moves it on. When scheduling was refused the reason was a
+// return value the caller logged at warn and dropped, so the reviewer
+// surfaces had nothing to show and span indefinitely.
+test('a refused schedule records why on the proposal and returns its reason', async () => {
+  const notStarted = [];
+  const cleared = [];
+  const injected = {
+    state: {
+      recordNotStarted: async (_pool, sessionId, reason) => {
+        notStarted.push({ sessionId, reason });
+        return { recorded: true };
+      },
+      clearNotStarted: async (_pool, sessionId) => { cleared.push(sessionId); return { cleared: true }; },
+    },
+  };
+
+  // Execution switched off: refused before any session is even loaded, so
+  // this is the one refusal a pool lookup can never explain.
+  const disabledPool = {
+    query: async () => { throw new Error('must not load a session when execution is off'); },
+  };
+  const disabled = await orchestrator.scheduleForSession(
+    { visualEvidence: { execute: false } },
+    { pool: disabledPool, sessionId: 42 },
+    injected
+  );
+  assert.equal(disabled.scheduled, false);
+  assert.equal(disabled.reason, 'disabled');
+
+  // No claim recorded: there is nothing to run.
+  const noIntentPool = {
+    query: async () => ({ rows: [{ id: 42, app_id: 9, app_slug: 'demo', visual_evidence_detail: null }] }),
+  };
+  const missing = await orchestrator.scheduleForSession(
+    { visualEvidence: { execute: true } },
+    { pool: noIntentPool, sessionId: 42 },
+    injected
+  );
+  assert.equal(missing.scheduled, false);
+  assert.equal(missing.reason, 'missing_intent');
+
+  assert.deepEqual(notStarted.map((n) => n.sessionId), [42, 42]);
+  assert.deepEqual(
+    notStarted.map((n) => n.reason),
+    [orchestrator.NOT_STARTED_REASONS.disabled, orchestrator.NOT_STARTED_REASONS.missing_intent]
+  );
+  assert.deepEqual(cleared, [], 'nothing started, so nothing to clear');
+  for (const note of notStarted) {
+    assert.ok(note.reason.length > 20, 'the stored reason is a sentence a reviewer can read');
+    assert.ok(!note.reason.includes('_'), `no bare refusal code reaches a reviewer: ${note.reason}`);
+  }
+});
+
+test('the refusal reasons are a closed set, and the two non-failures are absent', () => {
+  assert.deepEqual(Object.keys(orchestrator.NOT_STARTED_REASONS).sort(),
+    ['disabled', 'missing_intent', 'no_revision', 'no_staging_preview']);
+  // `already_running` is a run that IS going and `not_required` is a
+  // settled verdict; neither is a run that failed to start, so neither may
+  // ever write a "not started" note over a state that says more.
+  assert.equal(orchestrator.NOT_STARTED_REASONS.already_running, undefined);
+  assert.equal(orchestrator.NOT_STARTED_REASONS.not_required, undefined);
+});
+
+test('an unknown refusal logs but writes nothing, so no proposal carries an empty reason', async () => {
+  let recorded = 0;
+  await orchestrator.noteNotStarted({}, 42, 'something_new', {
+    state: { recordNotStarted: async () => { recorded += 1; return { recorded: true }; } },
+  });
+  assert.equal(recorded, 0);
+});

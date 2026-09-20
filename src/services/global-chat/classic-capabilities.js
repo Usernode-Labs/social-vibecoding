@@ -446,6 +446,19 @@ function authProjection(group, data) {
   return Object.fromEntries(fields.filter((key) => Object.hasOwn(user, key)).map((key) => [key, user[key]]));
 }
 
+function clientSettingsProjection(group, data) {
+  if (!data || typeof data !== 'object') return {};
+  const fields = {
+    theme: ['theme'],
+    alerts: ['devAlerts'],
+    'dev-console': ['devConsoleMode'],
+    'admin-preview': ['adminPreview'],
+  }[group] || [];
+  return Object.fromEntries(
+    fields.filter((key) => Object.hasOwn(data, key)).map((key) => [key, data[key]]),
+  );
+}
+
 function flattenSettingValues(value, prefix = '', out = {}, depth = 0) {
   if (Object.keys(out).length >= 20 || depth > 3 || value == null) return out;
   if (Array.isArray(value)) {
@@ -526,7 +539,11 @@ function settingInspectorDefinition() {
         }, '', values);
       }
       if (['theme', 'alerts', 'dev-console', 'admin-preview'].includes(input.group)) {
-        flattenSettingValues(context.clientSettings || {}, '', values);
+        flattenSettingValues(
+          clientSettingsProjection(input.group, context.clientSettings || {}),
+          '',
+          values,
+        );
       }
       const sources = [];
       for (const routePath of SETTINGS_READ_PATHS[input.group] || []) {
@@ -549,7 +566,12 @@ function settingInspectorDefinition() {
       const data = {
         group: input.group,
         label: item?.label || input.group,
-        items: [{ name: item?.label || input.group, ...values }],
+        items: [{
+          id: input.group,
+          group: input.group,
+          name: item?.label || input.group,
+          ...values,
+        }],
         relatedCapabilityIds: relatedSettingCapabilityIds(input.group),
         sources,
       };
@@ -638,6 +660,183 @@ function currentProposalsDefinition() {
         authoritativeResult: { ok: response.ok, status: response.status, data },
         modelResult: { ok: response.ok, status: response.status, data: sanitizeForModel(data) },
         classicPath: '#apps',
+      };
+    },
+    tests: ['tests/global-chat-classic-capabilities.test.js'],
+  };
+}
+
+function recentAppActivityDefinition() {
+  const route = mappedRoute('GET', '/api/apps');
+  if (!route) throw new Error('Global Chat app-activity route is missing.');
+  return {
+    id: 'apps.activity',
+    domain: 'apps',
+    title: 'List recent app activity',
+    summary: 'Show a compact activity-first list of authorized apps with their open issues, proposals, and active development counts.',
+    keywords: ['recent app activity', 'active apps', 'app work', 'apps'],
+    inputSchema: {
+      type: 'object', additionalProperties: false, properties: {}, required: [],
+    },
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'app',
+    access: (context) => actorCanUse(route, context),
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#apps',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (_input, context) => {
+      const response = await context.classicApi.invoke(route.capabilityId, {
+        pathParameters: {},
+        query: [{ name: 'view', value: 'global-chat' }],
+      });
+      const source = response.authoritativeResult || {};
+      const apps = (Array.isArray(source.apps) ? source.apps : [])
+        .filter((item) => (
+          Number(item?.messagesLast7Days || 0) > 0
+          || Number(item?.activitySecondsLast7Days || 0) > 0
+          || Number(item?.activeUsers || 0) > 0
+          || Number(item?.activeDevelopment || 0) > 0
+          || Number(item?.openProposals || 0) > 0
+        ))
+        .slice(0, 20);
+      const data = { apps };
+      return {
+        authoritativeResult: { ok: response.ok, status: response.status, data },
+        modelResult: { ok: response.ok, status: response.status, data: sanitizeForModel(data) },
+        classicPath: '#apps',
+      };
+    },
+    tests: ['tests/global-chat-classic-capabilities.test.js'],
+  };
+}
+
+function unreadConversationsDefinition() {
+  const route = mappedRoute('GET', '/api/conversations');
+  if (!route) throw new Error('Global Chat unread-conversations route is missing.');
+  return {
+    id: 'messages.unread',
+    domain: 'messages',
+    title: 'List unread conversations',
+    summary: 'List only conversations that currently contain unread messages.',
+    keywords: ['unread messages', 'new messages', 'unread conversations'],
+    inputSchema: {
+      type: 'object', additionalProperties: false, properties: {}, required: [],
+    },
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'conversation',
+    access: (context) => actorCanUse(route, context),
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#messages',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (_input, context) => {
+      const response = await context.classicApi.invoke(route.capabilityId, {
+        pathParameters: {}, query: [],
+      });
+      const source = response.authoritativeResult || {};
+      const conversations = (Array.isArray(source.conversations) ? source.conversations : [])
+        .filter((item) => Number(item?.unreadCount || 0) > 0);
+      const data = {
+        conversations,
+        unreadCount: conversations.reduce(
+          (sum, item) => sum + Number(item?.unreadCount || 0),
+          0,
+        ),
+      };
+      return {
+        authoritativeResult: { ok: response.ok, status: response.status, data },
+        modelResult: { ok: response.ok, status: response.status, data: sanitizeForModel(data) },
+        classicPath: '#messages',
+      };
+    },
+    tests: ['tests/global-chat-classic-capabilities.test.js'],
+  };
+}
+
+function appDiscussionsDefinition() {
+  const route = mappedRoute('GET', '/api/apps/:slug/messages');
+  if (!route) throw new Error('Global Chat app-discussions route is missing.');
+  return {
+    id: 'messages.for_app',
+    domain: 'messages',
+    title: 'List an app’s discussions',
+    summary: 'List recent discussion messages for one exact authorized app.',
+    keywords: ['app discussions', 'app messages', 'app chat'],
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        appSlug: {
+          type: 'string', minLength: 1, maxLength: 128,
+          description: 'Exact app slug copied from the user or an authoritative app result.',
+        },
+      },
+      required: ['appSlug'],
+    },
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'conversation',
+    access: (context) => actorCanUse(route, context),
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: ({ input }) => `#app/${encodeURIComponent(input.appSlug)}/dev/chat`,
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (input, context) => {
+      const response = await context.classicApi.invoke(route.capabilityId, {
+        pathParameters: { slug: input.appSlug },
+        query: [{ name: 'limit', value: '20' }],
+      });
+      const data = response.authoritativeResult || {};
+      return {
+        authoritativeResult: { ok: response.ok, status: response.status, data },
+        modelResult: { ok: response.ok, status: response.status, data: sanitizeForModel(data) },
+        classicPath: `#app/${encodeURIComponent(input.appSlug)}/dev/chat`,
+      };
+    },
+    tests: ['tests/global-chat-classic-capabilities.test.js'],
+  };
+}
+
+function globalChatSpendingDefinition() {
+  return {
+    id: 'settings.spending',
+    domain: 'settings',
+    title: 'View Global Chat spending',
+    summary: 'Show Global Chat spend, monthly cap, remaining cap, total turns, reset date, and the overall OpenRouter allowance when available.',
+    keywords: ['global chat spending', 'usage', 'cost', 'budget', 'allowance'],
+    inputSchema: {
+      type: 'object', additionalProperties: false, properties: {}, required: [],
+    },
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'setting',
+    access: (context) => context?.actor?.signedIn === true,
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#settings/global-chat',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (_input, context) => {
+      const usage = context.globalChatUsage || {};
+      const item = {
+        id: 'global-chat',
+        group: 'global-chat',
+        name: 'Global Chat usage',
+        spentUsd: usage.spentUsd ?? '0',
+        capUsd: usage.capUsd ?? null,
+        remainingUsd: usage.remainingUsd ?? null,
+        overallRemainingUsd: context.budget?.overallRemaining ?? null,
+        turns: usage.turns ?? '0',
+        successfulTurns: usage.successfulTurns ?? '0',
+        resetAt: usage.resetAt ?? context.budget?.resetAt ?? null,
+      };
+      const data = { items: [item] };
+      return {
+        authoritativeResult: { ok: true, status: 200, data },
+        modelResult: { ok: true, status: 200, data: sanitizeForModel(data) },
+        classicPath: '#settings/global-chat',
       };
     },
     tests: ['tests/global-chat-classic-capabilities.test.js'],
@@ -767,6 +966,87 @@ function localSettingUpdateDefinition() {
   };
 }
 
+function historyInputSchema(noun) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    description: `Read the signed-in user's recent ${noun} across every authorized app.`,
+    properties: {
+      limit: {
+        type: 'integer', minimum: 1, maximum: 50,
+        description: 'Maximum number of newest results. Use 10 when the user did not request a count.',
+      },
+    },
+    required: ['limit'],
+  };
+}
+
+function closedIssuesHistoryDefinition() {
+  return {
+    id: 'issues.closed_by_me',
+    domain: 'issues',
+    title: 'List issues closed by my merged work',
+    summary: 'List the newest issues across all apps that were linked to development work merged by the signed-in user. No app slug is required.',
+    keywords: [
+      'closed issues', 'issues i closed', 'recent closed issues', 'last issues closed',
+      'completed issues', 'my issue history',
+    ],
+    searchRequires: ['close'],
+    inputSchema: historyInputSchema('issues closed by merged work'),
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'issue',
+    access: (context) => context?.actor?.signedIn === true
+      && typeof context.queryUserHistory === 'function',
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#apps',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (input, context) => {
+      const data = await context.queryUserHistory('closed_issues', input);
+      return {
+        authoritativeResult: { ok: true, status: 200, data },
+        modelResult: { ok: true, status: 200, data: sanitizeForModel(data) },
+        classicPath: '#apps',
+      };
+    },
+    tests: ['tests/global-chat-activity-history.test.js'],
+  };
+}
+
+function mergedWorkHistoryDefinition() {
+  return {
+    id: 'governance.merged_by_me',
+    domain: 'governance',
+    title: 'List my recently merged work',
+    summary: 'List the newest development proposals merged by the signed-in user across all apps. No app slug is required.',
+    keywords: [
+      'merged work', 'what i merged', 'recent merges', 'last merged proposals',
+      'completed work', 'my merge history', 'issues linked to my merges',
+    ],
+    searchRequires: ['merge'],
+    inputSchema: historyInputSchema('merged development work'),
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'proposal',
+    access: (context) => context?.actor?.signedIn === true
+      && typeof context.queryUserHistory === 'function',
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#apps',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (input, context) => {
+      const data = await context.queryUserHistory('merged_work', input);
+      return {
+        authoritativeResult: { ok: true, status: 200, data },
+        modelResult: { ok: true, status: 200, data: sanitizeForModel(data) },
+        classicPath: '#apps',
+      };
+    },
+    tests: ['tests/global-chat-activity-history.test.js'],
+  };
+}
+
 function routeDefinition(route) {
   if (route.method === 'POST' && route.path === DEVELOPMENT_START_PATH) {
     return developmentStartDefinition(route);
@@ -865,8 +1145,14 @@ function classicCapabilityDefinitions() {
     settingInspectorDefinition(),
     settingsCatalogDefinition(),
     currentProposalsDefinition(),
+    recentAppActivityDefinition(),
+    unreadConversationsDefinition(),
+    appDiscussionsDefinition(),
+    globalChatSpendingDefinition(),
     globalChatUpdateDefinition(),
     localSettingUpdateDefinition(),
+    closedIssuesHistoryDefinition(),
+    mergedWorkHistoryDefinition(),
   ];
 }
 

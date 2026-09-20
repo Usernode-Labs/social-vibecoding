@@ -5,12 +5,26 @@ import type {
   GlobalChatBootstrap,
   GlobalChatMessage,
   GlobalChatPresentation,
+  GlobalChatProgress,
+  GlobalChatProgressOperation,
   GlobalChatResult,
   GlobalChatThread,
   GlobalChatSuggestion,
 } from './types';
 
 type Phase = 'idle' | 'booting' | 'loading' | 'ready' | 'sending' | 'error';
+
+type RetryRequest =
+  | { kind: 'turn'; text: string }
+  | { kind: 'more'; text: string; topic?: string }
+  | {
+    kind: 'direct';
+    label: string;
+    suggestionId?: string;
+    actionId?: string;
+    parameters?: Record<string, string>;
+    targetLabel?: string;
+  };
 
 export interface GlobalChatState {
   open: boolean;
@@ -22,7 +36,9 @@ export interface GlobalChatState {
   hasMoreHistory: boolean;
   before: string | null;
   error: string;
+  retryRequest: RetryRequest | null;
   activity: string;
+  progress: GlobalChatProgress | null;
   overallAllowance: {
     configured: boolean;
     limitUsd?: number | null;
@@ -45,7 +61,9 @@ const INITIAL_STATE: GlobalChatState = {
   hasMoreHistory: false,
   before: null,
   error: '',
+  retryRequest: null,
   activity: '',
+  progress: null,
   overallAllowance: null,
   dismissedConfirmations: {},
   consumedConfirmations: {},
@@ -63,6 +81,92 @@ function publish(next: Partial<GlobalChatState> | ((current: GlobalChatState) =>
   const patch = typeof next === 'function' ? next(state) : next;
   state = { ...state, ...patch };
   for (const listener of [...listeners]) listener();
+}
+
+function eventString(value: unknown, fallback = '') {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function eventNumber(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function progressOperations(value: unknown): GlobalChatProgressOperation[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    const toolCallId = eventString(item.toolCallId);
+    const capabilityId = eventString(item.capabilityId);
+    const title = eventString(item.title);
+    if (!toolCallId || !capabilityId || !title) return [];
+    return [{
+      toolCallId,
+      capabilityId,
+      title,
+      risk: eventString(item.risk) || undefined,
+      status: 'planned' as const,
+    }];
+  });
+}
+
+function applyProgressEvent(event: Record<string, unknown>) {
+  publish((current) => {
+    const existing = current.progress || {
+      phase: 'understanding',
+      message: 'Understanding your request…',
+      model: null,
+      reasoningEffort: null,
+      elapsedMs: 0,
+      startedAt: Date.now(),
+      steps: [],
+      operations: [],
+    };
+    const phase = eventString(event.phase, existing.phase);
+    const message = eventString(event.message, existing.message);
+    const elapsedMs = eventNumber(event.elapsedMs, existing.elapsedMs);
+    const last = existing.steps.at(-1);
+    const steps = last?.phase === phase && last.message === message
+      ? existing.steps
+      : [...existing.steps, { phase, message, elapsedMs }].slice(-12);
+    const announced = progressOperations(event.operations);
+    return {
+      activity: message,
+      progress: {
+        ...existing,
+        phase,
+        message,
+        elapsedMs,
+        model: eventString(event.model) || existing.model,
+        reasoningEffort: eventString(event.reasoningEffort) || existing.reasoningEffort,
+        attempt: eventNumber(event.attempt, existing.attempt || 1),
+        steps,
+        operations: announced.length ? announced : existing.operations,
+      },
+    };
+  });
+}
+
+function applyToolProgress(event: Record<string, unknown>, status: GlobalChatProgressOperation['status']) {
+  const toolCallId = eventString(event.toolCallId);
+  const capabilityId = eventString(event.capabilityId);
+  if (!toolCallId || !capabilityId) return;
+  publish((current) => {
+    if (!current.progress) return {};
+    const existing = current.progress.operations.find((item) => item.toolCallId === toolCallId);
+    const operation: GlobalChatProgressOperation = {
+      toolCallId,
+      capabilityId,
+      title: eventString(event.title, existing?.title || capabilityId),
+      risk: existing?.risk,
+      status,
+      ...(eventNumber(event.durationMs) ? { durationMs: eventNumber(event.durationMs) } : {}),
+    };
+    const operations = current.progress.operations.some((item) => item.toolCallId === toolCallId)
+      ? current.progress.operations.map((item) => item.toolCallId === toolCallId ? operation : item)
+      : [...current.progress.operations, operation];
+    return { progress: { ...current.progress, operations } };
+  });
 }
 
 function subscribe(listener: () => void) {
@@ -110,6 +214,7 @@ async function recoverInterruptedTurn(
   threadId: string,
   afterMessageId: bigint,
   signal: AbortSignal,
+  retryRequest: RetryRequest,
 ) {
   const deadline = Date.now() + 55_000;
   let inactivePolls = 0;
@@ -118,12 +223,17 @@ async function recoverInterruptedTurn(
     const newer = page.messages.filter(
       (message) => numericMessageId(message.id) > afterMessageId,
     );
-    if (!newer.some((message) => message.role === 'assistant')) return false;
+    const assistant = [...newer].reverse().find((message) => message.role === 'assistant');
+    if (!assistant) return false;
+    const failed = assistant.payload?.kind === 'turn_error'
+      || assistant.payload?.kind === 'direct_action_error';
     publish((current) => current.bootstrap?.thread?.id === threadId
       ? {
-        phase: 'ready',
+        phase: failed ? 'error' : 'ready',
         activity: '',
-        error: '',
+        progress: null,
+        error: failed ? assistant.text : '',
+        retryRequest: failed ? retryRequest : null,
         messages: mergePersistedMessages(current.messages, newer),
         results: resultsById(page.results, current.results),
       }
@@ -234,6 +344,8 @@ async function loadThread(thread: GlobalChatThread, version: number) {
     hasMoreHistory: false,
     before: null,
     error: '',
+    retryRequest: null,
+    progress: null,
   });
   try {
     const page = await api.messages(thread.id, { limit: 40 });
@@ -247,6 +359,8 @@ async function loadThread(thread: GlobalChatThread, version: number) {
       hasMoreHistory: page.hasMore,
       before: page.before,
       error: '',
+      retryRequest: null,
+      progress: null,
     });
   } catch (error) {
     if (version !== navigationVersion
@@ -265,7 +379,12 @@ export async function openGlobalChat({ threadId = null }: {
   threadId?: string | null;
 } = {}) {
   const version = ++navigationVersion;
-  publish({ open: true, phase: state.bootstrap ? 'loading' : 'booting', error: '' });
+  publish({
+    open: true,
+    phase: state.bootstrap ? 'loading' : 'booting',
+    error: '',
+    retryRequest: null,
+  });
   const boot = await initializeGlobalChat();
   if (version !== navigationVersion) return;
   if (!boot?.profiles.globalChat.enabled) {
@@ -318,7 +437,14 @@ export function deactivateGlobalChat() {
   if (activeAbort) activeAbort.abort();
   activeAbort = null;
   if (activeThreadId) void api.cancelTurn(activeThreadId).catch(() => {});
-  publish({ open: false, phase: state.bootstrap ? 'ready' : 'idle', activity: '', error: '' });
+  publish({
+    open: false,
+    phase: state.bootstrap ? 'ready' : 'idle',
+    activity: '',
+    progress: null,
+    error: '',
+    retryRequest: null,
+  });
 }
 
 export function closeGlobalChat(classicPath?: string | null) {
@@ -421,10 +547,32 @@ async function runTurn({ text, more = false, topic }: {
     return;
   }
   const messageBoundary = lastPersistedMessageId(state.messages);
+  const retryRequest: RetryRequest = more
+    ? { kind: 'more', text, ...(topic ? { topic } : {}) }
+    : { kind: 'turn', text };
   appendOptimisticUser(more ? 'More suggestions' : text);
   const controller = new AbortController();
   activeAbort = controller;
-  publish({ phase: 'sending', activity: more ? 'Loading options…' : 'Thinking…', error: '' });
+  publish({
+    phase: 'sending',
+    activity: more ? 'Loading options…' : 'Thinking…',
+    progress: more ? null : {
+      phase: 'understanding',
+      message: 'Understanding your request…',
+      model: boot.profiles.globalChat.model,
+      reasoningEffort: boot.profiles.globalChat.reasoningEffort,
+      elapsedMs: 0,
+      startedAt: Date.now(),
+      steps: [{
+        phase: 'understanding',
+        message: 'Understanding your request…',
+        elapsedMs: 0,
+      }],
+      operations: [],
+    },
+    error: '',
+    retryRequest: null,
+  });
   let completed = false;
   try {
     await api.streamTurn({
@@ -435,10 +583,15 @@ async function runTurn({ text, more = false, topic }: {
       shownSuggestionIds: more ? shownSuggestionIds() : undefined,
       signal: controller.signal,
       onEvent(event) {
-        if (event.type === 'tool.started') {
+        if (event.type === 'turn.progress') {
+          applyProgressEvent(event);
+        } else if (event.type === 'tool.started') {
+          applyToolProgress(event, 'running');
           publish((current) => current.bootstrap?.thread?.id === thread.id
-            ? { activity: 'Working…' }
+            ? { activity: eventString(event.title, 'Working…') }
             : {});
+        } else if (event.type === 'tool.completed') {
+          applyToolProgress(event, event.status === 'failed' ? 'failed' : 'completed');
         } else if (event.type === 'confirmation.required') {
           publish((current) => current.bootstrap?.thread?.id === thread.id
             ? { activity: 'Preparing confirmation…' }
@@ -467,6 +620,7 @@ async function runTurn({ text, more = false, topic }: {
             ? {
               phase: 'ready',
               activity: '',
+              progress: null,
               messages: [
                 ...current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
                 assistant,
@@ -476,12 +630,18 @@ async function runTurn({ text, more = false, topic }: {
         } else if (event.type === 'turn.failed') {
           completed = true;
           const message = typeof event.message === 'string' ? event.message : 'That request could not be completed.';
+          const assistantMessage = event.assistantMessage as GlobalChatMessage | null | undefined;
           publish((current) => current.bootstrap?.thread?.id === thread.id
             ? {
               phase: 'error',
               activity: '',
+              progress: null,
               error: message,
-              messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+              retryRequest,
+              messages: [
+                ...current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
+                ...(assistantMessage ? [assistantMessage] : []),
+              ],
             }
             : {});
         }
@@ -489,15 +649,23 @@ async function runTurn({ text, more = false, topic }: {
     });
     if (!completed && !controller.signal.aborted) {
       publish((current) => current.bootstrap?.thread?.id === thread.id
-        ? { activity: 'Reconnecting…' }
+        ? { activity: 'Reconnecting…', progress: current.progress ? {
+          ...current.progress,
+          phase: 'reconnecting',
+          message: 'Reconnecting to the saved turn…',
+        } : null }
         : {});
-      completed = await recoverInterruptedTurn(thread.id, messageBoundary, controller.signal);
+      completed = await recoverInterruptedTurn(
+        thread.id, messageBoundary, controller.signal, retryRequest,
+      );
       if (!completed && !controller.signal.aborted) {
         publish((current) => current.bootstrap?.thread?.id === thread.id
           ? {
             phase: 'error',
             activity: '',
+            progress: null,
             error: 'The connection was interrupted before an answer was saved. Please try again.',
+            retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
           }
           : {});
@@ -509,6 +677,7 @@ async function runTurn({ text, more = false, topic }: {
         ? {
           phase: 'ready',
           activity: '',
+          progress: null,
           messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
         }
         : {});
@@ -517,15 +686,23 @@ async function runTurn({ text, more = false, topic }: {
       // above, but the server may still be finishing the same durable turn.
       // Recover it in exactly the same way before showing a retry error.
       publish((current) => current.bootstrap?.thread?.id === thread.id
-        ? { activity: 'Reconnecting…' }
+        ? { activity: 'Reconnecting…', progress: current.progress ? {
+          ...current.progress,
+          phase: 'reconnecting',
+          message: 'Reconnecting to the saved turn…',
+        } : null }
         : {});
-      completed = await recoverInterruptedTurn(thread.id, messageBoundary, controller.signal);
+      completed = await recoverInterruptedTurn(
+        thread.id, messageBoundary, controller.signal, retryRequest,
+      );
       if (!completed && !controller.signal.aborted) {
         publish((current) => current.bootstrap?.thread?.id === thread.id
           ? {
             phase: 'error',
             activity: '',
+            progress: null,
             error: errorText(error),
+            retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
           }
           : {});
@@ -550,11 +727,13 @@ async function runDirectAction({
   suggestionId,
   actionId,
   parameters,
+  targetLabel,
 }: {
   label: string;
   suggestionId?: string;
   actionId?: string;
   parameters?: Record<string, string>;
+  targetLabel?: string;
 }) {
   const boot = state.bootstrap || await initializeGlobalChat();
   if (!boot || state.phase === 'sending') return;
@@ -564,14 +743,25 @@ async function runDirectAction({
     return;
   }
   const messageBoundary = lastPersistedMessageId(state.messages);
+  const retryRequest: RetryRequest = {
+    kind: 'direct',
+    label,
+    ...(suggestionId ? { suggestionId } : {}),
+    ...(actionId ? { actionId } : {}),
+    ...(parameters ? { parameters } : {}),
+    ...(targetLabel ? { targetLabel } : {}),
+  };
   appendOptimisticUser(label);
   const controller = new AbortController();
   activeAbort = controller;
-  publish({ phase: 'sending', activity: 'Loading…', error: '' });
+  publish({
+    phase: 'sending', activity: 'Loading…', progress: null, error: '', retryRequest: null,
+  });
   try {
     const response = await api.executeDirectAction(thread.id, {
       ...(suggestionId ? { suggestionId } : { actionId }),
       parameters,
+      targetLabel,
       shownSuggestionIds: shownSuggestionIds(),
     }, controller.signal);
     publish((current) => current.bootstrap?.thread?.id === thread.id
@@ -579,6 +769,7 @@ async function runDirectAction({
         phase: 'ready',
         activity: '',
         error: '',
+        retryRequest: null,
         messages: mergePersistedMessages(current.messages, [
           response.userMessage,
           response.message,
@@ -603,6 +794,7 @@ async function runDirectAction({
         thread.id,
         messageBoundary,
         controller.signal,
+        retryRequest,
       );
       if (!recovered && !controller.signal.aborted) {
         publish((current) => current.bootstrap?.thread?.id === thread.id
@@ -610,6 +802,7 @@ async function runDirectAction({
             phase: 'error',
             activity: '',
             error: errorText(error, 'That direct action could not be completed.'),
+            retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
           }
           : {});
@@ -625,7 +818,14 @@ async function runDirectAction({
 
 export async function selectGlobalChatSuggestion(suggestion: GlobalChatSuggestion) {
   if (suggestion.actionId) {
-    await runDirectAction({ label: suggestion.label, suggestionId: suggestion.id });
+    await runDirectAction(suggestion.parameters || suggestion.targetLabel
+      ? {
+        label: suggestion.label,
+        actionId: suggestion.actionId,
+        parameters: suggestion.parameters,
+        targetLabel: suggestion.targetLabel || undefined,
+      }
+      : { label: suggestion.label, suggestionId: suggestion.id });
     return;
   }
   await sendGlobalChatMessage(suggestion.prompt);
@@ -635,12 +835,46 @@ export async function executeGlobalChatResultAction(
   label: string,
   actionId: string,
   parameters: Record<string, string>,
+  targetLabel?: string,
 ) {
-  await runDirectAction({ label, actionId, parameters });
+  await runDirectAction({ label, actionId, parameters, targetLabel });
+}
+
+export async function loadGlobalChatInlineResults(
+  actionId: string,
+  parameters: Record<string, string>,
+  targetLabel?: string,
+) {
+  const threadId = state.bootstrap?.thread?.id;
+  if (!threadId) throw new Error('Open a Global Chat first.');
+  const response = await api.executeInlineAction(threadId, {
+    actionId,
+    parameters,
+    targetLabel,
+  });
+  return response.results;
 }
 
 export async function requestMoreSuggestions(topic?: string) {
   await runTurn({ text: 'More suggestions', more: true, topic });
+}
+
+export async function retryLastGlobalChatRequest() {
+  const request = state.retryRequest;
+  if (!request) {
+    await openGlobalChat();
+    return;
+  }
+  publish({ error: '', retryRequest: null });
+  if (request.kind === 'direct') {
+    await runDirectAction(request);
+    return;
+  }
+  await runTurn({
+    text: request.text,
+    more: request.kind === 'more',
+    ...(request.kind === 'more' && request.topic ? { topic: request.topic } : {}),
+  });
 }
 
 export function stopGlobalChatTurn() {

@@ -37,7 +37,7 @@ test('terminal-state and required-evidence policy distinguish an explicit no-imp
     rationale: null,
     claims: [],
     headSha: 'a'.repeat(40),
-    reason: 'This proposal appears to change the UI but has no visual evidence declaration yet.',
+    reason: 'This proposal appears to change the UI but has no visual change preview declaration yet.',
   });
 });
 
@@ -144,4 +144,56 @@ test('ids and revision checks are strict', () => {
   assert.equal(state.validSha('a'.repeat(40)), true);
   assert.equal(state.validSha('A'.repeat(40)), false);
   assert.equal(state.validSha('a'.repeat(39)), false);
+});
+
+// ── #2601/#2558: recording why a run never started ───────────────────────
+test('the not-started note is fenced to a planned session and never restarts the idle clock', async () => {
+  const seen = [];
+  const pool = { query: async (sql, values) => { seen.push({ sql: String(sql), values }); return { rows: [{ id: 42 }] }; } };
+
+  const written = await state.recordNotStarted(pool, 42, '  Previews are switched off here.  ');
+  assert.equal(written.recorded, true);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].values, [42, 'Previews are switched off here.']);
+  // Only while the session still reads 'planned': a run that has moved on
+  // owns its own state and must not be annotated by a late refusal.
+  assert.match(seen[0].sql, /visual_evidence_state = 'planned'/);
+  // The idle rule the reviewer surfaces apply is measured off this column.
+  // Touching it on every refusal would keep a stuck run looking fresh for
+  // as long as anything kept refusing it — which is the bug, not the fix.
+  assert.ok(!/visual_evidence_updated_at/.test(seen[0].sql),
+    'the note must not bump the timestamp the idle rule measures');
+  // The same reason twice is not a write.
+  assert.match(seen[0].sql, /IS DISTINCT FROM/);
+  // And it merges into the detail rather than replacing it.
+  assert.match(seen[0].sql, /COALESCE\(visual_evidence_detail, '\{\}'::jsonb\)\s*\|\|/);
+});
+
+test('an empty reason or a bad session id writes nothing at all', async () => {
+  const pool = { query: async () => { throw new Error('must not query'); } };
+  for (const reason of ['', '   ', null, undefined]) {
+    assert.deepEqual(await state.recordNotStarted(pool, 42, reason), { recorded: false });
+  }
+  for (const id of [0, -1, NaN, null, 'nope']) {
+    assert.deepEqual(await state.recordNotStarted(pool, id, 'a reason'), { recorded: false });
+  }
+});
+
+test('a run that starts drops the note the attempt before it left', async () => {
+  const seen = [];
+  const pool = { query: async (sql, values) => { seen.push({ sql: String(sql), values }); return { rows: [{ id: 42 }] }; } };
+  assert.deepEqual(await state.clearNotStarted(pool, 42), { cleared: true });
+  assert.match(seen[0].sql, /visual_evidence_detail - 'notStartedReason'/);
+  // The function form, never the `?` containment operator: nothing in the
+  // driver or the SQL tooling can then read it as a placeholder.
+  assert.match(seen[0].sql, /jsonb_exists\(visual_evidence_detail, 'notStartedReason'\)/);
+  assert.deepEqual(seen[0].values, [42]);
+  assert.ok(!/visual_evidence_updated_at/.test(seen[0].sql));
+});
+
+test('a stored reason is bounded, so no log line or upstream message can grow the row', async () => {
+  const seen = [];
+  const pool = { query: async (_sql, values) => { seen.push(values); return { rows: [] }; } };
+  await state.recordNotStarted(pool, 42, 'x'.repeat(5000));
+  assert.equal(seen[0][1].length, 300);
 });

@@ -31,11 +31,11 @@ function credentialRoutes(config) {
   const pool = getPool(config);
   const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 
-  function betaAllowed(userId) {
-    if (!config.codexOpenrouterEnabled) return false;
-    const beta = config.openrouterBetaUserIds || [];
-    if (beta.length === 0) return true; // no allowlist = open to all (behind flag)
-    return beta.includes(String(userId));
+  // #2568 retired the gradual-rollout allowlist. What is left is the one
+  // deployment switch, which is not per-user at all — the name is kept
+  // because the client field it feeds is still `codexAvailable`.
+  function codexAvailable() {
+    return config.codexOpenrouterEnabled === true;
   }
 
   async function openRouterCatalogForUser(userId, { forceRefresh = false } = {}) {
@@ -106,7 +106,7 @@ function credentialRoutes(config) {
       // limit line renders.
       const allowance = config.openrouterManagementApiKey
         ? await managedOpenRouter.resolveAllowance(pool, req.user.id)
-        : { cents: 0, limitUsd: 0, limitReset: managedOpenRouter.LIMIT_RESET, identityGated: false };
+        : { cents: 0, limitUsd: 0, limitReset: managedOpenRouter.LIMIT_RESET };
       const managedRow = await managedOpenRouter.syncAllowance({
         pool, userId: req.user.id, config, allowance,
         state: await managedOpenRouter.stateForUser(pool, req.user.id),
@@ -114,9 +114,7 @@ function credentialRoutes(config) {
       const meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
       const managed = managedOpenRouter.publicState(managedRow);
       const configured = meta?.status === 'valid';
-      const available = betaAllowed(req.user.id) && !!config.openrouterManagementApiKey;
-      const verificationRequired = managedOpenRouter.requiresVerifiedIdentity(config);
-      const identityEligible = !verificationRequired || !!managedRow.verified;
+      const available = codexAvailable() && !!config.openrouterManagementApiKey;
       const hasAllowance = allowance.cents > 0;
       res.json({
         configured,
@@ -127,21 +125,22 @@ function credentialRoutes(config) {
         keyInfo: meta?.metadata?.keyInfo || null,
         source: meta?.metadata?.source || (configured ? 'personal' : null),
         managed,
+        // #2568: nothing here is a claim gate any more — an account's
+        // included key is created with the account, and Settings renders
+        // this as a status line rather than a button. `canClaim` is kept
+        // only for the build-time safety net in the dev chat, which still
+        // POSTs the managed route when it finds an account without a key.
         managedProvisioning: {
           available,
-          verified: !!managedRow.verified,
-          verificationRequired,
           alreadyIssued: !!managed,
-          canClaim: available && identityEligible && hasAllowance && !managed && !configured,
+          canClaim: available && hasAllowance && !managed && !configured,
           limitUsd: allowance.limitUsd,
           limitReset: allowance.limitReset,
-          identityGated: !!allowance.identityGated,
-          reason: !betaAllowed(req.user.id) ? 'not_available'
+          reason: !codexAvailable() ? 'not_available'
             : (!config.openrouterManagementApiKey ? 'not_configured'
-              : (!identityEligible ? 'verification_required'
-                : (managed ? 'already_issued'
-                  : (!hasAllowance ? 'no_allowance'
-                    : (configured ? 'personal_key_configured' : null))))),
+              : (managed ? 'already_issued'
+                : (!hasAllowance ? 'no_allowance'
+                  : (configured ? 'personal_key_configured' : null)))),
         },
       });
     } catch (err) {
@@ -200,8 +199,8 @@ function credentialRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
-    if (!betaAllowed(req.user.id)) {
-      return res.status(403).json({ error: 'OpenRouter is not available for your account yet.' });
+    if (!codexAvailable()) {
+      return res.status(403).json({ error: 'OpenRouter is not available on this deployment.' });
     }
     try {
       const claimed = await managedOpenRouter.provision({
@@ -231,7 +230,7 @@ function credentialRoutes(config) {
   // ── Save / replace OpenRouter key ──────────────────────────────────
   router.put('/api/me/credentials/openrouter', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    if (!betaAllowed(req.user.id)) return res.status(403).json({ error: 'Codex/OpenRouter is not available for your account yet.' });
+    if (!codexAvailable()) return res.status(403).json({ error: 'OpenRouter is not available on this deployment.' });
     const { apiKey } = req.body || {};
     if (typeof apiKey !== 'string' || !apiKey.trim()) {
       return res.status(400).json({ error: 'API key required' });
@@ -370,9 +369,18 @@ function credentialRoutes(config) {
         };
       }
       let defaultBackend = rows.find((r) => r.is_default)?.backend || null;
-      // Existing OpenRouter users who predate this default migration should
-      // still see OpenRouter selected without requiring a preference rewrite.
-      if (!defaultBackend && betaAllowed(req.user.id)) {
+      // #2568: this read is the new-change screen's, and it is the lazy
+      // safety net for an account that has no included key yet — one
+      // created before keys were issued at signup, or one whose signup
+      // ran while OpenRouter's management API was down. ensureIncludedKey
+      // is idempotent and never throws; an account that already has a key
+      // (or a personal one) costs one metadata read.
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId: req.user.id, config, reason: 'coding_agent_read',
+      });
+      // A key on file means OpenRouter is the default, whether or not a
+      // preference row was ever written for it.
+      if (!defaultBackend && codexAvailable()) {
         const meta = await credentialStore.readMetadata({
           pool, userId: req.user.id, ...OPENROUTER,
         });
@@ -386,7 +394,15 @@ function credentialRoutes(config) {
         }
       }
       defaultBackend ||= (backends.claude_code ? 'claude_code' : registry.DEFAULT_BACKEND);
-      res.json({ defaultBackend, backends, codexAvailable: betaAllowed(req.user.id) });
+      res.json({
+        defaultBackend,
+        backends,
+        codexAvailable: codexAvailable(),
+        // #2600: what a coding turn thinks at when this account has not
+        // picked an effort, so Settings can name it instead of offering an
+        // unlabelled "Default".
+        defaultReasoningEffort: config.openrouterDefaultCodexReasoning || null,
+      });
     } catch (err) {
       log.error('credentials', 'coding-agent prefs read failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -398,8 +414,8 @@ function credentialRoutes(config) {
     const { defaultBackend, model, reasoningEffort } = req.body || {};
     let backend = defaultBackend || 'codex_openrouter';
     try { registry.resolveBackend(backend); } catch { return res.status(400).json({ error: 'Unknown backend' }); }
-    if (backend === 'codex_openrouter' && !betaAllowed(req.user.id)) {
-      return res.status(403).json({ error: 'Codex/OpenRouter is not available for your account yet.' });
+    if (backend === 'codex_openrouter' && !codexAvailable()) {
+      return res.status(403).json({ error: 'OpenRouter is not available on this deployment.' });
     }
     if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
       return res.status(400).json({ error: 'Invalid reasoning effort' });
@@ -478,7 +494,7 @@ function credentialRoutes(config) {
     res.setHeader('Pragma', 'no-cache');
     const backend = (req.query.backend || 'codex_openrouter');
     if (backend !== 'codex_openrouter') return res.json({ backend, models: [] });
-    if (!betaAllowed(req.user.id)) return res.status(403).json({ error: 'Not available' });
+    if (!codexAvailable()) return res.status(403).json({ error: 'Not available' });
     try {
       const [{ catalog }, favoriteOverrides] = await Promise.all([
         openRouterCatalogForUser(req.user.id, { forceRefresh: req.query.refresh === '1' }),
@@ -500,7 +516,7 @@ function credentialRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Pragma', 'no-cache');
-    if (!betaAllowed(req.user.id)) return res.status(403).json({ error: 'Not available' });
+    if (!codexAvailable()) return res.status(403).json({ error: 'Not available' });
     const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId.trim() : '';
     const favorite = req.body?.favorite;
     if (!modelId || modelId.length > 255 || /[\u0000-\u001f\u007f]/.test(modelId)) {

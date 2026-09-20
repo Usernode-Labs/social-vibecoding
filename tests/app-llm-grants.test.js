@@ -15,10 +15,12 @@ const assert = require('node:assert/strict');
 const poolMod = require('../src/db/pool');
 
 const state = {
+  // The retained-but-unenforced daily column (#2571).
   userLimit: 2500,
-  // #1788: the weekly cap, off by default (0 = "does not apply") so every
-  // pre-existing case here stays a daily-only account.
-  weeklyLimit: 0,
+  // #2571: the platform-default WEEKLY cap is the account's allowance and
+  // therefore the ceiling every per-app cap is validated against. $25 a
+  // week here, which is the figure the pre-existing cases below assume.
+  weeklyLimit: 2500,
   weeklyOverride: null,
   hasIdentity: false,
   identityLookupError: false,
@@ -152,7 +154,7 @@ beforeEach(() => {
   limits.invalidate();
   state.grants.clear();
   state.userLimit = 2500;
-  state.weeklyLimit = 0;
+  state.weeklyLimit = 2500;
   state.weeklyOverride = null;
   state.hasIdentity = false;
   state.identityLookupError = false;
@@ -258,7 +260,7 @@ test('the list keeps a revoked grant with the slug and cap that Re-enable sends 
     // `code` (credit_required and byok_required both carry one), and a POST
     // without a cap lands on the default — so the row is never stranded.
     await fetch(`${base}/api/me/llm-grants/11`, { method: 'DELETE' });
-    state.userLimit = 200;
+    state.weeklyOverride = 200;
     limits.invalidate();
     const tooBig = await post({ appSlug: 'demo-app', dailyCapCents: 250, allowByok: true });
     assert.equal(tooBig.status, 400);
@@ -468,16 +470,15 @@ test('an entitlement lookup outage still permits an explicitly consented BYOK gr
   });
 });
 
-// ── #1788: a weekly-only account can still consent to an app ────────────
+// ── #2571: the weekly allowance is the ceiling ──────────────────────────
 //
-// The per-app cap is validated against the user's own allowance, and that
-// allowance used to be one number. With a daily cap of 0 now meaning "this
-// cap does not apply" rather than "blocked", reading only the daily figure
-// would leave a user with a healthy weekly allowance unable to grant an
-// app any cap at all.
+// The per-app cap is validated against the user's own allowance. That
+// allowance is the weekly cap and nothing else now — reading the stored
+// daily figure would leave a user with a healthy weekly allowance unable
+// to grant an app any cap at all.
 
-test('with the daily cap switched off, the weekly allowance is the cap ceiling', async () => {
-  state.userLimit = 0;         // admin switched the daily cap off
+test('the weekly allowance is the cap ceiling, whatever the stored daily figure says', async () => {
+  state.userLimit = 0;         // a stored daily figure, not enforced
   state.weeklyOverride = 5000; // $50 for the week
   await withServer(async (base) => {
     const ok = await fetch(`${base}/api/me/llm-grants`, {
@@ -498,8 +499,8 @@ test('with the daily cap switched off, the weekly allowance is the cap ceiling',
   });
 });
 
-test('with BOTH caps switched off there is nothing to grant', async () => {
-  state.userLimit = 0;
+test('with the weekly cap switched off there is nothing to grant', async () => {
+  state.userLimit = 2500;
   state.weeklyOverride = 0;
   await withServer(async (base) => {
     const res = await fetch(`${base}/api/me/llm-grants`, {

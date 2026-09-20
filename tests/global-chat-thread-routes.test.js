@@ -172,10 +172,10 @@ test('bootstrap keeps Classic as startup and returns separate profiles with comp
   assert.deepEqual(body.profiles.development, {
     backend: 'codex', model: 'glm/dev', reasoningEffort: 'high',
   });
-  assert.equal(body.firstUse.suggestions.length, 5);
+  assert.equal(body.firstUse.suggestions.length, 6);
   assert.deepEqual(
     body.firstUse.suggestions.map(({ label }) => label),
-    ['Show my work', 'Explore apps', 'Find issues', 'Review proposals', 'Check messages'],
+    ['Show my work', 'Explore apps', 'Find issues', 'Review proposals', 'Check messages', 'Recent activity'],
   );
   assert.ok(body.firstUse.suggestions.every((suggestion) => !Object.hasOwn(suggestion, 'description')));
   assert.equal(JSON.stringify(body).includes('sk-or-private'), false);
@@ -222,7 +222,7 @@ test('thread endpoints use authenticated ownership and preserve append-only sugg
   assert.equal(created.status, 201);
   const createdBody = await created.json();
   assert.equal(createdBody.thread.id, NEXT_THREAD_ID);
-  assert.equal(createdBody.firstUse.suggestions.length, 5);
+  assert.equal(createdBody.firstUse.suggestions.length, 6);
 
   const status = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/turn-status`);
   assert.equal(status.status, 200);

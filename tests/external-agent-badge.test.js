@@ -150,24 +150,56 @@ test('a proposal built by a coding agent still behaves like an import', () => {
   assert.doesNotMatch(html, /Open session/);
 });
 
-test('the detail says whose subscription paid for the code', () => {
+// #2588: the two provenance rows are OFF the steps sheet.
+//
+// The sheet is the x/y progress indicator — every other row in it is a
+// merge gate somebody still has to clear. "Imported pull request, authored
+// by …" (#687) and "Built with … on their own coding-agent subscription"
+// (#967) are neither: they are facts about where the change came from,
+// already said on the hero line above the card and on the card's own meta
+// line. What the notes used to spell out is gone from the SHEET only —
+// both of the shorter provenance lines are asserted intact below.
+test('the steps sheet carries no provenance rows', () => {
   const AppView = makeAppView(ME);
   const html = detailsHtml(AppView, connectorProposal(), { majority: 1 });
-  assert.match(html, /Built with <span class="font-medium">Claude Code<\/span>/);
-  assert.match(html, /someone/);
-  assert.match(html, /their own coding-agent subscription/);
-  assert.match(html, /GitHub fork/);
-  // The imported note is still there — it explains why there is no dev
-  // session, which is just as true for connector work.
-  assert.match(html, /Imported pull request/);
+  assert.doesNotMatch(html, /data-note="agent"/);
+  assert.doesNotMatch(html, /data-note="imported"/);
+  assert.doesNotMatch(html, /Built with/);
+  assert.doesNotMatch(html, /coding-agent subscription/);
+  assert.doesNotMatch(html, /Imported pull request/);
+  assert.doesNotMatch(html, /no in-app dev session/);
 });
 
-test('the detail note is absent for a proposal nobody’s agent built', () => {
+test('the ledger those rows were built from no longer carries them either', () => {
   const AppView = makeAppView(ME);
-  const html = detailsHtml(AppView, 
+  const d = AppView._proposalDetailsView(connectorProposal());
+  const keys = d.ledger.map((r) => r.key);
+  assert.ok(!keys.includes('agent'), 'no built-with row');
+  assert.ok(!keys.includes('imported'), 'no imported row');
+  assert.equal(d.notes.length, 0, 'and nothing left to draw them from');
+  // The x/y count is the merge path, and the two rows were never on it:
+  // dropping them cannot make the figure say more steps than there are.
+  // (topic-ledger-path.test.js pins the same count on a proposal that HAS
+  // a path, which is where the figure is actually drawn.)
+  assert.equal(d.pathSteps, null);
+  assert.equal(d.pathLeft, null);
+});
+
+test('the same is true of a proposal nobody’s agent built', () => {
+  const AppView = makeAppView(ME);
+  const html = detailsHtml(AppView,
     connectorProposal({ external_agent: null }), { majority: 1 }
   );
   assert.doesNotMatch(html, /Built with/);
+});
+
+// Where the provenance still reads: the hero's own line above the card,
+// unchanged by #2588, in the words a reader wants there.
+test('the hero above the card still names the import and the agent', () => {
+  const AppView = makeAppView(ME);
+  const hero = AppView._topicHeroView('proposal', connectorProposal());
+  assert.equal(hero.provenance, 'imported from GitHub (someone) · built with Claude Code');
+  assert.equal(hero.verb, 'imported');
 });
 
 test('the badge’s data reaches the client — the column is selected', () => {

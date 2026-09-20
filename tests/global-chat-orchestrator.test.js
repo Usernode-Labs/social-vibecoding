@@ -196,12 +196,31 @@ function turnInput(overrides = {}) {
   };
 }
 
-test('the one-call shortcut accepts ordinary read phrasing but never write or multi-step intent', () => {
+test('the one-call shortcut accepts independent compound reads but never skips writes or synthesis', () => {
   const calls = [{ call: { id: 'read_1' }, definition: { risk: 'read' } }];
   const success = new Map([['read_1', { ok: true, data: { ok: true, status: 200 } }]]);
   assert.equal(canFastCompleteRead('Could you show my apps?', calls, success), true);
   assert.equal(canFastCompleteRead('Help me search issues by tag.', calls, success), true);
   assert.equal(canFastCompleteRead('Show my apps and then delete one.', calls, success), false);
+  assert.equal(canFastCompleteRead('Show my apps and their open issues.', calls, success), false);
+  const compoundCalls = [
+    ...calls,
+    { call: { id: 'read_2' }, definition: { risk: 'read' } },
+  ];
+  const compoundSuccess = new Map([
+    ...success,
+    ['read_2', { ok: true, data: { ok: true, status: 200 } }],
+  ]);
+  assert.equal(canFastCompleteRead(
+    'Show me the last issues I closed and what I merged.',
+    compoundCalls,
+    compoundSuccess,
+  ), true);
+  assert.equal(canFastCompleteRead(
+    'Compare my closed issues with what I merged.',
+    compoundCalls,
+    compoundSuccess,
+  ), false);
   assert.equal(canFastCompleteRead('Show my apps.', calls, new Map([
     ['read_1', { ok: true, data: { ok: false, status: 503 } }],
   ])), false);
@@ -241,13 +260,78 @@ test('the first call preloads matching capabilities and auto-attaches authoritat
   assert.equal(modelCalls[0].input.reasoningEffort, 'low');
   assert.equal(modelCalls[0].input.model.id, 'cheap/global');
   assert.equal(modelCalls[0].input.maxOutputTokens, 800);
+  assert.equal(modelCalls[0].input.timeoutMs, 8_000);
+  assert.equal(modelCalls[0].input.sessionId, `${THREAD_ID}:latency-v1`);
   assert.match(modelCalls[0].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
+  assert.equal(modelCalls[0].input.messages.at(-1).content, 'List my open issues');
+  assert.match(modelCalls[0].input.messages[1].content, /"availableCapabilities"/);
   assert.doesNotMatch(JSON.stringify(modelCalls[0].input.messages), /never-forwarded-outside-accounting/);
   assert.deepEqual(modelCalls[0].input.providerAllowance, { limitRemaining: 2 });
   assert.ok(events.some((event) => event.type === 'result.attached'));
   assert.equal(events.at(-1).type, 'turn.completed');
   assert.ok(state.calls.some((entry) => entry.type === 'release'));
   assert.equal(state.calls.find((entry) => entry.type === 'turn.outcome').input.outcome, 'success');
+});
+
+test('one model plan executes independent closed-issue and merged-work reads in parallel', async () => {
+  const closed = definition({
+    id: 'issues.closed_by_me',
+    title: 'List issues closed by my merged work',
+    summary: 'List recent issues closed by the signed-in user across apps.',
+    keywords: ['closed issues', 'issues i closed', 'last issues closed'],
+    inputSchema: schema({ limit: { type: 'integer', minimum: 1, maximum: 50 } }, ['limit']),
+    renderer: 'issue',
+    handler: async () => ({
+      modelResult: { items: [{ number: 7 }] },
+      authoritativeResult: { items: [{ number: 7, title: 'Closed issue' }] },
+    }),
+  });
+  const merged = definition({
+    id: 'governance.merged_by_me',
+    domain: 'governance',
+    title: 'List my recently merged work',
+    summary: 'List recent work merged by the signed-in user across apps.',
+    keywords: ['merged work', 'what i merged', 'recent merges', 'issues linked to merges'],
+    inputSchema: schema({ limit: { type: 'integer', minimum: 1, maximum: 50 } }, ['limit']),
+    renderer: 'proposal',
+    handler: async () => ({
+      modelResult: { items: [{ id: 8 }] },
+      authoritativeResult: { items: [{ id: 8, title: 'Merged proposal' }] },
+    }),
+  });
+  const responses = [providerResponse([
+    call('closed_1', capabilityToolName(closed.id), { limit: 10 }),
+    call('merged_1', capabilityToolName(merged.id), { limit: 10 }),
+  ])];
+  const state = harness({ definitions: [closed, merged], responses });
+  const events = [];
+  const userPrompt = 'Show me the last issues I closed and what I merged';
+  const result = await state.orchestrator.runTurn(turnInput({
+    text: userPrompt,
+    model: {
+      id: 'cheap/global', inputPricePerMillion: 0.1, outputPricePerMillion: 0.2,
+      supportsParallelToolCalls: true,
+    },
+    emit: async (event) => { events.push(event); },
+  }));
+
+  assert.equal(state.calls.filter((entry) => entry.type === 'model').length, 1);
+  assert.equal(state.calls.find((entry) => entry.type === 'model').input.parallelToolCalls, true);
+  assert.equal(state.calls.find((entry) => entry.type === 'model').input.messages.at(-1).content, userPrompt);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.presentation.resultRefs.length, 2);
+  const progress = events.filter((event) => event.type === 'turn.progress');
+  assert.deepEqual(
+    progress.map((event) => event.phase),
+    ['understanding', 'planning', 'running_tools', 'rendering'],
+  );
+  assert.equal(progress.find((event) => event.phase === 'running_tools').parallel, true);
+  assert.equal(progress.find((event) => event.phase === 'planning').reasoningEffort, 'low');
+  assert.deepEqual(
+    progress.find((event) => event.phase === 'running_tools').operations
+      .map((operation) => operation.capabilityId),
+    ['issues.closed_by_me', 'governance.merged_by_me'],
+  );
 });
 
 test('a failed Classic read stays in the model loop instead of using the fast completion', async () => {
@@ -269,7 +353,8 @@ test('a failed Classic read stays in the model loop instead of using the fast co
   assert.equal(result.presentation.message, 'What next?');
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
   assert.equal(modelCalls.length, 2);
-  assert.match(modelCalls[1].input.messages[0].content, /Inspect the newest tool result/);
+  assert.match(modelCalls[1].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
+  assert.match(modelCalls[1].input.messages[1].content, /Inspect the newest tool result/);
 });
 
 test('an incomplete platform request can ask for one missing value instead of looping', async () => {
@@ -375,7 +460,8 @@ test('protected writes prepare an exact one-use confirmation without executing t
   assert.doesNotMatch(allModelRequests, /browser-only-confirmation-token/);
   assert.ok(events.some((event) => event.type === 'confirmation.required'));
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
-  assert.match(modelCalls[1].input.messages[0].content, /Continue the current turn/);
+  assert.match(modelCalls[1].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
+  assert.match(modelCalls[1].input.messages[1].content, /Continue the current turn/);
 });
 
 test('shown suggestions cannot repeat and a rejected presentation stays inside the tool loop', async () => {
@@ -422,7 +508,7 @@ test('shown suggestions cannot repeat and a rejected presentation stays inside t
   assert.match(JSON.stringify(modelCalls[1].input.messages), /repeated_suggestion/);
 });
 
-test('one transient provider failure is accounted as a retry and free-form completion is rejected', async () => {
+test('a transient provider failure is not duplicated after OpenRouter has handled failover', async () => {
   const transient = Object.assign(new Error('network failed'), { code: 'network' });
   const retryState = harness({
     responses: [
@@ -430,20 +516,42 @@ test('one transient provider failure is accounted as a retry and free-form compl
       providerResponse([call('present_1', 'present_response', presentation())]),
     ],
   });
-  await retryState.orchestrator.runTurn(turnInput({ text: 'Hello.' }));
+  const events = [];
+  await assert.rejects(
+    retryState.orchestrator.runTurn(turnInput({
+      text: 'Hello.',
+      emit: async (event) => { events.push(event); },
+    })),
+    (error) => error.code === 'network',
+  );
   assert.deepEqual(
     retryState.calls.filter((entry) => entry.type === 'model').map((entry) => entry.input.attemptNumber),
-    [1, 2],
+    [1],
   );
+  assert.equal(events.some((event) => event.phase === 'retrying'), false);
+});
 
+test('free-form completion without a validated presentation is rejected', async () => {
   const invalidState = harness({ responses: [providerResponse([], { content: 'I did it.' })] });
+  const failureEvents = [];
   await assert.rejects(
-    invalidState.orchestrator.runTurn(turnInput({ text: 'Hello.' })),
+    invalidState.orchestrator.runTurn(turnInput({
+      text: 'Hello.',
+      emit: async (event) => { failureEvents.push(event); },
+    })),
     (error) => error instanceof GlobalChatOrchestrationError
       && error.code === 'presentation_required',
   );
   assert.ok(invalidState.calls.some((entry) => entry.type === 'release'));
-  assert.equal(invalidState.messages.some((message) => message.role === 'assistant'), false);
+  const failureMessage = invalidState.messages.find((message) => message.role === 'assistant');
+  assert.equal(failureMessage?.payload.kind, 'turn_error');
+  assert.equal(
+    failureMessage?.text,
+    'The chat model returned an incomplete response. Please try again.',
+  );
+  const terminal = failureEvents.find((event) => event.type === 'turn.failed');
+  assert.equal(terminal?.assistantMessage?.id, failureMessage?.id);
+  assert.equal(terminal?.message, failureMessage?.text);
 });
 
 test('runtime metadata uses only the server-owned compacted transcript summary', async () => {
@@ -490,5 +598,6 @@ test('More suggestions is one forced presentation call without a recursive More 
     type: 'function', function: { name: 'present_response' },
   });
   assert.equal(modelCalls[0].input.maxOutputTokens, 800);
-  assert.match(modelCalls[0].input.messages[0].content, /selected More suggestions/);
+  assert.match(modelCalls[0].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
+  assert.match(modelCalls[0].input.messages[1].content, /selected More suggestions/);
 });

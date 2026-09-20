@@ -171,7 +171,11 @@ test('client: admin-analytics.js renders the chart, registers its INFO, and load
   for (const k of ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6']) {
     assert.match(js, new RegExp(`key: '${k}'`), `segment ${k} must be defined`);
   }
-  assert.match(js, /\$20\+ capped/, 'capped label must be present');
+  // #2571 renamed the red top-tier label: the per-user cap is weekly now,
+  // so a $20 DAY is a heavy day rather than a refusal and "capped" said
+  // something the data no longer means.
+  assert.match(js, /\$20\+ platform only/, 'the platform-funded top tier must be labelled');
+  assert.doesNotMatch(js, /\$20\+ capped/, 'and must not claim a daily cap that is switched off');
   assert.match(js, /\$20\+ own key/, 'own-key label must be present');
 });
 

@@ -1541,12 +1541,47 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .global-chat-result-items > :not(:last-child) {
   border-bottom: 1px solid var(--border-light);
 }
+.global-chat-result[data-renderer="app"] .global-chat-result-items {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--border-light);
+}
+.global-chat-result[data-renderer="app"] .global-chat-result-items > .global-chat-item {
+  min-width: 0;
+  border-right: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
+}
+.global-chat-result[data-renderer="app"] .global-chat-result-items > .global-chat-item:nth-child(even) {
+  border-right: 0;
+}
 .global-chat-item {
   display: flex;
   gap: 10px;
   padding: 10px 12px 11px;
 }
+.global-chat-result[data-renderer="app"] .global-chat-item {
+  gap: 8px;
+  padding: 8px 10px;
+}
+.global-chat-app-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+.global-chat-item-toggle {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 8px;
+  text-align: left;
+}
+.global-chat-item-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .global-chat-item-title {
+  display: block;
   color: var(--text-primary);
   font-size: 15px;
   font-weight: 700;
@@ -1554,21 +1589,52 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   overflow-wrap: anywhere;
 }
 .global-chat-item-meta {
+  display: block;
   margin-top: 2px;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
+.global-chat-item-chevron {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--text-muted);
+  transition: transform .16s ease;
+}
+.global-chat-item[data-expanded] .global-chat-item-chevron { transform: rotate(180deg); }
+.global-chat-item-selector .global-chat-item-toggle {
+  min-height: 34px;
+  align-items: center;
+}
+.global-chat-item-selector .global-chat-item-title { font-size: 14px; }
+.global-chat-item-details { padding-top: 3px; }
 .global-chat-item-summary {
-  display: -webkit-box;
   margin-top: 4px;
-  overflow: hidden;
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.global-chat-item-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px 12px;
+  margin-top: 8px;
+}
+.global-chat-item-fields dt {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+.global-chat-item-fields dd {
+  margin: 1px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .global-chat-inline-actions { margin-top: 8px; }
 .global-chat-inline-actions button {
@@ -1582,12 +1648,79 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   min-height: 32px;
 }
 .global-chat-client-action { padding: 0 12px 12px; }
+.global-chat-result-nested {
+  margin: 9px 0 2px;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  background: var(--dc-raised);
+  box-shadow: none;
+}
+.global-chat-inline-loading,
+.global-chat-inline-error {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.global-chat-inline-error { color: var(--danger, #b91c1c); }
+.global-chat-setting-edit {
+  margin-top: 9px;
+  color: var(--brand-ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+.global-chat-setting-instruction {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+.global-chat-setting-instruction input {
+  min-width: min(100%, 260px);
+  flex: 1 1 260px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  color: var(--text-primary);
+  background: var(--bg-input, var(--dc-sheet));
+  font-size: 13px;
+}
+.global-chat-setting-instruction button {
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: 9999px;
+  color: var(--brand-ink);
+  background: var(--brand-tint);
+  font-size: 12px;
+  font-weight: 650;
+}
+.global-chat-setting-instruction button:last-child {
+  color: var(--text-secondary);
+  background: var(--dc-raised);
+}
+.global-chat-setting-instruction button:disabled { opacity: .45; }
+.global-chat-settings-editor { padding: 2px 12px 14px; }
+.global-chat-settings-editor > :last-child { margin-bottom: 0; }
+.global-chat-development-editor {
+  display: grid;
+  gap: 12px;
+}
+.global-chat-setting-status {
+  color: #047857;
+  font-size: 12px;
+}
+.global-chat-setting-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.dark .global-chat-setting-status { color: #6ee7b7; }
 .global-chat-result-done {
   display: flex;
   align-items: center;
   gap: 5px;
   padding: 9px 12px 12px;
-  color: var(--state-ok);
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 650;
 }
@@ -1631,6 +1764,54 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   color: var(--text-muted);
   font-size: 13px;
 }
+.global-chat-progress {
+  margin: 9px 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  color: var(--text-muted);
+  background: var(--dc-raised);
+  font-size: 12px;
+}
+.global-chat-progress-current {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 22px;
+}
+.global-chat-progress-current span {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.global-chat-progress-current time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.global-chat-progress details { margin-top: 5px; }
+.global-chat-progress summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 650;
+}
+.global-chat-progress-details {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-light);
+}
+.global-chat-progress-details ol,
+.global-chat-progress-details ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+}
+.global-chat-progress-details li[data-status="completed"] { color: var(--text-secondary); }
+.global-chat-progress-details li[data-status="failed"] { color: var(--danger, #b91c1c); }
 .global-chat-history { margin: 0 auto 10px; }
 .global-chat-error {
   display: flex;
@@ -1711,12 +1892,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .global-chat-turn-user p { max-width: 86%; }
   .global-chat-suggestions button { min-height: 42px; }
   .global-chat-inline-actions button { min-height: 36px; }
+  .global-chat-result[data-renderer="app"] .global-chat-result-items { grid-template-columns: minmax(0, 1fr); }
+  .global-chat-result[data-renderer="app"] .global-chat-result-items > .global-chat-item { border-right: 0; }
+  .global-chat-item { padding-top: 12px; padding-bottom: 12px; }
+  .global-chat-item-toggle { min-height: 36px; }
+  .global-chat-setting-instruction input,
+  .global-chat-setting-instruction button { min-height: 42px; }
+  .global-chat-progress { padding: 9px 10px; }
   .global-chat-composer { width: calc(100% - 16px); }
 }
 @media (prefers-reduced-motion: reduce) {
   .global-chat-result-loading svg,
   .global-chat-loading svg,
   .global-chat-activity svg { animation: none; }
+  .global-chat-progress-current svg { animation: none; }
 }
 
 
@@ -4409,6 +4598,30 @@ body:has(#platform-header.hidden) #app-frame-host {
   gap: 6px;
 }
 
+/* #2597: the venue caption under a running row's heading.
+   The heading says what is happening ("Coding agent is running"); this says
+   where, in the same muted second-line treatment .dc-cc-note already gives
+   the run card's guess and cohort hint.
+
+   .dc-status-line is a single centred flex ROW, and every other row in the
+   transcript depends on it staying one — so the wrap is opted into by the
+   captioned rows alone, and the caption claims a whole line by basis rather
+   than by leaving the flow. The 20px indent is the icon (14px) plus the
+   row's gap (6px), which lands it under the first letter of the heading.
+   Inside .dc-cc-attached-summary the summary is already a COLUMN, so the
+   caption is a row of it and neither rule applies. */
+.dc-status-venue {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  min-width: 0;
+}
+.dc-status-line-captioned { flex-wrap: wrap; }
+.dc-status-line-captioned > .dc-status-venue {
+  flex: 0 0 100%;
+  padding-left: 20px;
+}
+
 /* Explicit square box with centered glyph is required for the
    rotation animation to spin around the glyph's visual center. Without
    width/height/line-height, the span's transform-origin ends up wherever
@@ -6120,6 +6333,27 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-color: rgba(90, 169, 255, 0.35);
 }
 .gc-vote-btn-preview:hover { background: rgba(90, 169, 255, 0.18); border-color: rgba(90, 169, 255, 0.5); color: var(--accent); }
+/* #2585: the preview's BUILDING state, as the SAME pill in gray. It used to
+   be a bare `.gc-checks-running-badge` span floating in the band, which made
+   the card jump the moment the build finished and the real Preview button
+   took its place. It composes with .gc-vote-btn, so height, radius and
+   padding are the Preview pill's; only the fill and the ink differ, in the
+   neutral state tokens .gc-checks-running-badge already speaks in (both have
+   a .dark counterpart, so this is light and dark at once).
+   It renders as <button disabled>, and .gc-vote-btn:disabled's ghosting is
+   deliberately undone here: that treatment is for a control the viewer could
+   enable by doing something, and nothing anyone clicks makes a staging build
+   finish sooner. A half-transparent pill would read as broken rather than as
+   busy. The higher specificity is what beats both :disabled and
+   .gc-vote-btn:hover, which still matches a disabled button. */
+.gc-vote-btn.gc-vote-btn-building,
+.gc-vote-btn.gc-vote-btn-building:disabled {
+  opacity: 1;
+  cursor: default;
+  color: var(--state-neutral);
+  background: var(--state-neutral-bg);
+  border-color: transparent;
+}
 /* The ledger's one action (Re-run checks): the band's accent pill — the
    tinted fill Preview wears on the card — so the row's button reads as the
    same kind of control as the card's, not as a second neutral chip. */
@@ -10536,12 +10770,21 @@ html.in-native-webview {
    (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
    while presented, so selectors rooted at the modal stop matching.
 
-   THE LOOK IS THE LANGUAGE'S SELECTION IDIOM (#1910): the selected segment
-   is the solid inversion — near-black fill, page-coloured ink — the same
-   treatment @/components/ui/chip.tsx and the Leaderboard's section strip
-   state. The raised-face-on-a-recessed-track look these pills used to
-   share with the drawer's theme selector lives on in `.members-vis-pill`
-   and `.theme-seg` above; this dialog left it. */
+   THE SELECTED FILL IS THE SHELL'S ACCENT (#2566). It was the language's
+   solid inversion — a near-black fill inverting to near-white in dark —
+   and read as "black", not as "chosen": people asked for the colour the
+   product uses for selection instead. That colour is violet-600, the fill
+   this dialog's own Create/Import button already wears
+   (`Button variant="pillAccent"` → `bg-violet-600`), with white ink.
+   It is written as a literal here for the same reason the button carries
+   no `dark:` step: violet-600 clears AA against white in BOTH themes
+   (5.70:1), where violet-500 — the usual dark lift — measures 4.24:1 and
+   would fail the 15px choice title. The inversion lives on unchanged
+   elsewhere: @/components/ui/chip.tsx, the Leaderboard's section strip
+   and the Improve rail's view toggle all still state it. The
+   raised-face-on-a-recessed-track look these pills used to share with the
+   drawer's theme selector lives on in `.members-vis-pill` and `.theme-seg`
+   above; this dialog left it. */
 #create-card .create-mode-pill {
   color: var(--text-muted);
   cursor: pointer;
@@ -10551,15 +10794,18 @@ html.in-native-webview {
 }
 #create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
 #create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
-  background: var(--text-primary);
-  color: var(--bg-primary);
+  background: #7c3aed; /* violet-600 */
+  color: #ffffff;
   cursor: default;
 }
 
 /* Visibility segmented pills (create modal). Active state is a
    JS-toggled .active class — unlike the mode pills there are two
    independent controls per surface, so an attribute on the modal root
-   doesn't fit. Same inversion as .create-mode-pill. */
+   doesn't fit. Same accent fill as .create-mode-pill (#2566): one
+   dialog, one selected colour — leaving these inverted would have put a
+   black "Public" on the access step of a dialog whose first step had
+   just gone violet. */
 .create-vis-pill {
   color: var(--text-muted);
   cursor: pointer;
@@ -10568,8 +10814,8 @@ html.in-native-webview {
   color: var(--text-primary);
 }
 .create-vis-pill.active {
-  background: var(--text-primary);
-  color: var(--bg-primary);
+  background: #7c3aed; /* violet-600 */
+  color: #ffffff;
 }
 .create-vis-pill:disabled {
   opacity: 0.45;
@@ -10629,7 +10875,7 @@ html.in-native-webview {
 }
 
 /* The start step's two choice rows carry .create-mode-pill, so the rule
-   above paints the chosen one in the inversion; unchosen rows read as
+   above paints the chosen one in the accent; unchosen rows read as
    plain white cards in the primary ink with a muted caption. Once a
    choice is made the step COLLAPSES to the chosen row: the other row and
    the captions fold away, the chevron gives way to "Change", and pressing
@@ -10640,10 +10886,15 @@ html.in-native-webview {
 #create-card [data-create-step="start"] .create-choice-caption {
   color: var(--text-muted);
 }
+/* 0.9, not the 0.8 this carried: the caption is 12px, and on the accent
+   fill (#2566) white at 0.8 measures 4.18:1 — below AA — where 0.9 reads
+   at 4.90:1. On the near-black fill it replaced, 0.8 was 12.6:1, so the
+   step was free there and is not here. It still sits plainly under the
+   title, which is the full white. */
 #create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
 #create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] .create-choice-caption {
   color: inherit;
-  opacity: 0.8;
+  opacity: 0.9;
 }
 #create-card[data-step="start"] .create-choice-change { display: none; }
 #create-card:not([data-step="start"]) .create-choice-chevron,
@@ -11023,6 +11274,28 @@ button.attr-chip { cursor: pointer; }
   border-radius: 10px;
   background: var(--bg-card-alt);
   overflow: hidden;
+}
+
+/* #2605: the dev session page in its READ-ONLY form. The Build door sends a
+   reader who does not own the session here, and what they get is the
+   published chat on the session's own page rather than a sheet folded under
+   a card's discussion. `#dev-section` is a fixed, overflow-hidden flex
+   column, so this — its only child — owns the scroll. */
+.dev-session-read {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 0;
+}
+.dev-session-read > .st-section { margin-top: 0; }
+.dev-session-read-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .st-section-head {
@@ -11827,6 +12100,38 @@ body.is-offline [data-offline-disabled] {
   color: rgb(161 161 170); /* zinc-400 */
   padding: 0.15rem 0;
 }
+/* A long comment shows four lines and a "Show more" under them (#2556).
+   -webkit-line-clamp is the only cross-browser way to ellipsise at a line
+   COUNT; the standard `line-clamp` is listed alongside it, the same pair
+   this stylesheet already writes elsewhere.
+
+   The clamp is on a span WRAPPING the author and the body, not on the body:
+   the body renders inline after the name here (see the rule above), so
+   clamping it alone would count its first line from the wrong left edge.
+   The React comment surfaces reach the same four lines through Tailwind's
+   `line-clamp-4`; this one is hand-written because the slot is filled by
+   innerHTML from public/js/app-view.js, which is not React's to reconcile. */
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-clamp.is-expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
+/* The control ships `hidden` and only a measurement reveals it, so the rule
+   that hides it has to be here rather than left to a utility that may or may
+   not win against the flex layout above. */
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-toggle[hidden] { display: none; }
+:is(#dev-workshop, #dev-kanban) .dev-feed-comment-toggle {
+  margin-top: 4px;
+  cursor: pointer;
+}
 
 /* ── The Activity feed's inline discussion ─────────────────────────────
    Indented to the same 22px as #dev-workshop .dev-feed-comments above it, so
@@ -12358,6 +12663,21 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   align-items: center;
   flex: none;
 }
+/* #2585: the building state is no longer one of those badges — it is the
+   Preview pill in gray — so it takes the PILL's band geometry instead, the
+   same block as .gc-vote-btn-preview above. The height is restated because
+   the rule right above still reaches it through .gc-checks-running-badge,
+   and 28px there against the pill's 24px is exactly the shift this removes.
+   The `+ .dev-card-menu-btn` line matters as much: without it the hamburger
+   keeps its own `margin-left: auto` and the two share the free space, which
+   is what left "Preview building…" floating mid-band. */
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building {
+  margin-left: auto;
+  gap: 5px;
+  padding: 0 10px 0 9px;
+  height: 24px;
+}
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building + .dev-card-menu-btn { margin-left: 0; }
 
 /* Cards with 22px corners want a little more air between them than the
    column's space-y-2 gives. */
@@ -12449,10 +12769,11 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-change-issues { min-width: 0; }
 .dev-change-issues a { min-width: 0; overflow-wrap: anywhere; }
 .dev-change-overview .dev-topic { width: 100%; }
-/* The Discussion sheet, and the Build sheet under it (topic/conversation.tsx).
-   The tabs are gone: Activity was three timestamps the card's meta line
-   carries, and Build is the "Open build" / "Continue building" pill on the
-   card, which opens the sheet below the Discussion and scrolls to it. */
+/* The Discussion sheet (topic/conversation.tsx), and nothing under it. The
+   tabs went first — Activity was three timestamps the card's meta line
+   carries — and the Build sheet followed (#2605): the "Open build" /
+   "Continue building" / "Read the build" pill leaves this page for the
+   change's own dev session. */
 .dev-conversation { min-width: 0; scroll-margin-top: 12px; }
 .dev-conversation-audience { margin: 0 4px 8px; }
 .dev-conversation-chat { height: clamp(300px, 50dvh, 540px); }
@@ -12462,18 +12783,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
    whose pointer rested on the Discussion could not scroll the page even with
    the thread at its end. Let the scroll chain to the page. */
 .dev-conversation-chat #gc-thread-scroll { overscroll-behavior: auto; }
-.dev-conversation-build { min-width: 0; scroll-margin-top: 12px; }
-.dev-conversation-build[hidden] { display: none; }
-.dev-conversation-build-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.dev-conversation-build-head > .dev-topic-h { margin-bottom: 8px; }
-.dev-conversation-workspace {
-  display: flex;
-  flex-direction: column;
-  height: clamp(440px, 72dvh, 760px);
-  min-width: 0;
-  overflow: hidden;
-  border-radius: 18px;
-}
 .dev-conversation .dev-thread { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .dev-conversation .dev-thread::before, .dev-conversation .dev-thread::after { content: none; }
 #dev-topic-thread .dev-conversation #gc-thread-messages {
@@ -13049,6 +13358,150 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border-radius: 999px;
 }
 #dev-issue-comments .dev-feed-msg { font-size: 13px; }
+
+/* ── The change page as the Workshop's Needs-you item ──────────────────
+   topic/topic-head.tsx ChangeHero, StepsSheet and DetailsSheet. The hero
+   borrows the item's pieces by class — the eyebrow, the title, the by-line
+   and its avatar, the chips — and adds only what a page needs that a swipe
+   card does not: no fixed height and no snap, the title unclamped, the
+   chips under the by-line rather than beside it, and the card's action
+   band under them. */
+.dev-topic-hero {
+  position: relative;
+  padding: 16px 20px 18px;
+  overflow: hidden;
+}
+.dev-topic-hero[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(244, 114, 182, .08)); }
+.dev-topic-hero[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(251, 191, 36, .08)); }
+.dark .dev-topic-hero[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(244, 114, 182, .10)); }
+.dark .dev-topic-hero[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(251, 191, 36, .08)); }
+.dev-topic-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 20px; }
+.dev-topic-hero-eyebrow { display: inline-flex; align-items: center; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-topic-hero-eyebrow > a { color: var(--accent); text-decoration: none; letter-spacing: 0; text-transform: none; font-weight: 700; }
+.dev-topic-hero-eyebrow > a:hover { text-decoration: underline; }
+/* The item's title, unclamped and at page size: a page has room for the
+   whole line, where the swipe card's three-line clamp hid the end of a
+   long one behind an ellipsis nobody could open. */
+.dev-topic-hero > .dev-topic-hero-title {
+  margin: 10px 0 0; max-width: none; display: block; -webkit-line-clamp: unset; overflow: visible;
+  font-size: 24px; line-height: 1.2; overflow-wrap: anywhere;
+}
+.dev-topic-hero > .dev-topic-hero-by { margin-top: 10px; max-width: none; }
+/* The card's tags in the Needs-you chip's shape. Each keeps the tint and
+   ink utilities it arrived with — the card's own colours — and those
+   outrank the chip's neutral fill because tailwind.css loads last. (The
+   selectors here are two classes deep on purpose: the item's own rules,
+   and its wide-layout ones further down, are one class, and the hero's
+   must win whichever comes later in the file.) */
+.dev-topic-hero > .dev-topic-hero-chips { margin-top: 10px; flex: none; justify-content: flex-start; }
+.dev-topic-hero-chips > .dev-badge { height: 24px; padding: 0 9px; gap: 6px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
+.dev-topic-hero-chips > .dev-badge.font-mono { font-size: 11.5px; }
+.dev-topic-hero-chips > .dev-badge .attr-avatar { width: 16px; height: 16px; font-size: 0.65rem; }
+/* The band wears the card's class for the band rules above — the one-line
+   fold into ⋯, the accent pills, Preview and the hamburger at the right;
+   the card's own box (its radius, padding and edge) comes off here. */
+.dev-topic-hero > div.dev-topic-hero-actions.dev-card-topic {
+  margin-top: 12px; padding: 0; border-radius: 0; box-shadow: none; background: none; --dev-edge-w: 0px;
+}
+.dev-topic-hero .gc-card-actions { margin-top: 0; }
+.dev-topic-hero .gc-card-actions > .dev-vote-btn { margin-right: 4px; }
+/* The summary at the item's reading size, the whole of it. */
+.dev-topic-hero-summary { margin: 14px 0 0; font-size: 17px; line-height: 1.45; color: var(--text-secondary); }
+.dev-topic-hero-summary > :first-child { margin-top: 0; }
+.dev-topic-hero-summary > :last-child { margin-bottom: 0; }
+/* "Addresses", then the issue as a chip: the number bold, the title after
+   it, ellipsised rather than wrapped; the owner's pencil at the line's end. */
+.dev-topic-hero-issues { margin-top: 12px; min-width: 0; }
+.dev-topic-hero-issues-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: var(--text-muted); }
+.dev-topic-hero-issues-k { font-weight: 600; }
+.dev-topic-issue { max-width: 100%; height: auto; min-height: 24px; padding: 2px 10px 2px 8px; gap: 6px; text-decoration: none; }
+.dev-topic-issue:hover { text-decoration: none; filter: brightness(.96); }
+.dev-topic-issue > b { font-weight: 700; flex: none; }
+.dev-topic-issue > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.dev-topic-hero-issues-edit { margin-left: auto; }
+.dev-topic-hero-issues form { margin-top: 4px; }
+/* The picture, or the line that says it is coming. */
+.dev-topic-hero .dev-topic-visuals { margin-top: 14px; }
+.dev-topic-hero .dev-topic-evidence { margin-top: 12px; }
+.dev-topic-hero-evidence { display: inline-flex; align-items: center; gap: 8px; margin: 14px 0 0; font-size: 13px; color: var(--text-muted); }
+.dev-topic-hero-evidence > .dc-status-spinner-arc { flex: none; margin: 0; }
+.dev-topic-hero > .dev-topic-note { margin-top: 12px; }
+
+/* ── The steps: the card's grey strip, expanded ──
+   The same panel as card/dev-card.tsx RequirementsRow — its tints ride in
+   as the same utilities — with room to say, under each gate, what the
+   ledger row for it said. */
+.dev-topic-steps { padding: 8px; }
+.dev-steps { overflow: hidden; }
+.dev-steps-head { display: flex; align-items: baseline; gap: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.35; color: var(--text-secondary); }
+.dev-steps-headline { font-weight: 700; color: var(--text-primary); white-space: nowrap; }
+.dev-steps-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.dev-steps-count { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.dev-steps-list { list-style: none; margin: 0; padding: 4px 0; }
+.dev-step { display: grid; grid-template-columns: 22px 1fr auto; column-gap: 10px; align-items: baseline; padding: 9px 14px; font-size: 13.5px; line-height: 1.4; }
+.dev-step + .dev-step { border-top: 1px solid var(--app-sheet-line); }
+/* The mark: a ring, filled ok for a cleared step and blocked for a red one;
+   the step waiting on a person wears the attention tone, and the one in
+   flight spins the shell's arc. */
+.dev-step-mark {
+  display: inline-flex; align-items: center; justify-content: center; align-self: start; margin-top: 1px;
+  width: 20px; height: 20px; border-radius: 9999px; font-size: 11px; font-weight: 800;
+  box-shadow: inset 0 0 0 1.5px currentColor; color: var(--text-muted); background: transparent;
+}
+.dev-step-mark-done { background: var(--state-ok); color: #fff; box-shadow: none; }
+.dev-step-mark-blocked { background: var(--state-blocked); color: #fff; box-shadow: none; }
+.dev-step-mark-waiting { color: var(--state-attention); }
+.dev-step-mark-active { box-shadow: none; color: var(--accent); }
+.dev-step-mark-active > .dc-status-icon { margin: 0; }
+.dev-step-label { font-weight: 600; color: var(--text-primary); }
+.dev-step-done .dev-step-label { color: var(--text-secondary); }
+.dev-step-pending .dev-step-label { color: var(--text-muted); }
+.dev-step-actor { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.dev-step-body { grid-column: 2 / 4; display: flex; flex-direction: column; gap: 3px; margin-top: 2px; min-width: 0; font-size: 12.5px; color: var(--text-muted); }
+.dev-step-body .dev-ledger-text { color: var(--text-secondary); }
+.dev-step-blocked .dev-step-body .dev-ledger-text { color: var(--text-primary); }
+.dev-step-note { color: var(--text-muted); }
+.dev-step-when { color: var(--text-muted); }
+.dev-step-body .dev-ledger-fails { font-size: 12px; }
+.dev-step-body .dev-ledger-ops { margin-top: 4px; }
+.dev-step-body .dev-ledger-help { margin: 0; }
+/* The vote's line: the bar to the threshold, the card's pill, the counts. */
+.dev-step-vote { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.dev-step-vote-bar { flex: 0 0 160px; height: 8px; border-radius: 999px; background: var(--state-neutral-bg); overflow: hidden; }
+.dev-step-vote-bar > i { display: block; height: 100%; border-radius: 999px; background: var(--state-ok); }
+.dev-step-vote-tally { color: var(--text-primary); font-weight: 600; font-size: 12.5px; }
+
+/* ── Technical details, as a sheet over the page ──
+   Opened from the ⋯ menu (DetailsSheet); body-mounted, so no frosted sheet
+   contains it. A bottom sheet on a phone, a centred card above 720px. */
+.dev-details-scrim {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(20, 20, 26, .28); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}
+.dev-details-card {
+  width: min(680px, 100%); max-height: 78vh; overflow: auto; box-sizing: border-box;
+  padding: 14px 18px 20px; border-radius: 22px 22px 0 0;
+  background: var(--bg-primary); color: var(--text-primary);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, .22);
+}
+@media (min-width: 720px) {
+  .dev-details-scrim { align-items: center; }
+  .dev-details-card { border-radius: 22px; }
+}
+.dev-details-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.dev-details-head > .dev-topic-h { margin: 0; }
+.dev-details-close {
+  display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px;
+  border: 0; border-radius: 9999px; background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer;
+}
+.dev-details-card > .dev-topic-details-body { margin: 0; padding: 0; background: none; font-size: 13.5px; line-height: 1.5; }
+@media (max-width: 480px) {
+  .dev-topic-hero { padding: 14px 14px 16px; }
+  .dev-topic-hero-title { font-size: 22px; }
+  .dev-topic-hero-summary { font-size: 16px; }
+  .dev-step-vote-bar { flex-basis: 120px; }
+}
 #dev-issue-comments .dev-feed-msg-text { font-size: 13px; }
 #dev-topic-thread #gc-thread-messages {
   margin: 4px 0 0;

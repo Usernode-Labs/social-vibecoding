@@ -117,13 +117,23 @@ function runtimeInput(overrides = {}) {
       rawLedger: 'must-not-pass',
     },
     availableCapabilityIds: ['issues.list', 'issues.get'],
+    availableCapabilities: [{
+      id: 'issues.list',
+      domain: 'issues',
+      title: 'List issues',
+      summary: 'List authorized issues matching a query.',
+      risk: 'read',
+      confirmation: 'never',
+      requiredInputs: ['query'],
+      privateSchema: 'must-not-pass',
+    }],
     authorization: 'must-not-pass',
     ...overrides,
   };
 }
 
 test('the versioned system prompt gives weak models an exact platform workflow', () => {
-  assert.equal(PROMPT_VERSION, 'global-chat-system-v5');
+  assert.equal(PROMPT_VERSION, 'global-chat-system-v7');
   assert.match(SYSTEM_PROMPT, /same authorized features.*Classic mode/i);
   assert.match(SYSTEM_PROMPT, /search_capabilities/);
   assert.match(SYSTEM_PROMPT, /NOT the full list of platform features/);
@@ -135,16 +145,25 @@ test('the versioned system prompt gives weak models an exact platform workflow',
   assert.match(SYSTEM_PROMPT, /STEP 3 — COLLECT EVERY REQUIRED INPUT/);
   assert.match(SYSTEM_PROMPT, /pathParameters: an object containing every named placeholder/);
   assert.match(SYSTEM_PROMPT, /Never invent a missing slug, id, issue number/);
+  assert.match(SYSTEM_PROMPT, /Never invent choices from the user's wording/);
+  assert.match(SYSTEM_PROMPT, /Match only against records returned by that capability/);
   assert.match(SYSTEM_PROMPT, /call ask_user_for_input when it is available/);
   assert.match(SYSTEM_PROMPT, /STEP 5 — CHECK THE TOOL RESULT/);
   assert.match(SYSTEM_PROMPT, /Do not answer with ordinary assistant text/);
-  assert.match(SYSTEM_PROMPT, /exactly five button options/i);
+  assert.match(SYSTEM_PROMPT, /five or six button options/i);
+  assert.match(SYSTEM_PROMPT, /COMPOUND REQUEST RULE — NEVER DROP A CLAUSE/);
+  assert.match(SYSTEM_PROMPT, /issues\.closed_by_me and governance\.merged_by_me/);
+  assert.match(SYSTEM_PROMPT, /Call all independent read tools together/i);
+  assert.match(SYSTEM_PROMPT, /PLATFORM OPERATING MAP/);
+  assert.match(SYSTEM_PROMPT, /every object-specific prompt must name that object/i);
   assert.match(SYSTEM_PROMPT, /earlier suggestions stay visible in the transcript/i);
   assert.match(SYSTEM_PROMPT, /Open in Classic links/);
   assert.match(RESULT_FOLLOWUP_PROMPT, /Inspect the newest tool result/);
-  assert.match(RESULT_FOLLOWUP_PROMPT, /exactly five new button suggestions/);
+  assert.match(RESULT_FOLLOWUP_PROMPT, /five or six distinct new button suggestions/);
+  assert.match(RESULT_FOLLOWUP_PROMPT, /copy the exact visible name and canonical slug/i);
+  assert.match(MORE_SUGGESTIONS_PROMPT, /Stay inside that exact topic/i);
   assert.match(MORE_SUGGESTIONS_PROMPT, /Do not search and do not call a platform capability/);
-  assert.match(MORE_SUGGESTIONS_PROMPT, /exactly five relevant new button suggestions/);
+  assert.match(MORE_SUGGESTIONS_PROMPT, /five or six relevant new button suggestions/);
 });
 
 test('runtime metadata is allowlisted, deterministic, and defaults GLM global chat to low effort', () => {
@@ -158,6 +177,15 @@ test('runtime metadata is allowlisted, deterministic, and defaults GLM global ch
   assert.deepEqual(metadata.actor.roles, ['collaborator', 'member']);
   assert.deepEqual(metadata.context.activeObject, { type: 'issue', id: '1' });
   assert.deepEqual(metadata.context.excludedSuggestionIds, ['issue.open', 'issue.comment']);
+  assert.deepEqual(metadata.availableCapabilities, [{
+    id: 'issues.list',
+    domain: 'issues',
+    title: 'List issues',
+    summary: 'List authorized issues matching a query.',
+    risk: 'read',
+    confirmation: 'never',
+    requiredInputs: ['query'],
+  }]);
   assert.equal(metadata.budget.currency, 'USD');
 
   const serialized = serializeRuntimeMetadata(metadata);
@@ -181,6 +209,16 @@ test('runtime metadata is allowlisted, deterministic, and defaults GLM global ch
   const escaped = serializeRuntimeMetadata(injection);
   assert.doesNotMatch(escaped, /<system>|<\/homeroom-runtime-metadata><system>/);
   assert.match(escaped, /\\u003csystem\\u003e/);
+
+  const providerPrecision = buildRuntimeMetadata(runtimeInput({
+    budget: {
+      overallRemaining: 279.980327348,
+      globalChatSpent: '0.02',
+      globalChatCap: '0.50',
+      resetAt: '2026-09-21T00:00:00.000Z',
+    },
+  }), { now });
+  assert.equal(providerPrecision.budget.overallRemaining, '279.98032735');
 });
 
 test('provider tool schemas repeat exact argument and presentation instructions', () => {
@@ -195,7 +233,7 @@ test('provider tool schemas repeat exact argument and presentation instructions'
 
   const present = BASE_TOOLS.find((tool) => tool.function.name === 'present_response');
   assert.match(present.function.parameters.properties.resultRefs.description, /Use \[\] for results created in this turn/);
-  assert.match(present.function.parameters.properties.suggestions.description, /Exactly five relevant, new button options/);
+  assert.match(present.function.parameters.properties.suggestions.description, /Five or six distinct, relevant, new button options/);
   assert.match(
     present.function.parameters.properties.suggestions.items.properties.prompt.description,
     /Complete next user instruction/,
@@ -316,7 +354,7 @@ test('the registry rejects destructive capabilities without confirmation and uns
   );
 });
 
-test('present_response accepts exactly five compact non-repeating suggestions and known results', () => {
+test('present_response accepts five or six compact non-repeating suggestions and known results', () => {
   const value = validatePresentation({
     message: 'I found one issue.',
     resultRefs: ['result-1'],
@@ -368,6 +406,16 @@ test('present_response accepts exactly five compact non-repeating suggestions an
     }, { availableResultIds: ['result-1'] }),
     /unsupported fields: description/,
   );
+  assert.equal(validatePresentation({
+    ...value,
+    suggestions: [
+      ...value.suggestions,
+      {
+        id: 'issue.history', label: 'Issue history',
+        prompt: 'Show the history of issue 1.', capabilityHint: null,
+      },
+    ],
+  }, { availableResultIds: ['result-1'] }).suggestions.length, 6);
   assert.throws(
     () => validatePresentation({
       ...value,
@@ -403,6 +451,7 @@ test('the first-use state is instant, compact, and leaves More suggestions to th
     'Find issues',
     'Review proposals',
     'Check messages',
+    'Recent activity',
   ]);
   assert.equal(first.suggestionContext, 'general');
   assert.ok(first.suggestions.every((entry) => entry.actionId));
@@ -417,9 +466,10 @@ test('predetermined More batches are direct until fewer than five options remain
     excludedSuggestionIds: first.suggestions.map((entry) => entry.id),
   });
   assert.deepEqual(second.suggestions.map((entry) => entry.label), [
-    'Notifications',
     'Development work',
+    'Notifications',
     'Open settings',
+    'AI spending',
     'View my profile',
     'View leaderboard',
   ]);

@@ -22,10 +22,20 @@ const DDL = `
     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
     admin_readonly BOOLEAN NOT NULL DEFAULT FALSE,
     has_platform_access BOOLEAN NOT NULL DEFAULT FALSE,
-    platform_access_granted_at TIMESTAMPTZ
+    platform_access_granted_at TIMESTAMPTZ,
+    needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE
   );
   CREATE UNIQUE INDEX users_email_lower_unique
     ON users (lower(email)) WHERE email IS NOT NULL;
+  -- #2563: the signup path derives a username suggestion, and
+  -- checkAvailability consults the retired-handle ledger as well as the
+  -- live table before handing one out.
+  CREATE TABLE username_history (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username VARCHAR(255) NOT NULL,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
   CREATE TABLE sessions (
     token VARCHAR(64) PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -212,8 +222,19 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       assert.equal(complete.status, 200);
       const body = await complete.json();
       assert.deepEqual(Object.keys(body), ['user']);
-      assert.equal(body.user.username, 'new.user@example.com');
+      // #2563: the address is NEVER the handle. What the row carries is a
+      // suggestion derived from the local part — `New.User` lowercased with
+      // the dot removed — and the account is marked as still owing a
+      // choice, which is what puts the first-run step in front of it.
+      assert.equal(body.user.username, 'newuser');
+      assert.notEqual(body.user.username, 'new.user@example.com');
       assert.equal('token' in body, false);
+      const createdRow = (await pool.query(
+        'SELECT username, email, needs_username_choice FROM users WHERE email = $1',
+        ['new.user@example.com'],
+      )).rows[0];
+      assert.equal(createdRow.username, 'newuser');
+      assert.equal(createdRow.needs_username_choice, true);
       const sessionCookie = cookieValue(complete.headers, 'session');
       assert.match(sessionCookie, /^[0-9a-f]{64}$/);
       assert.match(complete.headers.get('set-cookie'), /HttpOnly/i);

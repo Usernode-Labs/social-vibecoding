@@ -209,6 +209,9 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
     canManage: !!user?.canAdminWrite
       || (user?.id != null && app.created_by === user.id)
       || isAppAdmin,
+    messagesLast7Days: parseInt(app.message_count, 10) || 0,
+    activitySecondsLast7Days: parseInt(app.total_seconds, 10) || 0,
+    activeUsers: parseInt(app.active_users, 10) || 0,
     openIssues: parseInt(app.open_issues, 10) || 0,
     openProposals: parseInt(app.open_prs, 10) || 0,
     activeDevelopment: parseInt(app.active_sessions, 10) || 0,
@@ -1339,6 +1342,11 @@ function appRoutes(config) {
         // The whole-tree verdict under direct merges (services/main-watch.js):
         // is main green, and are this app's merges paused because it is not?
         mainCheck: require('../services/main-watch').describe(appRow),
+        // A merged commit of the platform's own app that has not become the
+        // running release (services/release-watch.js). Never stalled for a
+        // child app. The raw column rides along in the allowlist; this is
+        // the shape clients read.
+        releaseStall: require('../services/release-watch').describe(appRow),
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };

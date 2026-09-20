@@ -28,6 +28,7 @@ function context(overrides = {}) {
       }),
     },
     dispatchClientAction: async () => ({ ok: true, status: 200, data: { opened: true } }),
+    queryUserHistory: async () => ({ items: [] }),
     ...overrides,
   };
 }
@@ -38,7 +39,7 @@ test('the registry contains every mapped route, Settings section, and navigation
   const expected = inventory.summary.mappedRoutes
     + inventory.summary.settingsSections
     + inventory.summary.navigationSurfaces
-    + 5; // settings inspect/catalog, current proposals, Global Chat update, local settings
+    + 11; // focused settings/activity reads, two updates, and two cross-app history reads
   assert.equal(definitions.length, expected);
   assert.equal(registry.size, expected);
   for (const route of inventory.routes.filter((item) => item.status === 'mapped')) {
@@ -65,6 +66,14 @@ test('natural user wording discovers the intended read and development tools', (
     registry.search('list the current issues', execution)[0]?.id,
     'issues.get.apps.item.issues.bcb11122',
   );
+  const history = registry.search(
+    'Show me the last issues I closed and what I merged', execution, { limit: 8 },
+  ).map((entry) => entry.id);
+  assert.ok(history.includes('issues.closed_by_me'));
+  assert.ok(history.includes('governance.merged_by_me'));
+  assert.deepEqual(registry.search('list unicorns', execution), []);
+  assert.deepEqual(registry.search('delete unicorns', execution), []);
+  assert.deepEqual(registry.search('merge bananas', execution), []);
   assert.equal(
     registry.search('start developing issue 2377', execution)[0]?.id,
     'development.post.apps.item.sessions.5206fad0',
@@ -407,6 +416,114 @@ test('every Settings group is queryable in one small logical result', async () =
   assert.equal(values['profile.reasoningEffort'], 'low');
   assert.equal(values['developmentProfile.model'], 'z-ai/glm-5.3-flash');
   assert.ok(result.modelResult.data.relatedCapabilityIds.includes('settings.global_chat.update'));
+});
+
+test('direct app, unread-message, and app-discussion reads return focused authoritative data', async () => {
+  const registry = new CapabilityRegistry(classicCapabilityDefinitions());
+  const appRoute = inventory.routes.find((item) => (
+    item.status === 'mapped' && item.method === 'GET' && item.path === '/api/apps'
+  ));
+  const conversationsRoute = inventory.routes.find((item) => (
+    item.status === 'mapped' && item.method === 'GET' && item.path === '/api/conversations'
+  ));
+  const discussionsRoute = inventory.routes.find((item) => (
+    item.status === 'mapped' && item.method === 'GET' && item.path === '/api/apps/:slug/messages'
+  ));
+  assert.ok(appRoute && conversationsRoute && discussionsRoute);
+  const calls = [];
+  const apps = Array.from({ length: 24 }, (_, index) => ({
+    id: index + 1,
+    slug: `app-${index + 1}`,
+    name: `App ${index + 1}`,
+    icon_emoji: index === 0 ? '🧪' : null,
+    messagesLast7Days: index < 22 ? index + 1 : 0,
+    activitySecondsLast7Days: index < 22 ? (index + 1) * 60 : 0,
+    activeUsers: index < 22 ? 1 : 0,
+  }));
+  const execution = context({
+    classicApi: {
+      route: () => ({}),
+      async invoke(id, input) {
+        calls.push({ id, input });
+        if (id === appRoute.capabilityId) {
+          return { ok: true, status: 200, authoritativeResult: { apps } };
+        }
+        if (id === conversationsRoute.capabilityId) {
+          return {
+            ok: true,
+            status: 200,
+            authoritativeResult: {
+              conversations: [
+                { id: 10, title: 'Unread', unreadCount: 3 },
+                { id: 11, title: 'Read', unreadCount: 0 },
+              ],
+            },
+          };
+        }
+        if (id === discussionsRoute.capabilityId) {
+          return {
+            ok: true,
+            status: 200,
+            authoritativeResult: { messages: [{ id: 12, content: 'Latest update' }] },
+          };
+        }
+        throw new Error(`Unexpected capability ${id}`);
+      },
+    },
+  });
+
+  const activity = await registry.execute('apps.activity', {}, execution);
+  assert.equal(activity.authoritativeResult.data.apps.length, 20);
+  assert.equal(activity.authoritativeResult.data.apps[0].icon_emoji, '🧪');
+  assert.equal(activity.authoritativeResult.data.apps[0].messagesLast7Days, 1);
+  assert.deepEqual(calls[0].input.query, [{ name: 'view', value: 'global-chat' }]);
+
+  const unread = await registry.execute('messages.unread', {}, execution);
+  assert.equal(unread.authoritativeResult.data.unreadCount, 3);
+  assert.deepEqual(
+    unread.authoritativeResult.data.conversations.map((item) => item.id),
+    [10],
+  );
+
+  const discussions = await registry.execute(
+    'messages.for_app', { appSlug: 'social-vibecoding' }, execution,
+  );
+  assert.equal(discussions.authoritativeResult.data.messages[0].content, 'Latest update');
+  assert.equal(discussions.classicPath, '#app/social-vibecoding/dev/chat');
+  assert.deepEqual(calls.at(-1).input.pathParameters, { slug: 'social-vibecoding' });
+  assert.deepEqual(calls.at(-1).input.query, [{ name: 'limit', value: '20' }]);
+});
+
+test('direct spending and notification settings expose only the requested logical group', async () => {
+  const registry = new CapabilityRegistry(classicCapabilityDefinitions());
+  const spending = await registry.execute('settings.spending', {}, context({
+    globalChatUsage: {
+      spentUsd: '0.125', capUsd: '2', remainingUsd: '1.875', turns: '8',
+      successfulTurns: '7', resetAt: '2026-10-01T00:00:00.000Z',
+    },
+    budget: { overallRemaining: '279.98032735' },
+  }));
+  const usage = spending.authoritativeResult.data.items[0];
+  assert.equal(usage.name, 'Global Chat usage');
+  assert.equal(usage.spentUsd, '0.125');
+  assert.equal(usage.remainingUsd, '1.875');
+  assert.equal(usage.overallRemainingUsd, '279.98032735');
+  assert.equal(usage.turns, '8');
+
+  const alerts = await registry.execute('settings.inspect', { group: 'alerts' }, context({
+    clientSettings: {
+      theme: 'dark', devAlerts: false, devConsoleMode: 'expanded', adminPreview: true,
+    },
+    classicApi: {
+      route: () => ({}),
+      invoke: async () => ({ ok: true, status: 200, authoritativeResult: {} }),
+    },
+  }));
+  const alertValues = alerts.authoritativeResult.data.items[0];
+  assert.equal(alertValues.devAlerts, false);
+  assert.equal(Object.hasOwn(alertValues, 'theme'), false);
+  assert.equal(Object.hasOwn(alertValues, 'devConsoleMode'), false);
+  assert.equal(Object.hasOwn(alertValues, 'adminPreview'), false);
 });
 
 test('Global Chat settings change independently through the same validated profile writer', async () => {

@@ -15,13 +15,20 @@ import {
   loadOlderGlobalChatMessages,
   openGlobalChat,
   requestMoreSuggestions,
+  retryLastGlobalChatRequest,
   selectGlobalChatSuggestion,
   sendGlobalChatMessage,
   startNewGlobalChat,
   stopGlobalChatTurn,
   useGlobalChatState,
 } from './store';
-import type { GlobalChatMessage, GlobalChatPresentation, GlobalChatSuggestion } from './types';
+import type {
+  GlobalChatItemSelection,
+  GlobalChatMessage,
+  GlobalChatPresentation,
+  GlobalChatProgress,
+  GlobalChatSuggestion,
+} from './types';
 
 function dollars(value: string | number | null | undefined) {
   if (value == null || value === '') return null;
@@ -41,6 +48,52 @@ function BudgetLabel() {
     <span className="global-chat-budget" title="Global Chat spend this month and overall OpenRouter allowance">
       Chat {spent}{cap ? ` / ${cap}` : ''}{remaining ? ` · ${remaining} left` : ''}
     </span>
+  );
+}
+
+function TurnProgress({ progress }: { progress: GlobalChatProgress }) {
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const elapsedMs = Math.max(progress.elapsedMs, clock - progress.startedAt);
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  return (
+    <section className="global-chat-progress" aria-label="Global Chat progress">
+      <div className="global-chat-progress-current">
+        <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
+        <span>{progress.message}</span>
+        <time>{seconds}s</time>
+      </div>
+      <details>
+        <summary>Activity</summary>
+        <div className="global-chat-progress-details">
+          {progress.model ? <p>Model: {progress.model}</p> : null}
+          {progress.reasoningEffort ? <p>Reasoning: {progress.reasoningEffort} effort</p> : null}
+          {progress.attempt && progress.attempt > 1 ? <p>Attempt: {progress.attempt}</p> : null}
+          {progress.steps.length ? (
+            <ol>
+              {progress.steps.map((step, index) => (
+                <li key={`${step.phase}:${index}`}>{step.message}</li>
+              ))}
+            </ol>
+          ) : null}
+          {progress.operations.length ? (
+            <ul>
+              {progress.operations.map((operation) => (
+                <li key={operation.toolCallId} data-status={operation.status}>
+                  {operation.title}
+                  {operation.durationMs != null
+                    ? ` · ${(operation.durationMs / 1000).toFixed(1)}s`
+                    : ''}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </details>
+    </section>
   );
 }
 
@@ -157,23 +210,28 @@ function AssistantTurn({
 }) {
   const snapshot = useGlobalChatState();
   const presentation = message.payload?.presentation as GlobalChatPresentation | undefined;
+  const itemSelection = presentation?.itemSelection as GlobalChatItemSelection | undefined;
   const copy = presentation?.message ?? message.text;
   return (
     <article className="global-chat-turn global-chat-turn-assistant">
       {copy ? <p className="global-chat-assistant-copy">{copy}</p> : null}
       {presentation?.resultRefs?.map((id) => {
         const result = snapshot.results[id];
-        return result ? <GlobalChatResultBlock key={id} result={result} /> : (
+        return result ? (
+          <GlobalChatResultBlock key={id} result={result} itemSelection={itemSelection} />
+        ) : (
           <div key={id} className="global-chat-result-loading" aria-label="Loading result">
             <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
           </div>
         );
       })}
-      <Suggestions
-        suggestions={presentation?.suggestions || []}
-        latest={latest}
-        context={presentation?.suggestionContext}
-      />
+      {!itemSelection ? (
+        <Suggestions
+          suggestions={presentation?.suggestions || []}
+          latest={latest}
+          context={presentation?.suggestionContext}
+        />
+      ) : null}
     </article>
   );
 }
@@ -344,7 +402,7 @@ export function GlobalChatScreen() {
           ) : (
             <AssistantTurn key={message.id} message={message} latest={message.id === latestAssistantId} />
           ))}
-          {snapshot.activity ? (
+          {snapshot.progress ? <TurnProgress progress={snapshot.progress} /> : snapshot.activity ? (
             <div className="global-chat-activity">
               <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" /> {snapshot.activity}
             </div>
@@ -352,7 +410,7 @@ export function GlobalChatScreen() {
           {snapshot.error ? (
             <div className="global-chat-error" role="alert">
               <span>{snapshot.error}</span>
-              <button type="button" onClick={() => void openGlobalChat()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /> Retry</button>
+              <button type="button" onClick={() => void retryLastGlobalChatRequest()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /> Retry</button>
             </div>
           ) : null}
         </div>

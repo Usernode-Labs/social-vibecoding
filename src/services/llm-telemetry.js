@@ -675,7 +675,7 @@ function normalizedCteSql() {
                     CASE g.outcome WHEN 'success' THEN 'end_turn' ELSE g.outcome END),
            g.metadata || jsonb_strip_nulls(jsonb_build_object(
              'reasoning_effort', g.reasoning_effort,
-             'request_mode', 'stream',
+             'request_mode', 'nonstream',
              'output_format', 'tool_schema',
              'tool_call_count', g.tool_calls
            )) AS telemetry_metadata

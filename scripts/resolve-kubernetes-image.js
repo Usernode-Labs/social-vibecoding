@@ -17,6 +17,35 @@ function command(file, args, cwd) {
   }).trim();
 }
 
+// Registry lookups that failed for a reason a second attempt can fix: the
+// connection dropped, the blob CDN reset it, a gateway timed out, GHCR asked
+// us to slow down. One "read: connection reset by peer" from
+// pkg-containers.githubusercontent.com failed the worker lookup for #2589's
+// merge, which skipped the Helm release, which left production a commit
+// behind with nothing on the platform saying so. Authentication (401/403)
+// and cache misses (404, handled before this) are deterministic and are not
+// here; a bad token does not get better with waiting.
+const TRANSIENT_REGISTRY_ERROR = new RegExp([
+  'connection reset', 'connection refused', 'broken pipe', '\\bEOF\\b',
+  'i/o timeout', 'timed out', 'timeout', 'TLS handshake',
+  'no such host', 'temporary failure', 'temporarily unavailable', 'server misbehaving',
+  'too many requests', 'internal server error', 'bad gateway', 'service unavailable',
+  'gateway time-?out', 'unexpected status(?: code)?:? (?:429|5\\d\\d)\\b',
+].join('|'), 'i');
+const INSPECT_ATTEMPTS = 3;
+const INSPECT_RETRY_BASE_MS = 2000;
+
+function isTransientRegistryError(error) {
+  if (error?.code === 'ETIMEDOUT') return true; // execFileSync's own 60s deadline
+  return TRANSIENT_REGISTRY_ERROR.test(`${error?.stderr || ''}\n${error?.message || ''}`);
+}
+
+// Block the (synchronous, single-purpose) resolver between attempts without
+// spawning anything.
+function pause(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function inputKey({ component, revision, ref, claudeCodeVersion }, { cwd, run = command } = {}) {
   // The Git tree includes names, contents, executable modes, Dockerfiles and
   // .dockerignore. The worker's floating Claude Code dependency is resolved
@@ -35,17 +64,30 @@ function inputKey({ component, revision, ref, claudeCodeVersion }, { cwd, run = 
   return createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
 }
 
-function inspectImage(tag, { cwd, run = command } = {}) {
+function inspectImage(tag, {
+  cwd, run = command, sleep = pause, warn = message => console.warn(message),
+} = {}) {
   let output;
-  try {
-    output = run('docker', ['buildx', 'imagetools', 'inspect', tag,
-      '--format', '{{json .Manifest}}'], cwd);
-  } catch (error) {
-    // Missing/removed registry artifacts are a normal cache miss.
-    // Authentication, network and rate-limit errors must still fail rather
-    // than masquerading as one.
-    if (/manifest unknown|not found|\b404\b/i.test(String(error.stderr || ''))) return null;
-    throw error;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      output = run('docker', ['buildx', 'imagetools', 'inspect', tag,
+        '--format', '{{json .Manifest}}'], cwd);
+      break;
+    } catch (error) {
+      // Missing/removed registry artifacts are a normal cache miss.
+      // Authentication and rate-limit errors must still fail rather than
+      // masquerading as one. A dropped connection is retried a couple of
+      // times first, and only then fails the same way: a transient error
+      // may not become a cache miss either, or a blip would rebuild an
+      // image whose inputs have not changed.
+      if (/manifest unknown|not found|\b404\b/i.test(String(error.stderr || ''))) return null;
+      if (attempt >= INSPECT_ATTEMPTS || !isTransientRegistryError(error)) throw error;
+      const delay = INSPECT_RETRY_BASE_MS * attempt;
+      const reason = String(error.stderr || error.message || '').trim().split('\n').pop();
+      warn(`${tag}: registry lookup failed (attempt ${attempt}/${INSPECT_ATTEMPTS}), `
+        + `retrying in ${delay}ms: ${reason}`);
+      sleep(delay);
+    }
   }
   const manifest = JSON.parse(output);
   if (!DIGEST.test(manifest.digest || '') || !manifest.manifests?.some(entry =>
@@ -117,4 +159,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { inputKey, resolveImage };
+module.exports = { inputKey, resolveImage, isTransientRegistryError };

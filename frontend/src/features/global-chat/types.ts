@@ -4,13 +4,24 @@ export interface GlobalChatSuggestion {
   prompt: string;
   capabilityHint: string | null;
   actionId?: string | null;
+  parameters?: Record<string, string>;
+  targetLabel?: string | null;
   relatedSuggestions?: GlobalChatSuggestion[];
 }
+
+export interface GlobalChatItemSelection {
+  renderer: 'app';
+  actionId: string;
+  parameter: 'appSlug';
+  label: string;
+}
+
 export interface GlobalChatPresentation {
   message: string;
   resultRefs: string[];
   suggestions: GlobalChatSuggestion[];
   suggestionContext?: string;
+  itemSelection?: GlobalChatItemSelection;
 }
 
 export interface GlobalChatMessage {
@@ -109,6 +120,33 @@ export interface GlobalChatMessagePage {
 export interface GlobalChatTurnEvent {
   type: string;
   [key: string]: unknown;
+}
+
+export interface GlobalChatProgressOperation {
+  toolCallId: string;
+  capabilityId: string;
+  title: string;
+  risk?: string;
+  status: 'planned' | 'running' | 'completed' | 'failed';
+  durationMs?: number;
+}
+
+export interface GlobalChatProgressStep {
+  phase: string;
+  message: string;
+  elapsedMs: number;
+}
+
+export interface GlobalChatProgress {
+  phase: string;
+  message: string;
+  model: string | null;
+  reasoningEffort?: string | null;
+  elapsedMs: number;
+  startedAt: number;
+  attempt?: number;
+  steps: GlobalChatProgressStep[];
+  operations: GlobalChatProgressOperation[];
 }
 
 export interface GlobalChatModel {

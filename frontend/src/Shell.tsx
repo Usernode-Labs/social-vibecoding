@@ -76,6 +76,7 @@ import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
+import { OnboardingTour } from './features/home/tour';
 import { ImproveIsland } from './features/improve';
 import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
@@ -465,6 +466,22 @@ export function Shell() {
           features/dialogs/index.tsx.
       */}
       <Island name="Dialogs"><Dialogs /></Island>
+      {/*
+          #2255 — the eight-step welcome tour, replacing the one-line
+          #home-welcome banner (#1561). A fixed overlay rather than a dialog:
+          it dims the page and cuts a hole around the thing each step is
+          about, so it has to sit OVER the header (which is `relative z-10`
+          in normal flow) and over the screens, and it must not be lifted
+          into the kit's modal shell the way frontend/src/lib/static-modal.ts
+          lifts the nine dialogs' cards.
+
+          Here, after the dialogs, for the same reason the two staging
+          overlays are here: everything it points at has to exist in the
+          document above it. It ships `hidden` and empty of state, and it
+          opens only once the viewer is known, the first-run terms gate has
+          settled and Home is on screen. See features/home/tour/index.tsx.
+      */}
+      <Island name="OnboardingTour"><OnboardingTour /></Island>
       {/*
           #1085 chunk H, step 3: the Dev board's runtime-injected regions.
           Renders NO DOM of its own — it is the anchor that lets
