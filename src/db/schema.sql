@@ -8534,6 +8534,13 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_prev_approvals INTEGER;
 -- keeps an earlier line when the same person re-casts the same side without
 -- a new one, which is what carries a Yes onto a proposal's next version.
 ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS reason TEXT;
+-- #2603: the same line, on a governance vote. routes/issues.js requires one on
+-- a No (`down`) and accepts one on a Yes (`up`), with the identical 280-char
+-- cap; a row written before this column is NULL and reads exactly as it did.
+-- An issue vote toggles OFF when it is re-cast on the same side, so there is
+-- no same-side upsert to carry a line across: a flip simply replaces it, the
+-- old sentence having argued for the other side.
+ALTER TABLE issue_votes ADD COLUMN IF NOT EXISTS reason TEXT;
 -- chat_sessions.conversation_prompted_epoch — the approval epoch for which
 -- the "needs a conversation" prompt was posted into the proposal's thread.
 -- Contested is derived from the active-user count, which moves without a
