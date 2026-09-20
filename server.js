@@ -5357,13 +5357,14 @@ const POOL_CLOSE_TIMEOUT_MS = 1000;
 // so nothing a tab fetches next can be answered by the build being retired —
 // read the build this deployment is moving to (deploy-status already reads
 // it for the version row's spinner) and, if it is not this one, tell every
-// open events socket. Tabs prefetch it and switch at their first quiet
-// moment (public/js/app.js handlePlatformVersion), seconds before their next
-// poll would have noticed and without waiting for the Deployment to call
-// itself complete. A SIGTERM for any other reason — a node drain, an
-// eviction, a crash restart — finds the target equal to this build and says
-// nothing. Bounded, and run alongside the handler drain rather than before
-// it, so it adds nothing to the shutdown budget the grace test pins.
+// open events socket. Tabs prefetch it and put up the reload button
+// (public/js/app.js handlePlatformVersion) — they do not reload themselves —
+// seconds before their next poll would have noticed and without waiting for
+// the Deployment to call itself complete. A SIGTERM for any other reason — a
+// node drain, an eviction, a crash restart — finds the target equal to this
+// build and says nothing. Bounded, and run alongside the handler drain rather
+// than before it, so it adds nothing to the shutdown budget the grace test
+// pins.
 const SUCCESSOR_ANNOUNCE_TIMEOUT_MS = 1500;
 
 async function announceSuccessorBuild() {

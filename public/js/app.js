@@ -907,12 +907,10 @@ const App = {
     // row flips to its "deploying" state within seconds of a deploy
     // signaling start, and to "stale" (a tappable reload) once a new
     // build is live and this tab is behind it. Cheap endpoint — just
-    // reads one tiny file off disk on the server.
-    //
-    // The build change itself no longer waits for this: the socket says so
-    // the moment traffic moves (handlePlatformVersion). The poll is what
-    // paints the rollout in progress, and the fallback for a tab whose
-    // socket missed the announcement.
+    // reads one tiny file off disk on the server. The live SHA also
+    // arrives pushed on /ws/events (`platform_version`, #2545), which is
+    // what usually gets there first; this poll is what carries a tab whose
+    // socket is down, and everything the message does not say.
     setInterval(App.loadVersion, 10_000);
   },
 
@@ -1693,71 +1691,6 @@ const App = {
   _shellReloadStarted: null,
   SHELL_AUTO_RELOAD_KEY: 'usernode-shell-auto-reload',
 
-  // ── A tab that was open across the deploy switches too (#2545) ────────
-  //
-  // The cold-boot switch above covers a document that was already stale when
-  // it loaded. A tab simply left open — which is where the person who just
-  // watched their merge land is standing — used to get the reload button and
-  // nothing else, so the platform "updated" whenever they next found that
-  // button or reloaded for some other reason, typically minutes after the
-  // build was live. It now switches itself, on the cold boot's terms (the
-  // complete prefetch, no draft, the session latch) plus one more: a QUIET
-  // MOMENT. A reload under somebody's hands is exactly what #1015 removed the
-  // forced reload for, and this must not be that again.
-  //
-  // Quiet is: the tab is hidden — nobody is looking, and it comes back
-  // current — or nobody has touched it for SHELL_AUTO_RELOAD_QUIET_MS with no
-  // sheet, panel or modal up. Never while a child app's frame is on screen:
-  // its state is the one thing the shell cannot see, so that tab keeps the
-  // button until it navigates away. Tried when the prefetch settles, on every
-  // 10s version poll while the tab stays behind, and as the tab is hidden;
-  // that cadence is the retry, so nothing here owns a timer.
-  //
-  // A prefetch that FAILED is never switched to on its own. That reload may
-  // serve the old document straight back, and an automatic one would be a
-  // loop with a latch on it rather than an update. It stays a button.
-  //
-  // Ten seconds: longer than the gap between two taps of one intention, so a
-  // reload never lands between them, and no longer than the poll that
-  // retries it, so a tab left alone is on the new build within a poll or two
-  // of the deploy — which is what "auto update" has to mean to be noticed.
-  SHELL_AUTO_RELOAD_QUIET_MS: 10_000,
-  _lastShellInteractionAt: 0,
-
-  // Something is dimming the scene: a surface the kit presented (sheet, panel,
-  // modal, action sheet — every one of them puts a `.un-backdrop` under
-  // itself), or a sheet's own web overlay where the kit declined
-  // (#improve-overlay, #notifications-sheet-overlay, … — each `<id>-overlay`
-  // with `data-open` on, see their rules in app.css).
-  SHELL_SURFACE_UP_SELECTOR: '.un-backdrop, [id$="-overlay"][data-open]',
-
-  _isShellQuiet() {
-    try {
-      if (App.currentApp && App.currentTab === 'app') return false;
-      if (document.hidden) return true;
-      if (document.querySelector(App.SHELL_SURFACE_UP_SELECTOR)) return false;
-      return Date.now() - App._lastShellInteractionAt >= App.SHELL_AUTO_RELOAD_QUIET_MS;
-    } catch {
-      return false;
-    }
-  },
-
-  _switchToPrefetchedShellIfQuiet() {
-    const update = App.shellUpdate;
-    if (!update || update.state !== 'ready') return false;
-    // `?shot=platform-update-ready` paints this state for a photograph; a
-    // reload out from under the camera is the one thing it must not do.
-    if (App._platformUpdateShot) return false;
-    return App._reloadPrefetchedShellIfSafe(update.sha, { quiet: true });
-  },
-
-  // Controls the person has typed into since this document loaded. A React
-  // controlled field keeps `defaultValue` in step with `value`, so the
-  // dirty-versus-default comparison below cannot see a draft in one; the
-  // `input` events it fired can. Filled by the listener at the foot of this
-  // file; absent in the bare vm sandboxes the unit tests build.
-  _dirtyShellControls: null,
-
   _hasUnsavedShellInput() {
     let controls = [];
     try {
@@ -1788,26 +1721,15 @@ const App = {
         continue;
       }
       if (String(control.value || '') !== String(control.defaultValue || '')) return true;
-      // Typed into and still holding something. A field a send has emptied is
-      // not a draft any more, whatever was typed into it before.
-      if (App._dirtyShellControls && App._dirtyShellControls.has(control)
-          && String(control.value || '').trim()) return true;
     }
     return false;
   },
 
-  // `force` is pull-to-refresh: the person asked, so nothing below applies.
-  // Otherwise one of two automatic modes — the cold stale boot, armed by
-  // loadVersion's first answer and switched at once, or `quiet`, a tab that
-  // fell behind later and switches only at a quiet moment (#2545).
-  _reloadPrefetchedShellIfSafe(sha, { force = false, quiet = false } = {}) {
+  _reloadPrefetchedShellIfSafe(sha, { force = false } = {}) {
     if (!sha || App._shellReloadStarted) return false;
-    if (!force && !quiet && App._shellAutoReloadSha !== sha) return false;
-    if (!force && quiet && !App._isShellQuiet()) return false;
+    if (!force && App._shellAutoReloadSha !== sha) return false;
     if (!force && App._hasUnsavedShellInput()) {
-      // A draft cancels the cold-boot switch outright; nothing re-arms it. The
-      // quiet switch is simply tried again by the next poll, once it is sent.
-      if (!quiet) App._shellAutoReloadSha = null;
+      App._shellAutoReloadSha = null;
       return false;
     }
     if (!force) {
@@ -1877,11 +1799,7 @@ const App = {
       // Repaint from the last answer rather than re-polling: the pill is the
       // only thing this changes, and /api/version is already on a 10s timer.
       if (App._lastVersionInfo) App.renderPlatformVersionPill(App._lastVersionInfo);
-      // A cold stale boot switches now; a tab open across the deploy at the
-      // first quiet moment, which may well be this one.
-      if (state === 'ready' && !App._reloadPrefetchedShellIfSafe(sha)) {
-        App._switchToPrefetchedShellIfQuiet();
-      }
+      if (state === 'ready') App._reloadPrefetchedShellIfSafe(sha);
     };
 
     const controller = navigator.serviceWorker && navigator.serviceWorker.controller;
@@ -1955,36 +1873,32 @@ const App = {
     } catch {}
   },
 
-  // ── The server says which build it is (#2545) ─────────────────────────
-  //
-  // `platform_version` arrives on /ws/events: on every connect, with the
-  // build the socket landed on, and from the pod being replaced during a
-  // rollout the moment traffic has moved to its successor (server.js
-  // announceSuccessorBuild). It is the fact loadVersion polls for, told when
-  // it becomes true, so it runs the same stale branch — prefetch, then the
-  // quiet switch — now rather than at the next tick.
-  //
-  // It is trusted over the poll's "deploying" state, deliberately. The
-  // Deployment reports itself complete only once the old pod is gone, which
-  // is seconds AFTER this message; and the reason the stale branch waits a
-  // deploy out — a prefetch answered by the pod being retired — cannot happen
-  // once that pod has closed its listener, which it does before sending
-  // this. Should a request land there regardless, the worker names the
-  // mismatch and the next cue asks again (see _ensureShellPrefetch).
-  //
-  // Only for a tab with a baseline and a first answer. Before those, the
-  // document may be a stale cached boot, and loadVersion's first answer owns
-  // that case — its cold-boot arming must see the poll's answer, not this.
+  /**
+   * The server said which build is live — `platform_version` on /ws/events,
+   * sent on connect and pushed by a pod leaving a rollout (#2545). Same
+   * conclusion the 10s poll reaches, up to 10s sooner: start the download
+   * now, so the reload button is up — with the build already cached behind
+   * it — by the time the user goes looking for it. Nothing here reloads;
+   * the button is the only way forward, as it is for the poll.
+   *
+   * A word, not an answer: /api/version is trusted for everything else
+   * (env, deployProgress, the boot latch). Before the first poll there is
+   * nothing to compare against, so the message is left to the poll; a SHA
+   * that is not news, or is 'dev', is nothing to do.
+   */
   handlePlatformVersion(data) {
-    const sha = data && typeof data.sha === 'string' ? data.sha : null;
+    const sha = data && data.sha;
     if (!sha || sha === 'dev') return;
     if (!App.loadedPlatformSha || !App._lastVersionInfo) return;
     if (sha === App.loadedPlatformSha) return;
-    // From this tab's point of view the rollout has delivered: `sha` is what
-    // its requests land on now. The poll's next answer replaces this.
-    const info = { ...App._lastVersionInfo, sha, deployProgress: null };
-    App._lastVersionInfo = info;
-    if (!App._platformUpdateShot) App.renderPlatformVersionPill(info);
+    if (App._lastVersionInfo.sha === sha) return;
+    // The poll's shape, with the pushed SHA: a pod announcing its successor
+    // knows it as live, whatever /api/version last said about a rollout in
+    // progress (the row shows "updating…" for a deploying answer without
+    // asking for the build, and this is the one moment that deferral is
+    // wrong: the download is exactly what should start).
+    App._lastVersionInfo = { ...App._lastVersionInfo, sha, deployProgress: null };
+    if (!App._platformUpdateShot) App.renderPlatformVersionPill(App._lastVersionInfo);
   },
 
   // The SHA /api/version reports when it differs from the one this document
@@ -2237,13 +2151,10 @@ const App = {
       const oldShort = App.loadedPlatformSha.slice(0, 7);
       const newShort = runningSha.slice(0, 7);
       // Pull the new build down before offering to switch to it. Idempotent
-      // per SHA, and this branch runs on every 10s poll while the tab is
-      // behind — see _ensureShellPrefetch for why the reload was a lie
-      // without it.
+      // per SHA (a 'retry' excepted: this is the re-ask), and this branch
+      // runs on every 10s poll and every push while the tab is behind — see
+      // _ensureShellPrefetch for why the reload was a lie without it.
       App._ensureShellPrefetch(runningSha);
-      // And once it is down, switch at the first quiet moment (#2545). This
-      // poll is that check's retry; if it reloads, the paint below is moot.
-      if (App._switchToPrefetchedShellIfQuiet()) return;
       const update = App.shellUpdate;
       if (update && update.sha === runningSha
           && (update.state === 'fetching' || update.state === 'retry')) {
@@ -2267,7 +2178,7 @@ const App = {
       const failed = !!(update && update.state === 'failed');
       const tip = failed
         ? `Platform updated from ${oldShort} to ${newShort}. Click to reload (the update could not be pre-downloaded, so this may take two tries).`
-        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload, or leave this tab alone for a moment and it switches by itself.`;
+        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload.`;
       paint(`
         <button type="button"
                 class="drawer-ver drawer-ver--stale"
@@ -2389,9 +2300,8 @@ const App = {
           case 'resync_hint':
             App.resyncCurrentView();
             break;
-          // Which build the server is (#2545): on connect, and from the pod
-          // being replaced the moment traffic moves. What /api/version's
-          // poll would say ten seconds from now, said now.
+          // Which platform build is live, from the server rather than the
+          // next /api/version poll (#2545) — see handlePlatformVersion.
           case 'platform_version':
             App.handlePlatformVersion(data);
             break;
@@ -5852,28 +5762,6 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 }
 if (typeof window !== 'undefined' && window.addEventListener) {
   window.addEventListener('focus', App._foregroundResync);
-}
-
-// #2545: what the quiet switch onto a new build reads (App._isShellQuiet,
-// App._hasUnsavedShellInput). Interaction is a pointer, a key, a touch or a
-// wheel — the things a person does, not the scrolls a streaming chat does to
-// itself. Capture-phase and passive: nothing here may delay or cancel the
-// gesture it is noting. The `input` listener is the draft detector's second
-// sense, for fields whose framework keeps `defaultValue` in step with what
-// was typed. And a tab going hidden is the quiet moment par excellence, so
-// it is tried at once rather than at the next poll.
-App._noteShellInteraction = () => { App._lastShellInteractionAt = Date.now(); };
-if (typeof document !== 'undefined' && document.addEventListener) {
-  App._dirtyShellControls = new WeakSet();
-  for (const type of ['pointerdown', 'keydown', 'touchstart', 'wheel']) {
-    document.addEventListener(type, App._noteShellInteraction, { capture: true, passive: true });
-  }
-  document.addEventListener('input', (event) => {
-    if (event.target) App._dirtyShellControls.add(event.target);
-  }, true);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) App._switchToPrefetchedShellIfQuiet();
-  });
 }
 
 // ── The FIRST screen, decided before anything hydrates ─────────────────

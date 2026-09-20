@@ -53,11 +53,13 @@ taken it out of the Service before `SIGTERM` arrives. On `SIGTERM`, `server.js`
 through `services/deploy-status.js` and, if it is another build, pushes
 `platform_version` to every open `/ws/events` socket
 (`ws.pushPlatformVersion`). Every events handshake carries the same message
-with the build the socket landed on. Tabs prefetch the announced build and
-switch at their first quiet moment (`handlePlatformVersion` in
-`public/js/app.js`); the 10s `/api/version` poll paints the rollout in
-progress and remains the fallback. A `SIGTERM` for any other reason finds the
-target equal to the running build and announces nothing.
+with the build the socket landed on. A tab prefetches the announced build into
+its service-worker cache and turns the Settings version row into the reload
+button (`handlePlatformVersion` in `public/js/app.js`); it never reloads
+itself — the user does, from that button or a pull-to-refresh. The 10s
+`/api/version` poll paints the rollout in progress and remains the fallback. A
+`SIGTERM` for any other reason finds the target equal to the running build and
+announces nothing.
 
 When a stable release changes `KUBERNETES_WORKER_IMAGE`, an existing warm
 worker is compared with that immutable digest before its next dispatch. An
