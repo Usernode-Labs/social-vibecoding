@@ -210,10 +210,28 @@ function mergeWindowMs(active, yesCount, noCount) {
 function rejectionWindowMs(active, yesCount, noCount) {
   const a = Math.max(parseInt(active, 10) || 0, 1);
   const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
-  const no = Math.max(parseInt(noCount, 10) || 0, 0);
   // Keep-alive: any real base of Yes support cancels the rejection clock.
   if (yes / a >= REJECT_KEEPALIVE_YES_FRAC) return null;
-  // Arming guard: only once No strictly leads Yes AND clears the min-No floor.
+  return oppositionWindowMs(yesCount, noCount);
+}
+
+// The arming guard and the curve, WITHOUT a keep-alive rule — #2494.
+//
+// Split out because the two governance modes agree on when opposition should
+// start a clock and how fast it should run, and disagree only on what
+// protects a proposal from it. The default mode's keep-alive is a fraction of
+// the ACTIVE user count (above); at-least-N has no meaningful active
+// denominator, and its own protection is simply having reached the approval
+// threshold (governance.js atLeastGate).
+//
+// One copy of the curve on purpose: two copies of a governance rule is how
+// one of them gets tuned and the other quietly does not.
+function oppositionWindowMs(yesCount, noCount) {
+  const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
+  const no = Math.max(parseInt(noCount, 10) || 0, 0);
+  // Arming guard: only once No strictly leads Yes AND clears the min-No
+  // floor. A tie is a stalemate, not a rejection, and a lone No can never
+  // auto-close anything.
   if (no <= yes || no < REJECT_MIN_NO) return null;
   const t = (no - yes) / (no + yes); // dominance margin in (0, 1]
   const windowMs = REJECT_WINDOW_MAX_MS * (1 - Math.pow(t, REJECT_CURVE_EXP));
@@ -474,6 +492,7 @@ module.exports = {
   mergeWindowMs,
   lazyWindowMs,
   rejectionWindowMs,
+  oppositionWindowMs,
   isContested,
   mergeGate,
   // Exported for tests / config visibility.

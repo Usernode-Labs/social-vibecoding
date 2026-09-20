@@ -161,10 +161,30 @@ test('at_least: the modifier is a verified no-op (that mode is already clock-fre
   }
 });
 
-test('at_least: rejection stays OFF under the modifier — "as before" means as that app behaves', () => {
+test('at_least: the modifier still does not touch rejection — the base gate owns it', () => {
+  // REVERSED by #2494, with the reasoning kept rather than the assertion.
+  //
+  // This used to assert `rejectionArmed === false` under the name
+  // "rejection stays OFF under the modifier". That was true, but it was
+  // true because atLeastGate had NO rejection clock at all — the very
+  // thing #2494 reports: a promoted proposal on an at-least-N app could
+  // never close itself however it was voted.
+  //
+  // #788's intent is unchanged and is actually better served now. Its own
+  // comment says the modifier passes all four rejection fields through
+  // untouched so that "a flagged proposal nobody wants still dies on
+  // schedule". With 1 yes / 6 no there is now a schedule for it to die on.
   const flagged = gate(AT_LEAST_GOV, 9, 1, 6, ago(7 * DAY), true);
-  assert.equal(flagged.rejectionArmed, false);
-  assert.equal(flagged.rejectable, false);
+  assert.equal(flagged.rejectionArmed, true,
+    'opposition arms the clock in at-least-N mode now (#2494)');
+
+  // What the modifier must STILL not do: change any of it. The MERGE
+  // timers are its business; the rejection fields are the base gate's.
+  const plain = gate(AT_LEAST_GOV, 9, 1, 6, ago(7 * DAY), false);
+  for (const key of ['rejectionArmed', 'rejectable', 'rejectionWindowMs', 'rejectionEndsAt']) {
+    assert.deepEqual(flagged[key], plain[key],
+      `the no-timer modifier must not move ${key}`);
+  }
 });
 
 test('at_least: mode still reports the real regime, not the modifier', () => {
