@@ -260,6 +260,8 @@ test('the first call preloads matching capabilities and auto-attaches authoritat
   assert.equal(modelCalls[0].input.reasoningEffort, 'low');
   assert.equal(modelCalls[0].input.model.id, 'cheap/global');
   assert.equal(modelCalls[0].input.maxOutputTokens, 800);
+  assert.equal(modelCalls[0].input.timeoutMs, 8_000);
+  assert.equal(modelCalls[0].input.sessionId, `${THREAD_ID}:latency-v1`);
   assert.match(modelCalls[0].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
   assert.equal(modelCalls[0].input.messages.at(-1).content, 'List my open issues');
   assert.match(modelCalls[0].input.messages[1].content, /"availableCapabilities"/);
@@ -506,7 +508,7 @@ test('shown suggestions cannot repeat and a rejected presentation stays inside t
   assert.match(JSON.stringify(modelCalls[1].input.messages), /repeated_suggestion/);
 });
 
-test('one transient provider failure is accounted as a retry and free-form completion is rejected', async () => {
+test('a transient provider failure is not duplicated after OpenRouter has handled failover', async () => {
   const transient = Object.assign(new Error('network failed'), { code: 'network' });
   const retryState = harness({
     responses: [
@@ -514,12 +516,22 @@ test('one transient provider failure is accounted as a retry and free-form compl
       providerResponse([call('present_1', 'present_response', presentation())]),
     ],
   });
-  await retryState.orchestrator.runTurn(turnInput({ text: 'Hello.' }));
+  const events = [];
+  await assert.rejects(
+    retryState.orchestrator.runTurn(turnInput({
+      text: 'Hello.',
+      emit: async (event) => { events.push(event); },
+    })),
+    (error) => error.code === 'network',
+  );
   assert.deepEqual(
     retryState.calls.filter((entry) => entry.type === 'model').map((entry) => entry.input.attemptNumber),
-    [1, 2],
+    [1],
   );
+  assert.equal(events.some((event) => event.phase === 'retrying'), false);
+});
 
+test('free-form completion without a validated presentation is rejected', async () => {
   const invalidState = harness({ responses: [providerResponse([], { content: 'I did it.' })] });
   const failureEvents = [];
   await assert.rejects(

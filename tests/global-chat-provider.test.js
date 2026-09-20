@@ -31,10 +31,14 @@ function responseFromParts(parts, { status = 200 } = {}) {
   }), {
     status,
     headers: {
-      'Content-Type': 'text/event-stream',
+      'Content-Type': 'application/json',
       'X-Generation-Id': 'gen_test_1',
     },
   });
+}
+
+function jsonResponse(value, options) {
+  return responseFromParts([JSON.stringify(value)], options);
 }
 
 test('OpenRouter request uses strict tools without conflicting response_format', () => {
@@ -49,9 +53,13 @@ test('OpenRouter request uses strict tools without conflicting response_format',
   assert.deepEqual(request.reasoning, { effort: 'low' });
   assert.equal(request.max_tokens, 800);
   assert.equal(request.temperature, 0.1);
-  assert.equal(request.stream, true);
+  assert.equal(request.stream, false);
   assert.deepEqual(request.usage, { include: true });
-  assert.deepEqual(request.provider, { require_parameters: true });
+  assert.deepEqual(request.provider, {
+    require_parameters: true,
+    allow_fallbacks: true,
+    sort: 'latency',
+  });
   assert.equal(Object.hasOwn(request, 'response_format'), false);
   assert.equal(request.parallel_tool_calls, true);
 });
@@ -67,7 +75,11 @@ test('unsupported optional model parameters are omitted instead of weakening req
   });
   assert.equal(Object.hasOwn(request, 'temperature'), false);
   assert.equal(Object.hasOwn(request, 'parallel_tool_calls'), false);
-  assert.deepEqual(request.provider, { require_parameters: true });
+  assert.deepEqual(request.provider, {
+    require_parameters: true,
+    allow_fallbacks: true,
+    sort: 'latency',
+  });
 });
 
 test('a forced tool choice must name one of the tools in the request', () => {
@@ -91,7 +103,7 @@ test('a forced tool choice must name one of the tools in the request', () => {
   }), /available tool/);
 });
 
-test('OpenRouter SSE parser reconstructs split tool calls and provider-reported usage', async () => {
+test('OpenRouter atomic response returns complete tool calls and provider-reported usage', async () => {
   let sent;
   const result = await provider.streamChat({
     apiKey: 'sk-or-private',
@@ -104,11 +116,30 @@ test('OpenRouter SSE parser reconstructs split tool calls and provider-reported 
     schema: STRICT_SCHEMA,
     fetchImpl: async (url, options) => {
       sent = { url, options, body: JSON.parse(options.body) };
-      return responseFromParts([
-        'data: {"id":"gen_test_1","model":"served/model","provider":"fast-provider","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"issues.list","arguments":"{\\"query\\":\\""}}]}}]}\n\n',
-        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"open\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":101,"completion_tokens":12,"completion_tokens_details":{"reasoning_tokens":3},"prompt_tokens_details":{"cached_tokens":20},"cost":0.00004}}\n\n',
-        'data: [DONE]\n\n',
-      ]);
+      return jsonResponse({
+        id: 'gen_test_1',
+        model: 'served/model',
+        provider: 'fast-provider',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'issues.list', arguments: '{"query":"open"}' },
+            }],
+          },
+          finish_reason: 'tool_calls',
+        }],
+        usage: {
+          prompt_tokens: 101,
+          completion_tokens: 12,
+          completion_tokens_details: { reasoning_tokens: 3 },
+          prompt_tokens_details: { cached_tokens: 20 },
+          cost: 0.00004,
+        },
+      });
     },
   });
 
@@ -130,10 +161,14 @@ test('OpenRouter SSE parser reconstructs split tool calls and provider-reported 
     reasoningTokens: 3,
     costUsd: 0.00004,
   });
+  assert.ok(result.timings.durationMs >= 0);
+  assert.ok(result.timings.firstByteMs >= 0);
 });
 
-test('OpenRouter SSE parsing preserves Unicode split across network chunks', async () => {
-  const full = Buffer.from('data: {"choices":[{"delta":{"content":"€"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+test('OpenRouter JSON parsing preserves Unicode split across network chunks', async () => {
+  const full = Buffer.from(JSON.stringify({
+    choices: [{ message: { content: '€', tool_calls: [] }, finish_reason: 'stop' }],
+  }));
   const euro = full.indexOf(Buffer.from('€'));
   const pieces = [full.subarray(0, euro + 1), full.subarray(euro + 1)];
   const result = await provider.streamChat({
@@ -154,10 +189,19 @@ test('OpenRouter SSE parsing preserves Unicode split across network chunks', asy
   assert.equal(result.content, '€');
 });
 
-test('an unterminated or length-capped provider stream is retryable instead of accepted as a partial turn', async () => {
-  for (const part of [
-    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"issues.list","arguments":"{\\"query\\":\\"open"}}]}}]}\n\n',
-    'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n',
+test('an unterminated or length-capped provider response is rejected as incomplete', async () => {
+  for (const body of [
+    {
+      choices: [{
+        message: {
+          tool_calls: [{
+            id: 'call_1', type: 'function',
+            function: { name: 'issues.list', arguments: '{"query":"open"}' },
+          }],
+        },
+      }],
+    },
+    { choices: [{ message: { content: 'partial' }, finish_reason: 'length' }] },
   ]) {
     await assert.rejects(
       provider.streamChat({
@@ -167,7 +211,7 @@ test('an unterminated or length-capped provider stream is retryable instead of a
         reasoning: 'low',
         messages: [],
         tools: [],
-        fetchImpl: async () => responseFromParts([part]),
+        fetchImpl: async () => jsonResponse(body),
       }),
       (error) => error.code === 'stream_error' && error.dispatched === true,
     );
@@ -306,6 +350,7 @@ test('an accounted provider call settles tokens and provider-reported cost', asy
       generationId: 'gen_test_1', servedModel: MODEL.id, provider: 'fast-provider',
       usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 10, reasoningTokens: 2, costUsd: 0.00003 },
       toolCalls: [{ id: 'call' }], content: '', assistantMessage: { role: 'assistant', content: null },
+      timings: { durationMs: 325, firstByteMs: 300 },
     }),
   });
   assert.ok(result.reservationId);
@@ -315,6 +360,12 @@ test('an accounted provider call settles tokens and provider-reported cost', asy
   assert.equal(updates[0].params[8], 'provider_reported');
   assert.equal(updates[0].params[9], 'success');
   assert.equal(updates[0].params[10], 1);
+  const timingMetadata = JSON.parse(updates[0].params[13]);
+  assert.equal(timingMetadata.routed_provider, 'fast-provider');
+  assert.equal(timingMetadata.generation_id, 'gen_test_1');
+  assert.equal(timingMetadata.provider_duration_ms, 325);
+  assert.equal(timingMetadata.time_to_first_output_ms, 300);
+  assert.ok(timingMetadata.dispatch_setup_duration_ms >= 0);
 });
 
 test('logical turn outcome annotates the final invocation without storing content', async () => {
@@ -358,5 +409,6 @@ test('Global Chat usage participates in provider-neutral telemetry without conte
   assert.match(source, /'turn_duration_ms'/);
   assert.match(source, /'turn_outcome'/);
   assert.match(source, /'turn_error_code'/);
+  assert.match(source, /'request_mode', 'nonstream'/);
   assert.doesNotMatch(source, /g\.(plain_text|structured_payload|normalized_input)/);
 });
