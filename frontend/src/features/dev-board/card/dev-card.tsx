@@ -166,7 +166,7 @@ export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
 
 /** The tap-through chevron (`DEV_CARD_CHEVRON`). */
 export function Chevron(): ReactNode {
-  return <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />;
+  return <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" aria-hidden="true" />;
 }
 
 /**
@@ -985,7 +985,7 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
               args: [editId],
             })}
           >
-            <PencilSquareIcon className="w-3.5 h-3.5 inline -mt-0.5" />
+            <PencilSquareIcon className="w-3.5 h-3.5 inline -mt-0.5" aria-hidden="true" />
           </button>
         </>
       ) : null}

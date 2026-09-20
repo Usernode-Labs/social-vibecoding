@@ -207,7 +207,7 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
             {preview}
           </span>
         </span>
-        <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />
+        <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" aria-hidden="true" />
       </a>
     </div>
   );
