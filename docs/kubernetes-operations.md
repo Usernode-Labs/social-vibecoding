@@ -30,6 +30,20 @@ runtime permissions. The platform owns generated apps, previews, workers and
 check Jobs. Keep each change with its owner; source commits do not themselves
 change the cluster. Review the normal release/GitOps diff before deployment.
 
+Argo notices a published chart by re-reading the registry's tag list on its
+reconcile interval, up to three minutes after the push. When the repository
+secret `ARGOCD_REFRESH_TOKEN` is set, the release job's "Ask Argo CD to pick up
+the release now" step follows a stable `helm push` with
+`GET /api/v1/applications/social-vibecoding-platform?refresh=hard`, so the
+comparison — and the automated sync behind it — starts at once. The token is
+an Argo CD project-role token that can only `get` that one Application; the
+role, the mint procedure and rotation live in the infra repository's
+`docs/22-social-vibecoding-runtime-operations.md`. The step is best effort:
+unset, it skips; a rejected or timed-out call posts a warning on the run and
+the release lands on the periodic reconcile as before. It cannot fail the run,
+because `release-watch` reads the run's conclusion and would otherwise report
+a healthy release as stalled.
+
 A merged platform PR is therefore "merged" on its card before it is running,
 and nothing in that chain reports back to the platform when a link fails. The
 platform watches the gap itself: `services/release-watch.js` compares the
