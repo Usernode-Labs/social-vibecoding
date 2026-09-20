@@ -1584,7 +1584,7 @@
     },
     {
       "source": "src/routes/app-llm-proxy.js",
-      "line": 214,
+      "line": 222,
       "method": "POST",
       "path": ":dynamic*",
       "expression": null,
@@ -1593,7 +1593,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 129,
+      "line": 130,
       "method": "GET",
       "path": "/api/app-permissions/catalogue",
       "expression": null,
@@ -1611,7 +1611,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 137,
+      "line": 138,
       "method": "GET",
       "path": "/api/me/permission-grants",
       "expression": null,
@@ -1637,7 +1637,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 172,
+      "line": 173,
       "method": "GET",
       "path": "/api/apps/:slug/permissions",
       "expression": null,
@@ -1660,7 +1660,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 212,
+      "line": 217,
       "method": "POST",
       "path": "/api/me/permission-grants",
       "expression": null,
@@ -1686,7 +1686,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 262,
+      "line": 271,
       "method": "DELETE",
       "path": "/api/me/permission-grants/:appId/:capability",
       "expression": null,
@@ -1897,7 +1897,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 978,
+      "line": 982,
       "method": "GET",
       "path": "/api/github/repo-info",
       "expression": null,
@@ -1915,7 +1915,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 994,
+      "line": 1002,
       "method": "GET",
       "path": "/api/github/verify-access",
       "expression": null,
@@ -1934,7 +1934,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1018,
+      "line": 1026,
       "method": "GET",
       "path": "/api/me/app-allowance",
       "expression": null,
@@ -1959,7 +1959,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1029,
+      "line": 1037,
       "method": "POST",
       "path": "/api/me/app-allowance/request",
       "expression": null,
@@ -1978,7 +1978,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1041,
+      "line": 1049,
       "method": "POST",
       "path": "/api/apps",
       "expression": null,
@@ -2006,7 +2006,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1177,
+      "line": 1185,
       "method": "POST",
       "path": "/api/apps/:slug/fork",
       "expression": null,
@@ -2029,7 +2029,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1267,
+      "line": 1275,
       "method": "GET",
       "path": "/api/apps/:slug",
       "expression": null,
@@ -2052,7 +2052,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1402,
+      "line": 1410,
       "method": "GET",
       "path": "/api/apps/:slug/version",
       "expression": null,
@@ -2074,7 +2074,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1667,
+      "line": 1675,
       "method": "GET",
       "path": "/api/apps/:slug/secrets",
       "expression": null,
@@ -2098,7 +2098,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1771,
+      "line": 1779,
       "method": "PUT",
       "path": "/api/apps/:slug/secrets/:key",
       "expression": null,
@@ -2117,7 +2117,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1824,
+      "line": 1832,
       "method": "DELETE",
       "path": "/api/apps/:slug/secrets/:key",
       "expression": null,
@@ -2136,7 +2136,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1868,
+      "line": 1876,
       "method": "POST",
       "path": "/api/apps/:slug/secret-declaration-pr",
       "expression": null,
@@ -2159,7 +2159,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2124,
+      "line": 2132,
       "method": "POST",
       "path": "/api/apps/:slug/redeploy",
       "expression": null,
@@ -2183,7 +2183,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2162,
+      "line": 2170,
       "method": "POST",
       "path": "/api/apps/:slug/check-updates",
       "expression": null,
@@ -2206,7 +2206,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2190,
+      "line": 2198,
       "method": "POST",
       "path": "/api/apps/:slug/rename",
       "expression": null,
@@ -2229,7 +2229,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2254,
+      "line": 2262,
       "method": "POST",
       "path": "/api/apps/:slug/lock",
       "expression": null,
@@ -2252,7 +2252,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2299,
+      "line": 2307,
       "method": "POST",
       "path": "/api/apps/:slug/main-check/resume",
       "expression": null,
@@ -2271,7 +2271,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2325,
+      "line": 2333,
       "method": "POST",
       "path": "/api/apps/:slug/visibility-pr",
       "expression": null,
@@ -2294,7 +2294,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2426,
+      "line": 2434,
       "method": "GET",
       "path": "/api/apps/:slug/admins",
       "expression": null,
@@ -2316,7 +2316,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2496,
+      "line": 2504,
       "method": "GET",
       "path": "/api/apps/:slug/contributors",
       "expression": null,
@@ -2338,7 +2338,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2546,
+      "line": 2554,
       "method": "POST",
       "path": "/api/apps/:slug/admins-pr",
       "expression": null,
@@ -2361,7 +2361,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2642,
+      "line": 2650,
       "method": "POST",
       "path": "/api/apps/:slug/governance-pr",
       "expression": null,
@@ -2384,7 +2384,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2776,
+      "line": 2784,
       "method": "GET",
       "path": "/__access/authorize",
       "expression": null,
@@ -2393,7 +2393,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2819,
+      "line": 2827,
       "method": "DELETE",
       "path": "/api/apps/:slug",
       "expression": null,
@@ -2416,7 +2416,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3014,
+      "line": 3022,
       "method": "POST",
       "path": "/api/apps/:slug/retry",
       "expression": null,
@@ -2442,7 +2442,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3089,
+      "line": 3097,
       "method": "POST",
       "path": "/api/apps/:slug/favorite",
       "expression": null,
@@ -2465,7 +2465,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3163,
+      "line": 3171,
       "method": "PUT",
       "path": "/api/favorites/order",
       "expression": null,
@@ -2483,7 +2483,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3210,
+      "line": 3218,
       "method": "POST",
       "path": "/api/apps/:slug/activity",
       "expression": null,
@@ -2657,7 +2657,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 409,
+      "line": 414,
       "method": "POST",
       "path": "/api/auth/register",
       "expression": null,
@@ -2678,7 +2678,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 476,
+      "line": 526,
       "method": "POST",
       "path": "/api/auth/logout",
       "expression": null,
@@ -2701,7 +2701,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 508,
+      "line": 558,
       "method": "GET",
       "path": "/api/auth/me",
       "expression": null,
@@ -2730,7 +2730,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 720,
+      "line": 770,
       "method": "GET",
       "path": "/api/me/ai-budget",
       "expression": null,
@@ -2755,7 +2755,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 762,
+      "line": 812,
       "method": "POST",
       "path": "/api/me/api-key",
       "expression": null,
@@ -2780,7 +2780,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 807,
+      "line": 857,
       "method": "DELETE",
       "path": "/api/me/api-key",
       "expression": null,
@@ -2805,7 +2805,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 827,
+      "line": 877,
       "method": "POST",
       "path": "/api/me/password",
       "expression": null,
@@ -2830,7 +2830,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 867,
+      "line": 917,
       "method": "POST",
       "path": "/api/me/ai-progress-estimate",
       "expression": null,
@@ -2855,7 +2855,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 889,
+      "line": 939,
       "method": "POST",
       "path": "/api/me/session-bridge",
       "expression": null,
@@ -2880,7 +2880,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 913,
+      "line": 963,
       "method": "POST",
       "path": "/api/me/dev-flow",
       "expression": null,
@@ -2906,7 +2906,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 945,
+      "line": 995,
       "method": "POST",
       "path": "/api/me/locale",
       "expression": null,
@@ -2931,7 +2931,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 987,
+      "line": 1037,
       "method": "POST",
       "path": "/api/me/wallet-link",
       "expression": null,
@@ -2956,7 +2956,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1025,
+      "line": 1075,
       "method": "GET",
       "path": "/api/me/wallet-link/status",
       "expression": null,
@@ -2975,7 +2975,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1039,
+      "line": 1089,
       "method": "DELETE",
       "path": "/api/me/wallet-link",
       "expression": null,
@@ -3000,7 +3000,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1099,
+      "line": 1149,
       "method": "POST",
       "path": "/api/auth/wallet-check",
       "expression": null,
@@ -3022,7 +3022,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1141,
+      "line": 1191,
       "method": "POST",
       "path": "/api/auth/wallet-verify",
       "expression": null,
@@ -3043,7 +3043,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1225,
+      "line": 1275,
       "method": "POST",
       "path": "/api/auth/wallet-reset-verify",
       "expression": null,
@@ -3064,7 +3064,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1338,
+      "line": 1388,
       "method": "POST",
       "path": "/api/auth/password-reset/request",
       "expression": null,
@@ -3083,7 +3083,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1386,
+      "line": 1436,
       "method": "POST",
       "path": "/api/auth/password-reset/confirm",
       "expression": null,
@@ -3102,7 +3102,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1453,
+      "line": 1503,
       "method": "POST",
       "path": "/api/me/wallet-change-password",
       "expression": null,
@@ -3127,7 +3127,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1519,
+      "line": 1569,
       "method": "POST",
       "path": "/api/auth/wallet-register",
       "expression": null,
@@ -3147,7 +3147,7 @@
     },
     {
       "source": "src/routes/auth.js",
-      "line": 1580,
+      "line": 1630,
       "method": "POST",
       "path": "/api/auth/wallet-link-login",
       "expression": null,
@@ -6273,7 +6273,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 108,
+      "line": 109,
       "method": "GET",
       "path": "/api/me/llm-grants",
       "expression": null,
@@ -6299,7 +6299,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 140,
+      "line": 141,
       "method": "POST",
       "path": "/api/me/llm-grants",
       "expression": null,
@@ -6325,7 +6325,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 203,
+      "line": 206,
       "method": "PATCH",
       "path": "/api/me/llm-grants/:appId",
       "expression": null,
@@ -6344,7 +6344,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 277,
+      "line": 280,
       "method": "DELETE",
       "path": "/api/me/llm-grants/:appId",
       "expression": null,
@@ -6363,7 +6363,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 304,
+      "line": 307,
       "method": "GET",
       "path": "/api/apps/:slug/llm-grant",
       "expression": null,

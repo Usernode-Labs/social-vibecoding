@@ -215,7 +215,7 @@ test('the back button has both icons and one named toggle', () => {
   assert.ok(!exit.slice(0, exit.indexOf('\n  },')).includes('setBackIcon'),
     '_exitAdminConsole leaves the icon to _showOnlyScreen');
   const swap = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
-  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
+  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
     '_showOnlyScreen restores Home on secondary screens and hides it on the Home/Browse roots');
 });
 

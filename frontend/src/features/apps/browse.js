@@ -260,12 +260,20 @@ const Browse = {
     // target handleBack() would take — up to the list, or all the way
     // home when the detail page was opened from a home card's "App
     // details" entry (there is no list behind it to go up to).
-    // The list and Home are peer destinations in the navigation menu.
-    // Keep their header controls identical instead of inserting a Home icon
-    // and shifting the title whenever the directory opens (#1569). Details
-    // still have a way up: the list's arrow, or the house for a Home entry.
+    // #2639: the LIST shows the house. #1569 read the list and Home as peer
+    // destinations and kept their bars identical, which left the directory
+    // with an empty bar and the chip menu's Home row as the only way out.
+    // Browse is somewhere you GO — from Home's "Find more apps" — so it takes
+    // the house like every other screen you navigate into. Details are
+    // unchanged: the arrow up to the list, or the house when the detail was
+    // opened from a Home card and there is no list behind it.
+    //
+    // This runs AFTER _showOnlyScreen inside the same transition and calls
+    // setBackIcon unconditionally, so it is the value that survives. The two
+    // have to agree or the later one silently wins — which is exactly how a
+    // first attempt at this issue changed only app.js and did nothing at all.
     const upToList = onDetail && Browse._detailOrigin !== 'home';
-    const backMode = onDetail ? (upToList ? 'arrow' : 'home') : 'none';
+    const backMode = onDetail ? (upToList ? 'arrow' : 'home') : 'home';
     App.setBackIcon(backMode, upToList ? '#apps' : undefined);
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);

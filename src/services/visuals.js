@@ -395,38 +395,13 @@ function isUiAffecting(files) {
   return Array.isArray(files) && files.some(isFrontendFile);
 }
 
-// dapp.json visual scenarios use a deliberately small git-glob dialect:
-// `*` and `?` stay inside one path segment; `**` may cross directories.
-// That is enough for ownership-shaped declarations such as
-// `frontend/src/features/settings/**` without adding a transitive glob
-// package to the platform's runtime surface.
-function visualImpactMatches(pattern, file) {
-  const glob = String(pattern || '').replace(/\\/g, '/');
-  const candidate = String(file || '').replace(/\\/g, '/').replace(/^\.\//, '');
-  if (!glob || !candidate) return false;
-  let source = '^';
-  for (let i = 0; i < glob.length; i++) {
-    const ch = glob[i];
-    if (ch === '*') {
-      if (glob[i + 1] === '*') {
-        i++;
-        if (glob[i + 1] === '/') {
-          i++;
-          source += '(?:.*/)?';
-        } else {
-          source += '.*';
-        }
-      } else {
-        source += '[^/]*';
-      }
-    } else if (ch === '?') {
-      source += '[^/]';
-    } else {
-      source += ch.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
-    }
-  }
-  try { return new RegExp(`${source}$`).test(candidate); } catch { return false; }
-}
+// The dapp.json visual-impact glob matcher lives in its own module now.
+// #2512: it used to compile each glob to a RegExp here, which turned every
+// `**` into an unbounded `.*` and made a hostile pattern from a proposal's
+// own dapp.json stall the platform's event loop for over a minute. The
+// replacement is an NFA simulation with the identical dialect — see
+// services/visuals-glob.js for the measurement and the equivalence argument.
+const { visualImpactMatches } = require('./visuals-glob');
 
 function visualScenarioFingerprint(test) {
   return crypto.createHash('sha256').update(JSON.stringify({

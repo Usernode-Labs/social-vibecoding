@@ -381,7 +381,15 @@ function anthropicProxyRoutes(config) {
   // request bodies at 32MB, and a normal CC turn can carry several
   // MB of file context. See server.js comment near the global
   // express.json() mount for context.
-  router.use(express.json({ limit: '32mb' }));
+  //
+  // #2512: this is a route-chain step, NOT a `router.use`, so it runs AFTER
+  // `anthropicProxyAuth` and the rate limiter. Mounted on the router it ran
+  // first, and an unauthenticated caller could make the platform read and
+  // JSON.parse 32 MB before anything checked the worker JWT — the parse
+  // blocks the event loop, and the request needed no credential at all.
+  // Auth here reads headers only (middleware/anthropic-proxy-auth.js never
+  // touches req.body), so it does not need the body.
+  const parseBody = express.json({ limit: '32mb' });
 
   // Same shape as the push-proxy rate-limit in internal.js — bounds a
   // runaway CC turn (or a malicious prompt looping API calls) to
@@ -404,7 +412,7 @@ function anthropicProxyRoutes(config) {
 
   // Catch-all under the proxy prefix. Express 4 / path-to-regexp v0
   // matches `*` against the remainder, accessible as req.params[0].
-  router.all(`${ROUTE_PREFIX}*`, anthropicProxyAuth, proxyLimiter, async (req, res) => {
+  router.all(`${ROUTE_PREFIX}*`, anthropicProxyAuth, proxyLimiter, parseBody, async (req, res) => {
     const sessionId = req.workerSession?.sessionId;
     const userId = await resolveUserId(pool, sessionId);
     if (!userId) {

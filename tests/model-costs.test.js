@@ -445,3 +445,13 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
   assert.match(admin, /the picker now says about \$\{money\(cents\)\} for a typical change/,
     'the save confirmation uses the phrase too');
 });
+
+test('the observed unit matches the estimate’s unit', async () => {
+  // typicalChange — which the estimate column is built from — groups
+  // agent_turns by session_id ALONE. The observed query has to answer the
+  // same question or the two columns cannot be read against each other.
+  const pool = poolFor([[/per_change/, [{ changes: '40', input_tokens: '9', output_tokens: '3' }]]]);
+  await modelCosts.typicalChange(pool, { days: 30 });
+  assert.match(pool.calls[0].sql, /GROUP BY session_id\s*\)/,
+    'the estimate profile is whole-change');
+});

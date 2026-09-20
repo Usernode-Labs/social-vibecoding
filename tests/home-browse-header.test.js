@@ -1,6 +1,16 @@
 'use strict';
 
-// #1569: the Home/Browse root header must not grow a back slot on navigation.
+// The Home and Browse headers, executed end to end.
+//
+// #1569 made these two IDENTICAL: Browse was read as a peer root of Home, so
+// its bar carried no back slot, and this file existed to stop one appearing.
+// #2639 reverses that half. Browse is not a root you arrive at — you go there
+// from Home's "Find more apps" — and an empty bar left the chip menu's Home
+// row as the only way out. So the list now draws the house, and what this
+// file pins is the ONE way the two headers differ: that slot, and nothing
+// else. Everything #1569 was protecting — the chip, the controls, the
+// classes, the wrappers, the deferral of chrome writes until the level
+// transition — is unchanged and still asserted below.
 // Execute the actual router and Browse controller, then render the actual
 // React header through their store bridges. Effects do not run under SSR;
 // viewport geometry remains covered by header-height/title-centering tests.
@@ -121,6 +131,11 @@ const chipName = (html) => {
   assert.ok(found, 'the chip still names itself to a screen reader');
   return found[0];
 };
+// #2639: the back slot is the one intended difference between the two
+// headers, so the parity comparison masks it and asserts it on its own.
+const maskBackSlot = (html) => html
+  .replace(/<div class="h-7 shrink-0[^"]*"[\s\S]*?<\/a><\/div>/, '[back slot]')
+  .replace(/<div class="h-7 shrink-0[^"]*">\s*<\/div>/, '[back slot]');
 const maskChip = (html) => html
   .replace(label(html), '[chip label]')
   .replace(chipName(html), 'aria-label="[chip name]: open the menu"');
@@ -134,7 +149,7 @@ const CHIP_CLASS = 'pointer-events-auto inline-flex items-center gap-1 max-w-ful
   + 'text-[color:var(--brand-ink)]';
 
 for (const improveAvailable of [true, false]) {
-  test(`Home and Browse render identical header controls with Improve ${improveAvailable ? 'available' : 'unavailable'}`, () => {
+  test(`Home and Browse differ only in the back slot, with Improve ${improveAvailable ? 'available' : 'unavailable'}`, () => {
     const h = harness({ improveAvailable });
     h.App._showOnlyScreen('home-screen');
     h.App.setHeaderTitle('Homeroom');
@@ -146,8 +161,18 @@ for (const improveAvailable of [true, false]) {
     assert.equal(h.header(), home);
     h.flush();
     const browse = h.header();
-    assert.equal(maskChip(browse), maskChip(home),
-      'only what the chip says changes, not controls, classes, or wrappers');
+    // #2639: the back slot is now the one difference, so it is masked out of
+    // the comparison and asserted separately below. Everything else — the
+    // controls, the classes, the wrappers — must still be byte-identical,
+    // which is what #1569 built this comparison to protect.
+    assert.equal(maskChip(maskBackSlot(browse)), maskChip(maskBackSlot(home)),
+      'apart from the back slot, only what the chip says changes');
+    assert.match(home, /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/,
+      'Home is the root: its slot is hidden');
+    assert.match(browse, /id="back-btn"[^>]*aria-label="Home"/,
+      'Browse offers the house');
+    assert.doesNotMatch(browse, /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/,
+      'and its slot is not hidden');
     assert.match(label(home), /<svg[^>]*\bfill="currentColor"/,
       'Home names the platform with the logotype');
     assert.doesNotMatch(label(home), /Homeroom/,
@@ -158,9 +183,14 @@ for (const improveAvailable of [true, false]) {
       '<span id="app-switcher-name" class="min-w-0 truncate">All apps</span>',
       'Browse names the destination in words, in the same slot');
     assert.equal(chipName(browse), 'aria-label="All apps: open the menu"');
-    assert.ok(h.writes.some((entry) => entry.mode === 'none'));
-    assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'none'),
-      'not even an intermediate publish inserts a Home icon');
+    // Two writers own this transition — the screen reveal and Browse's own
+    // chrome sync — and the LATER one wins. Both must say 'home', or the
+    // house is published and overwritten inside one transition and the bar
+    // stays empty. That is exactly how a first attempt at #2639 shipped as a
+    // no-op, so it is asserted on every write rather than the final state.
+    assert.ok(h.writes.some((entry) => entry.mode === 'home'));
+    assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'home'),
+      'no intermediate publish takes the house away again');
 
     h.writes.length = 0;
     h.App.navigateHome();
@@ -168,7 +198,8 @@ for (const improveAvailable of [true, false]) {
     assert.equal(h.header(), browse);
     h.flush();
     assert.equal(h.header(), home);
-    assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'none'));
+    assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'none'),
+      'and going back to the root hides the slot again');
   });
 }
 
@@ -240,12 +271,13 @@ test('the chip writes a name in words for an app, and whenever there is a subtit
   assert.match(subtitled, />Workshop</, 'beside the subtitle it shares the line with');
 });
 
-test('a cold Browse entry and a repeated route never insert the Home icon', () => {
+test('a cold Browse entry draws the house, and a repeated route changes nothing', () => {
   const h = harness();
   h.App.navigateToBrowse();
   assert.deepEqual(h.writes, []);
   h.flush();
-  assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'none'));
+  assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'home'),
+    'a cold entry lands on the house, with no none in between (#2639)');
   const header = h.header();
   h.writes.length = 0;
   h.App.navigateToBrowse();
@@ -254,7 +286,7 @@ test('a cold Browse entry and a repeated route never insert the Home icon', () =
   assert.equal(h.header(), header);
 });
 
-test('Browse details retain the arrow to the list, which restores the root header', () => {
+test('Browse details retain the arrow to the list, and returning restores the house', () => {
   const h = harness();
   h.App.navigateToBrowse();
   h.flush();

@@ -193,7 +193,15 @@ function appLlmProxyRoutes(config) {
   const pool = getPool(config);
 
   // Scoped JSON parser, same rationale and limit as the worker proxy.
-  router.use(ROUTE_PREFIX, express.json({ limit: '32mb' }));
+  //
+  // #2512: this is a route-chain step, NOT a `router.use`, so it runs AFTER
+  // `auth` and the rate limiter. Mounted on the router it ran first, and an
+  // unauthenticated caller could make the platform read and JSON.parse 32 MB
+  // before anything checked who they were — the parse blocks the event loop,
+  // and the request needed no credential at all. Auth here reads headers
+  // only (middleware/app-llm-auth.js never touches req.body), so it does not
+  // need the body, and an anonymous caller is now refused after headers.
+  const parseBody = express.json({ limit: '32mb' });
 
   const proxyLimiter = rateLimit({
     windowMs: 60 * 1000,
@@ -211,7 +219,7 @@ function appLlmProxyRoutes(config) {
 
   const auth = appLlmAuth(pool, config);
 
-  router.post(`${ROUTE_PREFIX}*`, auth, proxyLimiter, async (req, res) => {
+  router.post(`${ROUTE_PREFIX}*`, auth, proxyLimiter, parseBody, async (req, res) => {
     const upstreamPathRaw = req.params[0] || '';
     if (!ALLOWED_PATHS.has(upstreamPathRaw)) {
       return res.status(404).json({ ok: false, code: 'unsupported_endpoint' });

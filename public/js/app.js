@@ -4185,7 +4185,14 @@ const App = {
     if (revealId !== 'app-view') App._appBackHref = null;
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
-    App.setBackIcon(revealId === 'home-screen' || revealId === 'browse-screen' ? 'none' : 'home');
+    //
+    // #2639: HOME is the only root. #1569 grouped Browse with it, on the
+    // reading that both are top-level lists — but Browse is not somewhere you
+    // arrive, it is somewhere you go, from Home's "Find more apps". Arriving
+    // there and finding the bar empty left the chip menu's Home row as the
+    // only way back, which is an inch away and behind a menu. Every other
+    // screen you navigate INTO offers the house; Browse now does too.
+    App.setBackIcon(revealId === 'home-screen' ? 'none' : 'home');
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
