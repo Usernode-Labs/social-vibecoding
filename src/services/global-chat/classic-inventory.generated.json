@@ -5986,7 +5986,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2370,
+      "line": 2372,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/body",
       "expression": null,
@@ -6006,7 +6006,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2477,
+      "line": 2479,
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/bounty",
       "expression": null,
@@ -6025,7 +6025,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2564,
+      "line": 2566,
       "method": "POST",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6045,7 +6045,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2625,
+      "line": 2627,
       "method": "DELETE",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6065,7 +6065,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2686,
+      "line": 2688,
       "method": "POST",
       "path": "/api/issues/:id/admin-apply",
       "expression": null,
@@ -6084,7 +6084,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2764,
+      "line": 2766,
       "method": "POST",
       "path": "/api/issues/:id/close",
       "expression": null,
@@ -7713,7 +7713,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2550,
+      "line": 2564,
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/headless-session",
       "expression": null,
@@ -7732,7 +7732,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2755,
+      "line": 2772,
       "method": "POST",
       "path": "/api/sessions/:id/clone-headless",
       "expression": null,
@@ -7753,7 +7753,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3022,
+      "line": 3039,
       "method": "GET",
       "path": "/api/sessions/:id/checks",
       "expression": null,
@@ -7774,7 +7774,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3022,
+      "line": 3039,
       "method": "GET",
       "path": "/api/sessions/:id/details",
       "expression": null,
@@ -7795,7 +7795,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3095,
+      "line": 3112,
       "method": "GET",
       "path": "/api/sessions/:id",
       "expression": null,
@@ -7814,7 +7814,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3343,
+      "line": 3360,
       "method": "POST",
       "path": "/api/sessions/:id/activity",
       "expression": null,
@@ -7835,7 +7835,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3366,
+      "line": 3383,
       "method": "POST",
       "path": "/api/sessions/:id/notify-on-done",
       "expression": null,
@@ -7856,7 +7856,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3582,
+      "line": 3599,
       "method": "POST",
       "path": "/api/sessions/:id/platform-issue/:msgId/confirm",
       "expression": null,
@@ -7875,7 +7875,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3584,
+      "line": 3601,
       "method": "POST",
       "path": "/api/sessions/:id/platform-issue/:msgId/dismiss",
       "expression": null,
@@ -7894,7 +7894,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3592,
+      "line": 3609,
       "method": "POST",
       "path": "/api/sessions/:id/archive",
       "expression": null,
@@ -7916,7 +7916,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3633,
+      "line": 3650,
       "method": "POST",
       "path": "/api/sessions/:id/reset-agent-context",
       "expression": null,
@@ -7937,7 +7937,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3840,
+      "line": 3857,
       "method": "POST",
       "path": "/api/sessions/:id/build-venue",
       "expression": null,
@@ -7958,7 +7958,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3881,
+      "line": 3898,
       "method": "POST",
       "path": "/api/sessions/:id/unarchive",
       "expression": null,
@@ -7980,7 +7980,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3920,
+      "line": 3937,
       "method": "POST",
       "path": "/api/sessions/:id/share",
       "expression": null,
@@ -8000,7 +8000,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3955,
+      "line": 3972,
       "method": "POST",
       "path": "/api/sessions/:id/unshare",
       "expression": null,
@@ -8020,7 +8020,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3986,
+      "line": 4003,
       "method": "POST",
       "path": "/api/sessions/:id/share-transcript",
       "expression": null,
@@ -8040,7 +8040,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4022,
+      "line": 4039,
       "method": "POST",
       "path": "/api/sessions/:id/unshare-transcript",
       "expression": null,
@@ -8060,7 +8060,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4065,
+      "line": 4082,
       "method": "GET",
       "path": "/api/sessions/:id/transcript",
       "expression": null,
@@ -8080,7 +8080,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4156,
+      "line": 4173,
       "method": "POST",
       "path": "/api/sessions/:id/fork",
       "expression": null,
@@ -8101,7 +8101,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4350,
+      "line": 4367,
       "method": "POST",
       "path": "/api/sessions/:id/pause",
       "expression": null,
@@ -8121,7 +8121,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4414,
+      "line": 4431,
       "method": "POST",
       "path": "/api/sessions/:id/resume",
       "expression": null,
@@ -8142,7 +8142,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4553,
+      "line": 4570,
       "method": "POST",
       "path": "/api/sessions/:id/sync-main",
       "expression": null,
@@ -8163,7 +8163,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4603,
+      "line": 4620,
       "method": "POST",
       "path": "/api/sessions/:id/attachments",
       "expression": null,
@@ -8184,7 +8184,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4664,
+      "line": 4681,
       "method": "GET",
       "path": "/api/sessions/:id/attachments/:attId",
       "expression": null,
@@ -8203,7 +8203,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4696,
+      "line": 4713,
       "method": "POST",
       "path": "/api/sessions/:id/chat",
       "expression": null,
@@ -8224,7 +8224,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6668,
+      "line": 6694,
       "method": "GET",
       "path": "/api/sessions/:id/spec",
       "expression": null,
@@ -8244,7 +8244,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6755,
+      "line": 6781,
       "method": "GET",
       "path": "/api/sessions/:id/specs/:version",
       "expression": null,
@@ -8264,7 +8264,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6804,
+      "line": 6830,
       "method": "POST",
       "path": "/api/sessions/:id/specs/:version/share",
       "expression": null,
@@ -8283,7 +8283,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6903,
+      "line": 6929,
       "method": "POST",
       "path": "/api/sessions/:id/specs/:version/share-user",
       "expression": null,
@@ -8302,7 +8302,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7014,
+      "line": 7040,
       "method": "GET",
       "path": "/api/sessions/:id/status",
       "expression": null,
@@ -8323,7 +8323,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7211,
+      "line": 7237,
       "method": "POST",
       "path": "/api/sessions/:id/stop",
       "expression": null,
@@ -8344,7 +8344,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7458,
+      "line": 7484,
       "method": "GET",
       "path": "/api/sessions/:id/events",
       "expression": null,
@@ -8365,7 +8365,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7520,
+      "line": 7546,
       "method": "GET",
       "path": "/api/budget",
       "expression": null,
@@ -8392,7 +8392,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7607,
+      "line": 7633,
       "method": "POST",
       "path": "/api/sessions/:id/deploy-staging",
       "expression": null,
@@ -8412,7 +8412,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7768,
+      "line": 7794,
       "method": "GET",
       "path": "/api/sessions/:id/preview-status",
       "expression": null,
@@ -8433,7 +8433,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7797,
+      "line": 7823,
       "method": "POST",
       "path": "/api/sessions/:id/ensure-staging",
       "expression": null,
@@ -8454,7 +8454,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7881,
+      "line": 7907,
       "method": "POST",
       "path": "/api/sessions/:id/recheck",
       "expression": null,
@@ -11610,7 +11610,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2515,
+      "line": 2559,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/candidates",
       "expression": null,
@@ -11629,7 +11629,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2552,
+      "line": 2596,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/preview",
       "expression": null,
@@ -11647,7 +11647,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2615,
+      "line": 2659,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import",
       "expression": null,
@@ -11670,7 +11670,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2875,
+      "line": 2919,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import/_mock/advance",
       "expression": null,
@@ -11679,7 +11679,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2915,
+      "line": 2959,
       "method": "POST",
       "path": "/api/sessions/:id/vote",
       "expression": null,
@@ -11700,7 +11700,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3208,
+      "line": 3252,
       "method": "GET",
       "path": "/api/sessions/:id/votes",
       "expression": null,
@@ -11721,7 +11721,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3274,
+      "line": 3318,
       "method": "GET",
       "path": "/api/me/proposals",
       "expression": null,
@@ -11745,7 +11745,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3471,
+      "line": 3515,
       "method": "GET",
       "path": "/api/apps/:slug/promoted",
       "expression": null,
@@ -11770,7 +11770,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3845,
+      "line": 3889,
       "method": "GET",
       "path": "/api/apps/:slug/merged",
       "expression": null,
@@ -11793,7 +11793,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4160,
+      "line": 4204,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:id",
       "expression": null,
@@ -11813,7 +11813,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4231,
+      "line": 4275,
       "method": "POST",
       "path": "/api/sessions/:id/undo",
       "expression": null,
@@ -11834,7 +11834,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4317,
+      "line": 4361,
       "method": "POST",
       "path": "/api/sessions/:id/admin-merge",
       "expression": null,

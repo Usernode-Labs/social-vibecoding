@@ -1458,6 +1458,20 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_linked_issues_applied  INT
 -- closing keywords aren't re-fetched from GitHub on every boot.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues_backfilled  BOOLEAN NOT NULL DEFAULT false;
 
+-- #2500 / #2537. TRUE once the originating issue of a session started from
+-- an issue card has been seeded into `linked_issues` — at creation for
+-- every session made since, and at promote time for the rows that predate
+-- it. Before this, an interactive session recorded its issue only in
+-- `created_from_issue_number`: the issue board linked back to the session
+-- (issue-proposal-ref.js unions both columns) while the proposal itself
+-- read "No issues linked yet" and its pull request body carried no
+-- `Closes #N`, because both of those read `linked_issues` alone.
+-- The flag is what keeps the promote-time backfill from undoing an author:
+-- an empty `linked_issues` on a seeded row is a deliberate removal (the
+-- Mayor's `removes_issues`, or the linked-issues editor), not a gap to
+-- fill.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS issue_link_seeded         BOOLEAN NOT NULL DEFAULT false;
+
 -- Bot-generated testing guidance for PR previews (#127). The coding agent
 -- may end a build turn with a "==== TESTING ====" block (parsed by
 -- src/services/testing-notes.js):
