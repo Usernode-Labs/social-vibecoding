@@ -6,6 +6,11 @@ const { rateLimit } = require('express-rate-limit');
 const { anthropicProxyAuth } = require('../middleware/anthropic-proxy-auth');
 const { getPool } = require('../db/pool');
 const limits = require('../services/limits');
+// #2513: fail CLOSED on a database error. Every refresher below used to
+// install `totalAtCheckpointCents: 0` — "no spend today" — and cache it for a
+// full TTL, so a Postgres blip removed the spending cap rather than the
+// traffic. Shared with app-llm-proxy.js so the two cannot drift.
+const spendCache = require('../services/spend-cache');
 const anthropicStream = require('../services/anthropic-stream');
 const budgetLive = require('../services/budget-live');
 const log = require('../services/logger');
@@ -103,8 +108,8 @@ async function refreshSystemBudget(pool) {
     systemBudgetCache = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
     return systemBudgetCache;
   } catch (err) {
-    log.warn('anthropic-proxy', 'System budget refresh failed; failing open', { err: err.message });
-    systemBudgetCache = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    log.warn('anthropic-proxy', 'System budget refresh failed; failing closed', { err: err.message });
+    systemBudgetCache = spendCache.unavailable(systemBudgetCache, now, BUDGET_CACHE_TTL_MS);
     return systemBudgetCache;
   }
 }
@@ -142,12 +147,13 @@ async function refreshUserBudget(pool, userId) {
     userBudgetCache.set(userId, fresh);
     return fresh;
   } catch (err) {
-    log.warn('anthropic-proxy', 'Budget refresh failed; failing open', {
+    log.warn('anthropic-proxy', 'Budget refresh failed; failing closed', {
       userId, err: err.message,
     });
-    // Fail open on a transient DB hiccup rather than blocking traffic.
-    // The next refresh will catch up; bounded by TTL.
-    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    // #2513: keep the last real figure rather than inventing zero, and retry
+    // sooner than a full TTL. With nothing known at all, refuse — an
+    // unbounded bill is worse than a retryable 429.
+    const fresh = spendCache.unavailable(cached, now, BUDGET_CACHE_TTL_MS);
     userBudgetCache.set(userId, fresh);
     return fresh;
   }
@@ -177,10 +183,10 @@ async function refreshUserWeeklySpend(pool, userId) {
     weeklyBudgetCache.set(userId, fresh);
     return fresh;
   } catch (err) {
-    log.warn('anthropic-proxy', 'Weekly budget refresh failed; failing open', {
+    log.warn('anthropic-proxy', 'Weekly budget refresh failed; failing closed', {
       userId, err: err.message,
     });
-    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    const fresh = spendCache.unavailable(cached, now, BUDGET_CACHE_TTL_MS);
     weeklyBudgetCache.set(userId, fresh);
     return fresh;
   }
@@ -212,8 +218,8 @@ async function refreshGlobalSpend(pool) {
     globalBudgetCache = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
     return globalBudgetCache;
   } catch (err) {
-    log.warn('anthropic-proxy', 'Global spend refresh failed; failing open', { err: err.message });
-    globalBudgetCache = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    log.warn('anthropic-proxy', 'Global spend refresh failed; failing closed', { err: err.message });
+    globalBudgetCache = spendCache.unavailable(globalBudgetCache, now, BUDGET_CACHE_TTL_MS);
     return globalBudgetCache;
   }
 }
@@ -458,9 +464,31 @@ function anthropicProxyRoutes(config) {
     const weeklyBudget = caps.weeklyApplies
       ? await refreshUserWeeklySpend(pool, userId)
       : null;
-    const spentBeforeCall = budget.totalAtCheckpointCents + budget.liveDeltaCents;
+    // #2513: an UNREADABLE ledger is not the same thing as an exhausted cap,
+    // and must not be fed to the logic below as if it were. Left to arithmetic
+    // alone, the fail-closed sentinel reads as "over cap" — which on this path
+    // switches a user with a stored key onto BYOK and bills THEM for a
+    // Postgres blip, and on a failed global read lets a keyless caller
+    // through on the platform key. Both are the opposite of the intent.
+    // Refuse first, with a code that says "try again", and let the payer
+    // resolution below see only real numbers.
+    if (spendCache.isUnavailable(budget)
+      || (weeklyBudget && spendCache.isUnavailable(weeklyBudget))) {
+      log.warn('anthropic-proxy', 'Spend ledger unavailable; refusing rather than billing', {
+        sessionId, userId, isSyncTurn,
+        dailyUnavailable: spendCache.isUnavailable(budget),
+        weeklyUnavailable: !!weeklyBudget && spendCache.isUnavailable(weeklyBudget),
+      });
+      return res.status(429).json({
+        ok: false,
+        code: 'budget_unavailable',
+        message: 'Spending records are briefly unavailable. Try again in a moment.',
+      });
+    }
+
+    const spentBeforeCall = spendCache.spendTotal(budget);
     const weeklySpentBeforeCall = weeklyBudget
-      ? weeklyBudget.totalAtCheckpointCents + weeklyBudget.liveDeltaCents
+      ? spendCache.spendTotal(weeklyBudget)
       : 0;
     const dailyOver = caps.dailyApplies && spentBeforeCall >= caps.dailyLimitCents;
     const weeklyOver = caps.weeklyApplies && weeklySpentBeforeCall >= caps.weeklyLimitCents;
@@ -493,8 +521,20 @@ function anthropicProxyRoutes(config) {
       const userOver = dailyOver || weeklyOver || noAllowance;
       const globalCap = await limits.getGlobalLimitCents(pool);
       const globalSpend = await refreshGlobalSpend(pool);
-      const globalOver =
-        globalSpend.totalAtCheckpointCents + globalSpend.liveDeltaCents >= globalCap;
+      // #2513: same distinction. An unreadable GLOBAL ledger must refuse
+      // rather than resolve to "not over", which would let a keyless caller
+      // spend the platform key during an outage.
+      if (spendCache.isUnavailable(globalSpend)) {
+        log.warn('anthropic-proxy', 'Global spend ledger unavailable; refusing', {
+          sessionId, userId,
+        });
+        return res.status(429).json({
+          ok: false,
+          code: 'budget_unavailable',
+          message: 'Spending records are briefly unavailable. Try again in a moment.',
+        });
+      }
+      const globalOver = spendCache.spendTotal(globalSpend) >= globalCap;
       if (userOver || globalOver) {
         const byokKey = await limits.loadUserApiKey(pool, userId, config.dataEncryptionKey);
         if (byokKey) {
