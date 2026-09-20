@@ -24,6 +24,74 @@ function clientIp(req) {
   return normalizeIp(req.clientIp || '') || socketIp(req);
 }
 
+// Is this address on a private network? Loopback, plus the three RFC1918
+// ranges — Docker bridge networks land in 172.16.0.0/12 by default, and
+// user-defined networks can also use 10/8 or 192.168/16.
+//
+// #2506: this lived twice, character for character, in internal-auth.js and
+// anthropic-proxy-auth.js. Two copies of a security predicate is a hazard in
+// itself — a fix to one is invisible to the other — so it lives here now and
+// both import it.
+function isPrivateIp(ip) {
+  if (!ip) return false;
+  // Normalize IPv6-mapped IPv4 (`::ffff:172.18.0.5` -> `172.18.0.5`).
+  const v4 = String(ip).replace(/^::ffff:/, '');
+  if (v4 === '127.0.0.1' || v4 === '::1') return true;
+  if (/^10\./.test(v4)) return true;
+  if (/^192\.168\./.test(v4)) return true;
+  const m = v4.match(/^172\.(\d+)\./);
+  if (m) {
+    const oct = parseInt(m[1], 10);
+    return oct >= 16 && oct <= 31;
+  }
+  return false;
+}
+
+// Headers a proxy hop adds. Their PRESENCE is the signal, not their value:
+// a genuine server-to-server call carries none (see trustedProxyClientIp
+// below — "their normal internal calls carry no forwarding header").
+const FORWARDING_HEADERS = [
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-real-ip',
+  'forwarded',
+];
+
+// Did this request come DIRECTLY from inside, with no proxy in front?
+//
+// #2506: the four server-to-server gates used to ask
+// `isPrivateIp(clientIp(req))`, which is sound only while `clientIp` returns
+// the real originator. It does not always. `trustedProxyClientIp` resolves
+// the trusted proxy by DNS and, on a lookup failure, empties
+// `trustedAddresses` and falls back to the SOCKET PEER. That is genuinely
+// fail-closed for the rate limiters — grouping callers under one key only
+// over-counts — but it is fail OPEN here, because the address it falls back
+// to is the ingress's, and the ingress lives on a private network. DNS
+// blips, an external request arrives through Caddy, and the gate sees
+// `172.18.0.9` and says yes.
+//
+// Kubernetes mode reaches the same place without any DNS failure:
+// `trustDirectPeer` trusts every peer to supply a forwarding header (the
+// TODO below).
+//
+// So ask the real question instead. Two conditions, and the second is what
+// makes it independent of whatever DNS managed to resolve:
+//
+//   1. the SOCKET PEER is private — deliberately not `clientIp`, which is a
+//      value a forwarding header can set;
+//   2. the request carries NO forwarding header, so nothing proxied it.
+function isDirectInternalCall(req) {
+  if (!req) return false;
+  const headers = req.headers || {};
+  for (const name of FORWARDING_HEADERS) {
+    const value = headers[name];
+    if (typeof value === 'string' && value.trim()) return false;
+    if (Array.isArray(value) && value.length) return false;
+  }
+  return isPrivateIp(socketIp(req));
+}
+
 function forwardedClientIp(req) {
   const value = req.headers['x-forwarded-for'];
   // Caddy replaces untrusted incoming X-Forwarded-For and sends one client
@@ -104,6 +172,9 @@ module.exports = {
   normalizeIp,
   socketIp,
   clientIp,
+  isPrivateIp,
+  isDirectInternalCall,
+  FORWARDING_HEADERS,
   forwardedClientIp,
   trustedProxyClientIp,
 };
