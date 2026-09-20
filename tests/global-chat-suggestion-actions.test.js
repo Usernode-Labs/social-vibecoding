@@ -46,6 +46,27 @@ test('fixed suggestions resolve only to server-owned read steps', () => {
   assert.equal(spending.id, 'settings.spending');
   assert.equal(spending.steps[0].capabilityId, 'settings.spending');
 
+  const completed = resolveAction({
+    suggestionId: 'next.governance.completed', parameters: {},
+  });
+  assert.equal(completed.id, 'governance.completed');
+  assert.deepEqual(completed.steps[0], {
+    capabilityId: 'governance.completed', input: { limit: 10 },
+  });
+
+  const theme = resolveAction({
+    actionId: 'settings.local.update',
+    parameters: { setting: 'theme', value: 'dark' },
+  });
+  assert.deepEqual(theme.steps[0], {
+    capabilityId: 'settings.local.update', input: { setting: 'theme', value: 'dark' },
+  });
+  const alerts = resolveAction({
+    actionId: 'settings.local.update',
+    parameters: { setting: 'devAlerts', value: 'false' },
+  });
+  assert.equal(alerts.steps[0].input.value, false);
+
   const notification = resolveAction({
     actionId: 'notification.detail', parameters: { notificationId: '42' },
   });
@@ -308,6 +329,63 @@ test('inline reads return authoritative results without creating a chat turn or 
   assert.equal(result.results[0].id, RESULT_ID);
   assert.equal(calls.find((entry) => entry.type === 'start').value.messageId, null);
   assert.equal(calls.filter((entry) => entry.type === 'execute').length, 1);
+});
+
+test('safe browser-local settings can save inline without a model turn', async () => {
+  const calls = [];
+  const store = {
+    async claimTurn() { throw new Error('inline setting writes must not claim a turn'); },
+    async releaseTurn() { throw new Error('inline setting writes must not release a turn'); },
+    async insertMessage() { throw new Error('inline setting writes must not add messages'); },
+    async startToolRun() { return RESULT_ID; },
+    async finishToolRun(_pool, value) { calls.push(value); return true; },
+    async loadToolResults() {
+      return [{
+        id: RESULT_ID,
+        capabilityId: 'settings.local.update',
+        authoritativeResult: {
+          ok: true, status: 202, data: {
+            state: 'client_action_required',
+            action: { transport: 'local_setting', setting: 'theme', value: 'dark' },
+          },
+        },
+        renderer: 'setting', classicPath: '#settings/theme', status: 'completed',
+      }];
+    },
+  };
+  const registry = {
+    get() {
+      return {
+        risk: 'reversible_write', confirmation: 'never', access: () => true,
+      };
+    },
+    async execute(_id, input) {
+      assert.deepEqual(input, { setting: 'theme', value: 'dark' });
+      return {
+        authoritativeResult: {
+          ok: true, status: 202, data: {
+            state: 'client_action_required',
+            action: { transport: 'local_setting', setting: 'theme', value: 'dark' },
+          },
+        },
+        modelResult: { ok: true, status: 202 },
+        renderer: 'setting', classicPath: '#settings/theme',
+      };
+    },
+  };
+  const executor = createSuggestionExecutor({
+    pool: {}, config: { dataEncryptionKey: 'test-key' }, registry, store,
+  });
+  const result = await executor.executeInline({
+    userId: 7,
+    threadId: THREAD_ID,
+    actionId: 'settings.local.update',
+    parameters: { setting: 'theme', value: 'dark' },
+    executionContext: { actor: { signedIn: true } },
+  });
+  assert.equal(result.modelInvocations, 0);
+  assert.equal(result.results[0].capabilityId, 'settings.local.update');
+  assert.equal(calls.length, 1);
 });
 
 test('a failed direct action persists a readable assistant answer and releases its turn', async () => {

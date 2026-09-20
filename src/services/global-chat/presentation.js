@@ -111,6 +111,7 @@ function normalizeSuggestion(value, index) {
 function validatePresentation(value, {
   availableResultIds = [],
   excludedSuggestionIds = [],
+  allowEmptySuggestions = false,
 } = {}) {
   if (!plainObject(value)) {
     throw new PresentationError('invalid_presentation', 'Presentation must be an object');
@@ -147,12 +148,17 @@ function validatePresentation(value, {
     }
   }
 
+  const minimumSuggestions = allowEmptySuggestions && value.suggestions?.length === 0
+    ? 0
+    : MIN_SUGGESTIONS_PER_RESPONSE;
   if (!Array.isArray(value.suggestions)
-      || value.suggestions.length < MIN_SUGGESTIONS_PER_RESPONSE
+      || value.suggestions.length < minimumSuggestions
       || value.suggestions.length > MAX_SUGGESTIONS_PER_RESPONSE) {
     throw new PresentationError(
       'invalid_presentation',
-      `suggestions must contain ${MIN_SUGGESTIONS_PER_RESPONSE} to ${MAX_SUGGESTIONS_PER_RESPONSE} options`,
+      allowEmptySuggestions
+        ? `suggestions must be empty or contain ${MIN_SUGGESTIONS_PER_RESPONSE} to ${MAX_SUGGESTIONS_PER_RESPONSE} options`
+        : `suggestions must contain ${MIN_SUGGESTIONS_PER_RESPONSE} to ${MAX_SUGGESTIONS_PER_RESPONSE} options`,
     );
   }
   const suggestions = value.suggestions.map(normalizeSuggestion);
@@ -218,7 +224,7 @@ const SUGGESTION_CATALOG = Object.freeze({
     ['next.governance.votes', 'My votes', 'Show proposals I can vote on.'],
     ['next.governance.recent', 'Recent proposals', 'Show recently updated proposals.'],
     ['next.governance.issues', 'Related issues', 'Show issues related to current proposals.'],
-    ['next.governance.completed', 'Completed work', 'Show recently completed proposals.'],
+    ['next.governance.completed', 'Completed work', 'Show recently completed proposals.', 'governance.completed', 'governance'],
   ]),
   development: Object.freeze([
     ['next.development.active', 'Active development', 'Show my active development work.', 'development.active', 'development'],

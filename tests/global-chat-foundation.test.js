@@ -133,7 +133,7 @@ function runtimeInput(overrides = {}) {
 }
 
 test('the versioned system prompt gives weak models an exact platform workflow', () => {
-  assert.equal(PROMPT_VERSION, 'global-chat-system-v7');
+  assert.equal(PROMPT_VERSION, 'global-chat-system-v8');
   assert.match(SYSTEM_PROMPT, /same authorized features.*Classic mode/i);
   assert.match(SYSTEM_PROMPT, /search_capabilities/);
   assert.match(SYSTEM_PROMPT, /NOT the full list of platform features/);
@@ -150,17 +150,15 @@ test('the versioned system prompt gives weak models an exact platform workflow',
   assert.match(SYSTEM_PROMPT, /call ask_user_for_input when it is available/);
   assert.match(SYSTEM_PROMPT, /STEP 5 — CHECK THE TOOL RESULT/);
   assert.match(SYSTEM_PROMPT, /Do not answer with ordinary assistant text/);
-  assert.match(SYSTEM_PROMPT, /five or six button options/i);
+  assert.match(SYSTEM_PROMPT, /suggestions: use \[\] for every normal user_turn/i);
   assert.match(SYSTEM_PROMPT, /COMPOUND REQUEST RULE — NEVER DROP A CLAUSE/);
   assert.match(SYSTEM_PROMPT, /issues\.closed_by_me and governance\.merged_by_me/);
   assert.match(SYSTEM_PROMPT, /Call all independent read tools together/i);
   assert.match(SYSTEM_PROMPT, /PLATFORM OPERATING MAP/);
-  assert.match(SYSTEM_PROMPT, /every object-specific prompt must name that object/i);
   assert.match(SYSTEM_PROMPT, /earlier suggestions stay visible in the transcript/i);
   assert.match(SYSTEM_PROMPT, /Open in Classic links/);
   assert.match(RESULT_FOLLOWUP_PROMPT, /Inspect the newest tool result/);
-  assert.match(RESULT_FOLLOWUP_PROMPT, /five or six distinct new button suggestions/);
-  assert.match(RESULT_FOLLOWUP_PROMPT, /copy the exact visible name and canonical slug/i);
+  assert.match(RESULT_FOLLOWUP_PROMPT, /suggestions \[\]/);
   assert.match(MORE_SUGGESTIONS_PROMPT, /Stay inside that exact topic/i);
   assert.match(MORE_SUGGESTIONS_PROMPT, /Do not search and do not call a platform capability/);
   assert.match(MORE_SUGGESTIONS_PROMPT, /five or six relevant new button suggestions/);
@@ -233,7 +231,8 @@ test('provider tool schemas repeat exact argument and presentation instructions'
 
   const present = BASE_TOOLS.find((tool) => tool.function.name === 'present_response');
   assert.match(present.function.parameters.properties.resultRefs.description, /Use \[\] for results created in this turn/);
-  assert.match(present.function.parameters.properties.suggestions.description, /Five or six distinct, relevant, new button options/);
+  assert.match(present.function.parameters.properties.suggestions.description, /Use \[\] for normal user turns/);
+  assert.equal(present.function.parameters.properties.suggestions.minItems, 0);
   assert.match(
     present.function.parameters.properties.suggestions.items.properties.prompt.description,
     /Complete next user instruction/,

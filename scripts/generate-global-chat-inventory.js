@@ -174,6 +174,7 @@ const DOMAIN_RULES = [
   [/^\/api\/(?:conversations|apps\/[^/]+\/messages)/, 'messages'],
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
   [/^\/api\/(?:issues|apps\/[^/]+\/(?:issues|github-issues|board-order|board-search|topic))/, 'issues'],
+  [/^\/api\/me\/proposals(?:\/|$)/, 'governance'],
   [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|governance)|approver)/, 'governance'],
   [/^\/api\/(?:leaderboard|kudos|me\/(?:kudos|history|challenges)|v4\/leaderboard|v4\/season-events)/, 'leaderboards'],
   [/^\/api\/admin/, 'admin'],

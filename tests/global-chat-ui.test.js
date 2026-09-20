@@ -157,6 +157,7 @@ test('authoritative results never execute model HTML and retain exact Classic es
   assert.match(renderers, /#settings\/\$\{segment\(group\)\}/);
   assert.match(renderers, /github_issue_number/);
   assert.match(renderers, /githubIssueCapability/);
+  assert.match(renderers, /explicitGithubIssueNumber/);
   assert.match(renderers, /executeGlobalChatResultAction/);
   assert.match(renderers, /itemAction\([^\n]+?'issues\.for_app'/);
   assert.match(renderers, /itemAction\([^\n]+?'messages\.for_app'/);
@@ -172,6 +173,10 @@ test('authoritative results never execute model HTML and retain exact Classic es
   assert.match(renderers, /Active time \(7d\)/);
   assert.match(renderers, /No current proposals\./);
   assert.match(renderers, /SettingInstruction/);
+  assert.match(renderers, /LocalSettingEditor/);
+  assert.match(renderers, /'settings\.local\.update'/);
+  assert.match(renderers, /await runGlobalChatClientAction\(pending\)/);
+  assert.match(renderers, /selected === saved \? 'Saved' : 'Save'/);
   assert.match(renderers, /In the "\$\{title\}" settings group \(key: \$\{group\}\)/);
   assert.match(renderers, /Preserve every value I did not ask to change/);
   assert.doesNotMatch(renderers, /function safeFields/);
