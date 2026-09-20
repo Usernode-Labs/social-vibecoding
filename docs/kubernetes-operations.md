@@ -59,6 +59,22 @@ or the next merge, releases the commit; the poller clears the record on the new
 build's first tick. A token without `actions:read` degrades to the time-based
 verdict rather than failing.
 
+Nothing in that chain tells open browser tabs about the new build either; the
+Pod being replaced does. The rolling update terminates the old Pod only after
+the new one has been Ready for `minReadySeconds`, and the `preStop` sleep has
+taken it out of the Service before `SIGTERM` arrives. On `SIGTERM`, `server.js`
+`cleanup()` closes the listener, then reads the Deployment's target revision
+through `services/deploy-status.js` and, if it is another build, pushes
+`platform_version` to every open `/ws/events` socket
+(`ws.pushPlatformVersion`). Every events handshake carries the same message
+with the build the socket landed on. A tab prefetches the announced build into
+its service-worker cache and turns the Settings version row into the reload
+button (`handlePlatformVersion` in `public/js/app.js`); it never reloads
+itself — the user does, from that button or a pull-to-refresh. The 10s
+`/api/version` poll paints the rollout in progress and remains the fallback. A
+`SIGTERM` for any other reason finds the target equal to the running build and
+announces nothing.
+
 When a stable release changes `KUBERNETES_WORKER_IMAGE`, an existing warm
 worker is compared with that immutable digest before its next dispatch. An
 idle worker on the old digest is recreated while its per-session PVC is kept,
