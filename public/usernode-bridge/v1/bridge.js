@@ -642,6 +642,58 @@
   // its own copy of this bridge and is responsible for those decisions
   // in its own origin. The parent only relays raw Usernode.postMessage
   // payloads, which keeps cross-origin behaviour predictable.
+  // #2503: WHO may speak to this relay.
+  //
+  // The only guard used to be `!data || !e.source`. Any window able to
+  // reach this one could therefore drive it: a THIRD-PARTY IFRAME NESTED
+  // INSIDE AN APP can call `window.top.postMessage(...)` directly, skipping
+  // its own parent, and the top frame would relay `discover` + `request`
+  // over the native channel carrying THIS page's authority. Privileged
+  // methods were already refused, but the session-bound reads were not —
+  // `getWalletState` and friends answered a frame that should never have
+  // been able to ask. A classic confused deputy.
+  //
+  // Contrast public/js/app-view.js, where every web bridge handler gates on
+  // `e.source === iframe.contentWindow`. This relay was the one place that
+  // pattern was missing; these two helpers restore it and add the part
+  // identity alone cannot cover.
+  //
+  // The sender must be a DIRECT CHILD IFRAME of this document. A grandchild
+  // is not, which is exactly the frame the audit describes.
+  //
+  // Fail closed: no document, no `getElementsByTagName`, or a frame we
+  // cannot match means refuse, never relay.
+  //
+  // WHAT THIS DELIBERATELY DOES NOT CLOSE, stated rather than implied. The
+  // audit also notes that a `WindowProxy` SURVIVES NAVIGATION, so a document
+  // navigated INTO an app frame inherits the previous occupant's relay
+  // access. An origin pin — remember the origin seen at `discover`, refuse a
+  // later request from a different one — looks like the answer and is not:
+  // the CLIENT half of this same file auto-sends `discover` the moment it
+  // loads, so the navigated document simply re-pins by following the
+  // protocol. That was built, reviewed, reproduced and removed rather than
+  // shipped; tests/native-bridge-relay-origin.test.js pins the fact so the
+  // pin is not added back in the belief that it is a boundary.
+  //
+  // Closing it properly needs the PARENT to say which origin belongs in
+  // which frame — a registration lifecycle driven by the shell, which owns
+  // the iframe and knows when it changes `src`. That is a protocol change to
+  // a script shipped to every app, so it is its own piece of work.
+  function isOwnedChildFrame(source) {
+    var doc = typeof document !== "undefined" ? document : null;
+    if (!doc || typeof doc.getElementsByTagName !== "function") return false;
+    var frames;
+    try { frames = doc.getElementsByTagName("iframe"); } catch (_) { return false; }
+    if (!frames) return false;
+    for (var i = 0; i < frames.length; i++) {
+      // Reading contentWindow on a cross-origin frame is allowed; comparing
+      // the WindowProxy is the whole point. Guarded anyway — a detached or
+      // sandboxed frame can throw.
+      try { if (frames[i] && frames[i].contentWindow === source) return true; } catch (_) {}
+    }
+    return false;
+  }
+
   if (_hasNativeChannel) {
     console.log(_BRIDGE_TAG, "native channel available, relay listener installed");
     window.addEventListener("message", function (e) {
@@ -649,6 +701,13 @@
       if (!data || !e.source) return;
       var origin = e.origin || "*";
       var source = e.source;
+      if (data.__usernode_relay !== "discover" &&
+          data.__usernode_relay !== "request") return;
+      if (!isOwnedChildFrame(source)) {
+        console.warn(_BRIDGE_TAG, "refusing relay from a window that is not a",
+          "child iframe of this document", data.__usernode_relay, origin);
+        return;
+      }
       if (data.__usernode_relay === "discover") {
         console.log(_BRIDGE_TAG, "← discover from", origin, "→ acking");
         try {
@@ -656,7 +715,6 @@
         } catch (_) { /* iframe gone, ignore */ }
         return;
       }
-      if (data.__usernode_relay !== "request") return;
       var origId = data.id;
       function reply(value, error) {
         try {

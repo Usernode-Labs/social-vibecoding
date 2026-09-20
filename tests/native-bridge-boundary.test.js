@@ -65,6 +65,7 @@ function loadBridge({
 } = {}) {
   const nativePosts = [];
   const messageListeners = [];
+  const childFrames = [];
   const windowListeners = {};
   const storage = sharedStorage || new Map();
   const responses = {
@@ -131,6 +132,15 @@ function loadBridge({
       head: { appendChild() {} },
       body: { appendChild() {} },
       getElementById() { return null; },
+      // #2503: the relay now answers only a DIRECT CHILD IFRAME of this
+      // document, the same `e.source === iframe.contentWindow` gate every
+      // web handler in public/js/app-view.js already applies. A test
+      // registers its sender with `registerChildFrame` to be one; a sender
+      // that does not is standing in for a nested third-party frame
+      // calling `window.top.postMessage` directly.
+      getElementsByTagName(tag) {
+        return tag === 'iframe' ? childFrames.map((w) => ({ contentWindow: w })) : [];
+      },
       addEventListener() {},
       createElement() {
         return {
@@ -214,6 +224,9 @@ function loadBridge({
       const at = silentMethods.indexOf(method);
       if (at !== -1) silentMethods.splice(at, 1);
     },
+    // Make `win` a direct child iframe of the sandbox document, so the
+    // relay will speak to it (#2503).
+    registerChildFrame(win) { childFrames.push(win); return win; },
     dispatchMessage(event) {
       for (const listener of messageListeners) listener(event);
     },
@@ -696,6 +709,9 @@ test('notification permission and navigation actions require the top-frame capab
     const child = {
       postMessage(value, origin) { childReplies.push({ value, origin }); },
     };
+    // #2503: in a browser this sender IS an iframe of the document;
+    // the relay now requires that, so the fixture has to say so.
+    relayed.registerChildFrame(child);
     for (const method of methods) {
       relayed.dispatchMessage({
         source: child,
@@ -940,6 +956,9 @@ test('parent relay denies root methods and injects both claims for realm calls',
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
   };
+  // #2503: in a browser this sender IS an iframe of the document;
+  // the relay now requires that, so the fixture has to say so.
+  loaded.registerChildFrame(child);
   const dispatch = (method, id) => loaded.dispatchMessage({
     source: child,
     origin: 'https://child.example',
@@ -984,6 +1003,9 @@ test('native realm gate rejects top-frame and iframe wallet calls until establis
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
   };
+  // #2503: in a browser this sender IS an iframe of the document;
+  // the relay now requires that, so the fixture has to say so.
+  loaded.registerChildFrame(child);
   const relayWalletRead = (id) => loaded.dispatchMessage({
     source: child,
     origin: 'https://child.example',
@@ -1337,6 +1359,9 @@ test('trusted top frame records a dual-claim relayed child-app submission', asyn
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
   };
+  // #2503: in a browser this sender IS an iframe of the document;
+  // the relay now requires that, so the fixture has to say so.
+  loaded.registerChildFrame(child);
 
   loaded.dispatchMessage({
     source: child,
