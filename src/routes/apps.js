@@ -17,7 +17,7 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
@@ -975,7 +975,11 @@ function appRoutes(config) {
   // Public-only repo info. Kept as a low-privilege fallback; not used by
   // the import modal anymore (verify-access below is strictly better
   // because it works for private repos the bot can read).
-  router.get('/api/github/repo-info', async (req, res) => {
+  //
+  // githubLookupLimiter (#2519): the call this makes spends the PLATFORM's
+  // shared GitHub installation quota, not the caller's. Failures count —
+  // see the limiter for why.
+  router.get('/api/github/repo-info', githubLookupLimiter, async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Invalid GitHub URL' });
     const info = await github.fetchPublicRepoInfo(parsed.owner, parsed.repo);
@@ -991,7 +995,11 @@ function appRoutes(config) {
   //   2. confirm Write access
   //   3. return name/description so the form can prefill the app-name
   //      field with a sensible default
-  router.get('/api/github/verify-access', async (req, res) => {
+  //
+  // githubLookupLimiter (#2519): same shared installation quota as
+  // repo-info above, plus step 1 is a side effect worth bounding on its
+  // own. One bucket covers both routes.
+  router.get('/api/github/verify-access', githubLookupLimiter, async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
     // SELF-HOSTING.md sub-step 2k: refuse to import the platform's
