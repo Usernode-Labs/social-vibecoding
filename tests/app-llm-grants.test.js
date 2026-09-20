@@ -26,7 +26,16 @@ const state = {
   identityLookupError: false,
   apiKeyEnc: null,
   grants: new Map(), // `${appId}:${userId}` -> row
-  apps: new Map([['demo-app', { id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null }]]),
+  // #2510: the routes resolve an app through appAccess.getAppForUser now, and
+  // checkAppAccess THROWS on a row missing `view_visibility` rather than
+  // failing open. Real rows always have it — `apps.view_visibility` is NOT
+  // NULL DEFAULT 'public' in schema.sql — so a fixture without it was a
+  // fixture bug that the old bare SELECT simply never exposed.
+  apps: new Map([['demo-app', {
+    id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null,
+    created_by: 7, self_hosted: false,
+    collab_visibility: 'public', view_visibility: 'public',
+  }]]),
   // Today's app_llm_usage row joined by the bootstrap query (issue
   // #655). NUMERIC(10,4) comes back from pg as strings.
   usage: { spent: null, byok: null },
@@ -49,14 +58,16 @@ function mockQuery(sql, params) {
   if (/SELECT value FROM platform_settings/.test(sql)) {
     return { rows: [{ value: String(params[0] === limits.KEY_WEEKLY ? state.weeklyLimit : 2500) }] };
   }
-  if (/SELECT id, name, slug FROM apps WHERE slug/.test(sql)) {
+  // Match the lookup, not one exact projection: getAppForUser builds the
+  // column list from ACCESS_COLUMNS plus whatever the route needs, so pinning
+  // the old `SELECT id, name, slug` text here made every route 404.
+  if (/FROM apps WHERE slug = \$1/.test(sql)) {
     const app = state.apps.get(params[0]);
     return { rows: app ? [app] : [] };
   }
-  if (/SELECT id, name, slug, manifest_snapshot FROM apps WHERE slug/.test(sql)) {
-    const app = state.apps.get(params[0]);
-    return { rows: app ? [app] : [] };
-  }
+  // appAccess.isCollaborator — the fixture app is public, so this is only
+  // reached for a private one and answers "no".
+  if (/app_collaborators/.test(sql)) return { rows: [] };
   if (/SELECT anthropic_key_enc FROM users/.test(sql)) {
     return { rows: state.apiKeyEnc ? [{ anthropic_key_enc: state.apiKeyEnc }] : [] };
   }
@@ -354,6 +365,8 @@ test('bootstrap endpoint reports zero spend when no usage row exists today', asy
 test('bootstrap endpoint sanitizes the manifest llm block and clamps the suggestion', async () => {
   state.apps.set('demo-app', {
     id: 11, name: 'Demo App', slug: 'demo-app',
+    created_by: 7, self_hosted: false,
+    collab_visibility: 'public', view_visibility: 'public',
     manifest_snapshot: {
       llm: { purpose: 'Summarizes things', suggested_daily_cap_cents: 999999 },
     },
@@ -370,7 +383,11 @@ test('bootstrap endpoint sanitizes the manifest llm block and clamps the suggest
     assert.equal(body.grant, null);
     assert.equal(body.hasApiKey, false);
   });
-  state.apps.set('demo-app', { id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null });
+  state.apps.set('demo-app', {
+    id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null,
+    created_by: 7, self_hosted: false,
+    collab_visibility: 'public', view_visibility: 'public',
+  });
 });
 
 test('tiered policy refuses an unverified app grant when no payer exists', async () => {

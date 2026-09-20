@@ -4,6 +4,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const appPermissions = require('../services/app-permissions');
 const log = require('../services/logger');
+const appAccess = require('../services/app-access');
 
 // Grant management for the gated browser capabilities an app frame can be
 // delegated (#2219) — geolocation, microphone, camera, display-capture,
@@ -173,11 +174,15 @@ function appPermissionsRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, name, slug, manifest_snapshot FROM apps WHERE slug = $1',
-        [req.params.slug]
+      // #2510: resolve AND gate in one call. This used to be a bare
+      // `SELECT ... WHERE slug = $1`, so any signed-in stranger could read a
+      // private app's id, name and declared capabilities — and tell from the
+      // 404 whether a slug existed at all. `getAppForUser` returns null on
+      // denial, which makes a private app answer exactly like a missing one.
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view',
+        `${appAccess.ACCESS_COLUMNS}, name, manifest_snapshot`
       );
-      const app = appRows[0];
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const declared = declaredFor(app);
@@ -220,11 +225,15 @@ function appPermissionsRoutes(config) {
     }
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, name, slug, manifest_snapshot FROM apps WHERE slug = $1',
-        [appSlug]
+      // #2510: gated for the same reason as the bootstrap above, and for
+      // one more — this route WRITES. Ungated, a stranger could create a
+      // grant against a private app they cannot see. The `not_declared`
+      // refusal below is its own oracle too: it distinguishes "this private
+      // app declares camera" from "it does not". Both are behind the 404 now.
+      const app = await appAccess.getAppForUser(
+        pool, appSlug, req.user, 'view',
+        `${appAccess.ACCESS_COLUMNS}, name, manifest_snapshot`
       );
-      const app = appRows[0];
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const declared = declaredFor(app);
