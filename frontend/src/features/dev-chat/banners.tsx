@@ -116,6 +116,19 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
       <span className="text-violet-800 dark:text-violet-200 flex-1">
         {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR, so start a new change to keep PRs focused.`}
       </span>
+      {/* #2602: the way to the card this session became. An ANCHOR, not a
+          button: it is a hash navigation, so it middle-clicks and copies
+          like any other link, and it deliberately stays out of the
+          `<button>` the byte-for-byte tag assertion in
+          tests/dev-chat-banners.test.js reads. Quiet next to the filled
+          primary — leaving is the secondary act here, starting a new change
+          is the one the banner is arguing for. */}
+      {b.cardHref ? (
+        <a
+          id="dc-open-card-link" href={b.cardHref}
+          className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 text-xs font-medium text-violet-800 underline underline-offset-2 hover:text-violet-700 dark:text-violet-200 dark:hover:text-violet-100"
+        >Open proposal card</a>
+      ) : null}
       {/* The one primary-filled button on these four strips, so it routes
           through the shell's <Button> — `pill` + `dim60` + `xsText` + `solid`
           spells the hand-written string it replaces, in that order, with

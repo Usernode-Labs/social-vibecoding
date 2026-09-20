@@ -60,6 +60,7 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
       >
         <ChevronRightIcon
           data-archived-caret=""
+          aria-hidden="true"
           className="w-3 h-3 transition-transform"
           style={open ? { transform: 'rotate(90deg)' } : undefined}
         />
@@ -70,8 +71,8 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
           <div key={r.id} className={r.cls}>
             <CardIcon spec={r.icon} />
             <span className="flex-1 min-w-0">
-              <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">{r.label}</span>
-              <span className="block text-xs text-zinc-500 dark:text-zinc-500 truncate">Archived</span>
+              <span className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 break-words">{r.label}</span>
+              <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Archived</span>
             </span>
             <button type="button" className="gc-vote-btn" data-unarchive-chip={r.id} title="Restore this session (reopens its PR)">
               Unarchive
