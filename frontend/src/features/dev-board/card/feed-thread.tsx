@@ -37,6 +37,7 @@ import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { PostedViaChip, postedViaOf } from '../../group-chat/posted-via-chip';
 import { swatchFor } from '../../messages/format';
+import { ClampedComment } from '../comment-clamp';
 import {
   feedThreadStore,
   patchThread,
@@ -125,8 +126,17 @@ export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
             surface in the feed that renders something a person typed, and it
             renders it as a text child so React escapes it — the topic page is
             where the full, formatted thread lives. `whitespace-pre-wrap` keeps
-            the line breaks the multiline composer deliberately accepts. */}
-        <div className="dev-feed-msg-text whitespace-pre-wrap break-words">{m.content}</div>
+            the line breaks the multiline composer deliberately accepts.
+
+            #2556: and four lines of them at a time. A reply pasted from
+            somewhere else pushed the card below it off the screen, which is
+            the opposite of what a preview is for. */}
+        <ClampedComment
+          className="dev-feed-msg-text whitespace-pre-wrap break-words"
+          contentKey={m.content}
+        >
+          {m.content}
+        </ClampedComment>
       </div>
     </div>
   );

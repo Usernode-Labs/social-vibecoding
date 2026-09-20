@@ -104,21 +104,57 @@ const Kudos = {
 
     const tipAttr = tip ? ` title="${escapeAttr(tip)}"` : '';
 
+    // #1688: on a fresh proposal the viewer has neither voted on nor
+    // thanked, the slot spells itself out — "Thank evan for putting this
+    // up" — so the first thing on the band is the appreciation, ahead of
+    // the vote. Once they have done either it is the count pill again
+    // (thanksVariant decides; _fillKudosHosts re-fills a host whose face
+    // should change). The count still rides along, hidden, so the live
+    // counter has somewhere to land.
+    const thanks = opts.compact && !disabled ? Kudos.thanksVariant(pr) : null;
+    // The line's tail is its own span: on a narrow band the fold keeps the
+    // name and hides the tail, then the whole label (dev-card.tsx
+    // useFoldedActions, `data-thanks`), so the button carries the whole
+    // line as its name and tooltip at every face.
+    const line = thanks ? `Thank ${thanks} for putting this up` : '';
+    const face = thanks
+      ? `<span aria-hidden="true">\u{1F44F}</span><span class="dev-thanks-label">Thank ${escapeHtml(thanks)}<span class="dev-thanks-tail"> for putting this up</span></span><span data-kudos-count class="hidden">${count}</span>`
+      : `<span aria-hidden="true">\u{1F44F}</span>
+          <span data-kudos-count>${count}</span>`;
+
     // Wrap in a relatively-positioned span so the popover can absolute-
     // position against it. Clicks and hover are bound by Kudos.attach()
     // (called by app-view after innerHTML render).
     return `
-      <span class="kudos-wrap relative inline-block" data-kudos-session="${pr.id}">
-        <button class="${sizeCls}${activeCls}${disabledCls}" ${disabled ? 'disabled' : ''}${tipAttr}
+      <span class="kudos-wrap relative inline-block" data-kudos-session="${pr.id}" data-kudos-variant="${thanks ? 'thanks' : 'count'}">
+        <button class="${sizeCls}${thanks ? ' dev-thanks-pill' : ''}${activeCls}${disabledCls}" ${disabled ? 'disabled' : ''}${thanks ? ` aria-label="${escapeAttr(line)}" title="${escapeAttr(line)}"` : tipAttr}
                 data-kudos-action="give" data-kudos-session-id="${pr.id}"${locked ? ' data-kudos-locked="1"' : ''}>
-          <span aria-hidden="true">\u{1F44F}</span>
-          <span data-kudos-count>${count}</span>
+          ${face}
         </button>
         <span class="kudos-popover hidden absolute z-30 right-0 top-full mt-1 min-w-[12rem] max-w-[18rem]
                      bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700
                      rounded-lg shadow-xl text-xs text-zinc-700 dark:text-zinc-200 p-2"
               data-kudos-popover></span>
       </span>`;
+  },
+
+  // #1688: the author's name when the slot should read "Thank <author> for
+  // putting this up", else null for the count pill. A fresh proposal, up for
+  // a vote, that the viewer has not voted on, not thanked, and did not write
+  // — and a viewer who may thank at all (read-only viewers cannot).
+  thanksVariant(pr) {
+    if (!pr || pr.status !== 'promoted') return null;
+    if (pr.my_vote === 'yes' || pr.my_vote === 'no') return null;
+    // The row's own kudos facts first, so a caller that has not rendered
+    // the button yet (the host re-fill) reads the same answer it would.
+    Kudos.primeFromPr(pr);
+    const entry = Kudos._ensureCache(pr.id);
+    if (entry.my_kudos) return null;
+    const viewerId = window.App?.user?.id || null;
+    if (viewerId && pr.user_id && pr.user_id === viewerId) return null;
+    if (window.AppView && AppView.readOnly) return null;
+    const author = typeof pr.username === 'string' ? pr.username.trim() : '';
+    return author || null;
   },
 
   // Bind hover + click handlers for any kudos wrappers under `root`
@@ -360,6 +396,14 @@ const Kudos = {
       if (counter) counter.textContent = String(entry.count || 0);
       const btn = wrap.querySelector('[data-kudos-action="give"]');
       if (!btn) return;
+      // #1688: a "Thank <author>" pill the viewer has just tapped becomes the
+      // count pill in place — the thanks is given, and the number is what
+      // there is to show now.
+      if (entry.my_kudos && wrap.getAttribute('data-kudos-variant') === 'thanks') {
+        wrap.setAttribute('data-kudos-variant', 'count');
+        btn.classList.remove('dev-thanks-pill');
+        btn.innerHTML = `<span aria-hidden="true">\u{1F44F}</span><span data-kudos-count>${entry.count || 0}</span>`;
+      }
       // Locked buttons (self-PR / explicit opts.disabled at render
       // time) only ever get count updates — never enable/disable.
       if (btn.dataset.kudosLocked === '1') return;
@@ -440,15 +484,24 @@ const Kudos = {
       }
       const remaining = s.remaining;
       const limit = s.limit;
+      // #1688: bounties draw from their own allowance now, so the meter has
+      // two figures when the server sends the second. An older server sends
+      // one, and the meter reads as it did.
+      const bounties = s.bounties && typeof s.bounties === 'object' ? s.bounties : null;
       // Click navigates to the Leaderboard screen's KUDOS tab — named
       // explicitly (#leaderboard/prs, its Top PRs sub-view and the place
       // you actually give kudos), because the bare #leaderboard hash opens
       // the Challenges tab, which this meter is not about. Tooltip
       // explains the weekly cap + reset boundary.
-      const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
+      const tip = bounties
+        ? `${remaining} of ${limit} thanks and ${bounties.remaining} of ${bounties.limit} bounties left this week. Resets Monday 00:00 UTC.`
+        : `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
       const tone = remaining === 0
         ? 'text-zinc-500 dark:text-zinc-400'
         : 'text-violet-700 dark:text-violet-400';
+      const bountyPart = bounties
+        ? `<span class="drawer-meter-dim"> · </span><span class="drawer-meter-part"><span class="drawer-meter-strong">${bounties.remaining}</span><span class="drawer-meter-dim"> of ${bounties.limit} bounties</span></span>`
+        : '';
       // Plain inline text, NOT a pill: the row already labels itself
       // "Kudos", so the badge chrome was framing a number that needed no
       // frame — and it read as a tappable chip competing with the nav
@@ -460,7 +513,7 @@ const Kudos = {
       // longer has to account for this slot's width.
       slot.innerHTML = `
         <a href="#leaderboard/prs" class="drawer-meter ${tone}" title="${escapeAttr(tip)}">
-          <span class="drawer-meter-part"><span class="drawer-meter-strong">${remaining}</span><span class="drawer-meter-dim"> of ${limit} left</span></span>
+          <span class="drawer-meter-part"><span class="drawer-meter-strong">${remaining}</span><span class="drawer-meter-dim"> of ${limit} ${bounties ? 'thanks' : 'left'}</span></span>${bountyPart}
         </a>`;
     },
   },

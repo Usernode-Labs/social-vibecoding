@@ -76,11 +76,13 @@ import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
+import { OnboardingTour } from './features/home/tour';
 import { ImproveIsland } from './features/improve';
 import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { GlobalChatScreen } from './features/global-chat';
 import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
@@ -267,6 +269,13 @@ export function Shell() {
           which is how every messaging product on earth models it.
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
+      {/*
+          Global Chat (#2377, #2543) is a React-owned sibling screen. It ships
+          hidden for hydration parity, then the hash router reveals it at the
+          stable #chat/<uuid> address of a session selected from Improve.
+          App.REACT_SCREEN_IDS keeps visibility single-owned by React.
+      */}
+      <Island name="GlobalChatScreen"><GlobalChatScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
@@ -457,6 +466,22 @@ export function Shell() {
           features/dialogs/index.tsx.
       */}
       <Island name="Dialogs"><Dialogs /></Island>
+      {/*
+          #2255 — the eight-step welcome tour, replacing the one-line
+          #home-welcome banner (#1561). A fixed overlay rather than a dialog:
+          it dims the page and cuts a hole around the thing each step is
+          about, so it has to sit OVER the header (which is `relative z-10`
+          in normal flow) and over the screens, and it must not be lifted
+          into the kit's modal shell the way frontend/src/lib/static-modal.ts
+          lifts the nine dialogs' cards.
+
+          Here, after the dialogs, for the same reason the two staging
+          overlays are here: everything it points at has to exist in the
+          document above it. It ships `hidden` and empty of state, and it
+          opens only once the viewer is known, the first-run terms gate has
+          settled and Home is on screen. See features/home/tour/index.tsx.
+      */}
+      <Island name="OnboardingTour"><OnboardingTour /></Island>
       {/*
           #1085 chunk H, step 3: the Dev board's runtime-injected regions.
           Renders NO DOM of its own — it is the anchor that lets

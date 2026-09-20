@@ -384,3 +384,22 @@ test('#1808: the issue comment thread stamps a day and a time, in the reader\'s 
     else process.env.TZ = before;
   }
 });
+
+test('#1808: the topic page keeps no formatter of its own, and draws no Activity list at all now', () => {
+  // A change's Activity used to be rendered twice, on mutually exclusive
+  // paths — the tab inside the conversation card (topic/conversation.tsx)
+  // and the <details> in TopicBodySections — and both once printed
+  // `new Date(at).toLocaleString()`, a fourth spelling of an instant. The
+  // lists are gone with the tabs: the card's meta line carries the created
+  // stamp and the Checks row's "Last run" the other, both through the one
+  // helper. What stays pinned is that neither file grew a formatter back.
+  const CONVERSATION = 'frontend/src/features/dev-board/topic/conversation.tsx';
+  const HEAD = 'frontend/src/features/dev-board/topic/topic-head.tsx';
+  for (const rel of [CONVERSATION, HEAD]) {
+    const src = read(rel);
+    assert.doesNotMatch(src, /toLocaleString/, `${rel} keeps no formatter of its own`);
+    assert.doesNotMatch(src, /\.activity\b/, `${rel} draws no Activity list`);
+  }
+  assert.doesNotMatch(read('frontend/src/features/dev-board/topic/model.ts'), /\bactivity\b/,
+    'and the view model no longer carries one');
+});

@@ -29,7 +29,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { workshopHtml, kanbanHtml } = require('./lib/dev-card-html');
+const { workshopHtml, kanbanHtml, api: devCardApi } = require('./lib/dev-card-html');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 // The pane's week walk opens CLOSED — every window, the live one included,
@@ -138,6 +138,16 @@ const at = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString();
 // Values built inside the vm realm carry that realm's prototypes, which trips
 // deepStrictEqual — round-trip through JSON before comparing.
 const plain = (v) => JSON.parse(JSON.stringify(v));
+
+// The board's own routing, over the seeded module state — used to show the
+// mine strip ADDS a place an issue appears without MOVING it.
+function bucketsUnderwayIssue(AppView, number) {
+  return AppView._bucketDevItems({
+    issues: AppView._ghIssues || [], proposals: AppView._proposals || [],
+    gov: AppView._govProposals || [], merged: AppView._merged || [],
+    mySessions: AppView._mySessions || [], sharedSessions: AppView._sharedSessions || [],
+  }).inProgress.some((e) => e.kind === 'issue' && e.item.number === number);
+}
 
 /** A loaded board: two issues, a proposal awaiting the viewer's vote, a merge. */
 function seed(AppView) {
@@ -1356,6 +1366,122 @@ test('#1922: the loader keeps the server\'s week counts, and only well-formed on
   assert.match(src, /partial: !serverShipped && !!AppView\._mergedHasMore,/);
 });
 
+// ── #2573: the prompt to start on an app nobody has started ──────────
+//
+// Two facts make that state, and it takes BOTH: nothing open, and nothing
+// ever landed. Each half alone is a different app — one that has finished
+// everything, or one whose board is full of work nobody has picked up — and
+// the banner is wrong on both.
+
+/** A loaded board with nothing on it and nothing behind it. */
+function seedUntouched(AppView) {
+  AppView._ghIssues = [];
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._mySessions = [];
+  AppView._sharedSessions = [];
+  AppView._devDataReady = true;
+}
+
+const ONE_ISSUE = {
+  number: 12, title: 'Dark mode resets', createdAt: at(2), updatedAt: at(1),
+  lastMessageAt: at(1), user: 'alice', htmlUrl: 'https://github.com/x/y/issues/12',
+};
+
+test('#2573: "ever shipped" is the whole Done column, not this week\'s window', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  assert.equal(AppView._workshopView().dashboard.everShipped, false);
+
+  // THE CASE `shippedWeek` CANNOT ANSWER: a busy app having a quiet week.
+  // Nothing merged inside either window, and the column is far from empty —
+  // so a banner keyed on the week count would land on an app with thirty-one
+  // changes behind it.
+  AppView._mergedTotal = 31;
+  const d = AppView._workshopView().dashboard;
+  assert.equal(d.shippedWeek, 0, 'nothing landed in this week\'s window');
+  assert.equal(d.everShipped, true, 'and the app has still shipped thirty-one things');
+});
+
+test('#2573: the status tab offers to start an app with nothing open and nothing shipped', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-start-here=""/, 'the banner is up');
+  assert.match(html, /Start working on this app/, 'with the heading the request names');
+  assert.match(html, /Nothing is open and nothing has shipped yet/, 'and one line saying why');
+  assert.match(html, /data-ws-start-here-btn=""[^>]*>New change</,
+    'and the action, labelled as the Improve panel labels it');
+
+  // AT THE TOP OF THE TAB, ahead of the no-items note and the dashboard
+  // pane. The note answers what the board HOLDS and points at the "+";
+  // this answers what to do about an app nobody has started.
+  const order = ['data-ws-start-here', 'data-ws-empty', 'data-ws-dashboard'].map((k) => html.indexOf(k));
+  assert.ok(order.every((i) => i >= 0), `each is drawn: ${JSON.stringify(order)}`);
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'and the prompt leads');
+});
+
+test('#2573: the prompt stands down for an app with open work, or with a history', () => {
+  const withOpen = makeAppView();
+  seedUntouched(withOpen);
+  withOpen._ghIssues = [ONE_ISSUE];
+  assert.ok(!workshopHtml(withOpen).includes('data-ws-start-here'),
+    'somebody has already started it: there is something open');
+
+  const shipped = makeAppView();
+  seedUntouched(shipped);
+  shipped._mergedTotal = 4;
+  assert.ok(!workshopHtml(shipped).includes('data-ws-start-here'),
+    'an app with nothing left open but four changes behind it is finished, not unstarted');
+});
+
+test('#2573: a filter that hides everything is not an app nobody has started', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  AppView._ghIssues = [ONE_ISSUE];
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
+  const v = AppView._workshopView();
+  assert.equal(v.dashboard.open, 0, 'the tiles count what survived the filter');
+  assert.equal(v.meta.filtered, true);
+  assert.ok(!workshopHtml(AppView).includes('data-ws-start-here'),
+    'the prompt is a claim about the APP, so it waits for the filter to come off');
+});
+
+test('#2573: the button is offered on the gate the Improve panel offers New change on', () => {
+  const { improveStore } = devCardApi();
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  const before = improveStore.get().readOnly;
+  try {
+    // The same field, on the same store instance, that improve-panel.tsx
+    // reads to decide whether to draw `#improve-row-new-session` at all.
+    improveStore.set({ readOnly: true });
+    const html = workshopHtml(AppView);
+    assert.match(html, /data-ws-start-here=""/,
+      'a read-only viewer is still told what state the app is in');
+    assert.ok(!html.includes('data-ws-start-here-btn'),
+      'but is not offered a change they could not start from the panel either');
+  } finally {
+    improveStore.set({ readOnly: before });
+  }
+  assert.match(workshopHtml(AppView), /data-ws-start-here-btn=""/,
+    'and a collaborator gets it back');
+});
+
+// The entry point is BORROWED, not rebuilt: two copies of "navigate to the
+// app, then create a proposal" is the duplication this reuses away.
+test('#2573: the banner presses the Improve panel\'s own New change', () => {
+  assert.match(WORKSHOP, /import \{ Improve \} from '\.\.\/\.\.\/improve\/improve-controller\.js'/);
+  assert.match(WORKSHOP, /onClick=\{\(\) => Improve\.startSession\(\)\}/);
+  const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+  assert.match(PANEL, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
+    'which is the method the panel\'s row calls');
+});
+
 test('"try taking this one next" names an open issue nobody is on', () => {
   const AppView = makeAppView();
   seed(AppView);
@@ -1925,6 +2051,77 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   assert.equal(AppView._workshopView().mine.count, 2, 'a search does not hide your own work');
 });
 
+test('#2496: an issue you are working on joins "What you are working on"', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // Issue 12 carries a live claim by the viewer; issue 13 somebody else's.
+  // Both shapes are what GET /github-issues composes: `mine` is the
+  // server's per-viewer answer, `target` rides along on real payloads.
+  AppView._ghIssues[0].in_progress = {
+    count: 0, users: [], peopleTotal: 1, mine: true, sessions: [],
+    claims: [{ username: 'me', userId: 1, mine: true,
+      claimedAt: at(1), expiresAt: at(1 + 7 * 24) }],
+    target: null,
+  };
+  AppView._ghIssues[1].in_progress = {
+    count: 0, users: [], peopleTotal: 1, mine: false, sessions: [],
+    claims: [{ username: 'erin', userId: 9, mine: false,
+      claimedAt: at(2), expiresAt: at(2 + 7 * 24) }],
+    target: null,
+  };
+  const v = AppView._workshopView();
+  const mineKeys = plain(v.mine.rows).map((r) => r.key);
+  assert.ok(mineKeys.includes('mine:issue:12'), 'your claimed issue is in the strip');
+  assert.ok(!mineKeys.includes('mine:issue:13'), 'a claim by somebody else is not');
+  // It did not vanish from where it already lived: the bucket still routes
+  // it to Underway, so the issue is drawn exactly once per surface.
+  assert.ok(bucketsUnderwayIssue(AppView, 12), 'still on the board, Underway');
+  assert.ok(bucketsUnderwayIssue(AppView, 13), 'theirs is underway on the board all the same — the strip adds a place, it moves nothing');
+
+  // Rendered, keyed apart from the same card elsewhere in the pane.
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-row="mine:issue:12"/);
+});
+
+test('#2496: the mine-ness predicate reads every live mark the board writes', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // A live session of yours against the issue (the automatic half of
+  // issue-progress), with `mine` composed per session.
+  assert.equal(AppView._issueIsMine({
+    in_progress: { mine: false, sessions: [
+      { sessionId: 7, username: 'me', mine: true, status: 'active' },
+    ], claims: [] },
+  }), true, 'your live session counts');
+  // Paused counts too — it is still your work, which is what the strip says.
+  assert.equal(AppView._issueIsMine({
+    in_progress: { mine: false, sessions: [
+      { sessionId: 7, username: 'me', mine: true, status: 'paused' },
+    ], claims: [] },
+  }), true, 'a paused session of yours still counts');
+  // A claim fixture without the per-claim `mine` flag (an older cache)
+  // still names you by username.
+  assert.equal(AppView._issueIsMine({
+    in_progress: { claims: [{ username: 'me', mine: false }] },
+  }), true, 'a claim naming you counts even without the flag');
+  // The boolean alone, on a payload that carries no detail lists.
+  assert.equal(AppView._issueIsMine({ in_progress: { mine: true } }), true);
+  // The board's "assigned to you" reading: the community assignee chip.
+  assert.equal(AppView._issueIsMine({ assignee: { top: 'me' } }), true);
+  // And the negatives: somebody else's claim, their assignee mark, nothing.
+  assert.equal(AppView._issueIsMine({
+    in_progress: { mine: false, sessions: [
+      { sessionId: 7, username: 'erin', mine: false, status: 'active' },
+    ], claims: [] },
+  }), false, 'somebody else\u2019s session is not yours');
+  assert.equal(AppView._issueIsMine({ assignee: { top: 'erin' } }), false);
+  assert.equal(AppView._issueIsMine({}), false);
+  // A guest has no self to match, so nothing is mine — the same answer the
+  // quick filters give (`_viewerUsername` is null signed out).
+  const guest = makeAppView({ App: { user: null, currentApp: 'demo-app', currentSubTab: 'forum' } });
+  assert.equal(guest._issueIsMine({ assignee: { top: 'me' } }), false);
+});
+
 test('#1887: a card about your own session opens the CARD, with the session a link inside it', () => {
   // Opening a card about your own session used to navigate to the session
   // — the row's page link and the delegated #dev-body handler both went to
@@ -2398,6 +2595,24 @@ test('the open sheet is a DIRECT child of the wrapper, the way the check selects
   const end = inside === -1 ? els.length : i + 1 + inside;
   assert.ok(!els.slice(i, end).some((t) => classOf(t).includes('dev-ws-row')),
     'the compressed row is gone while the card is up');
+});
+
+test('the Workshop\'s inline comments clamp a long one at four lines (#2556)', () => {
+  const AppView = makeAppView();
+  const long = AppView._feedCommentsHtml([
+    { author: 'alice', body: 'short one', createdAt: at(1) },
+    { author: 'bob', body: 'word '.repeat(400), createdAt: at(1) },
+  ]);
+  // The clamp wraps the author AND the body, because the body renders inline
+  // after the name on this surface — see the rule in app.css.
+  assert.equal((long.match(/class="dev-feed-comment-clamp"/g) || []).length, 2,
+    'every comment in the tail is clamped, long or short');
+  assert.match(long, /<span class="dev-feed-comment-clamp">\s*<span class="dev-feed-comment-author">alice/);
+  // The control ships hidden: only `_clampFeedComments` has a laid-out box,
+  // and a comment that fits in four lines never gets one at all.
+  assert.equal((long.match(/class="dev-feed-comment-toggle [^"]+" aria-expanded="false" hidden>Show more<\/button>/g) || []).length, 2);
+  // The age still lands outside the clamp, where the #1585 check looks.
+  assert.match(long, /<\/span>\s*<span class="dev-feed-comment-time"/);
 });
 
 test('the sheet CSS moved host with the entry, and the Workshop has its own', () => {
@@ -4859,4 +5074,37 @@ test('the ear re-measures on every render, or a grouping switch leaves it stale'
   // The two things it reads to place the ear are both POSITIONS, which is why
   // a size-only observer is not enough on its own.
   assert.match(body, /t\.right - p\.left \+ EAR_GAP_PX/);
+});
+
+test('the Workshop keeps no swatch of its own — it imports the one the threads use', () => {
+  // A REAL BUG (#2475). This file carried a private `swatchFor` over seven
+  // stock hues hashed with `h * 31`, under a comment claiming it followed
+  // feed-thread's rule. It did not: feed-thread imports
+  // features/messages/format.tsx, which is six PRODUCT swatches hashed with
+  // FNV-1a. So the same person's initial was one colour on a Workshop row
+  // and a different one in that row's own Comments sheet — which renders
+  // <FeedThread /> a few lines below, from the same name.
+  //
+  // Three call sites read it (the faces strip, a theme's letter tile, an
+  // item's byline avatar) and all three take a name and get a colour back,
+  // so the shared function drops in unchanged.
+  assert.match(WORKSHOP, /^import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';$/m,
+    'the Workshop imports the shared swatch');
+  assert.ok(!/(?:function|const)\s+swatchFor\b/.test(WORKSHOP),
+    'and defines no local copy — a second palette is the bug this fixes');
+
+  // The old palette, named so a re-introduction of any of it is loud. None of
+  // these seven is in the product's vocabulary.
+  for (const hex of ['#8e44ad', '#1f8a4c', '#b4620a', '#c0392b', '#0e7c86', '#6d4c41']) {
+    assert.ok(!WORKSHOP.includes(hex), `${hex} is a stock hue the Workshop no longer paints with`);
+  }
+
+  // The row and the sheet under it now agree, which is the visible fix.
+  const { swatchFor } = loadTsx('frontend/src/features/messages/format.tsx');
+  assert.equal(swatchFor('ada'), swatchFor('ada'));
+  assert.ok(['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'].includes(swatchFor('ada')),
+    'and the colour comes from the shared six');
+  assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'),
+    /import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';/,
+    'the sheet reads the same module — that is what makes the two match');
 });

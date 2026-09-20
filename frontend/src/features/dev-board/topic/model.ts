@@ -23,7 +23,7 @@
  * knowing about.
  */
 
-import type { ActionSpec } from '../card/model';
+import type { ActionSpec, StatusPillState } from '../card/model';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -33,11 +33,20 @@ export type NoteTone = 'neutral' | 'ok' | 'warn' | 'error';
  * A run of prose, with the emphasised spans called out.
  *
  * Several of these sentences name a person or a tool mid-sentence in
- * `font-medium` — "…imported by **maya**…", "Built with **Claude Code** by
- * **maya**…" — and a plain string could not carry that. `{ b }` is the
+ * `font-medium` — "…imported by **maya**…", "Changed on both sides:
+ * **7 files**…" — and a plain string could not carry that. `{ b }` is the
  * emphasised run; a bare string is ordinary text.
  */
-export type TextRun = string | { b: string };
+export type TextRun = string | {
+  b: string;
+  /**
+   * A row's STATE, as its first word — "Failing.", "Syncing.", "Approved" —
+   * drawn bold in the ledger tone named here, so a reader scanning the
+   * ledger finds the one word they are looking for. Absent, the run is the
+   * plain `font-medium` emphasis the note boxes use for a name.
+   */
+  tone?: 'bad' | 'warn' | 'ok' | 'vote' | 'mute';
+};
 
 export interface NoteItem {
   /** A `<code>` run — a variable name, a file path. */
@@ -134,8 +143,11 @@ export type DetailBlock =
  * it, a sentence, and at most a couple of controls. It replaces four
  * things that used to stack under the card in four box styles: the "Why
  * this can't merge yet" reasons, the checks panel, the roster line and the
- * amber provenance notes. `key` is the row's `data-note`, which is what the
- * declared checks address a row by (`mergeability`, `checks`, `env`, …).
+ * amber provenance notes — the last of which #2588 dropped again, because a
+ * fact about where the change came from is not a step, and the hero line
+ * above the card already says it. `key` is the row's `data-note`, which is
+ * what the declared checks address a row by (`mergeability`, `checks`,
+ * `env`, …).
  */
 /** The repo unit suite (`npm test`), run alongside the browser checks. */
 export interface LedgerUnitProgress {
@@ -229,6 +241,11 @@ export interface LedgerRow {
   actions?: ActionSpec[];
   /** Extra attributes on the row — `data-checks-base="superseded"` for one check. */
   attrs?: Record<string, string>;
+  /**
+   * The Review row: draw "How voting works" at the right end of its line.
+   * It used to be a caption under the whole ledger; it explains this row.
+   */
+  help?: boolean;
 }
 
 export interface ProposalDetails {
@@ -267,9 +284,19 @@ export interface ProposalDetails {
 export interface RosterView {
   /** 'loading' until the fetch answers; 'hidden' when it fails. */
   phase: 'loading' | 'ready' | 'hidden';
+  /**
+   * Whether the vote has what it needs (`_topicLedgerRows` reads the same
+   * counts the pill does). Approved, the line reads "Approved by @maya ✓";
+   * not yet, it reads the tally.
+   */
+  approved?: boolean;
   yes?: { label: string; names: string };
   no?: { label: string; names: string };
   needs?: string;
+  /** #1688: the line each counted vote carries, one entry per voter who left one. */
+  reasons?: { who: string; vote: 'yes' | 'no'; text: string }[];
+  /** #1688: "Earlier version: @alice, @bob …" — votes on a previous version, or null. */
+  earlier?: string | null;
 }
 
 /** The shared-chat section: a disclosure whose BODY is another module's. */
@@ -306,6 +333,77 @@ export interface IssueProposalRef {
   href: string;
 }
 
+/**
+ * The change page's hero (topic-head.tsx `ChangeHero`): the words of the
+ * Workshop's Needs-you item, for one change. The card's meta line carried
+ * the same facts as one ellipsising row — "PR#2473 · snait · 5h ago · In
+ * review" — and this splits them into the eyebrow (what the page is, the
+ * pull request, where it stands), the age at the eyebrow's right and the
+ * by-line (who, and when). The tags, the actions and the summary are read
+ * off the card model and the body directly; nothing here is copied from
+ * them.
+ */
+export interface HeroView {
+  /** The eyebrow's first word — "Proposal", or "Change" before review. */
+  kind: string;
+  /** "PR#2473", linking to GitHub when the change has a pull request. */
+  ref: { s: string; href: string | null } | null;
+  /** "In review", "Merged", "Private change", "Visible to the group". */
+  status: string;
+  /** "5h ago", with the full stamp as its title. */
+  age: { s: string; title?: string } | null;
+  author: string | null;
+  /** The by-line's verb — "proposed", "imported", "started". */
+  verb: string;
+  /** The provenance words the meta line carried: imported from GitHub, built with an agent. */
+  provenance: string | null;
+  /** The item's soft gradient, alternating by change so two pages read as two. */
+  tint: 'a' | 'b';
+}
+
+/** A step's mark: the merge gate's own states (services/merge-requirements.js). */
+export type StepState = 'done' | 'active' | 'waiting' | 'blocked' | 'pending';
+
+/**
+ * One row of the steps sheet — the card's merge-requirements strip
+ * (card/dev-card.tsx `RequirementsRow`) expanded to say, under each gate,
+ * what the ledger row for that gate said: the vote's tally and roster, the
+ * checks' sentence, last run and failing rows, the sync's remedy.
+ *
+ * `key` is the row's `data-note` — the LEDGER row's key where one backs
+ * the step (`votes`, `checks`, `mergeability`), so the declared checks that
+ * address a fact by it still find it; `gate` is the merge gate's key, as
+ * `data-req-gate`, where the step is one. A row with a gate and no ledger
+ * row says the gate's own note; a ledger row with no gate — a failed
+ * preview, console errors, and every row of a change still under way —
+ * draws in the same shape with its tone as its mark.
+ */
+export interface StepRow {
+  key: string;
+  gate?: string | null;
+  state: StepState;
+  label: string;
+  /** Who clears it, already worded — "the group", "an admin", "automatic". */
+  actor: string | null;
+  /** The gate's one-line why, drawn when no ledger row says more. */
+  note?: string | null;
+  /** The gate's one control — an admin's "Resume merges". */
+  action?: ActionSpec | null;
+  /** The ledger row's material: the sentence, the roster, the checks, the ops. */
+  row?: LedgerRow | null;
+  /** The vote step's bar and tally: the same counts the card's pill reads. */
+  vote?: { yes: number; no: number; majority: number; pill: StatusPillState | null } | null;
+}
+
+/** The steps sheet: the strip's own headline over its rows, expanded. */
+export interface StepsView {
+  headline: string;
+  detail: string | null;
+  done: number | null;
+  total: number | null;
+  rows: StepRow[];
+}
+
 /** Everything under the card, by topic kind. */
 export interface TopicBody {
   changeId?: number;
@@ -317,9 +415,36 @@ export interface TopicBody {
   /** The proposal owner/full platform admin may change issue associations. */
   canEditIssues?: boolean;
   testing?: { html: string | null; path: string | null };
-  activity?: { label: string; at: string }[];
   workspace?: number | null;
   discussion?: string | null;
+  /**
+   * The Build door: the pill on the card ("Continue building", "Open
+   * build", "Read the build"). It NAVIGATES (#2605), to the change's own
+   * dev session page — the owner's live workspace, or, for a reader, the
+   * read-only chat its owner published. There is no sheet on this page any
+   * more. Null for a private change somebody else is reading, and for an
+   * imported one, which has no session behind it.
+   */
+  build?: { kind: 'owner' | 'published'; label: string } | null;
+  /**
+   * The visual evidence, as "What changes for you" reads it: the claims as
+   * bullets and the run's state as one strip. A verified run keeps the
+   * before/after card in `actions.visuals` instead, which leads with the
+   * claims itself.
+   */
+  evidence?: {
+    state: string;
+    verified: boolean;
+    /**
+     * #2601/#2558: a 'planned' run whose timestamp has gone past the idle
+     * threshold — minted at submission and never picked up. It does not
+     * spin, and it keeps the panel so its reason and retry control show.
+     */
+    notStarted: boolean;
+    label: string;
+    sentence: string;
+    claims: string[];
+  } | null;
   /**
    * The detail actions. The PILLS are merged onto the card's own action band
    * by `_renderTopicHead` (one action line, as on the board); the head draws
@@ -356,6 +481,9 @@ export interface TopicBody {
    */
   proposalBody?: { id: number | null; open: boolean; html: string } | null;
   details?: ProposalDetails | null;
+  /** A change page's hero, and the steps under it. Set with `changeId`. */
+  hero?: HeroView | null;
+  steps?: StepsView | null;
   /** The one-line explainer under a session or governance card. */
   note?: string | null;
   transcript?: TranscriptSection | null;

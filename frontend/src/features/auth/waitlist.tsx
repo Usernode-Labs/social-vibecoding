@@ -108,6 +108,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -127,6 +129,10 @@ import {
   // options object, and the helper renders a map of them.
   options as opts,
   StatusPill,
+  SURVEY_FIELD,
+  SURVEY_HINT,
+  SURVEY_LABEL,
+  SURVEY_SELECT,
   useSurveyAnswered,
   useWaitlistOptions,
   WaitlistStatus,
@@ -1134,7 +1140,7 @@ export function WaitlistScreen() {
           onSubmit={onSubmit}
         >
           <div>
-            <label htmlFor="waitlist-email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            <label htmlFor="waitlist-email" className={SURVEY_LABEL}>
               {/* #1877: the marker sits a hair off the word rather than
                   touching it, and is hidden from screen readers — the input's
                   own `required` is what announces the field as required. */}
@@ -1143,10 +1149,17 @@ export function WaitlistScreen() {
                 *
               </span>
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className={SURVEY_HINT}>
               We only email you when your spot comes up. No newsletter.
             </p>
-            <input
+            {/*
+                Every field on this screen and on `#more` spreads SURVEY_FIELD
+                — the `authWhite` box, the dialogs' placeholder colour and the
+                `bordered` focus treatment — rather than writing the box out
+                (#2437). The note on that constant says why these screens take
+                that box and not sign-in's box-less `card` one.
+            */}
+            <Input
               ref={email}
               id="waitlist-email"
               type="email"
@@ -1154,20 +1167,20 @@ export function WaitlistScreen() {
               maxLength={255}
               placeholder="you@example.com"
               autoComplete="email"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+              {...SURVEY_FIELD}
             />
           </div>
           <div>
             {/* #1877: JSX drops the line break between a label's text and the
                 span after it, so without its own margin "Optional" rendered
                 glued to the word ("CountryOptional"). */}
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            <label className={SURVEY_LABEL}>
               Country
               <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
                 Optional
               </span>
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className={SURVEY_HINT}>
               We&rsquo;re building early groups across different regions.
             </p>
             {/*
@@ -1184,10 +1197,10 @@ export function WaitlistScreen() {
                 draws everywhere it is supported; the border colour is what
                 guarantees a visible focus on the surfaces that ignore it.
             */}
-            <select
+            <Select
               ref={country}
               id="waitlist-country"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+              {...SURVEY_SELECT}
             >
               <option value="">
                 Select a country&hellip;
@@ -1199,16 +1212,16 @@ export function WaitlistScreen() {
                   the map already sorted by English name, so insertion order
                   IS display order and nothing sorts here. */}
               {opts(options?.countries)}
-            </select>
+            </Select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            <label className={SURVEY_LABEL}>
               How did you find us?
               <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
                 Optional
               </span>
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className={SURVEY_HINT}>
               Pick the closest one.
             </p>
             <ChipRow
@@ -1313,11 +1326,11 @@ export function WaitlistScreen() {
             >
               <label
                 htmlFor="waitlist-confirm-email"
-                className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+                className={SURVEY_LABEL}
               >
                 Your email address
               </label>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+              <p className={SURVEY_HINT}>
                 Enter the address you joined with. We will email you a six-digit code.
               </p>
               {/*
@@ -1328,17 +1341,19 @@ export function WaitlistScreen() {
                   form's own field still holds the address, so asking again
                   would be asking somebody to retype what they just typed.
               */}
-              <input
+              <Input
                 ref={confirmEmail}
                 id="waitlist-confirm-email"
                 type="email"
                 maxLength={255}
                 placeholder="you@example.com"
                 autoComplete="email"
-                className={hiddenFirst(
-                  !codeOnly,
-                  'w-full mb-2 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
-                )}
+                {...SURVEY_FIELD}
+                // `hidden` and the bottom margin are this call site's own, so
+                // they ride in through className, which cva emits last. There
+                // is no `spacing` value for `mb-2`: that group leads the
+                // string, and this one is written after `w-full`.
+                className={hiddenFirst(!codeOnly, 'mb-2')}
               />
               <Button
                 id="waitlist-request-code"
@@ -1443,11 +1458,11 @@ export function WaitlistScreen() {
               </p>
               <label
                 htmlFor="waitlist-code"
-                className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+                className={SURVEY_LABEL}
               >
                 {codeOnly ? 'Your six-digit code' : 'Step 2 of 2 · Confirm your email'}
               </label>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+              <p className={SURVEY_HINT}>
                 {/*
                     It no longer claims a send happened (#2201). "We sent a
                     six-digit code to you@\u2026" was false three ways: the mail
@@ -1465,7 +1480,7 @@ export function WaitlistScreen() {
                     : 'Check your email for a six-digit code, and use the newest one. You can also just click the link in it. Codes work for 15 minutes.'}
               </p>
               <div className="flex gap-2">
-                <input
+                <Input
                   ref={code}
                   id="waitlist-code"
                   type="text"
@@ -1474,7 +1489,10 @@ export function WaitlistScreen() {
                   maxLength={32}
                   placeholder="000000"
                   onChange={onCodeInput}
-                  className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                  {...SURVEY_FIELD}
+                  // Six digits read as digits, which is the whole point of a
+                  // code field.
+                  mono={true}
                 />
                 <Button
                   id="waitlist-code-submit"

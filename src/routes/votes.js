@@ -54,10 +54,10 @@ function visualEvidenceGateForSession(config, session) {
   }
   const allowed = exactHead && VISUAL_EVIDENCE_GATE_STATES.has(evidenceState);
   const reason = !exactHead
-    ? 'Visual evidence has not been verified for the proposal’s current commit.'
+    ? 'The visual change preview has not been verified for the proposal’s current commit.'
     : evidenceState === 'failed'
-      ? (detail.failureReason || 'Visual evidence failed and must be retried or overridden by an app administrator.')
-      : `Visual evidence is ${String(evidenceState).replace(/_/g, ' ')}.`;
+      ? (detail.failureReason || 'The visual change preview failed and must be retried or overridden by an app administrator.')
+      : `The visual change preview is ${String(evidenceState).replace(/_/g, ' ')}.`;
   return { applies: true, allowed, state: evidenceState, currentHead, recordedHead, reason };
 }
 
@@ -246,6 +246,16 @@ function stagingMockProposals(viewer) {
       ...mk(9000020, 900120, "[Mock] staging-tester's changes",
         4, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(60) }),
       pr_title_fallback: true,
+    },
+    // #1688: the viewer said yes to an EARLIER version of this one, and the
+    // author has since pushed a new one. Their vote is on the row but no
+    // longer counted, so the card's button asks "Still yes?" instead of
+    // "Vote" — reviewable on staging via ?demo=1.
+    {
+      ...mk(9000039, 900139,
+        '[Mock] Re-confirm test: you said yes to an earlier version of this proposal',
+        30, 0, 0, 2, { required: 2, windowEndsAt: null }),
+      my_prior_vote: 'yes',
     },
     // One No vote: eased threshold restored, window pushed back out.
     mk(9000002, 900102,
@@ -1321,6 +1331,13 @@ function normalizedSha(value) {
 // does not touch it, so the approvals keep counting with nothing carried or
 // advanced. Anything authored bumps it, and every tally in the platform stops
 // counting the old votes in the same statement.
+//
+// `fresh` (#2619): this reads the branch tip out of the repo mirror, and the
+// mirror coalesces one fetch per repository. A caller that has just PUSHED and
+// is reading its own write back has to opt out of that, or it joins a fetch
+// older than the push and is told the head did not move. Pass it whenever the
+// push and this call are in the same request; leave it off for the sweeps and
+// read paths, which have nothing of their own to see.
 async function reconcileNativeReviewedHead({
   config, pool, session, fresh = false, notify = true, deferChecks = false,
 }) {
@@ -1378,6 +1395,13 @@ async function reconcileNativeReviewedHead({
   try {
     dir = await mirror.ensureMirror(parsed.owner, parsed.repo, {
       refs: [oldHead, normalizedSha(session.checks_commit_sha)].filter(Boolean),
+      // #2619: `fresh` was accepted here and then never used — seven call
+      // sites asked for a re-read and silently got whatever fetch happened
+      // to be in flight. It is the callers that have just PUSHED who need
+      // it (proposal-update's two, merge-queue, cli-handoff-sync): without
+      // it their reconcile reads the pre-push tip, concludes the head did
+      // not move, and leaves the tally and the verdict on the old commit.
+      fresh,
     });
     mainSha = await mirror.defaultBranchSha(dir);
     liveHead = await mirror.resolveBranch(dir, session.branch_name);
@@ -1630,6 +1654,22 @@ function parseImportVisualEvidence(body) {
   return visualEvidencePlan.parseIntent(body.visualEvidence);
 }
 
+// Keep internal failures opaque, but name the import boundary a caller can
+// act on. The connector turns these fields into an `import_failed` response,
+// so an agent can retry the SAME open pull request instead of manufacturing a
+// fresh one without knowing whether parsing, persistence, or evidence failed.
+function prImportFailureBody(err) {
+  if (err?.prImportStage === 'visual_evidence_intent') {
+    return {
+      error: 'PR import failed while recording visualEvidence.',
+      stage: 'visual_evidence_intent',
+      field: 'visualEvidence',
+      retryable: true,
+    };
+  }
+  return { error: 'Internal server error' };
+}
+
 // The linked-issue set an import may carry (#1217). Bounded and sanitized by
 // pr-metadata's own helper — the one that renders `Closes #N` — so the column
 // and the PR body can never disagree about what counts as a linked issue.
@@ -1690,16 +1730,47 @@ function revisionChangedVoteResponse(res, headSha, message = null, epoch = null)
 // head_sha is still recorded. It no longer decides anything, but it is the
 // only record of which commit a person was looking at when they approved,
 // and that is worth keeping.
-async function recordVote({ pool, session, userId, vote, headSha, revisionEnforced }) {
+// The longest line a vote may carry (#1688). One sentence, not a review:
+// the roster, the thread line and the proposer's notification all quote it
+// whole, and a paragraph in any of those is worse than none.
+const VOTE_REASON_MAX = 280;
+const VOTE_REASON_REQUIRED = 'A No comes with a line: what is not working for you?';
+
+// The one-line reason on a vote, normalised: whitespace collapsed, empty
+// becomes null (no line), anything else trimmed. `{ error }` when the line is
+// not a string or runs past the cap — the caller answers 400 with it.
+function normalizeVoteReason(raw) {
+  if (raw == null) return { reason: null };
+  if (typeof raw !== 'string') return { error: 'Reason must be a string' };
+  const reason = raw.replace(/\s+/g, ' ').trim();
+  if (!reason) return { reason: null };
+  if (reason.length > VOTE_REASON_MAX) {
+    return { error: `Reason must be ${VOTE_REASON_MAX} characters or fewer` };
+  }
+  return { reason };
+}
+
+// The reason column on the upsert (#1688). A line that arrives replaces the
+// old one. When none arrives, the earlier line is KEPT if the person is
+// re-casting the same side — that is what carries a Yes, and its sentence,
+// onto a proposal's next version with one tap — and dropped on a flip, where
+// the old sentence argued for the other side.
+const VOTE_REASON_UPSERT_SQL = `reason = CASE
+             WHEN EXCLUDED.reason IS NOT NULL THEN EXCLUDED.reason
+             WHEN pr_votes.vote = EXCLUDED.vote THEN pr_votes.reason
+             ELSE NULL END`;
+
+async function recordVote({ pool, session, userId, vote, headSha, revisionEnforced, reason = null }) {
   if (!revisionEnforced) {
     return pool.query(
-      `INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch)
-       SELECT $1, $2, $3, $4, cs.approval_epoch FROM chat_sessions cs WHERE cs.id = $1
+      `INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
+       SELECT $1, $2, $3, $4, cs.approval_epoch, $5 FROM chat_sessions cs WHERE cs.id = $1
        ON CONFLICT (session_id, user_id) DO UPDATE
          SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
-             approval_epoch = EXCLUDED.approval_epoch, created_at = NOW()
-       RETURNING id`,
-      [session.id, userId, vote, headSha]
+             approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
+             ${VOTE_REASON_UPSERT_SQL}
+       RETURNING id, reason`,
+      [session.id, userId, vote, headSha, reason]
     );
   }
 
@@ -1711,13 +1782,14 @@ async function recordVote({ pool, session, userId, vote, headSha, revisionEnforc
           AND status IN ('promoted', 'merging')
         FOR UPDATE
      )
-     INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch)
-     SELECT id, $2, $3, $4, approval_epoch FROM current_session
+     INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
+     SELECT id, $2, $3, $4, approval_epoch, $5 FROM current_session
      ON CONFLICT (session_id, user_id) DO UPDATE
        SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
-           approval_epoch = EXCLUDED.approval_epoch, created_at = NOW()
-     RETURNING id`,
-    [session.id, userId, vote, headSha]
+           approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
+           ${VOTE_REASON_UPSERT_SQL}
+     RETURNING id, reason`,
+    [session.id, userId, vote, headSha, reason]
   );
 }
 
@@ -2672,12 +2744,23 @@ function voteRoutes(config) {
           importClient, app.id, inserted[0].id, req.user
         );
         if (config.visualEvidence?.collect && importVisualEvidence) {
-          visualEvidenceResult = await visualEvidenceState.recordIntent(
-            importClient,
-            inserted[0].id,
-            importVisualEvidence,
-            visualEvidenceState.validSha(headSha) ? { headSha } : {}
-          );
+          try {
+            visualEvidenceResult = await visualEvidenceState.recordIntentInTransaction(
+              importClient,
+              inserted[0].id,
+              importVisualEvidence,
+              visualEvidenceState.validSha(headSha) ? { headSha } : {}
+            );
+          } catch (err) {
+            // This transaction owns `importClient`; recordIntent must neither
+            // reconnect nor release it. Preserve a safe boundary marker for
+            // the outer HTTP error without exposing the database exception.
+            if (err && typeof err === 'object') {
+              err.prImportStage = 'visual_evidence_intent';
+              err.prImportField = 'visualEvidence';
+            }
+            throw err;
+          }
         }
         await importClient.query('COMMIT');
       } catch (err) {
@@ -2766,8 +2849,12 @@ function voteRoutes(config) {
       const appForBuild = { id: app.id, slug: app.slug, name: app.name, repo_url: app.repo_url };
       kickImportedChecks(session, appForBuild, headSha);
     } catch (err) {
-      log.error('votes', 'PR-import failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
+      log.error('votes', 'PR-import failed', {
+        message: err.message,
+        stage: err?.prImportStage || null,
+        field: err?.prImportField || null,
+      });
+      res.status(500).json(prImportFailureBody(err));
     }
   });
 
@@ -2827,6 +2914,11 @@ function voteRoutes(config) {
     if (!['yes', 'no'].includes(vote)) {
       return res.status(400).json({ error: 'Vote must be "yes" or "no"' });
     }
+    // #1688: the sentence behind the vote. Optional on a Yes; a No without
+    // one is refused further down, once the voter's earlier row is known.
+    const normalized = normalizeVoteReason(req.body?.reason);
+    if (normalized.error) return res.status(400).json({ error: normalized.error });
+    const reason = normalized.reason;
 
     try {
       // Accept votes on 'promoted' OR 'merging' sessions — once a merge
@@ -2890,20 +2982,37 @@ function voteRoutes(config) {
       // The DB upsert itself is still safe (UNIQUE(session_id,user_id))
       // but we avoid the side-effects on a no-op.
       const { rows: prevRows } = await pool.query(
-        `SELECT pv.vote, pv.approval_epoch, cs.approval_epoch AS current_epoch
+        `SELECT pv.vote, pv.reason, pv.approval_epoch, cs.approval_epoch AS current_epoch
            FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
           WHERE pv.session_id = $1 AND pv.user_id = $2`,
         [session.id, req.user.id]
       );
       const previousVote = prevRows[0]?.vote || null;
+      const previousReason = prevRows[0]?.reason || null;
       const voteHeadSha = reviewedHeadForSession(session);
+      // #1688: a No always carries a line, so the proposer learns what to
+      // fix rather than only that somebody minded. The one No that need not
+      // bring a new one is a re-cast of a No that already has its line —
+      // the upsert keeps it (see VOTE_REASON_UPSERT_SQL).
+      if (vote === 'no' && !reason && !(previousVote === 'no' && previousReason)) {
+        return res.status(400).json({
+          error: 'reason_required',
+          message: VOTE_REASON_REQUIRED,
+          maxLength: VOTE_REASON_MAX,
+        });
+      }
       // #2038: "unchanged" means the same person voting the same way on the
       // same PROPOSAL. Keying it on the commit made a re-vote after a
       // mechanical sync look like a change, re-posting to group chat and
       // re-entering checkAndMerge for a click that moved nothing.
-      const unchanged = previousVote === vote
+      const sameSide = previousVote === vote
         && prevRows[0]?.approval_epoch != null
         && prevRows[0].approval_epoch === prevRows[0].current_epoch;
+      const unchanged = sameSide && (reason === null || reason === previousReason);
+      // Same side, new words (#1688): the row is updated and the roster
+      // re-reads it, but nothing is announced or re-counted — the vote did
+      // not move.
+      const reasonOnly = sameSide && !unchanged;
 
       // Stamp every GitHub proposal vote with its reviewed PR head. Imported
       // proposals retain imported_pr_head_sha; native proposals use the new
@@ -2916,7 +3025,12 @@ function voteRoutes(config) {
         vote,
         headSha: voteHeadSha,
         revisionEnforced: !!revision.enforced,
+        reason,
       });
+      // The line the row now carries: the one sent, or the earlier one the
+      // upsert kept for a same-side re-cast (a Yes carried onto a new
+      // version brings its sentence along).
+      const recordedReason = recorded?.rows?.[0]?.reason ?? reason ?? null;
       if (revision.enforced && (recorded.rowCount || 0) === 0) {
         // The DB head moved after the GitHub read but before the write lock.
         // Refresh the proposal state, but never transfer this click to it.
@@ -2963,6 +3077,15 @@ function voteRoutes(config) {
         });
         return res.json({ ok: true, merged: false, unchanged: true });
       }
+      if (reasonOnly) {
+        // #1688: the same vote with new words. The roster and the proposer's
+        // notification read the row live, so a tally push is all the
+        // clients need; no line is re-posted and no merge is re-checked.
+        const { pushVoteUpdate: pushReason } = require('../services/ws');
+        pushReason({ sessionId: session.id, appSlug: session.app_slug, merged: false });
+        log.debug('votes', 'Vote reason updated', { sessionId: session.id, userId: req.user.id });
+        return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true });
+      }
 
       const voteLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
@@ -2989,12 +3112,19 @@ function voteRoutes(config) {
         log.error('votes', 'Vote notification threw', { sessionId: session.id, err: err.message });
       }
 
+      // #1688: with a line, the row is the person's sentence rather than
+      // their tally — the thread it lands in is the proposal's own, so the
+      // PR label it used to repeat is the thread's title. Without one, the
+      // line reads exactly as before.
+      const voteLine = recordedReason
+        ? `${req.user.username} voted ${vote}: “${recordedReason}”`
+        : `${req.user.username} voted ${vote} on ${voteLabel}`;
       await sendSystemMessage(pool, session.app_id,
-        `${req.user.username} voted ${vote} on ${voteLabel}`,
+        voteLine,
         'vote',
         // Lets the group-chat client render live vote buttons inline on
         // this activity row (see group-chat.js renderMessageHtml).
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null } },
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null, reason: recordedReason } },
         // #194: per-vote activity lands in the proposal's own thread, not
         // general chat — the promote/merge announcements remain the
         // general-chat entry points.
@@ -3015,6 +3145,17 @@ function voteRoutes(config) {
       const { pushVoteUpdate } = require('../services/ws');
       pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: false });
       log.info('votes', 'Vote cast', { sessionId: session.id, vote, userId: req.user.id });
+
+      // #1688: a No is the one vote that can make a proposal contested. When
+      // it does, the proposal's thread gets its script — once per version
+      // (services/conversation-prompt.js). Never in the vote's way.
+      if (vote === 'no') {
+        require('../services/conversation-prompt').promptIfContested(pool, session)
+          .then((r) => { if (r.prompted) log.info('votes', 'Conversation prompt posted', { sessionId: session.id, epoch: r.epoch }); })
+          .catch((err) => log.warn('votes', 'Conversation prompt failed (non-fatal)', {
+            sessionId: session.id, err: err.message,
+          }));
+      }
 
       // Emit only on a real (new or flipped) vote — the `unchanged`
       // no-op already returned above. pr_vote_cast credits the voter;
@@ -3063,20 +3204,38 @@ function voteRoutes(config) {
   // 'anyone' policy.
   router.get('/api/sessions/:id/votes', async (req, res) => {
     try {
-      const { rows } = await pool.query(
-        `SELECT pv.vote, u.username, pv.user_id
+      // Every row, with whether it still counts: the ones from an earlier
+      // version are the people the page names as asked back (#1688), so
+      // they are read here rather than filtered out in SQL.
+      const { rows: allRows } = await pool.query(
+        `SELECT pv.vote, pv.reason, u.username, pv.user_id,
+                ${currentVotePredicateSql('pv', 'cs')} AS current
          FROM pr_votes pv
          JOIN users u ON pv.user_id = u.id
          JOIN chat_sessions cs ON cs.id = pv.session_id
          WHERE pv.session_id = $1
-           AND ${currentVotePredicateSql('pv', 'cs')}`,
+         ORDER BY pv.created_at ASC, pv.id ASC`,
         [req.params.id]
       );
+      const rows = allRows.filter((r) => r.current === true);
+      const earlierRows = allRows.filter((r) => r.current !== true);
 
       const yes = rows.filter((r) => r.vote === 'yes');
       const no = rows.filter((r) => r.vote === 'no');
 
-      const out = { yes: yes.map((r) => r.username), no: no.map((r) => r.username) };
+      const out = {
+        yes: yes.map((r) => r.username),
+        no: no.map((r) => r.username),
+        // #1688: the sentence each counted vote carries, in vote order.
+        reasons: rows.filter((r) => r.reason)
+          .map((r) => ({ username: r.username, vote: r.vote, reason: r.reason })),
+        // Votes cast on an earlier version of the proposal — still on the
+        // row, no longer counted, their owners asked to take another look.
+        earlier: {
+          yes: earlierRows.filter((r) => r.vote === 'yes').map((r) => r.username),
+          no: earlierRows.filter((r) => r.vote === 'no').map((r) => r.username),
+        },
+      };
 
       try {
         const { rows: sessRows } = await pool.query(
@@ -3403,6 +3562,11 @@ function voteRoutes(config) {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- #1688: the viewer's vote on an EARLIER version — still on their
+           -- row, no longer counted. The card asks "Still yes?" from it.
+           (SELECT pv.vote FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.user_id = $2
+               AND NOT COALESCE(${currentVotePredicateSql('pv', 'cs')}, FALSE)) as my_prior_vote,
            -- Kudos counts piggy-back on this query so the vote panel
            -- doesn't fan out to N extra round-trips per PR card. The
            -- (session_id, giver_user_id) UNIQUE constraint makes EXISTS
@@ -3588,6 +3752,14 @@ function voteRoutes(config) {
       // panel, not per row: a red main pauses every merge on the app, and
       // the provisional ledger below names that step off these columns.
       const mainCheck = await require('../services/main-watch').mergePause(pool, appRows[0].id);
+      // And, for the platform's own app, a merged commit that has not become
+      // the running release (services/release-watch.js). Only that row ever
+      // carries one, so a child app's panel does not pay the read; the board
+      // banner draws it.
+      const releaseWatch = require('../services/release-watch');
+      const releaseStall = appRows[0].self_hosted
+        ? await releaseWatch.readStall(pool, appRows[0].id)
+        : releaseWatch.describe(null);
       {
         const freshnessSvc = require('../services/proposal-freshness');
         const integrationSvc = require('../services/integration');
@@ -3626,6 +3798,9 @@ function voteRoutes(config) {
         // services/main-watch.js: the unit suite's verdict on the last
         // merge commit, and whether it is pausing this app's merges.
         mainCheck,
+        // services/release-watch.js: a merged self-app commit that is not
+        // the running release. `stalled: false` everywhere but there.
+        releaseStall,
         activeUsers,
         majority,
         viewerActive,
@@ -4293,6 +4468,128 @@ async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issue
 // honours the `githubMerged` guard (never roll a GitHub-merged PR back to
 // 'promoted') and the merge-debug tracing. Only ever leaves the row in
 // 'merged' — a state recoverStuckMerges already understands.
+// #1688: who to name when a proposal lands.
+//   author  — the proposer.
+//   backers — everyone whose Yes counted at merge, in vote order, the author
+//             excluded (voting for your own is allowed; being thanked for it
+//             reads oddly).
+//   shapers — everyone else who took part: a No with a line on the version
+//             that merged (an objection that did not stop it), or a word in
+//             the proposal's thread before it landed. Nobody is named twice.
+async function mergeCredits(pool, session) {
+  const { rows: authorRows } = session.user_id
+    ? await pool.query('SELECT username FROM users WHERE id = $1', [session.user_id])
+    : { rows: [] };
+  const author = authorRows[0]?.username || null;
+  const { rows: votes } = await pool.query(
+    `SELECT u.username, pv.vote, pv.reason
+       FROM pr_votes pv
+       JOIN users u ON u.id = pv.user_id
+       JOIN chat_sessions cs ON cs.id = pv.session_id
+      WHERE pv.session_id = $1 AND ${currentVotePredicateSql('pv', 'cs')}
+      ORDER BY pv.created_at ASC, pv.id ASC`,
+    [session.id]
+  );
+  const { rows: talkers } = await pool.query(
+    `SELECT u.username, MIN(cm.created_at) AS first_at
+       FROM chat_messages cm
+       JOIN users u ON u.id = cm.user_id
+      WHERE cm.app_id = $1 AND cm.thread_type = 'session' AND cm.thread_ref = $2
+        AND cm.msg_type = 'message'
+      GROUP BY u.username
+      ORDER BY first_at ASC`,
+    [session.app_id, session.id]
+  );
+  const seen = new Set(author ? [author] : []);
+  const backers = [];
+  for (const v of votes || []) {
+    if (v.vote === 'yes' && v.username && !seen.has(v.username)) {
+      seen.add(v.username);
+      backers.push(v.username);
+    }
+  }
+  const shapers = [];
+  for (const v of votes || []) {
+    if (v.vote === 'no' && v.reason && v.username && !seen.has(v.username)) {
+      seen.add(v.username);
+      shapers.push(v.username);
+    }
+  }
+  for (const t of talkers || []) {
+    if (t.username && !seen.has(t.username)) {
+      seen.add(t.username);
+      shapers.push(t.username);
+    }
+  }
+  return { author, backers, shapers };
+}
+
+// "alice", "alice and bob", "alice, bob and carol", "… and 2 more" past
+// eight — the announcement is a sentence, not a roll call.
+function nameList(names) {
+  const list = names.slice(0, 8);
+  const rest = names.length - list.length;
+  if (rest > 0) return `${list.join(', ')} and ${rest} more`;
+  return list.length <= 1
+    ? list.join('')
+    : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+
+// "Built by evan, backed by alice and bob, shaped by carol." The author is
+// left out for the push that goes to the author. With nobody to name, the
+// wording the announcement carried before #1688.
+function creditsSentence(credits, { withAuthor = true } = {}) {
+  const parts = [];
+  if (withAuthor && credits.author) parts.push(`Built by ${credits.author}`);
+  if (credits.backers?.length) parts.push(`${parts.length ? 'backed' : 'Backed'} by ${nameList(credits.backers)}`);
+  if (credits.shapers?.length) parts.push(`${parts.length ? 'shaped' : 'Shaped'} by ${nameList(credits.shapers)}`);
+  if (!parts.length) return withAuthor ? 'Thanks to everyone who voted' : '';
+  return `${parts.join(', ')}.`;
+}
+
+// On an app in DEMO MODE, the preview the checks ran against is an image of
+// the very tree the merge just squashed onto main, so production can deploy
+// it instead of building the same source again — which is the ~9s of an ~18s
+// merge-to-live that a recording sits through with nothing on screen.
+//
+// Demo mode only, on purpose. The image's baked GIT_SHA names the commit it
+// was built from, so a reused image reports the proposal's head where
+// apps.main_sha reports the merge commit. On a demo app nothing reads it and
+// the whole app is rewound between takes; making this the fleet's merge path
+// means resolving that difference rather than tolerating it.
+//
+// Fails open at every step: no preview image, no tree to compare, a GitHub
+// that will not answer — all of them mean "build it", which is what the
+// platform did before. staging.rebuildProduction re-verifies the tree itself
+// against the clone; this only offers.
+async function demoPreviewImage(pool, app, session) {
+  if (!app?.demo_mode) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT staging_image_ref, staging_build_ref, staging_commit_sha
+         FROM chat_sessions WHERE id = $1`,
+      [session.id]
+    );
+    const row = rows[0];
+    if (!row?.staging_image_ref || !row.staging_commit_sha) return null;
+    const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    if (!owner || !repo || !github.isEnabled()) return null;
+    const treeSha = await github.getCommitTree(owner, repo, row.staging_commit_sha);
+    if (!treeSha) return null;
+    return {
+      imageRef: row.staging_image_ref,
+      buildRef: row.staging_build_ref || null,
+      treeSha,
+      fromSha: row.staging_commit_sha,
+    };
+  } catch (err) {
+    log.warn('votes', 'Could not offer the preview image to the rebuild; it will build', {
+      sessionId: session.id, err: err.message,
+    });
+    return null;
+  }
+}
+
 async function finalizeMerge({ config, pool, session, mergeCommitSha, required, activeCount, yesCount, majority, force, forceBy, dstep, dend, gateTrace, gateSave }) {
     // Rebuild production
     const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
@@ -4364,9 +4661,14 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       // clients pick up via /api/version.
       if (!app.self_hosted) {
         dstep({ phase: 'prod_rebuild', message: 'Production rebuild started.' });
-        const result = await staging.rebuildProduction(config, app);
+        const reuseImage = await demoPreviewImage(pool, app, session);
+        const result = await staging.rebuildProduction(config, app, reuseImage ? { reuseImage } : {});
         sha = result.sha;
-        dstep({ phase: 'prod_rebuild', message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}.`, detail: { sha: sha || null } });
+        dstep({
+          phase: 'prod_rebuild',
+          message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}${result.imageReused ? ', on the image the checks ran against' : ''}.`,
+          detail: { sha: sha || null, imageReused: !!result.imageReused },
+        });
         // Also record the SHA + originating PR so the main app view can
         // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
         // session we just merged; sha is what `rebuildProduction` cloned.
@@ -4469,12 +4771,24 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // synchronous throw (the module stubbed, the export renamed) escapes a
     // promise chain entirely, and the first thing that noticed was a merge
     // test going red.
+    // #1688: read once, used twice — the author's notification here and the
+    // announcement further down. Never for a force merge, and never a
+    // reason the merge fails: no names is the old wording, not an error.
+    const mergedCredits = force ? null : await mergeCredits(pool, session).catch((err) => {
+      log.warn('votes', 'Merge credits unavailable; announcing without names', {
+        sessionId: session.id, err: err.message,
+      });
+      return null;
+    });
     try {
       notifications.createPrMergedNotification?.(pool, {
         userId: session.user_id,
         appId: session.app_id,
         sessionId: session.id,
         forced: !!force,
+        // #1688: the names, for the author's own notification and push —
+        // without "Built by", since it goes to the builder.
+        credits: mergedCredits ? creditsSentence(mergedCredits, { withAuthor: false }) : null,
       })?.then((created) => Promise.all(
         created.map((row) => notifications.hydrateAndPush(pool, row))
       ))?.catch((err) => log.error('votes',
@@ -4646,14 +4960,35 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // that backfill, so the changed lead-in costs nothing there).
     const prRef = `PR #${session.pr_number || session.id}`;
     const mergedLabel = session.pr_title ? `${prRef}: ${session.pr_title}` : prRef;
+    // #1688: the announcement names the people. mergeCredits reads the
+    // author, the Yes voters whose votes counted and whoever shaped it (a No
+    // with a line, or a word in the thread before it landed); the sentence
+    // sits between the lead-in and the tally, whose "(yes/active votes)"
+    // shape migrate.js's backfill still parses. Without credits — a force
+    // merge, or a read that failed — the line reads as it did.
+    const credits = mergedCredits;
+    const creditLine = credits ? creditsSentence(credits) : 'Thanks to everyone who voted';
     const mergedLine = force && forceBy
       ? `${mergedLabel} force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
       : session.pr_title
-        ? `${session.pr_title} is live (${prRef}). Thanks to everyone who voted (${yesCount}/${activeCount} votes)`
-        : `${prRef} is live. Thanks to everyone who voted (${yesCount}/${activeCount} votes)`;
-    await sendSystemMessage(pool, session.app_id, mergedLine, 'system');
+        ? `${session.pr_title} is live (${prRef}). ${creditLine} (${yesCount}/${activeCount} votes)`
+        : `${prRef} is live. ${creditLine} (${yesCount}/${activeCount} votes)`;
+    // The names ride as metadata too, so the general chat's event row draws
+    // from data rather than from the wording.
+    const mergedMeta = credits ? {
+      merged: {
+        sessionId: session.id,
+        prNumber: session.pr_number || null,
+        title: session.pr_title || '',
+        author: credits.author || '',
+        backers: credits.backers,
+        shapers: credits.shapers,
+        votes: `${yesCount}/${activeCount}`,
+      },
+    } : null;
+    await sendSystemMessage(pool, session.app_id, mergedLine, 'system', mergedMeta);
     await sendSystemMessage(pool, session.app_id, mergedLine,
-      'system', null, { type: 'session', ref: session.id }
+      'system', mergedMeta, { type: 'session', ref: session.id }
     ).catch(() => {});
 
     // Cascade: drain the next eligible promoted PR for this app. The
@@ -6312,6 +6647,8 @@ module.exports = {
   resolveIssueBounty,
   createRevertPR,
   finalizeMerge,
+  // #demo: the preview image a demo-mode merge offers its rebuild.
+  demoPreviewImage,
   // Focused revision-safety tests exercise the reconciliation without
   // driving the full HTTP router.
   reconcileNativeReviewedHead,
@@ -6321,12 +6658,19 @@ module.exports = {
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
   parseImportVisualEvidence,
+  prImportFailureBody,
   visualEvidenceGateForSession,
   readVisualEvidenceGate,
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
   MAX_IMPORT_LINKED_ISSUES,
   recordVote,
+  // #1688: the line on a vote and the names at merge, unit-tested directly.
+  normalizeVoteReason,
+  VOTE_REASON_MAX,
+  VOTE_REASON_REQUIRED,
+  mergeCredits,
+  creditsSentence,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has
   // to resolve them too for a ?demo=1 deep link. Exported for that handler's

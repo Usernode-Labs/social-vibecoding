@@ -93,6 +93,10 @@ const DENIED_TABLES = new Set([
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
   'social_identity_pending_replacements', // short-lived verified account replacements
   'user_ai_credentials', // per-user AI/LLM provider keys (encrypted blobs, still deny)
+  'global_chat_threads', // private assistant summaries and ownership
+  'global_chat_messages', // private user/assistant transcript content
+  'global_chat_tool_runs', // private action inputs and authoritative results
+  'global_chat_action_tokens', // one-use action capabilities and sealed payloads
 ]);
 
 const DENIED_COLUMNS = {
@@ -116,6 +120,13 @@ const DENIED_COLUMNS = {
   ],
   chat_session_attachments: [
     'data', // raw upload bytes — large and potentially private
+  ],
+  global_chat_action_tokens: [
+    // The first hash locates a one-use write capability; the second is a
+    // fingerprint of that capability's exact private action payload.
+    'token_hash',
+    'input_hash',
+    'normalized_input',
   ],
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)

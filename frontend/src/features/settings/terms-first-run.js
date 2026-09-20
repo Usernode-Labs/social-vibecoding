@@ -25,6 +25,12 @@
 //     (NativeChrome.firstRunSheetSettled) and RE-EVALUATED on throttled
 //     foreground/online transitions until the current version is answered.
 //
+// Order against the other first-run gate (#2563): the "Choose your
+// username" step goes first and this one waits on
+// ../auth/username-first-run.js's `settled()`. Both present from the same
+// authed boot, and a handle nobody chose is already visible to other
+// members, while a terms ask that waits simply returns on the next load.
+//
 // Classic IIFE like ../settings/settings.js, imported from ./mount.ts so it
 // ships in the shell bundle — no new public/js/** script, so SHELL_ASSETS,
 // the script-order test and the markup baseline are untouched. The boot
@@ -43,6 +49,8 @@
     _presented: false,
     _answered: false,
     _lastCheckAt: 0,
+    _settle: null,
+    _settled: null,
 
     // Native foreground/online re-checks fire at most this often — the
     // same "don't spam on every alt-tab" stance as App._foregroundResync.
@@ -52,6 +60,32 @@
     // the same window the kit's ghost-click guard defends (GHOST_CLICK_MS,
     // and native-chrome's _FIRST_RUN_MIN_SEEN_MS reasoning).
     SETTLE_DELAY_MS: 450,
+
+    // Resolves once this document's terms gate is done with: answered,
+    // skipped, unreachable or never applicable. The shape is
+    // ../auth/username-first-run.js's `settled()`, which THIS module already
+    // awaits, so a caller that awaits this one has waited on both gates.
+    //
+    // The reader is ../home/tour (#2255): the welcome tour must not present
+    // over the terms sheet, and by the time it can be presented there is
+    // nothing else on the page saying "wait".
+    settled() {
+      if (!TermsFirstRun._settled) {
+        TermsFirstRun._settled = new Promise((resolve) => {
+          TermsFirstRun._settle = resolve;
+        });
+      }
+      return TermsFirstRun._settled;
+    },
+
+    _resolve() {
+      TermsFirstRun.settled();
+      if (TermsFirstRun._settle) {
+        const done = TermsFirstRun._settle;
+        TermsFirstRun._settle = null;
+        done();
+      }
+    },
 
     _isNative() {
       return !!(window.usernode && window.usernode.isNative === true);
@@ -69,12 +103,18 @@
       // and ?shot=terms-consent-blocking.
       try {
         const params = new URLSearchParams(location.search);
-        if (params.get('shot') || params.get('demo')) return;
+        if (params.get('shot') || params.get('demo')) {
+          TermsFirstRun._resolve();
+          return;
+        }
       } catch (_) { /* ignore */ }
 
       // A snapshot-derived offline boot can't reach the session-authed
       // endpoint; the fetch below would only burn a failed request.
-      if (window.App && window.App._sessionFromSnapshot) return;
+      if (window.App && window.App._sessionFromSnapshot) {
+        TermsFirstRun._resolve();
+        return;
+      }
       // The foreground re-check path can arrive before the authed boot.
       if (!window.App || !window.App.user) return;
 
@@ -83,6 +123,7 @@
         await TermsFirstRun._check();
       } catch (err) {
         console.warn('[terms-first-run] terms check skipped:', err);
+        TermsFirstRun._resolve();
       } finally {
         TermsFirstRun._inFlight = false;
       }
@@ -90,6 +131,27 @@
 
     async _check() {
       const native = TermsFirstRun._isNative();
+
+      // Sequenced behind the first-run username gate (#2563), on every
+      // host. Both are presented from the authed boot, so without this they
+      // would stack in the same tick — and of the two, the username step is
+      // the one that cannot be deferred: terms asks again on the next load
+      // (web) or the next foreground (native), while a handle nobody chose
+      // is on every message the person sends in the meantime.
+      //
+      // Guarded on `applies()` rather than simply awaiting `settled()`,
+      // because the SETTLE_DELAY_MS below is a ghost-click window and not a
+      // free 450ms to spend on the overwhelming majority of accounts that
+      // never see that screen at all.
+      if (window.UsernameFirstRun &&
+          typeof UsernameFirstRun.applies === 'function' &&
+          UsernameFirstRun.applies()) {
+        try {
+          await UsernameFirstRun.settled();
+          await new Promise((resolve) =>
+            setTimeout(resolve, TermsFirstRun.SETTLE_DELAY_MS));
+        } catch (_) { /* a broken gate must not block the terms ask */ }
+      }
 
       // Sequenced, not skipped (#1328): a fresh install used to defer the
       // terms ask to the NEXT launch whenever the "Set up your device"
@@ -119,14 +181,21 @@
         });
         // 404 = no published terms version — nothing to ask about. Not an
         // answer: a native re-check notices a later publish, restart-free.
-        if (res.status === 404) return;
+        if (res.status === 404) {
+          TermsFirstRun._resolve();
+          return;
+        }
         const body = await res.json().catch(() => ({}));
-        if (!res.ok || !body.success || !body.data) return;
+        if (!res.ok || !body.success || !body.data) {
+          TermsFirstRun._resolve();
+          return;
+        }
         payload = body.data;
       } catch (err) {
         // No longer a dead end until restart: on native the next
         // foreground/online tick retries.
         console.warn('[terms-first-run] terms check skipped:', err);
+        TermsFirstRun._resolve();
         return;
       }
 
@@ -136,11 +205,13 @@
       // naturally re-prompts everyone once (no consent row yet).
       if (!payload.consent || payload.consent.status !== null) {
         TermsFirstRun._answered = true;
+        TermsFirstRun._resolve();
         return;
       }
 
       if (!window.Settings ||
           typeof window.Settings.showTermsSheet !== 'function') {
+        TermsFirstRun._resolve();
         return;
       }
       // Pass the payload through so the sheet doesn't fetch a second time.
@@ -150,8 +221,14 @@
         firstRun: true,
         blocking: native,
         payload,
-        onAnswered: () => { TermsFirstRun._answered = true; },
-        onClosed: () => { TermsFirstRun._presented = false; },
+        onAnswered: () => {
+          TermsFirstRun._answered = true;
+          TermsFirstRun._resolve();
+        },
+        onClosed: () => {
+          TermsFirstRun._presented = false;
+          TermsFirstRun._resolve();
+        },
       });
     },
 

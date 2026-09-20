@@ -58,11 +58,17 @@ function fakeEl(extra) {
 // fire a synthetic click the way a real user's tap would arrive.
 function makeSandbox() {
   const listeners = {};
+  const titles = [];
   const record = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
   const sandbox = {
     console,
     relTime: () => 'just now',
-    App: { user: { id: 1 }, currentApp: 'puzzlechain-6cf8ff', currentSubTab: 'dev' },
+    App: {
+      user: { id: 1 },
+      currentApp: 'puzzlechain-6cf8ff',
+      currentSubTab: 'dev',
+      setHeaderTitle: (...args) => titles.push(args),
+    },
     document: {
       getElementById: (id) => (id === 'app-content' ? fakeEl() : null),
       querySelector: () => null,
@@ -82,7 +88,7 @@ function makeSandbox() {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
-  return { AppView: sandbox.__AppView, sandbox, listeners };
+  return { AppView: sandbox.__AppView, sandbox, listeners, titles };
 }
 
 // Stub everything renderDevView reaches EXCEPT the two installers, which
@@ -158,6 +164,29 @@ test('deep link to a proposal wires the "How voting works" popover', async () =>
   const btn = fakeEl({});
   clickMatching(listeners, '[data-voting-help]', btn);
   assert.equal(helpAnchor, btn, 'the "?" / "How voting works" affordance must open the popover');
+});
+
+test('every direct topic link replaces another app\'s remembered header title', async () => {
+  // #2487: localStorage is shared between tabs, so a cold document may start
+  // with the last app's display-only shell snapshot. Every topic kind takes
+  // the same early-returning branch and must publish the app metadata that
+  // has just loaded before painting its content.
+  for (const ref of [
+    { kind: 'issue', id: 42 },
+    { kind: 'proposal', id: 3431 },
+    { kind: 'gov', id: 9 },
+    { kind: 'session', id: 7 },
+  ]) {
+    const { AppView, titles } = makeSandbox();
+    stubBranches(AppView);
+    AppView.appData = { slug: 'usernode-2d5619', name: 'Homeroom' };
+
+    await AppView.renderDevView('topic', ref);
+
+    assert.equal(titles.length, 1, `${ref.kind} publishes one definitive title`);
+    assert.equal(titles[0][0], 'Homeroom', `${ref.kind} replaces the stale app name`);
+    assert.equal(titles[0][1], undefined, `${ref.kind} keeps the topic name in the body`);
+  }
 });
 
 test('every early-returning Dev sub-view installs both handler sets', async () => {

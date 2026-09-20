@@ -147,10 +147,10 @@ const PROBLEMS: Array<[string, string]> = [
   ['before_fell_back', 'Before fell back to home page'],
   ['root_only', 'Shot at the front page only'],
   ['failed_or_skipped', 'Capture failed or skipped'],
-  ['relevance_failure', 'Evidence not relevant'],
-  ['replay_failure', 'Evidence replay failed'],
-  ['unsupported_agent', 'Unsupported evidence agent'],
-  ['override', 'Evidence overridden'],
+  ['relevance_failure', 'Preview not relevant'],
+  ['replay_failure', 'Preview replay failed'],
+  ['unsupported_agent', 'Unsupported preview agent'],
+  ['override', 'Preview overridden'],
 ];
 
 const DOT = <span className="text-zinc-500 dark:text-zinc-500">·</span>;
@@ -251,7 +251,7 @@ function StatsStrip({ s }: { s: Stats }) {
       {item('before fell back', s.before_fell_back || 0, true)}
       {item('front page only', s.root_only || 0, true)}
       {item('failed / skipped', s.failed_or_skipped || 0, true)}
-      {item('evidence verified', s.evidence_verified || 0, true)}
+      {item('preview verified', s.evidence_verified || 0, true)}
       {item('relevance failures', s.relevance_failure || 0, true)}
       {item('replay failures', s.replay_failure || 0, true)}
       {item('unsupported agents', s.unsupported_agent || 0, true)}
@@ -358,13 +358,13 @@ function GallerySection() {
 
   return (
     <div id="admin-gallery-root">
-      <h2 className="text-lg font-semibold mb-4">Visual evidence gallery</h2>
+      <h2 className="text-lg font-semibold mb-4">Visual change preview gallery</h2>
       {gate ? <div id="admin-gallery-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
 
       {ready ? (
         <main id="admin-gallery-content" className="space-y-4">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Claim-labelled, exact-revision evidence for merged proposals, newest first.
+            Claim-labelled, exact-revision previews for merged proposals, newest first.
             Historical proposals retain their legacy capture diagnostics.
           </p>
 

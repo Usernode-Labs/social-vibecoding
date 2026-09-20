@@ -55,8 +55,12 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // lifecycle, which is exactly what this category's description already
     // promises, so they join it rather than getting one of their own —
     // somebody who turned proposal pushes off does not want these either.
+    // #1688 adds two more of the same kind: the re-confirm ask after a
+    // proposal you backed gets a new version, and the weekly "this week"
+    // card. Kept in lockstep with the seed in db/schema.sql.
     kinds: Object.freeze([
       'stale_pr', 'check_failed', 'pr_proposed', 'proposal_vote', 'pr_merged', 'vote_digest',
+      'revision_recheck', 'weekly_digest',
     ]),
   }),
   Object.freeze({

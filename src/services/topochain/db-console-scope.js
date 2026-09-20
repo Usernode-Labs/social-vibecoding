@@ -138,6 +138,15 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'chat_session_spec_conversation_shares',
   'user_blocks',
   'conversation_message_reports',
+  // Global Chat transcript rows are private user data, which keeps them out
+  // of the automated production-debug role. The signed-in human-admin console
+  // already follows the same deliberate policy for platform Messages above:
+  // transcript/summary rows are readable for diagnosis. Tool action inputs
+  // and authoritative results are sealed at rest before they reach this
+  // table, so the console sees ciphertext rather than executable payloads.
+  'global_chat_threads',
+  'global_chat_messages',
+  'global_chat_tool_runs',
 ]);
 
 // The per-column replacement for the old table-level denials — one entry
@@ -223,6 +232,11 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // is ordinary report metadata. `shared_at` — whether a snapshot is
   // shared, and since when — stays readable, which is the debuggable half.
   app_report_snapshots: ['share_token'],
+  // One-use Global Chat confirmations: preserve lifecycle metadata for human
+  // admin diagnosis while masking both lookup fingerprints and the sealed
+  // exact action payload. This mirrors debug-access.js explicitly so adding a
+  // new whole-table denial always has a reviewed console-side decision.
+  global_chat_action_tokens: ['token_hash', 'input_hash', 'normalized_input'],
 };
 
 // Columns denied per table: the prod-debug list, the topochain export's

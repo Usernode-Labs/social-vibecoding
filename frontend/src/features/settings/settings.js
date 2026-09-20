@@ -250,6 +250,10 @@
       // gate lines in _renderLanguageSection.
       { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
       { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
+      // The replay control for Home's welcome tour (#2255). Last in
+      // Preferences: it configures nothing, it re-runs something, and the
+      // tour's own Skip promises this row exists.
+      { key: 'tour', label: 'Welcome tour', group: 'Preferences' },
       // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
       // Challenges and Create app FIXED SECTIONS of the home screen rather
       // than draggable, hideable widgets, so there is nothing left for the
@@ -260,6 +264,7 @@
       { key: 'password', label: 'Password', group: 'Account' },
       { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
 
+      { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & agents' },
       { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
       // Own section (not folded into 'cli') so the out-of-credits card can
@@ -329,7 +334,6 @@
       // existence so the section degrades cleanly if the feature flag is
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
-      const orClaim = document.getElementById('settings-openrouter-claim');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
@@ -339,7 +343,6 @@
       const orStarModel = document.getElementById('settings-openrouter-star-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
-      if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
       if (orModel) orModel.addEventListener('change', () => {
@@ -2964,11 +2967,9 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
-      const betaGate = document.getElementById('settings-openrouter-beta-gated');
-      if (betaGate) betaGate.textContent = 'OpenRouter is being rolled out gradually and is not available for your account yet.';
     },
 
     _formatOpenRouterPrice(value) {
@@ -3080,6 +3081,21 @@
       this._syncOpenRouterModelDetails();
     },
 
+    // #2600: the reasoning-effort picker's first choice is a real level, not
+    // an absence of one, so name the level the platform runs at when nobody
+    // has chosen. The server is the only thing that knows it; if the read
+    // fails the option keeps its plain wording rather than inventing a level.
+    _labelOpenRouterDefaultEffort(effort) {
+      const select = document.getElementById('settings-openrouter-reasoning');
+      const option = Array.from(select?.options || []).find((item) => item.value === '');
+      if (!option) return;
+      const names = {
+        minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high',
+      };
+      const name = names[String(effort || '')] || null;
+      option.textContent = name ? `Default (${name})` : 'Default';
+    },
+
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
       const effort = document.getElementById('settings-openrouter-reasoning');
@@ -3120,7 +3136,7 @@
         if (effort.disabled) effort.value = '';
         effort.title = effort.disabled
           ? 'This model does not expose reasoning-effort controls.'
-          : 'Optional OpenRouter reasoning effort for this model.';
+          : 'How long this model thinks before it answers. Default is the level the platform runs at; your choice overrides it.';
       }
     },
 
@@ -3131,7 +3147,6 @@
     },
 
     async _refreshOpenRouter() {
-      const betaGate = document.getElementById('settings-openrouter-beta-gated');
       const display = document.getElementById('settings-openrouter-key-display');
       const last4 = document.getElementById('settings-openrouter-key-last4');
       const info = document.getElementById('settings-openrouter-key-info');
@@ -3139,51 +3154,58 @@
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
       const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
-      const managedCard = document.getElementById('settings-openrouter-managed-card');
-      const managedMessage = document.getElementById('settings-openrouter-managed-message');
-      const claimBtn = document.getElementById('settings-openrouter-claim');
+      const includedCard = document.getElementById('settings-openrouter-included');
+      const includedStatus = document.getElementById('settings-openrouter-included-status');
       const personalControls = document.getElementById('settings-openrouter-personal-controls');
       try {
+        // #2568: reading this is also what creates an included key for an
+        // account that somehow has none, so it stays ahead of the status
+        // line below. `codexAvailable` is a deployment switch now, not a
+        // per-account allowlist: off means the whole section has nothing
+        // to offer.
         const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
         const prefs = r.ok ? await r.json() : {};
-        const isBeta = !!prefs.codexAvailable;
-        if (betaGate) betaGate.classList.toggle('hidden', isBeta);
-        if (!isBeta) { if (modelsWrap) modelsWrap.classList.add('hidden'); return; }
+        if (!prefs.codexAvailable) {
+          if (includedCard) includedCard.classList.add('hidden');
+          if (modelsWrap) modelsWrap.classList.add('hidden');
+          return;
+        }
+        this._labelOpenRouterDefaultEffort(prefs.defaultReasoningEffort);
       } catch {}
       try {
         const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
         const j = r.ok ? await r.json() : {};
         const managed = j.managed || null;
         const provisioning = j.managedProvisioning || {};
-        if (managedCard) managedCard.classList.toggle('hidden', !provisioning.available && !managed);
-        if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
-        if (managedMessage) {
+        // #2568: a STATUS line, not a claim card. It says whether the key is
+        // there, its last four and its allowance — and, when it is not
+        // there, what is standing in the way rather than what to press.
+        if (includedCard) includedCard.classList.toggle('hidden', !provisioning.available && !managed);
+        if (includedStatus) {
+          const managedLast4 = managed && j.source === 'usernode_managed' ? j.last4 : null;
           if (managed?.status === 'active') {
             // The key carries the platform's weekly allowance; a key issued
             // before that policy keeps its own limit until it is re-limited.
             const amount = `$${Number(managed.limitUsd || 0).toFixed(2)}`;
             const carries = managed.limitReset === 'weekly'
-              ? `with the platform's ${amount} weekly allowance`
-              : `with a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
-            managedMessage.textContent = `Your Homeroom-managed key is active ${carries}. Admins can block or remove it; you may choose any available model.`;
+              ? `carries the platform's ${amount} weekly allowance`
+              : `carries a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
+            const tail = managedLast4 ? ` (sk-or-…${managedLast4})` : '';
+            includedStatus.textContent = `Active${tail}. It ${carries}, and you may choose any available model.`;
           } else if (managed?.status === 'disabled') {
-            managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
+            includedStatus.textContent = 'An admin has blocked this included key. Contact the platform admins if it should be enabled again.';
           } else if (managed?.status === 'deleted') {
-            managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
+            includedStatus.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
           } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
-            managedMessage.textContent = 'This key needs admin review. Homeroom did not retry the provider request, which prevents accidental duplicate keys.';
-          } else if (provisioning.verificationRequired && !provisioning.verified) {
-            managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
+            includedStatus.textContent = 'This key needs admin review. Homeroom did not retry the provider request, which prevents accidental duplicate keys.';
           } else if (!provisioning.available) {
-            managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
+            includedStatus.textContent = 'Included keys are not configured by the platform administrator yet.';
           } else if (provisioning.reason === 'no_allowance') {
-            managedMessage.textContent = provisioning.identityGated
-              ? 'Connect and verify GitHub or X in Social accounts & connectors to unlock included credits, then claim the company key.'
-              : 'Your account has no included weekly allowance right now, so there is no company key to create. You can add a personal OpenRouter key below.';
+            includedStatus.textContent = 'Your account has no included weekly allowance right now, so there is no included key. You can add a personal OpenRouter key below.';
           } else if (provisioning.reason === 'personal_key_configured') {
-            managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
+            includedStatus.textContent = 'You are using your own OpenRouter key. Remove it to fall back to the included one.';
           } else {
-            managedMessage.textContent = `You can create one included key that carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}.`;
+            includedStatus.textContent = `Your included key is being set up. It carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}; reopen this screen in a moment.`;
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
@@ -3215,32 +3237,6 @@
           if (modelsWrap) modelsWrap.classList.add('hidden');
         }
       } catch {}
-    },
-
-    async _claimManagedOpenRouterKey() {
-      const btn = document.getElementById('settings-openrouter-claim');
-      if (btn) btn.disabled = true;
-      this._setOrStatus('Creating your limited OpenRouter key…', 'info');
-      try {
-        const r = await fetch('/api/me/credentials/openrouter/managed', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}',
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          this._setOrStatus(j.error || 'Could not create the key.', 'error');
-          await this._refreshOpenRouter();
-          return;
-        }
-        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
-        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default.`, 'ok');
-        await this._refreshOpenRouter();
-      } catch (err) {
-        this._setOrStatus(`Network error: ${err.message}`, 'error');
-      } finally {
-        if (btn) btn.disabled = false;
-      }
     },
 
     async _loadOpenRouterModels({ forceRefresh = false } = {}) {

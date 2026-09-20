@@ -73,9 +73,9 @@ function appRow(overrides = {}) {
   };
 }
 
-async function fetchApps(server) {
+async function fetchApps(server, { query = '', headers = {} } = {}) {
   const port = server.address().port;
-  const res = await fetch(`http://127.0.0.1:${port}/api/apps`);
+  const res = await fetch(`http://127.0.0.1:${port}/api/apps${query}`, { headers });
   return { res, body: await res.json() };
 }
 
@@ -134,6 +134,56 @@ test('SQL filters on the documented status values', async () => {
     assert.match(q.sql, /FROM chat_sessions/);
     assert.match(q.sql, /COUNT\(\*\) AS open_issues/);
     assert.match(q.sql, /FROM issues\s+WHERE status = 'open'/);
+  } finally {
+    server.close();
+  }
+});
+
+test('the authenticated Global Chat loopback gets a compact icon-ready app projection', async () => {
+  capturedQueries = [];
+  poolQueryHandler = async (sql) => {
+    if (!/FROM apps a/.test(sql)) return { rows: [] };
+    return {
+      rows: [appRow({
+        description: `  A useful app ${'with detail '.repeat(80)}  `,
+        icon_emoji: '🧭',
+        icon_image_id: '00000000-0000-4000-8000-000000000099',
+        manifest_snapshot: { setup: 'x'.repeat(200_000), secrets: [{ key: 'PRIVATE' }] },
+        repo_url: 'https://github.com/example/private-app',
+        open_prs: '2',
+        active_sessions: '1',
+        open_issues: '3',
+        message_count: '9',
+        total_seconds: '5400',
+        active_users: '4',
+      })],
+    };
+  };
+  const server = await startServer();
+  try {
+    const { res, body } = await fetchApps(server, {
+      query: '?view=global-chat',
+      headers: { 'x-global-chat-loopback': '1' },
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(body.apps.length, 1);
+    assert.strictEqual(body.apps[0].slug, 'demo');
+    assert.strictEqual(body.apps[0].icon_emoji, '🧭');
+    assert.strictEqual(
+      body.apps[0].icon_url,
+      '/app-icons/00000000-0000-4000-8000-000000000099',
+    );
+    assert.strictEqual(body.apps[0].openIssues, 3);
+    assert.strictEqual(body.apps[0].openProposals, 2);
+    assert.strictEqual(body.apps[0].activeDevelopment, 1);
+    assert.strictEqual(body.apps[0].messagesLast7Days, 9);
+    assert.strictEqual(body.apps[0].activitySecondsLast7Days, 5400);
+    assert.strictEqual(body.apps[0].activeUsers, 4);
+    assert.ok(body.apps[0].description.length <= 500);
+    assert.strictEqual(Object.hasOwn(body.apps[0], 'manifest_snapshot'), false);
+    assert.strictEqual(Object.hasOwn(body.apps[0], 'repo_url'), false);
+    assert.ok(Buffer.byteLength(JSON.stringify(body), 'utf8') < 10_000);
+    assert.strictEqual(capturedQueries.some(({ sql }) => /FROM app_secrets/.test(sql)), false);
   } finally {
     server.close();
   }

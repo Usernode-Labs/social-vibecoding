@@ -155,7 +155,10 @@ test('a tier cap of 0 switches the weekly window off, like the base cap', async 
   const caps = limits.resolveCaps(e);
   assert.equal(e.weeklySource, 'tier');
   assert.equal(caps.weeklyApplies, false);
-  assert.equal(caps.dailyApplies, true, 'the daily cap still governs');
+  // #2571: nothing governs after that. The per-user daily cap is switched
+  // off platform-wide, so a tier cap of 0 leaves the account with no
+  // allowance at all — which is what checkBudget answers (no_allowance).
+  assert.equal(caps.dailyApplies, false, 'the daily window no longer exists');
 });
 
 test('the gate and the snapshot enforce the tier cap', async () => {

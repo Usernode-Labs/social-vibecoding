@@ -423,6 +423,32 @@
     // screenshots. Mirrors the kit's own `?un-platform=ios` skin override,
     // and is deliberately NOT staging-gated: a pure presentation flag with
     // no writes, so the "before" shot works the moment this ships.
+    // BROWSER-CHROME GUARD (#2509). Chrome on Android reports a nonzero
+    // env(safe-area-inset-top) even in a NORMAL browser tab, where the
+    // status bar belongs to the browser chrome and the page never owns
+    // those pixels. The shell's black-translucent install handling
+    // reserves that strip anyway (see the "page owns the status-bar
+    // strip" block above and --platform-safe-top in app.css), so a
+    // browser-tab load drew one status bar's worth of blank page above
+    // the header controls — the "excessive top margin" of #2509.
+    //
+    // Standalone display modes (installed PWA, fullscreen, minimal-ui)
+    // and the native WebView are the surfaces where the page really does
+    // reach the notch, and there the reservation stays. Everywhere else
+    // we tag <html> so app.css can zero the token for this load. Runs
+    // pre-paint in the same head-blocking pass as the theme module, so
+    // the reservation never lands and then retracts (no flash).
+    var isBrowserChrome = false;
+    try {
+      isBrowserChrome = !window.matchMedia(
+        '(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui)'
+      ).matches;
+    } catch (e) { /* no matchMedia / opaque origin — leave the class off */ }
+    if (isBrowserChrome
+        && !document.documentElement.classList.contains('in-native-webview')) {
+      document.documentElement.classList.add('web-browser-chrome');
+    }
+
     var forcedNative = false;
     try {
       forcedNative = new URLSearchParams(window.location.search)

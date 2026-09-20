@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 // Username changes — the ONE place that owns what a handle may be,
 // who may take it, and what happens to the one they leave behind.
 //
@@ -111,6 +113,125 @@ function validateUsername(raw) {
     return { ok: false, error: 'That name is reserved for the platform.' };
   }
   return { ok: true, value };
+}
+
+// ─── Suggesting a handle for somebody who has never had one (#2563) ────
+//
+// Email sign-up used to write the address itself into `users.username`, so
+// a member who signed in as `ada.lovelace@example.com` was that string to
+// everyone else on the platform. The address is now never stored as a
+// handle: signup stores a SUGGESTION derived here, marks the account
+// `needs_username_choice`, and the shell asks before Home.
+//
+// `suggestUsernameFromEmail` is the pure half — same input, same answer,
+// no pool — and it returns null rather than a name that would fail
+// `validateUsername`, because a suggestion that cannot be submitted is
+// worse than no suggestion at all.
+//
+// Padding a one- or two-character local part with `_` (`al` -> `al_`)
+// rather than a digit keeps the numeric suffix below meaning exactly one
+// thing: "somebody already has this".
+const MAX_SUGGESTION_ATTEMPTS = 50;
+
+function suggestUsernameFromEmail(rawEmail) {
+  const email = normalize(rawEmail);
+  const at = email.indexOf('@');
+  if (at <= 0) return null;
+  let stem = email
+    .slice(0, at)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '')
+    .slice(0, MAX_USERNAME_LEN);
+  if (!stem) return null;
+  while (stem.length < MIN_USERNAME_LEN) stem += '_';
+  // `usernode_*` and `staging_*` are platform infrastructure. An address
+  // whose local part lands there gets NO suggestion — the person types
+  // their own, which the choose endpoint validates the same way.
+  const check = validateUsername(stem);
+  return check.ok ? check.value : null;
+}
+
+// `base` truncated far enough that `base + n` still fits the ceiling.
+function withNumericSuffix(base, n) {
+  const suffix = String(n);
+  return base.slice(0, MAX_USERNAME_LEN - suffix.length) + suffix;
+}
+
+/**
+ * The suggestion a first-run screen actually prefills: derived from the
+ * email, then walked past anything already taken with a numeric suffix.
+ *
+ * `db` is a pool OR an open client — email-signup.js calls this INSIDE the
+ * transaction that creates the row, so it must be able to hand over the
+ * client it already holds.
+ *
+ * `userId` is the account asking, when there is one: a handle this same
+ * person already holds counts as available to them (see checkAvailability).
+ * Returns null when no valid handle could be derived, which is the caller's
+ * cue to fall back to an opaque placeholder rather than to the address.
+ */
+async function suggestAvailableUsernameFromEmail(db, rawEmail, userId = null) {
+  const base = suggestUsernameFromEmail(rawEmail);
+  if (!base) return null;
+  for (let n = 1; n <= MAX_SUGGESTION_ATTEMPTS; n += 1) {
+    const candidate = n === 1 ? base : withNumericSuffix(base, n);
+    const free = await checkAvailability(db, candidate, userId);
+    if (free.available) return candidate;
+  }
+  // Fifty people share this local part. A random tail beats both a
+  // fifty-first sequential probe and handing back the address.
+  for (let i = 0; i < 5; i += 1) {
+    const candidate = withNumericSuffix(base, crypto.randomInt(1000, 1000000));
+    const free = await checkAvailability(db, candidate, userId);
+    if (free.available) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The handle an account gets when no suggestion could be derived at all
+ * (an address whose local part is entirely punctuation, or one that lands
+ * in the reserved namespace). Opaque ON PURPOSE — the point of #2563 is
+ * that the placeholder must not be the email address, and the account
+ * carries `needs_username_choice` either way, so nobody wears this for
+ * longer than one sign-in.
+ *
+ * Shaped like the `topochain_<hex>` handles admin-created accounts get
+ * (src/routes/topochain/admin/users.js), for the same reason: it satisfies
+ * a NOT NULL UNIQUE column without doubling as anybody's real name.
+ */
+function placeholderUsername() {
+  return `member_${crypto.randomBytes(9).toString('hex')}`;
+}
+
+/**
+ * Take the first handle. NOT a rename: this account has never had one.
+ *
+ * Deliberately different from `renameUser` in three ways, and each is the
+ * point rather than a shortcut:
+ *
+ *  • No `username_history` row. The ledger reserves a RETIRED HANDLE so
+ *    the next registrant cannot inherit its mentions, links and dapp.json
+ *    admin rights. What is being left behind here is an email address or
+ *    an opaque placeholder, which nobody mentioned, linked or declared —
+ *    and writing an address into a table every handle resolver reads would
+ *    put it one `/api/public/profiles/<name>` away from being public.
+ *  • No cooldown burned. The 30-day window prices handle churn; picking a
+ *    name for the first time is not churn, and charging for it would leave
+ *    a typo in place for a month.
+ *  • Gated on `needs_username_choice` inside the UPDATE, so a replayed
+ *    request cannot walk somebody through the free path twice. Returns
+ *    null when the flag is already clear, which the route answers 409.
+ */
+async function chooseFirstUsername(pool, userId, nextName) {
+  const { rows } = await pool.query(
+    `UPDATE users
+        SET username = $1, needs_username_choice = FALSE, updated_at = NOW()
+      WHERE id = $2 AND needs_username_choice = TRUE
+      RETURNING username`,
+    [nextName, userId]
+  );
+  return rows.length ? { username: rows[0].username } : null;
 }
 
 /**
@@ -331,6 +452,10 @@ module.exports = {
   validateUsername,
   isReserved,
   isServiceIdentity,
+  suggestUsernameFromEmail,
+  suggestAvailableUsernameFromEmail,
+  placeholderUsername,
+  chooseFirstUsername,
   checkAvailability,
   checkCooldown,
   resolveHandle,

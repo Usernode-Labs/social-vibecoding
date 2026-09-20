@@ -106,8 +106,46 @@ export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
  * for the same proposal, from its own table, or null where app-view.js is
  * not loaded.
  */
+/** One line of the Friday card (#1688): a change that landed, or a proposal waiting. */
+export interface WeeklyItem {
+  id: number | null;
+  prNumber: string;
+  title: string;
+  author: string;
+  /** Whose Yes counted when it merged; empty on an open proposal. */
+  backers: string[];
+}
+
+/** The Friday card's data (#1688): what went live this week and what is waiting on votes. */
+export interface WeeklyCard {
+  app: string;
+  slug: string;
+  merged: WeeklyItem[];
+  mergedTotal: number;
+  open: WeeklyItem[];
+  openTotal: number;
+}
+
 export interface ProposalEvent {
-  type: 'submitted' | 'merged';
+  /**
+   * #1688 adds `weekly`: the Friday card, a message from the app itself.
+   * `vote` and `notice` exist only on a change page's own Discussion
+   * (`GroupChat._threadEvent`), where every row is drawn in this language:
+   * a vote cast, and any other notice the platform posted about the change.
+   */
+  type: 'submitted' | 'merged' | 'weekly' | 'vote' | 'notice';
+  /** `vote` rows: which way, and the line the voter left, if any. */
+  vote?: 'yes' | 'no';
+  reason?: string;
+  /** `notice` rows: the notice, reworded for the page it is on. */
+  text?: string;
+  /**
+   * True on the proposal's OWN page: the row names the act without the
+   * number and title ("Proposed this change for a vote"), and is no door.
+   */
+  here?: boolean;
+  /** The Friday card's data; set only when `type` is `weekly`. */
+  weekly?: WeeklyCard | null;
   /** The session id from the row's metadata tag, or '' on an older row. */
   sessionId: string;
   prNumber: string;
@@ -123,6 +161,12 @@ export interface ProposalEvent {
   /** "a/b", the tally the merge announced; '' on a submission. */
   votes: string;
   icon: { tint: string; path: string; small?: boolean; title?: string } | null;
+  /**
+   * #1688: who the merge announcement named — the proposer, the Yes voters
+   * whose votes counted, and whoever shaped it. Null on a submission, a
+   * force merge, and an announcement from before names were carried.
+   */
+  credits?: { author: string; backers: string[]; shapers: string[] } | null;
 }
 
 /**
@@ -274,7 +318,14 @@ export interface TranscriptLead {
    * app's name. Null or absent on the thread transcript, which has its own
    * placeholder above.
    */
-  quiet?: { exhausted: boolean; canPost: boolean; appName: string } | null;
+  quiet?: { exhausted: boolean; canPost: boolean; appName: string; variant?: 'app' | 'change' } | null;
+  /**
+   * How a THREAD transcript draws its rows. 'chat' is the change page's
+   * Discussion: bubbles for people, and every notice as a message from
+   * whoever did it, the general chat's language. Absent or 'flat', the
+   * thread keeps its flat named rows and centred lines (an issue's page).
+   */
+  language?: 'chat' | 'flat';
 }
 
 export interface TranscriptView {

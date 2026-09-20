@@ -37,10 +37,12 @@ test('every gated kind is also push-eligible, or the two could disagree', () => 
   assert.deepEqual(missing, []);
 });
 
-test('the six app categories are the ones that were agreed', () => {
+test('the eight app categories are the ones that were agreed', () => {
+  // #1688 adds two: the re-confirm ask after a proposal you backed gets a
+  // new version, and the weekly "this week on <app>" card.
   assert.deepEqual([...prefs.APP_CATEGORY_KEYS], [
     'new_proposals', 'new_issues', 'proposal_status',
-    'thread_replies', 'proposal_votes', 'app_health',
+    'thread_replies', 'proposal_votes', 'revision_recheck', 'weekly_digest', 'app_health',
   ]);
 });
 

@@ -483,7 +483,10 @@ const GroupChat = {
         // methods down), so the insertAdjacentHTML this replaces was legacy
         // markup spliced into a reconciled tree: the row carried none of the
         // component's handlers and the next store update erased it.
-        GroupChat._react()?.appendTranscriptMessage(GroupChat._messageView(msg), 'thread');
+        GroupChat._react()?.appendTranscriptMessage(
+          GroupChat._messageView(msg, { language: GroupChat.activeThread && GroupChat.activeThread.language }),
+          'thread',
+        );
         if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
         return;
       }
@@ -597,7 +600,14 @@ const GroupChat = {
     return me != null && (msg.userId === me || msg.user_id === me);
   },
 
-  _messageView(msg) {
+  // `opts.language` is 'chat' for a change page's Discussion, which draws
+  // every row in the general chat's language (#2366): a person's message as
+  // a bubble, and every notice as a message from whoever did it, with one
+  // box under the header (`_threadEvent`). Absent, the row is modelled as
+  // it always was: the general chat decides its own events, and a topic
+  // thread keeps the centred lines.
+  _messageView(msg, opts) {
+    const chat = !!(opts && opts.language === 'chat');
     const kindRaw = msg.msgType || msg.msg_type || 'message';
     const meta = msg.metadata || msg.meta || {};
     const isVote = kindRaw === 'vote';
@@ -620,11 +630,16 @@ const GroupChat = {
     const q = meta.quote;
     const atts = meta.attachments;
     const stamp = GroupChat._stamp(msg.createdAt || msg.created_at);
-    // The general chat's two proposal events, or null — see _proposalEvent.
-    const event = GroupChat._proposalEvent(msg, kind);
+    // The general chat's two proposal events, or null — see _proposalEvent;
+    // on a change page's Discussion, every notice as one (_threadEvent).
+    const event = chat ? GroupChat._threadEvent(msg, kind) : GroupChat._proposalEvent(msg, kind);
     // Resolved ONCE for the vote facts below — the row's tint, its phase and
     // the event's link all read the same live PR out of AppView.voteState.
-    const pr = (isVote || event) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
+    // #1688: the Friday card names several proposals in its text, so the
+    // "PR #N" its content happens to carry must not resolve it to one.
+    // A row on the proposal's own page (`here`) is not a door to that page.
+    const linksProposal = !!event && event.type !== 'weekly' && !event.here;
+    const pr = (isVote || linksProposal) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
     return {
       id: msg.id == null ? null : Number(msg.id),
       kind,
@@ -688,9 +703,9 @@ const GroupChat = {
         // Yours when you are the actor — the row then sits on the right, as
         // your messages do. A merge the vote decided is nobody's.
         mine: !!(event.actor && App.user && event.actor === App.user.username),
-        icon: GroupChat._eventIcon(event.type),
+        icon: GroupChat._eventIcon(event.type, event),
       } : null,
-      eventHref: event ? GroupChat._eventHref(GroupChat._voteRef(msg)[0], pr) : null,
+      eventHref: linksProposal ? GroupChat._eventHref(GroupChat._voteRef(msg)[0], pr) : null,
       // The controls host is module-filled, but only the message knows WHICH
       // pull request it is about — so the pair rides on the view model and
       // lands on the host as the two data-* attributes refreshVoteControls
@@ -761,7 +776,11 @@ const GroupChat = {
     if (!(GroupChat.appSlug === slug && liveWs)) {
       GroupChat.connect(slug);
     }
-    GroupChat.activeThread = { type, ref: Number(ref) };
+    // `language: 'chat'` is the change page's Discussion (topic/
+    // conversation.tsx): bubbles, and every notice as a message. Every other
+    // thread keeps its flat rows and centred lines.
+    const language = opts.language === 'chat' ? 'chat' : 'flat';
+    GroupChat.activeThread = { type, ref: Number(ref), language };
 
     const threadKey = GroupChat.threadKey(type, ref);
     // A quote staged in the general composer must not ride along into a
@@ -815,7 +834,12 @@ const GroupChat = {
     // Full general-chat interaction set on the thread list: tap-to-quote,
     // long-press / hover reactions, quote-jump, reference chips.
     const msgsEl = container.querySelector('#gc-thread-messages');
-    if (msgsEl) GroupChat._attachQuoteHandlers(msgsEl);
+    if (msgsEl) {
+      GroupChat._attachQuoteHandlers(msgsEl);
+      // app.css keys the thread's own tint off this: a bubbled row carries
+      // its own surface. Written the way `renderThread` writes data-loaded.
+      msgsEl.dataset.language = language;
+    }
 
     const form = container.querySelector('#gc-thread-form');
     const input = container.querySelector('#gc-thread-input');
@@ -964,15 +988,29 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
+    const language = a.language === 'chat' ? 'chat' : 'flat';
+    const chat = language === 'chat';
     GroupChat._react()?.mountTranscript(el, 'thread');
     GroupChat._react()?.publishTranscript(
-      st.messages.map(GroupChat._messageView),
+      st.messages.map((m) => GroupChat._messageView(m, { language })),
       'thread',
       {
         earlier: !!(st.loaded && st.hasMore && st.messages.length),
+        // In the chat language the quiet card says what an empty thread
+        // means; the placeholder line is the flat thread's.
         placeholder: st.loaded
-          ? (st.messages.length ? null : 'No messages yet. Start the thread.')
+          ? (st.messages.length || chat ? null : 'No messages yet. Start the thread.')
           : 'Loading…',
+        language,
+        ...(chat && st.loaded ? {
+          quiet: {
+            variant: 'change',
+            exhausted: !st.hasMore,
+            canPost: !GroupChat._readOnly(),
+            appName: (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.name)
+              || 'this app',
+          },
+        } : {}),
       },
     );
     el.dataset.loaded = st.loaded ? '1' : '';
@@ -2317,20 +2355,153 @@ const GroupChat = {
       };
     }
     if (kind !== 'system') return null;
-    let m = /^([\s\S]*?) is live \(PR #(\d+)\)\. Thanks to everyone who voted \((\d+\/\d+) votes?\)$/.exec(text);
-    if (m) return { type: 'merged', sessionId, prNumber: m[2], title: m[1], actor: '', force: false, votes: m[3] };
-    m = /^PR #(\d+) is live\. Thanks to everyone who voted \((\d+\/\d+) votes?\)$/.exec(text);
-    if (m) return { type: 'merged', sessionId, prNumber: m[1], title: '', actor: '', force: false, votes: m[2] };
+    // #1688: the Friday card — a system row carrying `weekly` metadata
+    // (services/weekly-digest.js), drawn as a card from the app itself.
+    const weekly = GroupChat._weeklyEvent(msg);
+    if (weekly) return weekly;
+    // #1688: the sentence between the lead-in and the tally names the people
+    // ("Built by evan, backed by alice and bob, shaped by carol.") — or is the
+    // older "Thanks to everyone who voted". The names ride as metadata on a
+    // new row; an older row, or a row whose metadata did not survive, has
+    // them read back out of the sentence. `credits` is on the event only
+    // when somebody is named, so a row naming nobody keeps its old shape.
+    const credits = GroupChat._mergeCredits(msg);
+    let m = /^([\s\S]*?) is live \(PR #(\d+)\)\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) {
+      const named = credits || GroupChat._parseCredits(m[3]);
+      return {
+        type: 'merged', sessionId, prNumber: m[2], title: m[1], actor: '', force: false, votes: m[4],
+        ...(named ? { credits: named } : {}),
+      };
+    }
+    m = /^PR #(\d+) is live\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) {
+      const named = credits || GroupChat._parseCredits(m[2]);
+      return {
+        type: 'merged', sessionId, prNumber: m[1], title: '', actor: '', force: false, votes: m[3],
+        ...(named ? { credits: named } : {}),
+      };
+    }
     m = /^PR #(\d+)(?:: ([\s\S]*?))? force-merged by admin (\S+) \((\d+\/\d+) votes? at the time\)$/.exec(text);
     if (m) return { type: 'merged', sessionId, prNumber: m[1], title: m[2] || '', actor: m[3], force: true, votes: m[4] };
     return null;
+  },
+
+  // The Friday card's data (#1688), or null on a row that is not one. The
+  // lists are what the card draws; the totals say how many it stands for.
+  _weeklyEvent(msg) {
+    const w = (msg.metadata || msg.meta || {}).weekly;
+    if (!w || typeof w !== 'object') return null;
+    const item = (x) => ({
+      id: x && x.id != null ? Number(x.id) : null,
+      prNumber: x && x.prNumber != null ? String(x.prNumber) : '',
+      title: String((x && x.title) || ''),
+      author: String((x && x.author) || ''),
+      backers: Array.isArray(x && x.backers)
+        ? x.backers.map((n) => String(n || '').trim()).filter(Boolean) : [],
+    });
+    return {
+      type: 'weekly', sessionId: '', prNumber: '', title: '', actor: '', force: false, votes: '',
+      weekly: {
+        app: String(w.app || ''),
+        slug: String(w.slug || ''),
+        merged: (Array.isArray(w.merged) ? w.merged : []).map(item),
+        mergedTotal: Number(w.mergedTotal) || 0,
+        open: (Array.isArray(w.open) ? w.open : []).map(item),
+        openTotal: Number(w.openTotal) || 0,
+      },
+    };
+  },
+
+  // The names a merge announcement carries as metadata (routes/votes.js
+  // finalizeMerge), or null on a row without them.
+  _mergeCredits(msg) {
+    const meta = (msg.metadata || msg.meta || {}).merged;
+    if (!meta || typeof meta !== 'object') return null;
+    const names = (v) => (Array.isArray(v) ? v.map((n) => String(n || '').trim()).filter(Boolean) : []);
+    const author = typeof meta.author === 'string' ? meta.author.trim() : '';
+    const backers = names(meta.backers);
+    const shapers = names(meta.shapers);
+    if (!author && !backers.length && !shapers.length) return null;
+    return { author, backers, shapers };
+  },
+
+  // The same names read back out of the sentence, for a row without
+  // metadata: "Built by evan, backed by alice and bob, shaped by carol."
+  // → { author, backers, shapers }. Null when the sentence names nobody
+  // (the older "Thanks to everyone who voted").
+  _parseCredits(sentence) {
+    const s = String(sentence || '').replace(/\.\s*$/, '');
+    const part = (verb) => {
+      const m = new RegExp(`(?:^|, )[${verb[0].toUpperCase()}${verb[0]}]${verb.slice(1)} by (.+?)(?=, [a-z]+ by |$)`).exec(s);
+      return m ? m[1] : '';
+    };
+    const names = (run) => run.split(/, | and /).map((n) => n.trim())
+      .filter((n) => n && !/^\d+ more$/.test(n));
+    const author = part('built');
+    const backers = names(part('backed'));
+    const shapers = names(part('shaped'));
+    if (!author && !backers.length && !shapers.length) return null;
+    return { author, backers, shapers };
   },
 
   // The glyph the Dev board gives the same proposal — the "done" tick once
   // it has merged, the proposal glyph while it is up for a vote — from the
   // board's own table, so the two surfaces cannot draw one thing two ways.
   // Null where app-view.js has not loaded (a test), and the row draws none.
-  _eventIcon(type) {
+  // ── The change page's Discussion: every notice is a message ─────────
+  // The general chat draws two events (`_proposalEvent`); the change
+  // page's own Discussion draws them ALL in that language, because there
+  // every notice is the story of this one change: proposed, voted, merged,
+  // and the platform's own notices as a message from the app itself. The
+  // proposal is the page, so a row here names the act without the number
+  // and title, and is never a door (`here`).
+  _threadEvent(msg, kind) {
+    const text = String(msg.content == null ? '' : msg.content);
+    const [sessionId, prNumber] = GroupChat._voteRef(msg);
+    const base = { sessionId, prNumber, title: '', force: false, votes: '', here: true };
+    if (kind === 'vote') {
+      // routes/votes.js: "<who> voted yes on PR #N: <title>" or, with a
+      // reason, "<who> voted no: “<reason>”".
+      let m = /^(\S+) voted (yes|no)(?::\s*[“"]([\s\S]*?)[”"]|\s+on\b[\s\S]*)?$/.exec(text);
+      if (m) return { ...base, type: 'vote', actor: m[1], vote: m[2], reason: m[3] || '' };
+      m = /^(\S+) (?:promoted|imported) PR #\d+/.exec(text);
+      return { ...base, type: 'submitted', actor: m ? m[1] : '' };
+    }
+    if (kind !== 'system') return null;
+    const known = GroupChat._proposalEvent(msg, kind);
+    if (known) return { ...known, here: known.type !== 'weekly' };
+    return { ...base, type: 'notice', actor: '', text: GroupChat._noticeText(text, sessionId, prNumber) };
+  },
+
+  // A notice's wording on its own page: "PR #12: <title> reached the vote
+  // threshold…" opens with the page's own name, so the row says "Reached
+  // the vote threshold…". The title is read off the vote snapshot; without
+  // it only a bare "PR #12:" lead-in is dropped, never a guess at where the
+  // title ends.
+  _noticeText(text, sessionId, prNumber) {
+    let t = String(text || '');
+    const pr = GroupChat._resolvePr(sessionId, prNumber);
+    const title = pr && pr.pr_title ? String(pr.pr_title) : '';
+    const n = prNumber || (pr && pr.pr_number != null ? String(pr.pr_number) : '');
+    if (n && title && t.startsWith(`PR #${n}: ${title}`)) {
+      t = t.slice(`PR #${n}: ${title}`.length).replace(/^[\s:,.\p{Pd}]+/u, '');
+    } else if (n && /^PR #\d+:\s/.test(t) && !title) {
+      t = t.replace(/^PR #\d+:\s*/, '');
+    }
+    return t ? t.charAt(0).toUpperCase() + t.slice(1) : String(text || '');
+  },
+
+  _eventIcon(type, ev) {
+    // A yes is the board's done glyph; every other act wears the proposal's.
+    if (type === 'vote' && typeof AppView !== 'undefined' && typeof AppView._devCardIcon === 'function') {
+      return AppView._devCardIcon(ev && ev.vote === 'yes' ? 'done' : 'proposal', { small: true });
+    }
+    if (type === 'notice' && typeof AppView !== 'undefined' && typeof AppView._devCardIcon === 'function') {
+      return AppView._devCardIcon('proposal', { small: true });
+    }
+    // #1688: the Friday card has no proposal to take a glyph from.
+    if (type === 'weekly') return null;
     if (typeof AppView === 'undefined' || typeof AppView._devCardIcon !== 'function') return null;
     return AppView._devCardIcon(type === 'merged' ? 'done' : 'proposal', { small: true });
   },

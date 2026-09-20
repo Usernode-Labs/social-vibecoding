@@ -47,7 +47,7 @@ async function recoverInterrupted(config, pool, { maxAgeMs = null, limit = 20 } 
       try {
         await state.transitionRun(pool, run.id, 'failed', {
           failureCode: 'evidence_run_interrupted',
-          failureReason: 'The visual evidence worker stopped before the run completed. Retry the evidence run.',
+          failureReason: 'The visual change preview worker stopped before the run completed. Retry the preview run.',
         });
         failed += 1;
         continue;
@@ -60,7 +60,7 @@ async function recoverInterrupted(config, pool, { maxAgeMs = null, limit = 20 } 
     await pool.query(
       `UPDATE visual_evidence_runs
           SET state = 'cancelled', failure_code = 'evidence_run_interrupted',
-              failure_reason = 'The visual evidence worker stopped before the run completed.',
+              failure_reason = 'The visual change preview worker stopped before the run completed.',
               completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
         WHERE id = $1 AND state IN ('planned','provisioning','exploring','replaying','reviewing')`,
       [run.id]

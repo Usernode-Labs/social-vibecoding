@@ -193,10 +193,10 @@ between them is about the SURFACE each is drawn for, not about styling.
 
 - **The platform shell** — `frontend/@/components/ui/**`. shadcn primitives,
   hand-rolled, `cssVariables: false`, in the platform's `zinc`/`violet`
-  palette. Twenty-one modules today: `alert`, `anchored-panel`, `button`,
+  palette. Twenty-two modules today: `alert`, `anchored-panel`, `button`,
   `chat`, `chip`, `dialog`, `feed`, `field`, `grouped-list`, `icon-tile`,
   `icons`, `input`, `label`, `page-header`, `password-input`, `progress-ring`,
-  `select`, `skeleton`, `switch`, `tabs`, `textarea`.
+  `select`, `skeleton`, `switch`, `tabs`, `textarea`, `wordmark`.
   Count them in the directory rather than trusting this line — it has been
   stale before, and a primitive nobody knows exists gets hand-written instead.
   Variants are `cva` tables; every class in them is a complete literal, because

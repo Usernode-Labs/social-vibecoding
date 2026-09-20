@@ -52,7 +52,7 @@ const nativeJs = fs.readFileSync(
 // other root has.
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
   'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
-  'settings-screen', 'messages-screen'];
+  'settings-screen', 'messages-screen', 'global-chat-screen'];
 
 const NAVIGATIONS = [
   { fn: 'navigateToLeaderboard', reveal: 'leaderboard-screen' },
@@ -61,11 +61,12 @@ const NAVIGATIONS = [
   { fn: 'navigateToAdminConsole', reveal: 'admin-screen' },
   { fn: 'navigateToSettings', reveal: 'settings-screen' },
   { fn: 'navigateToMessages', reveal: 'messages-screen' },
+  { fn: 'navigateToGlobalChat', reveal: 'global-chat-screen' },
   { fn: 'navigateToWorkshop', reveal: 'workshop-screen' },
 ];
 
 const EXITS = ['_exitLeaderboard', '_exitProfile', '_exitBrowse',
-  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitWorkshop'];
+  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitGlobalChat', '_exitWorkshop'];
 
 // The body of a top-level App method, from its two-space-indented
 // definition to the closing `},` at the same indent.
@@ -213,6 +214,7 @@ test('every screen entry is guarded against a duplicate dispatch', () => {
     navigateToBrowse: /if \(App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)\)/,
     navigateToAdminConsole: /if \(App\._inAdmin && window\.AdminConsole\?\.isOpen\?\.\(\)\)/,
     navigateToSettings: /if \(App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)\)/,
+    navigateToGlobalChat: /if \(App\._inGlobalChat && globalChat\?\.isOpen\?\.\(\)\)/,
     // navigateToMessages was here. It is a sheet resolver now, and a sheet
     // needs no duplicate-dispatch guard: presenting one that is already
     // presented is a no-op in the controller, and there is no View Transition

@@ -25,14 +25,17 @@
  */
 
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
 
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
-import { PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { DevCard, ActionButton } from '../card/dev-card';
+import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
+import type { DevCardModel } from '../card/model';
+import { swatchFor } from '../../group-chat/swatch';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import type {
@@ -40,7 +43,6 @@ import type {
   CheckRow,
   NoteBox,
   NoteTone,
-  ProposalDetails,
   RosterView,
   IssueLink,
   IssueProposalRef,
@@ -49,6 +51,10 @@ import type {
   TranscriptSection,
   LedgerProgress,
   LedgerBuildStep,
+  LedgerRow,
+  HeroView,
+  StepRow,
+  StepsView,
 } from './model';
 
 function call(fn: string, ...args: unknown[]): void {
@@ -74,7 +80,11 @@ function Runs({ parts }: { parts: TextRun[] }): ReactNode {
     <>
       {parts.map((r, i) => (typeof r === 'string'
         ? <Fragment key={i}>{r}</Fragment>
-        : <span key={i} className="font-medium">{r.b}</span>))}
+        : (
+          // A run with a tone is a row's STATE — "Failing.", "Syncing." —
+          // bold in the ledger tone, the one word a scan is looking for.
+          <span key={i} className={r.tone ? `dev-ledger-lead dev-ledger-lead-${r.tone}` : 'font-medium'}>{r.b}</span>
+        )))}
     </>
   );
 }
@@ -111,32 +121,55 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
   );
 }
 
+/**
+ * One check, on one line: the glyph, the name (ending in an ellipsis rather
+ * than wrapping — a check's name can run to a paragraph), the path for a
+ * pass, and the tags. A check that FAILED, or passed only after a retry,
+ * opens its reason from the line's right end ("Why it failed"), where the
+ * selector string and the console errors sit until somebody asks: that
+ * detail is for whoever fixes the check, not for a voter reading the row.
+ */
 function CheckRowView({ r }: { r: CheckRow }): ReactNode {
-  return (
+  const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
+  const tags = (
     <>
-      <li className={r.advisory ? 'opacity-70' : undefined}>
-        <span className={`${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`}>
-          {r.pass ? '✓' : '✗'}
+      {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span> : null}
+      {r.flaky ? (
+        <span className="dev-check-flaky" title={`Failed about ${r.flaky}% of its recorded runs`}>
+          {`flaky · ${r.flaky}%`}
         </span>
-        {` ${r.name} `}
-        {r.path ? <span className="opacity-60 font-mono">{r.path}</span> : null}
-        {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span> : null}
-        {r.flaky ? (
-          <span className="dev-check-flaky" title={`Failed about ${r.flaky}% of its recorded runs`}>
-            {`flaky · ${r.flaky}%`}
-          </span>
-        ) : null}
+      ) : null}
+    </>
+  );
+  // A row that passed only after a retry is GREEN and still carries its
+  // reason: the failure happened, it just did not reproduce, and the person
+  // who owns that check is the one who needs to know.
+  if (r.pass && !r.keepReason) {
+    return (
+      <li className={`dev-ledger-check${r.advisory ? ' opacity-70' : ''}`}>
+        <span className={glyphCls} aria-hidden="true">✓</span>
+        <span className="dev-ledger-check-name" title={r.name}>{r.name}</span>
+        {r.path ? <span className="dev-ledger-check-path font-mono">{r.path}</span> : null}
+        {tags}
       </li>
-      {/* A row that passed only after a retry is GREEN and still carries its
-          reason: the failure happened, it just did not reproduce, and the
-          person who owns that check is the one who needs to know. */}
-      {!r.pass || r.keepReason ? (
-        <>
-          <div className="ml-4 opacity-90">{r.reason || 'failed'}</div>
+    );
+  }
+  return (
+    <li className={`dev-ledger-check dev-ledger-check-why${r.advisory ? ' opacity-70' : ''}`}>
+      <details className="dev-ledger-why">
+        <summary className="dev-ledger-check-line">
+          <span className={glyphCls} aria-hidden="true">{r.pass ? '✓' : '✗'}</span>
+          <span className="dev-ledger-check-name" title={r.name}>{r.name}</span>
+          {tags}
+          <span className="dev-ledger-check-open">{r.pass ? 'Passed on retry' : 'Why it failed'}</span>
+        </summary>
+        <div className="dev-ledger-why-body">
+          {r.reason || 'failed'}
+          {r.path ? <span className="dev-ledger-why-path">{` · on ${r.path}`}</span> : null}
           {r.errors && r.errors.length ? (
-            <ul className="ml-6 list-disc space-y-0.5">
+            <ul className="dev-ledger-why-errors">
               {r.errors.map((e, i) => (
-                <li key={i} className="font-mono text-[0.7rem] break-all opacity-90">
+                <li key={i}>
                   <span className="opacity-70">{`[${e.kind}] `}</span>
                   {e.message}
                   {e.source ? <span className="opacity-60">{` (${e.source})`}</span> : null}
@@ -144,9 +177,9 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
               ))}
             </ul>
           ) : null}
-        </>
-      ) : null}
-    </>
+        </div>
+      </details>
+    </li>
   );
 }
 
@@ -291,131 +324,137 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
   );
 }
 
+/**
+ * The Review row's line. Approved, it says who: "Approved by @maya ✓" (the
+ * tick marks an invited approver, as the roster always drew it). Not yet,
+ * it is the tally. The count against the threshold is the row's sub line,
+ * and the policy's wording is the "How voting works" popover's — neither is
+ * repeated here.
+ */
 function Roster({ r }: { r: RosterView }): ReactNode {
   if (r.phase === 'hidden') return null;
+  if (r.phase === 'loading') return <span className="dev-ledger-roster">Loading votes…</span>;
+  const noNames = r.no && r.no.names && r.no.names !== '—' ? r.no.names : '';
   return (
-    <span className="dev-ledger-roster">
-      {r.phase === 'loading' ? 'Loading votes…' : (
+    <span className="dev-ledger-roster" data-approved={r.approved ? '1' : undefined}>
+      {r.approved ? (
         <>
+          <span className="dev-ledger-lead dev-ledger-lead-ok">Approved</span>
+          {` by ${r.yes!.names}`}
+          {noNames ? <span className="dev-ledger-needs">{` · No: ${noNames}`}</span> : null}
+        </>
+      ) : (
+        <>
+          {/* The space rides inside the lead: a bare whitespace expression
+              between two text runs is the hydration mismatch
+              tests/shell-build.test.js guards against. */}
+          <span className="dev-ledger-lead dev-ledger-lead-vote">{'Waiting for votes. '}</span>
           <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span>
           {` ${r.yes!.names} `}
           <span className="dev-ledger-no">{`${r.no!.label}:`}</span>
           {` ${r.no!.names}`}
-          <span className="dev-ledger-needs">{r.needs}</span>
         </>
       )}
+      {/* #1688: each voter's line under the names, in their own words. */}
+      {(r.reasons || []).map((q) => (
+        <span key={q.who} className="dev-ledger-reason" data-vote={q.vote}>
+          {`${q.who}: “${q.text}”`}
+        </span>
+      ))}
+      {r.earlier ? <span className="dev-ledger-earlier">{r.earlier}</span> : null}
+    </span>
+  );
+}
+
+/** "How voting works", and the circular "?" — both open the same popover. */
+function HelpLinks({ question }: { question: boolean }): ReactNode {
+  return (
+    <span className="dev-ledger-help voting-help-hint">
+      <button type="button" className="voting-help-link" data-voting-help="">How voting works</button>
+      {question ? (
+        <button
+          type="button"
+          className="voting-help-btn"
+          data-voting-help=""
+          aria-label="How voting and merges work"
+          title="How voting and merges work"
+        >?</button>
+      ) : null}
     </span>
   );
 }
 
 /**
- * The "Where it stands" sheet: one row per fact, in the bar's tones. Built
- * by app-view.js (`_topicLedgerRows`) from the same reason, checks, roster
- * and note builders the four boxes used to draw from — this only draws.
+ * What a ledger row SAYS, under the step it belongs to (StepRowView): the
+ * sentence, then — in this order — the live progress, the Review line (who
+ * approved, and "How voting works" at its right end, on the one row it
+ * explains), the follow-on lines and lists, the attention-tone lines, the
+ * failing checks, and the controls with the folded passes. Built by
+ * app-view.js (`_topicLedgerRows`) from the same reason, checks, roster and
+ * note builders the "Where it stands" ledger drew from — this only draws.
  */
-export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
-  if (!d.ledger || !d.ledger.length) return null;
+function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
   return (
-    <section className="dev-topic-sheet dev-topic-ledger" data-topic-sheet="ledger">
-      <h4 className="dev-topic-h">Where it stands</h4>
-      {d.pathSteps && d.pathSteps > 1 ? (
-        <p className="dev-ledger-path-note">
-          {`${NUMBER_WORD[d.pathSteps] || d.pathSteps} steps to a merge. `}
-          {d.pathLeft === d.pathSteps
-            ? 'All of them have to clear.'
-            : `${NUMBER_WORD[d.pathLeft || 0] || d.pathLeft} still to clear.`}
-        </p>
+    <>
+      {r.text.length ? (
+        <span className="dev-ledger-text">
+          <Runs parts={r.text} />
+          {/* When the run happened, at the sentence's end. The vote row's
+              count rides in its tally instead. */}
+          {r.sub && r.key !== 'votes' ? <span className="dev-step-when">{` ${r.sub}`}</span> : null}
+        </span>
       ) : null}
-      <div className="dev-ledger">
-        {d.ledger.map((r) => (
-          <div
-            key={r.key}
-            className={`dev-ledger-row dev-ledger-${r.tone}`}
-            data-note={r.key}
-            {...(r.step ? { 'data-step': String(r.step) } : {})}
-            {...(r.stepDone ? { 'data-step-done': '' } : {})}
-            {...(r.attrs || {})}
-          >
-            <span className="dev-ledger-dot" aria-hidden="true">
-              {r.spinner ? <Spinner />
-                : (r.step ? (r.stepDone ? '✓' : String(r.step)) : LEDGER_GLYPH[r.tone])}
-            </span>
-            <span className="dev-ledger-k">
-              {r.label}
-              {r.sub ? <small>{r.sub}</small> : null}
-            </span>
-            <span className="dev-ledger-v">
-              {r.text.length ? <span className="dev-ledger-text"><Runs parts={r.text} /></span> : null}
-              {r.progress ? <Progress p={r.progress} /> : null}
-              {r.roster ? <Roster r={r.roster} /> : null}
-              {/* One ordered sequence: a line, or the list its previous line
-                  introduced. Rendering every list after every line put the
-                  conflicting files three sentences below "Changed on both
-                  sides:" — see LedgerRow.foot in model.ts. */}
-              {(r.foot || []).map((f, i) => (Array.isArray(f) ? (
-                <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>
-              ) : (
-                <ul key={i} className="dev-ledger-list">
-                  {f.list.map((it, j) => (
-                    <li key={j} className={(it.kind || it.mono) ? 'font-mono' : undefined}>
-                      {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
-                      {it.code ? <code className="font-mono">{it.code}</code> : null}
-                      {it.text ? (it.code ? `: ${it.text}` : it.text) : null}
-                      {it.source ? <span className="opacity-60">{` (${it.source})`}</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              )))}
-              {(r.warnFoot || []).map((f, i) => (
-                <span key={`w${i}`} className="dev-ledger-foot dev-ledger-foot-warn text-amber-800 dark:text-amber-400"><Runs parts={f} /></span>
-              ))}
-              {r.fails && r.fails.length ? (
-                <ul className="dev-ledger-fails">
-                  {r.fails.map((c) => <CheckRowView key={c.key} r={c} />)}
-                </ul>
-              ) : null}
-              {(r.actions && r.actions.length) || (r.passes && r.passes.length) ? (
-                <span className="dev-ledger-ops">
-                  {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
-                  {r.passes && r.passes.length ? (
-                    <details className="dev-ledger-passes">
-                      <summary className="gc-vote-btn dev-ledger-passes-btn">{`${r.passes.length} passing`}</summary>
-                      <ul className="dev-ledger-fails">
-                        {r.passes.map((c) => <CheckRowView key={c.key} r={c} />)}
-                      </ul>
-                    </details>
-                  ) : null}
-                </span>
-              ) : null}
-            </span>
-          </div>
-        ))}
-      </div>
-      {d.helpHint ? (
-        <div className="dev-ledger-help voting-help-hint">
-          {'Merges are decided by votes over time · '}
-          <button type="button" className="voting-help-link" data-voting-help="">How voting works</button>
-          {d.help ? (
-            <button
-              type="button"
-              className="voting-help-btn"
-              data-voting-help=""
-              aria-label="How voting and merges work"
-              title="How voting and merges work"
-            >?</button>
+      {r.progress ? <Progress p={r.progress} /> : null}
+      {/* The Review line: who approved, and at its right end the "How
+          voting works" affordances — this is the row they explain. */}
+      {r.roster || r.help ? (
+        <span className="dev-ledger-review-line">
+          {r.roster ? <Roster r={r.roster} /> : null}
+          {r.help ? <HelpLinks question={help} /> : null}
+        </span>
+      ) : null}
+      {/* One ordered sequence: a line, or the list its previous line
+          introduced. Rendering every list after every line put the
+          conflicting files three sentences below "Changed on both
+          sides:" — see LedgerRow.foot in model.ts. */}
+      {(r.foot || []).map((f, i) => (Array.isArray(f) ? (
+        <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>
+      ) : (
+        <ul key={i} className="dev-ledger-list">
+          {f.list.map((it, j) => (
+            <li key={j} className={(it.kind || it.mono) ? 'font-mono' : undefined}>
+              {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
+              {it.code ? <code className="font-mono">{it.code}</code> : null}
+              {it.text ? (it.code ? `: ${it.text}` : it.text) : null}
+              {it.source ? <span className="opacity-60">{` (${it.source})`}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )))}
+      {(r.warnFoot || []).map((f, i) => (
+        <span key={`w${i}`} className="dev-ledger-foot dev-ledger-foot-warn text-amber-800 dark:text-amber-400"><Runs parts={f} /></span>
+      ))}
+      {r.fails && r.fails.length ? (
+        <ul className="dev-ledger-fails">
+          {r.fails.map((c) => <CheckRowView key={c.key} r={c} />)}
+        </ul>
+      ) : null}
+      {(r.actions && r.actions.length) || (r.passes && r.passes.length) ? (
+        <span className="dev-ledger-ops">
+          {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
+          {r.passes && r.passes.length ? (
+            <details className="dev-ledger-passes">
+              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${r.passes.length} passing`}</summary>
+              <ul className="dev-ledger-fails">
+                {r.passes.map((c) => <CheckRowView key={c.key} r={c} />)}
+              </ul>
+            </details>
           ) : null}
-        </div>
+        </span>
       ) : null}
-    </section>
+    </>
   );
 }
-
-/** Small counts read better as words in a sentence. */
-const NUMBER_WORD: Record<number, string> = { 1: 'One', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
-
-const LEDGER_GLYPH: Record<string, string> = {
-  bad: '✕', warn: '!', ok: '✓', vote: '✓', mute: '·', progress: '◐',
-};
 
 export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> }): ReactNode {
   return (
@@ -555,8 +594,19 @@ export function linkedIssueDelta(before: number[], after: number[]): {
   };
 }
 
-/** One reference row: the chip, then one truncating line of title. */
-const REF_ROW = 'flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 transition-colors hover:bg-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-700/80';
+/**
+ * One reference row — an issue this change addresses, or the change on an
+ * issue's page — in the Discussion's event-box language (app.css
+ * `.gc-event-box`, the frosted sheet fill and hairline): the number chip
+ * where the glyph goes, one truncating line of title, and a chevron for the
+ * door. The same box a proposal event wears in the chat, so a reference
+ * reads as one thing everywhere it is drawn.
+ */
+const REF_ROW = 'gc-event-box dev-issue-ref';
+
+function RefChevron(): ReactNode {
+  return <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" aria-hidden="true" />;
+}
 
 function IssueIdentity({ label, title }: { label: string; title: string }): ReactNode {
   return (
@@ -596,7 +646,7 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
           }}
-        ><IssueIdentity label={r.label} title={r.title} /></a>
+        ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
       </div>
     </aside>
   );
@@ -712,35 +762,42 @@ function IssueAssociations({
   }
 
   return (
-    <aside className="dev-change-issues" aria-label="Issues this change addresses">
-      <div className="flex items-center justify-between gap-3">
-        <h4 className="dev-topic-h">{issues.length === 1 ? 'Addresses issue' : 'Addresses issues'}</h4>
-        {editable && !editing ? <Button
-          type="button"
-          variant="unstyled"
-          size="inline"
-          ink="none"
-          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
-          aria-expanded="false"
-          onClick={openEditor}
-        >
-          {issues.length ? <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
-            : <PlusIcon className="h-4 w-4" aria-hidden="true" />}
-          {issues.length ? 'Edit issues' : 'Add issue'}
-        </Button> : null}
-      </div>
-      {!editing ? (issues.length ? <div className="mt-2 space-y-1.5">{issues.map((issue) => (
-        <a
-          key={issue.n}
-          href={issue.href}
-          className={REF_ROW}
-          onClick={(event) => {
-            if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
-            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-            event.preventDefault(); call('openTopic', 'issue', issue.n);
-          }}
-        ><IssueIdentity label={`#${issue.n}`} title={issue.title} /></a>
-      ))}</div> : <p className="dev-topic-note">No issues linked yet.</p>) : null}
+    <aside className="dev-topic-hero-issues" aria-label="Issues this change addresses">
+      {!editing ? (
+        <div className="dev-topic-hero-issues-line">
+          {/* One line under the summary: "Addresses", then each issue as a
+              chip — the number bold, the title after it — in the Needs-you
+              chip's accent tint. The chip opens the issue's own page; the
+              owner's pencil sits at the line's end. */}
+          <span className="dev-topic-hero-issues-k">Addresses</span>
+          {issues.length ? issues.map((issue) => (
+            <a
+              key={issue.n}
+              href={issue.href}
+              className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+              data-issue-ref={issue.n}
+              onClick={(event) => {
+                if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault(); call('openTopic', 'issue', issue.n);
+              }}
+            ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
+          )) : <span className="dev-topic-note">No issues linked yet.</span>}
+          {editable ? <Button
+            type="button"
+            variant="unstyled"
+            size="inline"
+            ink="none"
+            className="dev-topic-hero-issues-edit inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
+            aria-expanded="false"
+            onClick={openEditor}
+          >
+            {issues.length ? <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
+              : <PlusIcon className="h-4 w-4" aria-hidden="true" />}
+            {issues.length ? 'Edit issues' : 'Add issue'}
+          </Button> : null}
+        </div>
+      ) : null}
       {editing ? <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -807,9 +864,266 @@ function IssueAssociations({
   );
 }
 
+/** The evidence run's state, as one strip: a failed or waived run explains itself. */
+function EvidenceStrip({ e }: { e: NonNullable<TopicBody['evidence']> }): ReactNode {
+  const red = e.state === 'failed' || e.state === 'stale' || e.state === 'cancelled';
+  return (
+    <div className="dev-topic-evidence" data-evidence-state={e.state}>
+      <span className={`dev-badge ${red ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}`}>{e.label}</span>
+      <span className="dev-topic-evidence-text">{e.sentence}</span>
+    </div>
+  );
+}
+
+/**
+ * The evidence states that are a run still going: the picture is coming.
+ * 'planned' is in this set only while it is FRESH — `evidence.notStarted`
+ * (AppView._evidenceNotStarted) marks the run that has sat there past the
+ * idle threshold, and that one is not going anywhere on its own.
+ */
+const EVIDENCE_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
+
+/**
+ * The before/after: the verified evidence card (or the legacy capture
+ * tiles) once the run has it; until then one quiet line with the shell's
+ * own spinner — no panel and no state label, because "Visual preview in
+ * progress" in a box read as a verdict. A run that failed, or was waived,
+ * keeps its strip: that is a fact a voter weighs.
+ *
+ * #2601/#2558: a run that never started keeps the PANEL rather than the
+ * strip, because it is the one pending state with something for the reader
+ * to do — the panel carries the recorded reason and the retry control.
+ */
+function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
+  const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
+  const ev = body.evidence || null;
+  const notStarted = !!(ev && ev.notStarted);
+  if (tiles && (!ev || ev.verified || notStarted)) {
+    return (
+      <div className="dev-topic-visuals" data-visuals-scope="1">
+        {/* AppView.visualsTilesHtml's markup — four other surfaces still
+            call it, so it stays a string builder. */}
+        <div className="usn-visuals-body" dangerouslySetInnerHTML={{ __html: tiles.tilesHtml }} />
+      </div>
+    );
+  }
+  if (!ev || ev.verified) return null;
+  if (!notStarted && EVIDENCE_BUILDING.has(ev.state)) {
+    return (
+      <p className="dev-topic-hero-evidence" data-evidence-state={ev.state}>
+        <span className="dc-status-spinner-arc" aria-hidden="true"></span>
+        <span>Building before/after photos</span>
+      </p>
+    );
+  }
+  return <EvidenceStrip e={ev} />;
+}
+
+/**
+ * The hero: the change as the Workshop's Needs-you item. The eyebrow (what
+ * the page is, the pull request, where it stands) with the age at its
+ * right; the title, with the author's pencil; who proposed it; the card's
+ * tags as chips, in the card's own tints — what the change IS, never what
+ * state it is in, because the steps under it say that; the action band
+ * with Vote first; the plain-English summary; the issue it addresses; the
+ * picture, or the line that says it is coming.
+ */
+function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
+  id: number | null;
+  card: DevCardModel;
+  body: TopicBody;
+  linkedIssues: number[];
+  onIssuesSaved: (issues: number[]) => void;
+}): ReactNode {
+  const h: HeroView = body.hero || { kind: 'Change', ref: null, status: '', age: null, author: null, verb: 'proposed', provenance: null, tint: 'a' };
+  const all = card.actions || [];
+  const yesSpec = all.find((a) => isVoteSpec(a, 'yes'));
+  const noSpec = all.find((a) => isVoteSpec(a, 'no'));
+  const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
+  const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
+  // The tags: priority, assignee, category, and the linkage. The state
+  // chips — checks, behind main, the evidence — stay off: the steps say it.
+  const badges = (card.badges || []).filter(Boolean);
+  const chips = [
+    ...badges.filter((b) => b.t === 'attr'),
+    ...(card.linked || []),
+    ...badges.filter((b) => b.t === 'issueChip'),
+  ];
+  const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
+  return (
+    <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
+      <div className="dev-topic-hero-top">
+        <span className="dev-ws-eyebrow dev-topic-hero-eyebrow">
+          {h.ref ? (
+            <>
+              {`${h.kind} · `}
+              {h.ref.href ? <a href={h.ref.href} target="_blank" rel="noopener">{h.ref.s}</a> : <span>{h.ref.s}</span>}
+              {h.status ? <span>{` · ${h.status}`}</span> : null}
+            </>
+          ) : (h.status ? `${h.kind} · ${h.status}` : h.kind)}
+        </span>
+        {h.age ? <span className="dev-ws-item-of" title={h.age.title}>{h.age.s}</span> : null}
+      </div>
+      <h2 className="dev-ws-item-title dev-topic-hero-title"><TitleContent t={card.title} /></h2>
+      {h.author || h.age ? (
+        <p className="dev-ws-item-by dev-topic-hero-by">
+          {h.author ? (
+            <span className="dev-ws-item-avatar" style={{ background: swatchFor(h.author) }} aria-hidden="true">
+              {h.author.slice(0, 1).toUpperCase()}
+            </span>
+          ) : null}
+          <span>
+            {h.author ? <b>{h.author}</b> : null}
+            {h.age ? <span>{`${h.author ? ' · ' : ''}${h.verb} ${h.age.s}`}</span> : null}
+            {h.provenance ? <span>{` · ${h.provenance}`}</span> : null}
+          </span>
+        </p>
+      ) : null}
+      {chips.length ? (
+        <div className="dev-ws-item-chips dev-topic-hero-chips">
+          {chips.map((b) => <Badge key={b.key} b={b} />)}
+        </div>
+      ) : null}
+      {/* The band is the card's (card/dev-card.tsx ActionBand), Vote first.
+          It wears the card's class so the band's own rules — the one-line
+          fold into ⋯, the accent pills, Preview and the hamburger at the
+          right — apply here as on the card; app.css takes the card's box
+          off it. */}
+      <div className="dev-card-topic dev-topic-hero-actions">
+        <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} lead={vote} dense={false} />
+      </div>
+      {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+      <div className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" dangerouslySetInnerHTML={{ __html: body.summaryHtml || '' }} />
+      {hasIssues ? (
+        <IssueAssociations
+          proposalId={Number(id)}
+          issues={body.issues || []}
+          issueOptions={body.issueOptions || []}
+          linkedIssues={linkedIssues}
+          editable={body.canEditIssues === true}
+          onSaved={onIssuesSaved}
+        />
+      ) : null}
+      <BeforeAfter body={body} />
+      {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
+    </section>
+  );
+}
+
+/** A step's mark — the strip's own glyphs (card/dev-card.tsx REQ_MARK). */
+const STEP_MARK: Record<string, string> = {
+  done: '✓', waiting: '!', blocked: '✕', pending: '·',
+};
+
+/** The vote step's line: the bar to the threshold, the card's pill, the counts. */
+function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
+  const majority = Math.max(1, v.majority || 1);
+  const pct = Math.max(0, Math.min(100, Math.round((v.yes / majority) * 100)));
+  return (
+    <div className="dev-step-vote">
+      <span className="dev-step-vote-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
+      {v.pill ? <StatusPill s={v.pill} inline /> : null}
+      <span className="dev-step-vote-tally">{`Yes ${v.yes} · No ${v.no}`}</span>
+    </div>
+  );
+}
+
+/** One step: the mark, the label, who acts at the right; under them, what the row says. */
+function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
+  const row = r.row || null;
+  const gateAttrs = r.gate ? { 'data-req-gate': r.gate, 'data-req-state': r.state } : {};
+  return (
+    <li className={`dev-step dev-step-${r.state}`} data-note={r.key} {...gateAttrs} {...(row && row.attrs ? row.attrs : {})}>
+      <span className={`dev-step-mark dev-step-mark-${r.state}`} aria-hidden="true">
+        {r.state === 'active' ? <Spinner /> : (STEP_MARK[r.state] || '·')}
+      </span>
+      <span className="dev-step-label">{r.label}</span>
+      {r.actor ? <span className="dev-step-actor">{r.actor}</span> : null}
+      {r.vote || row || r.note || r.action ? (
+        <div className="dev-step-body">
+          {r.vote ? <VoteTally v={r.vote} /> : null}
+          {row ? <LedgerRowBody r={row} help={help} /> : (r.note ? <span className="dev-step-note">{r.note}</span> : null)}
+          {r.action ? <span className="dev-ledger-ops"><ActionButton a={r.action} /></span> : null}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * The steps: the card's merge-requirements strip (card/dev-card.tsx
+ * RequirementsRow) as a sheet — the same headline, detail and count across
+ * its top, then every gate as a row, expanded to say what its ledger row
+ * said. Built by app-view.js (`_topicStepsView`); this only draws.
+ */
+function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
+  if (!s.rows.length) return null;
+  return (
+    <section className="dev-topic-sheet dev-topic-steps" data-topic-sheet="steps">
+      <div className="dev-steps rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
+        <div className="dev-steps-head">
+          <span className="dev-steps-headline">{s.headline}</span>
+          {s.detail ? <span className="dev-steps-detail">{`· ${s.detail}`}</span> : null}
+          {s.total != null ? <span className="dev-steps-count">{`${s.done}/${s.total}`}</span> : null}
+        </div>
+        <ol className="dev-steps-list border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+          {s.rows.map((r) => <StepRowView key={r.key} r={r} help={help} />)}
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Technical details — the pull request's description, or the spec a change
+ * under way is built from — as a sheet over the page, opened from the ⋯
+ * menu's row (`AppView.openTechnicalDetails`, the same event shape the Build
+ * sheet listens for). Portalled to the body like the vote picker: a
+ * `position: fixed` box inside a frosted sheet would be contained by it.
+ */
+function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const onOpen = (event: Event) => { if (Number((event as CustomEvent).detail) === id) setOpen(true); };
+    window.addEventListener('change-details-open', onOpen);
+    return () => window.removeEventListener('change-details-open', onOpen);
+  }, [id]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (event: Event) => { if ((event as { key?: string }).key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+  if (!open || typeof document === 'undefined') return null;
+  return createPortal(
+    <div className="dev-details-scrim" data-change-details={id} onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+      <div className="dev-details-card" role="dialog" aria-modal="true" aria-label="Technical details">
+        <div className="dev-details-head">
+          <h4 className="dev-topic-h">Technical details</h4>
+          <button type="button" className="dev-details-close" aria-label="Close" onClick={() => setOpen(false)}>
+            <XIcon className="w-4 h-4" aria-hidden="true" />
+          </button>
+        </div>
+        {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+        <div className="dev-issue-body dev-topic-details-body" dangerouslySetInnerHTML={{ __html: html }} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /** The same card on the owner session and public review/discussion page.
  * Full public metadata is fetched separately from the lightweight board.
  * This endpoint cannot return private agent messages or credentials.
+ *
+ * A CHANGE (a session or a proposal, `body.changeId`) reads top to bottom
+ * as the Workshop's Needs-you item: the hero (ChangeHero) — the title, the
+ * tags, the actions, the summary, the issues, the picture — then the merge
+ * steps (StepsSheet), then, on its own page, the Discussion
+ * (./conversation.tsx); the technical half is a sheet the ⋯ menu opens
+ * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
+ * dev session (#2605). An issue or a governance vote keeps the card and
+ * `TopicBodySections`.
  */
 export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false }: {
   card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean;
@@ -854,30 +1168,42 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     }
     window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
   };
+  const changePage = !!body.changeId;
+  const linkedIssues = Array.isArray(session?.linked_issues) ? session.linked_issues : [];
   return (
     <div ref={root} className="dev-topic">
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
-      <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
-        {/* #2431: an ISSUE's page names the change on it; a CHANGE's page
-            names its issues. Mutually exclusive by topic kind. */}
-        {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
-        {(body.issues?.length || body.canEditIssues) && id ? <IssueAssociations
-          proposalId={Number(id)}
-          issues={body.issues || []}
-          issueOptions={body.issueOptions || []}
-          linkedIssues={Array.isArray(session?.linked_issues) ? session.linked_issues : []}
-          editable={body.canEditIssues === true}
-          onSaved={applyLinkedIssues}
-        /> : null}
-        <DevCard model={card} />
-      </div>
-      <TopicBodySections body={conversation ? { ...body, transcript: null, activity: [] } : owner ? { ...body, transcript: null } : body} />
-      {conversation && body.changeId ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
+      {changePage ? (
+        <>
+          <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
+          {body.steps ? <StepsSheet s={body.steps} help={!!(body.details && body.details.help)} /> : null}
+          {/* #2605: a change's page carries NO build surface — not the Build
+              sheet, and not the published chat's disclosure that used to sit
+              beside it. Both are the dev session page's now, behind the
+              hero's pill. */}
+          {conversation ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
+          {/* The GitHub thread's host (issue-comments.tsx mounts into it):
+              a body that carries one gets it whatever page it is on. */}
+          {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
+          {body.proposalBody && id ? <DetailsSheet id={Number(id)} html={body.proposalBody.html} /> : null}
+        </>
+      ) : (
+        <>
+          <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
+            {/* #2431: an ISSUE's page names the change on it. A CHANGE's page
+                names its issues under the summary (ChangeHero). */}
+            {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
+            <DevCard model={card} />
+          </div>
+          <TopicBodySections body={owner ? { ...body, transcript: null } : body} />
+        </>
+      )}
     </div>
   );
 }
 
-function IssueBody({ html: initialHtml, editor }: {
+function IssueBody(
+{ html: initialHtml, editor }: {
   html: string;
   editor: NonNullable<TopicBody['issueBodyEditor']>;
 }): ReactNode {
@@ -1015,7 +1341,6 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note);
   return (
     <>
-      {body.details ? <LedgerView d={body.details} /> : null}
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
           {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
@@ -1041,7 +1366,6 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
             {body.testing.html ? <div className="dev-issue-body dev-topic-details-body" dangerouslySetInnerHTML={{ __html: body.testing.html }} />
               : <p className="dev-topic-note">{body.testing.path ? `Testing instructions are recorded in ${body.testing.path}.` : 'No testing instructions have been added yet.'}</p>}
           </details> : null}
-          {body.changeId && !tiles ? <details className="dev-topic-details"><summary className="dev-topic-details-summary">Screenshots</summary><p className="dev-topic-note">No screenshots have been captured yet.</p></details> : null}
           {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
         </section>
       ) : null}
@@ -1050,10 +1374,6 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           <Transcript t={body.transcript} />
         </section>
       ) : null}
-      {body.activity?.length ? <section className="dev-topic-sheet"><details className="dev-topic-details">
-        <summary className="dev-topic-details-summary">Activity</summary>
-        {body.activity.map((event) => <p key={event.label} className="dev-topic-note">{event.label} · <time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time></p>)}
-      </details></section> : null}
       {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
           so app.css can run it into the Discussion sheet below the head. */}
       {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}

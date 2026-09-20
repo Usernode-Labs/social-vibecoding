@@ -285,11 +285,21 @@ const Home = {
   // How many admin-featured tiles the "Featured apps" row shows.
   FEATURED_LIMIT: 6,
 
-  // The API derives this from an explicit review of the current deployment,
-  // not from active-user counts or the staging-only `demo` fixture flag.
+  // Can this app be offered on the Discover rail at all: it runs, it is not
+  // the platform itself, and it has an icon to draw. No editorial state here.
+  isDiscoverable(app) {
+    return !!app && app.status === 'running' && !app.self_hosted
+      && !!(app.icon_url || app.icon_emoji);
+  },
+
+  // Discoverable AND reviewed. The API derives `directory.tier` from an
+  // explicit admin review of the current deployment, not from active-user
+  // counts or the staging-only `demo` fixture flag. That review is pinned to
+  // the deployment it was made on and expires on every merge
+  // (src/services/discovery-curation.js), which is why the popular lane and
+  // the Browse grouping read it and the featured lane does not.
   isDiscoveryReady(app) {
-    return !!app && app.directory?.tier === 'ready' && app.status === 'running'
-      && !app.self_hosted && !!(app.icon_url || app.icon_emoji);
+    return Home.isDiscoverable(app) && app.directory?.tier === 'ready';
   },
 
   // The featured row's contents for this viewer: admin-curated apps
@@ -298,6 +308,14 @@ const Home = {
   // them would be noise. Ordered by the admin's featured_order
   // (ascending, NULLs last) and capped at FEATURED_LIMIT.
   // Pure — unit-tested in tests/home-find-more.test.js.
+  //
+  // Featuring IS the editorial decision, so the review state does not gate
+  // this lane (#2565). It used to: a "Reviewed working" review expires on
+  // every merge, so a featured app dropped out of Discover each time it
+  // shipped a change, and a fresh platform showed nothing at all. ADDING an
+  // app to Featured still requires a current review (PUT
+  // /api/admin/featured-apps); staying there does not. An admin who later
+  // marks a featured app broken unfeatures it as well.
   //
   // ?shot=discover-empty forces the empty answer regardless (#949), for the
   // same reason ?shot=create-disabled exists above: "nothing left to
@@ -320,7 +338,7 @@ const Home = {
   featuredApps(apps) {
     if (Home._shotDiscoverEmpty()) return [];
     return (apps || [])
-      .filter((a) => a && a.featured && Home.isDiscoveryReady(a)
+      .filter((a) => a && a.featured && Home.isDiscoverable(a)
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => {
         const xo = x.featured_order == null ? Infinity : x.featured_order;

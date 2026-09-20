@@ -41,14 +41,15 @@ In `Usernode-Labs/social-vibecoding`, open **Settings → Secrets and variables
 | Secret | `USERNODE_OPENROUTER_MANAGEMENT_API_KEY` | Yes for included keys | OpenRouter organization management key. |
 | Variable | `OPENROUTER_MANAGED_DAILY_LIMIT_USD` | No longer used | The child key's limit is the user's platform weekly allowance, not a per-key amount. The deploy still writes this variable; it is inert. |
 | Variable | `OPENROUTER_MANAGED_WORKSPACE_ID` | Recommended | Dedicated funded OpenRouter workspace id. |
-| Variable | `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` | Optional | Set `true` to require a verified GitHub or X identity before claiming. The deploy default is `false`, which allows any authenticated account. |
+| Variable | `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` | No longer used | Every account is created with its included key (#2568), so there is no eligibility gate. The deploy still writes this variable; it is inert. |
 | Variable | `OPENROUTER_DEFAULT_CODEX_MODEL` | Optional | Preferred model slug; deploy default is `z-ai/glm-5.3-flash`. |
 
-`CODEX_OPENROUTER_ENABLED` remains `true` by default. An existing
-`CODEX_OPENROUTER_BETA_USER_IDS` allowlist still restricts eligibility when it
-is non-empty. Leave `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` unset or set
-it to `false` for the initial open rollout. Set it to the lowercase value
-`true` only when every new claimant should first connect GitHub or X.
+`CODEX_OPENROUTER_ENABLED` remains `true` by default and is now the only
+switch: #2568 retired both eligibility gates. `CODEX_OPENROUTER_BETA_USER_IDS`
+is no longer read, and neither is
+`OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY`. Every account is created with
+its included key, and an account that somehow has none gets one the next time
+it opens the new-change screen.
 
 After the values are saved, merge to `main` or manually run the normal deploy
 workflow. The deploy writes the management key into `/opt/usernode/.env`,
@@ -62,15 +63,13 @@ key remains available.
 
 ## Verification after deployment
 
-1. Sign in as a regular authenticated user. If
-   `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=true`, first connect and
-   verify GitHub or X.
-2. Open **Settings → OpenRouter**. The included-key card should quote the
-   platform's weekly allowance for that user (by default $175.00).
-3. Click **Create my included key** once. Confirm it becomes active. The raw
-   company-funded credential is stored internally and is never sent to the
-   user's browser.
-4. Confirm OpenRouter is selected as the user's default and that the model
+1. Create a new account.
+2. Open **Settings → OpenRouter**. The included-key card should already read
+   **Active**, with the key's last four and the platform's weekly allowance
+   for that user. There is nothing to press: the key was created with the
+   account. The raw company-funded credential is stored internally and is
+   never sent to the user's browser.
+3. Confirm OpenRouter is selected as the user's default and that the model
    picker contains the full key-visible catalog.
 5. As an admin, open **Admin → Users**. The user's row should show the local
    owner, remote key hash, limit, verification state, and Block/Enable/Delete

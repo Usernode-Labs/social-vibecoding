@@ -289,6 +289,8 @@ test('the work order separates manual testing routes from interaction evidence',
   // Homeroom explores once, then deterministically proves the pair twice.
   assert.match(order, /visualEvidence/);
   assert.match(order, /record_visual_evidence_intent/);
+  assert.match(order, /helper is not exposed[\s\S]*documented version-1 object directly/,
+    'a connector without the helper still documents the supported v1 input path');
   assert.match(order, /user-visible claim/);
   assert.match(order, /real interaction steps/);
   assert.match(order, /bounded plan/);

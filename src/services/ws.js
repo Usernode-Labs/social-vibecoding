@@ -937,6 +937,10 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
     ...(thread ? { thread } : {}),
     createdAt: rows[0].created_at,
   });
+  // #1688: the row, for a caller that hangs something off the message — the
+  // "needs a conversation" prompt names people, and their mention rows point
+  // at it. Every existing caller ignores the return.
+  return { id: rows[0].id, createdAt: rows[0].created_at };
 }
 
 function getOnlineUsers(appId) {

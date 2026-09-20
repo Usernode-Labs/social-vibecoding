@@ -82,7 +82,7 @@ test('a conflicted proposal reads as one ordered path, not four verdicts', () =>
   const steps = rows.filter((r) => r.step).map((r) => [r.step, r.key, r.label]);
   assert.deepEqual(steps, [
     [1, 'mergeability', 'Sync with main'],
-    [2, 'checks', 'Re-run checks'],
+    [2, 'checks', 'Checks'],
     [3, 'votes', 'Votes'],
   ], 'the path is sync, then checks, then the vote');
 
@@ -114,8 +114,9 @@ test('a conflict the lane owns is an automatic step, not the author’s (#2247)'
   assert.match(sync.text.join(''), /Main has moved 118 commits ahead, and 3 files changed on both sides/,
     'the size of the job is still said');
   assert.doesNotMatch(sync.text.join(''), /cannot finish this one/);
-  assert.match(sync.text.join(''), /The platform resolves it automatically, then retries the merge/);
-  assert.equal(sync.sub, 'automatic, now', 'nobody is being asked to do anything');
+  assert.match(sync.text.join(''), /Homeroom resolves it automatically, then tries the merge again/);
+  assert.deepEqual(sync.text[0], { b: 'Syncing.', tone: 'warn' }, 'the sentence leads with its state');
+  assert.equal(sync.sub, null, 'nobody is being asked to do anything, so nobody is named under the label');
   assert.equal(sync.tone, 'warn', 'a job the platform owns is not drawn as an emergency');
   const footText = sync.foot.filter(Array.isArray)
     .map((f) => f.map((x) => (typeof x === 'string' ? x : x.b)).join('')).join(' ');
@@ -125,12 +126,13 @@ test('a conflict the lane owns is an automatic step, not the author’s (#2247)'
 
   // While the lane is on it, the step says so in the present tense.
   const working = find(rowsOf(AppView, { ...CONFLICTED, integration: { blockReasons: ['integrating'] } }), 'mergeability');
-  assert.match(working.text.join(''), /The platform is resolving it now, then it retries the merge/);
-  assert.equal(working.sub, 'automatic, now');
+  assert.match(working.text.join(''), /Homeroom is resolving it now, then it tries the merge again/);
+  assert.equal(working.sub, null);
 
-  // A conflict the lane resolves once the vote passes says when.
+  // A conflict the lane resolves once the vote passes says so in the sentence.
   const later = find(rowsOf(AppView, { ...CONFLICTED, integration: { blockReasons: ['awaiting_approval'] } }), 'mergeability');
-  assert.equal(later.sub, 'automatic, after the vote');
+  assert.equal(later.sub, null);
+  assert.match(later.text.join(''), /once the group approves, then tries the merge again/);
 });
 
 test('the sync step says how many files overlap and does not list them', () => {
@@ -174,7 +176,8 @@ test('a box that leads with its list still renders the list first', () => {
 test('a verdict measured against a base main has left behind is not reported as live', () => {
   const AppView = makeAppView();
   const checks = find(rowsOf(AppView, CONFLICTED), 'checks');
-  assert.equal(checks.sub, 'automatic, after 1');
+  assert.equal(checks.sub, null, 'no "automatic, after 1": the numbered box says when, and this fixture has no run stamp');
+  assert.deepEqual(checks.text[0], { b: 'Waiting.', tone: 'mute' });
   assert.equal(checks.tone, 'mute', 'it is not the blocker while step 1 stands');
   // Whoever resolves the conflict pushes a new head, and that head gets its
   // own run: the verdict on this one is stale either way.
@@ -197,8 +200,32 @@ test('a proposal that is only behind main says the platform is doing it', () => 
   const sync = find(rows, 'behind');
   assert.ok(sync, 'the behind row is the sync step when nothing conflicts');
   assert.equal(sync.step, 1);
-  assert.equal(sync.sub, 'automatic, now', 'nobody is being asked to do anything');
-  assert.match(sync.text.join(''), /The platform is syncing this proposal onto it/);
+  assert.equal(sync.sub, null, 'nobody is being asked to do anything, so nobody is named');
+  assert.deepEqual(sync.text, [{ b: 'Syncing.', tone: 'warn' }, ' Main has moved 3 commits ahead; Homeroom is bringing this proposal up to date automatically.'],
+    'what the reader needs, with the commit count: the change page draws no chip to carry it');
+});
+
+// #2588: the provenance notes are off the ledger, and the x/y figure the
+// steps sheet draws is unchanged by their going.
+//
+// They were never steps — `_topicLedgerPath` numbers the sync, the checks
+// and the vote, and nothing else — so an imported, connector-built proposal
+// has exactly the path a native one has. This is the assertion that keeps
+// the count honest: the two rows leave, the figure does not move.
+test('an imported, agent-built proposal has the same path as any other', () => {
+  const AppView = makeAppView();
+  const IMPORTED = {
+    ...GAVE_UP,
+    source: 'imported', imported_pr_author: 'octo', external_agent: 'claude-code',
+  };
+  const d = AppView._proposalDetailsView(IMPORTED);
+  assert.equal(d.pathSteps, 3, 'the same three steps a native proposal has');
+  assert.equal(d.pathLeft, 3);
+  assert.deepEqual(plain(d.ledger.filter((r) => r.step).map((r) => r.key)),
+    ['mergeability', 'checks', 'votes']);
+  const keys = plain(d.ledger).map((r) => r.key);
+  assert.ok(!keys.includes('imported') && !keys.includes('agent'),
+    'and no provenance row padding the list under them');
 });
 
 test('with nothing to sync the ledger is left exactly as it was', () => {
@@ -244,12 +271,16 @@ test('the path is drawn as a checklist, and a cleared step is ticked', () => {
   assert.equal(clean.pathLeft, null);
 });
 
-test('a step box is a box, and a cleared one is not still coloured by the blocker', () => {
+test('a step wears a mark, and a cleared one is not still coloured by the blocker', () => {
+  // The change page draws the path as the card's requirements strip,
+  // expanded (topic/topic-head.tsx StepsSheet): a ring per step, filled ok
+  // once it has cleared and blocked when it is the red one.
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-ledger-row\[data-step\] \.dev-ledger-dot \{[^}]*border-radius: 5px;/,
-    'squared off, so it reads as a checkbox rather than a status dot');
-  assert.match(css, /\.dev-ledger-row\[data-step\]\[data-step-done\] \.dev-ledger-dot \{[^}]*--state-ok/,
-    'a ticked box takes the ok tone, not the row it sits in');
+  assert.match(css, /\.dev-step-mark \{[^}]*border-radius: 9999px;[^}]*box-shadow: inset 0 0 0 1\.5px currentColor;/,
+    'a ring, so it reads as a step rather than a status dot');
+  assert.match(css, /\.dev-step-mark-done \{ background: var\(--state-ok\); color: #fff; box-shadow: none; \}/,
+    'a ticked step takes the ok tone, not the row it sits in');
+  assert.match(css, /\.dev-step-mark-blocked \{ background: var\(--state-blocked\);/);
   assert.doesNotMatch(css, /The path rail/, 'the rail it replaced is gone, geometry and all');
 });
 
@@ -296,11 +327,16 @@ test('the declared checks match what the demo fixture actually renders', () => {
     mergeability_files_complete: true,
   });
   assert.equal(d.pathSteps, 3);
-  assert.equal(d.pathLeft, 2, 'the caption says "Two still to clear."');
+  assert.equal(d.pathLeft, 2, 'two steps still to clear (on the model; the ledger draws no caption)');
   const steps = d.ledger.filter((r) => r.step);
   assert.deepEqual(plain(steps.map((r) => [r.key, !!r.stepDone])),
     [['mergeability', false], ['checks', true], ['votes', false]]);
-  assert.equal(find(d.ledger, 'checks').sub, 'automatic, after 1');
-  assert.match(find(d.ledger, 'mergeability').text.join(''),
+  // The declared checks read the sync step's first word and its bare label:
+  // "Syncing." in the warn tone, and nobody named under "Sync with main".
+  const sync = find(d.ledger, 'mergeability');
+  assert.deepEqual(plain(sync.text[0]), { b: 'Syncing.', tone: 'warn' });
+  assert.equal(sync.sub, null);
+  assert.equal(find(d.ledger, 'checks').sub, null, 'no run stamp on this fixture, and no "automatic, after 1"');
+  assert.match(sync.text.join(''),
     /Main has moved 8 commits ahead, and 7 files changed on both sides/);
 });

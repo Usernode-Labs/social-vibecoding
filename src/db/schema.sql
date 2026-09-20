@@ -2122,20 +2122,15 @@ INSERT INTO platform_settings (key, value) VALUES
   ('system_tokens_daily_limit_cents', '2500')
 ON CONFLICT (key) DO NOTHING;
 
--- #1788: the platform-default per-user WEEKLY cap. Seeded as SEVEN TIMES
--- whatever the daily default is at the moment this first runs, rather than
--- as a literal: on an existing deployment that is exactly what a user on
--- the default could already spend across a week, so the cap arrives
--- enforced but non-regressive. A fresh deploy seeds 7 x 2500 = 17500.
--- ON CONFLICT DO NOTHING, so an operator-set value survives every boot.
-INSERT INTO platform_settings (key, value)
-SELECT 'user_weekly_limit_cents',
-       (7 * COALESCE((
-         SELECT ps.value::int
-           FROM platform_settings ps
-          WHERE ps.key = 'user_daily_limit_cents'
-            AND ps.value ~ '^[0-9]+$'
-       ), 2500))::text
+-- #1788: the platform-default per-user WEEKLY cap. #2571 makes it the ONLY
+-- per-user cap (the daily one is switched off in src/services/limits.js) and
+-- sets the code default to $50 a week, seeded as a literal rather than as a
+-- multiple of the daily default. Still ON CONFLICT DO NOTHING, and still the
+-- only statement that writes this key on boot: an operator-set value — which
+-- is what production runs on, set from the admin Limits page — survives every
+-- deploy untouched. No migration rewrites it.
+INSERT INTO platform_settings (key, value) VALUES
+  ('user_weekly_limit_cents', '5000')
 ON CONFLICT (key) DO NOTHING;
 
 -- One-shot backfill of users.weekly_limit_cents for everyone who already
@@ -4814,6 +4809,12 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('proposal_vote', 'proposal_alerts', TRUE),
   ('pr_merged', 'proposal_alerts', TRUE),
   ('vote_digest', 'proposal_alerts', TRUE),
+  -- #1688's two: the re-confirm ask after a proposal's author pushes a new
+  -- version, and the weekly "this week on <app>" card. Both are proposal
+  -- lifecycle, so proposal_alerts, and both are on by default here — the
+  -- per-app switch in services/notification-preferences.js is the first gate.
+  ('revision_recheck', 'proposal_alerts', TRUE),
+  ('weekly_digest', 'proposal_alerts', TRUE),
   ('issue_opened', 'app_alerts', TRUE),
   ('app_health', 'app_alerts', TRUE),
   ('reaction', 'lightweight_activity', FALSE),
@@ -4841,6 +4842,8 @@ DELETE FROM mobile_push_kind_categories
    'connector_submitted', 'agent_awaiting_input',
    -- #1374's five.
    'proposal_vote', 'pr_merged', 'vote_digest', 'issue_opened', 'app_health',
+   -- #1688's two.
+   'revision_recheck', 'weekly_digest',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction'
  );
@@ -8249,6 +8252,165 @@ CREATE INDEX IF NOT EXISTS idx_visual_evidence_artifacts_run
   ON visual_evidence_artifacts(run_id, story_id, viewport);
 COMMENT ON TABLE visual_evidence_artifacts IS 'staging:private';
 
+-- #2377: experimental Global Chat. These records are deliberately separate
+-- from repository-development chat_sessions and user_agent_preferences: the
+-- inexpensive global assistant may discover and operate the product, while
+-- code work continues to use the independently configured development agent.
+-- The optional spend cap is measured against UTC calendar-month usage.
+CREATE TABLE IF NOT EXISTS global_chat_profiles (
+  user_id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  enabled             BOOLEAN NOT NULL DEFAULT FALSE,
+  model_id            VARCHAR(255) NOT NULL,
+  reasoning_effort    VARCHAR(16) NOT NULL DEFAULT 'low',
+  spend_cap_usd       NUMERIC(18,8),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT global_chat_profiles_model_check
+    CHECK (model_id ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]*$'),
+  CONSTRAINT global_chat_profiles_reasoning_check
+    CHECK (reasoning_effort IN ('minimal', 'low', 'medium', 'high', 'xhigh')),
+  CONSTRAINT global_chat_profiles_spend_cap_check
+    CHECK (spend_cap_usd IS NULL OR spend_cap_usd >= 0)
+);
+ALTER TABLE global_chat_profiles
+  ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT FALSE;
+COMMENT ON TABLE global_chat_profiles IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS global_chat_threads (
+  id              UUID PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  summary         TEXT,
+  summary_cursor  BIGINT,
+  active_turn_id  UUID,
+  active_turn_started_at TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  archived_at     TIMESTAMPTZ
+);
+ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_id UUID;
+ALTER TABLE global_chat_threads ADD COLUMN IF NOT EXISTS active_turn_started_at TIMESTAMPTZ;
+-- #2543: chats are durable sessions in Improve, not a single replaceable
+-- full-application mode. Drop the original one-live-thread constraint so a
+-- user can keep and resume several conversations. Rows archived by the old
+-- replacement flow stay archived; deletion remains the only user-facing
+-- removal operation.
+DROP INDEX IF EXISTS global_chat_threads_one_active_user;
+CREATE INDEX IF NOT EXISTS global_chat_threads_user_updated
+  ON global_chat_threads (user_id, updated_at DESC);
+COMMENT ON TABLE global_chat_threads IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS global_chat_messages (
+  id                  BIGSERIAL PRIMARY KEY,
+  thread_id           UUID NOT NULL REFERENCES global_chat_threads(id) ON DELETE CASCADE,
+  role                VARCHAR(16) NOT NULL,
+  plain_text          TEXT NOT NULL DEFAULT '',
+  structured_payload  JSONB NOT NULL DEFAULT '{}'::jsonb,
+  prompt_version      VARCHAR(64),
+  model_id            VARCHAR(255),
+  reasoning_effort    VARCHAR(16),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT global_chat_messages_role_check
+    CHECK (role IN ('user', 'assistant')),
+  CONSTRAINT global_chat_messages_reasoning_check
+    CHECK (reasoning_effort IS NULL
+           OR reasoning_effort IN ('minimal', 'low', 'medium', 'high', 'xhigh'))
+);
+CREATE INDEX IF NOT EXISTS global_chat_messages_thread_cursor
+  ON global_chat_messages (thread_id, id DESC);
+COMMENT ON TABLE global_chat_messages IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS global_chat_tool_runs (
+  id                    UUID PRIMARY KEY,
+  thread_id             UUID NOT NULL REFERENCES global_chat_threads(id) ON DELETE CASCADE,
+  message_id            BIGINT REFERENCES global_chat_messages(id) ON DELETE SET NULL,
+  capability_id         VARCHAR(120) NOT NULL,
+  normalized_input      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  bounded_model_result  JSONB,
+  authoritative_result  JSONB,
+  renderer              VARCHAR(40),
+  classic_path          VARCHAR(512),
+  status                VARCHAR(16) NOT NULL DEFAULT 'pending',
+  duration_ms           INTEGER,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at          TIMESTAMPTZ,
+  CONSTRAINT global_chat_tool_runs_status_check
+    CHECK (status IN ('pending', 'completed', 'failed')),
+  CONSTRAINT global_chat_tool_runs_duration_check
+    CHECK (duration_ms IS NULL OR duration_ms >= 0)
+);
+CREATE INDEX IF NOT EXISTS global_chat_tool_runs_thread_created
+  ON global_chat_tool_runs (thread_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS global_chat_tool_runs_message
+  ON global_chat_tool_runs (message_id) WHERE message_id IS NOT NULL;
+COMMENT ON TABLE global_chat_tool_runs IS 'staging:private';
+
+-- Only the SHA-256 hash of the bearer confirmation token is stored. A token
+-- binds the authenticated user, thread, exact normalized input and observed
+-- object revision, and can be consumed once before its short expiry.
+CREATE TABLE IF NOT EXISTS global_chat_action_tokens (
+  id                UUID PRIMARY KEY,
+  token_hash        VARCHAR(64) NOT NULL UNIQUE,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  thread_id         UUID NOT NULL REFERENCES global_chat_threads(id) ON DELETE CASCADE,
+  capability_id     VARCHAR(120) NOT NULL,
+  normalized_input  JSONB NOT NULL,
+  input_hash        VARCHAR(64) NOT NULL,
+  object_revision   VARCHAR(255),
+  expires_at        TIMESTAMPTZ NOT NULL,
+  consumed_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT global_chat_action_tokens_hash_check
+    CHECK (token_hash ~ '^[0-9a-f]{64}$' AND input_hash ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT global_chat_action_tokens_expiry_check
+    CHECK (expires_at > created_at)
+);
+CREATE INDEX IF NOT EXISTS global_chat_action_tokens_user_expiry
+  ON global_chat_action_tokens (user_id, expires_at)
+  WHERE consumed_at IS NULL;
+COMMENT ON TABLE global_chat_action_tokens IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS global_chat_usage (
+  id                UUID PRIMARY KEY,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  thread_id         UUID REFERENCES global_chat_threads(id) ON DELETE SET NULL,
+  message_id        BIGINT REFERENCES global_chat_messages(id) ON DELETE SET NULL,
+  provider          VARCHAR(32) NOT NULL DEFAULT 'openrouter',
+  requested_model   VARCHAR(255),
+  served_model      VARCHAR(255),
+  reasoning_effort  VARCHAR(16),
+  input_tokens      BIGINT NOT NULL DEFAULT 0,
+  cached_input_tokens BIGINT NOT NULL DEFAULT 0,
+  output_tokens     BIGINT NOT NULL DEFAULT 0,
+  reasoning_tokens  BIGINT NOT NULL DEFAULT 0,
+  cost_usd          NUMERIC(18,8),
+  cost_source       VARCHAR(32) NOT NULL DEFAULT 'unavailable',
+  outcome           VARCHAR(16) NOT NULL DEFAULT 'unknown',
+  attempt_number    INTEGER NOT NULL DEFAULT 1,
+  tool_calls        INTEGER NOT NULL DEFAULT 0,
+  error_code        VARCHAR(64),
+  duration_ms       INTEGER,
+  metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT global_chat_usage_counts_check
+    CHECK (input_tokens >= 0 AND cached_input_tokens >= 0
+           AND output_tokens >= 0 AND reasoning_tokens >= 0
+           AND attempt_number > 0 AND tool_calls >= 0
+           AND (cost_usd IS NULL OR cost_usd >= 0)
+           AND (duration_ms IS NULL OR duration_ms >= 0)),
+  CONSTRAINT global_chat_usage_reasoning_check
+    CHECK (reasoning_effort IS NULL
+           OR reasoning_effort IN ('minimal', 'low', 'medium', 'high', 'xhigh')),
+  CONSTRAINT global_chat_usage_cost_source_check
+    CHECK (cost_source IN ('provider_reported', 'catalog_estimate', 'unavailable')),
+  CONSTRAINT global_chat_usage_outcome_check
+    CHECK (outcome IN ('success', 'error', 'cancelled', 'refusal', 'unknown'))
+);
+CREATE INDEX IF NOT EXISTS global_chat_usage_user_created
+  ON global_chat_usage (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS global_chat_usage_thread_created
+  ON global_chat_usage (thread_id, created_at DESC) WHERE thread_id IS NOT NULL;
+COMMENT ON TABLE global_chat_usage IS 'staging:private';
+
 -- ────────────────────────────────────────────────────────────────────
 -- EVERYTHING BELOW THIS LINE MUST STAND UP ON ITS OWN.
 --
@@ -8297,6 +8459,77 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_mode BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_partner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_base_sha VARCHAR(40);
+-- What the app's approvals rule was before demo mode changed it, so switching
+-- demo mode off puts it back. NULL while demo mode is off; NULL while it is ON
+-- means the app was on the default (timed) strategy, which is the common case.
+-- Demo mode sets apps.approvals_required so the vote card reads "1 of 2
+-- approvals" instead of counting down a lazy-consensus window nobody in a
+-- recording waits out; the column it overwrites is a governance setting, so it
+-- is restored rather than cleared.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_prev_approvals INTEGER;
+
+-- #1688: warmer voting.
+--
+-- pr_votes.reason — the sentence behind a vote. routes/votes.js requires one
+-- on a No and accepts one on a Yes; a row written before this column, or a
+-- Yes cast without a line, is NULL and reads exactly as it did. The upsert
+-- keeps an earlier line when the same person re-casts the same side without
+-- a new one, which is what carries a Yes onto a proposal's next version.
+ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS reason TEXT;
+-- chat_sessions.conversation_prompted_epoch — the approval epoch for which
+-- the "needs a conversation" prompt was posted into the proposal's thread.
+-- Contested is derived from the active-user count, which moves without a
+-- vote, so the prompt is claimed once per epoch here rather than re-posted
+-- on every crossing; a new authored push bumps the epoch and earns a new one.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS conversation_prompted_epoch INTEGER;
+-- apps.weekly_digest_at — when the "this week" card last went to the app's
+-- general chat (services/weekly-digest.js). NULL until the first one.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS weekly_digest_at TIMESTAMPTZ;
+
+-- #2563: users.needs_username_choice — this account has never picked the
+-- handle other members see, so the shell must ask before it lets them in.
+--
+-- SERVER STATE, deliberately. The alternative was for the client to look at
+-- the stored username and guess "that looks like an email address", which
+-- makes every surface that renders a handle a second implementation of the
+-- gate and gets a member called `ada.lovelace` wrong. One column, written
+-- where the account is created, read by /api/auth/me and cleared by
+-- POST /api/me/username/choose.
+--
+-- FALSE for everyone the column is added to, then the one-time backfill in
+-- src/db/migrate.js turns it on for the accounts email sign-up gave their
+-- own email address as a username. That backfill matches
+-- `lower(username) = lower(email)` — an exact identity, not a shape test —
+-- so an account that merely has a dotted handle is left alone.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- A merged commit of the platform's own app that has not become the running
+-- release (services/release-watch.js). The self-hosted row's main_sha is the
+-- RUNNING build (seedSelfApp writes GIT_SHA at boot), and GitHub's main is
+-- what should be running; everything between the two — the Actions image
+-- build, the Helm release, Argo CD, the rollout — is outside the platform,
+-- and when a link in it fails the merge reads "merged" here while production
+-- serves the previous commit. #2589 sat like that for half an hour because
+-- one registry connection dropped during the image build. The drift poller
+-- watches the gap and records here what it found, once, so the group chat,
+-- the admins' notifications and the board banner can say so.
+--
+-- NULL when the running build is at main (or ahead of a superseded record).
+-- Otherwise one JSON record:
+--   sha          the merged commit that has not been released
+--   prNumber     the PR that merged it, from the squash subject; may be null
+--   kind         'workflow_failed'  the release workflow concluded red
+--                'workflow_running' still running long past the normal time
+--                'rollout_missing'  the workflow published, nothing rolled
+--                'unknown'          past the grace with no workflow to read
+--   since        when main moved to the commit (ISO)
+--   detectedAt   when this record was written (ISO)
+--   running      the build that was serving when it was written
+--   runUrl       the workflow run on GitHub, when one was found
+--   runStatus / runConclusion   the run's own words, when found
+-- Only the self-hosted row ever carries one; a child app's merges deploy
+-- through rebuildProduction and record their failures on last_failure.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
 
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --

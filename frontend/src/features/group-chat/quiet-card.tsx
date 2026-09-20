@@ -21,18 +21,30 @@ export interface QuietCardProps {
   exhausted: boolean;
   canPost: boolean;
   appName: string;
+  /**
+   * 'change' is a proposal's own Discussion (topic/conversation.tsx), where
+   * the same quiet card asks about this change rather than about the app.
+   */
+  variant?: 'app' | 'change';
 }
 
-export function QuietCard({ exhausted, canPost, appName }: QuietCardProps) {
+export function QuietCard({ exhausted, canPost, appName, variant = 'app' }: QuietCardProps) {
+  const change = variant === 'change';
   return (
-    <div className="gc-quiet mx-3 my-3 rounded-2xl bg-zinc-100 px-4 py-4 text-center dark:bg-zinc-800" data-quiet-chat="">
+    <div className="gc-quiet mx-3 my-3 rounded-2xl bg-zinc-100 px-4 py-4 text-center dark:bg-zinc-800" data-quiet-chat={change ? 'change' : ''}>
       <div className="text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
-        {exhausted ? 'Nobody has said anything here yet' : 'It has been quiet in here lately'}
+        {change
+          ? (exhausted ? 'Nobody has commented on this change yet' : 'It has been quiet on this change lately')
+          : (exhausted ? 'Nobody has said anything here yet' : 'It has been quiet in here lately')}
       </div>
       <div className="mt-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
-        {canPost
-          ? `\u{1F44B} Say hi, ask a question, or share what you would like to see next in ${appName}.`
-          : `Messages from the people building ${appName} will show up here.`}
+        {change
+          ? (canPost
+            ? '\u{1F44B} Ask a question, or say what you think of it.'
+            : 'Comments from the group will show up here.')
+          : (canPost
+            ? `\u{1F44B} Say hi, ask a question, or share what you would like to see next in ${appName}.`
+            : `Messages from the people building ${appName} will show up here.`)}
       </div>
     </div>
   );

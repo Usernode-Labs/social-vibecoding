@@ -13,7 +13,7 @@ const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
-const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
+const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
 const { placeBounty } = require('../services/bounties');
 const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
@@ -488,21 +488,48 @@ function stagingMockIssueComments(number) {
       createdAt: daysAgo(3),
     },
   ]);
+  // #2556: one deliberately LONG reply per thread, so the "Show more" a
+  // comment grows past four lines actually has something to hide in a
+  // preview. Staging only, like every row in this function, and marked
+  // "[Mock]" like every row in this function. It is last in each thread on
+  // purpose: the Workshop's inline slot renders only the last two comments,
+  // so a long row further up would be invisible on the surface that most
+  // needed the clamp.
+  const longReply = () => ({
+    author: 'staging-tester',
+    body: '[Mock] Writing this one out at length on purpose, because a short '
+      + 'reply cannot show what a long one does to a card. Steps to reproduce: '
+      + 'open the board on a narrow window, scroll to any row that has a '
+      + 'conversation under it, and watch the row below it get pushed off the '
+      + 'bottom of the screen by a single pasted stack trace. It happens on '
+      + 'the topic page too, where three replies of this size turn the '
+      + 'discussion into a page of scrolling before you reach the box to '
+      + 'answer in. What I expected was the first few lines and a way to ask '
+      + 'for the rest, the way the app list already offers one. What I got '
+      + 'was the whole thing, every time, on every surface that renders a '
+      + 'comment. Adding a few more sentences here so this stays longer than '
+      + 'four lines at a desktop width as well as on a phone, since that is '
+      + 'the case the control has to be measured against.',
+    createdAt: hoursAgo(1),
+  });
   const threads = {
     900001: [
       ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] I can reproduce this every time on Firefox — the toggle flips back to light as soon as I reload.', createdAt: hoursAgo(40) },
       { author: 'usernode-bot', body: '[Mock] Thanks for the report. Is the preference meant to persist per-device or per-account? Defaulting to per-device unless you say otherwise.', createdAt: hoursAgo(36) },
       { author: 'staging-tester', body: '[Mock] Per-device is fine — just make it survive a refresh.', createdAt: hoursAgo(30) },
+      longReply(),
     ],
     900002: [
       ...stampLadder(),
       { author: 'another-tester', body: '[Mock] +1, Y/N shortcuts would be a huge time-saver during a voting spree.', createdAt: hoursAgo(20) },
       { author: 'usernode-bot', body: '[Mock] Should the shortcut act on the focused card only, or the top card in the list? Going with the focused card.', createdAt: hoursAgo(18) },
+      longReply(),
     ],
     900003: [
       ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
+      longReply(),
     ],
   };
   if (threads[n]) return threads[n];
@@ -524,6 +551,7 @@ function stagingMockIssueComments(number) {
         + 'Staging only, and never served in production.',
       createdAt: hoursAgo(5),
     },
+    longReply(),
   ];
 }
 
@@ -1891,8 +1919,10 @@ function issueRoutes(config) {
         }
       }
 
-      const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStartUtc());
-      const myRemaining = Math.max(0, WEEKLY_KUDOS_LIMIT - used);
+      // #1688: what the board shows beside the bounty button is the BOUNTY
+      // allowance, which has its own count now (services/bounties.js).
+      const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
+      const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
       res.json({
         issues,
@@ -1905,7 +1935,7 @@ function issueRoutes(config) {
           ? { refreshed: !!result.refreshed, refreshRetryMs: result.retryInMs || 0 }
           : {}),
         myRemaining,
-        limit: WEEKLY_KUDOS_LIMIT,
+        limit: WEEKLY_BOUNTY_LIMIT,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });

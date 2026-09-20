@@ -483,6 +483,93 @@ test('the proportional fill markup is preserved on the tally tiers', () => {
   assert.match(wonNo, /gc-vote-fill-full gc-vote-fill-full-no/);
 });
 
+test('the two bars face each other at full height, and meet rather than overlap', () => {
+  // The geometry lives in CSS, so that is where it is pinned: Yes anchored
+  // left, No anchored right, both the pill's whole height. Before this they
+  // were half-height lanes stacked one above the other, which meant a tally
+  // with votes on one side only — nearly all of them — drew a bar covering
+  // half the pill and read as a rendering fault.
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const base = css.slice(css.indexOf('.gc-vote-fill {'), css.indexOf('.gc-vote-fill-full-yes'));
+  assert.match(base, /\.gc-vote-fill \{[^}]*height: 100%/, 'both bars are the pill\'s full height');
+  assert.doesNotMatch(base, /height: 50%/, 'no half-height lanes left');
+  assert.match(base, /\.gc-vote-fill-yes \{ left: 0;/, 'Yes grows from the left');
+  assert.match(base, /\.gc-vote-fill-no \{ right: 0;/, 'and No from the right');
+  // The solid fill has no side of its own, so it needs an anchor to sit on.
+  assert.match(css, /\.gc-vote-fill-full \{ left: 0; top: 0; width: 100%; height: 100%; \}/);
+});
+
+test('facing bars can meet but never overlap, and keep their ratio when they would', () => {
+  const AppView = makeAppView();
+  // Spread into THIS realm: AppView is evaluated in a vm context, so the
+  // object it hands back is structurally right and reference-wrong for a
+  // strict deep compare.
+  const widths = (yes, no, maj) => ({ ...AppView.voteFillWidths(yes, no, maj) });
+
+  // The ordinary case: each side is simply its share of the threshold.
+  assert.deepEqual(widths(1, 0, 2), { yes: 50, no: 0 });
+  assert.deepEqual(widths(1, 1, 4), { yes: 25, no: 25 });
+  assert.deepEqual(widths(0, 0, 4), { yes: 0, no: 0 });
+  // Exactly meeting is allowed — that is the bar full, split between them.
+  assert.deepEqual(widths(1, 1, 2), { yes: 50, no: 50 });
+
+  // Past that they would overlap, and the later bar would paint over the
+  // earlier one. Scaled by a common factor instead, so which side is ahead
+  // stays readable. A contested tally is exactly this case: 5 active, 3
+  // needed, 2 yes and 2 no is 133% between them.
+  const contested = widths(2, 2, 3);
+  assert.equal(Math.round(contested.yes + contested.no), 100, 'they fill the bar, no more');
+  assert.equal(contested.yes, contested.no, 'and a tie still looks like a tie');
+  const uneven = widths(3, 1, 3);
+  assert.equal(Math.round(uneven.yes + uneven.no), 100);
+  assert.ok(uneven.yes > uneven.no * 2.9 && uneven.yes < uneven.no * 3.1,
+    'three to one still reads as three to one');
+
+  // Nothing ever exceeds the pill, whatever it is handed.
+  for (const [y, n, m] of [[9, 9, 1], [5, 0, 2], [0, 5, 2], [1, 0, 0], [-1, -1, 2]]) {
+    const w = widths(y, n, m);
+    assert.ok(w.yes >= 0 && w.no >= 0 && w.yes + w.no <= 100.001, `${y}/${n} of ${m}`);
+  }
+});
+
+test('the React pill and the legacy pill compute the same bar, to the pixel', () => {
+  // Two renderers draw this bar — StatusPill and voteCountPill — and the
+  // rule is transcribed rather than imported, because a bundled component
+  // cannot import a classic script. So the transcription is pinned.
+  const AppView = makeAppView();
+  const { voteFillWidths } = api();
+  for (const [y, n, m] of [[0, 0, 2], [1, 0, 2], [1, 1, 4], [2, 2, 3], [3, 1, 4], [1, 0, 0], [7, 2, 5]]) {
+    assert.deepEqual({ ...voteFillWidths(y, n, m) }, { ...AppView.voteFillWidths(y, n, m) }, `${y}/${n} of ${m}`);
+  }
+});
+
+test('the approvals pill draws its bar by the same rule', () => {
+  // "1 of 2 approvals" renders a Yes bar alone, and it must be the same
+  // half-width bar the tally would draw rather than a second convention.
+  const AppView = makeAppView();
+  assert.match(
+    AppView.voteCountPill(PR({ approvals_required: 2, yes_count: 1, check_state: 'passing' })),
+    /gc-vote-fill gc-vote-fill-yes" style="width:50%/
+  );
+});
+
+test('a rendered tally that would overlap is drawn scaled, in both pills', () => {
+  // The tallies above all leave a gap, so they cannot tell the shared rule
+  // from the formula it replaced. This one can: 2 yes and 2 no of 3 needed
+  // is 133% between them, and what must reach the DOM is 50/50.
+  const AppView = makeAppView();
+  const over = { yes_count: 2, no_count: 2, votes_required: 3, check_state: 'passing' };
+  const legacy = AppView.voteCountPill(PR(over));
+  assert.match(legacy, /gc-vote-fill-yes" style="width:50%/);
+  assert.match(legacy, /gc-vote-fill-no" style="width:50%/);
+  assert.doesNotMatch(legacy, /width:66/, 'never the unscaled share, which would overlap');
+
+  const composite = pillHtml(AppView, PR({ ...over, my_vote: 'yes' }));
+  assert.match(composite, /gc-vote-fill-yes" style="width:50%/);
+  assert.match(composite, /gc-vote-fill-no" style="width:50%/);
+  assert.doesNotMatch(composite, /width:66/);
+});
+
 test('a countdown carries the ticker contract the 30s timer reads', () => {
   const AppView = makeAppView();
   const html = pillHtml(AppView, PR({

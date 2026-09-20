@@ -241,7 +241,11 @@ test('proposal, foreign, plain collaborator', () => {
   assert.ok(labels.some((l) => /Explore in dev chat/.test(l)), 'offered from ⋯');
   assert.ok(!proposalCardHtml(AppView, PR()).includes('gc-explore-chat-btn'),
     '…and nowhere on the face');
-  assert.ok(labels.some((l) => /kudos/i.test(l)));
+  // Kudos went the other way (#1688): the slot is the band's one pill —
+  // "Thank <author> for putting this up" until the viewer votes or thanks —
+  // so ⋯ no longer offers a second way to give the same kudos.
+  assert.ok(!labels.some((l) => /kudos/i.test(l)), 'kudos is on the face, not in ⋯');
+  assert.match(proposalCardHtml(AppView, PR()), /gc-card-actions[^>]*><span class="contents" data-kudos-host=/);
   assert.ok(labels.some((l) => /Set priority/.test(l)));
 });
 
@@ -774,4 +778,38 @@ test('the ✨ that used to live inside the Explore label is now its icon', () =>
     .find((i) => /Explore in dev chat/.test(i.label));
   assert.equal(item.label, 'Explore in dev chat', 'no glyph baked into the label');
   assert.equal(AppView._menuIconGlyph(item), AppView.MENU_ICONS.explore);
+});
+
+// ── A folded kudos slot in ⋯ ──────────────────────────────────────────
+
+// The board band's fold (dev-card.tsx useFoldedActions) hands the kudos
+// spec over only when not even its clap fit beside Open card, Preview and
+// ⋯. The row is the slot's own face, acting through the slot's own button,
+// so Kudos keeps every rule it has.
+test('a folded kudos slot is a ⋯ row: the slot’s line, acting through its button', () => {
+  const AppView = makeAppView();
+  let clicked = 0;
+  const btn = { disabled: false, click: () => { clicked += 1; }, getAttribute: () => 'Thank someone for putting this up' };
+  const host = {
+    querySelector: (sel) => (sel === '[data-kudos-action="give"]' ? btn
+      : sel === '.dev-thanks-label' ? { textContent: ' Thank someone for putting this up ' } : null),
+  };
+  AppView.__sandbox.document.querySelector = (sel) => (sel === '[data-kudos-host="7"]' ? host : null);
+  AppView._setFoldedCardActions('proposal:7', [{ key: 'kudos', label: '', kudos: 7 }]);
+  const rows = AppView._cardMenuItems('proposal:7');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].label, 'Thank someone for putting this up', 'the slot’s own line, trimmed');
+  assert.equal(rows[0].icon, 'kudos');
+  assert.equal(rows[0].title, 'Thank someone for putting this up');
+  assert.equal(rows[0].disabled, false);
+  rows[0].act();
+  assert.equal(clicked, 1, 'the click is the slot’s');
+  // The count pill (no line on the face): the verb, by the cache state.
+  AppView.__sandbox.document.querySelector = () => null;
+  assert.equal(AppView._cardMenuItems('proposal:7')[0].label, 'Give kudos');
+  AppView.__sandbox.Kudos._ensureCache = () => ({ count: 1, my_kudos: true, my_kudos_direct: true });
+  assert.equal(AppView._cardMenuItems('proposal:7')[0].label, 'Retract kudos');
+  // A spec with neither a call nor a slot is dropped, as before.
+  AppView._setFoldedCardActions('proposal:7', [{ key: 'x', label: 'x' }]);
+  assert.equal(AppView._cardMenuItems('proposal:7').length, 0);
 });

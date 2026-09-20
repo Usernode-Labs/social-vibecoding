@@ -214,7 +214,7 @@ test('the column owns which card is open, one per column, through the shared fol
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(CARD, /const hasActions = bandPrimary\.length > 0 \|\| !!actionEnd \|\| !!menuTrigger \|\| !!bandPreview;/);
   assert.match(CARD, /\{actionEnd\}\s*\{bandPreview\}\s*\{menuTrigger\}\s*<\/div>/);
-  assert.match(CARD, /if \(k\.dataset\.fold\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width');
+  assert.match(CARD, /if \(k\.dataset\.fold \|\| k === host\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width (the kudos host apart: its pill is measured through it)');
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
   assert.match(KANBAN, /const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);/);
@@ -777,7 +777,99 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // #2423 extends the existing Done-column check above rather than consuming
   // the final reserved slot: the same fixture now covers the completed
   // change's in-app Closed-issue chip too.
-  assert.equal(DAPP.tests.length, 690);
+  //
+  // #1688 does the same with the In-review vote-button check: its column
+  // must now also hold a card whose button asks "Still yes?" (a Yes cast on
+  // an earlier version) and a fresh card whose kudos slot offers thanks by
+  // name — one check, no slot consumed.
+  //
+  // 690 → 690: the proposal page redesign (task 495) rewrote the checks the
+  // old page shape held — the sheet order, the two About halves, the path
+  // caption and its who-acts sub, the three conversation tabs, Explore in
+  // ⋯ — and folded its own claims into them with `:has()` on the same
+  // pages (the fold and the More sheet's accordion, the Review line, the
+  // Discussion in the general chat's language, the accent Re-run pill),
+  // merging the bare help-button check into the Review-line one. Its two
+  // new checks — the issue rows under What changes for you (9000013) and
+  // the one-line failing check (9000093) — take the two slots that merging
+  // freed, so the manifest keeps its 20 clear of the ceiling
+  // (tests/improve-session-spinner.test.js, tests/proposal-tests-manifest.test.js).
+  //
+  // 690 → 690: the change page as a Needs-you item (task 497) repointed the
+  // checks the previous shape held — the sheet order, the About halves, the
+  // folded summary, the numbered ledger path, the state tags — at the hero
+  // and the steps sheet, in place. No slot moved either way.
+  //
+  // 690 → 693: the first-run "Choose your username" step (#2563) is a new
+  // user-visible screen, so it declares checks of its own — one visual
+  // claim for the modal with its suggestion already in the field, and two
+  // that pin the copy the step depends on (the Continue button, which is
+  // the only way out of it, and the sentence that states the rules). It
+  // found the manifest exactly ON the 20-slot floor, so the ceiling moved
+  // with it (services/app-manifest.js, 710 → 730).
+  //
+  // 693 → 695: the "Model costs" admin section (#2570) is a new screen in
+  // the admin console — the per-model table of notes, shown estimates and
+  // observed spend, with the override field — so it declares two checks of
+  // its own: one visual claim for the table at /#admin/model-costs, and one
+  // that pins the override control an admin with write access acts on. The
+  // manifest stays 35 clear of the ceiling.
+  //
+  // 693 → 695: independently on main, the welcome tour (#2255) replaced the
+  // one-line #home-welcome banner with an eight-step overlay, and declares
+  // two checks of its own — that Settings offers the way back into it, and
+  // that the overlay ships hidden on Home so nobody's first paint meets it.
+  //
+  // 695 → 697: the tallies above were computed on either side of this merge
+  // against the same shared 693 and do not reconcile through the comment
+  // trail alone. This branch's #2570 pair and main's #2255 pair are
+  // independent additions against that shared 693, so the merged manifest
+  // holds every one of them: 693 + 2 + 2 = 697. The ceiling is untouched:
+  // 697 leaves 33 slots against MAX_DECLARED_TESTS (730), clear of the
+  // 20-slot floor.
+  //
+  // 697 → 699: the comment clamp (#2556) declares one check per surface it
+  // can actually reach from a URL — the Workshop's inline recent comments
+  // (the ?shot=feed-comments route, which already unfolds an issue row) and
+  // an issue's Discussion. Both assert the REVEALED control rather than the
+  // clamp alone, because the control is what a measurement puts there and a
+  // clamp with no control is the bug, not the feature. The third surface,
+  // the card's own reply thread, gets no check: it would need a long reply
+  // POSTED to the app's thread, and seeding one would be a fixture that
+  // fabricates activity rather than data. 699 leaves 31 slots against
+  // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  //
+  // 699 → 701: the running row's heading (#2597) is two assertions about
+  // one seeded transcript, not one — the heading now says what is happening
+  // ("Coding agent is running") and a second line says where ("Homeroom ·
+  // Claude"), and a single check could only pin one of them. Both ride the
+  // 990412 dev-session fixture the coding-run card already uses, so neither
+  // adds a route. 701 leaves 29 slots against MAX_DECLARED_TESTS (730),
+  // clear of the 20-slot floor.
+  //
+  // 701 → 702: #2607 put the venue dropdown on the unsent-change screen, so
+  // the check that pinned its ABSENCE there was retargeted to the new truth
+  // rather than deleted, and ONE check was added beside it — the dropdown
+  // is an enabled, direct-child control that names a venue and opens the
+  // sheet, which is the part a retargeted :not() cannot assert. The pick
+  // itself gets no check: every answer but the in-chat one creates a session
+  // row, and a declared check that creates one on every run would seed the
+  // staging clone with sessions nobody asked for. This branch's one addition
+  // and main's #2597 pair are independent additions against the shared 699,
+  // so the merged manifest holds all three: 699 + 2 + 1 = 702, which leaves
+  // 28 slots against MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  //
+  // 702 → 703: #2605 moved the build surface off a change's card page onto
+  // the dev session's own page. The four checks that pinned the Build sheet
+  // were retargeted rather than deleted — two now assert that a card page
+  // has NO build surface, one that an old `?conversation=workspace` link
+  // lands on the session page, one that a published chat renders read-only
+  // there — and ONE was added beside them: the old pair on the shared
+  // session's page asserted the transcript's body and its author
+  // attribution, and those now sit on two different pages, so the body
+  // needs a check of its own. 27 slots left against MAX_DECLARED_TESTS
+  // (730), clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 703);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -925,8 +1017,12 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   // fixed at the band's right, a narrow column may leave no room before
   // them, so the fold may take the first pill too; only a kudos host stays.
   assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\} hidden=\{i >= bandPrimary\.length - folded\.n\}/);
-  assert.match(CARD, /const foldable = primary\.filter\(\(a\) => a\.kudos == null\)\.length;/);
-  assert.match(CARD, /const hidden = n > 0 \? primary\.filter\(\(a\) => a\.kudos == null\)\.slice\(-n\) : \[\];/);
+  // The fold window is taken over the specs that DRAW a foldable pill: not
+  // the kudos host, and not the topic head's labelled Preview (an action
+  // spec too, drawn as the band's fixed control). Counting Preview put the
+  // window one spec off, and a folded first pill never reached the menu.
+  assert.match(CARD, /const foldSpecs = primary\.filter\(\(a\) => a\.kudos == null && !a\.preview\);\n\s*const foldable = foldSpecs\.length;/);
+  assert.match(CARD, /const hidden = n > 0 \? foldSpecs\.slice\(-n\) : \[\];/);
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));

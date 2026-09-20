@@ -2,9 +2,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const proposalUpdate = require('../src/services/proposal-update');
 const evidenceState = require('../src/services/visual-evidence-state');
 const handoff = require('../src/routes/proposal-handoff');
+const votes = require('../src/routes/votes');
 const { intent } = require('./fixtures/visual-evidence');
 
 const HEAD = 'a'.repeat(40);
@@ -91,4 +94,34 @@ test('native handoff build requests accept the same strictly parsed visual inten
   assert.throws(() => handoff.parseBuildBody({
     schemaVersion: 1, headSha: HEAD, history: [], tests: [], visualEvidence: bad,
   }), /relative in-app path/);
+});
+
+test('PR import records the declaration on its existing transaction client', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/routes/votes.js'), 'utf8');
+  const transaction = source.slice(
+    source.indexOf("const importClient = await pool.connect()"),
+    source.indexOf("const sessionId = inserted[0].id")
+  );
+  assert.match(transaction,
+    /recordIntentInTransaction\(\s*importClient,\s*inserted\[0\]\.id,\s*importVisualEvidence/,
+    'the uncommitted session row and its evidence are written atomically');
+  assert.doesNotMatch(transaction, /recordIntent\(\s*importClient/,
+    'the pool-owning helper must not receive an already checked-out PoolClient');
+});
+
+test('PR import evidence failures expose a safe stage and field without leaking the database error', () => {
+  const err = new Error('password=not-for-callers');
+  err.prImportStage = 'visual_evidence_intent';
+  err.prImportField = 'visualEvidence';
+  const body = votes.prImportFailureBody(err);
+  assert.deepEqual(body, {
+    error: 'PR import failed while recording visualEvidence.',
+    stage: 'visual_evidence_intent',
+    field: 'visualEvidence',
+    retryable: true,
+  });
+  assert.doesNotMatch(JSON.stringify(body), /password/);
+  assert.deepEqual(votes.prImportFailureBody(new Error('private')), {
+    error: 'Internal server error',
+  });
 });

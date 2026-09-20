@@ -79,6 +79,11 @@ export type NotificationRowView = {
   label: string;
   /** The subject line. EMPTY when the label is the whole of the row's copy. */
   segments: Segment[];
+  /**
+   * #1688: a row's own button, beside the tap that opens the thing — "Still
+   * yes" on a re-confirm ask. Absent on every other row.
+   */
+  actions?: { key: string; label: string; primary?: boolean }[];
 };
 
 type SavedView = {

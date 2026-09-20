@@ -58,6 +58,12 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #2568: the included key is not claimed, it is created ────────
+  // Every account is created with its included OpenRouter key, so the
+  // three ids that existed to ASK for one have nothing left to do. The
+  // card they sat in is replaced by #settings-openrouter-included, a
+  // status line (ADDED_IDS below).
+  'settings-openrouter-beta-gated': 'The "Codex/OpenRouter is being rolled out gradually" notice. There is no gradual rollout any more — CODEX_OPENROUTER_ENABLED is a deployment switch, not a per-account allowlist, and with it off the section renders nothing rather than an explanation of a queue nobody is in.',
   // ── #2304: app access moved to App settings ─────────────────────
   'members-visibility-section': 'The duplicate visibility editor in Members & visibility. App settings is the canonical access surface now; Members keeps collaborators, app admins and proposal approvals.',
   'members-vis-hint': 'The dependent build/view hint belonged to the retired two-axis editor. App settings presents only the three valid access combinations, so an invalid combination cannot be selected.',
@@ -274,6 +280,21 @@ const RETIRED_IDS = {
   // held nobody back and let nobody in. The invite link beside it, and
   // the copy saying we try to admit people together, are untouched.
   'more-admit-together': 'The "only let me in when someone from my link gets in too" checkbox. Nothing read the flag, so the promise it made was never kept; the field is dropped on input the way #more-invites was.',
+  // ── The signed-out landing stops being a website ──────────────────
+  // Measured on production at 375x812: 3328px of scroll, four screens,
+  // three of them a grid of app tiles 36 of which were locked and
+  // captioned "Account required". The screen now carries the logotype,
+  // the illustration, one heading, one sentence and two pills. What the
+  // retired ids held either moved into the body or was the grid itself.
+  // #landing-back-to-waiting, #landing-header, #landing-header-title,
+  // #landing-back-btn, #landing-waitlist-link and #landing-status-link
+  // all SURVIVE — see the design spec's slice B.
+  'landing-header-ctas': 'The bar\'s CTA wrapper. Both ways in are full-width pills in the body now, under the sentence that says what the product is, so the wrapper had nothing left to hold. The bar carries the wordmark and the back disc only.',
+  'landing-signin-cta': 'The header\'s 28px "Sign in" chip. Its job moved to the body\'s secondary pill, href="#login" unchanged, drawn as the same white pill the sign-in screen already uses.',
+  'landing-waitlist-cta': 'The header\'s 28px "Join waitlist" chip. Its job moved to #landing-waitlist-link, which carries the MARKETING waitlist URL with target="_blank" now instead of the in-app #waitlist route, so the join happens where the form already lives.',
+  'landing-waitlist': 'The pitch card <section>: 67 words of explanation in a tinted box above the grid. Replaced by the eyebrow, one heading and one sentence, with no box around them — the card was the largest single block on a screen whose problem was that it read as a website.',
+  'landing-cta-queued': 'The "You\'re already on the waitlist" line inside that card. A waiting-room session\'s whole action area is one pill to #waiting now (#landing-back-to-waiting, which is deliberately NOT retired), which says the same thing and gives them somewhere to go.',
+  'landing-apps': 'The directory grid. 41 tiles, 36 locked, three of the four screens a visitor scrolled through, and none of them usable signed out. The directory is still FETCHED — ?shot=anon-back picks its target from it, pull-to-refresh re-runs it, and _loadLandingApps stays a router seam — it simply renders nothing.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -397,7 +418,7 @@ const ADDED_IDS = {
   'app-context-row-workshop': 'The app\'s Workshop — the lander, and the strip\'s only Dev segment: the same cards the kanban draws, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment, then outlived the Board segment.',
   // ── #1443: the chip and its menu ────────────────────────────────
   'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
-  'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',
+  'app-switcher-name': 'The chip\'s label, a named slot so a declared check can assert WHAT the chip says and not merely that it exists. It holds the Homeroom logotype on a platform screen and the app\'s name inside an app (frontend/@/components/ui/wordmark.tsx), so a check that wants the platform case asserts the <svg> rather than text — the mark has no text to match.',
   'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
   'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
   'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',
@@ -460,14 +481,48 @@ const ADDED_IDS = {
   'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
   'mobile-install-open': 'The strip\'s primary control. An anchor to the store when a listing is published for this OS (href from app_version_configs.update_url via GET /api/public/mobile-app); a button revealing the Add-to-Home-Screen steps when none is (#1513).',
   'mobile-install-dismiss': 'Dismisses the strip for this session; the answer is kept in sessionStorage, so the next visit is offered the app once more (#1514).',
-  // #1561 — the once-per-account welcome on Home. A new account lands on a
-  // launcher grid of other people's apps with nothing on the screen saying
-  // what the place is, so the banner states it: the apps are changed by the
-  // people using them, and nothing ships without a group vote. Like the
-  // install strip above, it is always in the document and starts `hidden`,
-  // because the viewer is not known at prerender time.
-  'home-welcome': 'The dismissible first-login explainer at the top of #home-body (#1561).',
-  'home-welcome-dismiss': 'Dismisses it for good, per account: the answer is kept in localStorage under the viewer\'s user id.',
+  // #2255 — the eight-step welcome tour, and the two ids it took off the
+  // list. #1561's `#home-welcome` / `#home-welcome-dismiss` stood here: the
+  // once-per-account explainer at the top of #home-body. They are NOT in
+  // RETIRED_IDS, because that map is for ids the frozen baseline records and
+  // these two were added after it; a declared id that is no longer in the
+  // document is removed from THIS map, and the test below fails on a stale
+  // entry either way.
+  //
+  // The tour replaces the banner rather than joining it. The banner said the
+  // two things the launcher never says and then went for good; the tour says
+  // the same two things in its first step and then POINTS at the four places
+  // the banner could only name (Create app, Improve and what is behind it,
+  // Challenges, and the way back to Settings). Like the install strip above
+  // it is always in the document and starts `hidden`, because the viewer is
+  // not known at prerender time.
+  'home-tour': 'The welcome tour overlay, mounted from Shell.tsx and hidden until the first sign-in that reaches Home (#2255).',
+  // The dim is FOUR panels tiling the viewport minus the hole, not one
+  // box-shadow. A shadow paints but receives no pointer events, so it cannot
+  // block a click -- and the Improve step needs exactly that split: the
+  // cut-out passes the press through to the real #improve-btn while the
+  // dimmed area keeps swallowing clicks.
+  'home-tour-shade-top': 'The dim above the cut-out, and the whole screen on a step with nothing to point at.',
+  'home-tour-shade-right': 'The dim to the right of the cut-out.',
+  'home-tour-shade-bottom': 'The dim below the cut-out.',
+  'home-tour-shade-left': 'The dim to the left of the cut-out.',
+  'home-tour-spotlight': 'The cut-out\'s outline. It blocks the press on a step that only describes its target and passes it through on the Improve steps, which press real controls.',
+  'home-tour-card': 'The tooltip card, positioned against the cut-out and re-measured on resize and scroll.',
+  'home-tour-body': 'The card\'s step half. Hidden while the Skip question is up.',
+  'home-tour-counter': 'The "3 of 8" step counter.',
+  'home-tour-title': 'The step heading, and the card\'s accessible name.',
+  'home-tour-text': 'The step copy.',
+  'home-tour-skip': 'Skip, offered on every step.',
+  'home-tour-back': 'Back, disabled on step 1.',
+  'home-tour-next': 'Next, and Finish on the last step.',
+  'home-tour-confirm': 'The Skip question. Hidden until Skip or Escape.',
+  'home-tour-confirm-text': '"Are you sure? You can reopen this from Settings."',
+  'home-tour-confirm-cancel': 'The way back out of the question.',
+  'home-tour-confirm-skip': 'Confirms the skip, which records the tour as finished for this account.',
+  // The other half of the tour's promise: Settings -> Welcome tour.
+  'settings-tour-section': 'Settings -> Welcome tour, the pane holding the replay control (#2255).',
+  'settings-tour-replay': 'Clears this account\'s "finished" flag, asks for the tour and goes to Home.',
+  'settings-tour-hint': 'The line under it saying where the tour starts.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
@@ -641,9 +696,14 @@ const ADDED_IDS = {
   // four plaintext reveal controls originally added here were removed when
   // company-funded credentials became internal-only; like other post-baseline
   // ids, they leave this map rather than entering RETIRED_IDS.
-  'settings-openrouter-managed-card': 'Included managed OpenRouter key status and claim card (#1344).',
-  'settings-openrouter-managed-message': 'Eligibility/ownership/status copy for the included key (#1344).',
-  'settings-openrouter-claim': 'One-time managed child-key provisioning action (#1344).',
+  // #2568 replaced the claim card with a status line: the key exists
+  // before anybody opens this screen, so #settings-openrouter-managed-card,
+  // #settings-openrouter-managed-message and #settings-openrouter-claim
+  // went with the act of claiming. They were never in the baseline (they
+  // arrived with #1344, after it was cut), so they leave this map rather
+  // than entering RETIRED_IDS.
+  'settings-openrouter-included': 'Included OpenRouter key status card (#2568) — the key\'s state, its last four and its allowance, with nothing to press.',
+  'settings-openrouter-included-status': 'The sentence inside it, written from the credential and managed-key state (#2568).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
   // #1383 — the #apps directory's Sort control. It rides INSIDE
   // #browse-search-bar rather than in a strip of its own: both narrow the
@@ -687,6 +747,9 @@ const ADDED_IDS = {
   'notifications-tab-all': 'The whole archive, LAST. The strip narrows left to right — the count you came for, the one kind you answer, then the archive holding both — so the unfiltered tab sits behind the two filtered ones rather than between them. It is where the footer link at the bottom of a filtered tab goes — see #notifications-see-older — and the only tab that pages more rows in.',
   'notifications-tab-messages': 'The sheet\'s SECOND tab, between Unread and All. A message notification is one row in a flat chronological feed that also carries every session, proposal and kudos row, so it sinks fast on a busy account; this is the one place to catch up on conversations regardless. Its own \'All messages\' entry (#notifications-all-messages, rendered only while the tab is active and so not in the static markup) leads to the #messages screen the app chip\'s Messages row also opens.',
   'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above. It sat at the far RIGHT END of that tab row, in tab-sized ink on the same baseline as the three tabs, so a control that changes data read as a fourth place to go; it is a row UNDER the Unread tab now, with the list it empties, and renders nowhere else.',
+  // ── #2377: Global Chat (experimental) ───────────────────────────
+  'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',
+  'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

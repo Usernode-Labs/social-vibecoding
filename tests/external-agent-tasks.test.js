@@ -2786,6 +2786,57 @@ test('a mirrored branch the platform cannot import is removed, not left on the a
   assert.equal(cleaned, true, 'a head the platform wrote and could not use is litter — remove it');
 });
 
+test('a transient import failure keeps the mirrored head and open PR for a free retry', async () => {
+  let cleaned = false;
+  const gh = ghWithDiagnostics({
+    findOpenPrByBranch: async () => null,
+    createPR: async () => ({
+      number: 99,
+      html_url: 'https://github.com/usernode-bot/recipe-box/pull/99',
+      head: { repo: { owner: { login: 'usernode-bot' } } },
+    }),
+  });
+  const result = await withStubbedMirror(
+    async () => ({
+      ok: true, branch: 'usernode/from-someuser-t31-fade', credential: 'pat',
+      cleanup: async () => { cleaned = true; },
+    }),
+    () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+      { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+      {
+        user: { id: 3 }, taskId: 31,
+        importProposal: async () => ({
+          ok: false,
+          status: 500,
+          body: {
+            error: 'PR import failed while recording visualEvidence.',
+            stage: 'visual_evidence_intent',
+            field: 'visualEvidence',
+            retryable: true,
+          },
+        }),
+      }
+    ))
+  );
+
+  assert.equal(result.code, 'import_failed');
+  assert.equal(result.retryable, true);
+  assert.equal(result.recovery, 'retry_existing_pr');
+  assert.equal(result.prNumber, 99);
+  assert.equal(result.stage, 'visual_evidence_intent');
+  assert.equal(result.field, 'visualEvidence');
+  assert.equal(cleaned, false, 'the PR head is the recovery handle, not litter');
+  assert.match(result.message, /PR #99 remains open/);
+  assert.match(result.message, /slug "recipe-box" and prNumber 99/);
+});
+
+test('network and server import failures are retryable; deterministic refusals are not', () => {
+  assert.equal(svc.retryableImportFailure(null), true);
+  assert.equal(svc.retryableImportFailure({ status: 0, networkError: true }), true);
+  assert.equal(svc.retryableImportFailure({ status: 503, body: {} }), true);
+  assert.equal(svc.retryableImportFailure({ status: 409, body: {} }), false);
+});
+
 test('a mirror the platform refuses is reported as its own reason, not as GitHub’s', async () => {
   // "That branch is in somebody else's repository" is a better answer than
   // GitHub's 422, and a different one: it tells the user what to fix. A

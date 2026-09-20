@@ -137,19 +137,34 @@ const app = (over) => ({
 
 // ── featuredApps selection ────────────────────────────────────────
 
-test('discovery requires a current review and a real icon, not just popularity or featuring', () => {
+// One reviewed app, two that cannot be offered at all, and four whose review
+// is absent, expired or negative. The two lanes disagree about the last four.
+const discoveryCandidates = () => [
+  app({ slug: 'ready', active_users: 1 }),
+  app({ slug: 'no-icon', icon_emoji: null, active_users: 100 }),
+  app({ slug: 'not-running', status: 'creating', active_users: 100 }),
+  ...['unreviewed', 'outdated', 'demo', 'broken'].map((state) => app({
+    slug: state, active_users: 100, directory: { state, tier: state === 'outdated' || state === 'unreviewed' ? 'unreviewed' : 'more' },
+  })),
+];
+
+test('popular requires a current review and a real icon, not just popularity', () => {
   const Home = makeHome();
-  const candidates = [
-    app({ slug: 'ready', active_users: 1 }),
-    app({ slug: 'no-icon', icon_emoji: null, active_users: 100 }),
-    app({ slug: 'not-running', status: 'creating', active_users: 100 }),
-    ...['unreviewed', 'outdated', 'demo', 'broken'].map((state) => app({
-      slug: state, active_users: 100, directory: { state, tier: state === 'outdated' || state === 'unreviewed' ? 'unreviewed' : 'more' },
-    })),
-  ];
-  assert.deepEqual(Home.popularApps(candidates).map((a) => a.slug), ['ready']);
-  assert.deepEqual(Home.featuredApps(candidates.map((a) => ({ ...a, featured: true }))).map((a) => a.slug), ['ready']);
+  assert.deepEqual(Home.popularApps(discoveryCandidates()).map((a) => a.slug), ['ready']);
   assert.equal(Home.isDiscoveryReady(app({ demo: true })), true, 'staging inertness is not an editorial demo classification');
+  assert.equal(Home.isDiscoveryReady(app({ directory: { state: 'outdated', tier: 'unreviewed' } })), false,
+    'an expired review is not a current one');
+});
+
+test('featured requires a running app with an icon, not a current review (#2565)', () => {
+  const Home = makeHome();
+  const featured = discoveryCandidates().map((a, i) => ({ ...a, featured: true, featured_order: i }));
+  assert.deepEqual(Home.featuredApps(featured).map((a) => a.slug),
+    ['ready', 'unreviewed', 'outdated', 'demo', 'broken'],
+    'featuring is the editorial decision: an absent or expired review no longer hides the app; no icon and not running still do');
+  assert.equal(Home.isDiscoverable(app({ self_hosted: true })), false, 'the platform itself is never offered');
+  assert.equal(Home.isDiscoverable(app({ icon_emoji: null, icon_url: null })), false, 'nothing to draw');
+  assert.equal(Home.isDiscoverable(app({ status: 'creating' })), false, 'cannot be opened yet');
 });
 
 test('featuredApps: only featured rows, ordered by featured_order', () => {
@@ -791,7 +806,12 @@ for (const prepopulated of [false, true]) {
     }));
     const Home = makeHome();
     const offered = Home.featuredApps(apps);
-    assert.deepEqual(offered.map((a) => a.slug), fixtures.map((a) => a.slug));
+    // Featuring, not the review, decides the lane (#2565): a production app
+    // the clone brought over already featured is offered at its admin-set
+    // position even though the seed leaves it unreviewed. The fixtures follow
+    // in seed order.
+    assert.deepEqual(offered.map((a) => a.slug),
+      (prepopulated ? [real.slug] : []).concat(fixtures.map((a) => a.slug)));
     assert.ok(offered.every((a) => !a.demo && !Home.isYours(a)),
       'real DB-backed fixtures must remain available to the Discover add/remove check');
   });

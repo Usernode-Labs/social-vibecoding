@@ -29,6 +29,7 @@ const COMPONENTS = new Set([
   'progress_estimate',
   'issue_title',
   'report_summary',
+  'global_chat',
   'fleet_maintenance',
   'coding_agent_scout',
   'coding_agent_build',
@@ -385,6 +386,7 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'file_read_count', 'distinct_file_read_count', 'file_search_count',
   'file_change_count', 'distinct_file_change_count', 'mcp_call_count',
   'subagent_call_count', 'web_tool_call_count', 'tool_search_count',
+  'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 
 const CATEGORY_NAMES = Object.freeze([
@@ -392,6 +394,7 @@ const CATEGORY_NAMES = Object.freeze([
   'requested_service_tier', 'service_tier', 'inference_region',
   'requested_inference_region',
   'reasoning_effort', 'error_class', 'usage_reset_detected',
+  'turn_outcome', 'turn_error_code',
 ]);
 
 function snakeToCamel(value) {
@@ -644,6 +647,41 @@ function normalizedCteSql() {
        -- Only rows with evidence of a physical post-baseline dispatch enter
        -- the report; prepared intents cancelled during spin-up are excluded.
        AND a.metadata ? 'telemetry_component'
+
+    UNION ALL
+
+    SELECT g.created_at AS occurred_at,
+           NULL::integer AS app_id,
+           NULL::integer AS session_id,
+           g.id::text AS invocation_key,
+           COALESCE(g.message_id::text, g.thread_id::text) AS correlation_id,
+           g.attempt_number,
+           'openrouter' AS provider,
+           'global_chat' AS backend,
+           'global_chat' AS component,
+           g.requested_model,
+           g.served_model,
+           'openrouter_byok' AS billing_path,
+           g.input_tokens,
+           g.cached_input_tokens,
+           NULL::bigint AS cache_write_input_tokens,
+           g.output_tokens,
+           g.reasoning_tokens,
+           g.cost_usd,
+           g.cost_source,
+           g.duration_ms::double precision,
+           g.outcome,
+           COALESCE(NULLIF(g.error_code, ''),
+                    CASE g.outcome WHEN 'success' THEN 'end_turn' ELSE g.outcome END),
+           g.metadata || jsonb_strip_nulls(jsonb_build_object(
+             'reasoning_effort', g.reasoning_effort,
+             'request_mode', 'nonstream',
+             'output_format', 'tool_schema',
+             'tool_call_count', g.tool_calls
+           )) AS telemetry_metadata
+      FROM global_chat_usage g
+     WHERE g.outcome IN ('success', 'error', 'cancelled', 'refusal')
+       AND g.created_at >= NOW() - ($2::text || ' days')::interval
   )`;
 }
 

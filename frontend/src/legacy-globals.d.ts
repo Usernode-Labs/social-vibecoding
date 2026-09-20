@@ -85,6 +85,7 @@ declare global {
       } | null;
       eventsWs?: WebSocket | null;
       navigateHome?(): void;
+      restoreFromHash?(): void;
       navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
       openAppTab?(slug: string, tab?: string, opts?: unknown): void;
       _appUrl?(slug: string, tab?: string, ref?: unknown, subTab?: string | null,
@@ -234,6 +235,14 @@ declare global {
         /** Repaint one row's save state — the notifications drawer's unsave. */
         paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
+      };
+      globalChat?: {
+        open(options?: { threadId?: string | null }): Promise<void> | void;
+        route(threadId?: string | null): Promise<void> | void;
+        close(classicPath?: string | null): void;
+        deactivate(): void;
+        isOpen(): boolean;
+        send(text: string): Promise<void> | void;
       };
       [key: string]: unknown;
     };

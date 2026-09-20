@@ -227,6 +227,25 @@ export function DevActionsRow({
     callAppView('_rewirePlusMenu');
     return () => { live = false; };
   }, []);
+  /*
+      #2478 — ONE string for the "+" button's tooltip and its accessible
+      name. The button's only child is the glyph `+`, so a screen reader
+      announced it as "+": `title` is a tooltip, and no assistive technology
+      is obliged to fall back to it for a name (VoiceOver in Safari does not).
+      Every other glyph-only trigger on this board already pairs the two —
+      `MenuTrigger` in card/dev-card.tsx, the rail's "More" in
+      workshop/workshop.tsx — and this was the last one without.
+      Held in a const rather than written twice so the tooltip and the name
+      cannot drift apart.
+
+      `aria-label` is a STATIC attribute here and nothing outside React writes
+      it. `_wirePlusMenu` (public/js/app-view.js) co-owns this node, but only
+      its listeners and `aria-expanded`; it never sets `aria-label` and never
+      replaces the node's attributes wholesale, so the two owners do not meet.
+  */
+  const plusLabel = readOnly
+    ? 'Fork this app'
+    : 'File an issue, import a PR or manage this app';
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
@@ -252,12 +271,9 @@ export function DevActionsRow({
         id="dev-plus-btn"
         aria-haspopup="true"
         aria-expanded="false"
+        aria-label={plusLabel}
         className="un-touch-target rounded-lg bg-violet-600 hover:bg-violet-500 w-9 h-9 flex items-center justify-center text-lg font-bold leading-none text-white transition-colors"
-        title={
-          readOnly
-            ? 'Fork this app'
-            : 'File an issue, import a PR or manage this app'
-        }
+        title={plusLabel}
       >
         +
       </button>

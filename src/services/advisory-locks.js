@@ -64,7 +64,11 @@ const VOTE_DIGEST_LOCK = 991009;
 // still refuse the duplicate row, so this lock is about not doing the work
 // (and not spending the grading calls) twice, rather than about correctness.
 const CHALLENGE_SCORER_LOCK = 991010;
+// #1688: the Friday "this week on <app>" card. Exclusive across platform
+// Pods for the digest's reason: every instance runs the interval, and a card
+// posted twice into one chat is worse than one posted an hour late.
+const WEEKLY_DIGEST_LOCK = 991011;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
-  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK };
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK };

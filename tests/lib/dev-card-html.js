@@ -114,9 +114,17 @@ const BLANK_CARD = {
   rail: { chevron: false }, extra: [], dense: false, uncapped: true,
 };
 
-/** The proposal detail block: the meta line, its notes and its boxes. */
+/**
+ * What the change page says about a proposal's state: the steps sheet
+ * (topic/topic-head.tsx StepsSheet), built by `_topicStepsView` from the
+ * detail view's ledger rows — the roster, the checks, the notes — the way
+ * `_topicViewFor` builds it for a change page. The blank card carries no
+ * merge gates, so every ledger row draws as a step of its own.
+ */
 function detailsHtml(AppView, pr) {
-  return topicHeadHtml(BLANK_CARD, { actions: null, details: AppView._proposalDetailsView(pr) });
+  const body = { actions: null, changeId: pr.id || 1, details: AppView._proposalDetailsView(pr) };
+  body.steps = AppView._topicStepsView(pr, BLANK_CARD, body);
+  return topicHeadHtml(BLANK_CARD, body);
 }
 
 /** The detail ACTION block alone — the pills, the reasons, the visuals. */

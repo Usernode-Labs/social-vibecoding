@@ -88,6 +88,11 @@ export type TranscriptRow =
     text: string;
     /** `msg.content` reaches some rows as trusted html — see the builder. */
     html?: string;
+    /**
+     * #2597: a muted second line under the heading. The running row's
+     * heading no longer names the venue, so the venue is here instead.
+     */
+    caption?: string;
     elapsed: ElapsedSpec;
     stamp: string;
     dim?: boolean;
@@ -177,6 +182,8 @@ export type TranscriptRow =
     icon: 'spinner' | 'check';
     text: string;
     html?: string;
+    /** #2597's venue caption, under the card's head row. */
+    caption?: string;
     elapsed: ElapsedSpec;
     stamp: string;
     /** The live run's four summary spans; absent on the other two shapes. */
@@ -280,17 +287,9 @@ export interface TranscriptState {
   busy: boolean;
   /** #1942: an open, idle session with no messages yet shows its empty state. */
   empty?: boolean;
-  /**
-   * #2241: …and that empty session has not been created yet — this is the
-   * unsent-change screen (/dev/sessions/new). The empty state says so,
-   * because the difference is otherwise invisible and it is the whole point
-   * of the screen: arriving here costs nothing and leaving costs nothing.
-   * Only ever true alongside `empty`.
-   */
-  unsent?: boolean;
 }
 
-export const EMPTY_TRANSCRIPT: TranscriptState = { rows: [], devFlowHtml: '', activity: null, busy: false, empty: false, unsent: false };
+export const EMPTY_TRANSCRIPT: TranscriptState = { rows: [], devFlowHtml: '', activity: null, busy: false, empty: false };
 
 export const transcriptStore = createStore<TranscriptState>(EMPTY_TRANSCRIPT);
 
