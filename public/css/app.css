@@ -13355,6 +13355,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-topic-note { font-size: 13px; line-height: 1.5; color: var(--text-muted); }
 .dev-topic-about-body + .dev-topic-note { margin-top: 8px; }
+/* #2603: a governance proposal's vote roster, under the About sheet's
+   words. The ledger's review line rendered outside the ledger, so it takes
+   the note's size and its own top margin rather than the row grid's. */
+.dev-topic-roster { margin-top: 10px; font-size: 13px; line-height: 1.5; }
 .dev-topic-transcript .st-section { margin: 0; }
 
 /* ── Discussion ──
