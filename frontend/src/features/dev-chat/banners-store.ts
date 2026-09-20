@@ -58,6 +58,13 @@ export interface NewChangeBannerView {
   /** The click is in flight. Was `btn.disabled` + `btn.textContent`, written
    *  onto the element by id — a second author on a node this now renders. */
   pending: boolean;
+  /**
+   * #2602: the proposal card's hash route, or null when the slug cannot be
+   * resolved. The banner is the moment a person learns their change went up
+   * for a vote, and it named the PR without offering a way to reach it —
+   * the card is where the vote, the checks and the discussion are.
+   */
+  cardHref: string | null;
 }
 
 /**
