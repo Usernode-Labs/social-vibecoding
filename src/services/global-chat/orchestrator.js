@@ -30,18 +30,18 @@ const MAX_PARALLEL_READS = 4;
 const MAX_EXPOSED_CAPABILITIES = 60;
 const MAX_HISTORY_MESSAGES = 30;
 const MAX_TOOL_CONTENT_BYTES = 64 * 1024;
-const TURN_TIMEOUT_MS = 45_000;
-const PROVIDER_TIMEOUT_MS = 25_000;
-const TRANSIENT_PROVIDER_ERRORS = new Set([
-  'network',
-  'timeout',
-  'rate_limited',
-  'provider_unavailable',
-  'provider_error',
-  'stream_error',
-]);
-const SIMPLE_READ_START_RE = /^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:show|list|find|search|view|check|get|open|what|which|where|who|how\s+many|tell\s+me|help\s+me\s+(?:find|search))\b/i;
-const MULTI_STEP_OR_WRITE_RE = /\b(?:and\s+then|then|after\s+that|create|add|edit|change|update|set|configure|rename|delete|remove|close|merge|vote|start|continue|send|reply|fork|redeploy|install)\b/i;
+const TURN_TIMEOUT_MS = 35_000;
+// OpenRouter now owns provider failover inside one latency-routed request.
+// Keep the application deadline short and never repeat the same model request
+// blindly: that old 15s + 15s retry was the source of the observed 30s turns.
+const PROVIDER_TIMEOUT_MS = 8_000;
+// OpenRouter uses session_id as a sticky provider key. Bump this routing-only
+// suffix whenever the routing policy changes so existing chats adopt it
+// automatically instead of remaining pinned to a previously slow endpoint.
+const PROVIDER_SESSION_REVISION = 'latency-v1';
+const SYNTHESIS_REQUEST_RE = /\b(?:analyse|analyze|compare|contrast|difference|explain|recommend|summari[sz]e|why|which\s+(?:is|are|should)|best)\b/i;
+const WRITE_REQUEST_RE = /\b(?:add|change|close|configure|continue|create|delete|edit|fork|install|merge|remove|rename|reply|redeploy|send|set|start|update|vote)\b/i;
+const MULTI_CLAUSE_REQUEST_RE = /\b(?:also|and|plus|then)\b|,/i;
 
 class GlobalChatOrchestrationError extends Error {
   constructor(code, message, details = {}) {
@@ -227,23 +227,57 @@ async function inBatches(items, size, worker) {
   return output;
 }
 
-function invocationMessages(systemPrompt, metadata, transcript, loop) {
+function invocationMessages(workflowPrompt, metadata, transcript, loop) {
   return [
-    { role: 'system', content: systemPrompt },
+    // OpenRouter Chat Completions is stateless. Re-send the same complete,
+    // versioned operating manual as the stable first message on every model
+    // invocation so even a weak model never has to infer the platform rules
+    // from an earlier request. A short workflow prompt may narrow the current
+    // stage, but it never replaces the manual.
+    { role: 'system', content: SYSTEM_PROMPT },
+    ...(workflowPrompt ? [{ role: 'system', content: workflowPrompt }] : []),
     { role: 'system', content: serializeRuntimeMetadata(metadata) },
     ...transcript,
     ...loop,
   ];
 }
 
-function canFastCompleteRead(messageText, capabilityCalls, outcomes) {
-  if (!SIMPLE_READ_START_RE.test(messageText) || MULTI_STEP_OR_WRITE_RE.test(messageText)) return false;
-  if (capabilityCalls.length !== 1 || capabilityCalls[0].definition?.risk !== 'read') return false;
-  const outcome = outcomes.get(capabilityCalls[0].call.id);
-  const classic = outcome?.data;
-  return outcome?.ok === true
-    && classic?.ok !== false
-    && (!Number.isInteger(classic?.status) || (classic.status >= 200 && classic.status < 300));
+function canFastCompleteReads(messageText, capabilityCalls, outcomes) {
+  if (!capabilityCalls.length
+      || SYNTHESIS_REQUEST_RE.test(messageText)
+      || (capabilityCalls.length === 1 && MULTI_CLAUSE_REQUEST_RE.test(messageText))
+      || (WRITE_REQUEST_RE.test(messageText)
+        && capabilityCalls.every((entry) => entry.definition?.risk === 'read'))) return false;
+  return capabilityCalls.every((entry) => {
+    if (entry.definition?.risk !== 'read') return false;
+    const outcome = outcomes.get(entry.call.id);
+    const classic = outcome?.data;
+    return outcome?.ok === true
+      && classic?.ok !== false
+      && (!Number.isInteger(classic?.status)
+        || (classic.status >= 200 && classic.status < 300));
+  });
+}
+
+// Backward-compatible export name for tests and integrations that imported
+// the original single-read predicate. It now accepts one or more independent
+// reads selected by the model.
+const canFastCompleteRead = canFastCompleteReads;
+
+function completedSuggestionActionIds(capabilityCalls) {
+  const aliases = new Set();
+  for (const { capabilityId } of capabilityCalls) {
+    if (/^apps\.get\.apps\.[a-f0-9]+$/.test(capabilityId)) aliases.add('apps.list');
+    if (/^development\.get\.me\.active\.sessions\./.test(capabilityId)) {
+      aliases.add('development.active');
+    }
+    if (/^notifications\.get\.notifications\./.test(capabilityId)) {
+      aliases.add('notifications.list');
+    }
+    if (/^messages\.get\.conversations\./.test(capabilityId)) aliases.add('messages.recent');
+    aliases.add(capabilityId);
+  }
+  return [...aliases];
 }
 
 function createGlobalChatOrchestrator({
@@ -301,9 +335,19 @@ function createGlobalChatOrchestrator({
     let userMessage;
     let providerInvocationCount = 0;
     const turnResultIds = [];
+    const emitProgress = (phase, message, details = {}) => emit({
+      type: 'turn.progress',
+      phase,
+      message,
+      elapsedMs: Date.now() - turnStartedAt,
+      model: model?.id || null,
+      reasoningEffort: globalChatProfile?.reasoningEffort || null,
+      ...details,
+    });
     try {
       turnId = await store.claimTurn(pool, { userId, threadId });
       await emit({ type: 'turn.started', turnId, threadId, kind });
+      await emitProgress('understanding', 'Understanding your request…');
 
       const page = await store.listMessages(pool, {
         userId, threadId, limit: MAX_HISTORY_MESSAGES,
@@ -379,7 +423,13 @@ function createGlobalChatOrchestrator({
         const definition = exposed.get(capabilityId);
         const started = Date.now();
         let toolRunId;
-        await emit({ type: 'tool.started', toolCallId: call.id, capabilityId });
+        await emit({
+          type: 'tool.started',
+          toolCallId: call.id,
+          capabilityId,
+          title: definition.title,
+          elapsedMs: Date.now() - turnStartedAt,
+        });
         try {
           validateJsonSchema(definition.inputSchema, call.args, { path: 'input' });
           toolRunId = await store.startToolRun(pool, {
@@ -450,7 +500,10 @@ function createGlobalChatOrchestrator({
             await emit(event);
             await emit({
               type: 'tool.completed', toolCallId: call.id, capabilityId,
+              title: definition.title,
               resultId: toolRunId, status: 'confirmation_required',
+              durationMs: Date.now() - started,
+              elapsedMs: Date.now() - turnStartedAt,
             });
             return { ok: true, ...modelResult };
           }
@@ -470,7 +523,10 @@ function createGlobalChatOrchestrator({
           turnResultIds.push(toolRunId);
           await emit({
             type: 'tool.completed', toolCallId: call.id, capabilityId,
+            title: definition.title,
             resultId: toolRunId, status: 'completed',
+            durationMs: Date.now() - started,
+            elapsedMs: Date.now() - turnStartedAt,
           });
           return {
             ok: true,
@@ -492,7 +548,10 @@ function createGlobalChatOrchestrator({
           }
           await emit({
             type: 'tool.completed', toolCallId: call.id, capabilityId,
+            title: definition.title,
             resultId: null, status: 'failed', errorCode: safeCode(error),
+            durationMs: Date.now() - started,
+            elapsedMs: Date.now() - turnStartedAt,
           });
           return toolFailure(error);
         }
@@ -502,7 +561,7 @@ function createGlobalChatOrchestrator({
       // This removes an entire model round-trip for ordinary requests while
       // retaining search_capabilities for ambiguous or multi-step work.
       if (kind === 'user_turn') {
-        const initialMatches = registry.search(messageText, executionContext, { limit: 5 });
+        const initialMatches = registry.search(messageText, executionContext, { limit: 8 });
         for (const match of initialMatches) await exposeCapability(match.id);
       }
       for (let iteration = 1; iteration <= iterationLimit; iteration += 1) {
@@ -557,60 +616,80 @@ function createGlobalChatOrchestrator({
           developmentProfile,
           budget,
           availableCapabilityIds: [...exposed.keys()],
+          availableCapabilities: [...exposed.values()].map((definition) => ({
+            id: definition.id,
+            domain: definition.domain,
+            title: definition.title,
+            summary: definition.summary,
+            risk: definition.risk,
+            confirmation: definition.confirmation,
+            requiredInputs: definition.inputSchema.required || [],
+          })),
         });
-        const systemPrompt = suggestionOnly
+        const workflowPrompt = suggestionOnly
           ? MORE_SUGGESTIONS_PROMPT
           : (loopMessages.some((message) => message.role === 'tool')
             ? RESULT_FOLLOWUP_PROMPT
-            : SYSTEM_PROMPT);
-        const messages = invocationMessages(systemPrompt, metadata, transcript, loopMessages);
+            : null);
+        const messages = invocationMessages(workflowPrompt, metadata, transcript, loopMessages);
 
+        await emitProgress(
+          'planning',
+          iteration === 1 ? 'Planning the fastest safe path…' : 'Planning the next step…',
+          { attempt: 1, iteration },
+        );
+        const waitingTimer = setTimeout(() => {
+          void emitProgress(
+            'waiting_model',
+            `Waiting for ${model.name || model.id}…`,
+            { attempt: 1, iteration },
+          );
+        }, 4_000);
         let response;
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
-          try {
-            providerInvocationCount += 1;
-            response = await accounting.invokeAccounted({
-              pool,
-              config,
-              apiKey,
-              userId,
-              threadId,
-              messageId: userMessage.id,
-              model,
-              reasoningEffort: globalChatProfile.reasoningEffort,
-              spendCapUsd: globalChatProfile.spendCapUsd,
-              providerAllowance,
-              attemptNumber: attempt,
-              messages,
-              tools: currentToolSet.tools,
-              sessionId: threadId,
-              // Five compact suggestions plus a strict tool envelope fit
-              // comfortably inside the transport default. Keeping the full
-              // 800-token allowance avoids turning a provider-side length
-              // cutoff into an incomplete turn; the one-call read fast path
-              // is what removes latency, not an unsafe output cap.
-              maxOutputTokens: 800,
-              temperature: model.supportsTemperature === false ? null : 0.1,
-              parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
-              toolChoice: suggestionOnly
-                ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
-                : (mustUseCapability ? 'required' : 'auto'),
-              timeoutMs: Math.max(1_000, Math.min(
-                PROVIDER_TIMEOUT_MS,
-                deadlineAt - Date.now(),
-              )),
-              signal,
-            });
-            break;
-          } catch (error) {
-            if (Date.now() >= deadlineAt) {
-              throw new GlobalChatOrchestrationError(
-                'turn_timeout',
-                'Global Chat exceeded the turn deadline.',
-              );
-            }
-            if (attempt === 2 || !TRANSIENT_PROVIDER_ERRORS.has(error?.code)) throw error;
+        try {
+          providerInvocationCount += 1;
+          response = await accounting.invokeAccounted({
+            pool,
+            config,
+            apiKey,
+            userId,
+            threadId,
+            messageId: userMessage.id,
+            model,
+            reasoningEffort: globalChatProfile.reasoningEffort,
+            spendCapUsd: globalChatProfile.spendCapUsd,
+            providerAllowance,
+            attemptNumber: 1,
+            messages,
+            tools: currentToolSet.tools,
+            sessionId: `${threadId}:${PROVIDER_SESSION_REVISION}`,
+            // Five or six compact suggestions plus a strict tool envelope fit
+            // comfortably inside the transport default. Keeping the full
+            // 800-token allowance avoids turning a provider-side length
+            // cutoff into an incomplete turn; the one-call read fast path
+            // is what removes latency, not an unsafe output cap.
+            maxOutputTokens: 800,
+            temperature: model.supportsTemperature === false ? null : 0.1,
+            parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
+            toolChoice: suggestionOnly
+              ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
+              : (mustUseCapability ? 'required' : 'auto'),
+            timeoutMs: Math.max(1_000, Math.min(
+              PROVIDER_TIMEOUT_MS,
+              deadlineAt - Date.now(),
+            )),
+            signal,
+          });
+        } catch (error) {
+          if (Date.now() >= deadlineAt) {
+            throw new GlobalChatOrchestrationError(
+              'turn_timeout',
+              'Global Chat exceeded the turn deadline.',
+            );
           }
+          throw error;
+        } finally {
+          clearTimeout(waitingTimer);
         }
         servedModel = response.servedModel || servedModel;
         const rawCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
@@ -706,6 +785,25 @@ function createGlobalChatOrchestrator({
         const reads = capabilityCalls.filter(({ definition }) => definition.risk === 'read');
         const writes = capabilityCalls.filter(({ definition }) => definition.risk !== 'read');
         if (capabilityCalls.length) capabilityAttempted = true;
+        if (capabilityCalls.length) {
+          const titles = capabilityCalls.map(({ definition }) => definition.title);
+          const summary = titles.length === 1
+            ? titles[0]
+            : `${titles.slice(0, -1).join(', ')} and ${titles.at(-1)}`;
+          await emitProgress(
+            'running_tools',
+            `${reads.length === capabilityCalls.length ? 'Fetching' : 'Running'} ${summary}…`,
+            {
+              parallel: reads.length > 1,
+              operations: capabilityCalls.map(({ call, capabilityId, definition }) => ({
+                toolCallId: call.id,
+                capabilityId,
+                title: definition.title,
+                risk: definition.risk,
+              })),
+            },
+          );
+        }
         const readResults = await inBatches(reads, MAX_PARALLEL_READS, async (entry) => ({
           id: entry.call.id,
           result: await executeCapability(entry.call, entry.capabilityId),
@@ -756,18 +854,24 @@ function createGlobalChatOrchestrator({
           }
         }
 
-        // A simple successful read already has everything the interface needs:
-        // an authoritative result and item-level actions. Finishing it here
-        // removes the second model round trip that made list/search requests
-        // feel frozen. Multi-step requests, writes, failed reads, and ambiguous
-        // requests stay in the full agent loop above.
+        // Successful independent reads already have everything the interface
+        // needs: authoritative results and item-level actions. The model chose
+        // every operation, so the server can render all results without a
+        // second model round trip. Requests that need synthesis, writes, or a
+        // failed read stay in the full agent loop.
         if (!presentation && presentationCalls.length === 0
-            && canFastCompleteRead(messageText, capabilityCalls, outcomes)) {
+            && canFastCompleteReads(messageText, capabilityCalls, outcomes)) {
           try {
+            const completedDomains = new Set(
+              capabilityCalls.map(({ definition }) => definition.domain),
+            );
             presentation = automaticPresentation({
-              domain: capabilityCalls[0].definition.domain,
+              domain: completedDomains.size === 1
+                ? capabilityCalls[0].definition.domain
+                : 'general',
               resultRefs: turnResultIds.slice(-MAX_RESULT_REFS),
               excludedSuggestionIds,
+              excludedActionIds: completedSuggestionActionIds(capabilityCalls),
             });
           } catch {
             // A long-lived thread can exhaust the deterministic option pool.
@@ -783,6 +887,7 @@ function createGlobalChatOrchestrator({
         }
 
         if (presentation) {
+          await emitProgress('rendering', 'Rendering the results…');
           const attached = await store.loadToolResults(pool, {
             userId,
             threadId,
@@ -893,11 +998,13 @@ module.exports = {
   MAX_HISTORY_MESSAGES,
   MAX_ITERATIONS,
   MAX_PARALLEL_READS,
+  PROVIDER_TIMEOUT_MS,
   TURN_TIMEOUT_MS,
   GlobalChatOrchestrationError,
   boundedToolContent,
   createGlobalChatOrchestrator,
   canFastCompleteRead,
+  canFastCompleteReads,
   historyForModel,
   parseArguments,
   transcriptState,

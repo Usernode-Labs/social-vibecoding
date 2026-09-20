@@ -28,6 +28,16 @@ test('fixed suggestions resolve only to server-owned read steps', () => {
   assert.equal(activity.id, 'apps.activity');
   assert.equal(activity.steps[0].capabilityId, 'apps.activity');
 
+  const issuePicker = resolveAction({
+    suggestionId: 'next.general.issues', parameters: {},
+  });
+  assert.deepEqual(issuePicker.itemSelection, {
+    renderer: 'app',
+    actionId: 'issues.for_app',
+    parameter: 'appSlug',
+    label: 'Issues for',
+  });
+
   const unread = resolveAction({ suggestionId: 'next.messages.unread', parameters: {} });
   assert.equal(unread.id, 'messages.unread');
   assert.equal(unread.steps[0].capabilityId, 'messages.unread');
@@ -95,9 +105,19 @@ test('contextual actions preserve the exact target in transcript copy and every 
   assert.ok(contextual.suggestions.every((suggestion) => (
     !suggestion.actionId || Object.hasOwn(suggestion, 'parameters')
   )));
-  assert.ok(contextual.suggestions.every((suggestion) => (
-    suggestion.relatedSuggestions.length === 4
+  const appIssues = contextual.suggestions.find((suggestion) => (
+    suggestion.actionId === 'issues.for_app'
+  ));
+  assert.equal(appIssues.relatedSuggestions.length, 5);
+  assert.ok(appIssues.relatedSuggestions.every((suggestion) => (
+    /Global Chat interface \(#2377\)|usernode-2d5619/.test(suggestion.prompt)
   )));
+  assert.equal(
+    appIssues.relatedSuggestions.some((suggestion) => (
+      contextual.suggestions.some((sibling) => sibling.id === suggestion.id)
+    )),
+    false,
+  );
 });
 
 test('a direct suggestion persists authoritative results with zero model invocations', async () => {
@@ -172,6 +192,64 @@ test('a direct suggestion persists authoritative results with zero model invocat
   assert.ok(result.presentation.suggestions.some((item) => item.actionId));
   assert.equal(calls.filter((entry) => entry?.type === 'execute').length, 1);
   assert.deepEqual(calls.slice(-1), ['release']);
+});
+
+test('an app chooser carries one trusted row action and no model work', async () => {
+  const calls = [];
+  let messageId = 0;
+  const store = {
+    async claimTurn() { return 'turn-1'; },
+    async releaseTurn() { return true; },
+    async insertMessage(_pool, value) {
+      messageId += 1;
+      return { id: String(messageId), ...value };
+    },
+    async startToolRun() { return RESULT_ID; },
+    async finishToolRun() { return true; },
+    async loadToolResults() {
+      return [{
+        id: RESULT_ID,
+        capabilityId: 'apps.get.apps.b3dd6aff',
+        authoritativeResult: { ok: true, status: 200, data: { apps: [] } },
+        renderer: 'app',
+        classicPath: '#apps',
+        status: 'completed',
+      }];
+    },
+  };
+  const registry = {
+    get(id) { return { id, risk: 'read', confirmation: 'never', access: () => true }; },
+    async execute(id) {
+      calls.push(id);
+      return {
+        authoritativeResult: { ok: true, status: 200, data: { apps: [] } },
+        modelResult: { ok: true, status: 200, data: { apps: [] } },
+        renderer: 'app',
+        classicPath: '#apps',
+      };
+    },
+  };
+  const executor = createSuggestionExecutor({
+    pool: {}, config: { dataEncryptionKey: 'test-key' }, registry, store,
+  });
+
+  const result = await executor.execute({
+    userId: 7,
+    threadId: THREAD_ID,
+    suggestionId: 'next.general.issues',
+    parameters: {},
+    excludedSuggestionIds: ['next.general.issues'],
+    executionContext: { actor: { signedIn: true } },
+  });
+
+  assert.equal(result.modelInvocations, 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(result.presentation.itemSelection, {
+    renderer: 'app',
+    actionId: 'issues.for_app',
+    parameter: 'appSlug',
+    label: 'Issues for',
+  });
 });
 
 test('inline reads return authoritative results without creating a chat turn or message', async () => {

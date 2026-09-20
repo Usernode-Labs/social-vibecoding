@@ -216,6 +216,7 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
           domain: action.domain,
           resultRefs: outcomes,
           excludedSuggestionIds,
+          excludedActionIds: [action.id],
           message: action.message,
         });
       } catch (error) {
@@ -229,6 +230,7 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
         presentation = automaticPresentation({
           domain: action.domain,
           resultRefs: outcomes,
+          excludedActionIds: [action.id],
           message: action.message,
         });
       }
@@ -239,6 +241,13 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
           suggestions: contextual.suggestions,
           suggestionContext: contextual.topic,
         };
+      }
+      if (action.itemSelection) {
+        // A chooser is still backed by an ordinary authoritative result, but
+        // its rows have exactly one purpose. The browser uses this trusted,
+        // server-owned metadata to select an item directly and hides unrelated
+        // follow-up suggestions until that selection has completed.
+        presentation = { ...presentation, itemSelection: action.itemSelection };
       }
       const results = await store.loadToolResults(pool, {
         userId,

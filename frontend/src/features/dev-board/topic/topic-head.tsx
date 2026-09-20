@@ -875,20 +875,30 @@ function EvidenceStrip({ e }: { e: NonNullable<TopicBody['evidence']> }): ReactN
   );
 }
 
-/** The evidence states that are a run still going: the picture is coming. */
+/**
+ * The evidence states that are a run still going: the picture is coming.
+ * 'planned' is in this set only while it is FRESH — `evidence.notStarted`
+ * (AppView._evidenceNotStarted) marks the run that has sat there past the
+ * idle threshold, and that one is not going anywhere on its own.
+ */
 const EVIDENCE_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 
 /**
  * The before/after: the verified evidence card (or the legacy capture
  * tiles) once the run has it; until then one quiet line with the shell's
- * own spinner — no panel and no state label, because "Evidence planned" in
- * a box read as a verdict. A run that failed, or was waived, keeps its
- * strip: that is a fact a voter weighs.
+ * own spinner — no panel and no state label, because "Visual preview in
+ * progress" in a box read as a verdict. A run that failed, or was waived,
+ * keeps its strip: that is a fact a voter weighs.
+ *
+ * #2601/#2558: a run that never started keeps the PANEL rather than the
+ * strip, because it is the one pending state with something for the reader
+ * to do — the panel carries the recorded reason and the retry control.
  */
 function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
   const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
   const ev = body.evidence || null;
-  if (tiles && (!ev || ev.verified)) {
+  const notStarted = !!(ev && ev.notStarted);
+  if (tiles && (!ev || ev.verified || notStarted)) {
     return (
       <div className="dev-topic-visuals" data-visuals-scope="1">
         {/* AppView.visualsTilesHtml's markup — four other surfaces still
@@ -898,7 +908,7 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
     );
   }
   if (!ev || ev.verified) return null;
-  if (EVIDENCE_BUILDING.has(ev.state)) {
+  if (!notStarted && EVIDENCE_BUILDING.has(ev.state)) {
     return (
       <p className="dev-topic-hero-evidence" data-evidence-state={ev.state}>
         <span className="dc-status-spinner-arc" aria-hidden="true"></span>
@@ -1109,10 +1119,11 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
  * A CHANGE (a session or a proposal, `body.changeId`) reads top to bottom
  * as the Workshop's Needs-you item: the hero (ChangeHero) — the title, the
  * tags, the actions, the summary, the issues, the picture — then the merge
- * steps (StepsSheet), then, on its own page, the Discussion and the Build
- * sheet behind the hero's pill (./conversation.tsx); the technical half is
- * a sheet the ⋯ menu opens (DetailsSheet). An issue or a governance vote
- * keeps the card and `TopicBodySections`.
+ * steps (StepsSheet), then, on its own page, the Discussion
+ * (./conversation.tsx); the technical half is a sheet the ⋯ menu opens
+ * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
+ * dev session (#2605). An issue or a governance vote keeps the card and
+ * `TopicBodySections`.
  */
 export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false }: {
   card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean;
@@ -1166,13 +1177,10 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
           {body.steps ? <StepsSheet s={body.steps} help={!!(body.details && body.details.help)} /> : null}
-          {/* Unfolded inline (the Workshop), a published chat keeps its
-              disclosure; on the page it is the Build sheet's. */}
-          {!conversation && !owner && body.transcript ? (
-            <section className="dev-topic-sheet dev-topic-transcript" data-topic-sheet="transcript">
-              <Transcript t={body.transcript} />
-            </section>
-          ) : null}
+          {/* #2605: a change's page carries NO build surface — not the Build
+              sheet, and not the published chat's disclosure that used to sit
+              beside it. Both are the dev session page's now, behind the
+              hero's pill. */}
           {conversation ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
           {/* The GitHub thread's host (issue-comments.tsx mounts into it):
               a body that carries one gets it whatever page it is on. */}

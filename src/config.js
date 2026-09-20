@@ -9,8 +9,22 @@ const {
 const {
   DEFAULT_MODEL: DEFAULT_GLOBAL_CHAT_MODEL,
   DEFAULT_REASONING_EFFORT: DEFAULT_GLOBAL_CHAT_REASONING_EFFORT,
-  REASONING_EFFORTS: GLOBAL_CHAT_REASONING_EFFORTS,
+  // One effort scale for the whole platform (minimal, low, medium, high,
+  // xhigh). Global Chat happens to declare it, but it is not Global Chat's:
+  // the coding-agent default below is validated against the same list so the
+  // two profiles can never drift onto different vocabularies.
+  REASONING_EFFORTS: REASONING_EFFORT_LEVELS,
 } = require('./services/global-chat/prompt');
+
+// #2600: the default reasoning effort for an OpenRouter CODING turn when the
+// user has not picked one in Settings. It is 'xhigh' — the top of the scale
+// above, the Opus 5 "max" equivalent — because the models the platform
+// recommends for coding (GLM 5.3 Flash, DeepSeek v4.1 Flash) are cheap enough
+// per token that thinking longer is the better trade on repository work: a
+// change that lands first time costs less than a cheap one that has to be
+// re-run. Global Chat is a SEPARATE profile and deliberately stays at its own
+// low default; do not collapse the two.
+const DEFAULT_CODEX_REASONING_EFFORT = 'xhigh';
 
 const REQUIRED = [
   'DATABASE_URL',
@@ -253,8 +267,15 @@ function load() {
   const globalChatDefaultReasoningEffort =
     process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING
       || DEFAULT_GLOBAL_CHAT_REASONING_EFFORT;
-  if (!GLOBAL_CHAT_REASONING_EFFORTS.has(globalChatDefaultReasoningEffort)) {
+  if (!REASONING_EFFORT_LEVELS.has(globalChatDefaultReasoningEffort)) {
     console.error('[config] OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING must be minimal, low, medium, high, or xhigh.');
+    process.exit(1);
+  }
+  const codexDefaultReasoningEffort =
+    process.env.OPENROUTER_DEFAULT_CODEX_REASONING
+      || DEFAULT_CODEX_REASONING_EFFORT;
+  if (!REASONING_EFFORT_LEVELS.has(codexDefaultReasoningEffort)) {
+    console.error('[config] OPENROUTER_DEFAULT_CODEX_REASONING must be minimal, low, medium, high, or xhigh.');
     process.exit(1);
   }
   let cliAuthOrigin = null;
@@ -329,6 +350,10 @@ function load() {
     // identity variable; nothing reads it, exactly as with
     // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // The effort a coding turn runs at when the session carries no explicit
+    // choice. A user's Settings choice is stored on the session and still
+    // wins; this only fills the blank.
+    openrouterDefaultCodexReasoning: codexDefaultReasoningEffort,
     // Global Chat is a separate profile from repository development. Its
     // inexpensive, minimal-effort defaults never rewrite the coding-agent choice.
     openrouterDefaultGlobalChatModel:
@@ -825,6 +850,7 @@ function load() {
   console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
   console.log(`  OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
+  console.log(`  OPENROUTER_DEFAULT_CODEX_REASONING=${config.openrouterDefaultCodexReasoning}`);
   console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL=${config.openrouterDefaultGlobalChatModel}`);
   console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING=${config.openrouterDefaultGlobalChatReasoning}`);
   console.log(`  OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS=${config.openrouterGlobalChatFallbackModels.join(',') || '(none)'}`);

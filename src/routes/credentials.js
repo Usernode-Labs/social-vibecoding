@@ -394,7 +394,15 @@ function credentialRoutes(config) {
         }
       }
       defaultBackend ||= (backends.claude_code ? 'claude_code' : registry.DEFAULT_BACKEND);
-      res.json({ defaultBackend, backends, codexAvailable: codexAvailable() });
+      res.json({
+        defaultBackend,
+        backends,
+        codexAvailable: codexAvailable(),
+        // #2600: what a coding turn thinks at when this account has not
+        // picked an effort, so Settings can name it instead of offering an
+        // unlabelled "Default".
+        defaultReasoningEffort: config.openrouterDefaultCodexReasoning || null,
+      });
     } catch (err) {
       log.error('credentials', 'coding-agent prefs read failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });

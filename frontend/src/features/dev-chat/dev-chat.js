@@ -706,6 +706,49 @@ const DevChat = {
       : 'Claude Code';
   },
 
+  // #2597: the running row's HEADING stops naming the venue.
+  //
+  // The server writes the in-flight status as "<venue> is running..." —
+  // "Claude Code is running...", "OpenRouter is running..." — so the loudest
+  // row in the transcript said one of two different things about what is, to
+  // the person reading it, the same event: the coding agent is working. The
+  // heading is that one sentence now, and the venue moves underneath it as a
+  // muted caption, the form the run card already uses for its secondary line.
+  //
+  // Rewritten at RENDER time rather than where the status is written, and
+  // deliberately: every row already in the database then reads the new way
+  // too, and the pairing rules that key off `msg.content`
+  // (ACTIVE_CC_STATUS_RE, _isLiveCcRun) keep matching the text the server
+  // actually wrote. Only "<venue> is running" is rewritten — the legacy
+  // "...is making changes", "Scout reading the codebase" and "Syncing with
+  // main" lines say what they say.
+  _RUNNING_VENUE_RE: /^(?:Claude Code|Codex|OpenRouter) is running\b/i,
+
+  // The heading and caption for a "<venue> is running" row, or null when
+  // `msg` is not one. Whatever trailed the venue's sentence (the server's
+  // "...", nothing on the older rows) is carried over untouched.
+  _runningRowLabel(msg) {
+    const content = String(msg?.content || '');
+    const m = DevChat._RUNNING_VENUE_RE.exec(content);
+    if (!m) return null;
+    return {
+      text: `Coding agent is running${content.slice(m[0].length)}`,
+      caption: DevChat._agentName(DevChat._activityAgentBackend(msg)),
+    };
+  },
+
+  // Put that heading on a row built from `msg`. `html` goes with the venue:
+  // the heading is our own copy now, not the row's stored content, so there
+  // is nothing left for the unescaped branch to render.
+  _withRunningLabel(row, msg) {
+    const label = DevChat._runningRowLabel(msg);
+    if (!label) return row;
+    row.text = label.text;
+    row.caption = label.caption;
+    delete row.html;
+    return row;
+  },
+
   _copyActivityAgentMetadata(target, source) {
     if (!target || !source) return target;
     const backend = source.agentBackend
@@ -2042,6 +2085,41 @@ const DevChat = {
     DevChat._maybeInjectDemoCreditsCard();
   },
 
+  // #2598: a model call's cost just landed against this user's weekly pool
+  // and the server pushed the new figures (services/budget-live.js) over the
+  // socket public/js/app.js already holds open. Re-render from them instead
+  // of refetching: a build makes a call every few seconds, and the whole
+  // point of the push is that the figure moves without a request per call.
+  //
+  // MERGED into the existing budget, never replacing it. The pushed payload
+  // is limits.getBudgetSnapshot — the shared snapshot — while GET /api/budget
+  // wraps that with three fields of its own (globalSpentCents,
+  // globalLimitCents, aiEnabled) and its own spelling of the BYOK figure.
+  // Replacing would blank all four, and the exhausted banner's shared-budget
+  // check reads two of them to decide whose budget it blames.
+  //
+  // renderBudget() repaints the composer's meter AND both credits banners, so
+  // an OpenRouter session — whose meter shows the KEY's allowance, not the
+  // pool (#2118) — still gets its low-balance and exhausted banners moved by
+  // the included key's pooled spend (#2571).
+  applyBudgetUpdate(budget) {
+    if (!budget || typeof budget !== 'object') return;
+    // ?demo= and ?shot= pages are showing a fixture on purpose. A real push
+    // arriving underneath would swap out the state a reviewer came to look
+    // at, which is the one thing those flags exist to prevent.
+    if (DevChat._budgetDemo() || DevChat._shotCreditsLowBudget()) return;
+    const previous = DevChat.budget || {};
+    const byokCents = Number(budget.byokCents);
+    DevChat.budget = {
+      ...previous,
+      ...budget,
+      // /api/budget's spelling of the same number, kept in step so the
+      // key-holder branch of the meter can't read a stale "your key $X".
+      byokSpentCents: Number.isFinite(byokCents) ? byokCents : previous.byokSpentCents,
+    };
+    DevChat.renderBudget();
+  },
+
   // Staging review aid: with ?demo=1 on a staging page whose demo budget
   // reports exhausted, drop ONE non-persisted credits card into the
   // transcript so the in-chat card (not just the banner) is reviewable.
@@ -2822,7 +2900,16 @@ const DevChat = {
     const base = DevChat._sessionOptionsState();
     const user = (typeof App !== 'undefined' && App.user) || {};
     return {
-      mode: 'switch',
+      // #2607: an unsent change is build-venues.js's OWN 'start' case — "a
+      // session with nothing in it yet, where every answer is still open" —
+      // and it is the one that reads correctly there. 'switch' answers each
+      // row with what it keeps ("this chat, this branch and this proposal"),
+      // and an unsent change has no branch and no proposal to keep. The rows
+      // themselves are identical in both modes; only the sentence under them
+      // changes. The two web hand-offs say "Start new work with" either way,
+      // because `webTargetKind` reads the placeholder's missing branch and
+      // answers 'new'.
+      mode: DevChat.isPendingSession() ? 'start' : 'switch',
       current: DevChat._currentVenueId(),
       // Same three deployment capabilities the "…" menu reads, plus the two
       // this list needs on top: whether the OpenRouter backend is offerable
@@ -2873,7 +2960,7 @@ const DevChat = {
     BuildVenues.open({
       anchorEl: anchorEl || document.getElementById('dc-venue-select') || undefined,
       state,
-      onPick: (row) => {
+      onPick: async (row) => {
         if (!row || row.current) return;
         // #1348: the sheet answers coarsely now. `row.venue` is the venue a
         // choice resolves to, or null for the one the SERVER resolves.
@@ -2893,6 +2980,26 @@ const DevChat = {
           DevChat._persistBuildVenue(null);
           // …and the in-memory walkthrough, which outranks the column.
           DevChat._devFlowReturnToChat();
+          // #2607: on an unsent change this row creates NOTHING. There is no
+          // row for /build-venue or reset-agent-context to update (both are
+          // no-ops against a null id, the first by its own guard and the
+          // second by the return below), and there is nothing for them to
+          // do either: which in-chat agent the change is created with is
+          // already staged on the placeholder as `pending_agent_choice`, by
+          // the composer's model picker, exactly as it was before this row
+          // existed. Left null, POST /sessions resolves the saved default —
+          // which is the same resolution the no-backend reset-agent-context
+          // asks for on a real row, deferred to creation. So the pick's
+          // whole job here is to undo a hand-off: clear the venue, clear the
+          // walkthrough, and put the composer back.
+          if (DevChat.isPendingSession()) {
+            // The repaint the branch below explains, and nothing after it:
+            // `renderChatView` republishes the header strip too, so the
+            // dropdown restates the in-chat venue on the same paint that
+            // brings the composer back.
+            DevChat.renderChatView();
+            return;
+          }
           // Repaint NOW rather than leaving it to the switch below: that
           // one repaints only after its round trip, and only if the round
           // trip succeeds. The choice has already been made locally, so the
@@ -2910,6 +3017,14 @@ const DevChat = {
         }
         const pick = BuildVenues.preselect(row.venue);
         if (!pick) return;
+        // #2607: the other three answers all need a session row to act on —
+        // the lease is set up against a session id, the web hand-off and the
+        // import both RECORD themselves on `chat_sessions.build_venue`. On an
+        // unsent change there is no row yet, so one is created here, exactly
+        // as the first send would create it, and everything below then runs
+        // against a real session unchanged. A refused creation has already
+        // said why; the dropdown stays on the venue it was showing.
+        if (!(await DevChat._materializePendingSessionForVenue())) return;
         if (pick.kind === 'lease') {
           if (!window.SessionOptions) return;
           DevChat._optionsCard = SessionOptions.openInstructions({
@@ -3836,8 +3951,10 @@ const DevChat = {
   //     strip's ⋯ menu — Pause / Archive / Free worker are all
   //     owner-scoped calls against a row that does not exist yet.
   //
-  // `_sessionHeaderView` states the rest of the difference (no venue
-  // dropdown until the server has resolved one, see #1348).
+  // `_sessionHeaderView` states the rest of the difference. The venue
+  // dropdown is NOT part of it (#2607): choosing where a change is built is
+  // exactly the question an unsent one still has open, so the control paints
+  // there and `openVenueSheet` creates the row for the answers that need it.
 
   // The route segment that stands for "a change that has not been sent
   // yet": /app/<slug>/dev/sessions/new. It is where the ROUTER's session
@@ -3918,11 +4035,22 @@ const DevChat = {
       // navigated to.
       if (DevChat.currentSession !== pending) return false;
       DevChat.currentSession = session;
+      // The placeholder had NO hand-off wizard — `startPendingSession` nulls
+      // `_devFlow` on purpose, because a stale one would paint a launchpad
+      // for a session that does not exist. Now one does, so it gets the
+      // per-session object every other session is given on the way in
+      // (`openSession` → `_resetDevFlow`). Without it the first thing to read
+      // `_devFlow` after a creation throws: `_devFlowFromCredits` and
+      // `_devFlowReturnToChat` both assign straight into it, and the venue
+      // sheet on the freshly created session is exactly what reaches them.
+      DevChat._resetDevFlow(session.id);
       // From here the screen IS a session: it earns a URL of its own (in
       // place of /dev/sessions/new, so Back does not return to an empty
-      // composer), the activity heartbeat, and the header's venue dropdown
-      // — the one thing that can only be stated once the server has
-      // resolved a venue (#1348).
+      // composer), the activity heartbeat, and the ⋯ menu of owner-scoped
+      // actions that had no row to act on. The venue dropdown is NOT in that
+      // list any more (#2607): it paints on the unsent screen too, and what
+      // changes here is only that the venue it names is the one the server
+      // resolved rather than the one the placeholder derived.
       if (typeof App !== 'undefined' && App.updateHash) {
         App.updateHash({ replace: true, ref: session.id });
       }
@@ -3933,6 +4061,50 @@ const DevChat = {
     } finally {
       DevChat._pendingCreateInFlight = false;
     }
+  },
+
+  // #2607: create the row a venue pick needs, carrying the composer with it.
+  //
+  // The venue dropdown is on the unsent-change screen now, and three of its
+  // four answers cannot be given without a session: the lease is granted
+  // against a session id, and the web hand-off and the import both record
+  // themselves on that session's `build_venue` column. So the pick creates
+  // the row first — through `_materializePendingSession`, which is the
+  // FIRST SEND'S own path: same endpoint, same single-flight guard, the same
+  // `pending_agent_choice` (usually none, so the server resolves the saved
+  // default), the same URL replacement and the same session-list refresh.
+  // Picking a venue is simply the second thing that can bring a change into
+  // existence; it must not become a second way of doing it.
+  //
+  // Returns true when there is a real row to act on (including when there
+  // already was), false when creation was refused — `createSession` has
+  // already stated the server's own reason in the status line by then, so
+  // the caller stands down and leaves the dropdown on the venue it was
+  // showing, exactly as a refused first send leaves the screen unsent.
+  //
+  // THE TEXT IN THE BOX SURVIVES. The composer is uncontrolled and its
+  // stored draft is keyed by session id, which is null while the change is
+  // unsent — `_setDraft` drops those writes — so the next `renderChatView`
+  // would hand `_restoreDraft` a field whose session has changed and an
+  // empty draft under the new id, and it would clear what was typed. The
+  // text belongs to the CHANGE, not to the row that did not exist yet, so
+  // it is re-keyed onto the new id and the field is claimed for it before
+  // anything repaints.
+  async _materializePendingSessionForVenue() {
+    if (!DevChat.isPendingSession()) return true;
+    const input = document.getElementById('dc-input');
+    const typed = input ? String(input.value || '') : '';
+    if (!(await DevChat._materializePendingSession())) return false;
+    const id = DevChat.currentSession && DevChat.currentSession.id;
+    if (id && typed.trim()) {
+      DevChat._setDraft(id, typed);
+      // `_restoreDraft` compares this against the session it is rendering:
+      // claiming the field for the new id is what makes it leave the text
+      // alone instead of replacing it with the new row's empty draft.
+      DevChat._composerFieldSession = String(id);
+      DevChat._syncSaveDraftBtn();
+    }
+    return true;
   },
 
   // Re-sync the open session's server-side status and, if it was auto-
@@ -4677,10 +4849,16 @@ const DevChat = {
       const decoder = new TextDecoder();
       let buffer = '';
       let gotFirstToken = false;
+      // #2599: while this loop runs, the primary stream is the authority on
+      // whether the turn is live — see _pollMayEndTurn. Every chunk counts
+      // as evidence, heartbeat comments included.
+      DevChat._primaryStreamOpen = true;
+      DevChat._lastLiveEventAt = Date.now();
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        DevChat._lastLiveEventAt = Date.now();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -4698,6 +4876,11 @@ const DevChat = {
             const data = JSON.parse(line.slice(6));
             if (data._seq && DevChat._seenSeqs?.has(data._seq)) continue;
             if (data._seq) { DevChat._seenSeqs?.add(data._seq); DevChat._lastSeenSeq = data._seq; }
+            // #2599: a live event on a transcript something else already
+            // declared idle (a stale /status answer) re-arms the turn
+            // before the row below is drawn, so it never spins beside an
+            // enabled Send button.
+            DevChat._noteLiveTurnEvent(data, sessionId);
             switch (data.type) {
               case 'token':
                 gotFirstToken = true;
@@ -4992,6 +5175,9 @@ const DevChat = {
         DevChat._removeSpinner();
       }
     }
+    // #2599: the primary stream is gone (drained, died or aborted) — from
+    // here the /status poll may believe a not-busy answer again.
+    DevChat._primaryStreamOpen = false;
 
     // The primary POST SSE either drained to 'done' (which already called
     // _finishStreaming and set isStreaming = false) or it died early.
@@ -5048,6 +5234,168 @@ const DevChat = {
     // arrival in Notifications.handleIncoming → DevAlerts.onCompletion is
     // the single source of the chime (foreground) / OS notification
     // (backgrounded), even when the user is watching this same dev chat.
+  },
+
+  // ── One source of truth for "a turn is live" (#2599) ───────────────
+  //
+  // `isStreaming` is that flag, and three things used to write it from
+  // three different vantage points: the primary POST SSE, the shared
+  // channels (global WS, resumable GET /events) and the 3s /status poll.
+  // They disagreed for an OpenRouter run in exactly the ways the report
+  // lists: a not-busy /status snapshot — served by a process that is not
+  // the one running the turn, or issued during the pre-dispatch window —
+  // tore the UI down while the stream was still delivering the turn, and
+  // the next live event then pushed a second spinning "OpenRouter is
+  // running…" row beside an enabled Send button; a refresh asked the
+  // server and got "running" back. The rules below make live evidence
+  // outrank snapshots:
+  //
+  //   1. A live event proves the runner is running NOW. If the transcript
+  //      is idle when one lands, the turn is adopted (Stop button, live
+  //      stream, poll) instead of painting a spinner into an idle screen.
+  //   2. The /status poll CONFIRMS: a not-busy answer ends the turn only
+  //      when nothing live contradicts it — no event since the request went
+  //      out, and no bytes on the primary stream within the quiet window.
+  //   3. A `done`/`stopped` on a SHARED channel belongs to whichever request
+  //      emitted it (the "already running" refusal of a second send is one),
+  //      so it asks /status before tearing the turn down.
+  //
+  // Wall-clock stamp of the last byte/event received on any live channel
+  // for the current session. Bumped by the POST reader loop (heartbeats
+  // included — they are bytes), the resumable stream and the WS.
+  _lastLiveEventAt: 0,
+  // True while sendMessage's POST SSE reader loop is running.
+  _primaryStreamOpen: false,
+  // How long the primary stream may be silent before a not-busy snapshot
+  // is believed over it. The coding phase heartbeats every 5s and the Mayor
+  // phases stream tokens, so 45s of silence means the server really has
+  // stopped talking (a restart, a dead proxy connection).
+  STREAM_QUIET_MS: 45 * 1000,
+  // The event types a turn's own stream emits — the ones whose arrival says
+  // the server is still talking about THIS turn. Board-level chatter rides
+  // the same socket and is not evidence: `checks_ready` ticks once a second
+  // for as long as a check run lasts, `visuals_ready` lands after the turn,
+  // `session_titled` is a name. Counting those would let a not-busy server
+  // never be believed.
+  TURN_STREAM_EVENTS: new Set([
+    'token', 'status', 'cc_progress', 'cc_log', 'cc_estimate', 'phase', 'stopping',
+    'mayor_reasoning', 'suggestions', 'quick_replies', 'assistant_message_end',
+    'usage', 'platform_issue_draft', 'billing_switched', 'staging_ready',
+    'staging_failed', 'pr_created', 'spec_updated',
+  ]),
+
+  // Is this event proof that a turn is executing on the session right now?
+  // Terminal statuses (a failure, a stop landing, the finished summary) and
+  // reply text are not: they can trail a turn that has already ended.
+  _isLiveTurnEvent(data) {
+    if (!data) return false;
+    const type = data.type || data.event;
+    if (type === 'cc_progress' || type === 'phase' || type === 'stopping') return true;
+    if (type !== 'status') return false;
+    if (data.turnError || data.stopLanding || data.ccOutput || data.stagingBuild) return false;
+    return DevChat._isLiveRunStatusText(data.text);
+  },
+
+  // The status lines that open a coding run: the spin-up line, then the
+  // "<agent> is running…" line the progress log attaches to. Kept beside the
+  // pairing regex in renderMessages (ACTIVE_CC_STATUS_RE) on purpose — a
+  // "Syncing with main" turn is deliberately NOT here, because openSession
+  // never arms the chat-turn UI for a sync either.
+  _isLiveRunStatusText(text) {
+    return /^(Starting OpenRouter|Spinning up coding agent|Handing this turn to|Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase)/i
+      .test(String(text || ''));
+  },
+
+  // Record live evidence, and adopt the turn when the transcript is idle.
+  // Returns true when the turn was adopted by this call.
+  _noteLiveTurnEvent(data, sessionId = null) {
+    const sid = sessionId != null ? sessionId : data?.sessionId;
+    if (sid != null && Number(sid) !== Number(DevChat.currentSession?.id)) return false;
+    if (!DevChat.TURN_STREAM_EVENTS.has(data?.type || data?.event)) return false;
+    DevChat._lastLiveEventAt = Date.now();
+    if (DevChat.isStreaming || !DevChat.currentSession) return false;
+    if (!DevChat._isLiveTurnEvent(data)) return false;
+    DevChat._adoptLiveTurn(DevChat.currentSession.id);
+    return true;
+  },
+
+  // Re-arm the streaming UI for a turn the server is running that this tab
+  // was not tracking — the same re-entry openSession's busy branch makes,
+  // driven by a live event instead of a snapshot. The poll it starts is the
+  // confirmation: if the server really is idle (a stale replay, say), the
+  // next not-busy answer with nothing live behind it ends the turn again.
+  _adoptLiveTurn(sessionId) {
+    DevChat.isStreaming = true;
+    DevChat._clearStoppingState();
+    DevChat._setStreamingUI(true, DevChat._streamingPhase, { stoppable: DevChat._streamingStoppable });
+    if (!DevChat._seenSeqs) DevChat._seenSeqs = new Set();
+    // The persisted progress row is the live append target again, so the
+    // next cc_progress extends it rather than opening a second log — the
+    // "second OpenRouter agent" of the report was a fresh progress row.
+    if (!DevChat._currentProgressMsg()) {
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'user' || m.role === 'assistant') break;
+        if (m.role === 'system' && m.progressLog) { m._progress = true; break; }
+      }
+    }
+    DevChat._openResumableStream(sessionId);
+    if (!DevChat._progressPollTimer) DevChat._startProgressPolling(sessionId, []);
+  },
+
+  // May a not-busy /status snapshot requested at `issuedAt` end the turn?
+  // Not while a live channel contradicts it. When the streams are dead (a
+  // platform restart lost the ring buffer, the POST died), the poll is the
+  // only thing that can finish the UI, and it still does.
+  _pollMayEndTurn(issuedAt) {
+    if (DevChat._lastLiveEventAt > issuedAt) return false;
+    if (DevChat._primaryStreamOpen
+        && Date.now() - DevChat._lastLiveEventAt < DevChat.STREAM_QUIET_MS) return false;
+    return true;
+  },
+
+  // Tear the turn down on a `done`/`stopped` that arrived on a shared
+  // channel, once /status agrees the session is idle. A still-busy answer
+  // means the event was another request's (or the platform is still
+  // finishing this turn's tail), so the live UI stays up and the poll owns
+  // the end. Falls back to the old unconditional teardown when /status
+  // cannot be read at all.
+  //
+  // Resolves true when the session is idle now — the caller's cue to reload
+  // the timeline (#446) — and false while it is still busy.
+  async _endTurnFromSharedChannel(sessionId) {
+    const sid = sessionId != null ? sessionId : DevChat.currentSession?.id;
+    if (sid == null || Number(sid) !== Number(DevChat.currentSession?.id)) return false;
+    if (!DevChat.isStreaming) {
+      // Nothing live to tear down. A row this channel painted for the
+      // request that just ended must not keep spinning, and the teardown
+      // still closes whatever the poll's own end left open (its branch
+      // drops `isStreaming` without closing the resumable stream).
+      DevChat._deactivateLastStatus();
+      DevChat._finishStreaming();
+      return true;
+    }
+    let busy = null;
+    try {
+      const res = await fetch(`/api/sessions/${sid}/status`);
+      if (res.ok) {
+        const payload = await res.json();
+        busy = !!payload.busy && !(payload.sync && payload.sync.phase);
+      }
+    } catch { /* unreadable → the event is the best information we have */ }
+    if (Number(sid) !== Number(DevChat.currentSession?.id) || !DevChat.isStreaming) return false;
+    if (busy === true) {
+      // Another request's end. Its own status row (the refusal) is over;
+      // the turn this tab is following is not.
+      console.warn('[dc] shared-channel turn end ignored: the session is still busy');
+      DevChat._deactivateLastStatus();
+      DevChat.renderMessages();
+      return false;
+    }
+    DevChat._removeSpinner();
+    DevChat._deactivateLastStatus();
+    DevChat._finishStreaming();
+    return true;
   },
 
   // Self-healing sync for degraded turns (#446): called from the WS and
@@ -5139,6 +5487,9 @@ const DevChat = {
       DevChat._seenSeqs.add(data._seq);
       DevChat._lastSeenSeq = data._seq;
     }
+    // #2599: same rule as the primary stream — live evidence re-arms an
+    // idle transcript before the event paints.
+    DevChat._noteLiveTurnEvent(data, sessionId);
     const lastAssistantMsg = () => {
       for (let i = DevChat.messages.length - 1; i >= 0; i--) {
         if (DevChat.messages[i].role === 'assistant') return DevChat.messages[i];
@@ -5235,12 +5586,14 @@ const DevChat = {
         break;
       }
       case 'done':
-        DevChat._deactivateLastStatus();
-        DevChat._finishStreaming();
         // A 'done' on the resumable channel means the primary POST SSE never
         // finished this turn — reconcile from the DB so anything that rode
         // only the dead stream shows without a manual refresh (#446).
-        DevChat._reconcileAfterFallbackDone(sessionId);
+        // #2599: this channel is shared by every request on the session, so
+        // the teardown (and that reconcile) waits for /status to agree.
+        DevChat._endTurnFromSharedChannel(sessionId).then((idle) => {
+          if (idle) DevChat._reconcileAfterFallbackDone(sessionId);
+        });
         break;
       case 'phase':
         // Server announces which phase of the turn we're in so the UI
@@ -5256,12 +5609,11 @@ const DevChat = {
         DevChat._enterStoppingState({ by: data.by, stopRequestedAt: data.stopRequestedAt || null });
         break;
       case 'stopped': {
-        DevChat._removeSpinner();
-        DevChat._deactivateLastStatus();
         // The status system-message ("Stopped by @user.") was already
         // persisted and emitted server-side via sendStatus, so no need
-        // to add another row here — just tear down the streaming UI.
-        DevChat._finishStreaming();
+        // to add another row here — just tear down the streaming UI,
+        // once /status confirms the session is idle (#2599).
+        DevChat._endTurnFromSharedChannel(sessionId);
         break;
       }
       case 'assistant_message_end': {
@@ -6123,6 +6475,9 @@ const DevChat = {
 
     DevChat._progressPollTimer = setInterval(async () => {
       const spendGeneration = DevChat._spendPollGeneration;
+      // #2599: what this answer is a snapshot OF. A live event that lands
+      // after this instant makes a not-busy answer stale, not authoritative.
+      const issuedAt = Date.now();
       try {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
@@ -6179,6 +6534,13 @@ const DevChat = {
         }
 
         if (!busy) {
+          // #2599: the poll confirms; it never contradicts a live stream.
+          // A not-busy snapshot with the primary stream still talking (or
+          // an event newer than the request) is the other process's — or
+          // the pre-dispatch window's — answer, not this turn's end. The
+          // stream delivers its own `done`; the next quiet poll ends it
+          // otherwise.
+          if (!DevChat._pollMayEndTurn(issuedAt)) return;
           DevChat._stopProgressPolling();
           DevChat.isStreaming = false;
           DevChat._setStreamingUI(false);
@@ -6742,7 +7104,7 @@ const DevChat = {
    * copy with markup in it, and escaping them now would be a visible change.
    */
   _statusRow(msg, msgIdx, over) {
-    return {
+    return DevChat._withRunningLabel({
       t: 'status',
       key: DevChat._rowKey(msg, msgIdx),
       icon: msg._active ? 'spinner' : 'check',
@@ -6751,7 +7113,7 @@ const DevChat = {
       elapsed: DevChat._elapsedSpec(msg),
       stamp: DevChat._rowStamp(msg),
       ...over,
-    };
+    }, msg);
   },
 
   // The attachment strip inside a user bubble. It is a SIBLING of the
@@ -6930,6 +7292,9 @@ const DevChat = {
     // live log we want to attach.
     const ACTIVE_CC_STATUS_RE
       = /^(Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase|Syncing with main)/i;
+    // The line a run opens with, before the worker has started the agent —
+    // see the live-spin-up fallback below (#2599).
+    const SPIN_UP_STATUS_RE = /^(Starting OpenRouter|Spinning up coding agent|Handing this turn to)/i;
     // Helper: is this a viable status candidate for pairing? Stop on
     // any non-system row (status/progress pairs always live inside a
     // single dispatch turn) and skip rows that already carry their
@@ -6972,6 +7337,24 @@ const DevChat = {
           const ok = isPairableStatus(s);
           if (ok === null) break;
           if (ok === true) { paired = s; break; }
+        }
+      }
+
+      // #2599: still nothing, and the run is spinning up. The worker's
+      // bootstrap lines (clone / checkout) arrive BEFORE the "… is running…"
+      // line exists, under a spin-up line that is still live. Attach them
+      // to that line so the log opens under the arc that is already turning,
+      // instead of as an orphan "OpenRouter output" row wearing a ✓ for the
+      // first seconds of the run (the report's third symptom). Only a LIVE
+      // spin-up line qualifies: a historical run that died at bootstrap
+      // keeps its orphan row exactly as before.
+      if (!paired) {
+        for (let j = i - 1; j >= 0; j--) {
+          const s = DevChat.messages[j];
+          if (s.role !== 'system') break;
+          if (s.progressLog || s.ccLog || s.ccOutput || s.stagingUrl || s.specPreview) continue;
+          if (s._active && SPIN_UP_STATUS_RE.test(String(s.content || ''))) { paired = s; }
+          break;
         }
       }
 
@@ -7187,7 +7570,7 @@ const DevChat = {
             : { currentLabel: '', steps: 0, phaseLabel: '' };
           const cohortSince = msg._active && msg.created_at
             ? Math.min(new Date(msg.created_at).getTime(), Date.now()) : NaN;
-          rows.push({
+          rows.push(DevChat._withRunningLabel({
             t: 'attached', key,
             // #647: the open default follows the STATUS row, not the attached
             // progress row — keying off `msg` keeps it aligned with the
@@ -7211,7 +7594,7 @@ const DevChat = {
               persistId: DevChat._detailsId(attachedProgress, 'progress'),
               text: (attachedProgress.progressLog || []).join('\n'),
             },
-          });
+          }, msg));
           return;
         }
         // Post-turn ccOutput — the markdown summary the worker emits when the
@@ -7280,10 +7663,10 @@ const DevChat = {
           });
           return;
         }
-        rows.push({
+        rows.push(DevChat._withRunningLabel({
           t: 'status', key, icon: msg._active ? 'spinner' : 'check',
           html: msg.content || '', text: msg.content || '', elapsed, stamp,
-        });
+        }, msg));
         return;
       }
 
@@ -8662,10 +9045,16 @@ const DevChat = {
       localAgent: DevChat._localAgent,
     });
     if (!v) return null;
+    // #2607: on an unsent change nothing is being built yet, so the tooltip
+    // leads with the tense that is true. Everything after it is the same
+    // sentence, because the choice on offer is the same one.
+    const lead = session?.pending
+      ? 'This change will be built in ' + v.label + '. '
+      : 'Building in ' + v.label + '. ';
     return {
       id: v.id,
       label: v.label,
-      title: 'Building in ' + v.label + '. ' + v.blurb
+      title: lead + v.blurb
         + ' Pick a different venue: on Homeroom, on your computer, or handed to'
         + ' Claude Code or Codex on the web.',
       // Mid-turn the venue is not changeable: a running turn holds the
@@ -8686,12 +9075,26 @@ const DevChat = {
     const s = session || {};
     // #2241: an unsent change has nothing for this strip to state but its
     // own name. No PR (the "New change" caption is already the resting
-    // state of that slot), no lifecycle pill, no ⋯ menu — every row behind
-    // it is an owner-scoped call against a row that does not exist — and no
-    // venue dropdown: which venue a session builds in is resolved by the
-    // server when the row is created (#1348), and the honest thing to do
-    // before that is say nothing rather than guess. It appears on the paint
-    // straight after the first send, which is where #1348 always put it.
+    // state of that slot), no lifecycle pill and no ⋯ menu — every row
+    // behind it is an owner-scoped call against a row that does not exist.
+    //
+    // #2607: the venue dropdown is the ONE exception, and it used to be
+    // excluded with them. The reasoning was that a venue is resolved by the
+    // server when the row is created (#1348), so before that the honest
+    // thing was to say nothing rather than guess — but saying nothing also
+    // took away the only control that CHOOSES. A new change is exactly where
+    // "where should this be built?" is still an open question, and the one
+    // screen that never offered it was the one screen it belonged on: the
+    // answer was reachable only by sending a first message into the venue
+    // you did not want and switching afterwards.
+    //
+    // So the dropdown paints here too, from the same `_headerVenue` spec the
+    // real row uses. What it STATES is a default, not a stored fact —
+    // `_currentVenueId()` derives it from the placeholder, so it names the
+    // in-chat venue this change would be created in — and picking from it
+    // is what `openVenueSheet` now handles for an unsent change: an in-chat
+    // pick stages the choice and creates nothing, and a pick that needs a
+    // row creates it first (see `_materializePendingSessionForVenue`).
     if (s.pending) {
       return {
         sessionId: null,
@@ -8702,7 +9105,7 @@ const DevChat = {
         prTitle: '',
         newChangeTitle: '',
         life: null,
-        venue: null,
+        venue: DevChat._headerVenue(session),
         actions: [],
       };
     }
@@ -9494,7 +9897,12 @@ const DevChat = {
     DevChat._renderSavedDrafts();
     DevChat._wireSavedDrafts();
     DevChat._syncSaveDraftBtn();
-    if (DevChat.isStreaming) DevChat._setStreamingUI(true);
+    // #2599: repaint with the phase and stoppability the turn already has.
+    // A mid-turn re-render (the first-message `session_titled` lands here)
+    // must not reset an adopted turn's "Working" spinner to a live Stop.
+    if (DevChat.isStreaming) {
+      DevChat._setStreamingUI(true, DevChat._streamingPhase, { stoppable: DevChat._streamingStoppable });
+    }
     // #801 screenshot state: paint the mid-turn composer (the circle as Stop,
     // busy placeholder, drafts listed) without any turn actually running.
     // Pure UI — isStreaming stays false, so nothing can be sent or stopped.

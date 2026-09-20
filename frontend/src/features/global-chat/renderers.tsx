@@ -16,7 +16,7 @@ import {
   sendGlobalChatMessage,
   useGlobalChatState,
 } from './store';
-import type { GlobalChatResult } from './types';
+import type { GlobalChatItemSelection, GlobalChatResult } from './types';
 
 type JsonObject = Record<string, unknown>;
 
@@ -548,10 +548,12 @@ function ItemRow({
   result,
   value,
   nested = false,
+  itemSelection,
 }: {
   result: GlobalChatResult;
   value: unknown;
   nested?: boolean;
+  itemSelection?: GlobalChatItemSelection;
 }) {
   const [expanded, setExpanded] = useState(nested);
   const [inlineResults, setInlineResults] = useState<Record<string, GlobalChatResult[]>>({});
@@ -565,6 +567,18 @@ function ItemRow({
   const classicPath = itemClassicPath(result, item);
   const fields = displayFields(result, item);
   const showAppIcon = result.renderer === 'app' && !!text(item.slug || item.app_slug, 255);
+  const selectedValue = itemSelection?.parameter === 'appSlug'
+    ? resultAppSlug(result, item)
+    : '';
+  const selectionAction = itemSelection?.renderer === result.renderer && selectedValue
+    ? itemAction(
+      itemSelection.label,
+      `${itemSelection.label} ${targetLabel}`,
+      itemSelection.actionId,
+      { [itemSelection.parameter]: selectedValue },
+      'turn',
+    )
+    : null;
   const directActions = nested ? [] : directItemActions(result, item, targetLabel);
   const catalogView = directActions.find((action) => action.actionId === 'settings.inspect');
 
@@ -587,16 +601,28 @@ function ItemRow({
   }
 
   function toggleExpanded() {
+    if (selectionAction) {
+      void executeGlobalChatResultAction(
+        selectionAction.requestLabel,
+        selectionAction.actionId,
+        selectionAction.parameters,
+        targetLabel,
+      );
+      return;
+    }
     const next = !expanded;
     setExpanded(next);
     if (next && catalogView) void loadInline(catalogView);
   }
 
   return (
-    <article className="global-chat-item" data-expanded={expanded || undefined}>
+    <article
+      className={`global-chat-item${selectionAction ? ' global-chat-item-selector' : ''}`}
+      data-expanded={selectionAction ? undefined : expanded || undefined}
+    >
       {showAppIcon ? (
         <div
-          className="app-icon-tile h-10 w-10 shrink-0 overflow-hidden rounded-xl flex items-center justify-center text-lg font-bold"
+          className="app-icon-tile global-chat-app-icon shrink-0 overflow-hidden flex items-center justify-center text-lg font-bold"
           data-icon={appIconKind(item)}
         >
           <AppIconContent app={item} />
@@ -606,16 +632,17 @@ function ItemRow({
         <button
           type="button"
           className="global-chat-item-toggle"
-          aria-expanded={expanded}
+          aria-expanded={selectionAction ? undefined : expanded}
+          aria-label={selectionAction?.requestLabel}
           onClick={toggleExpanded}
         >
           <span className="min-w-0 flex-1 text-left">
             <span className="global-chat-item-title">{title}</span>
             {meta ? <span className="global-chat-item-meta">{meta}</span> : null}
           </span>
-          <ChevronDownIcon className="global-chat-item-chevron" aria-hidden="true" />
+          {!selectionAction ? <ChevronDownIcon className="global-chat-item-chevron" aria-hidden="true" /> : null}
         </button>
-        {expanded ? (
+        {!selectionAction && expanded ? (
           <div className="global-chat-item-details">
             {summary && summary !== title ? <p className="global-chat-item-summary">{summary}</p> : null}
             {fields.length ? (
@@ -738,14 +765,17 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
 export function GlobalChatResultBlock({
   result,
   nested = false,
+  itemSelection,
 }: {
   result: GlobalChatResult;
   nested?: boolean;
+  itemSelection?: GlobalChatItemSelection;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const payload = unwrapped(result);
   const confirmation = object(payload)?.status === 'confirmation_required';
   const items = useMemo(() => findItems(payload), [payload]);
+  const pageSize = result.renderer === 'app' ? 6 : 3;
+  const [visibleCount, setVisibleCount] = useState(pageSize);
   if (confirmation) return <ConfirmationResult result={result} payload={object(payload) || {}} />;
   if (result.renderer === 'setting'
       && result.capabilityId === 'settings.inspect'
@@ -784,11 +814,11 @@ export function GlobalChatResultBlock({
     );
   }
 
-  const visible = expanded ? items : items.slice(0, 3);
+  const visible = items.slice(0, visibleCount);
   const action = clientAction(result);
   return (
     <section
-      className={`global-chat-result${nested ? ' global-chat-result-nested' : ''}`}
+      className={`global-chat-result${nested ? ' global-chat-result-nested' : ''}${itemSelection ? ' global-chat-result-selector' : ''}`}
       data-renderer={result.renderer}
     >
       <header className="global-chat-result-head">
@@ -802,13 +832,18 @@ export function GlobalChatResultBlock({
               result={result}
               value={item}
               nested={nested}
+              itemSelection={itemSelection}
             />
           ))}
         </div>
       ) : null}
       {items.length > visible.length ? (
-        <button type="button" className="global-chat-expand" onClick={() => setExpanded(true)}>
-          Show {items.length - visible.length} more <ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />
+        <button
+          type="button"
+          className="global-chat-expand"
+          onClick={() => setVisibleCount((count) => Math.min(count + pageSize, items.length))}
+        >
+          Show more <ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       ) : null}
       {action ? <ClientActionResult result={result} /> : null}

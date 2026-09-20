@@ -3198,18 +3198,12 @@ const AppView = {
     // let the paint below re-read it once — returning to a topic shows the
     // roster it had while the new one loads, rather than a loading line.
     AppView._invalidateVoteRoster(ref.id);
-    // Arriving at a SESSION topic opens its shared transcript. The
-    // "Read chat" pill on the shared-session card used to set
-    // _transcriptOpen on its way here; that pill is gone (the card is
-    // one tap target now), so landing on this page IS the read-the-chat
-    // gesture and nothing else would ever set the flag. Here rather than
-    // in openTopic() because a deep link / reload reaches this view
-    // without going through openTopic — and once per navigation rather
-    // than per paint, so a reader who collapses the section (which nulls
-    // the flag) doesn't have it spring back open on the next WS repaint.
-    // A no-op when the owner hasn't published the chat:
-    // `_transcriptSectionView` returns null in that case.
-    if (ref.kind === 'session') AppView._transcriptOpen = ref.id;
+    // Arriving at a SESSION topic used to open its shared transcript here:
+    // the "Read chat" pill that once set `_transcriptOpen` on its way was
+    // gone, so landing on this page WAS the read-the-chat gesture. #2605
+    // moved the chat off this page entirely — it is the dev session page's
+    // now, behind the card's "Read the build" pill — so nothing pre-expands
+    // a section this page no longer draws.
     // #363: NOTHING is pinned here now. The topic card/body does not sit in
     // its own capped, separately scrolling box — it's painted into the mounted
     // thread's in-scroll header slot (#gc-thread-head) so the header and the
@@ -3268,6 +3262,12 @@ const AppView = {
       App.switchTab('dev');
       return;
     }
+    // #2605: a link that asked for this change's Build panel predates the
+    // move, and the panel is the dev session's own page now. Checked here,
+    // once the item has resolved, because whether the change HAS a build
+    // surface is what decides between redirecting and staying put.
+    if (['proposal', 'session'].includes(ref.kind)
+        && AppView._redirectLegacyBuildLink(AppView._findTopicItem())) return;
     // #363: mount the thread FIRST so its header slot (#gc-thread-head) exists,
     // then paint the topic card/body into it.
     AppView._mountTopicThread();
@@ -4113,13 +4113,7 @@ const AppView = {
     }
     const votes = rows.find((r) => r.key === 'votes');
     if (votes) votes.label = 'Review';
-    // The Build door (topic/conversation.tsx): the owner's workspace, or the
-    // dev chat the owner published, opened by a pill on the card. Nothing
-    // for a private change somebody else is reading, or an imported one,
-    // which has no session behind it.
-    body.build = body.workspace
-      ? { kind: 'owner', label: underway ? 'Continue building' : 'Open build' }
-      : (body.transcript ? { kind: 'published', label: 'Read the build' } : null);
+    body.build = AppView._buildDoorView(item);
     // The evidence claims and state, for "What changes for you".
     body.evidence = AppView._evidenceView(item.visualEvidence);
     if (underway) {
@@ -4201,18 +4195,63 @@ const AppView = {
   },
 
   // The ⋯ row's call: the change page's DetailsSheet (topic-head.tsx)
-  // listens for its own change id, as the Build sheet does for
-  // `change-workspace-open`.
+  // listens for its own change id.
   openTechnicalDetails(id) {
     window.dispatchEvent(new CustomEvent('change-details-open', { detail: Number(id) }));
   },
 
-  openChangeWorkspace(id) {
-    if (document.querySelector(`[data-change-conversation="${Number(id)}"]`)) {
-      window.dispatchEvent(new CustomEvent('change-workspace-open', { detail: Number(id) }));
-      return;
+  /**
+   * The Build door for one change: whether there is a build surface to open
+   * at all, and what its pill says. 'owner' is the author's own dev session;
+   * 'published' is the read-only chat its owner published, for everybody
+   * else. Null when there is nothing behind the change — somebody else's
+   * private workspace, or an imported pull request, which never had a
+   * session.
+   *
+   * Derived from the ITEM alone, and the single rule for it: the pill on the
+   * card and the redirect that catches an old `?conversation=workspace` link
+   * both read this, so they cannot disagree about where a change's build
+   * surface is. `body.workspace` and `body.transcript` are the same two
+   * facts, which is what it was assembled from before #2605.
+   */
+  _buildDoorView(item) {
+    if (!item || item.source === 'imported') return null;
+    if (App.user && Number(item.user_id) === Number(App.user.id)) {
+      return { kind: 'owner', label: ['active', 'paused'].includes(item.status) ? 'Continue building' : 'Open build' };
     }
+    return (item.transcript_shared || item.transcript_shared_at)
+      ? { kind: 'published', label: 'Read the build' }
+      : null;
+  },
+
+  // The Build door. It used to do one of two things depending on where it
+  // was pressed: on a change's own page it opened the Build sheet IN PLACE
+  // (the `change-workspace-open` event), and anywhere else it navigated.
+  // #2605 removed that sheet — a dev session is a screen, not a fold under a
+  // discussion — so this always navigates, and the change page and the board
+  // card now send a reader to the same address. A reader who does not own
+  // the session lands on its read-only published chat (`renderDevChatTab`).
+  openChangeWorkspace(id) {
     AppView.openProposalSession(id);
+  },
+
+  /**
+   * An old link that asked for the Build panel — `?conversation=workspace`,
+   * and the `build` spelling that preceded it — arriving on a change's page.
+   * The panel is a page of its own now (#2605), so the link lands there
+   * rather than on a card page with nothing to open and no explanation.
+   *
+   * Returns true when it redirected, so the caller stops rendering this
+   * page. A change with no build surface (somebody else's private
+   * workspace, an imported pull request) keeps the card page: the link is
+   * stale, but the page it names is still the right one to read.
+   */
+  _redirectLegacyBuildLink(item) {
+    const requested = new URLSearchParams(window.location.search).get('conversation');
+    if (requested !== 'workspace' && requested !== 'build') return false;
+    if (!AppView._buildDoorView(item)) return false;
+    AppView.openChangeWorkspace(item.id);
+    return true;
   },
 
   _showExplorePill(pr) {
@@ -6138,6 +6177,11 @@ const AppView = {
         // read per panel; the board banner (_renderMainPauseNotice) draws it.
         mainCheck: promotedData.mainCheck && typeof promotedData.mainCheck === 'object'
           ? promotedData.mainCheck : null,
+        // services/release-watch.js: a merged commit of the platform's own
+        // app that has not become the running release. Stalled only ever on
+        // that app; the board banner (_renderReleaseStallNotice) draws it.
+        releaseStall: promotedData.releaseStall && typeof promotedData.releaseStall === 'object'
+          ? promotedData.releaseStall : null,
       };
       AppView._merged = merged;
       AppView._mergedCtx = { majority, activeUsers };
@@ -6201,6 +6245,7 @@ const AppView = {
     }
     AppView._renderLockedNotice();
     AppView._renderMainPauseNotice();
+    AppView._renderReleaseStallNotice();
     AppView._repaintDevBodyKeepingPosition();
     // The themes ride in behind the board's own data: the Workshop paints
     // first from what it has (every item under "Everything on the board")
@@ -6371,6 +6416,29 @@ const AppView = {
       canResume: paused && !AppView.readOnly
         && !!(typeof App !== 'undefined' && App.user && App.user.canAdminWrite),
       slug: (AppView.appData && AppView.appData.slug) || null,
+    });
+  },
+
+  // The "merged but not released" banner (features/dev-board/
+  // release-stall-store.ts), from the promoted list's `releaseStall` block:
+  // services/release-watch.js's finding that a merged commit of the
+  // platform's own app is not the build that is serving. App state, said once
+  // above the cards; the merged card itself can only say "merged", which is
+  // exactly what was true and not enough while #2589 sat unreleased. The run
+  // link is offered only for a github.com URL, which the server already
+  // enforces; the check here is the client's own.
+  _renderReleaseStallNotice() {
+    const rs = AppView._proposalsCtx && AppView._proposalsCtx.releaseStall;
+    const stalled = !!(rs && rs.stalled);
+    const runUrl = stalled && typeof rs.runUrl === 'string' && /^https:\/\/github\.com\//.test(rs.runUrl)
+      ? rs.runUrl : null;
+    AppView._reactDevBoard()?.publishReleaseStall?.({
+      stalled,
+      kind: stalled ? (rs.kind || 'unknown') : null,
+      sha: stalled && rs.sha ? String(rs.sha).slice(0, 7) : null,
+      prNumber: stalled && rs.prNumber ? Number(rs.prNumber) : null,
+      running: stalled && rs.running ? String(rs.running).slice(0, 7) : null,
+      runUrl,
     });
   },
 
@@ -10449,6 +10517,71 @@ const AppView = {
     AppView._transcriptOpen = opening ? id : null;
     AppView._renderTopicHead();
     if (opening) AppView._loadSessionTranscript(id);
+  },
+
+  /**
+   * The dev session page in its READ-ONLY form (#2605): the chat a session's
+   * owner published, for everybody who does not own the session.
+   *
+   * The Build door used to open a sheet under the change's discussion; it
+   * navigates to the session's own page now, and GET /api/sessions/:id is
+   * owner-scoped, so `renderDevChatTab` reaches this with no workspace to
+   * show. GET /api/sessions/:id/transcript is the separate, side-effect-free
+   * route that serves a published chat to a reader, and this is the page it
+   * renders on.
+   *
+   * Returns false when there is no published chat to show — a private or
+   * archived session, or a bad id — which is the genuine miss the caller
+   * bounces to the board for. So the fetch happens BEFORE anything is
+   * painted: a page that cannot be filled is never put on screen.
+   *
+   * The section keeps the topic page's markup — `[data-transcript-section]`,
+   * `[data-transcript-body]`, session-transcript.js's own `dc-*` classes —
+   * with one difference: no disclosure. A reader who pressed "Read the
+   * build" came for the chat, so the page IS the chat rather than a line to
+   * press. `#dev-section` is a legacy-owned host (see session-frame.tsx),
+   * which is why this writes markup into it directly.
+   */
+  async _renderSessionTranscriptPage(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0) return false;
+    let data = AppView._transcripts[id];
+    if (!data) {
+      try {
+        const res = await fetch(`/api/sessions/${id}/transcript${AppView._demoQS()}`);
+        if (!res.ok) return false;
+        data = await res.json();
+      } catch {
+        return false;
+      }
+      if (!data || !data.session) return false;
+      AppView._transcripts[id] = data;
+    }
+    const content = AppView._devContainer();
+    if (!content) return false;
+    const label = (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
+      ? SessionTranscript.headerText(data.session, { expanded: true })
+      : 'Dev chat';
+    content.innerHTML = `
+      <div class="dev-session-read">
+        <div class="st-section" data-transcript-section="${id}">
+          <p class="dev-session-read-head">${escapeHtml(label)}<span class="st-readonly-tag">read-only</span></p>
+          <div class="st-body" data-transcript-body="${id}"></div>
+        </div>
+      </div>`;
+    // The same delegate the topic page's section carried: "Fork this chat"
+    // is inside `_transcriptActionsHtml`'s string, so it cannot be a child's
+    // own handler.
+    content.querySelector(`[data-transcript-section="${id}"]`)?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-fork-chat]');
+      if (!button || button.disabled) return;
+      event.preventDefault();
+      AppView.forkSharedChat(Number(button.dataset.forkChat), button);
+    });
+    // Paints straight from the cache the fetch above filled — the loader
+    // owns the body's contents on every surface that shows a transcript.
+    AppView._loadSessionTranscript(id);
+    return true;
   },
 
   // Fetch (or repaint from cache) one session's sanitised transcript.
@@ -16286,14 +16419,21 @@ const AppView = {
     const evidence = p.visualEvidence;
     if (evidence && evidence.required !== false
         && !['verified', 'not_required', 'overridden'].includes(evidence.state)) {
-      const running = ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']
-        .includes(evidence.state);
+      // #2601/#2558: 'planned' is only in flight while it is fresh. A run
+      // that has sat there past the idle threshold has not started, so the
+      // tag says so with the recorded reason and stops spinning — the
+      // neutral in-flight tone was the thing reading as "any moment now"
+      // on proposals nothing was ever going to pick up.
+      const notStarted = AppView._evidenceNotStarted(evidence);
+      const running = !notStarted
+        && ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(evidence.state);
       const enforced = AppView.appData?.visualEvidenceEnforced === true;
       out.push({
         key: 'visual_evidence',
-        label: running ? 'Visual change preview in progress'
-          : evidence.state === 'failed' ? 'Visual change preview failed' : 'Visual change preview needed',
-        detail: evidence.failureReason
+        label: running ? 'Visual preview in progress'
+          : notStarted ? 'Visual preview not started'
+            : evidence.state === 'failed' ? 'Visual change preview failed' : 'Visual change preview needed',
+        detail: (notStarted ? AppView._evidenceNotStartedReason(evidence) : evidence.failureReason)
           || (enforced
             ? 'Voting and merging wait for a verified visual change preview of the current proposal commit.'
             : 'This proposal does not yet have a verified visual change preview for its current commit.'),
@@ -16832,12 +16972,41 @@ const AppView = {
   // returns one sanitized view model to every proposal surface; this is the
   // shared HTML adapter for the remaining legacy/React boundaries. It never
   // accepts an absolute URL and never reaches the public /visuals route.
+  // #2601/#2558: a run sits in 'planned' from the moment the intent is
+  // recorded at submission, and nothing moves it on until the orchestrator
+  // actually picks it up. When the pick-up never happens — execution off,
+  // no staging preview to shoot against — the row stayed 'planned' with its
+  // timestamp frozen at submission, and every surface spun on it forever.
+  // So 'planned' is read as two different things: a run that was minted
+  // moments ago is starting, and one this old with nothing under way has
+  // not started. Five minutes is the product owner's threshold.
+  EVIDENCE_IDLE_MS: 5 * 60 * 1000,
+
+  // True when a 'planned' run has sat untouched past that threshold. An
+  // unparseable or missing timestamp reads as "still starting": the spinner
+  // is the safer of the two when the age is unknown.
+  _evidenceNotStarted(evidence) {
+    const e = evidence || {};
+    if (String(e.state || '') !== 'planned') return false;
+    const at = Date.parse(e.updatedAt || '');
+    return Number.isFinite(at) && (Date.now() - at) > AppView.EVIDENCE_IDLE_MS;
+  },
+
+  // The reason the run never started, when the server recorded one.
+  _evidenceNotStartedReason(evidence) {
+    const e = evidence || {};
+    const reason = typeof e.notStartedReason === 'string' ? e.notStartedReason.trim() : '';
+    return reason || 'Nothing has picked this preview up yet.';
+  },
+
   // The words for each evidence state — a label and a sentence — shared by
   // the verified/pending card below and the change page's strip.
   _evidenceStateCopy(evidence) {
     const e = evidence || {};
     return {
-      planned: ['Preview planned', 'The interaction flow is waiting to start.'],
+      planned: AppView._evidenceNotStarted(e)
+        ? ['Visual preview not started', AppView._evidenceNotStartedReason(e)]
+        : ['Visual preview in progress', 'The interaction flow is starting.'],
       provisioning: ['Preparing the preview', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
       exploring: ['Finding the relevant UI state', 'The preview agent is working through the declared user flow on both revisions.'],
       replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
@@ -16863,13 +17032,20 @@ const AppView = {
     const claims = (Array.isArray(evidence.claims) ? evidence.claims : [])
       .slice(0, 3).map((c) => String((c && c.claim) || '').trim()).filter(Boolean);
     const settled = state === 'not_required' || state === 'overridden';
+    // #2601/#2558: a 'planned' run that never started is not in flight, so
+    // it neither spins nor promises captures are being taken. It reads as
+    // its own state, with whatever reason the server recorded.
+    const notStarted = AppView._evidenceNotStarted(evidence);
     return {
       state,
       verified: state === 'verified',
+      notStarted,
       label: state === 'verified' ? 'Verified' : copy[0],
-      sentence: settled
-        ? `${detail}.`
-        : `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom records before-and-after captures of these claims on the exact proposal build.`,
+      sentence: notStarted
+        ? `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Nothing has been captured for this commit yet.`
+        : settled
+          ? `${detail}.`
+          : `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom records before-and-after captures of these claims on the exact proposal build.`,
       claims,
     };
   },
@@ -16899,8 +17075,13 @@ const AppView = {
     if (state !== 'verified') {
       const copy = stateCopy[state] || ['Preview pending', 'The visual change preview has not finished yet.'];
       const declared = claims.map((claim) => `<li>${esc(claim.claim || '')}</li>`).join('');
-      const retry = state === 'failed' && evidence.repairAvailable === true
-        && Number.isInteger(sessionId) && sessionId > 0
+      // #2601/#2558: the same control a failed run offers, on a run that
+      // never started. The rerun route already accepts a 'planned' run (it
+      // reruns the same head), and a stuck run is precisely the case where
+      // a reader needs a way to kick it.
+      const retryable = (state === 'failed' && evidence.repairAvailable === true)
+        || AppView._evidenceNotStarted(evidence);
+      const retry = retryable && Number.isInteger(sessionId) && sessionId > 0
         ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunVisualEvidence(${sessionId}, this)">Retry visual change preview</button>`
         : '';
       const override = state === 'overridden' && evidence.overriddenAt
@@ -18277,6 +18458,20 @@ const AppView = {
       return;
     }
 
+    // #2605: the Build door sends a READER to this page too, and the fetch
+    // below is owner-scoped — it 404s for them by design, and a 404 in the
+    // network log is a console error, which fails every declared check on
+    // the route. So when the Dev caches already say this change's build
+    // surface is a published CHAT rather than a workspace, go straight to
+    // it and never ask for the workspace. `_buildDoorView` is the same rule
+    // the pill that sent them here is drawn from.
+    //
+    // A change no cached list covers (a deep link past the cached pages)
+    // falls through and is answered by the server, as it always was.
+    const cached = AppView._findItem('session', Number(restoreSessionId));
+    if (AppView._buildDoorView(cached)?.kind === 'published'
+        && await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
+
     // Landing on /app/<slug>/dev/sessions/<id> IS the user opening the
     // session — from the drawer's completion row, the session list, a
     // bookmark or Back. Carries the "user saw it" signal (?opened=1) that
@@ -18284,9 +18479,13 @@ const AppView = {
     // dev-chat.js deliberately do not.
     await DevChat.openSession(restoreSessionId, { userOpened: true });
 
-    // Archived / inaccessible session: fall back to the forum rather
-    // than stranding an empty view.
+    // Inaccessible as a WORKSPACE — which, since #2605, is the ordinary way
+    // a reader arrives: the Build door sends "Read the build" to this page,
+    // and GET /api/sessions/:id is owner-scoped. So try the published chat
+    // before giving up; only a session with none (archived, private, a bad
+    // link) falls back to the forum rather than stranding an empty view.
     if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
+      if (await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
       if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
       return;
     }

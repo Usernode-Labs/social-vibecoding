@@ -1331,6 +1331,13 @@ function normalizedSha(value) {
 // does not touch it, so the approvals keep counting with nothing carried or
 // advanced. Anything authored bumps it, and every tally in the platform stops
 // counting the old votes in the same statement.
+//
+// `fresh` (#2619): this reads the branch tip out of the repo mirror, and the
+// mirror coalesces one fetch per repository. A caller that has just PUSHED and
+// is reading its own write back has to opt out of that, or it joins a fetch
+// older than the push and is told the head did not move. Pass it whenever the
+// push and this call are in the same request; leave it off for the sweeps and
+// read paths, which have nothing of their own to see.
 async function reconcileNativeReviewedHead({
   config, pool, session, fresh = false, notify = true, deferChecks = false,
 }) {
@@ -1388,6 +1395,13 @@ async function reconcileNativeReviewedHead({
   try {
     dir = await mirror.ensureMirror(parsed.owner, parsed.repo, {
       refs: [oldHead, normalizedSha(session.checks_commit_sha)].filter(Boolean),
+      // #2619: `fresh` was accepted here and then never used — seven call
+      // sites asked for a re-read and silently got whatever fetch happened
+      // to be in flight. It is the callers that have just PUSHED who need
+      // it (proposal-update's two, merge-queue, cli-handoff-sync): without
+      // it their reconcile reads the pre-push tip, concludes the head did
+      // not move, and leaves the tally and the verdict on the old commit.
+      fresh,
     });
     mainSha = await mirror.defaultBranchSha(dir);
     liveHead = await mirror.resolveBranch(dir, session.branch_name);
@@ -3738,6 +3752,14 @@ function voteRoutes(config) {
       // panel, not per row: a red main pauses every merge on the app, and
       // the provisional ledger below names that step off these columns.
       const mainCheck = await require('../services/main-watch').mergePause(pool, appRows[0].id);
+      // And, for the platform's own app, a merged commit that has not become
+      // the running release (services/release-watch.js). Only that row ever
+      // carries one, so a child app's panel does not pay the read; the board
+      // banner draws it.
+      const releaseWatch = require('../services/release-watch');
+      const releaseStall = appRows[0].self_hosted
+        ? await releaseWatch.readStall(pool, appRows[0].id)
+        : releaseWatch.describe(null);
       {
         const freshnessSvc = require('../services/proposal-freshness');
         const integrationSvc = require('../services/integration');
@@ -3776,6 +3798,9 @@ function voteRoutes(config) {
         // services/main-watch.js: the unit suite's verdict on the last
         // merge commit, and whether it is pausing this app's merges.
         mainCheck,
+        // services/release-watch.js: a merged self-app commit that is not
+        // the running release. `stalled: false` everywhere but there.
+        releaseStall,
         activeUsers,
         majority,
         viewerActive,

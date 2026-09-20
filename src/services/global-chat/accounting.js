@@ -224,6 +224,12 @@ function count(value) {
   return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : 0;
 }
 
+function optionalCount(value) {
+  if (value == null) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : null;
+}
+
 async function settleInvocation(pool, reservation, {
   servedModel = null,
   routedProvider = null,
@@ -235,6 +241,7 @@ async function settleInvocation(pool, reservation, {
   durationMs = null,
   errorCode = null,
   generationId = null,
+  providerTimings = null,
 }) {
   if (!reservation?.id) throw new Error('global-chat accounting: reservation required');
   if (!OUTCOMES.has(outcome)) throw new Error('global-chat accounting: invalid outcome');
@@ -245,11 +252,17 @@ async function settleInvocation(pool, reservation, {
   }
   const safeError = errorCode && ERROR_CODE_RE.test(errorCode) ? errorCode : null;
   const duration = durationMs == null ? null : Math.max(0, Math.round(Number(durationMs) || 0));
+  const providerDuration = optionalCount(providerTimings?.durationMs);
+  const firstOutput = optionalCount(providerTimings?.firstByteMs);
+  const dispatchSetup = optionalCount(providerTimings?.dispatchSetupMs);
   const metadata = {
     ...(routedProvider ? { routed_provider: String(routedProvider).slice(0, 128) } : {}),
     ...(generationId && /^[A-Za-z0-9._:-]{1,180}$/.test(generationId)
       ? { generation_id: generationId }
       : {}),
+    ...(providerDuration == null ? {} : { provider_duration_ms: providerDuration }),
+    ...(firstOutput == null ? {} : { time_to_first_output_ms: firstOutput }),
+    ...(dispatchSetup == null ? {} : { dispatch_setup_duration_ms: dispatchSetup }),
   };
   const { rows } = await pool.query(
     `UPDATE global_chat_usage
@@ -392,6 +405,7 @@ async function invokeAccounted({
     now,
   });
   const reservation = reserved;
+  const dispatchSetupMs = Math.max(0, Date.now() - started);
   try {
     const result = await streamChat({
       apiKey,
@@ -424,6 +438,7 @@ async function invokeAccounted({
       toolCalls: result.toolCalls.length,
       durationMs: Date.now() - started,
       generationId: result.generationId,
+      providerTimings: { ...result.timings, dispatchSetupMs },
     });
     return { ...result, reservationId: reservation.id };
   } catch (err) {
@@ -434,6 +449,9 @@ async function invokeAccounted({
         outcome: err?.code === 'cancelled' ? 'cancelled' : 'error',
         durationMs: Date.now() - started,
         errorCode: ERROR_CODE_RE.test(err?.code || '') ? err.code : 'provider_error',
+        routedProvider: err?.provider,
+        generationId: err?.generationId,
+        providerTimings: { ...err?.timings, dispatchSetupMs },
       }).catch(() => {});
     }
     throw err;

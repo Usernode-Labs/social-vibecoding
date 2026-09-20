@@ -25,6 +25,7 @@ const { classicCapabilityDefinitions } = require('../services/global-chat/classi
 const { ClassicApiClient } = require('../services/global-chat/classic-api-client');
 const { createGlobalChatOrchestrator } = require('../services/global-chat/orchestrator');
 const { createActionExecutor } = require('../services/global-chat/action-executor');
+const { queryUserHistory } = require('../services/global-chat/activity-history');
 const {
   createSuggestionExecutor,
   directFailureMessage,
@@ -572,6 +573,16 @@ function globalChatRoutes(config) {
       developmentProfile: runtime.development || null,
       budget: runtime.budget || {},
       classicApi,
+      queryUserHistory: (kind, options) => queryUserHistory(
+        pool,
+        req.user.id,
+        kind,
+        {
+          ...options,
+          isAdmin: !!req.user.isAdmin,
+          showSelfHosted: !!req.user.isAdmin || !!config.selfAppPublicVoting,
+        },
+      ),
       updateGlobalChatProfile: (patch) => saveGlobalChatProfile(req.user.id, patch),
       // Browser/native-only capabilities become authoritative pending client
       // actions. Their result is rendered by the allowlisted component layer;

@@ -358,3 +358,35 @@ test('imported proposals are not reconciled here at all', async () => {
     assert.equal(pool.writes.length, 0);
   } finally { restore(); r.cleanup(); }
 });
+
+test('a caller that has just pushed asks the mirror for a fetch of its own (#2619)', async () => {
+  // `fresh` was accepted here and then never read: seven call sites asked to
+  // re-read the branch and silently got whatever fetch happened to be in
+  // flight for the repository. For the four that call this immediately AFTER
+  // pushing, that fetch can predate their own push — so the reconcile saw the
+  // old tip, concluded the head had not moved, and returned `unchanged`.
+  // Upstream that became `votesCleared: 0, checksRerun: false,
+  // previewRebuilding: false`, leaving the verdict and the tally on the
+  // previous commit until a sweep caught up minutes later.
+  const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+  const { votes, restore } = load(r);
+  const mirror = require('../src/services/repo-mirror');
+  const asked = [];
+  mirror.ensureMirror = async (owner, name, options) => { asked.push(options); return r.dir; };
+  const pool = makePool({ epoch: 0 });
+  try {
+    await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r), notify: false, fresh: true,
+    });
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0].fresh, true,
+      'the push and this read are in one request, so it must not join an older fetch');
+
+    // And the sweeps, which have no write of their own to see, still coalesce.
+    asked.length = 0;
+    await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r), notify: false,
+    });
+    assert.equal(asked[0].fresh, false);
+  } finally { restore(); r.cleanup(); }
+});

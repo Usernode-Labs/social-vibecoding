@@ -22,7 +22,11 @@ const bcrypt = require('bcrypt');
 // ── Pool stub: query-aware, captures everything ────────────────────
 const poolMod = require('../src/db/pool');
 let capturedQueries = [];
-let userByPubkey = null;   // row returned for SELECT ... WHERE usernode_pubkey = $1
+// Row returned for SELECT ... WHERE usernode_pubkey = $1. It carries
+// usernode_pubkey because the wallet handlers verify the signature against
+// the stored column rather than the request field (issue #2502), so a
+// fixture without it no longer models what the real query returns.
+let userByPubkey = null;
 let userPasswordRow = null; // row returned for SELECT password ... WHERE id
 let userLinkedPubkeyRow = null; // row for SELECT usernode_pubkey FROM users WHERE id
 let userByEmail = null;     // row for SELECT ... WHERE lower(email) = lower($1) (reset request)
@@ -181,7 +185,7 @@ test('change-password: requires current password and verifies it', async () => {
 // ── POST /api/auth/wallet-reset-verify ─────────────────────────────
 test('wallet-reset: rejects an invalid/expired challenge before touching the DB', async () => {
   reset();
-  userByPubkey = { id: 9, username: 'bob', is_admin: false };
+  userByPubkey = { id: 9, username: 'bob', is_admin: false, usernode_pubkey: 'ut1bob' };
   const rpc = await startRpc();
   const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
   try {
@@ -198,7 +202,7 @@ test('wallet-reset: rejects an invalid/expired challenge before touching the DB'
 
 test('wallet-reset: rejects when the node RPC reports the signature invalid', async () => {
   reset();
-  userByPubkey = { id: 9, username: 'bob', is_admin: false };
+  userByPubkey = { id: 9, username: 'bob', is_admin: false, usernode_pubkey: 'ut1bob' };
   rpcValid = false;
   const rpc = await startRpc();
   const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
@@ -220,7 +224,7 @@ test('wallet-reset: rejects when the node RPC reports the signature invalid', as
 
 test('wallet-reset: valid signature updates the hash and clears all sessions', async () => {
   reset();
-  userByPubkey = { id: 9, username: 'bob', is_admin: false };
+  userByPubkey = { id: 9, username: 'bob', is_admin: false, usernode_pubkey: 'ut1bob' };
   const rpc = await startRpc();
   const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
   try {
@@ -250,7 +254,7 @@ test('wallet-reset: valid signature updates the hash and clears all sessions', a
 
 test('wallet-reset: a linked NON-genesis wallet is accepted (no genesis gate)', async () => {
   reset();
-  userByPubkey = { id: 12, username: 'carol', is_admin: false };
+  userByPubkey = { id: 12, username: 'carol', is_admin: false, usernode_pubkey: 'ut1carol' };
   // Force the genesis check to report this address as NOT in the ledger.
   // The reset path must not consult it, so the reset still succeeds.
   const origIsGenesis = genesisAccounts.isGenesisAddress;
@@ -334,7 +338,7 @@ test('wallet-change: rejects a challenge issued for a DIFFERENT pubkey (binding)
   currentUser = { id: 9, username: 'bob', isAdmin: false };
   userLinkedPubkeyRow = { usernode_pubkey: 'ut1bob' };
   // wallet-check will issue a challenge for whatever pubkey we ask about.
-  userByPubkey = { id: 99, username: 'attacker', is_admin: false };
+  userByPubkey = { id: 99, username: 'attacker', is_admin: false, usernode_pubkey: 'ut1attacker' };
   const rpc = await startRpc();
   const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
   try {
@@ -358,7 +362,7 @@ test('wallet-change: rejects when the node RPC reports the signature invalid', a
   reset();
   currentUser = { id: 9, username: 'bob', isAdmin: false };
   userLinkedPubkeyRow = { usernode_pubkey: 'ut1bob' };
-  userByPubkey = { id: 9, username: 'bob', is_admin: false };
+  userByPubkey = { id: 9, username: 'bob', is_admin: false, usernode_pubkey: 'ut1bob' };
   rpcValid = false;
   const rpc = await startRpc();
   const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
@@ -379,7 +383,7 @@ test('wallet-change: valid signature matching the linked wallet writes a fresh h
   reset();
   currentUser = { id: 9, username: 'bob', isAdmin: false };
   userLinkedPubkeyRow = { usernode_pubkey: 'ut1bob' };
-  userByPubkey = { id: 9, username: 'bob', is_admin: false };
+  userByPubkey = { id: 9, username: 'bob', is_admin: false, usernode_pubkey: 'ut1bob' };
   const rpc = await startRpc();
   const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
   try {
@@ -407,7 +411,7 @@ test('wallet-change: a NON-genesis matching pubkey is accepted (no genesis gate)
   reset();
   currentUser = { id: 12, username: 'carol', isAdmin: false };
   userLinkedPubkeyRow = { usernode_pubkey: 'ut1carol' };
-  userByPubkey = { id: 12, username: 'carol', is_admin: false };
+  userByPubkey = { id: 12, username: 'carol', is_admin: false, usernode_pubkey: 'ut1carol' };
   const origIsGenesis = genesisAccounts.isGenesisAddress;
   genesisAccounts.isGenesisAddress = () => false;
   const rpc = await startRpc();

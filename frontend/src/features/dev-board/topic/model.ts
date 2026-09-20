@@ -419,10 +419,11 @@ export interface TopicBody {
   discussion?: string | null;
   /**
    * The Build door: the pill on the card ("Continue building", "Open
-   * build", "Read the build") and the sheet it opens under the Discussion
-   * — the owner's own workspace, or the dev chat the owner published. Null
-   * for a private change somebody else is reading, and for an imported
-   * one, which has no session behind it.
+   * build", "Read the build"). It NAVIGATES (#2605), to the change's own
+   * dev session page — the owner's live workspace, or, for a reader, the
+   * read-only chat its owner published. There is no sheet on this page any
+   * more. Null for a private change somebody else is reading, and for an
+   * imported one, which has no session behind it.
    */
   build?: { kind: 'owner' | 'published'; label: string } | null;
   /**
@@ -434,6 +435,12 @@ export interface TopicBody {
   evidence?: {
     state: string;
     verified: boolean;
+    /**
+     * #2601/#2558: a 'planned' run whose timestamp has gone past the idle
+     * threshold — minted at submission and never picked up. It does not
+     * spin, and it keeps the panel so its reason and retry control show.
+     */
+    notStarted: boolean;
     label: string;
     sentence: string;
     claims: string[];
