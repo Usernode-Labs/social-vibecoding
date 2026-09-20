@@ -12,6 +12,7 @@ const {
   MAX_RESULT_REFS,
   automaticPresentation,
   enrichPresentation,
+  PresentationError,
   validatePresentation,
 } = require('./presentation');
 const { validateJsonSchema, JsonSchemaValidationError } = require('./json-schema');
@@ -38,10 +39,11 @@ const PROVIDER_TIMEOUT_MS = 8_000;
 // OpenRouter uses session_id as a sticky provider key. Bump this routing-only
 // suffix whenever the routing policy changes so existing chats adopt it
 // automatically instead of remaining pinned to a previously slow endpoint.
-const PROVIDER_SESSION_REVISION = 'latency-v1';
+const PROVIDER_SESSION_REVISION = 'latency-v2';
 const SYNTHESIS_REQUEST_RE = /\b(?:analyse|analyze|compare|contrast|difference|explain|recommend|summari[sz]e|why|which\s+(?:is|are|should)|best)\b/i;
 const WRITE_REQUEST_RE = /\b(?:add|change|close|configure|continue|create|delete|edit|fork|install|merge|remove|rename|reply|redeploy|send|set|start|update|vote)\b/i;
 const MULTI_CLAUSE_REQUEST_RE = /\b(?:also|and|plus|then)\b|,/i;
+const GUIDANCE_REQUEST_RE = /^(?:hi|hello|hey|help|i need help|what can (?:i|you) do|how (?:does|do) (?:this|global chat) work)[.!?\s]*$/i;
 
 class GlobalChatOrchestrationError extends Error {
   constructor(code, message, details = {}) {
@@ -280,6 +282,21 @@ function completedSuggestionActionIds(capabilityCalls) {
   return [...aliases];
 }
 
+function automaticPresentationWithFallback(options) {
+  try {
+    return automaticPresentation(options);
+  } catch (error) {
+    if (!(error instanceof PresentationError) || error.code !== 'suggestions_exhausted') {
+      throw error;
+    }
+    // Old suggestions remain in the transcript, but completing the current
+    // request must never require another model round trip just because the
+    // finite trusted catalog has already been seen. Reusing the most relevant
+    // server-owned options is safer than failing or asking the model for filler.
+    return automaticPresentation({ ...options, excludedSuggestionIds: [] });
+  }
+}
+
 function createGlobalChatOrchestrator({
   pool,
   config,
@@ -399,6 +416,8 @@ function createGlobalChatOrchestrator({
       const confirmationEvents = [];
       let capabilityAttempted = false;
       let servedModel = model.id;
+      const completedDomains = new Set();
+      const completedActionIds = new Set();
 
       async function exposeCapability(capabilityId) {
         if (exposed.has(capabilityId)) return exposed.get(capabilityId);
@@ -572,6 +591,10 @@ function createGlobalChatOrchestrator({
           );
         }
         const suggestionOnly = kind === 'more_suggestions';
+        const guidanceOnly = kind === 'user_turn'
+          && exposed.size === 0
+          && turnResultIds.length === 0
+          && GUIDANCE_REQUEST_RE.test(messageText);
         const mustUseCapability = kind === 'user_turn'
           && exposed.size > 0
           && turnResultIds.length === 0
@@ -663,15 +686,13 @@ function createGlobalChatOrchestrator({
             messages,
             tools: currentToolSet.tools,
             sessionId: `${threadId}:${PROVIDER_SESSION_REVISION}`,
-            // Five or six compact suggestions plus a strict tool envelope fit
-            // comfortably inside the transport default. Keeping the full
-            // 800-token allowance avoids turning a provider-side length
-            // cutoff into an incomplete turn; the one-call read fast path
-            // is what removes latency, not an unsafe output cap.
-            maxOutputTokens: 800,
+            // Generic guidance is intentionally brief because the server owns
+            // its follow-up suggestions. Capability turns retain the larger
+            // envelope for structured results and multi-step requests.
+            maxOutputTokens: guidanceOnly ? 256 : 800,
             temperature: model.supportsTemperature === false ? null : 0.1,
             parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
-            toolChoice: suggestionOnly
+            toolChoice: suggestionOnly || guidanceOnly
               ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
               : (mustUseCapability ? 'required' : 'auto'),
             timeoutMs: Math.max(1_000, Math.min(
@@ -692,7 +713,21 @@ function createGlobalChatOrchestrator({
           clearTimeout(waitingTimer);
         }
         servedModel = response.servedModel || servedModel;
-        const rawCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+        let rawCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+        if (!rawCalls.length && guidanceOnly && String(response.content || '').trim()) {
+          const message = String(response.content)
+            .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
+            .trim()
+            .slice(0, 600);
+          rawCalls = [{
+            id: 'guidance_response',
+            type: 'function',
+            function: {
+              name: BASE_TOOL_NAMES.PRESENT,
+              arguments: JSON.stringify({ message, resultRefs: [], suggestions: [] }),
+            },
+          }];
+        }
         if (!rawCalls.length) {
           throw new GlobalChatOrchestrationError(
             'presentation_required',
@@ -812,6 +847,12 @@ function createGlobalChatOrchestrator({
         for (const entry of writes) {
           outcomes.set(entry.call.id, await executeCapability(entry.call, entry.capabilityId));
         }
+        for (const entry of capabilityCalls) {
+          completedDomains.add(entry.definition.domain);
+          for (const actionId of completedSuggestionActionIds([entry])) {
+            completedActionIds.add(actionId);
+          }
+        }
 
         let presentation = null;
         if (presentationCalls.length === 1) {
@@ -835,12 +876,30 @@ function createGlobalChatOrchestrator({
                 'Use an authoritative Homeroom capability before presenting platform facts.',
               );
             }
-            presentation = enrichPresentation(validatePresentation(presentationInput, {
-              availableResultIds: knownResultIds,
-              excludedSuggestionIds,
-            }), {
-              context: capabilityCalls.at(-1)?.definition?.domain || suggestionContext,
-            });
+            const domain = completedDomains.size === 1
+              ? [...completedDomains][0]
+              : suggestionContext;
+            if (presentationCall.clarification || kind === 'more_suggestions') {
+              presentation = enrichPresentation(validatePresentation(presentationInput, {
+                availableResultIds: knownResultIds,
+                excludedSuggestionIds,
+              }), { context: domain });
+            } else {
+              const modelPresentation = validatePresentation({
+                ...presentationInput,
+                suggestions: [],
+              }, {
+                availableResultIds: knownResultIds,
+                allowEmptySuggestions: true,
+              });
+              presentation = automaticPresentationWithFallback({
+                domain,
+                resultRefs: modelPresentation.resultRefs,
+                excludedSuggestionIds,
+                excludedActionIds: [...completedActionIds],
+                message: modelPresentation.message || null,
+              });
+            }
             outcomes.set(presentationCall.call.id, { ok: true, accepted: true });
           } catch (error) {
             outcomes.set(presentationCalls[0].call.id, toolFailure(error));
@@ -862,22 +921,15 @@ function createGlobalChatOrchestrator({
         if (!presentation && presentationCalls.length === 0
             && canFastCompleteReads(messageText, capabilityCalls, outcomes)) {
           try {
-            const completedDomains = new Set(
-              capabilityCalls.map(({ definition }) => definition.domain),
-            );
-            presentation = automaticPresentation({
+            presentation = automaticPresentationWithFallback({
               domain: completedDomains.size === 1
-                ? capabilityCalls[0].definition.domain
+                ? [...completedDomains][0]
                 : 'general',
               resultRefs: turnResultIds.slice(-MAX_RESULT_REFS),
               excludedSuggestionIds,
-              excludedActionIds: completedSuggestionActionIds(capabilityCalls),
+              excludedActionIds: [...completedActionIds],
             });
-          } catch {
-            // A long-lived thread can exhaust the deterministic option pool.
-            // In that rare case the normal model presentation loop remains the
-            // safe fallback and can generate genuinely new suggestions.
-          }
+          } catch {}
         }
 
         for (const call of calls) {

@@ -68,10 +68,10 @@ const PRESENTATION_SCHEMA = Object.freeze({
     },
     suggestions: {
       type: 'array',
-      minItems: MIN_SUGGESTIONS_PER_RESPONSE,
+      minItems: 0,
       maxItems: MAX_SUGGESTIONS_PER_RESPONSE,
       items: SUGGESTION_SCHEMA,
-      description: 'Five or six distinct, relevant, new button options. Never add filler or repeat the action just completed. Never include More suggestions, Fewer suggestions, Back, Cancel, or Open in Classic.',
+      description: 'Use [] for normal user turns; Homeroom adds fast, trusted next-step buttons. Only request.kind more_suggestions may contain five or six generated options. Never include More suggestions, Fewer suggestions, Back, Cancel, or Open in Classic.',
     },
   },
   required: ['message', 'resultRefs', 'suggestions'],
@@ -152,7 +152,7 @@ const BASE_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: BASE_TOOL_NAMES.PRESENT,
-      description: 'Finish the turn after all required platform tools have completed. Call exactly once. Keep the message compact, leave resultRefs empty for this turn, and supply five or six useful new button suggestions without repeating the completed action. Homeroom renders authoritative results and adds More suggestions and Open in Classic controls itself.',
+      description: 'Finish the turn after all required platform tools have completed. Call exactly once. Keep the message compact, leave resultRefs empty for this turn, and use suggestions [] unless request.kind is more_suggestions. Homeroom renders authoritative results and normally adds trusted next-step buttons itself.',
       strict: true,
       parameters: PRESENTATION_SCHEMA,
     },

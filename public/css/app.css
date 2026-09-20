@@ -1668,6 +1668,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   font-size: 12px;
   font-weight: 650;
 }
+.global-chat-setting-controls { margin-top: 9px; }
 .global-chat-setting-instruction {
   display: flex;
   flex-wrap: wrap;

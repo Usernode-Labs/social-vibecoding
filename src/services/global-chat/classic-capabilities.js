@@ -363,6 +363,7 @@ function developmentStartDefinition(route) {
     title: 'Start development work',
     summary: 'Create a development session with the independently configured Development AI profile, then hand the exact task to that session. The Global Chat model never performs repository work.',
     keywords: ['build', 'code', 'develop', 'development', 'fix', 'implement', 'repository', 'start work'],
+    discoveryPriority: 40,
     inputSchema: developmentTaskSchema('start'),
     resultSchema: RESULT_SCHEMA,
     renderer: 'session',
@@ -399,6 +400,7 @@ function developmentTurnDefinition(route) {
     title: 'Continue development work',
     summary: 'Send an exact task to an existing owned development session. The session keeps its pinned Development AI model and reasoning effort; the Global Chat model never substitutes itself.',
     keywords: ['code', 'continue', 'develop', 'development', 'fix', 'implement', 'repository', 'session'],
+    discoveryPriority: 40,
     inputSchema: developmentTaskSchema('continue'),
     resultSchema: RESULT_SCHEMA,
     renderer: 'session',
@@ -505,6 +507,7 @@ function settingInspectorDefinition() {
       'alerts', 'account', 'wallet', 'global chat', 'development ai', 'openrouter',
       'connectors', 'permissions', 'skills', 'cli', 'experimental', 'about',
     ],
+    discoveryPriority: 40,
     inputSchema: {
       type: 'object', additionalProperties: false,
       description: 'Read exactly one small logical settings group. Call again only when the user asks for another group.',
@@ -591,7 +594,8 @@ function settingsCatalogDefinition() {
     domain: 'settings',
     title: 'List settings groups',
     summary: 'List the small authorized Settings groups that can be inspected from Global Chat.',
-    keywords: ['settings', 'preferences', 'configure', 'more settings', 'settings groups'],
+    keywords: ['open settings', 'settings', 'preferences', 'configure', 'more settings', 'settings groups'],
+    discoveryPriority: 50,
     inputSchema: {
       type: 'object', additionalProperties: false, properties: {}, required: [],
     },
@@ -632,6 +636,7 @@ function currentProposalsDefinition() {
     title: 'List my current proposals',
     summary: 'List the signed-in user’s current proposals across authorized apps.',
     keywords: ['my proposals', 'review proposals', 'current proposals', 'votes'],
+    discoveryPriority: 40,
     inputSchema: {
       type: 'object', additionalProperties: false, properties: {}, required: [],
     },
@@ -675,6 +680,8 @@ function recentAppActivityDefinition() {
     title: 'List recent app activity',
     summary: 'Show a compact activity-first list of authorized apps with their open issues, proposals, and active development counts.',
     keywords: ['recent app activity', 'active apps', 'app work', 'apps'],
+    searchRequires: ['activity'],
+    discoveryPriority: 30,
     inputSchema: {
       type: 'object', additionalProperties: false, properties: {}, required: [],
     },
@@ -721,6 +728,7 @@ function unreadConversationsDefinition() {
     title: 'List unread conversations',
     summary: 'List only conversations that currently contain unread messages.',
     keywords: ['unread messages', 'new messages', 'unread conversations'],
+    discoveryPriority: 40,
     inputSchema: {
       type: 'object', additionalProperties: false, properties: {}, required: [],
     },
@@ -765,6 +773,8 @@ function appDiscussionsDefinition() {
     title: 'List an app’s discussions',
     summary: 'List recent discussion messages for one exact authorized app.',
     keywords: ['app discussions', 'app messages', 'app chat'],
+    searchRequires: ['discussion'],
+    discoveryPriority: 40,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -807,6 +817,7 @@ function globalChatSpendingDefinition() {
     title: 'View Global Chat spending',
     summary: 'Show Global Chat spend, monthly cap, remaining cap, total turns, reset date, and the overall OpenRouter allowance when available.',
     keywords: ['global chat spending', 'usage', 'cost', 'budget', 'allowance'],
+    discoveryPriority: 40,
     inputSchema: {
       type: 'object', additionalProperties: false, properties: {}, required: [],
     },
@@ -850,6 +861,7 @@ function globalChatUpdateDefinition() {
     title: 'Change Global Chat settings',
     summary: 'Change the separate Global Chat model, reasoning effort, or monthly spend cap. This never changes the Development AI profile.',
     keywords: ['global chat', 'model', 'reasoning', 'effort', 'spend', 'budget', 'cap', 'settings'],
+    discoveryPriority: 40,
     inputSchema: {
       type: 'object', additionalProperties: false,
       description: 'Submit the complete next Global Chat profile. Copy unchanged values from globalChatProfile and budget.globalChatCap. Development AI settings are never changed by this capability.',
@@ -903,6 +915,7 @@ function localSettingUpdateDefinition() {
     title: 'Change a local browser setting',
     summary: 'Change Theme, developer-session alerts, Developer Console visibility, or authorized admin preview on this browser using an allowlisted client action.',
     keywords: ['theme', 'light', 'dark', 'system', 'alerts', 'sound', 'developer console', 'admin preview', 'settings'],
+    discoveryPriority: 40,
     inputSchema: {
       type: 'object', additionalProperties: false,
       description: 'Change exactly one allowlisted setting on the current client.',
@@ -992,6 +1005,7 @@ function closedIssuesHistoryDefinition() {
       'completed issues', 'my issue history',
     ],
     searchRequires: ['close'],
+    discoveryPriority: 60,
     inputSchema: historyInputSchema('issues closed by merged work'),
     resultSchema: RESULT_SCHEMA,
     renderer: 'issue',
@@ -1025,7 +1039,42 @@ function mergedWorkHistoryDefinition() {
       'completed work', 'my merge history', 'issues linked to my merges',
     ],
     searchRequires: ['merge'],
+    discoveryPriority: 60,
     inputSchema: historyInputSchema('merged development work'),
+    resultSchema: RESULT_SCHEMA,
+    renderer: 'proposal',
+    access: (context) => context?.actor?.signedIn === true
+      && typeof context.queryUserHistory === 'function',
+    risk: 'read',
+    confirmation: 'never',
+    classicPath: () => '#apps',
+    mobileSupported: true,
+    sensitiveFields: [],
+    handler: async (input, context) => {
+      const data = await context.queryUserHistory('merged_work', input);
+      return {
+        authoritativeResult: { ok: true, status: 200, data },
+        modelResult: { ok: true, status: 200, data: sanitizeForModel(data) },
+        classicPath: '#apps',
+      };
+    },
+    tests: ['tests/global-chat-activity-history.test.js'],
+  };
+}
+
+function completedWorkHistoryDefinition() {
+  return {
+    id: 'governance.completed',
+    domain: 'governance',
+    title: 'List my recently completed proposals',
+    summary: 'List the newest completed development proposals merged by the signed-in user across all apps. No app slug is required.',
+    keywords: [
+      'completed work', 'completed proposals', 'recently completed',
+      'finished proposals', 'done work', 'completion history',
+    ],
+    searchRequires: ['complete'],
+    discoveryPriority: 60,
+    inputSchema: historyInputSchema('completed development proposals'),
     resultSchema: RESULT_SCHEMA,
     renderer: 'proposal',
     access: (context) => context?.actor?.signedIn === true
@@ -1084,6 +1133,7 @@ function navigationDefinition(item) {
     title: item.label,
     summary: `Open the ${item.label} area in Classic mode.`,
     keywords: ['open', 'go', 'navigate', item.label],
+    searchRequires: ['classic'],
     inputSchema: {
       type: 'object', additionalProperties: false, properties: {}, required: [],
     },
@@ -1114,6 +1164,7 @@ function settingDefinition(item) {
     title: item.label,
     summary: `Open the ${item.label} settings group; its individual values and changes are provided by authorized settings capabilities.`,
     keywords: ['settings', 'preferences', 'configure', item.group, item.label],
+    searchRequires: ['classic'],
     inputSchema: {
       type: 'object', additionalProperties: false, properties: {}, required: [],
     },
@@ -1153,6 +1204,7 @@ function classicCapabilityDefinitions() {
     localSettingUpdateDefinition(),
     closedIssuesHistoryDefinition(),
     mergedWorkHistoryDefinition(),
+    completedWorkHistoryDefinition(),
   ];
 }
 

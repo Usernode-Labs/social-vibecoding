@@ -7,7 +7,6 @@ const { CapabilityRegistry } = require('../src/services/global-chat/capability-r
 const {
   canFastCompleteRead,
   createGlobalChatOrchestrator,
-  GlobalChatOrchestrationError,
 } = require('../src/services/global-chat/orchestrator');
 const { capabilityToolName } = require('../src/services/global-chat/tool-protocol');
 
@@ -261,7 +260,7 @@ test('the first call preloads matching capabilities and auto-attaches authoritat
   assert.equal(modelCalls[0].input.model.id, 'cheap/global');
   assert.equal(modelCalls[0].input.maxOutputTokens, 800);
   assert.equal(modelCalls[0].input.timeoutMs, 8_000);
-  assert.equal(modelCalls[0].input.sessionId, `${THREAD_ID}:latency-v1`);
+  assert.equal(modelCalls[0].input.sessionId, `${THREAD_ID}:latency-v2`);
   assert.match(modelCalls[0].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
   assert.equal(modelCalls[0].input.messages.at(-1).content, 'List my open issues');
   assert.match(modelCalls[0].input.messages[1].content, /"availableCapabilities"/);
@@ -464,7 +463,7 @@ test('protected writes prepare an exact one-use confirmation without executing t
   assert.match(modelCalls[1].input.messages[1].content, /Continue the current turn/);
 });
 
-test('shown suggestions cannot repeat and a rejected presentation stays inside the tool loop', async () => {
+test('normal model presentations cannot replace trusted server suggestions', async () => {
   const oldSuggestion = {
     id: 'issue.open', label: 'Open issue', prompt: 'Open issue 1.', capabilityHint: 'issues.get',
   };
@@ -499,13 +498,15 @@ test('shown suggestions cannot repeat and a rejected presentation stays inside t
     ],
   });
   const result = await state.orchestrator.runTurn(turnInput({ text: 'Help me choose.' }));
-  assert.deepEqual(
-    result.presentation.suggestions.map((suggestion) => suggestion.id),
-    ['issue.comment', 'issue.vote', 'issue.claim', 'issue.labels', 'issue.proposals'],
-  );
+  assert.deepEqual(result.presentation.suggestions.map((suggestion) => suggestion.id), [
+    'next.general.work',
+    'next.general.apps',
+    'next.general.issues',
+    'next.general.proposals',
+    'next.general.messages',
+  ]);
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
-  assert.equal(modelCalls.length, 2);
-  assert.match(JSON.stringify(modelCalls[1].input.messages), /repeated_suggestion/);
+  assert.equal(modelCalls.length, 1);
 });
 
 test('a transient provider failure is not duplicated after OpenRouter has handled failover', async () => {
@@ -531,27 +532,17 @@ test('a transient provider failure is not duplicated after OpenRouter has handle
   assert.equal(events.some((event) => event.phase === 'retrying'), false);
 });
 
-test('free-form completion without a validated presentation is rejected', async () => {
+test('plain guidance text from a weak model is recovered into a trusted presentation', async () => {
   const invalidState = harness({ responses: [providerResponse([], { content: 'I did it.' })] });
-  const failureEvents = [];
-  await assert.rejects(
-    invalidState.orchestrator.runTurn(turnInput({
-      text: 'Hello.',
-      emit: async (event) => { failureEvents.push(event); },
-    })),
-    (error) => error instanceof GlobalChatOrchestrationError
-      && error.code === 'presentation_required',
-  );
+  const result = await invalidState.orchestrator.runTurn(turnInput({ text: 'Hello.' }));
   assert.ok(invalidState.calls.some((entry) => entry.type === 'release'));
-  const failureMessage = invalidState.messages.find((message) => message.role === 'assistant');
-  assert.equal(failureMessage?.payload.kind, 'turn_error');
-  assert.equal(
-    failureMessage?.text,
-    'The chat model returned an incomplete response. Please try again.',
-  );
-  const terminal = failureEvents.find((event) => event.type === 'turn.failed');
-  assert.equal(terminal?.assistantMessage?.id, failureMessage?.id);
-  assert.equal(terminal?.message, failureMessage?.text);
+  assert.equal(result.presentation.message, 'I did it.');
+  assert.equal(result.presentation.suggestions.length, 5);
+  const model = invalidState.calls.find((entry) => entry.type === 'model');
+  assert.deepEqual(model.input.toolChoice, {
+    type: 'function', function: { name: 'present_response' },
+  });
+  assert.equal(model.input.maxOutputTokens, 256);
 });
 
 test('runtime metadata uses only the server-owned compacted transcript summary', async () => {
