@@ -52,8 +52,21 @@
 //     latch. Never from `failed`, never with a child app's frame on screen,
 //     never under the `?shot=` painting. The button stays for every case the
 //     automatic switch declines.
+//  7. THE SERVER SAYS SO ITSELF, AND THE TAB DOES NOT WAIT FOR THE POLL
+//     (#2545). `platform_version` arrives on /ws/events — on connect, with
+//     the build the socket landed on, and from the pod being replaced the
+//     moment traffic has moved to its successor. handlePlatformVersion runs
+//     the same stale branch at once: prefetch, then the quiet switch. It is
+//     trusted over the poll's "deploying" state, ignored for `dev` and for
+//     the tab's own build, and left alone until loadVersion has answered
+//     once — the cold stale boot stays the poll's to arm.
+//  8. A PREFETCH ANSWERED BY THE WRONG BUILD IS ASKED AGAIN, NOT GIVEN UP ON.
+//     The worker names the rollout-crossed case (`mismatch`), the row goes
+//     to 'retry', and the next poll or push re-asks — bounded by that
+//     cadence, one document request a time. Any other failure still settles
+//     to 'failed' once, as point 4 requires.
 //
-// Points 1-4 and 6 are executed, not grepped: the methods touch only `App`,
+// Points 1-4 and 6-8 are executed, not grepped: the methods touch only `App`,
 // `document`, `navigator`, `Date` and `MessageChannel`, so they run in a vm
 // against stubs. The worker half is source-pinned (it lives in sw.js's
 // browser-only branch, which Node never evaluates) and proven end-to-end by
@@ -95,6 +108,7 @@ ${sliceMethod(appJs, '_hasUnsavedShellInput() {')},
 ${sliceMethod(appJs, '_reloadPrefetchedShellIfSafe(sha, { force = false, quiet = false } = {}) {')},
 ${sliceMethod(appJs, '_ensureShellPrefetch(sha) {')},
 ${sliceMethod(appJs, 'async loadVersion() {')},
+${sliceMethod(appJs, 'handlePlatformVersion(data) {')},
 ${sliceMethod(appJs, 'async platformMovedOn() {')},
 ${sliceMethod(appJs, '_refreshOrReload(refresh) {')},
 ${sliceMethod(appJs, '_announceRefreshIntent() {')},
@@ -269,6 +283,62 @@ test('a settled attempt is not retried — a failure is one refetch, not a loop'
   for (let i = 0; i < 5; i++) h.App.renderPlatformVersionPill(STALE);
   assert.equal(h.posted.length, 1,
     'a tab that stays behind must not refetch the whole shell every ten seconds');
+});
+
+test('…except a fetch the wrong build answered, which the next cue asks again', () => {
+  // The worker asked the new build's document of a server that still served
+  // the old one — the seconds of a rollout in which both do. That is not the
+  // update failing; it is the update not yet being where the request went.
+  const h = harness();
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = STALE;
+  h.App.renderPlatformVersionPill(STALE);
+  h.reply({ ok: false, sha: STALE.sha, mismatch: true });
+
+  assert.equal(h.App.shellUpdate.state, 'retry');
+  assert.ok(!h.slot.innerHTML.includes('<button'),
+    'no reload is offered: the build is not in the cache, and a reload now would serve the old one');
+  assert.match(h.slot.innerHTML, /updating…/, 'the row keeps saying what is true');
+  assert.equal(h.posted.length, 1,
+    'nothing is re-asked by the reply itself — a repaint would run the stale branch, and that is the loop');
+
+  // The next poll is the retry — one document request per cue, no loop of
+  // its own.
+  h.poll();
+  assert.equal(h.posted.length, 2, 'the poll asks again');
+  assert.equal(h.App.shellUpdate.state, 'fetching');
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.App.shellUpdate.state, 'ready');
+});
+
+test('the first attempt\'s bail-out cannot fail the retry it was superseded by', () => {
+  // Ask at t=0, mismatch at t=1, re-ask at t=10: the first attempt's 30s
+  // timer is still pending when the second is twenty seconds into a slow
+  // download. A settle belongs to the ask that made it.
+  const h = harness();
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = STALE;
+  h.App.renderPlatformVersionPill(STALE);
+  h.reply({ ok: false, sha: STALE.sha, mismatch: true });
+  h.poll();
+  assert.equal(h.posted.length, 2);
+  assert.equal(h.timers.length, 2, 'one bail-out per ask');
+
+  h.timers[0].fn();
+  assert.equal(h.App.shellUpdate.state, 'fetching', 'the old timer settles nothing');
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.App.shellUpdate.state, 'ready');
+});
+
+test('a mismatch reported for another build cannot reopen this one', () => {
+  const h = harness();
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = STALE;
+  h.App.renderPlatformVersionPill(STALE);
+  h.reply({ ok: false, sha: '3333333ddddddddddddddddddddddddddddddddd', mismatch: true });
+  assert.equal(h.App.shellUpdate.state, 'failed');
+  h.poll();
+  assert.equal(h.posted.length, 1, 'settled is settled');
 });
 
 test('a deploy in flight is not a build to download — only a landed one is', () => {
@@ -585,6 +655,97 @@ test('the foot of app.js records what quiet is measured against', () => {
   assert.match(foot, /if \(typeof document !== 'undefined' && document\.addEventListener\) \{\s*\n\s*App\._dirtyShellControls = new WeakSet\(\)/);
 });
 
+// ─── 3c. The server says so itself; the tab does not wait for the poll ──
+//
+// A tab that booted current, has heard the poll answer BOOTED, and now hears
+// `platform_version` on its socket — from the pod being replaced (`rollout`)
+// or from the pod its socket reconnected to (`connected`). Both mean the
+// same thing and are handled the same way.
+
+const CURRENT = { ...STALE, sha: BOOTED };
+
+function tabHearingTheServer(opts) {
+  const h = harness(opts);
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = CURRENT;
+  return h;
+}
+
+test('the socket announcing a new build runs the stale branch at once', () => {
+  const h = tabHearingTheServer();
+  h.App.handlePlatformVersion({ type: 'platform_version', sha: STALE.sha, reason: 'rollout' });
+
+  assert.equal(h.posted.length, 1, 'the prefetch is asked for from the message, not the next poll');
+  assert.equal(h.posted[0].sha, STALE.sha);
+  assert.equal(h.App._lastVersionInfo.sha, STALE.sha,
+    'the row now reads the build the server said it is');
+  assert.match(h.slot.innerHTML, /updating…/);
+
+  // …and a quiet tab is on it as soon as the download lands.
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 1, 'no poll fired anywhere in this test');
+});
+
+test('a busy tab hearing it gets the button now and the switch when quiet', () => {
+  const h = tabHearingTheServer();
+  h.App.handlePlatformVersion({ type: 'platform_version', sha: STALE.sha, reason: 'connected' });
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 0);
+  assert.match(h.slot.innerHTML, /<button/);
+  h.pause(h.App.SHELL_AUTO_RELOAD_QUIET_MS);
+  h.poll();
+  assert.equal(h.reloads.length, 1);
+});
+
+test('it is trusted over a poll that still says the deploy is in progress', () => {
+  // The Deployment calls itself complete only once the old pod is gone —
+  // seconds AFTER that pod, listener already closed, sent this. Waiting for
+  // the poll to agree would give back the delay the message removes.
+  const h = tabHearingTheServer();
+  h.App._lastVersionInfo = { ...CURRENT, deployProgress: { deploying: true, sha: STALE.sha } };
+  h.App.renderPlatformVersionPill(h.App._lastVersionInfo);
+  assert.equal(h.posted.length, 0, 'the poll alone holds off, as section 1 requires');
+
+  h.App.handlePlatformVersion({ type: 'platform_version', sha: STALE.sha, reason: 'rollout' });
+  assert.equal(h.posted.length, 1, 'the announcement is what the deploying state was waiting for');
+  assert.equal(h.App._lastVersionInfo.deployProgress, null,
+    'from this tab\'s side the rollout has delivered');
+});
+
+test('the tab\'s own build, and no build at all, are not news', () => {
+  const h = tabHearingTheServer();
+  h.App.handlePlatformVersion({ type: 'platform_version', sha: BOOTED, reason: 'connected' });
+  h.App.handlePlatformVersion({ type: 'platform_version', sha: 'dev', reason: 'connected' });
+  h.App.handlePlatformVersion({ type: 'platform_version', reason: 'connected' });
+  h.App.handlePlatformVersion(null);
+  assert.equal(h.posted.length, 0);
+  assert.equal(h.App._lastVersionInfo, CURRENT, 'the last answer is left exactly as it was');
+});
+
+test('before the poll has answered once, the announcement is left to loadVersion', () => {
+  // A stale cached boot is repaired by loadVersion's FIRST answer, which
+  // arms the immediate switch on seeing it. The socket's hello can land
+  // first; if it painted the row, that answer would no longer be the first.
+  const h = tabHearingTheServer();
+  h.App._lastVersionInfo = null;
+  h.App.handlePlatformVersion({ type: 'platform_version', sha: STALE.sha, reason: 'connected' });
+  assert.equal(h.posted.length, 0);
+  assert.equal(h.App._lastVersionInfo, null);
+});
+
+test('the screenshot painting is not repainted by the socket either', () => {
+  const h = tabHearingTheServer();
+  h.App._platformUpdateShot = true;
+  h.App.handlePlatformVersion({ type: 'platform_version', sha: STALE.sha, reason: 'rollout' });
+  assert.equal(h.posted.length, 0, '?shot=platform-update-* is a picture, not a state');
+});
+
+test('the socket routes platform_version to the handler', () => {
+  assert.match(appJs, /case 'platform_version':\s*\n\s*App\.handlePlatformVersion\(data\);/,
+    'the /ws/events switch delivers the message');
+});
+
 // ─── 4. Every failure still ends at a way forward ───────────────────────
 
 test('a worker that answers no still offers the reload, with an honest tip', () => {
@@ -691,8 +852,17 @@ test('sw.js answers prefetch-shell by refetching the whole shell', () => {
   assert.match(body, /type === 'prefetch-shell'/, 'reachable by message');
   assert.match(body, /shellPrefetches\.has\(expectedBuild\)/,
     'concurrent asks from several tabs share one run per requested build');
-  assert.match(body, /port\.postMessage\(\{ ok, sha: expectedBuild \|\| null \}\)/,
-    'the reply identifies the build whose download settled');
+  assert.match(body, /port\.postMessage\(\{ ok, sha: expectedBuild \|\| null, mismatch \}\)/,
+    'the reply identifies the build whose download settled, and names a rollout-crossed one');
+  // The mismatch is decided where it is detected, on both the document and
+  // the assets, and read back off the settled results: no string matching
+  // on error messages between the two.
+  assert.match(precache, /throw buildMismatch\(`expected build \$\{expectedBuild\}/,
+    'the document from the wrong build is the named failure');
+  assert.match(precache, /throw buildMismatch\('served by a different build'\)/,
+    'so is an asset from one');
+  assert.match(swJs, /err\.code = 'build-mismatch';/);
+  assert.match(body, /r\.reason\.code === 'build-mismatch'/);
 });
 
 test('the document is refreshed under the key the navigation actually reads', () => {
