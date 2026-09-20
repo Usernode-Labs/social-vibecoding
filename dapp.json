@@ -1165,9 +1165,9 @@
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "Browse renders app-store rows with an Add button and the Home header (#1569)",
+      "name": "Browse renders app-store rows with an Add button and a Home button (#2639)",
       "path": "/#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #app-switcher-btn):has(#platform-header #notifications-btn ~ #improve-btn):has(#platform-header a#back-btn.hidden) #browse-list .browse-row .browse-add-btn",
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #app-switcher-btn):has(#platform-header #notifications-btn ~ #improve-btn):has(#platform-header a#back-btn:not(.hidden)[aria-label=\"Home\"]) #browse-list .browse-row .browse-add-btn",
       "expectText": "All apps"
     },
     {
@@ -4098,9 +4098,9 @@
       "expectText": "Recommended"
     },
     {
-      "name": "?sort= orders the touch directory with the Home header (#1383, #1569)",
+      "name": "?sort= orders the touch directory, with a Home button in the bar (#1383, #2639)",
       "path": "/?sort=new&un-platform=ios#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #app-switcher-btn):has(#platform-header #notifications-btn ~ #improve-btn):has(#platform-header a#back-btn.hidden) #browse-list[data-sort=\"new\"] .browse-row"
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #app-switcher-btn):has(#platform-header #notifications-btn ~ #improve-btn):has(#platform-header a#back-btn:not(.hidden)[aria-label=\"Home\"]) #browse-list[data-sort=\"new\"] .browse-row"
     },
     {
       "name": "Sorting by activity shows what it sorted on (#1383)",

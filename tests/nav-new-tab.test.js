@@ -245,7 +245,7 @@ test('every screen entry refreshes the href through the one choke point', () => 
   const at = appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   assert.ok(at !== -1, '_showOnlyScreen went missing');
   const fn = appJs.slice(at, appJs.indexOf('\n  },', at));
-  assert.match(fn, /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
+  assert.match(fn, /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
     'this is what keeps the href from ever going stale — every screen change '
     + 'passes through here');
 });
@@ -256,14 +256,15 @@ test('the three up-one-level screens pass their own target', () => {
   // is likewise a level inside the screen and would strand a phone viewer
   // without it.
   //
-  // Settings and Admin roots draw the house. Browse's root shares Home's
-  // header without a back slot (#1569); Home remains in the navigation menu.
-  // A Browse detail opened from Home still draws the house, while a detail
-  // opened from the list (or directly) links back to that list.
+  // Settings and Admin roots draw the house, and since #2639 so does the
+  // Browse LIST: it is somewhere you go from Home, not a root you arrive at,
+  // and an empty bar left the chip menu as the only way out. A Browse detail
+  // opened from Home still draws the house, while a detail opened from the
+  // list (or directly) links back to that list.
   assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
     'browse names the one state with a list above it…');
-  assert.match(browseJs, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'none';/,
-    '…and that state alone gets the chevron; Home-origin details get the house and the root hides the slot');
+  assert.match(browseJs, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,
+    '…and that state alone gets the chevron; every other level gets the house');
   assert.match(browseJs, /setBackIcon\(backMode, upToList \? '#apps' : undefined\)/,
     'the list-bound chevron keeps its explicit parent target');
   assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
