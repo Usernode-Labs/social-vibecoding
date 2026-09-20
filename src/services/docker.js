@@ -2,6 +2,7 @@ const { execFile, spawn } = require('child_process');
 const crypto = require('crypto');
 const { promisify } = require('util');
 const log = require('./logger');
+const { redactValues, redactEnvAssignments } = require('./log-redaction');
 
 const execFileAsync = promisify(execFile);
 
@@ -285,7 +286,7 @@ function containerHostname(name) {
   return `${prefix}-${digest}`;
 }
 
-async function runContainer(name, {
+async function runContainerInner(name, {
   image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS, labels = {},
   aliases = [],
 }) {
@@ -405,7 +406,7 @@ async function runContainer(name, {
 // boundaries fall anywhere, so lines are re-assembled here and the trailing
 // partial is flushed at exit. Used to surface per-check progress while a
 // capture container is running, which the buffered result cannot do.
-async function runOneShot(name, {
+async function runOneShotInner(name, {
   image, env = {}, memory = '1g', cpus = '1',
   timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
   salvagePartial = false, stdinPayload = null, cmd = null,
@@ -926,6 +927,54 @@ async function removeVolume(name) {
   } catch (err) {
     // Missing / in-use volumes aren't fatal — log and move on.
     log.warn('docker', 'Failed to remove volume', { name, err: err.message });
+  }
+}
+
+
+// #2504: mask the app's OWN secret values out of any error these two throw,
+// before it can reach `apps.last_failure`.
+//
+// Both functions put every environment variable on the `docker run` argv as
+// `-e NAME=value`, and a rejected execFile carries that whole argv in its
+// `message` — which services/deploy-failure.js records and
+// GET /api/apps/:slug hands to every collaborator.
+//
+// services/log-redaction.js scrubs by PATTERN, and that inference has a
+// floor: a secret is any string a child app's author chose, so
+// `-e ADMIN_TOKEN=alpha beta gamma` is indistinguishable from three separate
+// arguments and no regex can know where the value ends. HERE the values are
+// in hand, so there is nothing to infer — mask the literals and the question
+// does not arise. The pattern list still runs downstream, for build and
+// container logs whose secrets nobody holds.
+function scrubEnvFromError(err, env) {
+  if (!err || !env) return err;
+  const values = Object.values(env);
+  // Two passes, and both are needed. `redactEnvAssignments` handles the
+  // exact `NAME=value` token this file wrote onto the argv, at ANY value
+  // length; `redactValues` then catches the value appearing loose elsewhere
+  // in the output, where only a length floor keeps it from blanking ordinary
+  // text. Assignments first, so the precise rule wins.
+  const scrub = (text) => redactValues(redactEnvAssignments(text, env), values);
+  if (typeof err.message === 'string') err.message = scrub(err.message);
+  if (typeof err.stderr === 'string') err.stderr = scrub(err.stderr);
+  if (typeof err.stdout === 'string') err.stdout = scrub(err.stdout);
+  if (typeof err.cmd === 'string') err.cmd = scrub(err.cmd);
+  return err;
+}
+
+async function runContainer(name, opts = {}) {
+  try {
+    return await runContainerInner(name, opts);
+  } catch (err) {
+    throw scrubEnvFromError(err, opts.env);
+  }
+}
+
+async function runOneShot(name, opts = {}) {
+  try {
+    return await runOneShotInner(name, opts);
+  } catch (err) {
+    throw scrubEnvFromError(err, opts.env);
   }
 }
 

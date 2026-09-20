@@ -26,6 +26,11 @@
  */
 
 const { mentionsConnectionLimit, connectionExhaustionMessage } = require('../db/connection-census');
+// #2504: the redaction rules directly, NOT through services/logger. This
+// record goes to the database, and dozens of test files stub the logger
+// with a bare {info,warn,error,debug} — reaching the redactor through that
+// facade meant every one of those stubs silently deleted it.
+const { redactString } = require('./log-redaction');
 
 const MAX_REASON = 280;
 const MAX_LOG = 16 * 1024;
@@ -41,15 +46,37 @@ function stripAnsi(s) {
   return String(s || '').replace(ANSI_RE, '');
 }
 
-// ANSI-strip + keep only the last MAX_LOG bytes. Used at capture time
-// (docker.buildImage) and defensively again at persist time.
+// ANSI-strip, REDACT, then keep only the last MAX_LOG bytes. Used at
+// capture time (docker.buildImage) and defensively again at persist time.
+//
+// #2504: the redaction is the point. This record is written to
+// `apps.last_failure` and handed whole — `log` included — to any
+// collaborator, the creator or any admin by GET /api/apps/:slug. It never
+// passes through a log line, so it took none of the scrubbing #30 built
+// into services/logger.js for exactly this hazard ("a single
+// log.warn('docker', err.message) where err.cmd happens to contain a key
+// shouldn't be a security incident").
+//
+// What it holds is not hypothetical: `classify()` below builds from
+// `err.buildLog`, `err.containerLogs` and `err.stderr`, and this file's own
+// `stripCommandFailedPrefix` comment notes that a rejected execFile carries
+// its ENTIRE argv — which services/docker.js builds as one `-e NAME=value`
+// per environment variable, i.e. every secret the app declares.
+//
+// Redacting HERE rather than on read means the database never holds the
+// value at all. Reusing the logger's pattern list rather than writing a
+// second one means the two can never drift apart.
 function truncateLog(s, max = MAX_LOG) {
-  const clean = stripAnsi(s).trim();
+  const clean = redactString(stripAnsi(s).trim());
   return clean.length > max ? clean.slice(-max) : clean;
 }
 
+// #2504: redact here too. `reason` is the 280-character line shown on the
+// app card's tooltip, and several paths below build it from `err.message`
+// directly — which never passed through truncateLog and so was never
+// scrubbed at all.
 function capReason(reason) {
-  const r = String(reason || '').trim();
+  const r = redactString(String(reason || '').trim());
   return r.length > MAX_REASON ? `${r.slice(0, MAX_REASON - 1)}…` : r;
 }
 
