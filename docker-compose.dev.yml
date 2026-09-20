@@ -43,6 +43,17 @@ services:
       USERNODE_DB_PASSWORD: localdev
       LOG_LEVEL: DEBUG
       CLI_CANONICAL_ORIGIN: http://localhost:3000
+      # #2508 set `ENV NODE_ENV=production` in the Dockerfile, which this
+      # file builds from — and this stack serves plain HTTP on
+      # localhost:3000. `SECURE_COOKIE` in src/middleware/auth.js is
+      # `NODE_ENV === 'production'`, so inheriting it here would mark the
+      # session cookie Secure and the browser would silently drop it: local
+      # sign-in would stop working with no error anywhere.
+      #
+      # Overridden here rather than by weakening the image, because the image
+      # is what production and every staging preview run, and both are
+      # HTTPS-only.
+      NODE_ENV: development
       # Sidecar node can't sync via WebRTC inside Docker Desktop for Mac.
       # Run the node natively in another terminal — `make node-full` in this
       # repo handles the archive fetch + boot on the right port (3001,
