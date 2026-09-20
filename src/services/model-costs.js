@@ -188,17 +188,29 @@ async function typicalChange(pool, { days = OBSERVED_DAYS } = {}) {
 //   chat_session_agent_model_costs (model, cost_cents) — the Claude coding
 //     agent's own spend, per model (#2592).
 //
-// #2592 — WHY THE OBSERVED FIGURES USED TO READ LOW. The third record did
-// not exist. The Claude coding agent's spend is the large majority of what
-// a change costs, and its ledger (chat_sessions.agent_cost_cents) had no
-// model column, so it had to be left out of a per-model aggregate rather
-// than attributed by guesswork: the Anthropic rows counted CHAT TURNS and
-// nothing else. A second, smaller distortion compounded it — grouping by
-// model AND session split a change that switched models into two partial
-// "changes", pulling the average and the median down again.
+// #2592 — WHAT "PER CHANGE" HAS TO MEAN HERE, AND WHY THE OBSERVED FIGURES
+// USED TO READ LOW. This sits beside "Shown estimate, per typical change",
+// which is a WHOLE-change figure: pricing times `typicalChange`'s profile,
+// and that profile groups agent_turns by session_id alone. An admin reads
+// the two columns against each other, so the observed one has to be the
+// same unit or the comparison is nonsense.
+//
+// Two things made it not. The third record above did not exist: the Claude
+// coding agent's spend is the large majority of what a change costs, and
+// its ledger (chat_sessions.agent_cost_cents) had no model column, so it
+// had to be left out of a per-model aggregate rather than attributed by
+// guesswork — the Anthropic rows counted CHAT TURNS and nothing else. And
+// the aggregate grouped by (model, session_id), which is a change's SLICE
+// per model, and counted each slice as its own change. A session almost
+// always has more than one model in it — the conversation runs on one and
+// the coding turns on another, which is the ordinary shape, not a rarity —
+// so nearly every change was counted twice at part of its cost, and the
+// average and median both read LOW against the estimate beside them.
 //
 // Both are fixed here. A session is summed WHOLE, counted ONCE, and
-// attributed to the model that spent the most in it.
+// attributed to the model that spent the most in it — which is also the
+// question the estimate answers: you pick a model, and the change costs
+// what it costs.
 const OBSERVED_SINCE_KEY = 'model_cost_observed_since';
 
 /**
