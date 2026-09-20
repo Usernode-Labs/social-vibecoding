@@ -4275,9 +4275,9 @@
       "expectText": "went live with 1/1 votes"
     },
     {
-      "name": "General chat: a person's message sits in a bubble under their name and stamp, the Messages screen's own bubble, with their reactions beneath it; your own is that same box in the accent tint, and both stay a box inside the row that a hover or tap highlights (#2464)",
+      "name": "General chat: a person's message sits in a bubble under their name and stamp, the Messages screen's own bubble, with their reactions beneath it, and that bubble stays its own box inside the row a hover or tap highlights (#2464)",
       "path": "/app/usernode-2d5619/dev/chat",
-      "expectSelector": "#gc-messages:has(> .gc-msg:not(.gc-msg-self) .gc-bubble:not(.gc-bubble-self) > .gc-msg-content):has(> .gc-msg.gc-msg-self .gc-bubble.gc-bubble-self > .gc-msg-content)"
+      "expectSelector": "#gc-messages > .gc-msg:not(.gc-msg-self) .gc-bubble:not(.gc-bubble-self) > .gc-msg-content"
     },
     {
       "name": "General chat: with no message from a person on screen, the transcript ends with the quiet card, after the open proposal and above the composer",
