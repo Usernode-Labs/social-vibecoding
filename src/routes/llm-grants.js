@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const limits = require('../services/limits');
 const { invalidateGrant } = require('../middleware/app-llm-auth');
 const log = require('../services/logger');
+const appAccess = require('../services/app-access');
 
 // Grant management for app LLM access (issue #34). Mounted AFTER
 // authMiddleware — every route here is the signed-in user managing
@@ -145,11 +146,13 @@ function llmGrantsRoutes(config) {
     }
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, name, slug FROM apps WHERE slug = $1',
-        [appSlug]
+      // #2510: this route WRITES an LLM spend grant. Ungated, a signed-in
+      // stranger could create one against a private app they cannot see.
+      // `getAppForUser` returns null on denial, so it 404s like a slug that
+      // was never taken.
+      const app = await appAccess.getAppForUser(
+        pool, appSlug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, name`
       );
-      const app = appRows[0];
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const capacity = await grantCapacity(pool, req.user.id);
@@ -305,11 +308,13 @@ function llmGrantsRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, name, slug, manifest_snapshot FROM apps WHERE slug = $1',
-        [req.params.slug]
+      // #2510: ungated, this handed any signed-in stranger a private app's
+      // id and name plus its manifest `llm` block — the purpose string it
+      // shows in the consent dialog and its suggested daily cap.
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view',
+        `${appAccess.ACCESS_COLUMNS}, name, manifest_snapshot`
       );
-      const app = appRows[0];
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       // Today's spend rides along (issue #655) so the shell can answer

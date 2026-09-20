@@ -1593,7 +1593,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 129,
+      "line": 130,
       "method": "GET",
       "path": "/api/app-permissions/catalogue",
       "expression": null,
@@ -1611,7 +1611,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 137,
+      "line": 138,
       "method": "GET",
       "path": "/api/me/permission-grants",
       "expression": null,
@@ -1637,7 +1637,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 172,
+      "line": 173,
       "method": "GET",
       "path": "/api/apps/:slug/permissions",
       "expression": null,
@@ -1660,7 +1660,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 212,
+      "line": 217,
       "method": "POST",
       "path": "/api/me/permission-grants",
       "expression": null,
@@ -1686,7 +1686,7 @@
     },
     {
       "source": "src/routes/app-permissions.js",
-      "line": 262,
+      "line": 271,
       "method": "DELETE",
       "path": "/api/me/permission-grants/:appId/:capability",
       "expression": null,
@@ -6273,7 +6273,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 108,
+      "line": 109,
       "method": "GET",
       "path": "/api/me/llm-grants",
       "expression": null,
@@ -6299,7 +6299,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 140,
+      "line": 141,
       "method": "POST",
       "path": "/api/me/llm-grants",
       "expression": null,
@@ -6325,7 +6325,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 203,
+      "line": 206,
       "method": "PATCH",
       "path": "/api/me/llm-grants/:appId",
       "expression": null,
@@ -6344,7 +6344,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 277,
+      "line": 280,
       "method": "DELETE",
       "path": "/api/me/llm-grants/:appId",
       "expression": null,
@@ -6363,7 +6363,7 @@
     },
     {
       "source": "src/routes/llm-grants.js",
-      "line": 304,
+      "line": 307,
       "method": "GET",
       "path": "/api/apps/:slug/llm-grant",
       "expression": null,
