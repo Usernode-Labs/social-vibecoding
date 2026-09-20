@@ -1274,7 +1274,7 @@ function IssueBody(
             data-issue-body-edit={editor.issue}
             onClick={() => { setError(''); setEditing(true); }}
           >
-            <PencilSquareIcon className="w-4 h-4" />
+            <PencilSquareIcon className="w-4 h-4" aria-hidden="true" />
           </button>
         ) : null}
       </div>
