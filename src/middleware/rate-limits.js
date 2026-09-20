@@ -583,6 +583,40 @@ const attributeVoteLimiter = makeLimiter({
   message: 'Too many updates. Slow down for a minute.',
 });
 
+// #2525: GOVERNANCE votes — POST /api/sessions/:id/vote and
+// POST /api/issues/:id/vote. 30 / minute / user.
+//
+// These had no limiter at all, and unlike the attribute vote above a
+// governance vote is not a quiet field update: every CHANGED vote posts a
+// `vote` system line into the proposal's own thread (`sendSystemMessage`),
+// broadcasts a tally push and notifies. Casting the SAME vote twice is
+// already short-circuited as `unchanged`, so the spam shape is a FLIP —
+// yes, no, yes, no — and each flip is another line in the thread and
+// another notification for everyone reading it.
+//
+// Tighter than attributeVoteLimiter's 60 because of that thread line, and
+// loose enough for the one workflow that is legitimately fast: the
+// Workshop's Needs-you deck answers with the Y and N keys, so a reader
+// clearing a queue votes quickly. Nobody reads and answers more than 30
+// proposals in a minute, so an honest voter never meets this and a scripted
+// flipper stops at 30 lines instead of thousands.
+//
+// One bucket for both routes on purpose: they are the same act with the
+// same blast radius, and a user who has cast 30 votes in a minute is not
+// being starved of the other kind — they are being asked to slow down.
+// Per-user keyed for shared-NAT fairness; failed requests are refunded so a
+// 400 or a 404 never costs budget. Admins are NOT exempt: an admin flipping
+// a vote floods the same thread as anyone else, and no admin workflow needs
+// to vote in bulk.
+const governanceVoteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'governance-vote',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: 'Too many votes. Slow down for a minute.',
+});
+
 // #613: drag-and-drop reorder of Dev-board cards. Dragging is bursty (a
 // tester can reshuffle a column several times in a few seconds), so the
 // window is generous but still caps a scripted write loop. Per-user keyed,
@@ -942,4 +976,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups. Please slow down.',
 });
 
-module.exports = { appAllowanceRequestLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };
+module.exports = { appAllowanceRequestLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };

@@ -11,7 +11,7 @@ const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
 const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
-const { issueKindLimiter } = require('../middleware/rate-limits');
+const { issueKindLimiter, governanceVoteLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
 const { placeBounty } = require('../services/bounties');
@@ -1294,13 +1294,15 @@ function issueRoutes(config) {
   });
 
   // Vote on an issue — for rename proposals, a passing up-vote auto-applies.
+  // #2525: same bucket as proposal votes — a changed issue vote posts a
+  // system line into the issue's thread, so flipping is the spam shape.
   //
   // #2603: a governance vote carries the same one line a proposal vote does.
   // The rules are votes.js's, reused rather than restated: the same
   // normaliser, the same 280-character cap, required on a No and optional on
   // a Yes. Lazily required, matching the direction this module already uses
   // for './votes' (see the demo close rows in the by-id handler above).
-  router.post('/api/issues/:id/vote', async (req, res) => {
+  router.post('/api/issues/:id/vote', governanceVoteLimiter, async (req, res) => {
     const { vote } = req.body;
     if (!['up', 'down'].includes(vote)) {
       return res.status(400).json({ error: 'Vote must be "up" or "down"' });
