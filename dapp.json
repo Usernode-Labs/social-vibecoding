@@ -1981,6 +1981,18 @@
       "expectText": "closed by vote"
     },
     {
+      "name": "#2603: a governance card's vote is the same picker a change's is, so the reason box opens with it",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "[data-gov-row='9100003'] .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
+      "expectText": "Vote"
+    },
+    {
+      "name": "#2603: a close proposal's page lists the votes cast on it, each in the voter's own words",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100003",
+      "expectSelector": "#gc-thread-head .dev-topic-about .dev-topic-roster .dev-ledger-reason[data-vote=\"yes\"]",
+      "expectText": "Checked it myself, nothing left to fix."
+    },
+    {
       "name": "App-admins section ships in the Members modal (#788)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#members-appadmins-section #members-appadmins-list"
