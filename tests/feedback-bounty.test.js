@@ -131,6 +131,7 @@ global.fetch = async (url, opts) => {
 };
 
 const { feedbackRoutes } = require('../src/routes/feedback');
+const { feedbackSubmitLimiter } = require('../src/middleware/rate-limits');
 const { WEEKLY_KUDOS_LIMIT } = require('../src/services/bounties');
 const { weekStartUtc } = require('../src/services/leaderboard-users');
 const express = require('express');
@@ -146,6 +147,10 @@ function startServer() {
 }
 
 function reset() {
+  // #2520: POST /api/feedback is limited to 10 submissions per hour per
+  // user and this suite files more than that as user 7, so each test
+  // starts from a fresh bucket rather than inheriting the last one's.
+  feedbackSubmitLimiter.resetKey('user:7');
   poolQueries = [];
   bountyRows = [];
   systemMessages = [];
