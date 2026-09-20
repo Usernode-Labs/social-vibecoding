@@ -406,6 +406,11 @@ function authRoutes(config) {
     }
   });
 
+  // #2522: a lost race for an activation code, signalled by throwing so the
+  // transaction rolls back the user row the loser had already inserted.
+  // Identity-compared, so it can never collide with a real database error.
+  const CODE_TAKEN = Symbol('activation-code-taken');
+
   router.post('/api/auth/register', registerLimiter, async (req, res) => {
     const { code, username, password } = req.body;
 
@@ -414,27 +419,72 @@ function authRoutes(config) {
     }
 
     try {
-      const { rows: codeRows } = await pool.query(
-        'SELECT id FROM activation_codes WHERE code = $1 AND used_by IS NULL',
+      // #2522: the code is CLAIMED atomically, not checked and then taken.
+      //
+      // This used to `SELECT ... WHERE used_by IS NULL`, insert the user, and
+      // then `UPDATE ... WHERE id = $2` with no guard — three statements, no
+      // transaction, and the write did not re-assert the condition the read
+      // had relied on. Two requests racing on one code both passed the
+      // SELECT, both created an account, and both wrote `used_by`; the last
+      // one simply overwrote the first. One invite, several accounts, each
+      // with platform access and an included key.
+      //
+      // The claim is now the UPDATE itself, carrying `AND used_by IS NULL`,
+      // so the database decides the winner: exactly one caller sees
+      // rowCount 1 and the loser sees 0. Both statements sit in one
+      // transaction, so a loser's half-made user is rolled back rather than
+      // left orphaned, and the code stays free if the insert fails.
+      // A cheap preflight, and ONLY that. It is not the claim and nothing
+      // depends on it being still true below — it can go stale in the very
+      // window this issue is about. Its job is to keep an unusable code from
+      // costing a cost-12 bcrypt: without it every garbage code makes this
+      // unauthenticated route burn ~100ms of CPU before refusing, which the
+      // per-IP limiter does not bound because it only bites after several
+      // such requests and a distributed caller has many addresses.
+      const { rows: preflight } = await pool.query(
+        'SELECT 1 FROM activation_codes WHERE code = $1 AND used_by IS NULL',
         [code.trim()]
       );
-
-      if (codeRows.length === 0) {
+      if (preflight.length === 0) {
         return res.status(400).json({ error: 'Invalid or already used activation code' });
       }
 
-      const codeId = codeRows[0].id;
       const hash = await bcrypt.hash(password, 12);
-      const { rows: userRows } = await pool.query(
-        'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
-        [username.trim(), hash]
-      );
-
-      const userId = userRows[0].id;
-      await pool.query(
-        'UPDATE activation_codes SET used_by = $1, used_at = NOW() WHERE id = $2',
-        [userId, codeId]
-      );
+      let userId;
+      let codeId;
+      try {
+        // withTransaction, not a bare pool.connect(): route tests and some
+        // embedded deployments hand us a transaction-capable query facade
+        // with no pg.Pool#connect, and the helper already handles both (see
+        // services/cli-auth.js). Calling connect() directly turned every
+        // valid registration into a 500 on those setups.
+        ({ userId, codeId } = await withTransaction(pool, async (client) => {
+          const { rows: userRows } = await client.query(
+            'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
+            [username.trim(), hash]
+          );
+          const uid = userRows[0].id;
+          const claim = await client.query(
+            `UPDATE activation_codes SET used_by = $1, used_at = NOW()
+              WHERE code = $2 AND used_by IS NULL
+              RETURNING id`,
+            [uid, code.trim()]
+          );
+          // THROWN, not returned: the rollback is the point. A loser has
+          // already inserted its user inside this transaction, and returning
+          // normally would commit that orphan.
+          if (claim.rowCount !== 1) throw CODE_TAKEN;
+          return { userId: uid, codeId: claim.rows[0].id };
+        }));
+      } catch (err) {
+        if (err === CODE_TAKEN) {
+          // Unknown code, or another request took it while we were hashing.
+          // Identical message either way: which of the two it was is not
+          // something an unauthenticated caller should be able to tell.
+          return res.status(400).json({ error: 'Invalid or already used activation code' });
+        }
+        throw err;
+      }
 
       // An activation code is an admin-minted invite — stronger than a
       // waitlist release — so it carries platform access with it
