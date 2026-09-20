@@ -869,7 +869,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // attribution, and those now sit on two different pages, so the body
   // needs a check of its own. 27 slots left against MAX_DECLARED_TESTS
   // (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 703);
+  //
+  // 703 → 704: #2592 taught the Model costs console to count the coding
+  // agent's own spend, which is most of what a change costs and had been
+  // left out of the observed average and median entirely. The figure is
+  // only trustworthy if the screen states what it counted, so the
+  // paragraph under the heading now defines a change, and ONE check was
+  // added beside the existing "says where its estimates come from" to pin
+  // that sentence. 26 slots left against MAX_DECLARED_TESTS (730), clear
+  // of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 704);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
