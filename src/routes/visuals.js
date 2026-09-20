@@ -32,6 +32,7 @@ function visualsRoutes(config) {
     const demoBytes = galleryDemo.demoVisualBytes(id);
     if (demoBytes) {
       res.set('Content-Type', demoBytes.contentType);
+      res.set('X-Content-Type-Options', 'nosniff');
       res.set('Cache-Control', 'no-store');
       return res.send(demoBytes.data);
     }
@@ -44,7 +45,11 @@ function visualsRoutes(config) {
       const contentType = rows[0].content_type || 'application/octet-stream';
       const data = rows[0].data;
 
+      // #2515: the type here is a STORED value, so a capture whose recorded
+      // content_type says image/* while its bytes are markup must not be
+      // sniffed into HTML on the platform's own origin.
       res.set('Content-Type', contentType);
+      res.set('X-Content-Type-Options', 'nosniff');
       res.set('Cache-Control', 'public, max-age=31536000, immutable');
       res.set('Accept-Ranges', 'bytes');
 
