@@ -10660,6 +10660,31 @@ html.in-native-webview {
   --create-modal-overscroll: contain;
   --create-modal-padding: calc(20px + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) calc(16px + env(safe-area-inset-right, 0px)) calc(20px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))) calc(16px + env(safe-area-inset-left, 0px));
 }
+/* The native Android create screen always fills the viewport. Anchoring its
+   box directly gives the same bounds as 50% plus translate(-50%, -50%), but
+   avoids keeping the settled full-screen form on a transformed layer during
+   every keyboard resize. Its scale and fade still use the kit's timing.
+   Keep the normal shadow through the 260ms entrance (including overshoot),
+   then stop rendering it outside the viewport. Removing un-in restores it
+   before the exit begins. The frosted fill and blur stay unchanged. */
+html.in-native-webview.un-android .un-modal:has(> #create-card) {
+  left: 0;
+  top: 0;
+  transform: scale(1.04);
+  will-change: auto;
+}
+html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
+  transform: none;
+  animation: create-fullscreen-shadow-settled 1ms step-end 260ms forwards;
+}
+@keyframes create-fullscreen-shadow-settled {
+  to { box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
+    animation-delay: 0s;
+  }
+}
 /* The same layout if the kit is unavailable. Keep max-width measurable:
    adoption remembers that desktop width before it moves the card. */
 #create-modal > [data-modal-backdrop] {
