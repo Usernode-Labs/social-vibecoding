@@ -196,6 +196,9 @@ export function BrowseScreen() {
               <option key={o.key} value={o.key}>{o.label}</option>
             ))}
           </Select>
+          <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800 ring-1 ring-violet-200 dark:bg-violet-900 dark:text-violet-100 dark:ring-violet-800">
+            Visual evidence trial
+          </span>
         </div>
       </div>
       {/*
