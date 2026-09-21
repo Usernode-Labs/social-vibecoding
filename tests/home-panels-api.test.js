@@ -647,7 +647,7 @@ function loadHomePanels() {
 // compare have to survive the four-slot budget — not merely exist in the
 // fixture and fall off the bottom. The budget is the client's (S10), so the
 // payload goes through HomePanels to see the four it draws.
-test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async () => {
+test('GET ?demo=1 in staging draws its unfinished rows first, then one finished row (#2490)', async () => {
   const prev = process.env.USERNODE_ENV;
   process.env.USERNODE_ENV = 'staging';
   let body;
@@ -660,29 +660,26 @@ test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async
   const p = body.panels[0];
   assert.equal(p.demo, true);
   assert.equal(p.challenges.length, 5, 'every open row, as the real builder sends them');
-  const drawn = [...loadHomePanels().visibleSlots({ key: 'challenges', ...p }).rows];
+  const out = loadHomePanels().visibleSlots({ key: 'challenges', ...p });
+  const drawn = [...out.rows];
   assert.equal(drawn.length, 4, 'the collapsed block draws four rows');
 
-  // This week, then Always open with its unfinished card first and the two
-  // finished ones ADJACENT under it: a ✓ with no bar, and a ✓ over a bar
-  // filled end to end. Seeing the two kinds of "done" side by side is the point.
-  const done = drawn.filter((c) => c.progress.done);
-  assert.equal(done.length, 2);
-  assert.deepEqual(drawn.map((c) => !!c.progress.done),
-    [false, false, true, true], 'the done pair sits at the bottom, together');
-  const binaryDone = done.find((c) => !c.metric);
-  const numericDone = done.find((c) => c.metric);
-  assert.ok(binaryDone, 'a finished BINARY challenge (✓, no bar)');
-  assert.ok(numericDone, 'a finished NUMERIC challenge (✓ over a full bar)');
-  assert.equal(numericDone.progress.current, numericDone.progress.target,
-    'full target, or the bar is not full and the state is not the one being shown');
+  // #2490: This week, Always open and Season challenges each give their
+  // unfinished row, and the one slot left goes to a finished row, which the
+  // block draws last, under its Done header.
+  assert.deepEqual(drawn.map((c) => c.id), [900512, 900510, 900513, 900511]);
+  assert.deepEqual(drawn.map((c) => !!c.progress.done), [false, false, false, true],
+    'no finished row above an unfinished one');
+  assert.equal(out.doneFrom, 3, 'the finished fill starts at the fourth row');
 
-  // And a part-filled numeric is still up top, so "in progress" and
-  // "finished" are both readable in one shot.
+  // Every state the rail draws is still on screen in one shot: part-filled,
+  // not started, the empty counted track, and finished.
   const partial = drawn.find((c) => c.metric && !c.progress.done
     && c.progress.current > 0);
   assert.ok(partial, 'the part-filled bar keeps its slot');
-  assert.ok(!drawn.some((c) => c.id === 900513), 'the empty 0-of-5 track is the row past the cap');
+  assert.ok(drawn.some((c) => !c.metric && !c.progress.done), 'a yes-or-no challenge not started');
+  assert.ok(drawn.some((c) => c.metric && c.progress.current === 0), 'the empty 0-of-5 track');
+  assert.ok(!drawn.some((c) => c.id === 900516), 'the finished numeric is the row past the cap');
   assert.equal(p.done, 2, 'the header counter agrees with the glyphs');
 });
 
@@ -996,7 +993,8 @@ test('demoChallengesPanel: registry artwork on the rows, with one fallback in th
     }
   }
   // The four the client DRAWS, not the payload: the collapsed payload also
-  // carries the overflow row, which has artwork of its own and is cut.
+  // carries the finished numeric row, which has artwork of its own and is cut
+  // (#2490: unfinished rows take the slots first).
   const drawn = [...loadHomePanels().visibleSlots({
     key: 'challenges', ...demoChallengesPanel({ username: 'tester' }),
   }).rows];
@@ -1006,10 +1004,10 @@ test('demoChallengesPanel: registry artwork on the rows, with one fallback in th
 });
 
 // The preview is where Home's group headers are reviewed. Every group is
-// headed (S10), and the four the collapsed block draws span two of them, This
-// week and Always open. The open row past the cap is in a third, Season
-// challenges, which ranks after both, so the cap cuts exactly that row.
-test('demoChallengesPanel: the drawn four and the short list sit under two group headers', () => {
+// headed (S10). The four the collapsed block draws are one unfinished row from
+// each of This week, Always open and Season challenges, then a finished one
+// under Done (#2490); the short list spans the first two.
+test('demoChallengesPanel: the drawn four sit under three group headers and Done, the short list under two', () => {
   const { demoChallengesPanel } = require('../src/routes/home-panels');
   const HP = loadHomePanels();
   const labels = (opts) => [...new Set(demoChallengesPanel({ username: 'tester', ...opts })
@@ -1019,9 +1017,10 @@ test('demoChallengesPanel: the drawn four and the short list sit under two group
   const headings = (opts) => [...HP.challengesView({
     key: 'challenges', ...demoChallengesPanel({ username: 'tester', ...opts }),
   }).groups].map((g) => g.heading);
-  assert.deepEqual(headings({}), ['This week', 'Always open'], 'what the collapsed block draws');
+  assert.deepEqual(headings({}), ['This week', 'Always open', 'Season challenges', 'Done'],
+    'what the collapsed block draws');
   assert.deepEqual(headings({ variant: 'few' }), ['This week', 'Always open']);
-  // The binary and the numeric DONE rows are compared side by side, so a
+  // Expanded, the binary and the numeric DONE rows sit side by side, so a
   // group header must not fall between them.
   const rows = demoChallengesPanel({ username: 'tester' }).challenges;
   const labelOf = (id) => rows.find((c) => c.id === id).label;
