@@ -442,11 +442,19 @@ test('a key whose limit differs from the platform weekly allowance is re-limited
   assert.deepEqual(updates[1], [2119, 50, 'weekly']);
   assert.equal(lowered.daily_limit_usd, 50);
 
+  // Reusing a previously applied allowance must work without restarting the
+  // server. Remembering successful targets forever strands the remote key.
+  const restored = await managed.syncAllowance({
+    pool: {}, userId: 7, state: lowered, config, allowance: weekly(17500),
+  });
+  assert.equal(restored.daily_limit_usd, 175);
+  assert.deepEqual(patches.map((patch) => patch.limit), [175, 50, 175]);
+
   // A zero allowance is never written to an issued key.
   assert.equal(await managed.syncAllowance({
     pool: {}, userId: 7, state: lowered, config, allowance: weekly(0),
   }), lowered);
-  assert.equal(patches.length, 2);
+  assert.equal(patches.length, 3);
 
   // Nothing that can be synced: no confirmed hash, deleted, unconfigured, no row.
   const unconfirmed = { ...legacy, managed_key_id: 2120, remote_key_hash: null };
@@ -466,17 +474,20 @@ test('a key whose limit differs from the platform weekly allowance is re-limited
   assert.equal(await managed.syncAllowance({
     pool: {}, userId: 11, state: none, config, allowance: weekly(17500),
   }), none);
-  assert.equal(patches.length, 2);
+  assert.equal(patches.length, 3);
   assert.equal(reads.length, 1, 'a caller that already resolved the allowance is not made to resolve it again');
 });
 
-test('a failed allowance sync keeps the key truthful and is not retried for the same target in this process', async (t) => {
+test('a failed allowance sync retries after a short backoff without a server restart', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1000000 });
   const originals = {
     withTransaction: credentialStore.withTransaction,
+    mergeKeyInfo: credentialStore.mergeKeyInfoOnClient,
     setLimit: managementClient.setLimit,
   };
   t.after(() => {
     credentialStore.withTransaction = originals.withTransaction;
+    credentialStore.mergeKeyInfoOnClient = originals.mergeKeyInfo;
     managementClient.setLimit = originals.setLimit;
   });
 
@@ -509,6 +520,25 @@ test('a failed allowance sync keeps the key truthful and is not retried for the 
   // A different target value (an admin changed the cap) is a new attempt.
   await managed.syncAllowance({ pool: {}, userId: 12, state: legacy, config, allowance: weekly(5000) });
   assert.deepEqual(attempts, [175, 50]);
+
+  t.mock.timers.tick(60001);
+  managementClient.setLimit = async (args) => {
+    attempts.push(args.limit);
+    return { limit: args.limit, limitRemaining: args.limit, limitReset: 'weekly' };
+  };
+  credentialStore.withTransaction = async (_pool, fn) => {
+    writes += 1;
+    return fn({ query: async () => ({ rows: [] }) });
+  };
+  credentialStore.mergeKeyInfoOnClient = async () => true;
+  const [recovered, concurrent] = await Promise.all([1, 2].map(() => managed.syncAllowance({
+    pool: {}, userId: 12, state: legacy, config, allowance: weekly(17500),
+  })));
+  assert.deepEqual(attempts, [175, 50, 175], 'a temporary provider outage must not pin the old limit forever');
+  assert.equal(recovered.daily_limit_usd, 175);
+  assert.equal(recovered.limit_reset, 'weekly');
+  assert.equal(concurrent, recovered, 'concurrent status/turn reads share the confirmed result');
+  assert.equal(writes, 1);
 });
 
 // #2568 retired OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY and

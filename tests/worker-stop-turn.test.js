@@ -198,6 +198,20 @@ test('stop script: targets the recorded journal path, guarded on existence', () 
   } finally { restore(); }
 });
 
+test('stop script includes the Codex request adapter in every signal and liveness check', () => {
+  const { worker, restore } = loadWorker();
+  try {
+    const script = worker.buildTurnStopScript('/home/node/.claude/turn-123.log');
+    const patterns = [...script.matchAll(/grep -qE '([^']+)'/g)].map(match => new RegExp(match[1]));
+    assert.ok(patterns.length >= 3, 'TERM, liveness and KILL all match the same processes');
+    for (const pattern of patterns) {
+      assert.match('node /usr/local/bin/codex-openrouter-request.js exec --json', pattern);
+      assert.match('codex exec --json', pattern);
+      assert.doesNotMatch('tail -f /home/node/.claude/turn-codex-openrouter-request.js.log', pattern);
+    }
+  } finally { restore(); }
+});
+
 test('stop script: discovers the journal in-container when the path is unknown', () => {
   const { worker, restore } = loadWorker();
   try {

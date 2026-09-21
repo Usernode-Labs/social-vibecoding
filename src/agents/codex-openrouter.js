@@ -15,7 +15,7 @@
 //   turn.started    -> phase "[agent]"
 //   item.started    -> command_started / file_changed / file_read / mcp_started
 //   item.completed  -> command_completed / file_changed / agent_message /
-//                      mcp_completed / error
+//                      mcp_completed / warning
 //   turn.completed  -> usage (complete usage-total object)
 //   turn.failed     -> error
 //   error           -> error (sanitized)
@@ -70,14 +70,6 @@ request_max_retries = ${REQUEST_MAX_RETRIES}
 const STREAM_WRAPPER = /^stream disconnected before completion:\s*/i;
 // "Reconnecting... 2/5 (connection reset)" — attempt N of M.
 const RECONNECT_ATTEMPT = /^Reconnecting\.\.\.\s+(\d+)\/(\d+)(?:\s|\(|$)/;
-// Reconnecting cannot clear a credit or credential failure. A retry
-// diagnostic whose cause is one of these is reported once as the failure it
-// is, rather than five times as a retry that was never going to work.
-const RECONNECT_FUTILE_CODES = new Set([
-  'insufficient_credits',
-  'insufficient_credits_max_tokens',
-  'credential_failure',
-]);
 
 // Classify one provider failure message. Pure: no I/O, no database, no
 // config — the same function runs in the JSONL normalizer, in the resume
@@ -116,12 +108,60 @@ function classifyProviderError(message) {
   return { ...base, code: 'provider_error' };
 }
 
-// Token counts are read out loud, so they are rounded rather than exact.
-function approximateTokens(value) {
-  const count = Number(value);
-  if (!Number.isFinite(count) || count <= 0) return null;
-  const rounded = count >= 10_000 ? Math.round(count / 1_000) * 1_000 : Math.round(count);
-  return rounded.toLocaleString('en-US');
+function tokenCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+// Only these fields may leave the worker journal for the attempt ledger or
+// session status. Never persist request bodies, headers, keys or /key labels.
+function sanitizeProviderRequest(value) {
+  if (!value || typeof value !== 'object') return null;
+  const diagnostic = {
+    model: typeof value.model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,199}$/.test(value.model)
+      ? value.model : null,
+    maxOutputTokens: tokenCount(value.maxOutputTokens),
+    inputBytes: tokenCount(value.inputBytes),
+    inputItems: tokenCount(value.inputItems),
+    httpStatus: Number.isInteger(value.httpStatus) && value.httpStatus >= 100 && value.httpStatus <= 599
+      ? value.httpStatus : null,
+    requestId: typeof value.requestId === 'string' && /^[a-zA-Z0-9._:-]{1,160}$/.test(value.requestId)
+      ? value.requestId : null,
+  };
+  if (Object.hasOwn(value, 'keyLookupStatus')) {
+    diagnostic.keyLookupStatus = Number.isInteger(value.keyLookupStatus)
+      && value.keyLookupStatus >= 100 && value.keyLookupStatus <= 599 ? value.keyLookupStatus : null;
+    diagnostic.keyLimitUsd = typeof value.keyLimitUsd === 'number' && Number.isFinite(value.keyLimitUsd)
+      && value.keyLimitUsd >= 0 ? value.keyLimitUsd : null;
+    diagnostic.keyRemainingUsd = typeof value.keyRemainingUsd === 'number' && Number.isFinite(value.keyRemainingUsd)
+      ? value.keyRemainingUsd : null;
+    diagnostic.keyLimitReset = ['daily', 'weekly', 'monthly'].includes(value.keyLimitReset) ? value.keyLimitReset : null;
+  }
+  if (['openrouter_credits', 'openrouter_key_limit', 'openrouter_in_flight_budget'].includes(value.limitSource)) {
+    diagnostic.limitSource = value.limitSource;
+  }
+  if (['in_flight_budget_exhausted', 'weight_exceeds_budget'].includes(value.limitReason)) {
+    diagnostic.limitReason = value.limitReason;
+  }
+  if (typeof value.providerName === 'string' && /^[a-zA-Z0-9 ._:/()-]{1,80}$/.test(value.providerName)) {
+    diagnostic.providerName = value.providerName;
+  }
+  if (tokenCount(value.retryAfterSeconds) != null) diagnostic.retryAfterSeconds = value.retryAfterSeconds;
+  if (value.providerErrorStatus === 402) diagnostic.providerErrorStatus = 402;
+  return diagnostic;
+}
+
+function providerFailureDiagnostics(result) {
+  if (!result?.agentErrorCode) return null;
+  const knownCodes = new Set([
+    'insufficient_credits_max_tokens', 'insufficient_credits', 'rate_limited',
+    'credential_failure', 'stream_disconnected', 'provider_error',
+  ]);
+  return {
+    code: knownCodes.has(result.agentErrorCode) ? result.agentErrorCode : 'provider_error',
+    requestedOutputTokens: tokenCount(result.requestedOutputTokens),
+    affordableOutputTokens: tokenCount(result.affordableOutputTokens),
+    request: sanitizeProviderRequest(result.providerRequest),
+  };
 }
 
 function clipRawError(raw) {
@@ -129,37 +169,59 @@ function clipRawError(raw) {
   return text.length > 200 ? `${text.slice(0, 199)}…` : text;
 }
 
-// Turn a classification into one sentence a non-developer can act on.
-// `includedKey` selects between the credit Homeroom includes and the user's
-// own OpenRouter key, because the remedy differs: one is "add your own key",
-// the other is "top up the account you already have". This module never
-// looks that up itself — the caller that knows passes it in.
+// A refusal reports a requested ceiling, not a prediction of how long the
+// agent's reply will be. A 402 alone also cannot establish account balance:
+// a key can have its own spending limit. Attribute claims to OpenRouter.
 function describeProviderError({
   code,
   requestedTokens = null,
   affordableTokens = null,
+  requestDiagnostic = null,
   raw = '',
   includedKey = false,
 } = {}) {
-  void requestedTokens;
-  const account = includedKey
-    ? 'The OpenRouter credit included with Homeroom'
-    : 'Your OpenRouter account';
+  const request = sanitizeProviderRequest(requestDiagnostic);
   const remedy = includedKey
-    ? 'Add your own OpenRouter key in Settings to keep going.'
-    : 'Top up your OpenRouter credit, then send the request again.';
+    ? 'Check the credit included with Homeroom or add your own OpenRouter key in Settings.'
+    : 'Check this key’s spending limit and your OpenRouter account balance.';
+  if (code === 'insufficient_credits' || code === 'insufficient_credits_max_tokens') {
+    if (request?.limitSource === 'openrouter_in_flight_budget') {
+      const retry = request.retryAfterSeconds > 0
+        ? `Try again in ${request.retryAfterSeconds} seconds.`
+        : 'Wait for those requests to settle, then try again.';
+      return `OpenRouter’s temporary spending budget is occupied by running or recently completed requests. ${retry}`;
+    }
+    if (request?.limitSource === 'openrouter_key_limit') {
+      return `OpenRouter reports that this API key’s spending limit has been reached. ${includedKey
+        ? remedy : 'Raise the key’s limit in OpenRouter or wait for it to reset.'}`;
+    }
+    if (request?.limitReason === 'weight_exceeds_budget') {
+      return 'OpenRouter rejected the estimated cost of this request under its temporary spending budget. '
+        + 'The request’s input and reply limit need to fit that budget, even when the account has credit. '
+        + remedy;
+    }
+  }
   switch (code) {
     case 'insufficient_credits_max_tokens': {
-      const affordable = approximateTokens(affordableTokens);
-      const sizing = affordable
-        ? ` It can afford about ${affordable} tokens of reply, and the coding agent needs more.`
-        : '';
-      return `${account} cannot cover a reply this long.${sizing} ${remedy}`;
+      const requested = tokenCount(requestedTokens);
+      const affordable = tokenCount(affordableTokens);
+      const sent = request?.maxOutputTokens;
+      const details = ['OpenRouter rejected the reply limit for this request.'];
+      if (sent != null) details.push(`We sent a limit of ${sent.toLocaleString('en-US')} output tokens.`);
+      if (requested != null) {
+        details.push(`OpenRouter checked a limit of ${requested.toLocaleString('en-US')} tokens${affordable != null
+          ? ` and reported an allowance of ${affordable.toLocaleString('en-US')} for this key` : ''}.`);
+      } else if (affordable != null) {
+        details.push(`OpenRouter reported an allowance of ${affordable.toLocaleString('en-US')} output tokens for this key.`);
+      }
+      if (request?.keyLimitUsd != null && request.keyRemainingUsd != null) {
+        details.push(`The key reports $${request.keyRemainingUsd.toFixed(2)} remaining under its $${request.keyLimitUsd.toFixed(2)} spending limit.`);
+      }
+      details.push(remedy);
+      return details.join(' ');
     }
     case 'insufficient_credits':
-      return includedKey
-        ? `The OpenRouter credit included with Homeroom is used up. ${remedy}`
-        : `Your OpenRouter account is out of credit. ${remedy}`;
+      return `OpenRouter refused payment for this request. ${remedy}`;
     case 'rate_limited':
       return 'OpenRouter rate-limited this request. Wait a moment, then send the request again.';
     case 'credential_failure':
@@ -217,11 +279,17 @@ function verbFor(kind) {
   return 'Editing';
 }
 
-// Emit an error event and mark the running state as errored so a later
-// turn.failed / terminal exit marker cannot be reported as a clean success.
+// Record a provider error until the CLI reports a terminal outcome. Explicit
+// turn.completed clears recovered errors; turn.failed / a nonzero exit do not.
 function emitError(state, msg) {
   const raw = msg != null ? String(msg) : 'Codex error';
   const classification = classifyProviderError(raw);
+  // The CLI may keep only the SSE error's message, dropping its HTTP-like
+  // code and metadata. The worker's observation preserves that evidence.
+  if ((state.providerRequest?.httpStatus === 402 || state.providerRequest?.providerErrorStatus === 402)
+      && ['provider_error', 'stream_disconnected'].includes(classification.code)) {
+    classification.code = 'insufficient_credits';
+  }
   state.ccIsError = true;
   // The raw provider text stays on the state: telemetry and the ledger's
   // error detail want what OpenRouter actually said, not the rewrite.
@@ -230,9 +298,12 @@ function emitError(state, msg) {
   if (classification.affordableTokens != null) {
     state.affordableOutputTokens = classification.affordableTokens;
   }
-  const text = describeProviderError({ ...classification, raw });
-  // One provider failure usually arrives twice: an item.completed error, then
-  // the turn.failed that follows it. Both still update the turn state; only
+  if (classification.requestedTokens != null) {
+    state.requestedOutputTokens = classification.requestedTokens;
+  }
+  const text = describeProviderError({ ...classification, raw, requestDiagnostic: state.providerRequest });
+  // One provider failure can arrive twice: a top-level error, then the
+  // turn.failed that follows it. Both still update the turn state; only
   // the repeated progress line is dropped, so dev chat shows it once.
   const duplicate = state.lastEmittedErrorText === text;
   state.lastEmittedErrorText = text;
@@ -241,6 +312,7 @@ function emitError(state, msg) {
     text: duplicate ? null : text,
     errorMessage: raw,
     errorCode: classification.code,
+    requestedOutputTokens: classification.requestedTokens,
     affordableOutputTokens: classification.affordableTokens,
   };
 }
@@ -258,18 +330,23 @@ function nonFatalDiagnostic(msg) {
   if (attempt) {
     // Five identical "retrying…" lines read as a hang. Showing which attempt
     // this is makes the same sequence legible as bounded progress.
-    return `OpenRouter connection interrupted, retrying (attempt ${attempt[1]} of ${attempt[2]})…`;
+    const { code } = classifyProviderError(text);
+    const cause = code === 'insufficient_credits' || code === 'insufficient_credits_max_tokens'
+      ? 'OpenRouter rejected an attempt because of a payment or spending limit'
+      : code === 'credential_failure' ? 'OpenRouter rejected an attempt’s API key'
+        : 'OpenRouter connection interrupted';
+    return `${cause}, retrying (attempt ${attempt[1]} of ${attempt[2]})…`;
   }
   return null;
 }
 
-function emitDiagnosticOrError(state, msg) {
+function emitDiagnosticOrError(state, msg, { nonfatal = false } = {}) {
   const raw = String(msg || '');
   const warning = nonFatalDiagnostic(raw);
-  if (warning && !RECONNECT_FUTILE_CODES.has(classifyProviderError(raw).code)) {
+  if (warning || nonfatal) {
     return {
       kind: 'warning',
-      text: `⚠ ${warning}`,
+      text: `⚠ ${warning || `OpenRouter notice: ${clipRawError(raw)}`}`,
       diagnostic: RECONNECT_ATTEMPT.test(raw) ? 'provider_retry' : 'provider_warning',
     };
   }
@@ -286,6 +363,10 @@ function normalizeCodexLine(line, state) {
   let ev;
   try { ev = JSON.parse(line); } catch { return []; }
 
+  if (ev.type === 'usernode.openrouter.request') {
+    state.providerRequest = sanitizeProviderRequest(ev.diagnostic);
+    return [];
+  }
   if (ev.type === 'thread.started') {
     const tid = ev.thread_id || ev.id;
     if (tid) state.agentThreadId = tid;
@@ -348,7 +429,10 @@ function normalizeCodexLine(line, state) {
       return [];
     }
     if (t === 'error') {
-      return [emitDiagnosticOrError(state, item.message || 'OpenRouter error')];
+      // In pinned Codex 0.146.0, ErrorItem explicitly means a nonfatal
+      // notice (including warnings, deprecations and model reroutes).
+      // turn.failed / the process exit supplies the terminal verdict.
+      return [emitDiagnosticOrError(state, item.message || 'OpenRouter notice', { nonfatal: true })];
     }
     if (t === 'file_change') {
       const changes = Array.isArray(item.changes) && item.changes.length
@@ -412,6 +496,16 @@ function normalizeCodexLine(line, state) {
     return [];
   }
   if (ev.type === 'turn.completed') {
+    // A provider error can recover inside the CLI. Keeping its old flag
+    // after explicit success made the host fail and sometimes re-run work
+    // that had completed. Clear only provider state; host fatal errors and
+    // the runner's eventual exit status remain independent failure gates.
+    state.ccIsError = false;
+    state.agentError = null;
+    state.agentErrorCode = null;
+    state.requestedOutputTokens = null;
+    state.affordableOutputTokens = null;
+    state.lastEmittedErrorText = null;
     const u = ev.usage || {};
     state.usageSeen = true;
     state.cacheWriteInputTokens = normalizeNonNegativeInteger(u.cache_write_input_tokens);
@@ -458,7 +552,9 @@ function newCodexState() {
     ccIsError: false,
     agentError: null,
     agentErrorCode: null,
+    requestedOutputTokens: null,
     affordableOutputTokens: null,
+    providerRequest: null,
     lastEmittedErrorText: null,
     usageSeen: false,
     cacheWriteInputTokens: null,
@@ -470,6 +566,7 @@ module.exports = {
   classifyProviderError,
   classifyResumeError,
   describeProviderError,
+  providerFailureDiagnostics,
   normalizeCodexLine,
   nonFatalDiagnostic,
   summarizeResult,

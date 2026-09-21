@@ -222,14 +222,9 @@ function buildCodexModelCatalog({
       supports_image_detail_original: false,
       context_window: resolvedContextWindow,
       max_context_window: resolvedContextWindow,
-      // Verified against the pinned Codex 0.146.0 binary: it accepts this
-      // field in the catalog, but a wire capture shows it does not yet put
-      // a max_output_tokens on the /v1/responses request, so OpenRouter
-      // still prices against its own 131,072 default. The value is emitted
-      // anyway: it is the field the ceiling belongs in, it costs nothing
-      // today, and it starts bounding the request the moment the pinned CLI
-      // forwards it. The clamped retry in the sessions attempt loop is what
-      // recovers the turn in the meantime (#2676).
+      // Codex 0.146.0 ignores this catalog field. The worker-local request
+      // adapter reads it and enforces it in the actual /responses body on
+      // every call, including compaction and the host's smaller retry.
       max_output_tokens: resolvedMaxOutputTokens,
       auto_compact_token_limit: null,
       comp_hash: null,
