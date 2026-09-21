@@ -218,7 +218,9 @@ export type TranscriptRow =
      * explicit is what lets an already-proposed card stay visibly disabled
      * across success re-renders, status polls and a fresh session load.
      */
-    propose: { kind: 'ready' } | { kind: 'pending' } | { kind: 'completed' }
+    /** #2668: `reason` on a READY state is a caution, not a refusal — a
+     *  failing revision submits and says why it still cannot merge. */
+    propose: { kind: 'ready'; reason?: string } | { kind: 'pending' } | { kind: 'completed' }
       | { kind: 'blocked'; label: string; reason: string } | null;
     /** MergeStatus's badge for the card, or the merged sentence. */
     status2: { kind: 'none' } | { kind: 'merged' } | { kind: 'badge'; html: string };

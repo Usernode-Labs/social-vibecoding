@@ -85,6 +85,11 @@ test('every blocked reason names its own condition (#2074)', () => {
   // for the current revision" — which is what turned a temporary state into a
   // bug report: it named checks that were not running, and gave no way to tell
   // whether waiting would help.
+  //
+  // #2668: two of these are no longer REFUSALS — a failing or errored
+  // revision submits, carrying its verdict as a caution. The sentences
+  // below are still theirs, and still have to be distinct from each other,
+  // which is what this test is actually about.
   const av = context();
   const reason = (patch) => av.changeSubmissionState({ ...failing, ...patch }).reason;
 
@@ -124,10 +129,53 @@ test('an ordinary session submits while its checks are still running (#2074)', (
   assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'passing', busy: true }).kind,
     'ready', 'and a build in flight is the same kind of not-yet');
 
-  // A real verdict still blocks: putting a known-broken change in front of the
-  // group is the thing worth refusing.
-  assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'failing' }).kind, 'blocked');
-  assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'error' }).kind, 'blocked');
+  // REVERSED by #2668. This used to assert 'blocked' for both, on #2074's
+  // reasoning that "putting a known-broken change in front of the group is
+  // the thing worth refusing". Every argument #2074 made against the OTHER
+  // conditions applies to these two as well: promote has no checks condition
+  // server-side, the connector's submit_work puts a failing revision to the
+  // vote today, and the merge gate — the real one — is untouched. A failing
+  // check is a fact about the revision, not a reason the group may not see
+  // it; the vote and the fix can run at the same time instead of in series.
+  for (const check_state of ['failing', 'error']) {
+    const state = av.changeSubmissionState({ ...ordinary, check_state });
+    assert.equal(state.kind, 'ready', `${check_state} no longer refuses the submission`);
+    // But it is a CAUTION, not silence — and it names the gate that does
+    // still apply, so this cannot be read as "checks stopped mattering".
+    assert.ok(state.reason, `${check_state} must still say what is wrong`);
+    assert.match(state.reason, /cannot merge until/,
+      'the merge gate has to be named where the caution is');
+  }
+});
+
+test('a submitted-with-failing-checks change still reports the caution, not "Ready" (#2668)', () => {
+  // The other half of the fix: enabling the button without carrying the
+  // verdict would have hidden it. The Review row and the button title both
+  // read the same `reason`.
+  const av = context();
+  const ordinary = { ...failing, source: null, proposal_state: undefined, check_state: 'failing' };
+  const view = av._topicViewFor('session', ordinary);
+  const rows = JSON.stringify(view);
+  assert.match(rows, /cannot merge until they pass/,
+    'the caution has to reach the rendered view, not just the return value');
+  assert.doesNotMatch(rows, /Ready to submit for review/,
+    'and it must not also claim the clean ready state');
+});
+
+test('the Checks row names the merge gate, not a submission gate (#2668)', () => {
+  // Review's finding. `_completeChangeView` rewrote the Checks row to
+  // "Required checks need attention before this change can be proposed",
+  // which was true while a failing revision could not be submitted. It can
+  // now, so that sentence named a gate that no longer exists and
+  // contradicted the live Submit button two rows below it.
+  const av = context();
+  const ordinary = { ...failing, source: null, proposal_state: undefined, check_state: 'failing' };
+  const rendered = JSON.stringify(av._topicViewFor('session', ordinary));
+  assert.doesNotMatch(rendered, /before this change can be proposed/,
+    'the submission gate it describes is gone');
+  assert.match(rendered, /cannot merge until the checks pass/,
+    'and what is still true is the merge gate');
+  assert.match(rendered, /Failing\./, 'the verdict itself is unchanged');
 });
 
 test('a change with nothing committed cannot be submitted yet (#2379)', () => {

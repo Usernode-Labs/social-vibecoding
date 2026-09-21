@@ -592,8 +592,9 @@ test('a later iteration moves the card, not its status line, to the bottom (#188
 });
 
 test('the trailing card keeps the proposal action\'s lifecycle (#1889)', () => {
-  // Completed on a promoted session, blocked with its reason on a failing
-  // one, absent on a paused one — the model the in-place card renders from.
+  // Completed on a promoted session, ENABLED-with-a-caution on a failing one
+  // (#2668 — it used to be disabled), absent on a paused one — the model the
+  // in-place card renders from.
   let h = makeDevChat();
   let html = h.render([CARD, WRAP_UP, ASK, ANSWER], withPr({ status: 'promoted' }));
   assert.ok(at(html, 'class="dc-pr-card"') > at(html, 'rounds to the hour'));
@@ -603,8 +604,17 @@ test('the trailing card keeps the proposal action\'s lifecycle (#1889)', () => {
   h = makeDevChat();
   html = h.render([CARD, WRAP_UP, ASK, ANSWER], withPr({ check_state: 'failing' }));
   assert.ok(at(html, 'class="dc-pr-card"') > at(html, 'rounds to the hour'));
-  assert.match(html, /disabled[^>]*title="The checks on this revision are failing/);
-  assert.match(html, /Submit for review/, 'the blocked action keeps its label');
+  // #2668 REVERSED this: it asserted `disabled[^>]*title="The checks..."`.
+  // A failing revision now submits, so the control is live and the verdict
+  // rides along as its title instead of as a refusal.
+  assert.match(html, /title="The checks on this revision are failing/,
+    'the verdict still travels with the control');
+  assert.match(html, /cannot merge until they pass/,
+    'and it names the gate that does still apply');
+  const btn = /<button[^>]*dc-pr-btn-promote[^>]*>/.exec(html);
+  assert.ok(btn, 'the proposal action is rendered');
+  assert.doesNotMatch(btn[0], /\bdisabled\b/, 'and it is no longer disabled');
+  assert.match(html, /Submit for review/, 'the action keeps its label');
 
   h = makeDevChat();
   html = h.render([CARD, WRAP_UP, ASK, ANSWER], withPr({ status: 'paused' }));

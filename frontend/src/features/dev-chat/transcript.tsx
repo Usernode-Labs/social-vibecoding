@@ -510,7 +510,12 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
               className="dc-pr-btn dc-pr-btn-promote"
               disabled={r.propose.kind !== 'ready'}
               aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
-              title={r.propose.kind === 'blocked' ? r.propose.reason : undefined}
+              // #2668: a 'ready' state can carry a caution too (failing
+              // checks submit now, with the merge gate named), so the title
+              // follows the reason rather than the kind. Narrowed with `in`
+              // because 'pending' and 'completed' carry no reason at all —
+              // reading it off the bare union is a TS2339.
+              title={('reason' in r.propose && r.propose.reason) || undefined}
               onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
               {r.propose.kind === 'pending'

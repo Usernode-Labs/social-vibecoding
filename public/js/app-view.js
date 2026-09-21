@@ -4036,11 +4036,37 @@ const AppView = {
         return blocked('There are no committed changes to submit yet. Ask the agent to make a change first.');
       }
     }
+    // #2668 — and the last two conditions #2074 left standing. That change
+    // established that submitting is not merging, then drew the line at a
+    // KNOWN-BAD verdict: 'failing' and 'error' were "reasons not to put a
+    // change in front of the group". Every argument it made against the
+    // others applies here too, and the line did not hold:
+    //
+    //   * `POST /api/sessions/:id/promote` still has no checks condition, so
+    //     this was never enforcement — only the browser declining to ask.
+    //   * The connector's `submit_work` puts a failing revision to the vote
+    //     today, and says so: "Checks ... build automatically", then
+    //     "Checks on PR #N are failing and they gate merge". One doorway
+    //     refused what the other routinely does.
+    //   * The merge gate is the real one and it is untouched: a non-green
+    //     proposal cannot land however the vote goes.
+    //
+    // A failing check is a fact about the revision, not a reason the group
+    // may not see it — and seeing it is often the point, because the vote
+    // and the fix can happen at the same time rather than in series.
+    //
+    // So it SUBMITS, and it still SAYS SO: `reason` on a ready state is the
+    // caution, carried to the button's title and the Review row, and it
+    // names the merge gate so nobody reads this as "checks stopped
+    // mattering". Hiding the verdict would be the wrong half of this.
+    const caution = (reason) => ({ kind: 'ready', reason });
     if (item.check_state === 'failing') {
-      return blocked('The checks on this revision are failing. Push a fix, then submit it.');
+      return caution('The checks on this revision are failing. You can still submit it '
+        + 'for review, but it cannot merge until they pass.');
     }
     if (item.check_state === 'error') {
-      return blocked('The checks could not run on this revision. Push a fix, then submit it.');
+      return caution('The checks could not run on this revision. You can still submit it '
+        + 'for review, but it cannot merge until they do.');
     }
     return { kind: 'ready' };
   },
@@ -4125,7 +4151,11 @@ const AppView = {
     body.evidence = AppView._evidenceView(item.visualEvidence);
     if (underway) {
       const checks = rows.find((r) => r.key === 'checks');
-      if (item.check_state === 'failing' && checks) checks.text = [{ b: 'Failing.', tone: 'bad' }, ' Required checks need attention before this change can be proposed.'];
+      // #2668: "before this change can be proposed" was true when a failing
+      // revision could not be submitted. It can now, so the sentence named
+      // a gate that no longer exists and contradicted the live Submit
+      // button two rows down. What is still true is the MERGE gate.
+      if (item.check_state === 'failing' && checks) checks.text = [{ b: 'Failing.', tone: 'bad' }, ' This change can still be submitted for review, but it cannot merge until the checks pass.'];
       if (main.key === 'behind') {
         const behind = AppView._freshnessOf(item).behindBy ?? main.count;
         main.label = 'Main';
@@ -4137,8 +4167,11 @@ const AppView = {
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
       const submission = AppView.changeSubmissionState(item);
       const ready = submission.kind === 'ready';
-      rows.push({ key: 'review', label: 'Review', tone: ready ? 'ok' : 'mute',
-        text: [ready ? 'Ready to submit for review.' : submission.reason || 'Submitting for review…'] });
+      // #2668: a ready state can now carry a caution (failing checks), so the
+      // row reports the reason whenever there is one and only claims a clean
+      // "Ready" when there is not.
+      rows.push({ key: 'review', label: 'Review', tone: ready && !submission.reason ? 'ok' : 'mute',
+        text: [submission.reason || (ready ? 'Ready to submit for review.' : 'Submitting for review…')] });
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
         label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
