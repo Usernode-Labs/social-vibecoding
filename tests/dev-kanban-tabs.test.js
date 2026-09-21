@@ -40,6 +40,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { kanbanHtml } = require('./lib/dev-card-html');
+const { SW_VERSION } = require('../public/sw.js');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -136,6 +137,11 @@ test('Done column calls out pending and stalled production changes', () => {
   AppView._mergedCtx.deployment = { state: 'stalled', pendingCount: 1 };
   html = kanbanHtml(AppView);
   assert.match(html, /1 merged change · deployment stalled/);
+});
+
+test('Done deployment summary retires shells that cannot render its status field', () => {
+  const version = Number(String(SW_VERSION).replace(/^v/, ''));
+  assert.ok(version >= 33, `expected the Done-deployment shell cache, got ${SW_VERSION}`);
 });
 
 // All `data-kanban-tab="…"` keys, in document order.
