@@ -132,36 +132,28 @@ function runtimeInput(overrides = {}) {
   };
 }
 
-test('the versioned system prompt gives weak models an exact platform workflow', () => {
-  assert.equal(PROMPT_VERSION, 'global-chat-system-v8');
-  assert.match(SYSTEM_PROMPT, /same authorized features.*Classic mode/i);
+test('the versioned system prompt is compact and supports conversation as well as tools', () => {
+  assert.equal(PROMPT_VERSION, 'global-chat-system-v9');
+  assert.ok(Buffer.byteLength(SYSTEM_PROMPT) < 4_000);
+  assert.match(SYSTEM_PROMPT, /Classic mode has the same features/i);
+  assert.match(SYSTEM_PROMPT, /answer directly or ask a focused question/i);
+  assert.match(SYSTEM_PROMPT, /inline results and next-step buttons are optional/i);
   assert.match(SYSTEM_PROMPT, /search_capabilities/);
-  assert.match(SYSTEM_PROMPT, /NOT the full list of platform features/);
+  assert.match(SYSTEM_PROMPT, /not the full catalog/i);
   assert.match(SYSTEM_PROMPT, /untrusted data/i);
   assert.match(SYSTEM_PROMPT, /threadSummary/);
-  assert.match(SYSTEM_PROMPT, /developmentProfile is the separate model profile/i);
-  assert.match(SYSTEM_PROMPT, /STEP 1 — IDENTIFY THE REQUEST TYPE/);
-  assert.match(SYSTEM_PROMPT, /STEP 2 — FIND THE EXACT CAPABILITY/);
-  assert.match(SYSTEM_PROMPT, /STEP 3 — COLLECT EVERY REQUIRED INPUT/);
-  assert.match(SYSTEM_PROMPT, /pathParameters: an object containing every named placeholder/);
-  assert.match(SYSTEM_PROMPT, /Never invent a missing slug, id, issue number/);
-  assert.match(SYSTEM_PROMPT, /Never invent choices from the user's wording/);
-  assert.match(SYSTEM_PROMPT, /Match only against records returned by that capability/);
-  assert.match(SYSTEM_PROMPT, /call ask_user_for_input when it is available/);
-  assert.match(SYSTEM_PROMPT, /STEP 5 — CHECK THE TOOL RESULT/);
-  assert.match(SYSTEM_PROMPT, /Do not answer with ordinary assistant text/);
-  assert.match(SYSTEM_PROMPT, /suggestions: use \[\] for every normal user_turn/i);
-  assert.match(SYSTEM_PROMPT, /COMPOUND REQUEST RULE — NEVER DROP A CLAUSE/);
-  assert.match(SYSTEM_PROMPT, /issues\.closed_by_me and governance\.merged_by_me/);
-  assert.match(SYSTEM_PROMPT, /Call all independent read tools together/i);
-  assert.match(SYSTEM_PROMPT, /PLATFORM OPERATING MAP/);
-  assert.match(SYSTEM_PROMPT, /earlier suggestions stay visible in the transcript/i);
-  assert.match(SYSTEM_PROMPT, /Open in Classic links/);
-  assert.match(RESULT_FOLLOWUP_PROMPT, /Inspect the newest tool result/);
-  assert.match(RESULT_FOLLOWUP_PROMPT, /suggestions \[\]/);
-  assert.match(MORE_SUGGESTIONS_PROMPT, /Stay inside that exact topic/i);
-  assert.match(MORE_SUGGESTIONS_PROMPT, /Do not search and do not call a platform capability/);
-  assert.match(MORE_SUGGESTIONS_PROMPT, /five or six relevant new button suggestions/);
+  assert.match(SYSTEM_PROMPT, /separate developmentProfile/i);
+  assert.match(SYSTEM_PROMPT, /Handle every part of a compound request/i);
+  assert.match(SYSTEM_PROMPT, /Run independent reads together/i);
+  assert.match(SYSTEM_PROMPT, /Never guess an app slug/i);
+  assert.match(SYSTEM_PROMPT, /Ask one clear question whenever/i);
+  assert.match(SYSTEM_PROMPT, /up to six short, contextual button suggestions/i);
+  assert.match(SYSTEM_PROMPT, /Earlier suggestions stay in the chat/i);
+  assert.match(SYSTEM_PROMPT, /Open in Classic/i);
+  assert.match(RESULT_FOLLOWUP_PROMPT, /newest tool results/);
+  assert.match(RESULT_FOLLOWUP_PROMPT, /clear text answer/);
+  assert.match(MORE_SUGGESTIONS_PROMPT, /Do not call platform tools/);
+  assert.match(MORE_SUGGESTIONS_PROMPT, /five or six new/);
 });
 
 test('runtime metadata is allowlisted, deterministic, and defaults GLM global chat to low effort', () => {
@@ -231,7 +223,7 @@ test('provider tool schemas repeat exact argument and presentation instructions'
 
   const present = BASE_TOOLS.find((tool) => tool.function.name === 'present_response');
   assert.match(present.function.parameters.properties.resultRefs.description, /Use \[\] for results created in this turn/);
-  assert.match(present.function.parameters.properties.suggestions.description, /Use \[\] for normal user turns/);
+  assert.match(present.function.parameters.properties.suggestions.description, /Zero to six short contextual options/);
   assert.equal(present.function.parameters.properties.suggestions.minItems, 0);
   assert.match(
     present.function.parameters.properties.suggestions.items.properties.prompt.description,
@@ -239,7 +231,8 @@ test('provider tool schemas repeat exact argument and presentation instructions'
   );
 
   const ask = BASE_TOOLS.find((tool) => tool.function.name === 'ask_user_for_input');
-  assert.match(ask.function.description, /one required input/);
+  assert.match(ask.function.description, /goal, target, or preference is ambiguous/);
+  assert.equal(ask.function.parameters.properties.suggestions.minItems, 0);
   assert.match(ask.function.parameters.properties.question.description, /End with a question mark/);
 
   const dynamic = capabilityTool(capability());
@@ -439,6 +432,31 @@ test('present_response accepts five or six compact non-repeating suggestions and
     (error) => error instanceof PresentationError
       && error.code === 'unknown_result_reference',
   );
+});
+
+test('conversation presentations may contain text and a small number of choices', () => {
+  const value = validatePresentation({
+    message: 'What would you like to focus on next?',
+    resultRefs: [],
+    suggestions: [
+      { id: 'focus.issues', label: 'Issues', prompt: 'Help me find issues.', capabilityHint: null },
+      { id: 'focus.development', label: 'Development', prompt: 'Show my development work.', capabilityHint: null },
+    ],
+  }, { allowShortSuggestions: true });
+  assert.equal(value.suggestions.length, 2);
+  assert.equal(validatePresentation({ ...value, suggestions: [] }, {
+    allowShortSuggestions: true,
+  }).suggestions.length, 0);
+  assert.throws(() => validatePresentation({
+    message: '', resultRefs: [], suggestions: [],
+  }, { allowShortSuggestions: true }), /needs text, a result, or at least one option/);
+  assert.deepEqual(validatePresentation({
+    ...value,
+    suggestions: [value.suggestions[0], value.suggestions[0], value.suggestions[1]],
+  }, {
+    allowShortSuggestions: true,
+    dropRepeatedSuggestions: true,
+  }).suggestions.map((suggestion) => suggestion.id), ['focus.issues', 'focus.development']);
 });
 
 test('the first-use state is instant, compact, and leaves More suggestions to the client', () => {

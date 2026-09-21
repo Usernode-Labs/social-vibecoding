@@ -212,9 +212,16 @@ enabled = false
 name = "OpenRouter"
 TOML
   printf 'base_url = "%s"\n' "$ESCAPED_BASE"
+  # Codex retries a dropped stream five times by default. A provider that
+  # is refusing the request (out of credit, a rejected key) refuses every
+  # retry too, so the default budget turns one refusal into a minute of
+  # identical "Reconnecting..." lines. Three rides out a genuine blip
+  # without hiding a hard refusal (#2676).
   cat <<'TOML'
 wire_api = "responses"
 env_key = "OPENROUTER_API_KEY"
+stream_max_retries = 3
+request_max_retries = 3
 TOML
   # #2380: browser parity with hosted Claude build turns. This is the
   # platform-seeded config, never a repository .mcp.toml. Scout remains

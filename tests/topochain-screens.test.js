@@ -321,6 +321,7 @@ test('admin-authored copy is escaped in text AND attribute contexts', () => {
     'frontend/src/features/leaderboard/event-bar.tsx', 'EventBarView',
     {
       mounted: true,
+      history: true,
       options: [{ id: 7, label: `${hostile} (current)` }],
       placeholder: null,
       selectedId: 7,
@@ -361,6 +362,7 @@ test('admin-authored copy is escaped in text AND attribute contexts', () => {
 test('the event bar draws no hero on the Challenges tab, and names its picker', () => {
   const props = {
     mounted: true,
+    history: true,
     options: [{ id: 7, label: 'Season 2 (season)' }],
     placeholder: null,
     selectedId: 7,
@@ -380,6 +382,39 @@ test('the event bar draws no hero on the Challenges tab, and names its picker', 
   const standings = renderComponent(file, 'EventBarView', { ...props, section: 'topochain' });
   assert.match(standings, /<h2[^>]*>Season 2<\/h2>/, 'Standings keeps the hero');
   assert.match(standings, /id="tc-ev-season-note"/);
+});
+
+// Issue #2495: the picker reaches standings other than the ones on screen, so
+// a member with nothing elsewhere — enrolled fresh into the season on screen,
+// or nobody signed in — gets neither it nor the hero, on either event tab.
+// Nothing, not an empty picker: the screen simply opens on the board.
+test('the event bar draws nothing for a member without the season history', () => {
+  const props = {
+    mounted: true,
+    history: false,
+    options: [{ id: 7, label: 'Season 2 (season)' }],
+    placeholder: null,
+    selectedId: 7,
+    hero: {
+      kind: 'event', name: 'Season 2', statusLabel: 'season', statusClass: '',
+      description: 'The season everyone is in.', dates: 'Sep 1, 2026 – Sep 30, 2026',
+      participants: null, seasonNote: true, fallbackNote: false,
+    },
+  };
+  const file = 'frontend/src/features/leaderboard/event-bar.tsx';
+  for (const section of ['challenges', 'topochain']) {
+    const html = renderComponent(file, 'EventBarView', { ...props, section });
+    assert.equal(html, '', `${section}: no picker, no hero host, no card`);
+  }
+  // The store ships the verdict as false and the context takes it from the
+  // events list, so the bar never paints a picker it then has to take back
+  // for the many viewers the server says no to.
+  const store = fs.readFileSync(
+    path.join(root, 'frontend/src/features/leaderboard/event-bar-store.js'), 'utf8');
+  assert.match(store, /history: false,/);
+  assert.match(contextJs, /_history = data\.viewer\?\.history === true;/);
+  assert.match(contextJs, /history: TopochainEventContext\._history,/,
+    'a re-open paints the remembered answer at once');
 });
 
 // The standings pane's replacement for the two tests above. It has no escaping

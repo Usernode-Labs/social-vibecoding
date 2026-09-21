@@ -259,8 +259,8 @@ test('the chunk is a lazy route chunk: unlisted in the precache, copied by every
   assert.ok(!sw.SHELL_ASSETS.some((p) => p.includes('settings-chunk')), 'not precached — the module graph loads it');
   assert.match(read('public/sw.js'), /shell-settings-chunk\.js/, 'but named in the LAZY CHUNKS note');
   assert.match(read('Dockerfile'), /COPY --from=shell \/build\/public\/shell\/assets\/ \.\/public\/shell\/assets\//);
-  assert.match(read('Dockerfile.kubernetes'), /COPY --chown=node:node --from=shell \/build\/public\/shell\/assets\/ \.\/public\/shell\/assets\//,
-    'the Kubernetes image copied shell.js alone, which left every lazy chunk out of it');
+  assert.match(read('Dockerfile.kubernetes'), /COPY --chown=node:node --from=shell \/build\/public \.\/public/,
+    'the Kubernetes image must copy the complete generated public tree, including lazy chunks');
   assert.match(read('frontend/vite.config.ts'), /chunkFileNames: 'assets\/shell-\[name\]\.js'/);
 });
 

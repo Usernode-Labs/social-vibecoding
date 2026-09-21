@@ -104,9 +104,12 @@ test('normalizeCodexLine maps turn.failed to an error event', () => {
   const ev = codex.normalizeCodexLine(JSON.stringify({ type: 'turn.failed', error: { message: 'boom' } }), state);
   assert.equal(ev.length, 1);
   assert.equal(ev[0].kind, 'error');
-  assert.match(ev[0].text, /\[agent_failed\]/);
+  assert.doesNotMatch(ev[0].text, /agent_failed/);
+  assert.equal(ev[0].text, 'OpenRouter could not finish this request: boom');
+  assert.equal(ev[0].errorCode, 'provider_error');
   assert.equal(state.ccIsError, true);
   assert.equal(state.agentError, 'boom');
+  assert.equal(state.agentErrorCode, 'provider_error');
 });
 
 test('normalizeCodexLine maps item.completed with agent_message via item.text (real 0.146.0)', () => {
@@ -127,8 +130,16 @@ test('normalizeCodexLine maps item.completed with error type (real 0.146.0)', ()
   }), state);
   assert.equal(ev.length, 1);
   assert.equal(ev[0].kind, 'error');
-  assert.match(ev[0].text, /401/);
+  assert.equal(
+    ev[0].text,
+    'OpenRouter rejected your API key. Check the key in Settings, then send the request again.',
+  );
+  assert.equal(ev[0].errorCode, 'credential_failure');
   assert.equal(state.ccIsError, true);
+  assert.equal(state.agentErrorCode, 'credential_failure');
+  // The raw provider line is kept for the ledger's error_detail even though
+  // the user never sees it.
+  assert.equal(state.agentError, '401 Unauthorized');
 });
 
 test('normalizeCodexLine treats unknown-model fallback metadata as a nonfatal warning', () => {
@@ -298,4 +309,123 @@ test('normalizeCodexLine: unknown future events are ignored (empty array)', () =
   const state = codex.newCodexState();
   assert.deepEqual(codex.normalizeCodexLine(JSON.stringify({ type: 'item.completed', item: { type: 'some_future_kind' } }), state), []);
   assert.deepEqual(codex.normalizeCodexLine(JSON.stringify({ type: 'turn.halted' }), state), []);
+});
+
+// ── Provider-error classification (#2676) ─────────────────────────────
+const MAX_TOKENS_REFUSAL = 'stream disconnected before completion: This request '
+  + 'requires more credits, or fewer max_tokens. You requested up to 131072 tokens, '
+  + 'but can only afford 21605. To increase, visit '
+  + 'https://openrouter.ai/settings/credits and upgrade to a paid account';
+
+test('classifyProviderError: the max_tokens refusal carries both token figures', () => {
+  const c = codex.classifyProviderError(MAX_TOKENS_REFUSAL);
+  assert.equal(c.code, 'insufficient_credits_max_tokens');
+  assert.equal(c.retryable, true);
+  assert.equal(c.requestedTokens, 131072);
+  assert.equal(c.affordableTokens, 21605);
+});
+
+test('classifyProviderError: the stream wrapper never hides the provider reason', () => {
+  // The same refusal arrives both bare and wrapped by the stream layer. The
+  // wrapper is what made every one of these read as a connection blip.
+  assert.equal(codex.classifyProviderError('402 insufficient credits').code, 'insufficient_credits');
+  assert.equal(
+    codex.classifyProviderError('stream disconnected before completion: 402 insufficient credits').code,
+    'insufficient_credits',
+  );
+  assert.equal(codex.classifyProviderError('429 rate limit exceeded').code, 'rate_limited');
+  assert.equal(codex.classifyProviderError('401 Unauthorized').code, 'credential_failure');
+  assert.equal(codex.classifyProviderError('stream disconnected before completion').code, 'stream_disconnected');
+  assert.equal(codex.classifyProviderError('something weird').code, 'provider_error');
+  assert.equal(codex.classifyProviderError('').code, 'provider_error');
+});
+
+test('describeProviderError: the remedy names the account that is actually paying', () => {
+  const c = codex.classifyProviderError(MAX_TOKENS_REFUSAL);
+  const personal = codex.describeProviderError({ ...c, raw: MAX_TOKENS_REFUSAL, includedKey: false });
+  assert.match(personal, /Your OpenRouter account cannot cover a reply this long\./);
+  assert.match(personal, /about 22,000 tokens/);
+  assert.match(personal, /Top up your OpenRouter credit/);
+
+  const included = codex.describeProviderError({ ...c, raw: MAX_TOKENS_REFUSAL, includedKey: true });
+  assert.match(included, /credit included with Homeroom/);
+  assert.match(included, /Add your own OpenRouter key in Settings/);
+
+  assert.match(
+    codex.describeProviderError({ code: 'credential_failure', includedKey: true }),
+    /Please report this so it can be fixed\./,
+  );
+  assert.match(
+    codex.describeProviderError({ code: 'rate_limited' }),
+    /^OpenRouter rate-limited this request\./,
+  );
+  assert.match(
+    codex.describeProviderError({ code: 'provider_error', raw: 'weird upstream text' }),
+    /weird upstream text/,
+  );
+});
+
+test('every provider sentence is free of em dashes', () => {
+  const codes = [
+    'insufficient_credits_max_tokens', 'insufficient_credits', 'rate_limited',
+    'credential_failure', 'stream_disconnected', 'provider_error',
+  ];
+  for (const code of codes) {
+    for (const includedKey of [false, true]) {
+      const text = codex.describeProviderError({
+        code, includedKey, affordableTokens: 21605, raw: 'raw provider text',
+      });
+      assert.doesNotMatch(text, /\u2014|&mdash;|&#8212;/, code);
+      assert.ok(text.length > 0, code);
+    }
+  }
+});
+
+test('normalizeCodexLine: the max_tokens refusal is classified and its affordable size kept', () => {
+  const state = codex.newCodexState();
+  const ev = codex.normalizeCodexLine(JSON.stringify({
+    type: 'turn.failed', error: { message: MAX_TOKENS_REFUSAL },
+  }), state);
+  assert.equal(ev[0].kind, 'error');
+  assert.equal(ev[0].errorCode, 'insufficient_credits_max_tokens');
+  assert.equal(ev[0].affordableOutputTokens, 21605);
+  assert.equal(state.agentErrorCode, 'insufficient_credits_max_tokens');
+  assert.equal(state.affordableOutputTokens, 21605);
+  // The raw text survives for the ledger even though the rendered sentence
+  // is the short one.
+  assert.equal(state.agentError, MAX_TOKENS_REFUSAL);
+  assert.doesNotMatch(ev[0].text, /max_tokens|openrouter\.ai\/settings/);
+});
+
+test('normalizeCodexLine: the same failure is rendered once, not once per line', () => {
+  // Codex reports one refusal as both a top-level error and a turn.failed.
+  // Printing it twice is what made a single failure look like a cascade.
+  const state = codex.newCodexState();
+  const first = codex.normalizeCodexLine(JSON.stringify({
+    type: 'error', message: MAX_TOKENS_REFUSAL,
+  }), state);
+  assert.ok(first[0].text);
+  const second = codex.normalizeCodexLine(JSON.stringify({
+    type: 'turn.failed', error: { message: MAX_TOKENS_REFUSAL },
+  }), state);
+  assert.equal(second[0].kind, 'error');
+  assert.equal(second[0].text, null);
+  // Suppressing the duplicate must not suppress the state it carries.
+  assert.equal(second[0].errorCode, 'insufficient_credits_max_tokens');
+  assert.equal(state.ccIsError, true);
+});
+
+test('normalizeCodexLine: a reconnect over a hard refusal escalates instead of counting to five', () => {
+  const state = codex.newCodexState();
+  const evs = codex.normalizeCodexLine(JSON.stringify({
+    type: 'error', message: 'Reconnecting... 2/5 (402 insufficient credits)',
+  }), state);
+  assert.equal(evs[0].kind, 'error');
+  assert.equal(state.ccIsError, true);
+});
+
+test('nonFatalDiagnostic renders the reconnect counter in plain words', () => {
+  const text = codex.nonFatalDiagnostic('Reconnecting... 2/5 (connection reset)');
+  assert.equal(text, 'OpenRouter connection interrupted, retrying (attempt 2 of 5)…');
+  assert.doesNotMatch(text, /\u2014/);
 });

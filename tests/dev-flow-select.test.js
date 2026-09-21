@@ -649,3 +649,95 @@ test('the instructions start collapsed, and the copy action does not need them o
   assert.equal(checks[0].expectText, 'Instructions',
     'and asserts the text that is visible with the body collapsed');
 });
+
+// ── "Link GitHub" goes to GitHub (#2679, #2680) ────────────────────────
+//
+// The first step's button used to assign `#settings/connectors` and leave
+// the person to find the Connect row on that screen — a whole screen between
+// the step and the one thing it asks for, and the detour #2680 caught broken.
+// It is a real anchor now, straight at the connect route the Settings row
+// itself uses, and the click event reaches the caller so the one host that
+// cannot follow it (the Homeroom app's webview) can take it over.
+
+test('"Link GitHub" is a link to GitHub itself, not a trip to Settings (#2679, #2680)', () => {
+  const unlinked = fullStatus({ github: { linked: false }, fork: null });
+  const step = DevFlowSelect.steps(unlinked, 'claude-code')[0];
+  assert.equal(step.key, 'github');
+  assert.equal(step.state, 'current');
+  assert.deepEqual(step.actions.map((a) => a.action), ['link-github']);
+  assert.equal(step.actions[0].href, DevFlowSelect.GITHUB_CONNECT_HREF,
+    'the action carries a destination, so actionHtml renders an anchor');
+  assert.equal(DevFlowSelect.GITHUB_CONNECT_HREF,
+    '/api/me/social-identities/github/connect?intent=connect');
+
+  // The SAME route the Connect row on Settings → Social accounts builds, so
+  // the two doors to one OAuth flow cannot drift apart.
+  const settings = fs.readFileSync(
+    path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8'
+  );
+  const template = settings.match(/`(\/api\/me\/social-identities\/)\$\{provider\}(\/connect\?intent=)\$\{intent\}`/);
+  assert.ok(template, 'Settings builds its connect href from a template this can be held to');
+  assert.equal(`${template[1]}github${template[2]}connect`, DevFlowSelect.GITHUB_CONNECT_HREF);
+  const routes = fs.readFileSync(
+    path.join(__dirname, '../src/routes/social-identities.js'), 'utf8'
+  );
+  assert.match(routes, /router\.get\('\/api\/me\/social-identities\/:provider\/connect'/,
+    'and the server answers on it');
+
+  // Rendered as a real anchor (#1312): a new tab in a browser, and the thing
+  // the app's delegated listener and dev-chat.js can take over on a phone.
+  const html = DevFlowSelect.wizardHtml({ agent: 'claude-code', status: unlinked });
+  const anchor = html.match(/<a [^>]*data-flow-action="link-github"[^>]*>/);
+  assert.ok(anchor, '"Link GitHub" is an anchor');
+  assert.match(anchor[0], /href="\/api\/me\/social-identities\/github\/connect\?intent=connect"/);
+  assert.match(anchor[0], /target="_blank"/, 'the walkthrough tab survives the trip');
+  assert.match(anchor[0], /rel="noopener"/);
+  assert.doesNotMatch(anchor[0], /#settings/, 'never a hash to Settings');
+  assert.match(html, /data-flow-action="link-github">Link GitHub<\/a>/);
+  assert.ok(!html.includes('data-flow-href'), 'no scripted open rides along');
+
+  // Linked, the step is done and offers nothing — unchanged.
+  const done = DevFlowSelect.steps(fullStatus(), 'claude-code')[0];
+  assert.equal(done.state, 'done');
+  assert.deepEqual(done.actions, []);
+});
+
+test('the dev chat no longer sends "Link GitHub" to Settings (#2679)', () => {
+  // The two actions used to share one branch that assigned the Settings
+  // hash. "Connect Homeroom" still goes there — the connector is added on
+  // that screen — but GitHub has its own road now.
+  assert.doesNotMatch(DEV_CHAT_SRC, /action === 'link-github' \|\| action === 'link-connector'/,
+    'the shared branch is gone');
+  const branch = DEV_CHAT_SRC.match(/if \(action === 'link-github'\)[^\n]*/);
+  assert.ok(branch, 'link-github is dispatched on its own');
+  assert.match(branch[0], /_devFlowLinkGithub\(event\)/,
+    'to the handler that follows the anchor, or hands it to the bridge');
+  const connector = DEV_CHAT_SRC.match(/if \(action === 'link-connector'\) \{[\s\S]*?\n    \}/);
+  assert.ok(connector, 'link-connector keeps its own branch');
+  assert.match(connector[0], /#settings\/connectors/, 'and it still goes to Settings');
+  // Both wiring sites hand the event over, or the app could not take the
+  // anchor over on a phone.
+  const sites = DEV_CHAT_SRC.match(/onAction: \(action, target, event\) => DevChat\._devFlowAction\(action, target, event\)/g) || [];
+  assert.equal(sites.length, 2, 'the transcript card and the launchpad both forward the event');
+});
+
+test('wire() hands the click event to the caller, for the host that must take an anchor over', () => {
+  const seen = [];
+  const root = fakeRoot();
+  DevFlowSelect.wire(root, {
+    onAction: (action, target, event) => seen.push({ action, target, event }),
+  });
+  const attrs = {
+    'data-flow-action': 'link-github',
+    href: '/api/me/social-identities/github/connect?intent=connect',
+  };
+  const anchor = { tagName: 'A', getAttribute: (name) => (name in attrs ? attrs[name] : null) };
+  let prevented = 0;
+  const event = { target: { closest: () => anchor }, preventDefault() { prevented += 1; } };
+  root.listeners[0](event);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].action, 'link-github');
+  assert.equal(seen[0].target, anchor, 'the node that was activated');
+  assert.equal(seen[0].event, event, 'the same event, so the caller can preventDefault it');
+  assert.equal(prevented, 0, 'wire() itself still leaves an anchor to the browser (#1312)');
+});

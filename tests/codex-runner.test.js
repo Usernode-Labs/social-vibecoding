@@ -19,6 +19,8 @@ const {
   buildCodexModelCatalog,
   nameSelectedModel,
   neutralizeBundledBaseInstructions,
+  MIN_MAX_OUTPUT_TOKENS,
+  SAFE_MAX_OUTPUT_TOKENS,
 } = require('../worker/build-codex-model-catalog');
 
 const RUNNER = path.join(__dirname, '..', 'worker', 'run-codex-agent.sh');
@@ -276,6 +278,10 @@ exit 1
     'base_url = "https://openrouter.ai/api/v1"',
     'wire_api = "responses"',
     'env_key = "OPENROUTER_API_KEY"',
+    // #2676: five silent stream retries turned one hard refusal into a
+    // minute of identical "Reconnecting..." lines.
+    'stream_max_retries = 3',
+    'request_max_retries = 3',
     '',
     '[mcp_servers.playwright]',
     'command = "npx"',
@@ -490,4 +496,55 @@ exit 0
   });
   assert.notEqual(build.status, 0);
   assert.match(build.stdout, /WORKER_JWT required for build mode/);
+});
+
+// ── Reply-size ceiling (#2676) ────────────────────────────────────────
+test('model catalog bounds the reply ceiling instead of inheriting the context window', () => {
+  // The provider refused a whole request because the ceiling it inferred
+  // (131,072) cost more than the account's remaining credit, and no reply
+  // this session has ever needed is anywhere near that.
+  const base = {
+    modelId: 'z-ai/glm-5.3-flash',
+    displayName: 'Z.AI: GLM 5.3 Flash',
+    contextWindow: 200_000,
+    baseInstructions: 'Test coding instructions',
+  };
+  assert.equal(SAFE_MAX_OUTPUT_TOKENS, 32_000);
+  assert.equal(MIN_MAX_OUTPUT_TOKENS, 4_096);
+
+  assert.equal(
+    buildCodexModelCatalog(base).models[0].max_output_tokens,
+    SAFE_MAX_OUTPUT_TOKENS,
+  );
+  assert.equal(
+    buildCodexModelCatalog({ ...base, maxOutputTokens: 8_000 }).models[0].max_output_tokens,
+    8_000,
+  );
+  // An oversized request is clamped down, a tiny one up, and the ceiling can
+  // never exceed the window the reply has to fit inside.
+  assert.equal(
+    buildCodexModelCatalog({ ...base, maxOutputTokens: 900_000 }).models[0].max_output_tokens,
+    SAFE_MAX_OUTPUT_TOKENS,
+  );
+  assert.equal(
+    buildCodexModelCatalog({ ...base, maxOutputTokens: 10 }).models[0].max_output_tokens,
+    MIN_MAX_OUTPUT_TOKENS,
+  );
+  assert.equal(
+    buildCodexModelCatalog({ ...base, contextWindow: 9_000 }).models[0].max_output_tokens,
+    9_000,
+  );
+});
+
+test('the reply ceiling is taken from the environment the host already sets', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-catalog-2676-'));
+  const bundledCatalogPath = path.join(dir, 'bundled-models.json');
+  fs.writeFileSync(bundledCatalogPath, JSON.stringify({ models: [] }));
+  const catalog = buildCatalogFromEnvironment({
+    CODEX_BUNDLED_MODELS_PATH: bundledCatalogPath,
+    AGENT_MODEL: 'z-ai/glm-5.3-flash',
+    AGENT_MODEL_NAME: 'Z.AI: GLM 5.3 Flash',
+    AGENT_MODEL_MAX_OUTPUT_TOKENS: '12000',
+  });
+  assert.equal(catalog.models[0].max_output_tokens, 12_000);
 });

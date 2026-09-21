@@ -23,6 +23,13 @@
 
 const crypto = require('crypto');
 
+// Codex retries a dropped stream five times by default. A provider that is
+// refusing the request (out of credit, bad key) refuses every retry too, so
+// the default budget turns one failure into a minute of silence. Three is
+// enough to ride out a genuine blip without hiding a hard refusal.
+const STREAM_MAX_RETRIES = 3;
+const REQUEST_MAX_RETRIES = 3;
+
 // Generate the Codex config that points the CLI DIRECTLY at OpenRouter.
 // The user's key arrives per-turn as OPENROUTER_API_KEY. `agents.enabled
 // = false` disables multi-agent in the first release (plan.md §8.6).
@@ -52,23 +59,144 @@ name = "OpenRouter"
 base_url = "${safeBase}"
 wire_api = "responses"
 env_key = "OPENROUTER_API_KEY"
+stream_max_retries = ${STREAM_MAX_RETRIES}
+request_max_retries = ${REQUEST_MAX_RETRIES}
 `;
+}
+
+// Codex wraps a provider failure it saw mid-stream in its own prefix. The
+// wrapper says how the request died, never why, so it is stripped before the
+// body underneath is classified.
+const STREAM_WRAPPER = /^stream disconnected before completion:\s*/i;
+// "Reconnecting... 2/5 (connection reset)" — attempt N of M.
+const RECONNECT_ATTEMPT = /^Reconnecting\.\.\.\s+(\d+)\/(\d+)(?:\s|\(|$)/;
+// Reconnecting cannot clear a credit or credential failure. A retry
+// diagnostic whose cause is one of these is reported once as the failure it
+// is, rather than five times as a retry that was never going to work.
+const RECONNECT_FUTILE_CODES = new Set([
+  'insufficient_credits',
+  'insufficient_credits_max_tokens',
+  'credential_failure',
+]);
+
+// Classify one provider failure message. Pure: no I/O, no database, no
+// config — the same function runs in the JSONL normalizer, in the resume
+// classifier and in the route that writes the turn's terminal message.
+// Returns { code, retryable, requestedTokens, affordableTokens }; retryable
+// means "another attempt could plausibly succeed", which for OpenRouter's
+// max_tokens refusal means "succeed with a smaller reply limit".
+function classifyProviderError(message) {
+  const raw = String(message == null ? '' : message);
+  const text = raw.replace(STREAM_WRAPPER, '').trim();
+  const base = { retryable: false, requestedTokens: null, affordableTokens: null };
+  if (text) {
+    // OpenRouter's own wording for "this key has credit, but not enough for
+    // a reply this long". It names both numbers, which is what makes a
+    // smaller retry possible instead of a dead end.
+    if (/requires more credits,? or fewer max_tokens/i.test(text)) {
+      const amounts = text.match(/requested up to (\d+) tokens[\s\S]*?can only afford (\d+)/i);
+      return {
+        code: 'insufficient_credits_max_tokens',
+        retryable: true,
+        requestedTokens: amounts ? Number(amounts[1]) : null,
+        affordableTokens: amounts ? Number(amounts[2]) : null,
+      };
+    }
+    if (/\b402\b|insufficient credits|requires more credits/i.test(text)) {
+      return { ...base, code: 'insufficient_credits' };
+    }
+    if (/\b429\b|rate limit/i.test(text)) return { ...base, code: 'rate_limited' };
+    if (/\b401\b|\b403\b|unauthorized|invalid api key/i.test(text)) {
+      return { ...base, code: 'credential_failure' };
+    }
+  }
+  if (STREAM_WRAPPER.test(raw) || /stream (?:disconnected|closed)/i.test(raw)) {
+    return { ...base, code: 'stream_disconnected' };
+  }
+  return { ...base, code: 'provider_error' };
+}
+
+// Token counts are read out loud, so they are rounded rather than exact.
+function approximateTokens(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count) || count <= 0) return null;
+  const rounded = count >= 10_000 ? Math.round(count / 1_000) * 1_000 : Math.round(count);
+  return rounded.toLocaleString('en-US');
+}
+
+function clipRawError(raw) {
+  const text = String(raw || '').replace(STREAM_WRAPPER, '').replace(/\s+/g, ' ').trim();
+  return text.length > 200 ? `${text.slice(0, 199)}…` : text;
+}
+
+// Turn a classification into one sentence a non-developer can act on.
+// `includedKey` selects between the credit Homeroom includes and the user's
+// own OpenRouter key, because the remedy differs: one is "add your own key",
+// the other is "top up the account you already have". This module never
+// looks that up itself — the caller that knows passes it in.
+function describeProviderError({
+  code,
+  requestedTokens = null,
+  affordableTokens = null,
+  raw = '',
+  includedKey = false,
+} = {}) {
+  void requestedTokens;
+  const account = includedKey
+    ? 'The OpenRouter credit included with Homeroom'
+    : 'Your OpenRouter account';
+  const remedy = includedKey
+    ? 'Add your own OpenRouter key in Settings to keep going.'
+    : 'Top up your OpenRouter credit, then send the request again.';
+  switch (code) {
+    case 'insufficient_credits_max_tokens': {
+      const affordable = approximateTokens(affordableTokens);
+      const sizing = affordable
+        ? ` It can afford about ${affordable} tokens of reply, and the coding agent needs more.`
+        : '';
+      return `${account} cannot cover a reply this long.${sizing} ${remedy}`;
+    }
+    case 'insufficient_credits':
+      return includedKey
+        ? `The OpenRouter credit included with Homeroom is used up. ${remedy}`
+        : `Your OpenRouter account is out of credit. ${remedy}`;
+    case 'rate_limited':
+      return 'OpenRouter rate-limited this request. Wait a moment, then send the request again.';
+    case 'credential_failure':
+      return includedKey
+        ? 'OpenRouter rejected the key Homeroom uses for this app. Please report this so it can be fixed.'
+        : 'OpenRouter rejected your API key. Check the key in Settings, then send the request again.';
+    case 'stream_disconnected':
+      return 'The connection to OpenRouter dropped before the reply finished. Send the request again to retry.';
+    default: {
+      const detail = clipRawError(raw);
+      return detail
+        ? `OpenRouter could not finish this request: ${detail}`
+        : 'OpenRouter could not finish this request. Send the request again to retry.';
+    }
+  }
 }
 
 // Classify a Codex resume error to decide whether a fresh-thread retry is
 // safe. Returns { retryFresh, reason }.
 function classifyResumeError(stderr, exitCode) {
-  const text = String(stderr || '').toLowerCase();
-  if (/thread not found|local rollout unavailable|session not found/.test(text)) {
+  void exitCode;
+  const text = String(stderr || '');
+  if (/thread not found|local rollout unavailable|session not found/i.test(text)) {
     return { retryFresh: true, reason: 'thread_missing' };
   }
-  if (/401|unauthorized|authentication|api key|invalid/.test(text)) {
+  // The shared classifier decides the provider conditions; the broader
+  // patterns beside it are the ones this resume path matched before it and
+  // are kept so a stderr tail it already handled keeps its reason.
+  const { code } = classifyProviderError(text);
+  if (code === 'credential_failure' || /authentication|api key|invalid/i.test(text)) {
     return { retryFresh: false, reason: 'auth_failure' };
   }
-  if (/402|payment|credit|insufficient/.test(text)) {
+  if (code === 'insufficient_credits' || code === 'insufficient_credits_max_tokens'
+      || /payment|credit|insufficient/i.test(text)) {
     return { retryFresh: false, reason: 'insufficient_credits' };
   }
-  if (/429|rate limit/.test(text)) {
+  if (code === 'rate_limited') {
     return { retryFresh: false, reason: 'rate_limited' };
   }
   return { retryFresh: false, reason: 'unknown_error' };
@@ -92,37 +220,57 @@ function verbFor(kind) {
 // Emit an error event and mark the running state as errored so a later
 // turn.failed / terminal exit marker cannot be reported as a clean success.
 function emitError(state, msg) {
+  const raw = msg != null ? String(msg) : 'Codex error';
+  const classification = classifyProviderError(raw);
   state.ccIsError = true;
-  state.agentError = msg != null ? String(msg) : null;
+  // The raw provider text stays on the state: telemetry and the ledger's
+  // error detail want what OpenRouter actually said, not the rewrite.
+  state.agentError = raw;
+  state.agentErrorCode = classification.code;
+  if (classification.affordableTokens != null) {
+    state.affordableOutputTokens = classification.affordableTokens;
+  }
+  const text = describeProviderError({ ...classification, raw });
+  // One provider failure usually arrives twice: an item.completed error, then
+  // the turn.failed that follows it. Both still update the turn state; only
+  // the repeated progress line is dropped, so dev chat shows it once.
+  const duplicate = state.lastEmittedErrorText === text;
+  state.lastEmittedErrorText = text;
   return {
     kind: 'error',
-    text: `[agent_failed] ${String(msg == null ? 'Codex error' : msg).slice(0, 200)}`,
-    errorMessage: msg != null ? String(msg) : 'Codex error',
+    text: duplicate ? null : text,
+    errorMessage: raw,
+    errorCode: classification.code,
+    affordableOutputTokens: classification.affordableTokens,
   };
 }
 
 // Codex 0.146 emits some retry/fallback diagnostics in the same JSONL shapes
 // it uses for fatal errors. They are not terminal: a turn.started or a retry
 // follows. Keep them visible as provider-neutral warnings without poisoning
-// the turn state or rendering the alarming [agent_failed] marker.
+// the turn state or rendering a terminal failure.
 function nonFatalDiagnostic(msg) {
   const text = String(msg || '');
   if (/^Model metadata for `[^`]+` not found\. Defaulting to fallback metadata;/.test(text)) {
     return 'OpenRouter model metadata was unavailable; continuing with conservative defaults.';
   }
-  if (/^Reconnecting\.\.\.\s+\d+\/\d+(?:\s|\(|$)/.test(text)) {
-    return 'OpenRouter connection interrupted; retrying…';
+  const attempt = text.match(RECONNECT_ATTEMPT);
+  if (attempt) {
+    // Five identical "retrying…" lines read as a hang. Showing which attempt
+    // this is makes the same sequence legible as bounded progress.
+    return `OpenRouter connection interrupted, retrying (attempt ${attempt[1]} of ${attempt[2]})…`;
   }
   return null;
 }
 
 function emitDiagnosticOrError(state, msg) {
-  const warning = nonFatalDiagnostic(msg);
-  if (warning) {
+  const raw = String(msg || '');
+  const warning = nonFatalDiagnostic(raw);
+  if (warning && !RECONNECT_FUTILE_CODES.has(classifyProviderError(raw).code)) {
     return {
       kind: 'warning',
       text: `⚠ ${warning}`,
-      diagnostic: /^Reconnecting/.test(String(msg || '')) ? 'provider_retry' : 'provider_warning',
+      diagnostic: RECONNECT_ATTEMPT.test(raw) ? 'provider_retry' : 'provider_warning',
     };
   }
   return emitError(state, msg);
@@ -309,6 +457,9 @@ function newCodexState() {
     toolUses: new Map(),
     ccIsError: false,
     agentError: null,
+    agentErrorCode: null,
+    affordableOutputTokens: null,
+    lastEmittedErrorText: null,
     usageSeen: false,
     cacheWriteInputTokens: null,
   };
@@ -316,7 +467,9 @@ function newCodexState() {
 
 module.exports = {
   buildCodexConfig,
+  classifyProviderError,
   classifyResumeError,
+  describeProviderError,
   normalizeCodexLine,
   nonFatalDiagnostic,
   summarizeResult,

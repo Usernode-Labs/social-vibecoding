@@ -401,6 +401,123 @@ test('neither partner limiter keys off the shared API key', () => {
     'and client-ip.js is where that is admitted');
 });
 
+// ── The v4 error envelope ──────────────────────────────────────────────
+//
+// Every other error on /api/v4 goes through routes/topochain/helpers.js
+// `fail`, which answers `{ success: false, error, ... }`. The throttles
+// added for #2526 used the platform's bare shape, so a 429 was the one
+// reply on that surface with no `success` at all — a client reading
+// `body.success` got `undefined` rather than `false`.
+//
+// Found by comparing against an abandoned earlier attempt at the same
+// issue (proposal 4557 / PR #2614), which had spotted it.
+
+test('a v4 throttle answers in the v4 envelope', async () => {
+  const headers = { 'x-user-id': 'envelope-user', 'x-client-ip': '203.0.113.200' };
+  await hit('/mobile-read', headers, MOBILE_MAX);
+  const refused = await hit('/mobile-read', headers, 1);
+  assert.equal(refused.status, 429);
+  assert.equal(refused.body.success, false,
+    'every other v4 error carries success:false; a throttle must too');
+  assert.match(refused.body.error || '', /Too many requests/);
+  assert.ok(Number.isFinite(refused.body.retryAfterSeconds),
+    'and the retry hint is unchanged');
+});
+
+test('the envelope is what `fail` produces, not a second shape', () => {
+  // One definition of "a v4 error". If helpers.fail changes, this notices.
+  const helpers = read('src/routes/topochain/helpers.js');
+  assert.match(helpers, /const body = \{ success: false, error \};/,
+    'the envelope moved; the limiters need to move with it');
+});
+
+test('the throttle stays CODE-FREE, envelope or not', () => {
+  // #463: clients tell billing 429s apart by their `code` tag, so a
+  // throttle must not carry one. The earlier attempt proposed
+  // `code: 'rate_limited'`; that would have broken this rule, so the
+  // envelope adds `success` and nothing else.
+  const src = read('src/middleware/rate-limits.js');
+  const handler = src.slice(src.indexOf('res.status(429).json({'),
+    src.indexOf('});', src.indexOf('res.status(429).json({')));
+  assert.doesNotMatch(handler, /code:/, 'a throttle may not carry a code (#463)');
+  assert.match(handler, /\.\.\.\(envelope \? \{ success: false \} : null\)/,
+    'the envelope adds success and nothing else');
+});
+
+test('a limiter SHARED with non-v4 routes answers correctly on both', async () => {
+  // Review's finding, and the reason the envelope is decided per REQUEST
+  // rather than per limiter. `attachmentUploadLimiter` gates POST
+  // /api/v4/admin/challenge-illustrations AND conversations, chat,
+  // sessions and app illustrations — one instance, two surfaces. A
+  // limiter-level flag could not fix the v4 route without changing the
+  // other four; the path test fixes exactly the one that needs it.
+  const express2 = require('express');
+  const { attachmentUploadLimiter } = require('../src/middleware/rate-limits');
+  const app2 = express2();
+  app2.use((req, _res, next) => { req.user = { id: 'shared-limiter-user' }; next(); });
+  const r = express2.Router();
+  r.post('/api/v4/admin/challenge-illustrations', attachmentUploadLimiter,
+    (_q, res) => res.json({ success: true }));
+  r.post('/api/conversations/1/attachments', attachmentUploadLimiter,
+    (_q, res) => res.json({ ok: true }));
+  app2.use(r);
+  const srv = app2.listen(0);
+  await new Promise((resolve) => srv.once('listening', resolve));
+  try {
+    const at = `http://127.0.0.1:${srv.address().port}`;
+    const post = async (path) => {
+      const res = await fetch(at + path, { method: 'POST' });
+      const text = await res.text();
+      return { status: res.status, body: JSON.parse(text) };
+    };
+    let last;
+    for (let i = 0; i < 60; i += 1) {
+      last = await post('/api/v4/admin/challenge-illustrations');
+      if (last.status === 429) break;
+    }
+    assert.equal(last.status, 429, 'the shared limiter must actually bite');
+    assert.equal(last.body.success, false, 'on /api/v4 it answers in the envelope');
+
+    const other = await post('/api/conversations/1/attachments');
+    assert.equal(other.status, 429, 'same bucket, so it is spent here too');
+    assert.ok(!('success' in other.body),
+      'and OFF /api/v4 the shape is unchanged for its existing clients');
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
+});
+
+test('the path alone carries the envelope, with no flag at all', () => {
+  const src = read('src/middleware/rate-limits.js');
+  assert.match(src,
+    /const envelope = v4Envelope \|\| String\(req\.path \|\| ''\)\.startsWith\('\/api\/v4'\);/,
+    'a v4 limiter added later must not be able to forget');
+});
+
+test('the flag is opt-in, and only on limiters exclusive to /api/v4', () => {
+  const src = read('src/middleware/rate-limits.js');
+  // Exactly the five mounted on topochain routes and nowhere else.
+  for (const name of ['topochainMobileReadLimiter', 'partnerActivityLimiter',
+    'partnerActivityParticipantLimiter', 'mobileWalletClaimLimiter',
+    'topochainMobilePushRegistrationLimiter']) {
+    const start = src.indexOf(`const ${name} = makeLimiter({`);
+    assert.ok(start > 0, `${name} is gone`);
+    assert.match(src.slice(start, src.indexOf('});', start)), /v4Envelope: true/,
+      `${name} is on the v4 surface and needs the envelope`);
+  }
+  assert.equal((src.match(/v4Envelope: true/g) || []).length, 5,
+    'a sixth would mean a non-v4 route just changed shape');
+
+  // attachmentUploadLimiter must NOT carry the flag: the same instance
+  // also gates conversations, chat, sessions and app illustrations, whose
+  // clients read the bare shape. Its v4 route is covered by the PATH test
+  // instead — see the shared-limiter test above.
+  const att = src.indexOf('const attachmentUploadLimiter = makeLimiter({');
+  assert.ok(att > 0);
+  assert.doesNotMatch(src.slice(att, src.indexOf('});', att)), /v4Envelope/,
+    'flagging it would change four non-v4 routes');
+});
+
 // ── 3. Every route the issue names actually carries one ────────────────
 
 const MOBILE_JS = read('src/routes/topochain/mobile.js');
