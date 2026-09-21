@@ -142,6 +142,20 @@ export function clampIndex(index: number): number {
   return Math.max(0, Math.min(TOUR_LENGTH - 1, Math.trunc(index)));
 }
 
+/**
+ * The step a tour in progress comes back at after the page reloads.
+ *
+ * Nothing saved, nothing to resume: the top. A panel step cannot resume as
+ * itself, because a fresh document has no Improve panel open, so it lands on
+ * the Improve step, which is the rule ./index.tsx already applies to a viewer
+ * who shut the panel. Every other step resumes where it was.
+ */
+export function resumeIndex(saved: number | null): number {
+  if (saved == null) return 0;
+  const index = clampIndex(saved);
+  return TOUR_STEPS[index].needsPanel ? IMPROVE_STEP_INDEX : index;
+}
+
 export function stepAt(index: number): TourStep {
   return TOUR_STEPS[clampIndex(index)];
 }
