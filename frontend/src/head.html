@@ -423,6 +423,17 @@
     // screenshots. Mirrors the kit's own `?un-platform=ios` skin override,
     // and is deliberately NOT staging-gated: a pure presentation flag with
     // no writes, so the "before" shot works the moment this ships.
+    // Classify native first: WebViews also report browser display mode,
+    // but their header must retain the status-bar inset.
+    var forcedNative = false;
+    try {
+      forcedNative = new URLSearchParams(window.location.search)
+        .get('un-native-webview') === '1';
+    } catch (e) { /* no URL API / opaque origin — fall through */ }
+    if (forcedNative || (window.usernode && window.usernode.isNative)) {
+      document.documentElement.classList.add('in-native-webview');
+    }
+
     // BROWSER-CHROME GUARD (#2509). Chrome on Android reports a nonzero
     // env(safe-area-inset-top) even in a NORMAL browser tab, where the
     // status bar belongs to the browser chrome and the page never owns
@@ -447,15 +458,6 @@
     if (isBrowserChrome
         && !document.documentElement.classList.contains('in-native-webview')) {
       document.documentElement.classList.add('web-browser-chrome');
-    }
-
-    var forcedNative = false;
-    try {
-      forcedNative = new URLSearchParams(window.location.search)
-        .get('un-native-webview') === '1';
-    } catch (e) { /* no URL API / opaque origin — fall through */ }
-    if (forcedNative || (window.usernode && window.usernode.isNative)) {
-      document.documentElement.classList.add('in-native-webview');
     }
   </script>
   <!-- Third-party browser libs, vendored into public/vendor/ by

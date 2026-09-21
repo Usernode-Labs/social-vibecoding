@@ -158,12 +158,15 @@ export function LeaderboardScreen() {
               The host ships VISIBLE, with the challenges pane below (the default
               section is an event section), and EMPTY — the bar's interior was
               written on the screen's first open, so the store's initial
-              `mounted: false` renders nothing. `_applySection` hides the host on
-              Kudos by `classList`, which is safe for the reason the two pane
-              roots' comments give: this `className` is a constant React never
-              writes again.
+              `mounted: false` renders nothing. It stays empty for a viewer
+              with no season to go back to (#2495, see ./event-bar.tsx), and
+              the gap below the bar is the bar's own, so an empty host adds
+              no space between the strip and the board. `_applySection`
+              hides the host on Kudos by `classList`, which is safe for the
+              reason the two pane roots' comments give: this `className` is
+              a constant React never writes again.
           */}
-          <div id="leaderboard-event-bar" className="w-full mb-4">
+          <div id="leaderboard-event-bar" className="w-full">
             <EventBar />
           </div>
         </div>

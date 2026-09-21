@@ -11406,7 +11406,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 525,
+      "line": 571,
       "method": "GET",
       "path": "/api/v4/season-events",
       "expression": null,
@@ -11425,7 +11425,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 572,
+      "line": 622,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId",
       "expression": null,
@@ -11444,7 +11444,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 615,
+      "line": 665,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId/challenges",
       "expression": null,
@@ -11464,7 +11464,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 752,
+      "line": 802,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId/challenges/:challengeId/breakdown",
       "expression": null,
@@ -11483,7 +11483,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 853,
+      "line": 903,
       "method": "GET",
       "path": "/api/v4/users/:userId/profile",
       "expression": null,
@@ -11503,7 +11503,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 1028,
+      "line": 1078,
       "method": "POST",
       "path": "/api/v4/app-version/check",
       "expression": null,
