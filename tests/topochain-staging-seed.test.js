@@ -618,6 +618,23 @@ test("the viewer loop credits the finished numeric all the way to its target", (
   assert.match(body, /const base = 900520 \+ slot \* 20;/);
 });
 
+test('the viewer loop keeps every viewer inside the running season, so the screenshot identity is a new member', () => {
+  // #2495: the Leaderboard screen draws its event picker for admins and for
+  // members with a trace in a season other than the default event's. Every
+  // screenshot signs as usernode-capture, a member, and it is meant to show
+  // the new-member state — the board with no picker — so the loop must not
+  // give it a past season. The declared check on #tc-ev-select signs in as
+  // the capture admin, who sees the picker by role.
+  const start = body.indexOf('INSERT INTO user_enrollments', body.indexOf('const VIEWER_USERNAMES'));
+  const stmtEnd = body.indexOf(');', start);
+  const stmt = body.slice(start, stmtEnd);
+  assert.match(stmt, /\[viewerId, SEASON_ID, EVENT_REGULAR_ID\]/, 'the running season and its regular event only');
+  assert.doesNotMatch(stmt, /SEASON_CLOSED_ID|EVENT_ARCHIVE_ID/, 'no row in the archive season');
+  const check = DAPP_TESTS.find((t) => typeof t.expectSelector === 'string' && t.expectSelector.includes('#tc-ev-select'));
+  assert.ok(check, 'the declared check is still there');
+  assert.match(check.name, /the checks identity is an admin/, 'and says which viewer it depends on');
+});
+
 test('epoch_stats: 3 epochs x 3 wallets, including one wallet-only (user_id NULL) row per epoch', () => {
   const start = body.indexOf('INSERT INTO epoch_stats');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));

@@ -905,9 +905,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // a hop to Settings, and no declared check had ever looked at that step:
   // the staging fixture has always been linked, so the card never opened
   // on it. ONE check, on the new ?order=link fixture shape, pins the anchor
-  // and its destination. 22 slots left against MAX_DECLARED_TESTS (730),
-  // clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 708);
+  // and its destination.
+  //
+  // 707 → 708: independently on main, the native/browser classification
+  // script's startup ordering could tag a native Android WebView as browser
+  // chrome too, dropping the safe-area inset the platform header needs
+  // under the status bar. ONE check pins that a native Android session
+  // keeps `#platform-header.un-safe-top-extend`.
+  //
+  // 708 → 709: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 707 → 708 alone,
+  // with the #2679/#2680 Link-GitHub check above; main independently took
+  // the same 707 to 708, with the native-Android-header check above.
+  // Neither set overlaps the other, so the merged manifest holds both:
+  // 707 + 1 + 1 = 709, which leaves 21 slots against MAX_DECLARED_TESTS
+  // (730), clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 709);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
