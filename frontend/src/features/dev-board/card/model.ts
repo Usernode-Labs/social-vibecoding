@@ -648,6 +648,12 @@ export interface KanbanColView {
   title: string;
   count: number;
   hint?: string | null;
+  /** A visible app-level fact under the heading (the Done deployment boundary). */
+  status?: {
+    text: string;
+    tone: 'neutral' | 'progress' | 'blocked' | 'ok';
+    title?: string;
+  } | null;
   rows: ListRow[];
   /** The no-cards note ('Nothing here yet' / 'No matching cards'), or null. */
   empty?: string | null;

@@ -112,6 +112,32 @@ function seedBoard(AppView, { issues = 2, merged = 3, total = null } = {}) {
   AppView._sharedSessions = [];
 }
 
+test('Done column visibly names the live production boundary', () => {
+  const AppView = makeAppView();
+  seedBoard(AppView, { merged: 2 });
+  AppView._mergedCtx.deployment = {
+    state: 'deployed',
+    runningSha: 'abcdef0123456789abcdef0123456789abcdef01',
+    livePrNumber: 42,
+    pendingCount: 0,
+  };
+  const html = kanbanHtml(AppView);
+  assert.match(html, /data-kanban-col-status="done"/);
+  assert.match(html, /Production live through PR #42 · abcdef0/);
+});
+
+test('Done column calls out pending and stalled production changes', () => {
+  const AppView = makeAppView();
+  seedBoard(AppView, { merged: 2 });
+  AppView._mergedCtx.deployment = { state: 'deploying', pendingCount: 2 };
+  let html = kanbanHtml(AppView);
+  assert.match(html, /2 merged changes waiting to go live/);
+
+  AppView._mergedCtx.deployment = { state: 'stalled', pendingCount: 1 };
+  html = kanbanHtml(AppView);
+  assert.match(html, /1 merged change · deployment stalled/);
+});
+
 // All `data-kanban-tab="…"` keys, in document order.
 const tabKeys = (html) =>
   Array.from(html.matchAll(/data-kanban-tab="([^"]+)"/g), (m) => m[1]);
