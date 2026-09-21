@@ -96,7 +96,11 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // v10 publishes bootstrap readiness and fences turns after container restarts.
 // v11 refreshes warm workers so synthetic OpenRouter models use a
 // provider-neutral identity instead of claiming to be GPT (#2120).
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v12';
+// v12 is the bootstrap generation before the Codex provider retry budget.
+// v13 refreshes warm workers so the generated Codex config bounds the CLI's
+// own reconnect budget instead of retrying a refused request five times
+// (#2676).
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v13';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -746,6 +750,13 @@ function parseLine(line, onProgress, state) {
         if (ev.kind === 'error' && ev.errorMessage != null) {
           state.ccIsError = true;
           state.agentError = ev.errorMessage;
+          // The normalizer already decided what kind of provider failure
+          // this is. Carrying its verdict beats re-deriving one from the
+          // message text further downstream, where less is known.
+          if (ev.errorCode) state.agentErrorCode = ev.errorCode;
+          if (ev.affordableOutputTokens != null) {
+            state.affordableOutputTokens = ev.affordableOutputTokens;
+          }
         }
         // Progress line: use the short display form (or any event text).
         if (ev.text) onProgress(ev.text);
@@ -794,6 +805,13 @@ function newWatchState() {
     hostContainerName: null,
     ccIsError: false,
     agentError: null,
+    // Set from the Codex normalizer's classification of a provider failure
+    // (see src/agents/codex-openrouter.js). Null for every other backend and
+    // for a turn that never failed.
+    agentErrorCode: null,
+    // The output-token budget OpenRouter said the key could afford, when it
+    // said so. Drives the one clamped retry in the sessions attempt loop.
+    affordableOutputTokens: null,
     usageSeen: false,
     resultSubtype: null,
     providerStopReason: null,
@@ -950,10 +968,24 @@ function codingRunOutcome(state) {
   return { outcome: 'error', stopReason: 'agent_error' };
 }
 
+// A provider failure the Codex normalizer already classified reports that
+// classification. The substring table below is the fallback for backends and
+// failures that carry no code, and it guesses: an OpenRouter credit refusal
+// mentioning "connection" used to land on 'network' rather than 'billing'.
+const CODEX_ERROR_CLASSES = {
+  insufficient_credits: 'billing',
+  insufficient_credits_max_tokens: 'billing',
+  rate_limited: 'rate_limited',
+  credential_failure: 'authentication',
+  stream_disconnected: 'network',
+};
+
 function codingErrorClass(state, outcome) {
   if (outcome === 'cancelled') return 'cancelled';
   if (outcome !== 'error') return null;
   if (state && state.markerlessCause) return 'worker';
+  const classified = state && CODEX_ERROR_CLASSES[state.agentErrorCode];
+  if (classified) return classified;
   const text = String([
     state && state.resultSubtype,
     state && state.agentError,

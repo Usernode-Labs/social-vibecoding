@@ -1120,3 +1120,61 @@ test('admin report is protected, defaults to 14 days, and bounds the timeframe',
     delete require.cache[require.resolve('../src/routes/admin')];
   }
 });
+
+test('a Codex provider refusal is classified as billing rather than a shapeless provider error', async () => {
+  // #2676: the OpenRouter refusal arrived wrapped by the stream layer, so
+  // nothing set an error code and every failed Codex turn landed in the
+  // aggregate as error_class 'provider'. The classifier now names it.
+  await withTelemetrySink(async (rows) => {
+    const state = worker.newWatchState();
+    state.agentBackend = 'codex_openrouter';
+    worker.parseLine(JSON.stringify({
+      type: 'error',
+      message: 'stream disconnected before completion: This request requires more '
+        + 'credits, or fewer max_tokens. You requested up to 131072 tokens, but can '
+        + 'only afford 21605. To increase, visit https://openrouter.ai/settings/credits '
+        + 'and upgrade to a paid account',
+    }), () => {}, state);
+    assert.equal(state.agentErrorCode, 'insufficient_credits_max_tokens');
+    assert.equal(state.affordableOutputTokens, 21605);
+
+    worker._recordClaudeCodingRunForTests({
+      sessionId: 42,
+      turnId: '76767676-7676-4676-8676-767676767676',
+      result: state,
+      requestedModel: 'z-ai/glm-5.3-flash',
+      component: 'coding_agent_build',
+      startedAt: new Date(),
+      durationMs: 120,
+    });
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].outcome, 'error');
+    assert.equal(rows[0].error_class, 'billing');
+    assert.equal(JSON.stringify(rows[0]).includes('openrouter.ai'), false,
+      'the provider sentence stays out of telemetry');
+  });
+});
+
+test('a Codex credential failure and a genuine disconnect stay distinguishable', async () => {
+  await withTelemetrySink(async (rows) => {
+    for (const [i, message] of [
+      '401 Unauthorized: invalid API key',
+      'stream disconnected before completion',
+    ].entries()) {
+      const state = worker.newWatchState();
+      state.agentBackend = 'codex_openrouter';
+      worker.parseLine(JSON.stringify({ type: 'error', message }), () => {}, state);
+      worker._recordClaudeCodingRunForTests({
+        sessionId: 42,
+        turnId: `8787878${i}-8787-4787-8787-878787878787`,
+        result: state,
+        requestedModel: 'z-ai/glm-5.3-flash',
+        component: 'coding_agent_build',
+        startedAt: new Date(),
+        durationMs: 120,
+      });
+    }
+    assert.deepEqual(rows.map((r) => r.error_class), ['authentication', 'network']);
+  });
+});
