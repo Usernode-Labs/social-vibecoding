@@ -13,10 +13,10 @@ paired apps and submits its own plan through the normal evidence tools. Only
 the second result addresses failures such as `evidence_agent_failed` and
 `evidence_agent_timeout` that happen before capture.
 
-This branch starts from main commit
-`4472166f44e459c2503f1ddf52b992d37910ba9f` and carries the issue #2560
-replay fixes and the human-review change. The local harness lives on
-`b/visual-evidence-local-harness-main-2698` until those commits land.
+This branch carries the issue #2560 replay fixes and the human-review change.
+The local harness lives on `b/visual-evidence-local-harness-main-2698` until
+those commits land. Use the PR's Git base and head SHAs to identify the exact
+revision under review.
 
 ## Boundaries
 
@@ -224,11 +224,23 @@ production root cause.
 
 ## Milestone 3: normal evidence agent on the local platform
 
-**Status: not implemented.** The current local platform command injects a
-fixture environment, identities, and worker, and submits `authorPlan`. Its
-assertion that `agentAttempts === 0` confirms it bypasses the failure-prone
-agent path. The historical command invokes replay directly. Neither is a
-normal-flow agent test.
+**Status: not implemented; local model access is blocked.** The current local
+platform command injects a fixture environment, identities, and worker, and
+submits `authorPlan`. Its assertion that `agentAttempts === 0` confirms it
+bypasses the failure-prone agent path. The historical command invokes replay
+directly. Neither is a normal-flow agent test.
+
+The current checkout has no locally usable model credential. The user's
+Homeroom-managed model access is kept server-side and cannot be supplied to a
+local worker through the existing user API. An account-scoped inference relay
+does not exist. Therefore a local model request cannot be made through the
+normal worker yet; the deterministic successes above must not be presented as
+agent-path successes. A production rerun of historical proposal #2548 reached
+agent exploration and then failed with `evidence_agent_timeout`. That rerun
+used the deployed production code, not this branch, and exposed no trace that
+proves a successful model request/response. A staging build of this PR can
+exercise this branch with Homeroom's managed model access after the PR is
+imported for staging.
 
 | Part of the live flow | Current local coverage | Needed for agent parity |
 | --- | --- | --- |
@@ -246,9 +258,13 @@ normal-flow agent test.
    the local Git provider only where remote repository resolution is needed;
    do not replace the environment, worker, identity, or replay services with
    fixture implementations for this mode.
-2. Configure a test-scoped model credential through the same local credential
-   store the agent uses. For `codex_openrouter`, set the backend flag and a
-   tool-capable model, then run the repository's actual worker image with
+2. Provide a real model-access path to the local worker: either configure a
+   test-scoped credential in the local credential store or implement an
+   account-scoped inference relay that uses Homeroom-managed access. The relay
+   would be a separate platform feature requiring deployment, authorization,
+   usage limits, and billing safeguards; it cannot be simulated by this
+   harness. For `codex_openrouter`, set the backend flag and a tool-capable
+   model, then run the repository's actual worker image with
    `mode: evidence`. If Claude is the selected live backend, test Claude too.
    Report an unavailable credential or unsupported model as a preflight
    failure; do not silently call a different model and label it equivalent.
@@ -279,8 +295,10 @@ normal-flow agent test.
 Acceptance: a single opt-in local command runs the normal evidence agent and
 worker against isolated local app revisions and data, records the actual model
 backend, and leaves reviewable media. The default deterministic commands stay
-cheap and credential-free. No merge or production deploy is needed for a
-development iteration.
+cheap and credential-free. This acceptance cannot be claimed until a real
+local model-access path exists. Until then, importing the PR for a staging
+build is the way to exercise this branch with managed model access before
+merge.
 
 ## Release gate and remaining differences
 
