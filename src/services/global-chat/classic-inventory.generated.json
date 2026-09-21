@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 643,
-    "mappedRoutes": 506,
+    "totalRoutes": 647,
+    "mappedRoutes": 510,
     "exemptRoutes": 137,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 357,
+    "clientApiReferences": 360,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -430,7 +430,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 54,
+      "line": 55,
       "method": "GET",
       "path": "/api/admin/llm-telemetry",
       "expression": null,
@@ -444,13 +444,14 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/admin.js",
-      "line": 82,
+      "line": 83,
       "method": "GET",
       "path": "/api/admin/overview",
       "expression": null,
@@ -464,6 +465,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-overview.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -471,7 +473,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 131,
+      "line": 132,
       "method": "GET",
       "path": "/api/admin/mobile-push/diagnostics",
       "expression": null,
@@ -490,7 +492,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 159,
+      "line": 160,
       "method": "POST",
       "path": "/api/admin/rollover",
       "expression": null,
@@ -504,6 +506,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -511,7 +514,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 192,
+      "line": 193,
       "method": "GET",
       "path": "/api/admin/rollover",
       "expression": null,
@@ -525,6 +528,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -532,7 +536,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 228,
+      "line": 229,
       "method": "POST",
       "path": "/api/admin/staging-reap",
       "expression": null,
@@ -546,6 +550,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -553,7 +558,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 259,
+      "line": 260,
       "method": "GET",
       "path": "/api/admin/staging-reap",
       "expression": null,
@@ -567,6 +572,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -574,7 +580,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 306,
+      "line": 307,
       "method": "GET",
       "path": "/api/admin/users",
       "expression": null,
@@ -588,6 +594,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx",
         "frontend/src/features/admin/admin-users.tsx"
@@ -595,7 +602,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 377,
+      "line": 378,
       "method": "PATCH",
       "path": "/api/admin/openrouter-keys/:id",
       "expression": null,
@@ -614,7 +621,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 396,
+      "line": 397,
       "method": "DELETE",
       "path": "/api/admin/openrouter-keys/:id",
       "expression": null,
@@ -633,7 +640,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 422,
+      "line": 423,
       "method": "PUT",
       "path": "/api/admin/users/app-quota",
       "expression": null,
@@ -653,7 +660,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 442,
+      "line": 443,
       "method": "PUT",
       "path": "/api/admin/users/:id/app-quota",
       "expression": null,
@@ -673,7 +680,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 466,
+      "line": 467,
       "method": "POST",
       "path": "/api/admin/users/:id/app-quota-request/approve",
       "expression": null,
@@ -691,7 +698,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 482,
+      "line": 483,
       "method": "DELETE",
       "path": "/api/admin/users/:id/app-quota-request",
       "expression": null,
@@ -710,7 +717,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 518,
+      "line": 519,
       "method": "POST",
       "path": "/api/admin/users/:id/is-admin",
       "expression": null,
@@ -730,7 +737,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 619,
+      "line": 620,
       "method": "DELETE",
       "path": "/api/admin/users/:id",
       "expression": null,
@@ -750,7 +757,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 691,
+      "line": 692,
       "method": "POST",
       "path": "/api/admin/users/:id/reset-password",
       "expression": null,
@@ -770,7 +777,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 725,
+      "line": 726,
       "method": "GET",
       "path": "/api/admin/codes",
       "expression": null,
@@ -785,13 +792,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-codes.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/admin.js",
-      "line": 741,
+      "line": 742,
       "method": "POST",
       "path": "/api/admin/codes",
       "expression": null,
@@ -806,13 +814,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-codes.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/admin.js",
-      "line": 756,
+      "line": 757,
       "method": "DELETE",
       "path": "/api/admin/codes/:id",
       "expression": null,
@@ -831,7 +840,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 807,
+      "line": 808,
       "method": "GET",
       "path": "/api/admin/limits",
       "expression": null,
@@ -846,6 +855,7 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-analytics.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -853,7 +863,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 816,
+      "line": 817,
       "method": "PUT",
       "path": "/api/admin/limits",
       "expression": null,
@@ -868,6 +878,7 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-analytics.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -875,7 +886,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 902,
+      "line": 903,
       "method": "GET",
       "path": "/api/admin/model-costs",
       "expression": null,
@@ -889,6 +900,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-model-costs.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -896,7 +908,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 911,
+      "line": 912,
       "method": "PUT",
       "path": "/api/admin/model-costs",
       "expression": null,
@@ -910,6 +922,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-model-costs.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -917,7 +930,85 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 953,
+      "line": 950,
+      "method": "GET",
+      "path": "/api/admin/homeroom-bot",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.homeroom.bot.24ebc4eb",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "line": 963,
+      "method": "PUT",
+      "path": "/api/admin/homeroom-bot/settings",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.put.admin.homeroom.bot.settings.2640f67e",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "line": 977,
+      "method": "POST",
+      "path": "/api/admin/homeroom-bot/runs/:id/rating",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.runs.item.rating.4806570d",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "line": 991,
+      "method": "POST",
+      "path": "/api/admin/homeroom-bot/run",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.run.48f50678",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "line": 1022,
       "method": "GET",
       "path": "/api/admin/storage",
       "expression": null,
@@ -931,6 +1022,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx",
         "frontend/src/features/admin/admin-storage.tsx"
@@ -938,7 +1030,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 969,
+      "line": 1038,
       "method": "PUT",
       "path": "/api/admin/storage/:slug",
       "expression": null,
@@ -958,7 +1050,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1011,
+      "line": 1080,
       "method": "POST",
       "path": "/api/admin/storage/sweep",
       "expression": null,
@@ -978,7 +1070,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1043,
+      "line": 1112,
       "method": "GET",
       "path": "/api/admin/featured-apps",
       "expression": null,
@@ -993,13 +1085,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-featured-apps.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1087,
+      "line": 1156,
       "method": "PUT",
       "path": "/api/admin/apps/:slug/directory-review",
       "expression": null,
@@ -1018,7 +1111,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1141,
+      "line": 1210,
       "method": "PUT",
       "path": "/api/admin/featured-apps",
       "expression": null,
@@ -1033,13 +1126,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-featured-apps.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1222,
+      "line": 1291,
       "method": "GET",
       "path": "/api/admin/anthropic-credits",
       "expression": null,
@@ -1053,6 +1147,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -1060,7 +1155,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1250,
+      "line": 1319,
       "method": "PUT",
       "path": "/api/admin/anthropic-credits",
       "expression": null,
@@ -1074,6 +1169,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
@@ -1081,7 +1177,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1312,
+      "line": 1381,
       "method": "PUT",
       "path": "/api/admin/users/:id/daily-limit",
       "expression": null,
@@ -1101,7 +1197,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1353,
+      "line": 1422,
       "method": "PUT",
       "path": "/api/admin/users/:id/weekly-limit",
       "expression": null,
@@ -1121,7 +1217,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1421,
+      "line": 1490,
       "method": "PUT",
       "path": "/api/admin/users/:id/wallet",
       "expression": null,
@@ -1141,7 +1237,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1567,
+      "line": 1636,
       "method": "GET",
       "path": "/api/admin/submitted-features",
       "expression": null,
@@ -1156,13 +1252,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-features.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1703,
+      "line": 1772,
       "method": "GET",
       "path": "/api/admin/db-export/status",
       "expression": null,
@@ -1181,7 +1278,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1756,
+      "line": 1825,
       "method": "GET",
       "path": "/api/admin/db-export/history",
       "expression": null,
@@ -1200,7 +1297,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1798,
+      "line": 1867,
       "method": "POST",
       "path": "/api/admin/db-export/ticket",
       "expression": null,
@@ -1219,7 +1316,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1883,
+      "line": 1952,
       "method": "GET",
       "path": "/api/admin/db-export",
       "expression": null,
@@ -1233,13 +1330,14 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2017,
+      "line": 2086,
       "method": "GET",
       "path": "/api/admin/mail/status",
       "expression": null,
@@ -1258,7 +1356,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2044,
+      "line": 2113,
       "method": "GET",
       "path": "/api/admin/mail/activity",
       "expression": null,
@@ -1277,7 +1375,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2092,
+      "line": 2161,
       "method": "POST",
       "path": "/api/admin/mail/test",
       "expression": null,
@@ -4517,6 +4615,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
@@ -5862,7 +5961,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1305,
+      "line": 1314,
       "method": "POST",
       "path": "/api/issues/:id/vote",
       "expression": null,
@@ -5881,7 +5980,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1472,
+      "line": 1481,
       "method": "GET",
       "path": "/api/apps/:slug/board-search",
       "expression": null,
@@ -5904,7 +6003,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 1511,
+      "line": 1520,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues",
       "expression": null,
@@ -5928,7 +6027,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2073,
+      "line": 2087,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number",
       "expression": null,
@@ -5947,7 +6046,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2187,
+      "line": 2201,
       "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number/comments",
       "expression": null,
@@ -5966,7 +6065,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2265,
+      "line": 2279,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/title",
       "expression": null,
@@ -5986,7 +6085,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2372,
+      "line": 2386,
       "method": "PATCH",
       "path": "/api/apps/:slug/github-issues/:number/body",
       "expression": null,
@@ -6006,7 +6105,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2479,
+      "line": 2493,
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/bounty",
       "expression": null,
@@ -6025,7 +6124,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2566,
+      "line": 2580,
       "method": "POST",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6045,7 +6144,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2627,
+      "line": 2641,
       "method": "DELETE",
       "path": "/api/apps/:slug/github-issues/:number/claim",
       "expression": null,
@@ -6065,7 +6164,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2688,
+      "line": 2702,
       "method": "POST",
       "path": "/api/issues/:id/admin-apply",
       "expression": null,
@@ -6084,7 +6183,7 @@
     },
     {
       "source": "src/routes/issues.js",
-      "line": 2766,
+      "line": 2780,
       "method": "POST",
       "path": "/api/issues/:id/close",
       "expression": null,
@@ -7140,6 +7239,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
@@ -7713,7 +7813,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2572,
+      "line": 2573,
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/headless-session",
       "expression": null,
@@ -7732,7 +7832,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2780,
+      "line": 2782,
       "method": "POST",
       "path": "/api/sessions/:id/clone-headless",
       "expression": null,
@@ -7753,7 +7853,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3047,
+      "line": 3050,
       "method": "GET",
       "path": "/api/sessions/:id/checks",
       "expression": null,
@@ -7774,7 +7874,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3047,
+      "line": 3050,
       "method": "GET",
       "path": "/api/sessions/:id/details",
       "expression": null,
@@ -7795,7 +7895,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3120,
+      "line": 3123,
       "method": "GET",
       "path": "/api/sessions/:id",
       "expression": null,
@@ -7814,7 +7914,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3368,
+      "line": 3371,
       "method": "POST",
       "path": "/api/sessions/:id/activity",
       "expression": null,
@@ -7835,7 +7935,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3391,
+      "line": 3394,
       "method": "POST",
       "path": "/api/sessions/:id/notify-on-done",
       "expression": null,
@@ -7856,7 +7956,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3607,
+      "line": 3610,
       "method": "POST",
       "path": "/api/sessions/:id/platform-issue/:msgId/confirm",
       "expression": null,
@@ -7875,7 +7975,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3609,
+      "line": 3612,
       "method": "POST",
       "path": "/api/sessions/:id/platform-issue/:msgId/dismiss",
       "expression": null,
@@ -7894,7 +7994,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3617,
+      "line": 3620,
       "method": "POST",
       "path": "/api/sessions/:id/archive",
       "expression": null,
@@ -7916,7 +8016,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3658,
+      "line": 3661,
       "method": "POST",
       "path": "/api/sessions/:id/reset-agent-context",
       "expression": null,
@@ -7937,7 +8037,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3865,
+      "line": 3868,
       "method": "POST",
       "path": "/api/sessions/:id/build-venue",
       "expression": null,
@@ -7958,7 +8058,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3906,
+      "line": 3909,
       "method": "POST",
       "path": "/api/sessions/:id/unarchive",
       "expression": null,
@@ -7980,7 +8080,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3945,
+      "line": 3948,
       "method": "POST",
       "path": "/api/sessions/:id/share",
       "expression": null,
@@ -8000,7 +8100,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3980,
+      "line": 3983,
       "method": "POST",
       "path": "/api/sessions/:id/unshare",
       "expression": null,
@@ -8020,7 +8120,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4011,
+      "line": 4014,
       "method": "POST",
       "path": "/api/sessions/:id/share-transcript",
       "expression": null,
@@ -8040,7 +8140,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4047,
+      "line": 4050,
       "method": "POST",
       "path": "/api/sessions/:id/unshare-transcript",
       "expression": null,
@@ -8060,7 +8160,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4090,
+      "line": 4093,
       "method": "GET",
       "path": "/api/sessions/:id/transcript",
       "expression": null,
@@ -8080,7 +8180,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4181,
+      "line": 4184,
       "method": "POST",
       "path": "/api/sessions/:id/fork",
       "expression": null,
@@ -8101,7 +8201,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4375,
+      "line": 4379,
       "method": "POST",
       "path": "/api/sessions/:id/pause",
       "expression": null,
@@ -8121,7 +8221,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4439,
+      "line": 4443,
       "method": "POST",
       "path": "/api/sessions/:id/resume",
       "expression": null,
@@ -8142,7 +8242,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4578,
+      "line": 4583,
       "method": "POST",
       "path": "/api/sessions/:id/sync-main",
       "expression": null,
@@ -8163,7 +8263,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4628,
+      "line": 4633,
       "method": "POST",
       "path": "/api/sessions/:id/attachments",
       "expression": null,
@@ -8184,7 +8284,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4689,
+      "line": 4694,
       "method": "GET",
       "path": "/api/sessions/:id/attachments/:attId",
       "expression": null,
@@ -8203,7 +8303,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4721,
+      "line": 4726,
       "method": "POST",
       "path": "/api/sessions/:id/chat",
       "expression": null,
@@ -8224,7 +8324,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6702,
+      "line": 6707,
       "method": "GET",
       "path": "/api/sessions/:id/spec",
       "expression": null,
@@ -8244,7 +8344,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6789,
+      "line": 6794,
       "method": "GET",
       "path": "/api/sessions/:id/specs/:version",
       "expression": null,
@@ -8264,7 +8364,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6838,
+      "line": 6843,
       "method": "POST",
       "path": "/api/sessions/:id/specs/:version/share",
       "expression": null,
@@ -8283,7 +8383,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6937,
+      "line": 6942,
       "method": "POST",
       "path": "/api/sessions/:id/specs/:version/share-user",
       "expression": null,
@@ -8302,7 +8402,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7048,
+      "line": 7053,
       "method": "GET",
       "path": "/api/sessions/:id/status",
       "expression": null,
@@ -8323,7 +8423,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7245,
+      "line": 7250,
       "method": "POST",
       "path": "/api/sessions/:id/stop",
       "expression": null,
@@ -8344,7 +8444,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7492,
+      "line": 7497,
       "method": "GET",
       "path": "/api/sessions/:id/events",
       "expression": null,
@@ -8365,7 +8465,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7554,
+      "line": 7559,
       "method": "GET",
       "path": "/api/budget",
       "expression": null,
@@ -8392,7 +8492,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7641,
+      "line": 7646,
       "method": "POST",
       "path": "/api/sessions/:id/deploy-staging",
       "expression": null,
@@ -8412,7 +8512,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7802,
+      "line": 7807,
       "method": "GET",
       "path": "/api/sessions/:id/preview-status",
       "expression": null,
@@ -8433,7 +8533,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7831,
+      "line": 7836,
       "method": "POST",
       "path": "/api/sessions/:id/ensure-staging",
       "expression": null,
@@ -8454,7 +8554,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7915,
+      "line": 7920,
       "method": "POST",
       "path": "/api/sessions/:id/recheck",
       "expression": null,

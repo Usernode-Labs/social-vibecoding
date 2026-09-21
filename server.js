@@ -1083,6 +1083,10 @@ async function becomeLeader() {
   // advisory-locked so only one instance sends, and the counterweight to
   // new-proposal notifications now defaulting off.
   require('./src/services/vote-digest').start(config);
+  // #2684: the Homeroom bot's shadow-mode triage loop. Leader-only for the
+  // same reason the digests are — a pass runs container turns that cost
+  // money — and inert until an admin switches homeroom_bot_mode on.
+  require('./src/services/homeroom-bot').start(config);
   // #1688: the Friday "this week on <app>" card. Same shape as the digest
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.

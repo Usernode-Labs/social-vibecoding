@@ -68,7 +68,14 @@ const CHALLENGE_SCORER_LOCK = 991010;
 // Pods for the digest's reason: every instance runs the interval, and a card
 // posted twice into one chat is worse than one posted an hour late.
 const WEEKLY_DIGEST_LOCK = 991011;
+// #2684: the Homeroom bot's work loop. Session-scoped, held by the leader
+// for the length of one pass over the queue, because a pass runs container
+// turns that cost money: two Pods draining the same queue would triage the
+// same issue twice and pay twice. The queue's UNIQUE (app_id, issue_number)
+// would still refuse a duplicate row, so this is about not doing the work
+// twice rather than about correctness.
+const HOMEROOM_BOT_LOCK = 991012;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
-  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK };
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK };

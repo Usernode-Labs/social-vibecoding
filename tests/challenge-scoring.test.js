@@ -581,9 +581,13 @@ async function listen(app) {
 }
 
 test('the screen loads in one request: measures, rules and recent runs', async (t) => {
-  // The route reads wall-clock time; keep its live window aligned with the fixture.
+  // The GET handler reads the PROCESS clock (`Date.now()`), not the pinned
+  // `NOW` the pure-function tests pass in — so freeze it to `NOW` here, or
+  // the fixture ages into "window has closed" the week after the pinned
+  // date (which is how it first failed).
   t.mock.timers.enable({ apis: ['Date'], now: NOW });
-  currentMockPool = scriptedPool({ challenges: [challengeRow()] });
+  const live = challengeRow();
+  currentMockPool = scriptedPool({ challenges: [live] });
   currentMockPool.query = async (sql) => {
     if (sql.includes('LEFT JOIN challenge_templates ct ON ct.id = r.challenge_template_id')) {
       return {
@@ -595,7 +599,7 @@ test('the screen loads in one request: measures, rules and recent runs', async (
       };
     }
     if (sql.includes('FROM challenge_scorer_runs')) return { rows: [] };
-    if (sql.includes('FROM challenge_scoring_rules')) return { rows: [challengeRow()] };
+    if (sql.includes('FROM challenge_scoring_rules')) return { rows: [live] };
     return { rows: [] };
   };
   const { server, base } = await listen(buildApp('admin'));
