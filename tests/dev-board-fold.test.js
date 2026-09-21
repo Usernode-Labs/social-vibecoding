@@ -899,7 +899,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Neither set overlaps the other, so the merged manifest holds every one
   // of them: 703 + 1 + 2 + 1 = 707, which leaves 23 slots against
   // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 707);
+  //
+  // 707 → 708: #2679 and #2680 made the hand-off walkthrough's "Link
+  // GitHub" step a real link to GitHub's own authorization page instead of
+  // a hop to Settings, and no declared check had ever looked at that step:
+  // the staging fixture has always been linked, so the card never opened
+  // on it. ONE check, on the new ?order=link fixture shape, pins the anchor
+  // and its destination. 22 slots left against MAX_DECLARED_TESTS (730),
+  // clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 708);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

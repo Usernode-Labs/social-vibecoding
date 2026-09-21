@@ -4427,6 +4427,12 @@
       "expectText": "Connect Homeroom"
     },
     {
+      "name": "Link GitHub in the walkthrough goes to GitHub itself, not to Settings (#2679, #2680)",
+      "path": "/?demo=1&order=link&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"github\"][data-flow-step-state=\"current\"] a[data-flow-action=\"link-github\"][target=\"_blank\"][href=\"/api/me/social-identities/github/connect?intent=connect\"]",
+      "expectText": "Link GitHub"
+    },
+    {
       "name": "A continuation says the work lands as an update, not a second copy",
       "path": "/?demo=1&order=continue&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-step-detail",
