@@ -33,13 +33,6 @@
     {
       "source": "src/db/migrate.js",
       "kind": "structural-template",
-      "fingerprint": "301217890c3df39a7080",
-      "count": 1,
-      "preview": "`INSERT INTO user_enrollments (id, user_id, season_id, season_event_id, created_at, updated_at) VALUES (${base}, $1, $2, NULL, NOW(), NOW()), (${base + 1}, $1, "
-    },
-    {
-      "source": "src/db/migrate.js",
-      "kind": "structural-template",
       "fingerprint": "5827127ec18b1ca8f607",
       "count": 1,
       "preview": "`INSERT INTO topic_attribute_votes (app_id, target_type, target_ref, field, value, user_id, created_at) VALUES ($1, 'proposal', $2, $3, $4, $5, ${when}) ON CONF"
@@ -50,6 +43,13 @@
       "fingerprint": "6db4ee5a12448838a9cd",
       "count": 1,
       "preview": "`INSERT INTO onchain_accounts (id, amount, identity_uid, address, public_key, secret_key, tier, registration_code, season_event_id, season_id, user_id, is_used,"
+    },
+    {
+      "source": "src/db/migrate.js",
+      "kind": "structural-template",
+      "fingerprint": "7ad7a570203416ff9eca",
+      "count": 1,
+      "preview": "`INSERT INTO user_enrollments (id, user_id, season_id, season_event_id, created_at, updated_at) VALUES (${base}, $1, $2, NULL, NOW(), NOW()), (${base + 1}, $1, "
     },
     {
       "source": "src/db/migrate.js",

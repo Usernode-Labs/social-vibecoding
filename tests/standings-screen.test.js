@@ -447,12 +447,10 @@ test('the bar is drawn only for a viewer the server gives the season history', (
   assert.match(ctxJs, /_history = data\.viewer\?\.history === true;/, 'the context takes the verdict from the list');
   assert.match(barStore, /history: false,/, 'the store ships without it');
   assert.match(barTsx, /if \(!mounted \|\| !history\) return null;/, 'and the component renders nothing without it');
-  // Every screenshot signs as usernode-capture, a member, so the staging
-  // seed gives each viewer identity a past season — or no capture of this
-  // screen would ever show the picker.
-  const migrate = fs.readFileSync(path.join(root, 'src/db/migrate.js'), 'utf8');
-  assert.match(migrate, /\(\$\{base \+ 2\}, \$1, \$4, \$5,   NOW\(\), NOW\(\)\)/,
-    'each viewer identity is enrolled in the archive season');
+  // Every screenshot signs as usernode-capture, a member with no trace
+  // outside the running season, so captures of this screen show the
+  // new-member state; the checks identity is an admin and sees the picker
+  // by role. tests/topochain-staging-seed.test.js pins the seed side.
 });
 
 test('neither pane fetches or renders an event picker of its own any more', () => {
