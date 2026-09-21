@@ -4,8 +4,14 @@
 
 Exercise the same interaction replay and PNG/WebM generation used for proposal
 visual evidence, then exercise the full issue-to-proposal flow on a local
-Homeroom instance. A passing test must leave files a person can open and judge.
-No model gives a relevance verdict.
+Homeroom instance **with the normal evidence agent**. A passing test must leave
+files a person can open and judge. No model gives a relevance verdict.
+
+Keep two distinct results: deterministic capture validation, which supplies a
+plan, and local agent validation, in which the selected model explores the
+paired apps and submits its own plan through the normal evidence tools. Only
+the second result addresses failures such as `evidence_agent_failed` and
+`evidence_agent_timeout` that happen before capture.
 
 This branch starts from main commit
 `4472166f44e459c2503f1ddf52b992d37910ba9f` and carries the issue #2560
@@ -17,12 +23,10 @@ replay fixes and the human-review change. The local harness lives on
 - The default test uses synthetic users and app state, with two real local Git
   commits for the demo app.
   It makes no production API calls and needs no model credentials.
-- The fixture app, browser, capture image, and output files run locally in
-  Milestone 1. Milestone 2 adds a local platform database. An optional OpenAI
-  model adapter would make a remote API request; file-plan
-  mode stays offline. The [Responses API](https://developers.openai.com/api/docs/quickstart)
-  is the documented route for an automated GPT adapter. This interactive
-  Codex task can also write or revise a plan file during development.
+- The fixture app, browser, capture image, output files, and platform database
+  run locally. Deterministic plan-file mode is offline. A full agent run calls
+  the selected model provider using a separately configured test credential;
+  it does not use this interactive Codex conversation as an API.
 - A future read-only connector may copy selected issue/proposal metadata from
   the real platform into a local fixture. It must omit tokens, secrets,
   private app data, and personal messages. It must never copy a production
@@ -31,8 +35,14 @@ replay fixes and the human-review change. The local harness lives on
   inspect the captured media before deciding whether it supports a claim.
 - The model's job is to turn an accepted user flow into a typed replay plan.
   The browser runner executes actions and creates PNG/WebM bytes without a
-  model call. Submitting an author plan skips the separate evidence-agent
-  dispatch, including its fallback model. The local lab will use that route.
+  model call. An author plan skips evidence-agent dispatch and is valid only
+  for the deterministic baseline. It cannot count as a normal-flow agent test.
+- A GPT test is useful when GPT is the selected, tool-capable model on the
+  production `codex_openrouter` worker path. A standalone GPT planner that
+  returns JSON for the author-plan route would skip the worker, evidence MCP
+  tools, browser exploration, timeout, and fallback behavior. It cannot be a
+  parity gate. If direct OpenAI API support is wanted, add it as a real agent
+  backend first, then test that backend through the same evidence tools.
 
 ## Milestone 1: runnable capture contract
 
@@ -123,8 +133,15 @@ entire HTTP issue-to-proposal flow local and offline:
    `resolveRevisionContext` calls GitHub for the comparison and
    `checkoutExactRevision` in `visual-evidence-environment.js` gets a GitHub
    clone URL directly. The local provider must resolve changed files and
-   check out exact SHAs from a bare Git fixture without either call. Inject
-   it at those two seams, keeping the production GitHub provider unchanged.
+   check out exact SHAs from a bare Git fixture without either call. The
+   **normal agent run also requires** `worker.js`'s warm bootstrap to clone
+   that same fixture; cover its public-repo check and clone URL with the
+   local provider. Serve the fixture Git repository on the isolated Docker
+   network so both platform and worker can reach it. Keep production GitHub
+   behavior unchanged and require an explicit local-only configuration guard.
+   Fence every outbound GitHub mutation too: scheduling calls the PR-body
+   evidence-link sync, so a lab session must never point that call at a real
+   pull request.
 2. Add a dedicated Compose overlay for the existing `docker-compose.dev.yml`
    stack. Keep it on a separate network and local volumes so it cannot share
    data with another development stack. Supply generated local-only secrets
@@ -193,9 +210,9 @@ show the real change when handed a valid plan. Codex wrote the plans here;
 the historical evidence agent did not. The live failures happened before any
 capture artifacts were produced. A passing local replay does **not** prove
 that the live evidence agent will author a valid plan or complete before its
-timeout. The remaining Milestone 2 HTTP route test, Milestone 3 planner test,
-and a normal staging proposal run are the gates for that claim. Human review
-is still required to decide whether the media supports each change.
+timeout. Milestone 3 must repeat at least one historical case without handing
+the agent that plan. Human review is still required to decide whether the
+media supports each change.
 
 The run exposed a local fixture blocker: a newly seeded `usernode-capture`
 member had no platform access, so authenticated captures loaded the waitlist
@@ -205,26 +222,76 @@ fixtures on boot. This failure was observed in local revision containers; the
 historical proposal failure labels alone do not establish that it was their
 production root cause.
 
-## Milestone 3: GPT planning and optional real metadata
+## Milestone 3: normal evidence agent on the local platform
 
-1. Keep the plan-file path as the deterministic baseline. Add an explicit
-   `openai` planner adapter only for runs that ask for model-generated flows.
-   It receives sanitized intent and local fixture URLs, returns a typed plan,
-   and never returns a relevance verdict. Validate the plan with
-   `parseReplayPlan` before submitting it through the author-plan route.
-   Require a separately configured API key; do not add a hidden model call
-   to every test. This route must not dispatch the platform's fallback model.
-2. Add a read-only metadata importer for selected real issues/proposals.
-   Save a small, redacted JSON fixture with stable local IDs. It may supply
-   claims and steps, but local Git commits and local seeded app data remain
-   the replay targets.
-3. Run the same acceptance case in file-plan and GPT-plan modes. Record model
-   usage separately from replay/capture time and bytes, so a planning failure
-   is distinguishable from a PNG/WebM failure.
+**Status: not implemented.** The current local platform command injects a
+fixture environment, identities, and worker, and submits `authorPlan`. Its
+assertion that `agentAttempts === 0` confirms it bypasses the failure-prone
+agent path. The historical command invokes replay directly. Neither is a
+normal-flow agent test.
 
-Acceptance: local replay remains reproducible without a model; a GPT-generated
-plan can be substituted deliberately, and human inspection remains the only
-semantic review of the media.
+| Part of the live flow | Current local coverage | Needed for agent parity |
+| --- | --- | --- |
+| Exact base/head source and reproducible PNG/WebM replay | Synthetic and historical runs | Keep as the fast baseline |
+| Durable coordinator and stored artifacts | Synthetic author-plan run | Exercise without `authorPlan` |
+| Real revision provisioning and app database resets | Historical runner has its own setup; synthetic coordinator replaces the environment | Use `visual-evidence-environment` |
+| Hosted worker, model, and evidence/browser tools | Skipped | Use the actual worker and selected model |
+| Authenticated evidence route and proposal card | Pending | Check the reviewer-visible result |
+
+1. Complete the Milestone 2 local Git provider and isolated platform stack.
+   Seed a real fixture app database and proposal session with exact base/head
+   SHAs, accepted visual intent, a local test identity, and the intended agent
+   backend/model. Use the production environment service for app-secret
+   resolution, image builds, database clone/reset, deploy, and cleanup. Inject
+   the local Git provider only where remote repository resolution is needed;
+   do not replace the environment, worker, identity, or replay services with
+   fixture implementations for this mode.
+2. Configure a test-scoped model credential through the same local credential
+   store the agent uses. For `codex_openrouter`, set the backend flag and a
+   tool-capable model, then run the repository's actual worker image with
+   `mode: evidence`. If Claude is the selected live backend, test Claude too.
+   Report an unavailable credential or unsupported model as a preflight
+   failure; do not silently call a different model and label it equivalent.
+3. Trigger the local proposal's normal rerun/preview route **without**
+   `authorPlan`. The orchestrator must dispatch `visual-evidence-agent`, and
+   the worker must use its normal `evidence_get_context`, base/head browser,
+   `evidence_reset_side`, and `evidence_run_plan` tools. The platform must
+   perform the same two clean replays, store the artifacts, and serve them on
+   its authenticated evidence routes and proposal card. Run this once for the
+   synthetic UI change and at least once for a historically failed revision,
+   without exposing its previously hand-written replay plan to the model.
+4. Record enough provenance to prove which path ran: selected and actual
+   backend/model (including any fallback), prompt/worker contract revision,
+   evidence tool call count, submitted plan/hash, base/head SHAs, fixture and
+   image digests, two replay-pass results, artifact MIME types and bytes,
+   agent time, replay time, and model usage. Add these fields to the local
+   manifest and safe run trace where absent. Redact tokens and private data.
+   `agentAttempts > 0` alone is insufficient: a failed dispatch increments it
+   before the worker ever calls `evidence_run_plan`.
+5. Make the local command fail unless the model actually submitted a plan
+   through `evidence_run_plan`, two fresh passes agreed, and the authenticated
+   reviewer view exposes precisely the requested PNGs and any genuine
+   interaction WebMs. Exercise timeout, broken selector/repair, stale head,
+   worker bootstrap failure, and missing credential as distinct failures.
+   Deterministic model/tool stubs are suitable for these fault tests, but a
+   stubbed success cannot satisfy the normal-flow acceptance gate.
+
+Acceptance: a single opt-in local command runs the normal evidence agent and
+worker against isolated local app revisions and data, records the actual model
+backend, and leaves reviewable media. The default deterministic commands stay
+cheap and credential-free. No merge or production deploy is needed for a
+development iteration.
+
+## Release gate and remaining differences
+
+Use the deterministic run after capture, replay, or encoding edits. Use the
+opt-in normal-agent run after planner, prompt, worker, provisioning, auth, or
+orchestrator edits. Repeat a historically failed case before proposing a fix
+for an agent failure. Once those local gates pass, submit **one normal staging
+proposal before merge** to check the remaining deployment differences. A
+local Docker run cannot prove behavior in the production Kubernetes worker
+runtime, live routing, or the actual user's credential/model choice. The
+staging smoke test is a final confidence check, not the debugging loop.
 
 ## Evidence to keep from each run
 
