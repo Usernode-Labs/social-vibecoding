@@ -12324,6 +12324,17 @@ async function seedStagingProfileCustomization(pool, config) {
 // pre-migration state (still working with the shared superuser URL)
 // and will be retried on next boot.
 async function migrateAppDbsToPerRole(pool, config) {
+  // A preview owns one already-created clone and receives only that clone's
+  // DATABASE_URL. It deliberately has no DB_ADMIN_URL and must not inspect or
+  // repair roles for the production child-app fleet. The production platform
+  // runs this migration before the clone is made, so the copied app metadata
+  // is already current. Besides being unnecessary, spawning one psql role
+  // check per copied app added about 22 seconds to every self-app preview.
+  if (process.env.USERNODE_ENV === 'staging') {
+    log.info('db', 'Per-app role migration skipped in staging preview');
+    return;
+  }
+
   log.info('db', 'Running per-app role migration');
 
   const { rows } = await pool.query(
