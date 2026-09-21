@@ -1043,7 +1043,7 @@ function buildWorkOrder({
       '   stories, and a specific rationale. Homeroom produces new exact-base/head',
       '   evidence instead of reusing old captures.',
       '   After submit_work, use get_proposal and submit_visual_evidence_plan',
-      '   to send your UI flow for exact-head replay and PNG/WebM verification.',
+      '   to send your UI flow for exact-head replay and PNG/WebM capture.',
       '   If that tool is absent, the hosted evidence agent remains available.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through your chat product\'s own',

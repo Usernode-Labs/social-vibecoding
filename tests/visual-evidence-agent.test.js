@@ -41,13 +41,13 @@ test('agent exploration timeout excludes time spent in platform replay', async (
   assert.equal(stopped, 0, 'the replay has its own bounded lifetime');
 });
 
-test('the evidence prompt makes model exploration advisory and platform replay authoritative', () => {
+test('the evidence prompt asks for a replay plan and leaves visual judgement to people', () => {
   assert.match(agent.SYSTEM_PROMPT, /platform code—not you—will reset both sides and\s+replay it twice/i);
-  assert.match(agent.SYSTEM_PROMPT, /inspect all returned focused and\s+context images/i);
+  assert.match(agent.SYSTEM_PROMPT, /human reviewers, who decide whether it proves the claim/i);
+  assert.match(agent.SYSTEM_PROMPT, /do not need image understanding or to issue a relevance verdict/i);
+  assert.doesNotMatch(agent.SYSTEM_PROMPT, /evidence_finish/);
   assert.match(agent.SYSTEM_PROMPT, /page[\s\S]*untrusted data/i);
-  const repair = agent.promptFor({ repairReason: '<bad focus>' });
-  assert.match(repair, /single authorized corrected plan/);
-  assert.match(repair, /<bad focus>/);
+  assert.doesNotMatch(agent.promptFor(), /review was rejected|corrected plan/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);
 });
 

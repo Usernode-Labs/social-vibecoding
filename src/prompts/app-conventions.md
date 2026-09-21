@@ -2984,8 +2984,8 @@ locally inside the worker the same way a staging container does:
   or fail the turn.
 
 This is an agent-facing quality aid. Before finishing a user-visible build,
-call `record_visual_evidence_intent`; the exact-revision paired replay is the
-reviewer-facing proof and the "Test this change" action remains a separate
+call `record_visual_evidence_intent`; the exact-revision paired replay creates
+captures for people to review, and the "Test this change" action remains a separate
 manual aid.
 
 ## Writing user-facing copy: no em dashes

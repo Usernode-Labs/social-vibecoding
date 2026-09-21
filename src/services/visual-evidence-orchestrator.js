@@ -15,7 +15,6 @@ const environment = require('./visual-evidence-environment');
 const identities = require('./visual-evidence-identities');
 const planContract = require('./visual-evidence-plan');
 const replay = require('./visual-evidence-replay');
-const reviewer = require('./visual-evidence-reviewer');
 const state = require('./visual-evidence-state');
 const worker = require('./worker');
 
@@ -227,16 +226,6 @@ function replayInput({ run, plan, deployment, authTokens, provenance, pass }) {
   };
 }
 
-function reviewImages(artifacts) {
-  return (artifacts || [])
-    .filter((artifact) => artifact.media === 'png' && ['focus', 'context'].includes(artifact.variant))
-    .map((artifact) => ({
-      label: `${artifact.storyId}/${artifact.viewport}/${artifact.side}/${artifact.variant}`,
-      mimeType: artifact.contentType,
-      data: artifact.data.toString('base64'),
-    }));
-}
-
 async function waitForSessionIdle(pool, sessionId, {
   timeoutMs = 120_000,
   workerService = worker,
@@ -253,29 +242,6 @@ async function waitForSessionIdle(pool, sessionId, {
     'evidence_agent_busy',
     'The proposal agent stayed busy past the visual change preview start window.'
   );
-}
-
-function semanticFromFinish(finish) {
-  if (finish?.status === 'verified') {
-    return {
-      relevant: true,
-      focusAccurate: true,
-      needsRepair: false,
-      reason: finish.reason,
-      reviewer: 'author_agent',
-    };
-  }
-  if (finish) {
-    return {
-      relevant: false,
-      focusAccurate: false,
-      needsRepair: true,
-      reason: finish.reason,
-      reviewer: 'author_agent',
-      authorStatus: finish.status,
-    };
-  }
-  return null;
 }
 
 function errorCode(error) {
@@ -295,7 +261,6 @@ function newRunMetrics() {
       provisioning: 0,
       agentExploration: 0,
       replay: 0,
-      semanticReview: 0,
       artifactPersist: 0,
       cleanup: 0,
     },
@@ -384,7 +349,6 @@ async function executeRun(config, options, injected = {}) {
     environment: injected.environment || environment,
     identities: injected.identities || identities,
     replay: injected.replay || replay,
-    reviewer: injected.reviewer || reviewer,
     evidenceAgent: injected.evidenceAgent || evidenceAgent,
     evidenceControl: injected.evidenceControl || evidenceControl,
     worker: injected.worker || worker,
@@ -573,7 +537,6 @@ async function executeRun(config, options, injected = {}) {
               stories: hardVerdict.stories,
               relativePointer: hardVerdict.relativePointer,
             }),
-            images: reviewImages(second.artifacts),
           };
         } finally {
           replaySuspendedMs += Date.now() - replayStartedAt;
@@ -582,7 +545,7 @@ async function executeRun(config, options, injected = {}) {
       },
     });
 
-    const dispatchOnce = async (repairReason = null, forceBackend = null) => {
+    const dispatchOnce = async (forceBackend = null) => {
       if (agentWindowStartedAt == null) {
         agentWindowStartedAt = Date.now();
         agentWindowSuspendedAt = suspendedMs();
@@ -600,7 +563,7 @@ async function executeRun(config, options, injected = {}) {
         if (remainingAgentMs <= 0) {
           throw new VisualEvidenceOrchestrationError(
             'evidence_agent_timeout',
-            'The preview agent used its bounded exploration and review time.'
+            'The preview agent used its bounded exploration time.'
           );
         }
         const dispatched = await deps.evidenceAgent.dispatch(config, {
@@ -611,7 +574,6 @@ async function executeRun(config, options, injected = {}) {
           authTokens,
           onProgress: (line) => progress(`Evidence agent: ${line}`),
           resumeThreadId: agentThreadId,
-          repairReason,
           forceBackend,
           timeoutMs: remainingAgentMs,
           suspendedMs,
@@ -630,62 +592,24 @@ async function executeRun(config, options, injected = {}) {
     let agentOutcome = null;
     if (authorPlan) {
       // The implementing agent already knows the UI flow. It supplies only
-      // the typed plan; the same platform-owned two-pass replay, storage and
-      // semantic review below still decide whether media is verified.
+      // the typed plan; the same platform-owned two-pass replay and storage
+      // decide whether the captured media is reproducible and complete.
       progress('Replaying the change author’s submitted UI flow…');
       await registration.control.runPlan(authorPlan);
     } else {
       progress('The proposal agent is exploring the changed UI…');
-      agentOutcome = await dispatchOnce(null);
+      agentOutcome = await dispatchOnce();
       if (agentOutcome.error && !latestHardVerdict
           && registration.control.planCalls === 0
           && session.agent_backend === 'codex_openrouter') {
-        progress('The selected Codex model could not start the evidence flow; using the platform vision agent…');
-        agentOutcome = await dispatchOnce(null, 'claude_code');
+        progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
+        agentOutcome = await dispatchOnce('claude_code');
       }
       if (agentOutcome.error && !latestHardVerdict) throw agentOutcome.error;
     }
 
-    const semanticVerdict = async () => {
-      const authored = semanticFromFinish(registration.control.finished);
-      if (authored) return authored;
-      if (!latestHardVerdict || !latestArtifacts) {
-        throw new VisualEvidenceOrchestrationError('missing_evidence_replay', 'The preview agent did not submit a replay plan.');
-      }
-      progress('Checking whether the replay images prove the declared claim…');
-      return deps.reviewer.review({
-        intent,
-        artifacts: latestArtifacts,
-        telemetryContext: { sessionId: session.id, runId: run.id },
-      });
-    };
-
-    let semanticStartedAt = Date.now();
-    let semantic = await semanticVerdict();
-    addTiming(metrics, 'semanticReview', semanticStartedAt);
-    if (!(semantic.relevant === true && semantic.focusAccurate === true)) {
-      if (authorPlan) {
-        throw new VisualEvidenceOrchestrationError(
-          'irrelevant_visual_evidence',
-          semantic.reason || 'The submitted replay did not clearly prove the declared visual change.'
-        );
-      }
-      registration.control.allowRepair(semantic.reason || 'The first evidence did not clearly prove the declared claim.');
-      metrics.repairCount = 1;
-      progress('The first evidence was not relevant enough; the agent gets one bounded repair…');
-      agentOutcome = await dispatchOnce(semantic.reason);
-      if (agentOutcome.error && (!latestHardVerdict || Number(registration.control.planCalls) < 2)) {
-        throw agentOutcome.error;
-      }
-      semanticStartedAt = Date.now();
-      semantic = await semanticVerdict();
-      addTiming(metrics, 'semanticReview', semanticStartedAt);
-    }
-    if (semantic.relevant !== true || semantic.focusAccurate !== true || !latestPlanHash) {
-      throw new VisualEvidenceOrchestrationError(
-        'irrelevant_visual_evidence',
-        semantic.reason || 'The replay did not clearly demonstrate the declared visual change.'
-      );
+    if (!latestHardVerdict?.passed || !latestArtifacts || !latestPlanHash) {
+      throw new VisualEvidenceOrchestrationError('missing_evidence_replay', 'The preview agent did not submit a passing replay plan.');
     }
 
     // A successful run tears down its exact-revision environment before it
@@ -706,18 +630,17 @@ async function executeRun(config, options, injected = {}) {
     });
     await deps.state.transitionRun(pool, run.id, 'verified', {
       hardVerdict: latestHardVerdict,
-      semanticVerdict: semantic,
       planHash: latestPlanHash,
       repairAttempt: Math.max(0, registration.control.planCalls - 1),
       traceSummary: finalTrace,
     });
-    log.info('visual-evidence', 'Visual evidence run verified', {
+    log.info('visual-evidence', 'Visual evidence captures stored', {
       sessionId: session.id,
       runId: run.id,
       trace: finalTrace,
     });
     notifyEvidence(session, app, 'verified');
-    progress('Visual evidence verified.');
+    progress('Visual evidence captured for human review.');
     return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
   } catch (error) {
     const failureTrace = traceSummary(metrics, { terminalFailureClass: errorCode(error) });
@@ -731,7 +654,7 @@ async function executeRun(config, options, injected = {}) {
     if (failed && session && app) {
       notifyEvidence(session, app, 'failed', { failureCode: errorCode(error) });
     }
-    log.warn('visual-evidence', 'Visual evidence run ended without verified evidence', {
+    log.warn('visual-evidence', 'Visual evidence run ended without captured evidence', {
       sessionId: session?.id || null,
       runId: run?.id || options.runId || null,
       code: errorCode(error),
@@ -885,9 +808,7 @@ module.exports = {
   evidenceContext,
   sameProvenance,
   replayInput,
-  reviewImages,
   waitForSessionIdle,
-  semanticFromFinish,
   newRunMetrics,
   addTiming,
   addAgentUsage,

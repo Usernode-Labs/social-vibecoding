@@ -22,7 +22,7 @@ function evidence(overrides = {}) {
     }],
     baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), planHash: 'c'.repeat(64),
     replayCount: 2, repairCount: 1, relativePointer: true,
-    verifiedReason: 'The focused pair demonstrates the claim.',
+    verifiedReason: null,
     artifacts: [
       { id: id('1'), storyId: 'dialog', viewport: 'desktop', side: 'base', variant: 'focus', media: 'png', url: url('1') },
       { id: id('2'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'focus', media: 'png', url: url('2') },
@@ -49,6 +49,9 @@ test('verified cards are claim-first, escaped, authenticated, and never autoplay
   assert.match(html, /2 clean replays/);
   assert.match(html, /1 bounded repair/);
   assert.match(html, /relative-pointer flow/);
+  assert.match(html, /Captured/);
+  assert.match(html, /Review the images and video to decide/);
+  assert.doesNotMatch(html, /Verified visual change preview/);
 });
 
 test('absence is labelled only when the author explicitly declared a new base state', () => {

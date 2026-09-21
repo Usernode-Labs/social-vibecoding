@@ -259,7 +259,7 @@ TOML
 command = "node"
 args = ["/usr/local/bin/evidence-mcp.js"]
 env_vars = ["EVIDENCE_JWT", "EVIDENCE_RUN_ID", "PLATFORM_URL"]
-enabled_tools = ["evidence_get_context", "evidence_reset_side", "evidence_run_plan", "evidence_finish"]
+enabled_tools = ["evidence_get_context", "evidence_reset_side", "evidence_run_plan"]
 startup_timeout_sec = 15
 tool_timeout_sec = 720
 

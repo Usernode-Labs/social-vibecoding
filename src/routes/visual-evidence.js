@@ -143,8 +143,8 @@ function visualEvidenceRoutes(config) {
   });
 
   // The agent that wrote the revision may submit its executable UI flow.
-  // It cannot submit media or a verdict: the ordinary paired replay and
-  // reviewer still generate and verify every PNG/WebM artifact.
+  // It cannot submit media or a verdict: the ordinary paired replay generates
+  // and checks every PNG/WebM artifact; people review what the media shows.
   router.post('/api/apps/:slug/proposals/:sessionId/evidence/plan',
     json({ limit: '512kb' }), async (req, res) => {
       const id = sessionId(req.params.sessionId);

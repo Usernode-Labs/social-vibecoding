@@ -6865,8 +6865,8 @@ const AppView = {
       const after = find('head');
       if (!before && !after) return null;
       return {
-        path: claim?.claim || 'Verified visual change preview',
-        claim: claim?.claim || 'Verified visual change preview',
+        path: claim?.claim || 'Captured visual change preview',
+        claim: claim?.claim || 'Captured visual change preview',
         mobile: viewport === 'mobile',
         before: before?.url || null,
         after: after?.url || null,
@@ -16496,8 +16496,8 @@ const AppView = {
             : evidence.state === 'failed' ? 'Visual change preview failed' : 'Visual change preview needed',
         detail: (notStarted ? AppView._evidenceNotStartedReason(evidence) : evidence.failureReason)
           || (enforced
-            ? 'Voting and merging wait for a verified visual change preview of the current proposal commit.'
-            : 'This proposal does not yet have a verified visual change preview for its current commit.'),
+            ? 'Voting and merging wait for a replay-checked visual change preview of the current proposal commit.'
+            : 'This proposal does not yet have captured visual evidence for its current commit.'),
         running,
         soft: !enforced,
       });
@@ -17071,12 +17071,12 @@ const AppView = {
       provisioning: ['Preparing the preview', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
       exploring: ['Finding the relevant UI state', 'The preview agent is working through the declared user flow on both revisions.'],
       replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
-      reviewing: ['Checking relevance', 'The replay passed its hard checks and is being checked against the author’s claim.'],
-      failed: ['Visual change preview failed', e.failureReason || 'The declared UI state could not be reached or verified.'],
+      reviewing: ['Saving captures', 'The replay passed its technical checks and the media is being stored.'],
+      failed: ['Visual change preview failed', e.failureReason || 'The declared UI state could not be captured reliably.'],
       stale: ['Visual change preview is stale', e.failureReason || 'A newer proposal revision superseded these artifacts.'],
       cancelled: ['Visual change preview cancelled', e.failureReason || 'This run was superseded before it finished.'],
       not_required: ['No visual change preview required', e.rationale || 'The author declared that this change has no user-visible effect.'],
-      overridden: ['Preview requirement overridden', e.overrideReason || 'An app administrator allowed review to continue without a verified visual change preview.'],
+      overridden: ['Preview requirement overridden', e.overrideReason || 'An app administrator allowed review to continue without captured visual evidence.'],
     };
   },
 
@@ -17101,7 +17101,7 @@ const AppView = {
       state,
       verified: state === 'verified',
       notStarted,
-      label: state === 'verified' ? 'Verified' : copy[0],
+      label: state === 'verified' ? 'Captured' : copy[0],
       sentence: notStarted
         ? `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Nothing has been captured for this commit yet.`
         : settled
@@ -17129,7 +17129,7 @@ const AppView = {
     };
     const stateCopy = AppView._evidenceStateCopy(evidence);
     const badge = state === 'verified'
-      ? '<span class="dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">Verified</span>'
+      ? '<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">Captured</span>'
       : `<span class="dev-badge ${state === 'failed' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Preview pending'])[0])}</span>`;
     const provenance = `<span>base <code>${esc(shortSha(evidence.baseSha))}</code></span><span aria-hidden="true">→</span><span>head <code>${esc(shortSha(evidence.headSha))}</code></span>`;
 
@@ -17202,16 +17202,15 @@ const AppView = {
         <div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${badge}</div>
         ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
         ${viewportRows.join('')}
-        <details class="mt-2 text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">View verification details</summary>
+        <details class="mt-2 text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">View capture details</summary>
           <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>plan <code>${esc(String(evidence.planHash || '').slice(0, 12) || 'unknown')}</code></span>${evidence.replayCount === 2 ? '<span>2 clean replays</span>' : ''}${evidence.repairCount === 1 ? '<span>1 bounded repair</span>' : ''}${evidence.relativePointer === true ? '<span>relative-pointer flow</span>' : ''}</div>
-          ${evidence.verifiedReason ? `<p class="mt-1">${esc(evidence.verifiedReason)}</p>` : ''}
         </details>
       </article>`);
     }
     if (!rendered.length) {
-      return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">Verified visual change preview metadata is incomplete; no claim can be displayed.</section>`;
+      return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">Captured visual change preview metadata is incomplete; no claim can be displayed.</section>`;
     }
-    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Verified visual change preview" class="space-y-3">${rendered.join('')}</section>`;
+    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Captured visual change preview" class="space-y-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">These captures passed replay checks. Review the images and video to decide whether they show the claimed change.</p>${rendered.join('')}</section>`;
   },
 
   // Authenticated evidence uses full relative URLs rather than public
