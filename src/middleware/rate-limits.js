@@ -782,25 +782,40 @@ const issueScreenshotLimiter = makeLimiter({
 // siblings above were limited from the start and this one was not, so a
 // signed-in user could loop it and mint an unbounded stream of real
 // GitHub issues on live repos, each one also paying for a Haiku title
-// call out of the shared LLM budget. Filing is a deliberate, typed
-// action: honest use is one or two reports in a sitting, and the offline
-// outbox that replays queued reports caps itself at 10 entries, so
-// 10 / hour clears a full flush and still never bites, while a scripted
-// loop bounces after ten.
+// call out of the shared LLM budget.
+//
+// #2669 raised it from 10/hour to 30. The original sizing argued that "the
+// offline outbox that replays queued reports caps itself at 10 entries, so
+// 10 / hour clears a full flush and still never bites". The premise is
+// right and the conclusion does not follow: the outbox's MAX_ENTRIES is
+// exactly 10 (public/js/feedback-queue.js), so a full flush spends the
+// ENTIRE hour's budget, and the next report — the one the person is
+// typing now, having just come back online — is refused. It cleared the
+// flush and then bit immediately, which is how this got reported.
+//
+// 30 leaves a full flush at a third of the budget, so twenty live reports
+// still fit behind it. A scripted loop still bounces, which is the point:
+// the bound exists for the outbound GitHub writes and the shared Haiku
+// spend, and neither is something thirty an hour threatens.
 //
 // Every attempt counts, deliberately — unlike issueCreateLimiter this one
 // does NOT refund failures. The expensive half of the route (title
 // generation) runs before the GitHub call, so a 502 from a repo the bot
 // cannot reach has already spent a Haiku call; refunding it would leave
 // exactly that loop unbounded. Admins are not exempt for the same reason:
-// the cost here is outbound and shared, and ten reports an hour is not a
-// limit real triage runs into. Per-user keyed for shared-NAT fairness.
+// the cost here is outbound and shared. Per-user keyed for shared-NAT
+// fairness.
+const FEEDBACK_SUBMITS_PER_HOUR = 30;
 const feedbackSubmitLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
-  max: 10,
+  max: FEEDBACK_SUBMITS_PER_HOUR,
   name: 'feedback-submit',
   keyByUser: true,
-  message: (s) => `Rate limit reached: up to 10 issue reports per hour. You can try again ${retryPhrase(s)}.`,
+  // Interpolated rather than written twice: this message is what the
+  // person actually reads, and a message that disagrees with the limit is
+  // worse than no message at all.
+  message: (s) => `Rate limit reached: up to ${FEEDBACK_SUBMITS_PER_HOUR} issue reports per hour.`
+    + ` You can try again ${retryPhrase(s)}.`,
 });
 
 // Profile customization writes (issue #982): PATCH /api/me/profile plus
@@ -1255,4 +1270,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups. Please slow down.',
 });
 
-module.exports = { appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };
+module.exports = { FEEDBACK_SUBMITS_PER_HOUR, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };
