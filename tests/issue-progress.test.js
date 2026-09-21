@@ -89,7 +89,9 @@ function poolOf({ sessions = [], claims = [], threads = [] } = {}) {
   };
 }
 
-test('both halves land in one set', async () => {
+test('both halves land in one set', async (t) => {
+  // Unlike claimIsLive's unit calls, this entry point reads Date.now itself.
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const pool = poolOf({
     sessions: [{ n: 11 }, { n: 12 }],
     claims: [{ n: 20, claimed_at: iso(NOW - DAY) }],

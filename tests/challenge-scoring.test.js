@@ -580,7 +580,9 @@ async function listen(app) {
   return { server, base: `http://127.0.0.1:${server.address().port}` };
 }
 
-test('the screen loads in one request: measures, rules and recent runs', async () => {
+test('the screen loads in one request: measures, rules and recent runs', async (t) => {
+  // The route reads wall-clock time; keep its live window aligned with the fixture.
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
   currentMockPool = scriptedPool({ challenges: [challengeRow()] });
   currentMockPool.query = async (sql) => {
     if (sql.includes('LEFT JOIN challenge_templates ct ON ct.id = r.challenge_template_id')) {
