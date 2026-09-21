@@ -199,7 +199,9 @@ test('the one-call shortcut accepts independent compound reads but never skips w
   const calls = [{ call: { id: 'read_1' }, definition: { risk: 'read' } }];
   const success = new Map([['read_1', { ok: true, data: { ok: true, status: 200 } }]]);
   assert.equal(canFastCompleteRead('Could you show my apps?', calls, success), true);
-  assert.equal(canFastCompleteRead('Help me search issues by tag.', calls, success), true);
+  assert.equal(canFastCompleteRead('Help me search issues by tag.', calls, success), false);
+  assert.equal(canFastCompleteRead('What are my recent issues?', calls, success), false);
+  assert.equal(canFastCompleteRead('Show what I should work on next.', calls, success), false);
   assert.equal(canFastCompleteRead('Show my apps and then delete one.', calls, success), false);
   assert.equal(canFastCompleteRead('Show my apps and their open issues.', calls, success), false);
   const compoundCalls = [
@@ -211,7 +213,7 @@ test('the one-call shortcut accepts independent compound reads but never skips w
     ['read_2', { ok: true, data: { ok: true, status: 200 } }],
   ]);
   assert.equal(canFastCompleteRead(
-    'Show me the last issues I closed and what I merged.',
+    'Show the last issues I closed and what I merged.',
     compoundCalls,
     compoundSuccess,
   ), true);
@@ -249,18 +251,18 @@ test('the first call preloads matching capabilities and auto-attaches authoritat
   assert.ok(modelCalls[0].input.tools.some(
     (tool) => tool.function.name === capabilityToolName('issues.list'),
   ));
-  assert.equal(modelCalls[0].input.toolChoice, 'required');
+  assert.equal(modelCalls[0].input.toolChoice, 'auto');
   assert.equal(modelCalls[0].input.tools.some(
     (tool) => tool.function.name === 'present_response',
-  ), false);
+  ), true);
   assert.equal(modelCalls[0].input.tools.some(
     (tool) => tool.function.name === 'request_more_suggestions',
   ), false);
   assert.equal(modelCalls[0].input.reasoningEffort, 'low');
   assert.equal(modelCalls[0].input.model.id, 'cheap/global');
-  assert.equal(modelCalls[0].input.maxOutputTokens, 800);
-  assert.equal(modelCalls[0].input.timeoutMs, 8_000);
-  assert.equal(modelCalls[0].input.sessionId, `${THREAD_ID}:latency-v2`);
+  assert.equal(modelCalls[0].input.maxOutputTokens, 1_000);
+  assert.equal(modelCalls[0].input.timeoutMs, 10_000);
+  assert.equal(modelCalls[0].input.sessionId, `${TURN_ID}:turn-v1:route-1`);
   assert.match(modelCalls[0].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
   assert.equal(modelCalls[0].input.messages.at(-1).content, 'List my open issues');
   assert.match(modelCalls[0].input.messages[1].content, /"availableCapabilities"/);
@@ -353,7 +355,7 @@ test('a failed Classic read stays in the model loop instead of using the fast co
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
   assert.equal(modelCalls.length, 2);
   assert.match(modelCalls[1].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
-  assert.match(modelCalls[1].input.messages[1].content, /Inspect the newest tool result/);
+  assert.match(modelCalls[1].input.messages[1].content, /newest tool results/);
 });
 
 test('an incomplete platform request can ask for one missing value instead of looping', async () => {
@@ -394,13 +396,33 @@ test('an incomplete platform request can ask for one missing value instead of lo
   assert.deepEqual(result.presentation.suggestions, clarification.suggestions);
   assert.deepEqual(result.results, []);
   const modelCall = state.calls.find((entry) => entry.type === 'model');
-  assert.equal(modelCall.input.toolChoice, 'required');
+  assert.equal(modelCall.input.toolChoice, 'auto');
   assert.ok(modelCall.input.tools.some(
     (tool) => tool.function.name === 'ask_user_for_input',
   ));
   assert.equal(modelCall.input.tools.some(
     (tool) => tool.function.name === 'present_response',
-  ), false);
+  ), true);
+});
+
+test('an ambiguous preference can be clarified without five filler options', async () => {
+  const state = harness({
+    responses: [providerResponse([
+      call('ask_preference', 'ask_user_for_input', {
+        question: 'Would you rather fix a bug or build a feature?',
+        suggestions: [
+          { id: 'prefer.bug', label: 'Fix a bug', prompt: 'Help me choose a bug to fix.', capabilityHint: null },
+          { id: 'prefer.feature', label: 'Build a feature', prompt: 'Help me choose a feature to build.', capabilityHint: null },
+        ],
+      }),
+    ])],
+  });
+  const result = await state.orchestrator.runTurn(turnInput({ text: 'What should I work on next?' }));
+  assert.equal(result.presentation.message, 'Would you rather fix a bug or build a feature?');
+  assert.deepEqual(result.presentation.suggestions.map((item) => item.label), [
+    'Fix a bug', 'Build a feature',
+  ]);
+  assert.equal(state.calls.filter((entry) => entry.type === 'model').length, 1);
 });
 
 test('protected writes prepare an exact one-use confirmation without executing the handler or exposing its token to the model', async () => {
@@ -460,10 +482,10 @@ test('protected writes prepare an exact one-use confirmation without executing t
   assert.ok(events.some((event) => event.type === 'confirmation.required'));
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
   assert.match(modelCalls[1].input.messages[0].content, /Homeroom Global Chat \(experimental\)/);
-  assert.match(modelCalls[1].input.messages[1].content, /Continue the current turn/);
+  assert.match(modelCalls[1].input.messages[1].content, /Continue from the newest tool results/);
 });
 
-test('normal model presentations cannot replace trusted server suggestions', async () => {
+test('normal model presentations keep contextual options without repeating old buttons or calling the model again', async () => {
   const oldSuggestion = {
     id: 'issue.open', label: 'Open issue', prompt: 'Open issue 1.', capabilityHint: 'issues.get',
   };
@@ -481,35 +503,87 @@ test('normal model presentations cannot replace trusted server suggestions', asy
   const state = harness({
     priorMessages,
     responses: [
-      providerResponse([call('present_bad', 'present_response', presentation([], [
+      providerResponse([call('present_options', 'present_response', presentation([], [
         oldSuggestion,
         { id: 'issue.close', label: 'Close issue', prompt: 'Close issue 1.', capabilityHint: 'issues.close' },
         { id: 'issue.assign', label: 'Assign issue', prompt: 'Assign issue 1.', capabilityHint: 'issues.assign' },
         { id: 'issue.history', label: 'Issue history', prompt: 'Show issue 1 history.', capabilityHint: null },
         { id: 'issue.related', label: 'Related work', prompt: 'Show work related to issue 1.', capabilityHint: null },
       ]))]),
-      providerResponse([call('present_good', 'present_response', presentation([], [
-        { id: 'issue.comment', label: 'Add comment', prompt: 'Comment on issue 1.', capabilityHint: 'issues.comment' },
-        { id: 'issue.vote', label: 'Vote', prompt: 'Vote on issue 1.', capabilityHint: 'issues.vote' },
-        { id: 'issue.claim', label: 'Claim issue', prompt: 'Claim issue 1.', capabilityHint: 'issues.claim' },
-        { id: 'issue.labels', label: 'Issue labels', prompt: 'Show labels for issue 1.', capabilityHint: null },
-        { id: 'issue.proposals', label: 'Related proposals', prompt: 'Show proposals related to issue 1.', capabilityHint: null },
-      ]))]),
     ],
   });
   const result = await state.orchestrator.runTurn(turnInput({ text: 'Help me choose.' }));
   assert.deepEqual(result.presentation.suggestions.map((suggestion) => suggestion.id), [
-    'next.general.work',
-    'next.general.apps',
-    'next.general.issues',
-    'next.general.proposals',
-    'next.general.messages',
+    'issue.close', 'issue.assign', 'issue.history', 'issue.related',
   ]);
   const modelCalls = state.calls.filter((entry) => entry.type === 'model');
   assert.equal(modelCalls.length, 1);
 });
 
-test('a transient provider failure is not duplicated after OpenRouter has handled failover', async () => {
+test('older assistant options are compacted but the newest button prompts remain available', async () => {
+  const older = {
+    id: 'older.issue', label: 'Older issue',
+    prompt: 'Find the full history of an older issue with a long prompt.', capabilityHint: null,
+  };
+  const latest = {
+    id: 'latest.issue', label: 'Latest issue',
+    prompt: 'Show details for issue 7.', capabilityHint: null,
+  };
+  const state = harness({
+    priorMessages: [
+      { role: 'assistant', text: 'Earlier', payload: { presentation: presentation([], [older]) } },
+      { role: 'user', text: 'Show newer options.' },
+      { role: 'assistant', text: 'Middle', payload: { presentation: presentation([], [
+        { id: 'middle.issue', label: 'Middle issue', prompt: 'Show details for issue 4.', capabilityHint: null },
+      ]) } },
+      { role: 'user', text: 'Show even newer options.' },
+      { role: 'assistant', text: 'Recent', payload: { presentation: presentation([], [latest]) } },
+    ],
+    responses: [providerResponse([], { content: 'Which one would you like?' })],
+  });
+  await state.orchestrator.runTurn(turnInput({ text: 'Help me choose.' }));
+  const modelCall = state.calls.find((entry) => entry.type === 'model');
+  const olderHistory = JSON.parse(modelCall.input.messages[2].content);
+  const latestHistory = JSON.parse(modelCall.input.messages[6].content);
+  assert.equal(olderHistory.suggestions[0].prompt, undefined);
+  assert.deepEqual(olderHistory.suggestions[0], { id: older.id, label: older.label });
+  assert.equal(latestHistory.suggestions[0].prompt, latest.prompt);
+});
+
+test('a model can answer with a short contextual next-step choice', async () => {
+  const state = harness({
+    responses: [providerResponse([
+      call('present_options', 'present_response', {
+        message: 'I can help you choose. Do you want to focus on issues or active development?',
+        resultRefs: [],
+        suggestions: [
+          { id: 'choose.issues', label: 'Issues', prompt: 'Show issues I can work on.', capabilityHint: null },
+          { id: 'choose.development', label: 'Active work', prompt: 'Show my active development work.', capabilityHint: null },
+        ],
+      }),
+    ])],
+  });
+  const result = await state.orchestrator.runTurn(turnInput({ text: 'Help me choose my next task.' }));
+  assert.deepEqual(result.presentation.suggestions.map((item) => item.label), ['Issues', 'Active work']);
+  assert.equal(result.presentation.resultRefs.length, 0);
+});
+
+test('a model-written answer with inline results is not padded with generic buttons', async () => {
+  const state = harness({ responses: [
+    providerResponse([call('list_1', capabilityToolName('issues.list'), { query: 'open' })]),
+    providerResponse([call('present_1', 'present_response', {
+      message: 'This issue is open; its details are shown below.',
+      resultRefs: [],
+      suggestions: [],
+    })]),
+  ] });
+  const result = await state.orchestrator.runTurn(turnInput({ text: 'Explain what you found for my open issues.' }));
+  assert.equal(result.presentation.resultRefs.length, 1);
+  assert.deepEqual(result.presentation.suggestions, []);
+  assert.equal(state.calls.filter((entry) => entry.type === 'model').length, 2);
+});
+
+test('a transient provider failure reroutes once with visible progress', async () => {
   const transient = Object.assign(new Error('network failed'), { code: 'network' });
   const retryState = harness({
     responses: [
@@ -518,31 +592,82 @@ test('a transient provider failure is not duplicated after OpenRouter has handle
     ],
   });
   const events = [];
-  await assert.rejects(
-    retryState.orchestrator.runTurn(turnInput({
-      text: 'Hello.',
-      emit: async (event) => { events.push(event); },
-    })),
-    (error) => error.code === 'network',
-  );
+  const result = await retryState.orchestrator.runTurn(turnInput({
+    text: 'Hello.',
+    emit: async (event) => { events.push(event); },
+  }));
+  assert.equal(result.presentation.message, 'What next?');
   assert.deepEqual(
     retryState.calls.filter((entry) => entry.type === 'model').map((entry) => entry.input.attemptNumber),
-    [1],
+    [1, 2],
   );
-  assert.equal(events.some((event) => event.phase === 'retrying'), false);
+  assert.deepEqual(
+    retryState.calls.filter((entry) => entry.type === 'model').map((entry) => entry.input.sessionId),
+    [`${TURN_ID}:turn-v1:route-1`, `${TURN_ID}:turn-v1:route-2`],
+  );
+  assert.equal(events.some((event) => event.phase === 'retrying'), true);
 });
 
-test('plain guidance text from a weak model is recovered into a trusted presentation', async () => {
-  const invalidState = harness({ responses: [providerResponse([], { content: 'I did it.' })] });
-  const result = await invalidState.orchestrator.runTurn(turnInput({ text: 'Hello.' }));
-  assert.ok(invalidState.calls.some((entry) => entry.type === 'release'));
-  assert.equal(result.presentation.message, 'I did it.');
-  assert.equal(result.presentation.suggestions.length, 5);
-  const model = invalidState.calls.find((entry) => entry.type === 'model');
-  assert.deepEqual(model.input.toolChoice, {
-    type: 'function', function: { name: 'present_response' },
-  });
-  assert.equal(model.input.maxOutputTokens, 256);
+test('a provider timeout reroutes once but invalid requests do not retry', async () => {
+  const timeout = Object.assign(new Error('slow provider'), { code: 'timeout' });
+  const timeoutState = harness({ responses: [
+    timeout,
+    providerResponse([], { content: 'Which kind of work interests you?' }),
+  ] });
+  const result = await timeoutState.orchestrator.runTurn(turnInput({ text: 'What should I work on next?' }));
+  assert.equal(result.presentation.message, 'Which kind of work interests you?');
+  assert.deepEqual(timeoutState.calls.filter((entry) => entry.type === 'model')
+    .map((entry) => entry.input.timeoutMs), [10_000, 12_000]);
+
+  const invalid = Object.assign(new Error('invalid model request'), { code: 'invalid_request' });
+  const invalidState = harness({ responses: [invalid] });
+  await assert.rejects(
+    invalidState.orchestrator.runTurn(turnInput({ text: 'Hello.' })),
+    (error) => error.code === 'invalid_request',
+  );
+  assert.equal(invalidState.calls.filter((entry) => entry.type === 'model').length, 1);
+});
+
+test('an output-limit response gets one larger retry, not another identical request', async () => {
+  const outputLimit = Object.assign(new Error('response reached limit'), { code: 'output_limit' });
+  const state = harness({ responses: [
+    outputLimit,
+    providerResponse([], { content: 'I can help with that. What outcome do you want?' }),
+  ] });
+  const events = [];
+  const result = await state.orchestrator.runTurn(turnInput({
+    text: 'Help me decide what to do next.',
+    emit: async (event) => { events.push(event); },
+  }));
+  assert.match(result.presentation.message, /What outcome/);
+  assert.deepEqual(state.calls.filter((entry) => entry.type === 'model')
+    .map((entry) => entry.input.maxOutputTokens), [1_000, 1_800]);
+  assert.ok(events.some((event) => event.phase === 'retrying'
+    && /more room/.test(event.message)));
+});
+
+test('hundreds of prior suggestion ids do not break runtime metadata', async () => {
+  const state = harness({ responses: [providerResponse([], { content: 'What would you like next?' })] });
+  const ids = Array.from({ length: 320 }, (_, index) => `suggestion.${index}`);
+  const result = await state.orchestrator.runTurn(turnInput({
+    text: 'What else can I do?',
+    excludedSuggestionIds: ids,
+  }));
+  assert.equal(result.presentation.message, 'What would you like next?');
+  const modelCall = state.calls.find((entry) => entry.type === 'model');
+  assert.match(modelCall.input.messages[1].content, /suggestion\.319/);
+  assert.doesNotMatch(modelCall.input.messages[1].content, /suggestion\.0"/);
+});
+
+test('ordinary assistant text is a valid answer without widgets or forced options', async () => {
+  const state = harness({ responses: [providerResponse([], { content: 'Tell me whether you prefer bugs or new features, and I can help you choose.' })] });
+  const result = await state.orchestrator.runTurn(turnInput({ text: 'What should I work on next?' }));
+  assert.ok(state.calls.some((entry) => entry.type === 'release'));
+  assert.equal(result.presentation.message, 'Tell me whether you prefer bugs or new features, and I can help you choose.');
+  assert.deepEqual(result.presentation.suggestions, []);
+  const model = state.calls.find((entry) => entry.type === 'model');
+  assert.equal(model.input.toolChoice, 'auto');
+  assert.equal(model.input.maxOutputTokens, 1_000);
 });
 
 test('runtime metadata uses only the server-owned compacted transcript summary', async () => {
