@@ -8,6 +8,7 @@ const dbManager = require('./db-manager');
 const environment = require('./visual-evidence-environment');
 const log = require('./logger');
 const state = require('./visual-evidence-state');
+const { visualHeadForSession, sameSha } = require('./pr-vote-revision');
 
 const FAILED_MEDIA_HOURS = 24;
 const ROLLBACK_MEDIA_DAYS = 7;
@@ -67,6 +68,62 @@ async function recoverInterrupted(config, pool, { maxAgeMs = null, limit = 20 } 
     );
   }
   return { examined: rows.length, failed };
+}
+
+// Intent is written before checks finish. The ordinary checks completion
+// event starts evidence, but a process can die between those two writes.
+// Unlike an interrupted run, that leaves no visual_evidence_runs row for
+// recoverInterrupted to find. Reconcile open, settled, exact-head proposals
+// so a one-time hand-off cannot leave "planned" on the card forever.
+async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, schedule = null } = {}) {
+  if (!config.visualEvidence?.execute) return { examined: 0, scheduled: 0 };
+  const retryAfterMs = 10 * 60_000;
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
+            cs.checks_commit_sha, cs.handoff_head_sha
+       FROM chat_sessions cs
+      WHERE cs.visual_evidence_state = 'planned'
+        AND cs.visual_evidence_run_id IS NULL
+        AND cs.status IN ('active', 'promoted')
+        AND cs.visual_evidence_detail->>'required' = 'true'
+        AND jsonb_typeof(cs.visual_evidence_detail->'intent') = 'object'
+        AND (cs.check_state IN ('passing', 'failing', 'error', 'skipped')
+             OR cs.check_phase = 'deferred')
+        AND cs.visual_evidence_updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+        AND COALESCE((cs.visual_evidence_detail->>'recoveryAttemptAt')::bigint, 0)
+            < (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint - $3::bigint
+      ORDER BY cs.visual_evidence_updated_at ASC LIMIT $2`,
+    [Math.max(0, Number(minAgeMs) || 0), Math.max(1, Math.min(50, Number(limit) || 10)), retryAfterMs]
+  );
+  const dispatch = schedule || require('./visual-evidence-orchestrator').scheduleForSession;
+  const defer = async (id) => {
+    await pool.query(
+      `UPDATE chat_sessions
+          SET visual_evidence_detail = visual_evidence_detail
+                || jsonb_build_object('recoveryAttemptAt', $2::bigint)
+        WHERE id = $1 AND visual_evidence_state = 'planned'
+          AND visual_evidence_run_id IS NULL`,
+      [id, Date.now()]
+    );
+  };
+  let scheduled = 0;
+  for (const session of rows) {
+    const head = visualHeadForSession(session);
+    if (!state.validSha(head) || !sameSha(head, session.checks_commit_sha)) continue;
+    try {
+      const result = await dispatch(config, {
+        pool, sessionId: session.id, headSha: head, trigger: 'planned-recovery',
+      });
+      if (result.scheduled) scheduled += 1;
+      else if (result.reason !== 'already_running') await defer(session.id);
+    } catch (error) {
+      log.warn('visual-evidence', 'Could not recover an unstarted visual evidence claim', {
+        sessionId: session.id, headSha: head, error: error.message,
+      });
+      await defer(session.id).catch(() => {});
+    }
+  }
+  return { examined: rows.length, scheduled };
 }
 
 async function prune(pool, config = {}) {
@@ -164,6 +221,7 @@ module.exports = {
   RUN_RETENTION_DAYS,
   cleanupRunResources,
   recoverInterrupted,
+  recoverUnstarted,
   prune,
   sweepOrphanCheckouts,
   sweep,

@@ -151,6 +151,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // text to a build the user already started.
 const ACTING_TOOLS = Object.freeze([
   'submit_work',
+  'submit_visual_evidence_plan',
   'create_request',
   'prepare_work',
   'start_platform_build',
@@ -2483,6 +2484,48 @@ function registerTools(server, ctx) {
       prBodyStatus: String(body.prBodyStatus || 'unknown'),
       webPath: changeWebPath(origin, body.appSlug || '', proposalId),
       nextStep: `The proposal now carries the returned linkedIssues set. No code or votes changed.${prNote}`,
+    });
+  });
+
+  // ── submit_visual_evidence_plan ─────────────────────────────────────
+  server.registerTool('submit_visual_evidence_plan', {
+    title: 'Submit the author’s visual replay plan',
+    description: 'After submit_work has recorded a visualEvidence intent, the coding agent that made the change can submit the executable flow for that exact proposal head. Homeroom replays the plan twice on private base/head builds, produces PNGs and any declared WebM, and verifies the result. This tool accepts no image bytes or verdict. Use get_proposal to read the current headSha and proposalId; a moved head or a plan that changes the accepted claims is refused.',
+    inputSchema: {
+      proposalId: z.number().int().positive(),
+      slug: z.string(),
+      headSha: z.string().regex(/^[0-9a-f]{40}$/)
+        .describe('The exact current proposal head from get_proposal.'),
+      plan: z.unknown()
+        .describe('A version-1 plan copying the submitted visualEvidence intent exactly. For each story add replay:{before:{startPath,actions},after:{startPath,actions},checkpoint:{id,label,focus:{before:locator,after:locator},assertions:{before:[assertion],after:[assertion]},animation}}. Each action has id,stage,type and type-specific fields. Locators use by:testId,role,label,placeholder,text,or css. No executable JavaScript.'),
+    },
+    outputSchema: {
+      proposalId: z.number(),
+      appSlug: z.string(),
+      runId: z.string(),
+      headSha: z.string(),
+      visualEvidenceState: z.string(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ proposalId, slug, headSha, plan: replayPlan }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const result = await callPlatform(baseUrl, accessToken, 'POST',
+      `/api/apps/${slug}/proposals/${proposalId}/evidence/plan`,
+      { headSha, plan: replayPlan });
+    if (!result.ok) return platformError(result);
+    const body = result.body || {};
+    return toolResult({
+      proposalId,
+      appSlug: slug,
+      runId: String(body.runId || ''),
+      headSha: String(body.headSha || headSha),
+      visualEvidenceState: String(body.visualEvidenceState || 'provisioning'),
+      webPath: changeWebPath(origin, slug, proposalId),
+      nextStep: 'The platform is generating and verifying the exact-revision media. Read get_proposal for the final evidence state and any replay failure.',
     });
   });
 

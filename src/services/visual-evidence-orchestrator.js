@@ -400,7 +400,13 @@ async function executeRun(config, options, injected = {}) {
   let latestHardVerdict = null;
   let agentThreadId;
   const metrics = newRunMetrics();
-  const agentDeadline = Date.now() + (config.visualEvidence?.maxAgentMs || 240_000);
+  const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
+  let agentWindowStartedAt = null;
+  let agentWindowSuspendedAt = 0;
+  let replayBudgetStartedAt = null;
+  let replaySuspendedMs = 0;
+  const suspendedMs = () => replaySuspendedMs
+    + (replayBudgetStartedAt == null ? 0 : Date.now() - replayBudgetStartedAt);
   const progress = (message) => {
     if (typeof onProgress === 'function') onProgress(message);
   };
@@ -416,6 +422,15 @@ async function executeRun(config, options, injected = {}) {
       throw new VisualEvidenceOrchestrationError('stale_evidence_operation', 'This visual change preview run was superseded before it started.');
     }
     const intent = planContract.parseIntent(run.intent || intentForSession(session));
+    const authorPlan = options.authorPlan == null
+      ? null : planContract.parseReplayPlan(options.authorPlan);
+    if (authorPlan && planContract.canonicalJson(planContract.semanticIntentFromPlan(authorPlan))
+        !== planContract.canonicalJson(intent)) {
+      throw new VisualEvidenceOrchestrationError(
+        'evidence_intent_mismatch',
+        'The author plan must preserve the proposal’s accepted visual claims.'
+      );
+    }
     if (run.state === 'not_required') return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
 
     const idleStartedAt = Date.now();
@@ -426,7 +441,13 @@ async function executeRun(config, options, injected = {}) {
     addTiming(metrics, 'idleWait', idleStartedAt);
     progress('Preparing exact base and head revisions for visual evidence…');
     const provisioningStartedAt = Date.now();
-    await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
+    if (run.state === 'planned') {
+      await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
+    } else if (run.state !== 'provisioning') {
+      throw new VisualEvidenceOrchestrationError(
+        'stale_evidence_operation', 'This visual evidence run is no longer available for provisioning.'
+      );
+    }
     notifyEvidence(session, app, 'provisioning');
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
     const exploration = await deps.environment.resetPair(config, pair);
@@ -465,101 +486,117 @@ async function executeRun(config, options, injected = {}) {
       },
       runPlan: async (plan, { attempt }) => {
         const replayStartedAt = Date.now();
-        progress(attempt === 1
-          ? 'Replaying the agent-authored UI flow twice…'
-          : 'Replaying the corrected UI flow twice…');
-        await deps.state.transitionRun(pool, run.id, 'replaying', {
-          replayPlan: plan,
-          planHash: planContract.planHash(plan),
-          repairAttempt: attempt - 1,
-        });
-        notifyEvidence(session, app, 'replaying');
-        const planHash = planContract.planHash(plan);
-        const firstDeployment = await deps.environment.resetPair(config, pair);
-        if (!sameProvenance(firstDeployment, expectedProvenance)) {
-          throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass one did not use the prepared fixture and images.');
-        }
-        const firstStartedAt = Date.now();
-        const first = await deps.replay.runPass(
-          config,
-          session.id,
-          replayInput({ run, plan, deployment: firstDeployment, authTokens, provenance: expectedProvenance, pass: 1 }),
-          { onEvent: (event) => progress(`Evidence pass 1: ${event.type}`), previewRunId: run.id }
-        );
-        metrics.replayPasses.push({
-          attempt,
-          pass: 1,
-          durationMs: Math.max(0, Date.now() - firstStartedAt),
-        });
-        const secondDeployment = await deps.environment.resetPair(config, pair);
-        if (!sameProvenance(secondDeployment, expectedProvenance)) {
-          throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass two did not use the prepared fixture and images.');
-        }
-        const secondStartedAt = Date.now();
-        const second = await deps.replay.runPass(
-          config,
-          session.id,
-          replayInput({ run, plan, deployment: secondDeployment, authTokens, provenance: expectedProvenance, pass: 2 }),
-          { onEvent: (event) => progress(`Evidence pass 2: ${event.type}`), previewRunId: run.id }
-        );
-        metrics.replayPasses.push({
-          attempt,
-          pass: 2,
-          durationMs: Math.max(0, Date.now() - secondStartedAt),
-        });
-        const hardVerdict = deps.replay.comparePasses(first, second, {
-          plan,
-          provenance: expectedProvenance,
-          runId: run.id,
-        });
-        if (!hardVerdict.passed) {
-          throw new VisualEvidenceOrchestrationError(hardVerdict.code, hardVerdict.reason);
-        }
-        const replayTrace = traceSummary(metrics, {
-          planHash,
-          runs: 2,
-          stories: hardVerdict.stories,
-          relativePointer: hardVerdict.relativePointer,
-        });
-        await deps.state.transitionRun(pool, run.id, 'reviewing', {
-          hardVerdict,
-          traceSummary: replayTrace,
-          repairAttempt: attempt - 1,
-        });
-        notifyEvidence(session, app, 'reviewing');
-        const artifactPersistStartedAt = Date.now();
-        await deps.replay.storeArtifacts(pool, run.id, second.artifacts, {
-          headSha: run.head_sha,
-          planHash,
-        });
-        addTiming(metrics, 'artifactPersist', artifactPersistStartedAt);
-        addTiming(metrics, 'replay', replayStartedAt);
-        metrics.artifactBytes = second.artifacts.reduce(
-          (sum, artifact) => sum + Math.max(0, Number(artifact.bytes) || artifact.data?.length || 0),
-          0
-        );
-        latestArtifacts = second.artifacts;
-        latestPlanHash = planHash;
-        latestHardVerdict = hardVerdict;
-        return {
-          hardVerdict,
-          planHash,
-          traceSummary: traceSummary(metrics, {
+        replayBudgetStartedAt = replayStartedAt;
+        try {
+          progress(attempt === 1
+            ? 'Replaying the agent-authored UI flow twice…'
+            : 'Replaying the corrected UI flow twice…');
+          await deps.state.transitionRun(pool, run.id, 'replaying', {
+            replayPlan: plan,
+            planHash: planContract.planHash(plan),
+            repairAttempt: attempt - 1,
+          });
+          notifyEvidence(session, app, 'replaying');
+          const planHash = planContract.planHash(plan);
+          const firstDeployment = await deps.environment.resetPair(config, pair);
+          if (!sameProvenance(firstDeployment, expectedProvenance)) {
+            throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass one did not use the prepared fixture and images.');
+          }
+          const firstStartedAt = Date.now();
+          const first = await deps.replay.runPass(
+            config,
+            session.id,
+            replayInput({ run, plan, deployment: firstDeployment, authTokens, provenance: expectedProvenance, pass: 1 }),
+            { onEvent: (event) => progress(`Evidence pass 1: ${event.type}`), previewRunId: run.id }
+          );
+          metrics.replayPasses.push({
+            attempt,
+            pass: 1,
+            durationMs: Math.max(0, Date.now() - firstStartedAt),
+          });
+          const secondDeployment = await deps.environment.resetPair(config, pair);
+          if (!sameProvenance(secondDeployment, expectedProvenance)) {
+            throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass two did not use the prepared fixture and images.');
+          }
+          const secondStartedAt = Date.now();
+          const second = await deps.replay.runPass(
+            config,
+            session.id,
+            replayInput({ run, plan, deployment: secondDeployment, authTokens, provenance: expectedProvenance, pass: 2 }),
+            { onEvent: (event) => progress(`Evidence pass 2: ${event.type}`), previewRunId: run.id }
+          );
+          metrics.replayPasses.push({
+            attempt,
+            pass: 2,
+            durationMs: Math.max(0, Date.now() - secondStartedAt),
+          });
+          const hardVerdict = deps.replay.comparePasses(first, second, {
+            plan,
+            provenance: expectedProvenance,
+            runId: run.id,
+          });
+          if (!hardVerdict.passed) {
+            throw new VisualEvidenceOrchestrationError(hardVerdict.code, hardVerdict.reason);
+          }
+          const replayTrace = traceSummary(metrics, {
             planHash,
             runs: 2,
             stories: hardVerdict.stories,
             relativePointer: hardVerdict.relativePointer,
-          }),
-          images: reviewImages(second.artifacts),
-        };
+          });
+          await deps.state.transitionRun(pool, run.id, 'reviewing', {
+            hardVerdict,
+            traceSummary: replayTrace,
+            repairAttempt: attempt - 1,
+          });
+          notifyEvidence(session, app, 'reviewing');
+          const artifactPersistStartedAt = Date.now();
+          await deps.replay.storeArtifacts(pool, run.id, second.artifacts, {
+            headSha: run.head_sha,
+            planHash,
+          });
+          addTiming(metrics, 'artifactPersist', artifactPersistStartedAt);
+          addTiming(metrics, 'replay', replayStartedAt);
+          metrics.artifactBytes = second.artifacts.reduce(
+            (sum, artifact) => sum + Math.max(0, Number(artifact.bytes) || artifact.data?.length || 0),
+            0
+          );
+          latestArtifacts = second.artifacts;
+          latestPlanHash = planHash;
+          latestHardVerdict = hardVerdict;
+          return {
+            hardVerdict,
+            planHash,
+            traceSummary: traceSummary(metrics, {
+              planHash,
+              runs: 2,
+              stories: hardVerdict.stories,
+              relativePointer: hardVerdict.relativePointer,
+            }),
+            images: reviewImages(second.artifacts),
+          };
+        } finally {
+          replaySuspendedMs += Date.now() - replayStartedAt;
+          replayBudgetStartedAt = null;
+        }
       },
     });
 
     const dispatchOnce = async (repairReason = null, forceBackend = null) => {
+      if (agentWindowStartedAt == null) {
+        agentWindowStartedAt = Date.now();
+        agentWindowSuspendedAt = suspendedMs();
+      }
       const dispatchStartedAt = Date.now();
+      const suspendedAtStart = suspendedMs();
       metrics.agentAttempts += 1;
       try {
-        const remainingAgentMs = agentDeadline - Date.now();
+        // Provisioning and deterministic replay are platform work. Starting
+        // this clock before the paired images/fixtures were ready spent the
+        // agent's four minutes before it could even open its first page.
+        const remainingAgentMs = agentBudgetMs
+          - (Date.now() - agentWindowStartedAt
+            - (suspendedMs() - agentWindowSuspendedAt));
         if (remainingAgentMs <= 0) {
           throw new VisualEvidenceOrchestrationError(
             'evidence_agent_timeout',
@@ -577,6 +614,7 @@ async function executeRun(config, options, injected = {}) {
           repairReason,
           forceBackend,
           timeoutMs: remainingAgentMs,
+          suspendedMs,
         }, injected.agentDependencies || {});
         addAgentUsage(metrics, dispatched);
         agentThreadId = dispatched.threadId || agentThreadId || null;
@@ -584,19 +622,29 @@ async function executeRun(config, options, injected = {}) {
       } catch (error) {
         return { dispatched: null, error };
       } finally {
-        addTiming(metrics, 'agentExploration', dispatchStartedAt);
+        metrics.timingsMs.agentExploration += Math.max(0,
+          Date.now() - dispatchStartedAt - (suspendedMs() - suspendedAtStart));
       }
     };
 
-    progress('The proposal agent is exploring the changed UI…');
-    let agentOutcome = await dispatchOnce(null);
-    if (agentOutcome.error && !latestHardVerdict
-        && registration.control.planCalls === 0
-        && session.agent_backend === 'codex_openrouter') {
-      progress('The selected Codex model could not start the evidence flow; using the platform vision agent…');
-      agentOutcome = await dispatchOnce(null, 'claude_code');
+    let agentOutcome = null;
+    if (authorPlan) {
+      // The implementing agent already knows the UI flow. It supplies only
+      // the typed plan; the same platform-owned two-pass replay, storage and
+      // semantic review below still decide whether media is verified.
+      progress('Replaying the change author’s submitted UI flow…');
+      await registration.control.runPlan(authorPlan);
+    } else {
+      progress('The proposal agent is exploring the changed UI…');
+      agentOutcome = await dispatchOnce(null);
+      if (agentOutcome.error && !latestHardVerdict
+          && registration.control.planCalls === 0
+          && session.agent_backend === 'codex_openrouter') {
+        progress('The selected Codex model could not start the evidence flow; using the platform vision agent…');
+        agentOutcome = await dispatchOnce(null, 'claude_code');
+      }
+      if (agentOutcome.error && !latestHardVerdict) throw agentOutcome.error;
     }
-    if (agentOutcome.error && !latestHardVerdict) throw agentOutcome.error;
 
     const semanticVerdict = async () => {
       const authored = semanticFromFinish(registration.control.finished);
@@ -616,6 +664,12 @@ async function executeRun(config, options, injected = {}) {
     let semantic = await semanticVerdict();
     addTiming(metrics, 'semanticReview', semanticStartedAt);
     if (!(semantic.relevant === true && semantic.focusAccurate === true)) {
+      if (authorPlan) {
+        throw new VisualEvidenceOrchestrationError(
+          'irrelevant_visual_evidence',
+          semantic.reason || 'The submitted replay did not clearly prove the declared visual change.'
+        );
+      }
       registration.control.allowRepair(semantic.reason || 'The first evidence did not clearly prove the declared claim.');
       metrics.repairCount = 1;
       progress('The first evidence was not relevant enough; the agent gets one bounded repair…');
@@ -729,7 +783,8 @@ async function noteNotStarted(pool, sessionId, reason, injected = {}) {
 }
 
 async function scheduleForSession(config, options, injected = {}) {
-  const { pool, sessionId, headSha = null, trigger = 'preview-ready', onProgress = null } = options;
+  const { pool, sessionId, headSha = null, trigger = 'preview-ready',
+    onProgress = null, authorPlan = null } = options;
   if (!config.visualEvidence?.execute) {
     await noteNotStarted(pool, sessionId, 'disabled', injected);
     return { scheduled: false, reason: 'disabled' };
@@ -739,6 +794,12 @@ async function scheduleForSession(config, options, injected = {}) {
   if (!intent) {
     await noteNotStarted(pool, sessionId, 'missing_intent', injected);
     return { scheduled: false, reason: 'missing_intent' };
+  }
+  // An explicit head is a fence, not permission to revive a former commit.
+  // The session is reloaded here because the author route and the checks
+  // hand-off both observed it earlier, before this asynchronous launch.
+  if (headSha && exactSha(headSha) !== headForSession(session)) {
+    return { scheduled: false, reason: 'head_moved' };
   }
   const revision = await resolveRevisionContext(session, headSha, injected.github || github);
   const key = `${sessionId}:${revision.headSha}`;
@@ -765,17 +826,32 @@ async function scheduleForSession(config, options, injected = {}) {
   if (!created.created && run.state !== 'planned') {
     return { scheduled: false, reason: run.state, runId: run.id };
   }
+  // Claim the durable planned row before handing work to an asynchronous
+  // runner. A checks hand-off, the recovery sweep and an author submission
+  // may all arrive together, including on different server pods. Only one
+  // planned -> provisioning transition may own the paired environments.
+  try {
+    await (injected.state || state).transitionRun(pool, run.id, 'provisioning', {
+      startedAt: new Date(),
+    });
+  } catch (error) {
+    if (['invalid_evidence_transition', 'stale_evidence_operation'].includes(error?.code)) {
+      return { scheduled: false, reason: 'already_running', runId: run.id };
+    }
+    throw error;
+  }
   const { session: sessionValue, app } = publicSessionAndApp(session);
   // The run is under way, so whatever an earlier attempt recorded about it
   // not starting is no longer true (#2601/#2558).
   await (injected.state || state).clearNotStarted(pool, sessionId).catch(() => {});
   const promise = executeRun(config, {
     pool,
-    run,
+    run: { ...run, state: 'provisioning' },
     session: sessionValue,
     app,
     revision,
     onProgress,
+    authorPlan,
   }, injected).catch((error) => {
     log.warn('visual-evidence', 'Visual evidence run failed', {
       sessionId,

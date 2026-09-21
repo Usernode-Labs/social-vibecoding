@@ -92,13 +92,20 @@ class RunControl {
     // multiple expensive paired replays.
     this.planCalls += 1;
     this.busy = 'replaying the submitted plan';
+    const replayStartedAt = Date.now();
     try {
       const result = await this.runPlanCallback(plan, { attempt: this.planCalls });
       this.latestHard = result?.hardVerdict?.passed === true
         ? { passed: true, planHash: result.planHash, attempt: this.planCalls }
         : null;
       return result;
-    } finally { this.busy = null; }
+    } finally {
+      // Each deterministic replay pass has its own container deadline. Do
+      // not expire the agent's control window while that bounded platform
+      // work is running; it still needs to inspect the media and finish.
+      this.expiresAt += Date.now() - replayStartedAt;
+      this.busy = null;
+    }
   }
 
   finish({ status, reason, planHash = null }) {

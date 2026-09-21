@@ -104,16 +104,17 @@ function setup({ dispatch, storeArtifacts } = {}) {
   return { pool, run, session, app, pair, artifacts, dependencies, transitions, calls };
 }
 
-async function execute(fixture) {
+async function execute(fixture, options = {}) {
   controlPlane._clearForTests();
   return orchestrator.executeRun({
-    visualEvidence: { maxRunMs: 60_000, maxAgentMs: 10_000 },
+    visualEvidence: { maxRunMs: 60_000, maxAgentMs: options.maxAgentMs || 10_000 },
   }, {
     pool: fixture.pool,
     run: fixture.run,
     session: fixture.session,
     app: fixture.app,
     revision: { baseSha: BASE, headSha: HEAD, files: [], filesComplete: true },
+    ...(options.authorPlan ? { authorPlan: options.authorPlan } : {}),
   }, fixture.dependencies);
 }
 
@@ -127,6 +128,72 @@ test('a successful agent plan is replayed twice from fresh paired state before v
   assert.equal(fixture.calls.cleaned, 1);
   assert.deepEqual(fixture.transitions.map((entry) => entry.next),
     ['provisioning', 'exploring', 'replaying', 'reviewing', 'verified']);
+});
+
+test('an author plan uses the same two clean replays and independent semantic review', async () => {
+  const fixture = setup();
+  fixture.dependencies.reviewer.review = async () => ({
+    relevant: true, focusAccurate: true, reason: 'The change is visible in the generated media.',
+  });
+  const result = await execute(fixture, { authorPlan: fixtures.plan() });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 0, 'the implementing agent already supplied the flow');
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.calls.stored, 1);
+  assert.equal(fixture.transitions.at(-1).next, 'verified');
+});
+
+test('slow paired environment provisioning does not consume the agent exploration budget', async () => {
+  const fixture = setup();
+  const preparePair = fixture.dependencies.environment.preparePair;
+  fixture.dependencies.environment.preparePair = async (...args) => {
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    return preparePair(...args);
+  };
+  const result = await execute(fixture, { maxAgentMs: 20 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 1);
+});
+
+test('competing schedulers claim a planned run only once before launching paired replay', async (t) => {
+  const fixture = setup();
+  fixture.session.handoff_base_sha = BASE;
+  fixture.session.imported_pr_head_sha = HEAD;
+  fixture.session.source = 'imported';
+  fixture.session.visual_evidence_detail = { intent: fixtures.intent() };
+  fixture.pool.query = async (sql) => {
+    if (/FROM chat_sessions cs/.test(String(sql))) return { rows: [{ ...fixture.session, app_name: 'Demo' }] };
+    if (/SELECT active_turn/.test(String(sql))) return { rows: [{ active_turn: false }] };
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  };
+  fixture.dependencies.github = { compareRefs: async () => ({ files: [], filesComplete: true }) };
+  fixture.dependencies.state.createRun = async () => ({ created: true, run: fixture.run });
+  fixture.dependencies.state.clearNotStarted = async () => ({ cleared: true });
+  let claimed = false;
+  const transitionRun = fixture.dependencies.state.transitionRun;
+  fixture.dependencies.state.transitionRun = async (...args) => {
+    if (args[2] === 'provisioning') {
+      if (claimed) throw Object.assign(new Error('Already claimed'), { code: 'invalid_evidence_transition' });
+      claimed = true;
+    }
+    return transitionRun(...args);
+  };
+  const metadata = require('../src/services/pr-metadata');
+  const sync = metadata.syncEvidencePrBlock;
+  metadata.syncEvidencePrBlock = async () => {};
+  t.after(() => { metadata.syncEvidencePrBlock = sync; });
+  controlPlane._clearForTests();
+  const config = { visualEvidence: { execute: true, maxRunMs: 60_000, maxAgentMs: 10_000 } };
+  const options = { pool: fixture.pool, sessionId: 42, headSha: HEAD };
+  const results = await Promise.all([
+    orchestrator.scheduleForSession(config, options, fixture.dependencies),
+    orchestrator.scheduleForSession(config, options, fixture.dependencies),
+  ]);
+  assert.equal(results.filter((result) => result.scheduled).length, 1);
+  assert.equal(results.filter((result) => result.reason === 'already_running').length, 1);
+  await results.find((result) => result.scheduled).promise;
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.transitions.filter((entry) => entry.next === 'provisioning').length, 1);
 });
 
 test('an irrelevant first result gets exactly one corrected replay-plan attempt', async () => {
@@ -277,6 +344,20 @@ test('a refused schedule records why on the proposal and returns its reason', as
     assert.ok(note.reason.length > 20, 'the stored reason is a sentence a reviewer can read');
     assert.ok(!note.reason.includes('_'), `no bare refusal code reaches a reviewer: ${note.reason}`);
   }
+});
+
+test('an asynchronous schedule cannot launch evidence for a head that moved meanwhile', async () => {
+  const pool = {
+    query: async () => ({ rows: [{
+      id: 42, app_id: 9, app_slug: 'demo', source: 'imported',
+      imported_pr_head_sha: HEAD, visual_evidence_detail: { intent: fixtures.intent() },
+    }] }),
+  };
+  const result = await orchestrator.scheduleForSession(
+    { visualEvidence: { execute: true } },
+    { pool, sessionId: 42, headSha: 'c'.repeat(40) }
+  );
+  assert.deepEqual(result, { scheduled: false, reason: 'head_moved' });
 });
 
 test('the refusal reasons are a closed set, and the two non-failures are absent', () => {

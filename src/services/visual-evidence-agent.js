@@ -97,17 +97,30 @@ function resultThreadId(result, backend) {
   return result?.sessionId || result?.initSessionId || null;
 }
 
-async function withDispatchTimeout(promise, { timeoutMs, onTimeout }) {
+async function withDispatchTimeout(promise, { timeoutMs, onTimeout, suspendedMs = () => 0 }) {
   const bounded = Math.max(1, Number(timeoutMs) || 1);
+  const startedAt = Date.now();
+  const initialSuspendedMs = Math.max(0, Number(suspendedMs()) || 0);
   let timer;
   const timeout = new Promise((resolve, reject) => {
-    timer = setTimeout(async () => {
-      try { await onTimeout?.(); } catch (_) {}
-      reject(new VisualEvidenceAgentError(
-        'evidence_agent_timeout',
-        'The visual evidence agent exceeded its bounded exploration time.'
-      ));
-    }, bounded);
+    const check = () => {
+      // evidence_run_plan blocks the agent while platform-owned browsers
+      // perform two clean replays. Charge only model time to the model's
+      // exploration budget; the replay has its own bounded run lifetime.
+      const excluded = Math.max(0, (Number(suspendedMs()) || 0) - initialSuspendedMs);
+      const remaining = bounded - (Date.now() - startedAt - excluded);
+      if (remaining > 0) {
+        timer = setTimeout(check, Math.max(1, Math.min(remaining, 1000)));
+        return;
+      }
+      Promise.resolve().then(() => onTimeout?.()).catch(() => {}).finally(() => {
+        reject(new VisualEvidenceAgentError(
+          'evidence_agent_timeout',
+          'The visual evidence agent exceeded its bounded exploration time.'
+        ));
+      });
+    };
+    timer = setTimeout(check, Math.min(bounded, 1000));
     // Keep this timer referenced. If the underlying dispatch promise is inert,
     // this may be the only live handle left in its process/test worker. An
     // unref'ed timer lets that worker exit before the bound fires, which both
@@ -152,6 +165,7 @@ async function dispatchClaude(config, options, deps) {
   }), {
     timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 240_000,
     onTimeout: () => deps.workerService.stopTurn?.(session.id),
+    suspendedMs: options.suspendedMs,
   });
   if (failedResult(result)) {
     throw new VisualEvidenceAgentError(
@@ -223,6 +237,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
       }), {
         timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 240_000,
         onTimeout: () => deps.workerService.stopTurn?.(session.id),
+        suspendedMs: options.suspendedMs,
       });
       lastResult = result;
     } catch (error) {

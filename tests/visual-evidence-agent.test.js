@@ -3,6 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const agent = require('../src/services/visual-evidence-agent');
+const worker = require('../src/services/worker');
+const fs = require('node:fs');
+const path = require('node:path');
 
 test('agent dispatch time is bounded and invokes worker cancellation', async () => {
   let stopped = 0;
@@ -14,6 +17,28 @@ test('agent dispatch time is bounded and invokes worker cancellation', async () 
     { code: 'evidence_agent_timeout' }
   );
   assert.equal(stopped, 1);
+});
+
+test('agent exploration timeout excludes time spent in platform replay', async () => {
+  const started = Date.now();
+  let pauseStarted = started;
+  let completedPause = 0;
+  let stopped = 0;
+  const suspendedMs = () => completedPause + (pauseStarted == null ? 0 : Date.now() - pauseStarted);
+  const result = await agent.withDispatchTimeout(
+    new Promise((resolve) => setTimeout(() => {
+      completedPause += Date.now() - pauseStarted;
+      pauseStarted = null;
+      resolve('replay complete');
+    }, 90)),
+    {
+      timeoutMs: 20,
+      suspendedMs,
+      onTimeout: () => { stopped += 1; },
+    }
+  );
+  assert.equal(result, 'replay complete');
+  assert.equal(stopped, 0, 'the replay has its own bounded lifetime');
 });
 
 test('the evidence prompt makes model exploration advisory and platform replay authoritative', () => {
@@ -31,4 +56,17 @@ test('backend results cannot silently turn an errored model turn into success', 
   assert.equal(agent.failedResult({ exitCode: 1 }), true);
   assert.equal(agent.failedResult({ ccIsError: true }), true);
   assert.equal(agent.failedResult({ exitCode: 0 }), false);
+});
+
+test('Kubernetes evidence tools call the Pod that owns their in-memory replay control', () => {
+  assert.equal(worker.evidenceControlUrl({ podIp: '10.20.30.40', port: '3000', fallback: 'http://service:3000' }),
+    'http://10.20.30.40:3000');
+  assert.equal(worker.evidenceControlUrl({ podIp: '2001:db8::7', port: '3000', fallback: 'http://service:3000' }),
+    'http://[2001:db8::7]:3000');
+  assert.equal(worker.evidenceControlUrl({ podIp: 'not-an-ip', fallback: 'http://service:3000' }),
+    'http://service:3000');
+  const source = fs.readFileSync(require.resolve('../src/services/worker'), 'utf8');
+  const chart = fs.readFileSync(path.join(__dirname, '../deploy/helm/social-vibecoding-platform/templates/platform.yaml'), 'utf8');
+  assert.match(source, /PLATFORM_URL: mode === 'evidence' \? evidenceControlUrl\(\) : PLATFORM_INTERNAL_URL/);
+  assert.match(chart, /name: POD_IP\s+valueFrom: \{fieldRef: \{fieldPath: status\.podIP\}\}/);
 });

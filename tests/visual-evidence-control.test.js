@@ -37,3 +37,19 @@ test('exploration resets and deterministic replay cannot race each other', async
   assert.equal(finished.status, 'verified');
   assert.equal(finished.planHash, planHash);
 });
+
+test('the evidence turn stays live after waiting for bounded platform replay', async () => {
+  const replayPlan = fixtures.plan();
+  const planHash = contract.planHash(replayPlan);
+  const control = new RunControl({
+    runId: 'b'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 20,
+    runPlan: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      return { hardVerdict: { passed: true }, planHash };
+    },
+  });
+  await control.runPlan(replayPlan);
+  assert.equal(control.finish({ status: 'verified', reason: 'The replayed pair proves the claim.', planHash }).status,
+    'verified');
+});
