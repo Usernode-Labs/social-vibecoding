@@ -899,7 +899,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Neither set overlaps the other, so the merged manifest holds every one
   // of them: 703 + 1 + 2 + 1 = 707, which leaves 23 slots against
   // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 707);
+  // 707 → 708: native Android header safe-area classification regression.
+  assert.equal(DAPP.tests.length, 708);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
