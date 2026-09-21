@@ -925,6 +925,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // overlaps another, so the merged manifest holds every one of them:
   // 707 + 1 + 2 + 1 = 711, which leaves 19 slots against MAX_DECLARED_TESTS
   // (730) — one past the 20-slot floor.
+  //
+  // 711, ceiling 730 → 750: main alone stood exactly ON the floor (710), so
+  // this branch's one check crossed it, and the two tests that state the
+  // floor (tests/improve-session-spinner.test.js and
+  // tests/proposal-tests-manifest.test.js) both say to move the ceiling
+  // rather than delete a check. It moved with this branch
+  // (services/app-manifest.js, 730 → 750, still not a coupled move), so
+  // 711 leaves 39 slots, clear of the 20-slot floor. The count is unchanged.
   assert.equal(DAPP.tests.length, 711);
 });
 
