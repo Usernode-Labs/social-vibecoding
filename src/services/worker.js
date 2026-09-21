@@ -100,7 +100,8 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // v13 refreshes warm workers so the generated Codex config bounds the CLI's
 // own reconnect budget instead of retrying a refused request five times
 // (#2676).
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v13';
+// v14 installs the OpenRouter request adapter so output limits reach the wire.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v14';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -754,6 +755,9 @@ function parseLine(line, onProgress, state) {
           // this is. Carrying its verdict beats re-deriving one from the
           // message text further downstream, where less is known.
           if (ev.errorCode) state.agentErrorCode = ev.errorCode;
+          if (ev.requestedOutputTokens != null) {
+            state.requestedOutputTokens = ev.requestedOutputTokens;
+          }
           if (ev.affordableOutputTokens != null) {
             state.affordableOutputTokens = ev.affordableOutputTokens;
           }
@@ -809,6 +813,10 @@ function newWatchState() {
     // (see src/agents/codex-openrouter.js). Null for every other backend and
     // for a turn that never failed.
     agentErrorCode: null,
+    requestedOutputTokens: null,
+    // Last HTTP request observed by the worker-local OpenRouter adapter.
+    // Only content-free fields are accepted by the Codex normalizer.
+    providerRequest: null,
     // The output-token budget OpenRouter said the key could afford, when it
     // said so. Drives the one clamped retry in the sessions attempt loop.
     affordableOutputTokens: null,
@@ -3447,10 +3455,10 @@ async function listOrphanWorkers() {
 // pgrep/pkill exit 127 in there. The old `pgrep ... && busy || idle`
 // one-liner silently reported "idle" for every container, busy or not.
 // Match a turn process for EITHER backend (review F4): the Claude runner
-// (run-cc.sh + claude) or the Codex runner (run-codex-agent.sh + codex).
+// (run-cc.sh + claude) or the Codex runner, its request adapter, and codex.
 // Without the codex terms, long Codex turns look idle (watchdog abandons)
 // and Stop appends a fake marker without killing the process.
-const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh)( |$)';
+const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh|codex-openrouter-request\\.js)( |$)';
 const TURN_PROC_PROBE_SCRIPT =
   'busy=0; for d in /proc/[0-9]*; do '
   + '[ "$d" = "/proc/$$" ] && continue; '

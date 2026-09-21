@@ -7,12 +7,13 @@
 #   __USERNODE_WARN__   <msg>
 #   __USERNODE_ERROR__  <msg>
 #
-# Direct-transport (review P0): Codex points DIRECTLY at OpenRouter and
-# authenticates with the user's own key, injected per-turn on this specific
+# The worker connects to OpenRouter using the user's key, injected per-turn
+# on this specific
 # `docker exec` as OPENROUTER_API_KEY. It is NOT persisted in the warm
 # container's env/filesystem by the platform. Company-funded key material is
 # stored internally and is never returned by the user-facing API. No platform
-# relay.
+# relay. A worker-local request adapter supplies the output cap that the
+# pinned Codex CLI omits; its listener exists only during this invocation.
 #
 # Required env: PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL,
 #   OPENROUTER_API_KEY, AGENT_MODEL
@@ -348,9 +349,11 @@ start_codex() {
   CODEX_RUN_EXIT=$(cat "$TMP_STATUS")
 }
 
+CODEX_REQUEST_WRAPPER="$(dirname "$0")/codex-openrouter-request.js"
+
 if [ -n "$AGENT_THREAD_ID" ]; then
   echo "__USERNODE_PHASE__ codex (resume $AGENT_THREAD_ID, mode $MODE)"
-  start_codex codex exec resume --dangerously-bypass-approvals-and-sandbox "$AGENT_THREAD_ID" - --json
+  start_codex node "$CODEX_REQUEST_WRAPPER" exec resume --dangerously-bypass-approvals-and-sandbox "$AGENT_THREAD_ID" - --json
   if [ "$CODEX_RUN_EXIT" -ne 0 ]; then
     # Only retry fresh for a genuinely missing/stale thread (review P4):
     # auth/credit/rate-limit/unknown failures must NOT re-run (they'd
@@ -378,7 +381,7 @@ if [ -n "$AGENT_THREAD_ID" ]; then
   fi
 else
   echo "__USERNODE_PHASE__ codex (mode $MODE)"
-  start_codex codex exec --dangerously-bypass-approvals-and-sandbox - --json
+  start_codex node "$CODEX_REQUEST_WRAPPER" exec --dangerously-bypass-approvals-and-sandbox - --json
 fi
 CODEX_EXIT=$CODEX_RUN_EXIT
 rm -f "$TMP_STATUS" 2>/dev/null

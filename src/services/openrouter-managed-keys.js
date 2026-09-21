@@ -28,8 +28,9 @@ const MANAGED_SOURCE = 'usernode_managed';
 // (src/routes/sessions.js), and checkBudget refuses the next turn on either
 // backend once that total reaches the weekly cap. The remote limit set on
 // the child key stays at the same figure and reset cadence, where it is now
-// a provider-side BACKSTOP rather than a second allowance: it can only ever
-// bind after the platform's pooled gate already has.
+// a provider-side backstop. It can refuse a request while the platform still
+// shows room: OpenRouter checks its own spending limit and request budget,
+// while the platform gate checks recorded spend at the start of a turn.
 //
 // #2568 removed the identity gate this used to apply on top: every account
 // gets its included key when the account is created, so an account whose
@@ -458,16 +459,17 @@ async function remove({ pool, id, config, actorId }) {
 // boot-time sweep that talks to the provider for every row, each key is
 // brought in line lazily, the next time its owner's credential status is
 // read (the settings screen and the first-use build flow both read it), and
-// eagerly when an admin sets that user's weekly cap. Best-effort, attempted
-// once per key per target value per process: a failure leaves the row, and
-// therefore its label, truthful and is logged, instead of stalling every
-// later status read behind a provider timeout while OpenRouter is
-// unreachable. PATCH is idempotent, so the retry after a restart is safe
-// even when the provider call succeeded and only the local write did not.
+// eagerly when an admin sets that user's weekly cap or a coding turn starts.
+// Best-effort with a short failure backoff: an outage must not strand an old
+// limit until the next deployment. Successful targets are never memoized —
+// lowering a cap and later restoring it must issue both changes. Concurrent
+// reads of the same target share one PATCH. PATCH is idempotent, including
+// when the provider succeeded but the local transaction failed.
 // A zero allowance is never written to an issued key (neither zero nor
 // unlimited is a limit this code will set): the key keeps its last amount,
 // and an admin blocks or deletes it from Admin > Users.
-const allowanceSyncAttempted = new Set();
+const ALLOWANCE_SYNC_RETRY_MS = 60_000;
+const allowanceSyncAttempts = new Map();
 
 function syncable(state, config) {
   return Boolean(state?.managed_key_id
@@ -482,15 +484,38 @@ async function syncAllowance({ pool, userId, state, config, allowance }) {
   const id = state.managed_key_id;
   const currentCents = Math.round(Number(state.daily_limit_usd) * 100);
   if (currentCents === target.cents && state.limit_reset === LIMIT_RESET) return state;
-  const attempt = `${id}:${target.cents}:${LIMIT_RESET}`;
-  if (allowanceSyncAttempted.has(attempt)) return state;
-  allowanceSyncAttempted.add(attempt);
   if (target.cents <= 0) {
     log.warn('openrouter-managed', 'managed key keeps its last limit: the platform weekly allowance is zero', {
       userId, managedKeyId: id, remoteHash: state.remote_key_hash,
     });
     return state;
   }
+  const now = Date.now();
+  for (const [key, entry] of allowanceSyncAttempts) {
+    if (!entry.pending && entry.retryAfter <= now) allowanceSyncAttempts.delete(key);
+  }
+  const attempt = `${id}:${target.cents}:${LIMIT_RESET}`;
+  const previous = allowanceSyncAttempts.get(attempt);
+  if (previous?.pending) return previous.pending;
+  if (previous?.retryAfter > now) return state;
+
+  const entry = {};
+  allowanceSyncAttempts.set(attempt, entry);
+  entry.pending = Promise.resolve().then(async () => {
+    const synced = await applyAllowance({ pool, userId, state, config, target });
+    if (synced === state) {
+      entry.pending = null;
+      entry.retryAfter = Date.now() + ALLOWANCE_SYNC_RETRY_MS;
+    } else {
+      allowanceSyncAttempts.delete(attempt);
+    }
+    return synced;
+  });
+  return entry.pending;
+}
+
+async function applyAllowance({ pool, userId, state, config, target }) {
+  const id = state.managed_key_id;
   try {
     const remote = await managementClient.setLimit({
       ...managementOptions(config), hash: state.remote_key_hash,

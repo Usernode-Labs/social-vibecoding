@@ -1129,6 +1129,12 @@ test('a Codex provider refusal is classified as billing rather than a shapeless 
     const state = worker.newWatchState();
     state.agentBackend = 'codex_openrouter';
     worker.parseLine(JSON.stringify({
+      type: 'usernode.openrouter.request', diagnostic: {
+        model: 'z-ai/glm-5.3-flash', maxOutputTokens: 32000, httpStatus: 402,
+        inputBytes: 5000, inputItems: 12, requestId: 'req-glm-123',
+      },
+    }), () => {}, state);
+    worker.parseLine(JSON.stringify({
       type: 'error',
       message: 'stream disconnected before completion: This request requires more '
         + 'credits, or fewer max_tokens. You requested up to 131072 tokens, but can '
@@ -1136,7 +1142,10 @@ test('a Codex provider refusal is classified as billing rather than a shapeless 
         + 'and upgrade to a paid account',
     }), () => {}, state);
     assert.equal(state.agentErrorCode, 'insufficient_credits_max_tokens');
+    assert.equal(state.requestedOutputTokens, 131072);
     assert.equal(state.affordableOutputTokens, 21605);
+    assert.equal(state.providerRequest.maxOutputTokens, 32000);
+    assert.equal(state.providerRequest.requestId, 'req-glm-123');
 
     worker._recordClaudeCodingRunForTests({
       sessionId: 42,
