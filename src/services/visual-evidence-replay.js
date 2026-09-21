@@ -214,6 +214,22 @@ function reproducibleStories(leftStories, rightStories) {
   return true;
 }
 
+// The browser runner emits every known provenance field, representing an
+// absent optional hosted asset revision as null. The orchestrator may omit
+// that field entirely. Compare the same explicit shape on both sides so this
+// harmless normalization cannot reject every otherwise valid replay.
+function comparableProvenance(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return {
+    baseSha: value.baseSha,
+    headSha: value.headSha,
+    fixtureFingerprint: value.fixtureFingerprint,
+    baseImageDigest: value.baseImageDigest || null,
+    headImageDigest: value.headImageDigest || null,
+    hostedAssetRevision: value.hostedAssetRevision || null,
+  };
+}
+
 function comparePasses(first, second, { plan = null, provenance = null, runId = null } = {}) {
   if (first?.result?.passed !== true || second?.result?.passed !== true) {
     return { passed: false, code: 'replay_failed', reason: 'Both clean replay passes must succeed.' };
@@ -239,8 +255,9 @@ function comparePasses(first, second, { plan = null, provenance = null, runId = 
     return { passed: false, code: 'pass_identity_changed', reason: 'The clean replay passes were not executed in the required order.' };
   }
   if (provenance) {
-    const expected = JSON.stringify(provenance);
-    if (JSON.stringify(first.result.provenance) !== expected || JSON.stringify(second.result.provenance) !== expected) {
+    const expected = JSON.stringify(comparableProvenance(provenance));
+    if (JSON.stringify(comparableProvenance(first.result.provenance)) !== expected
+        || JSON.stringify(comparableProvenance(second.result.provenance)) !== expected) {
       return { passed: false, code: 'provenance_changed', reason: 'The clean replay provenance changed between passes.' };
     }
   }
@@ -363,6 +380,7 @@ module.exports = {
   validateArtifact,
   parseReplayOutput,
   comparePasses,
+  comparableProvenance,
   reproducibleStories,
   runPass,
   storeArtifacts,
