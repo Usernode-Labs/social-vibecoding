@@ -576,6 +576,8 @@ test('completeCodexAttempt preserves each baseline across an intervening partial
 const {
   runCodexAttemptLoop,
   resumeRecoveredCodexFreshRetry,
+  codexMaxTokensRetry,
+  codexProviderFailureText,
 } = require('../src/routes/sessions');
 const { settleRecoveredAgentAttempt } = require('../src/services/agent-turn');
 
@@ -609,6 +611,7 @@ function makeLoopPool() {
       if (r && r.status === 'running') {
         r.status = params[1];
         r.updated = true;
+        r.error_code = params[2];
         r.input_tokens = params[5];
         r.output_tokens = params[8];
         r.provider_input_tokens_total = params[10];
@@ -1207,4 +1210,168 @@ test('attempt loop: refuses to dispatch when the backend changed', async () => {
   });
   assert.equal(out.error, 'agent_context_changed');
   assert.equal(dispatchCalls, 0);
+});
+
+// ── #2676: the clamped single retry on a provider refusal ─────────────
+const MAX_TOKENS_REFUSAL = 'stream disconnected before completion: This request '
+  + 'requires more credits, or fewer max_tokens. You requested up to 131072 tokens, '
+  + 'but can only afford 21605.';
+
+function refusalRuntime() {
+  return {
+    agentBackend: 'codex_openrouter', agentModel: 'z-ai/glm-5.3-flash',
+    agentReasoningEffort: null, credentialId: 1, credentialRevision: 1,
+    agentConfigVersion: 1,
+    agentModelMetadata: {
+      name: 'Z.AI: GLM 5.3 Flash', contextWindow: 200_000, maxOutputTokens: 32_000,
+    },
+    pricingSnapshot: { available: false },
+  };
+}
+
+test('attempt loop: a max_tokens refusal retries once under a ceiling the account can pay for', async () => {
+  const { pool, attempts } = makeLoopPool();
+  const ceilings = [];
+  let dispatchCalls = 0;
+  const statuses = [];
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => refusalRuntime(),
+    dispatchOnce: async (ctx) => {
+      dispatchCalls += 1;
+      ceilings.push(ctx.agentModelMetadata?.maxOutputTokens);
+      if (dispatchCalls === 1) {
+        return {
+          exitCode: 1, ccIsError: true, resultSeen: true,
+          agentError: MAX_TOKENS_REFUSAL,
+          agentErrorCode: 'insufficient_credits_max_tokens',
+          affordableOutputTokens: 21605,
+        };
+      }
+      return { exitCode: 0, resultSeen: true };
+    },
+    // Deliberately false: the clamp rule must stand on its own, because the
+    // build path's predicate only retries headless turns.
+    retryPredicate: () => false,
+    sendStatus: async (msg) => { statuses.push(msg); },
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+
+  assert.equal(dispatchCalls, 2, 'retried exactly once');
+  assert.equal(ceilings[0], 32_000, 'attempt one asks for the runtime ceiling');
+  assert.equal(ceilings[1], Math.floor(21605 * 0.8), 'attempt two asks for what is affordable');
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0].error_code, 'insufficient_credits',
+    'the refusal is billed, not left NULL for the telemetry to guess at');
+  assert.equal(attempts[1].status, 'completed');
+  assert.equal(attempts[1].error_code, null);
+  assert.match(statuses[0], /shorter reply/);
+  assert.doesNotMatch(statuses[0], /\u2014/);
+});
+
+test('attempt loop: the clamped retry keeps the rest of the model metadata', async () => {
+  const { pool } = makeLoopPool();
+  const seen = [];
+  let dispatchCalls = 0;
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => refusalRuntime(),
+    dispatchOnce: async (ctx) => {
+      dispatchCalls += 1;
+      seen.push(ctx.agentModelMetadata);
+      return dispatchCalls === 1
+        ? {
+          exitCode: 1, ccIsError: true, resultSeen: true,
+          agentErrorCode: 'insufficient_credits_max_tokens',
+          affordableOutputTokens: 21605,
+        }
+        : { exitCode: 0, resultSeen: true };
+    },
+    retryPredicate: () => false,
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+  assert.equal(seen[1].name, 'Z.AI: GLM 5.3 Flash');
+  assert.equal(seen[1].contextWindow, 200_000);
+});
+
+test('attempt loop: a refusal the account cannot retry under does not buy a second request', async () => {
+  const { pool, attempts } = makeLoopPool();
+  let dispatchCalls = 0;
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => refusalRuntime(),
+    dispatchOnce: async () => {
+      dispatchCalls += 1;
+      return {
+        exitCode: 1, ccIsError: true, resultSeen: true,
+        agentErrorCode: 'insufficient_credits_max_tokens',
+        // Below the catalog's floor: no reply worth paying for fits.
+        affordableOutputTokens: 900,
+      };
+    },
+    retryPredicate: () => false,
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+  assert.equal(dispatchCalls, 1);
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].error_code, 'insufficient_credits');
+});
+
+test('attempt loop: an out-of-credit refusal is terminal, never retried', async () => {
+  const { pool, attempts } = makeLoopPool();
+  let dispatchCalls = 0;
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => refusalRuntime(),
+    dispatchOnce: async () => {
+      dispatchCalls += 1;
+      return {
+        exitCode: 1, ccIsError: true, resultSeen: true,
+        agentErrorCode: 'insufficient_credits',
+      };
+    },
+    retryPredicate: () => false,
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+  assert.equal(dispatchCalls, 1, 'a second request would be refused identically');
+  assert.equal(attempts[0].error_code, 'insufficient_credits');
+});
+
+test('codexMaxTokensRetry: only the max_tokens refusal, and never after a stop', () => {
+  const refusal = {
+    agentErrorCode: 'insufficient_credits_max_tokens', affordableOutputTokens: 21605,
+  };
+  assert.deepEqual(codexMaxTokensRetry(refusal), { clamped: 17284 });
+  assert.equal(codexMaxTokensRetry(refusal, { stopped: true }), null);
+  assert.equal(codexMaxTokensRetry(null), null);
+  assert.equal(codexMaxTokensRetry({ agentErrorCode: 'insufficient_credits' }), null);
+  assert.equal(codexMaxTokensRetry({ agentErrorCode: 'stream_disconnected' }), null);
+  assert.equal(codexMaxTokensRetry({ ...refusal, affordableOutputTokens: null }), null);
+  assert.equal(codexMaxTokensRetry({ ...refusal, affordableOutputTokens: 900 }), null);
+});
+
+test('codexProviderFailureText: the remedy follows whose key is paying', async () => {
+  const result = {
+    agentErrorCode: 'insufficient_credits_max_tokens',
+    affordableOutputTokens: 21605,
+    agentError: MAX_TOKENS_REFUSAL,
+  };
+  const personalPool = { query: async () => ({ rows: [] }) };
+  assert.match(
+    await codexProviderFailureText(personalPool, 1, result),
+    /Your OpenRouter account cannot cover a reply this long/,
+  );
+  const includedPool = { query: async () => ({ rows: [{ source: 'usernode_managed' }] }) };
+  assert.match(
+    await codexProviderFailureText(includedPool, 1, result),
+    /credit included with Homeroom/,
+  );
+  // A failed lookup must not tell the user the platform's key is at fault.
+  const brokenPool = { query: async () => { throw new Error('db down'); } };
+  assert.match(
+    await codexProviderFailureText(brokenPool, 1, result),
+    /Your OpenRouter account/,
+  );
+  // An unclassified turn keeps whatever copy the caller already had.
+  assert.equal(await codexProviderFailureText(personalPool, 1, { exitCode: 1 }), null);
 });
