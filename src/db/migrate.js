@@ -12005,6 +12005,12 @@ async function seedStagingTopochain(pool, config) {
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, VIEWER_WALLET, VIEWER_PUBKEY, SEASON_ID]
       );
+      // Both rows sit in the RUNNING season on purpose (issue #2495): the
+      // Leaderboard screen shows its event picker to admins and to members
+      // with a season to go back to, and usernode-capture — the member
+      // every screenshot signs as — is meant to show the new-member state,
+      // the board with no picker. The checks identity is an admin and sees
+      // the picker by role.
       await pool.query(
         `INSERT INTO user_enrollments
            (id, user_id, season_id, season_event_id, created_at, updated_at)
