@@ -109,6 +109,10 @@ function parse(value: string | number | Date | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+// "Now" is read through `Date.now()` rather than `new Date()` so a test that
+// pins the process clock (`Date.now = () => FIXED`) pins these stamps too —
+// `new Date()` ignores that override, and a fixture "2d ago" against a pinned
+// clock read as an absolute date once the real clock moved a week past it.
 export function messageStamp(
   value: string | number | Date | null | undefined,
   opts: { now?: Date; hour?: 'numeric' | '2-digit' } = {},
@@ -116,7 +120,7 @@ export function messageStamp(
   const date = parse(value);
   if (!date) return { text: '', title: '' };
 
-  const now = opts.now ?? new Date();
+  const now = opts.now ?? new Date(Date.now());
   const time = date.toLocaleTimeString(undefined, { hour: opts.hour ?? '2-digit', minute: '2-digit' });
   const title = date.toLocaleString(undefined, FULL);
   if (sameDay(date, now)) return { text: time, title };
@@ -143,7 +147,7 @@ export function agoStamp(
   const date = parse(value);
   if (!date) return { text: '', title: '' };
 
-  const now = opts.now ?? new Date();
+  const now = opts.now ?? new Date(Date.now());
   const title = date.toLocaleString(undefined, FULL);
   const elapsed = now.getTime() - date.getTime();
   if (elapsed >= RELATIVE_FLOOR_MS) return { text: datePart(date, now), title };
