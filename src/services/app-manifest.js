@@ -203,7 +203,23 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 650s TESTS_DEADLINE_MS clears the 2x margin by ~294s. The deadline and
 // RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 17
 // slots over the 693 declared here.
-const MAX_DECLARED_TESTS = 730;
+//
+// Raised 730 → 750 by #2679/#2680 (PR #2683), whose one check on the
+// hand-off walkthrough's "Link GitHub" step put the manifest at 711 against
+// the 710 floor. Ninth crossing, and once more the floor was ALREADY met
+// before that check landed: main stood at 710 exactly after the #2684
+// Homeroom-bot pair and the native-Android-header check arrived beside
+// each other, so any proposal declaring a single check was red before it
+// started. tests/improve-session-spinner.test.js and
+// tests/proposal-tests-manifest.test.js both state the floor, and both say
+// to move the ceiling rather than delete a check.
+//
+// STILL NOT A COUPLED MOVE, same arithmetic as the three bumps above: the
+// pool is 16, so 750 checks at ~3.9s over 16 is ~183s, and the UNCHANGED
+// 650s TESTS_DEADLINE_MS clears the 2x margin by ~284s. The deadline and
+// RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 19
+// slots over the 711 declared here.
+const MAX_DECLARED_TESTS = 750;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
