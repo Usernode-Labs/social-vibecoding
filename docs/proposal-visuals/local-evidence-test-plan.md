@@ -238,9 +238,10 @@ normal worker yet; the deterministic successes above must not be presented as
 agent-path successes. A production rerun of historical proposal #2548 reached
 agent exploration and then failed with `evidence_agent_timeout`. That rerun
 used the deployed production code, not this branch, and exposed no trace that
-proves a successful model request/response. A staging build of this PR can
-exercise this branch with Homeroom's managed model access after the PR is
-imported for staging.
+proves a successful model request/response. Importing this PR builds and
+checks its app revision, but the imported proposal's evidence run is scheduled
+by Homeroom's already deployed coordinator and worker. An import alone does
+not exercise this branch's evidence agent with managed model access.
 
 | Part of the live flow | Current local coverage | Needed for agent parity |
 | --- | --- | --- |
@@ -296,20 +297,29 @@ Acceptance: a single opt-in local command runs the normal evidence agent and
 worker against isolated local app revisions and data, records the actual model
 backend, and leaves reviewable media. The default deterministic commands stay
 cheap and credential-free. This acceptance cannot be claimed until a real
-local model-access path exists. Until then, importing the PR for a staging
-build is the way to exercise this branch with managed model access before
-merge.
+local model-access path exists. A branch-specific platform and worker
+environment with managed model access is another way to test before merge;
+the ordinary app PR import only checks and previews the branch revision.
 
 ## Release gate and remaining differences
 
 Use the deterministic run after capture, replay, or encoding edits. Use the
 opt-in normal-agent run after planner, prompt, worker, provisioning, auth, or
 orchestrator edits. Repeat a historically failed case before proposing a fix
-for an agent failure. Once those local gates pass, submit **one normal staging
-proposal before merge** to check the remaining deployment differences. A
-local Docker run cannot prove behavior in the production Kubernetes worker
-runtime, live routing, or the actual user's credential/model choice. The
-staging smoke test is a final confidence check, not the debugging loop.
+for an agent failure. Then run one normal proposal in a **branch-specific
+platform and worker staging environment** with the intended model access,
+before merge. The ordinary app PR import does not supply this gate: its
+evidence coordinator still runs deployed code, and the staged app cannot
+build nested previews. A local Docker run cannot prove behavior in the
+production Kubernetes worker runtime, live routing, or the actual user's
+credential/model choice. Until this branch-specific gate exists and passes,
+live evidence-agent reliability remains unverified.
+
+PR #2709 was initially imported as proposal 4675 at head
+`eabe9b70d4118556b0372739b23f0855233ee401`. Its staging preview and
+checks passed, but no visual claim was accepted on that proposal and Homeroom
+recorded that there was nothing to run. This validates the branch's build and
+declared checks, not its new evidence-agent path.
 
 ## Evidence to keep from each run
 
