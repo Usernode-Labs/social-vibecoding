@@ -5155,7 +5155,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 509,
+      "line": 513,
       "method": "POST",
       "path": "/api/apps/:slug/external-tasks",
       "expression": null,
@@ -5178,7 +5178,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 604,
+      "line": 608,
       "method": "POST",
       "path": "/api/apps/:slug/external-tasks/:id/submit",
       "expression": null,
@@ -5197,7 +5197,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 697,
+      "line": 701,
       "method": "POST",
       "path": "/api/apps/:slug/external-tasks/:id/discard",
       "expression": null,
@@ -5216,7 +5216,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 757,
+      "line": 761,
       "method": "POST",
       "path": "/api/apps/:slug/external-tasks/:id/submit-update",
       "expression": null,
@@ -8541,7 +8541,8 @@
         "frontend/src/features/settings/native-social-connect.js",
         "frontend/src/features/settings/settings.js",
         "public/js/auth-screens.js",
-        "public/js/auth-screens.js"
+        "public/js/auth-screens.js",
+        "public/js/dev-flow-select.js"
       ]
     },
     {
