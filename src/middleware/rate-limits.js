@@ -31,7 +31,7 @@ function retryPhrase(seconds) {
 // a falsy value to fall through to the keyByUser / IP default below. That
 // fallthrough is load-bearing: the waitlist token bucket keys on the path
 // token, and one route in the same family carries no token.
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null }) {
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null, v4Envelope = false }) {
   const options = {
     windowMs,
     max,
@@ -61,8 +61,40 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
         path: req.path,
       });
       // No `code` field here — clients discriminate billing 429s by
-      // their code tag (#463), so throttles must stay code-free.
+      // their code tag (#463), so throttles must stay code-free. That rule
+      // holds on the v4 surface too: `v4Envelope` adds the envelope, never
+      // a code.
+      //
+      // The envelope exists because /api/v4 answers every OTHER error
+      // through routes/topochain/helpers.js `fail`, which returns
+      // `{ success: false, error, ... }`. A throttle on those routes was
+      // the one reply on that surface without `success`, so a client
+      // reading `body.success` got `undefined` rather than `false`. It is
+      // not global because this same helper builds the limiters for the
+      // platform's own API, whose clients read the bare shape.
+      //
+      // TWO WAYS IN, and both are needed:
+      //
+      //   * THE PATH. Any request under /api/v4 gets it, whichever limiter
+      //     answered. That covers a limiter SHARED with non-v4 routes —
+      //     `attachmentUploadLimiter` gates POST
+      //     /api/v4/admin/challenge-illustrations as well as conversations,
+      //     chat, sessions and app illustrations, so a limiter-level flag
+      //     could not fix the v4 route without changing the other four.
+      //     Deciding per request does. It also means a v4 limiter added
+      //     later cannot forget.
+      //   * THE FLAG, for the routes that share the envelope but not the
+      //     prefix: `/challenges-api/**` reuses the very same topochain
+      //     handlers and the same `fail`, so it needs the envelope and a
+      //     path test alone would miss it.
+      //
+      // Still no `code`, either way — see #463 above.
+      //
+      // `Retry-After` is already set by express-rate-limit and needs
+      // nothing here — verified against a live 429 before writing this.
+      const envelope = v4Envelope || String(req.path || '').startsWith('/api/v4');
       res.status(429).json({
+        ...(envelope ? { success: false } : null),
         error: typeof message === 'function'
           ? message(retryAfterSeconds)
           : (message || 'Too many requests, please slow down'),
@@ -266,6 +298,8 @@ const mobileWalletClaimLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 10,
   name: 'mobile-wallet-claim',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
   keyByUser: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many claim attempts. Try again ${retryPhrase(s)}.`,
@@ -381,6 +415,8 @@ const topochainMobileReadLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 120,
   name: 'topochain-mobile-read',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
   keyByUser: true,
   message: (s) => `Too many requests. Try again ${retryPhrase(s)}.`,
 });
@@ -451,6 +487,8 @@ const partnerActivityParticipantLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
   name: 'partner-user-activities-participant',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
   // The key has to be the participant the ROUTE will resolve, not the bytes
   // the caller happened to send, or the bound is bypassable by respelling.
   //
@@ -547,6 +585,8 @@ const partnerActivityLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 600,
   name: 'partner-user-activities',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
   message: (s) => `Too many activity submissions. Try again ${retryPhrase(s)}.`,
 });
 
@@ -981,6 +1021,8 @@ const topochainMobilePushRegistrationLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
   name: 'topochain-mobile-push-registration',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
   keyByUser: true,
   message: 'Too many push registration updates. Slow down for a minute.',
 });
