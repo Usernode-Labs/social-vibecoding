@@ -18,16 +18,36 @@ function flush() {
   });
 }
 
-export function cutoutPath(rect, radii, width, height) {
-  const { left: l, top: t, right: r, bottom: b } = rect;
+// Compound clip paths with an inner hole paint as a solid dim in Android's
+// WebView on the tested Pixel. Paint only the outside instead: four bounded
+// strips and four small corner gradients, never a viewport-sized shadow/mask.
+export function scrimBackground(rect, radii, width, height, pixelRatio = 1) {
+  const layers = [];
+  const clamp = (n, end) => Math.max(0, Math.min(n, end));
+  const top = clamp(rect.top, height), bottom = clamp(rect.bottom, height);
+  const left = clamp(rect.left, width), right = clamp(rect.right, width);
+  const color = 'var(--pane-scrim)';
+  const place = (image, x, y, w, h) => {
+    if (w > 0 && h > 0) layers.push(`${image} ${x}px ${y}px / ${w}px ${h}px no-repeat`);
+  };
+  const fill = `linear-gradient(${color}, ${color})`;
+  place(fill, 0, 0, width, top);
+  place(fill, 0, bottom, width, height - bottom);
+  place(fill, 0, top, left, bottom - top);
+  place(fill, right, top, width - right, bottom - top);
   const [tl, tr, br, bl] = radii;
-  // Keep offscreen coordinates: clipping a moving hole to the viewport would
-  // introduce rounded corners on the straight docked edge during a spring.
-  return `path(evenodd, "M 0 0 H ${width} V ${height} H 0 Z `
-    + `M ${l + tl[0]} ${t} H ${r - tr[0]} A ${tr} 0 0 1 ${r} ${t + tr[1]} `
-    + `V ${b - br[1]} A ${br} 0 0 1 ${r - br[0]} ${b} `
-    + `H ${l + bl[0]} A ${bl} 0 0 1 ${l} ${b - bl[1]} `
-    + `V ${t + tl[1]} A ${tl} 0 0 1 ${l + tl[0]} ${t} Z")`;
+  const corners = [
+    [tl, rect.left, rect.top, 'right bottom'],
+    [tr, rect.right - tr[0], rect.top, 'left bottom'],
+    [br, rect.right - br[0], rect.bottom - br[1], 'left top'],
+    [bl, rect.left, rect.bottom - bl[1], 'right top'],
+  ];
+  for (const [[rx, ry], x, y, center] of corners) {
+    if (x >= width || y >= height || x + rx <= 0 || y + ry <= 0) continue;
+    const edge = 0.5 / pixelRatio;
+    place(`radial-gradient(ellipse ${rx}px ${ry}px at ${center}, transparent calc(100% - ${edge}px), ${color} 100%)`, x, y, rx, ry);
+  }
+  return layers.join(', ') || 'none';
 }
 
 export function attachOverlayScrim(surface, backdrop, paint) {
@@ -78,7 +98,7 @@ export function attachOverlayScrim(surface, backdrop, paint) {
         || (surface.id === 'apps-switcher-sheet' && matchMedia('(min-width: 640px)').matches);
       const opacity = cardFade ? style.opacity : getComputedStyle(backdrop).opacity;
       return {
-        clipPath: cutoutPath(box, radii, innerWidth, innerHeight),
+        background: scrimBackground(box, radii, innerWidth, innerHeight, window.devicePixelRatio || 1),
         opacity, zIndex: style.zIndex, visibility: 'visible',
         animating: [surface, backdrop].some(el => el.getAnimations().some(a => a.playState === 'running')),
       };
@@ -87,7 +107,7 @@ export function attachOverlayScrim(surface, backdrop, paint) {
       if (disposed) return;
       visible = !!snapshot;
       const next = snapshot || { visibility: 'hidden', opacity: '0' };
-      for (const key of ['clipPath', 'opacity', 'zIndex', 'visibility']) {
+      for (const key of ['background', 'opacity', 'zIndex', 'visibility']) {
         if (next[key] !== undefined && next[key] !== last[key]) paint.style[key] = next[key];
       }
       last = next;

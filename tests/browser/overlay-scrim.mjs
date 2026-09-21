@@ -18,7 +18,7 @@ let checks = 0;
 const results = [];
 try {
  for (const theme of ['light', 'dark']) for (const width of [390, 1280]) {
-  for (const kind of ['rail', 'dropdown', 'sheet', 'panel', 'modal']) {
+  for (const kind of ['rail', 'dropdown', 'sheet', 'panel', 'modal', 'creation']) {
    if (process.env.OVERLAY_CASE && `${theme}-${width}-${kind}` !== process.env.OVERLAY_CASE) continue;
    for (const version of ['base', 'head']) {
     const page = await browser.newPage({ viewport: { width, height: 860 } });
@@ -33,7 +33,7 @@ try {
        ? execFileSync('git', ['show', `${base}:${path}`], { cwd: root }) : readFileSync(root + path);
       return route.fulfill({ contentType, body });
      }
-     return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="${theme === 'dark' ? 'dark' : ''}"><head><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/usernode-native/v1/native.css"><link rel="stylesheet" href="/css/app.css"><link rel="stylesheet" href="/css/tailwind.css"><style>body{min-height:100vh;background:linear-gradient(120deg,${theme === 'light' ? '#edb393,#adb6d8 45%,#deca87' : '#412822,#282c42 45%,#403a25'})}main{padding:90px 20px;font-size:28px;color:#927b70}section{padding:32px}input{margin:20px 0}#improve-panel,#apps-switcher-sheet{padding:32px}</style></head><body><button id="opener">Open</button><main>Homeroom<br><br>Wallpapers and text remain behind bright glass.<br><br>Another row of background content.</main><script src="/usernode-native/v1/native.js"></script><script src="/js/platform-ui.js"></script></body></html>` });
+     return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="${theme === 'dark' ? 'dark' : ''} ${kind === 'creation' && width === 390 ? 'in-native-webview un-android' : ''}"><head><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/usernode-native/v1/native.css"><link rel="stylesheet" href="/css/app.css"><link rel="stylesheet" href="/css/tailwind.css"><style>body{min-height:100vh;background:linear-gradient(120deg,${theme === 'light' ? '#edb393,#adb6d8 45%,#deca87' : '#412822,#282c42 45%,#403a25'})}main{padding:90px 20px;font-size:28px;color:#927b70}section{padding:32px}input{margin:20px 0}#improve-panel,#apps-switcher-sheet{padding:32px}</style></head><body><button id="opener">Open</button><main>Homeroom<br><br>Wallpapers and text remain behind bright glass.<br><br>Another row of background content.</main><script src="/usernode-native/v1/native.js"></script><script src="/js/platform-ui.js"></script></body></html>` });
     });
     await page.goto('http://overlay.test/');
     if (version === 'head') await page.addScriptTag({ content: bridge + '\n' + legacy + '\nwindow.attachOverlayScrim=attachOverlayScrim;' });
@@ -54,7 +54,8 @@ try {
       openSurface();
      } else {
       const contentEl = document.createElement('section'); contentEl.innerHTML = content;
-      window.handle = PlatformUI[kind]({ contentEl, onDismiss: () => { window.dismissed = true; } });
+      if (kind === 'creation') { contentEl.id = 'create-card'; contentEl.className = 'platform-modal-card'; }
+      window.handle = PlatformUI[kind === 'creation' ? 'modal' : kind]({ contentEl, onDismiss: () => { window.dismissed = true; } });
       window.surface = handle.el;
       window.closeSurface = () => handle.dismiss();
      }
@@ -66,10 +67,12 @@ try {
     if (version === 'head') {
      assert.equal(await page.evaluate(() => [...document.querySelectorAll('.overlay-scrim')].filter(e => getComputedStyle(e).visibility === 'visible').length), 1); checks++;
      assert.equal(await page.evaluate(() => getComputedStyle(surface).boxShadow.includes('1280px')), false); checks++;
-     assert.equal(await page.evaluate(() => {
-      const hit = document.elementFromPoint(2, 2);
-      return hit?.classList.contains('un-backdrop') || hit?.id.endsWith('overlay');
-     }), true, 'the original dismissal backdrop keeps its hit target'); checks++;
+     if (kind !== 'creation' || width !== 390) {
+      assert.equal(await page.evaluate(() => {
+       const hit = document.elementFromPoint(2, 2);
+       return hit?.classList.contains('un-backdrop') || hit?.id.endsWith('overlay');
+      }), true, 'the original dismissal backdrop keeps its hit target'); checks++;
+     }
      if (kind === 'sheet') {
       const grabber = await page.locator('.un-sheet-grabber').boundingBox();
       await page.mouse.move(grabber.x + grabber.width / 2, grabber.y + grabber.height / 2);
@@ -86,6 +89,17 @@ try {
       await page.waitForTimeout(800);
       assert.equal(await page.locator('.un-sheet').count(), 1, 'short drag springs back'); checks++;
      }
+     // The dim must never paint inside the surface, including a square
+     // fullscreen creation dialog. Read actual rendered pixels, not only the
+     // computed clip/mask declaration (Android accepted a hole but filled it).
+     await page.addStyleTag({ content: '* { caret-color: transparent !important; }' });
+     const box = await page.evaluate(() => surface.getBoundingClientRect().toJSON());
+     const clip = { x: Math.max(0, box.x + box.width / 2 - 10), y: Math.max(0, box.y + box.height / 2 - 10), width: 20, height: 20 };
+     const painted = await page.screenshot({ clip });
+     await page.evaluate(() => { surface.nextElementSibling.style.visibility = 'hidden'; });
+     const clear = await page.screenshot({ clip });
+     await page.evaluate(() => { surface.nextElementSibling.style.visibility = 'visible'; });
+     assert.ok(painted.equals(clear), 'the scrim leaves the surface pixels untouched'); checks++;
      // Motion work must stop when settled, even though the surface remains open.
      await page.evaluate(() => { window.reads = 0; const get = surface.getBoundingClientRect.bind(surface); surface.getBoundingClientRect = () => { reads++; return get(); }; });
      await page.waitForTimeout(120);

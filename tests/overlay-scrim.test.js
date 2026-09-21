@@ -40,6 +40,7 @@ function harness() {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/src/lib/overlay-scrim.js'), 'utf8').replace(/export /g, ''), sandbox);
   const detach = sandbox.attachOverlayScrim(surface, backdrop, paint);
   return { surface, backdrop, paint, style, observers, events, callbacks, detach,
+    scrimBackground: sandbox.scrimBackground,
     reads: () => reads,
     frame() { const work = [...callbacks.values()]; callbacks.clear(); work.forEach(fn => fn()); },
   };
@@ -61,7 +62,8 @@ test('opening measures once, coalesces mutations and stops when settled', () => 
   assert.equal(h.reads(), 1);
   assert.equal(h.paint.style.opacity, '.4');
   assert.equal(h.paint.style.zIndex, '50', 'the decoration shares the surface stacking level');
-  assert.match(h.paint.style.clipPath, /path\(evenodd/);
+  assert.match(h.paint.style.background, /linear-gradient/);
+  assert.equal(h.paint.style.clipPath, undefined, 'Android must not rely on a compound clipping hole');
   assert.equal(h.callbacks.size, 0, 'no idle polling'); h.detach();
 });
 
@@ -88,4 +90,27 @@ test('teardown cancels queued work and releases observers and listeners', () => 
   h.detach(); h.frame();
   assert.equal(h.callbacks.size, 0); assert.equal(h.reads(), 0);
   assert.ok(h.observers.every(o => o.disconnected)); assert.equal(h.events.size, 0);
+});
+
+
+test('a square full-screen surface needs no dim paint', () => {
+  const h = harness();
+  assert.equal(h.scrimBackground({ left: 0, top: 0, right: 400, bottom: 800 },
+    [[0, 0], [0, 0], [0, 0], [0, 0]], 400, 800), 'none');
+  h.detach();
+});
+
+test('offscreen surfaces dim the viewport without negative background sizes', () => {
+  const h = harness();
+  const radii = [[28, 28], [28, 28], [28, 28], [28, 28]];
+  for (const box of [
+    { left: 0, top: 900, right: 400, bottom: 1200 },
+    { left: 0, top: -400, right: 400, bottom: -100 },
+    { left: 450, top: 0, right: 850, bottom: 800 },
+  ]) {
+    const paint = h.scrimBackground(box, radii, 400, 800);
+    assert.match(paint, /0px 0px \/ 400px 800px no-repeat/);
+    assert.doesNotMatch(paint, /radial-gradient|NaN/);
+  }
+  h.detach();
 });
