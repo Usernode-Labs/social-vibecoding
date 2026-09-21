@@ -40,7 +40,13 @@ const outputLabel = path.relative(ROOT, outputPath) || outputPath;
 function resolveCli() {
   let pkgJson;
   try {
-    pkgJson = require.resolve('tailwindcss/package.json', { paths: [ROOT] });
+    // The Kubernetes image builds the shell and CSS from one dependency
+    // tree under frontend/. Local and Docker-compose builds keep using the
+    // root install. Search both explicitly so the compiler script stays the
+    // single entry point for either layout without NODE_PATH or npx.
+    pkgJson = require.resolve('tailwindcss/package.json', {
+      paths: [ROOT, path.join(ROOT, 'frontend')],
+    });
   } catch {
     fail('tailwindcss is not installed. Run `npm install` (dev dependencies included) first.');
   }
