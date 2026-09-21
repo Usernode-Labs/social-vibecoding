@@ -1692,6 +1692,19 @@ const App = {
   SHELL_AUTO_RELOAD_KEY: 'usernode-shell-auto-reload',
 
   _hasUnsavedShellInput() {
+    // A welcome tour in progress is input too (#2584, features/home/tour):
+    // the viewer is part-way through a walk the overlay is narrating, and a
+    // reload under it -- it lands in the first seconds on Home, which is
+    // exactly when the tour is up -- was the "looping between the first and
+    // second step" people reported. The overlay now resumes at its step, but
+    // being pulled out mid-sentence is still the wrong moment; the visible
+    // reload offer stays, as it does for a draft. `#home-tour` is the shell's
+    // own island and `hidden` is how it is off (lib/legacy-dom.ts), so this
+    // reads the same truth the overlay writes.
+    try {
+      const tour = document.getElementById('home-tour');
+      if (tour && !tour.classList.contains('hidden')) return true;
+    } catch { return true; }
     let controls = [];
     try {
       controls = document.querySelectorAll('input, textarea, select, [contenteditable="true"]');

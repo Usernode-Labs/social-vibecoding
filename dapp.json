@@ -3277,7 +3277,7 @@
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "The shared event picker renders above the Topochain tab",
+      "name": "The shared event picker renders above the Topochain tab for a viewer with history (the checks identity is an admin)",
       "path": "/#leaderboard/topochain",
       "expectSelector": "#leaderboard-event-bar:not(.hidden) #tc-ev-select"
     },
@@ -3535,6 +3535,18 @@
       "path": "/#admin/model-costs",
       "expectSelector": "#admin-model-costs-profile",
       "expectText": "Estimates are per-token pricing times a typical change"
+    },
+    {
+      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684)",
+      "path": "/#admin/homeroom-bot",
+      "expectSelector": "#admin-homeroom-bot-table",
+      "expectText": "Verdict"
+    },
+    {
+      "name": "Homeroom bot dashboard says it posts nothing in shadow mode (#2684)",
+      "path": "/#admin/homeroom-bot",
+      "expectSelector": "#admin-homeroom-bot-intro",
+      "expectText": "It posts nothing, claims nothing and builds nothing"
     },
     {
       "name": "Model costs says what one change is and that it counts the coding agent (#2592)",
@@ -3967,7 +3979,15 @@
     {
       "name": "Native-iOS performance scope activates from a URL (#787)",
       "path": "/?un-platform=ios&un-native-webview=1",
-      "expectSelector": "html.un-ios.in-native-webview #platform-header"
+      "expectSelector": "html.un-ios.in-native-webview:not(.web-browser-chrome) #platform-header"
+    },
+    {
+      "id": "native-android-header-safe-area",
+      "name": "Native Android retains the header status-bar inset",
+      "visual": true,
+      "impact": ["frontend/src/head.html", "public/css/app.css"],
+      "path": "/?un-platform=android&un-native-webview=1",
+      "expectSelector": "html.un-android.in-native-webview:not(.web-browser-chrome) #platform-header.un-safe-top-extend"
     },
     {
       "name": "The local-CLI card spells the commands for THIS session (#1055)",
@@ -4425,6 +4445,12 @@
       "path": "/?demo=1&order=connect&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions button[data-flow-action=\"link-connector\"]",
       "expectText": "Connect Homeroom"
+    },
+    {
+      "name": "Link GitHub in the walkthrough goes to GitHub itself, not to Settings (#2679, #2680)",
+      "path": "/?demo=1&order=link&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"github\"][data-flow-step-state=\"current\"] a[data-flow-action=\"link-github\"][target=\"_blank\"][href=\"/api/me/social-identities/github/connect?intent=connect\"]",
+      "expectText": "Link GitHub"
     },
     {
       "name": "A continuation says the work lands as an update, not a second copy",

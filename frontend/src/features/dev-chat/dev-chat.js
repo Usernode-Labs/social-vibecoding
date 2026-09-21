@@ -996,7 +996,7 @@ const DevChat = {
     if (window.DevFlowSelect) {
       host.querySelectorAll('[data-flow-wizard]').forEach((el) => {
         DevFlowSelect.wire(el, {
-          onAction: (action) => DevChat._devFlowAction(action),
+          onAction: (action, target, event) => DevChat._devFlowAction(action, target, event),
         });
       });
     }
@@ -1802,7 +1802,7 @@ const DevChat = {
   // renders it silently. tests/dev-flow-routes.test.js scrapes the route's own
   // `req.query.order === '…'` literals and fails when this list does not cover
   // them, so the next one cannot repeat it.
-  DEV_FLOW_ORDERS: ['connect', 'continue'],
+  DEV_FLOW_ORDERS: ['connect', 'continue', 'link'],
 
   _devFlowDemoQS() {
     const base = DevChat._demoQS();
@@ -3425,7 +3425,7 @@ const DevChat = {
     if (!container) return;
     container.querySelectorAll('[data-flow-wizard]').forEach((el) => {
       DevFlowSelect.wire(el, {
-        onAction: (action) => DevChat._devFlowAction(action),
+        onAction: (action, target, event) => DevChat._devFlowAction(action, target, event),
       });
     });
   },
@@ -3482,7 +3482,53 @@ const DevChat = {
     }
   },
 
-  async _devFlowAction(action) {
+  // "Link GitHub" (#2679, #2680). The step's anchor points straight at the
+  // social-identity connect route, which answers with a redirect to GitHub's
+  // own authorization page. It used to point at Settings → Connectors and
+  // leave the person to find the Connect row there, and that detour is what
+  // #2680 caught broken. Two hosts, two roads:
+  //
+  //   * in a browser the anchor is already being followed — a new tab, like
+  //     "Fork on GitHub" (#1312) — so this only says where to look and
+  //     re-reads the status the way the other trips out do; coming back
+  //     re-checks again (_bindDevFlowVisibility) and ticks the step;
+  //   * inside the Homeroom app the webview cannot reach github.com and the
+  //     system browser has its own cookie jar, so the click is taken over
+  //     and the ACCOUNT-PINNED form of the URL goes out through the bridge,
+  //     exactly as the Settings row does (features/settings/
+  //     native-social-connect.js). That helper is reached by name through
+  //     the React bridge because this module cannot import; see the header.
+  async _devFlowLinkGithub(event) {
+    const flow = DevChat._devFlow;
+    const bridge = window.usernode;
+    if (!bridge || !bridge.isNative) {
+      flow.notice = 'Finish linking GitHub in the tab that just opened, then come back here.';
+      await DevChat._devFlowEnsureStatus(true);
+      return;
+    }
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    const react = window.UsernodeReact && window.UsernodeReact.devChat;
+    if (!react || typeof react.openNativeSocialConnect !== 'function') {
+      // A bundle without the bridge method: Settings still has the row.
+      window.location.hash = '#settings/connectors';
+      return;
+    }
+    try {
+      await react.openNativeSocialConnect({
+        bridge,
+        provider: 'github',
+        intent: 'connect',
+        accountId: typeof App !== 'undefined' && App.user ? App.user.id : null,
+        origin: window.location.origin,
+      });
+      flow.notice = 'Finish linking GitHub in your browser, then come back to the app. Sign in with the same Homeroom account if asked.';
+    } catch (err) {
+      flow.error = err.message;
+    }
+    DevChat._repaintDevFlow();
+  },
+
+  async _devFlowAction(action, target, event) {
     const flow = DevChat._devFlow;
     flow.error = null;
     flow.notice = null;
@@ -3501,7 +3547,10 @@ const DevChat = {
       DevChat.renderChatView();
       return;
     }
-    if (action === 'link-github' || action === 'link-connector') {
+    if (action === 'link-github') return DevChat._devFlowLinkGithub(event);
+    if (action === 'link-connector') {
+      // The Homeroom connector is added in Settings → Connectors, and there
+      // is no shorter road to it: that screen has the per-account steps.
       window.location.hash = '#settings/connectors';
       return;
     }

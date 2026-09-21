@@ -1284,6 +1284,15 @@ function issueRoutes(config) {
       }
 
       pushIssueUpdate({ action: 'created', appSlug: app.slug, appId: app.id, issueId: rows[0].id, kind });
+      // The Homeroom bot triages a new request as soon as it exists — the
+      // create carries the local row's id, so the twin's number goes here.
+      if (githubIssueNumber) {
+        try {
+          require('../services/homeroom-bot').noteIssueActivity({ appId: app.id, issueNumber: githubIssueNumber, reason: 'created' });
+        } catch (botErr) {
+          log.warn('issues', 'Homeroom bot wake failed', { err: botErr.message });
+        }
+      }
 
       log.info('issues', 'Issue created', { issueId: rows[0].id, kind, title });
       res.status(201).json({ issue: rows[0] });
@@ -1629,6 +1638,9 @@ function issueRoutes(config) {
       // changes-ready label + Preview button for auto runs that pushed code
       // and built a preview. staging_url is nulled on teardown, so a GC'd
       // preview degrades the label back to the plain outcome wording.
+      // #2684: a synthetic user's sessions (the Homeroom bot's shadow-mode
+      // triage turns) are never work on an issue that a card should show,
+      // here or in the in_progress derivation below.
       const { rows: headlessRows } = await pool.query(
         `SELECT DISTINCT ON (cs.headless_issue_number)
                 cs.headless_issue_number AS n, cs.id, cs.headless_status,
@@ -1637,6 +1649,7 @@ function issueRoutes(config) {
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = TRUE
             AND cs.headless_status IN ('generating', 'ready')
+            AND u.is_synthetic IS NOT TRUE
           ORDER BY cs.headless_issue_number, cs.created_at DESC`,
         [app.id]
       );
@@ -1716,6 +1729,7 @@ function issueRoutes(config) {
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0
+            AND u.is_synthetic IS NOT TRUE
             AND (cs.status IN ('active','promoted','merging')
                  OR (cs.status = 'paused'
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
