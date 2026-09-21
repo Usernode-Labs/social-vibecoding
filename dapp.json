@@ -2578,8 +2578,8 @@
     },
     {
       "name": "Improve panel leads with Give feedback, a verb like New change beside it",
-      "path": "/",
-      "expectSelector": "#improve-panel #improve-quick-actions #improve-row-feedback",
+      "path": "/?demo=1&shot=improve",
+      "expectSelector": "#improve-panel[data-open] #improve-quick-actions #improve-row-feedback",
       "expectText": "Give feedback"
     },
     {

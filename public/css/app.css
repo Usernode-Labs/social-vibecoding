@@ -8670,149 +8670,43 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   #dc-session-header.un-scrolled { background-color: var(--dc-strip); }
 }
 
-/* ── THE THIRD SURFACE: a lift that CASTS its own scrim ────────────────
-   `.dc-lift-panel` is the same glass the dev screen's session sheet wears —
-   `--dc-sheet-fill` over `--dc-frost` — on the shell's three floating panes:
-   the notifications rail, the Improve rail and the app chip's menu. What is
-   different is not the surface. It is where the modal dim comes from.
-
-   THE DIM USED TO BE PAINTED BEHIND THE PANE, AND THAT IS WHAT MADE IT DULL.
-   Each pane raised a sibling backdrop at `z-40` carrying `bg-black/40`, and
-   the pane sat above it at `z-50`. `backdrop-filter` samples everything
-   painted behind the element, so the thing this glass was frosting was a page
-   already dimmed 40% — and half of a dimmed page, blurred flat, is grey.
-   Measured on the home ground: #f4f2e4 goes to #929189 under the backdrop and
-   the pane composited to #cac7c3, a fifth of the way to black on the surface
-   meant to be the brightest thing on screen.
-
-   Making the pane opaque fixed the dullness and cost the glass — three flat
-   white slabs. Both halves are wanted: the page dimmed, the pane frosted over
-   what is actually behind it.
-
-   SO THE SCRIM IS AN OUTER BOX-SHADOW ON THE PANE. An outer shadow is clipped
-   to outside the border box, so it is never part of the element's own
-   backdrop: the pane frosts the UNDIMMED page while the same declaration
-   darkens everything around it. Measured, all three at (200,700) and
-   (1100,650) in a 1280x860 light viewport:
-
-     opaque + backdrop dim   page #948a84   pane #ffffff   (flat)
-     glass  + no dim         page #f7e7dc   pane #fcf6ee   (not modal)
-     glass  + backdrop dim   page #948a84   pane #cac7c3   (the dull one)
-     glass  + THIS           page #948a84   pane #fcf6ee   (both)
-
-   `100vmax` covers the viewport from wherever the pane is docked, at any
-   aspect ratio, which is what makes this work for a right rail, a bottom
-   sheet and a centred dropdown without any of them knowing its own geometry —
-   the reason this is a shadow and not a clip-path hole in the backdrop.
-
-   The backdrop ELEMENTS stay, transparent: they are the click-to-dismiss
-   target and they own `pointer-events`, which is the half of their job this
-   does not take over.
-
-   IT PAINTS AT THE PANE'S OWN z-50, one layer above the `z-40` the backdrops
-   sit at, so the header (`z-10`) is inside the dim exactly as it was — see
-   "THE HEADER IS INSIDE THE DIM" below, which this does not change.
-
-   Two shadow lists, both three layers long, because box-shadow interpolates
-   componentwise and a list that changes LENGTH snaps instead of fading. The
-   closed state carries the scrim as `transparent` so the dim fades with the
-   slide rather than popping off at the start of it. */
+/* Mounted panes retain their DOM and state, but stop painting after exit.
+   The separate overlay-scrim paint layer cuts out the rounded surface. It is
+   immediately AFTER that surface at the SAME z-index: glass samples the
+   undimmed page, later overlays still cover it, and existing backdrops keep
+   their original hit testing. See lib/overlay-scrim.js. */
 .dc-lift-panel {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
-  box-shadow: var(--dc-lift-shadow), 0 0 0 100vmax transparent;
+  box-shadow: var(--dc-lift-shadow);
+  visibility: visible;
 }
-.dc-lift-panel[data-open] {
-  box-shadow: var(--dc-lift-shadow), 0 0 0 100vmax var(--pane-scrim);
-}
-/* A CLOSED PANE IS NOT PAINTED, and it is `opacity` that does it — NOT
-   `visibility: hidden`, which is the obvious answer and the wrong one.
-
-   THE COST FIRST. The scrim layer is 100vmax of spread, and all three panes
-   are ALWAYS MOUNTED — a closed rail is translated off-screen, not unmounted.
-   Chromium records and rasterises a shadow that big even when its colour is
-   `transparent`, on three elements, on every route in the shell. Measured at
-   1280x860 over 60 forced style-recalc + paint cycles:
-
-     painted while closed          frame median 51.9ms   p95 72.7ms
-     opacity: 0 while closed                 16.7ms          35.2ms
-     visibility: hidden while closed         16.7ms          17.1ms
-
-   3x the frame cost on every screen, which is enough to make timing-dependent
-   checks fail on a slow container.
-
-   WHY NOT `visibility: hidden`, WHICH IS FASTER. It removes the subtree's
-   text from `innerText`, and dapp.json reads text out of these panes on
-   routes where they are CLOSED — "Improve panel leads with Give feedback"
-   asserts that string on `/`, where #improve-panel is shut. Hiding it turned
-   that check red, and it would have taken any future one with it. `opacity: 0`
-   suppresses the paint without touching layout, text extraction or the
-   accessibility tree, which is the same trade #apps-switcher-sheet's dropdown
-   already makes for its own closed state. The p95 is 18ms worse than
-   visibility's and that is the right price.
-
-   THE DELAY IS WHAT KEEPS THE SLIDE VISIBLE. Opacity drops only after the
-   200ms transition has run, so the pane paints all the way out; opening has
-   no delay here, so it paints all the way in.
-
-   The other candidate was collapsing the spread to 0 while closed. Same
-   saving, and wrong: box-shadow interpolates spread, so the dim grew out of
-   the pane's edge as a hard-edged rectangle instead of fading. */
-.dc-lift-panel:not([data-open]) {
+.dc-lift-panel:not([data-open]):not(.platform-sheet-adopted) {
   opacity: 0;
+  visibility: hidden;
   transition: transform 200ms ease-out, box-shadow 200ms ease-out,
-    opacity 0s linear 200ms;
+    opacity 0s linear 200ms, visibility 0s linear 200ms;
+}
+.overlay-scrim {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+  background: var(--pane-scrim);
 }
 
 /* NO BLUR, NO GLASS — the same fallback the two planes above take, and for
    the same reason: without the filter the alphas leave the page sitting
-   unblurred behind body text. The scrim is unaffected; it is a shadow, not a
-   filter, so the dim still reads and only the pane goes opaque. */
+   unblurred behind body text. The separate scrim is unaffected; only the pane goes opaque. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dc-lift-panel { background-color: var(--dc-sheet); }
 }
 
-/* ── THE KIT'S SURFACES TAKE THE PANE GLASS (#1839) ──────────────────────
-   The three panes above are frosted only where they present THEMSELVES: the
-   desktop rails and the desktop dropdown. On touch the kit takes over
-   (`.platform-sheet-adopted`, `lib/kit-surface.ts`): the same element rides
-   inside `.un-sheet`, which paints an opaque `--un-sheet-bg` and owns the
-   surface, so a phone never saw the glass at all. The nine dialogs, Members &
-   visibility among them, never saw it on ANY width: with the kit loaded their
-   card is lifted into `.un-modal`, opaque for the same reason, and
-   `.un-modal .platform-modal-card` above strips the card's own chrome so
-   the kit's is the only one. The header drawer rides `.un-panel` on touch.
-
-   So the frost goes on the KIT'S surfaces, and it goes on them HERE. This
-   stylesheet is loaded by the shell document alone, after native.css, so a
-   plain `.un-modal` rule in it restyles the kit's modal in the shell and
-   nowhere else: every app keeps the kit exactly as native.css ships it.
-   (Restyling native.css itself would be the fleet-wide change this is not.)
-
-   Three things carry over from `.dc-lift-panel`, for the reasons written
-   there: the translucent fill over `--dc-frost`; the dim cast FROM the
-   surface as a 100vmax outer shadow, so the glass never samples a dimmed
-   page (glass over the kit's `.un-backdrop` came out the same dull grey the
-   rails did over `bg-black/40`); and the opaque fallback where there is no
-   backdrop-filter. The kit's backdrop element stays, transparent, because
-   it is the kit's tap-to-dismiss target and its `style.opacity` is what
-   `body:has(.un-backdrop[style*="opacity: 1"])` in dapp.json reads.
-   `:has(+ …)` scopes the transparency to a backdrop that is immediately
-   followed by one of these three surfaces, which is how presentModal /
-   presentSheet / presentPanel build them; the alert's and action sheet's
-   backdrops keep the kit's dim.
-
-   HOW THE DIM RIDES THE MOTION differs per surface, and that is the whole
-   subtlety. The modal fades: `.un-modal` goes opacity 0 → 1 (`.un-in`) and
-   back, and an element's opacity applies to its box-shadow too, so the
-   cast scrim fades with the card and nothing more is needed. The sheet and
-   the panel SLIDE, with the kit fading the backdrop 1:1 with the finger; a
-   constant scrim would hold the page dark all the way through the exit
-   spring and then vanish in a frame. So the kit publishes that same 0..1 as
-   `--un-presence` on the surface (native.js render()), and the scrim's
-   alpha is `--pane-scrim-alpha` times it: the dim follows the drag, springs
-   in with the entrance and out with the exit, exactly as the backdrop's did. */
+/* Shell-only frosted kit surfaces. PlatformUI attaches the same cutout
+   paint layer used by the legacy panes. Kit opacity/presence and teardown
+   remain authoritative, including dragging and spring overshoot. The kit's
+   ordinary backdrops remain in place for dismissal and modal lifecycle. */
 .un-backdrop:has(+ .un-modal),
 .un-backdrop:has(+ .un-sheet),
 .un-backdrop:has(+ .un-panel) {
@@ -8822,14 +8716,13 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
-  box-shadow: var(--dc-lift-shadow), 0 0 0 100vmax var(--pane-scrim);
+  box-shadow: var(--dc-lift-shadow);
 }
 .un-sheet {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
-  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22),
-    0 0 0 100vmax rgb(var(--pane-scrim-ink) / calc(var(--pane-scrim-alpha) * var(--un-presence, 1)));
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
 }
 /* The overscroll extension below the sheet (issue #789 in native.css) is
    more sheet, so it is the same glass. */
@@ -8844,12 +8737,10 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   -webkit-backdrop-filter: var(--dc-frost);
 }
 .un-panel[data-un-side="right"] {
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.22),
-    0 0 0 100vmax rgb(var(--pane-scrim-ink) / calc(var(--pane-scrim-alpha) * var(--un-presence, 1)));
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.22);
 }
 .un-panel[data-un-side="left"] {
-  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.22),
-    0 0 0 100vmax rgb(var(--pane-scrim-ink) / calc(var(--pane-scrim-alpha) * var(--un-presence, 1)));
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.22);
 }
 /* The panel's overshoot extension (the `.un-sheet::after` story on the x
    axis) is more panel. */
