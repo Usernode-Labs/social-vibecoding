@@ -618,6 +618,23 @@ test("the viewer loop credits the finished numeric all the way to its target", (
   assert.match(body, /const base = 900520 \+ slot \* 20;/);
 });
 
+test('the viewer loop enrolls each viewer in the archive season, so the screenshot identity is a member with history', () => {
+  // #2495: the Leaderboard screen draws its event picker for admins and for
+  // members with a trace in a season other than the default event's. Every
+  // screenshot signs as usernode-capture, a member and one of the three
+  // viewer identities, so the loop gives each of them a past season; the
+  // checks identity is an admin and asserts on the picker by role.
+  const start = body.indexOf('INSERT INTO user_enrollments', body.indexOf('const VIEWER_USERNAMES'));
+  const stmtEnd = body.indexOf(');', start);
+  const stmt = body.slice(start, stmtEnd);
+  assert.match(stmt, /\(\$\{base \+ 2\}, \$1, \$4, \$5,/, 'a third row, in the viewer\'s own id block');
+  assert.match(stmt, /\[viewerId, SEASON_ID, EVENT_REGULAR_ID, SEASON_CLOSED_ID, EVENT_ARCHIVE_ID\]/,
+    'the row hangs off the archive event AND its closed season (the scope invariant)');
+  const check = DAPP_TESTS.find((t) => typeof t.expectSelector === 'string' && t.expectSelector.includes('#tc-ev-select'));
+  assert.ok(check, 'the declared check this row exists for is still there');
+  assert.match(check.name, /with history/, 'and says which viewer it depends on');
+});
+
 test('epoch_stats: 3 epochs x 3 wallets, including one wallet-only (user_id NULL) row per epoch', () => {
   const start = body.indexOf('INSERT INTO epoch_stats');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
