@@ -19104,6 +19104,15 @@ const AppView = {
         url = new URL(visit || '/', resolved);
         if (url.origin !== new URL(resolved).origin) url = new URL('/', resolved);
       } catch { return null; }
+      // #2691: the self-app's staging database is deliberately sparse, and
+      // its review fixtures are request-time data gated on `?demo=1`.  The
+      // ordinary Preview action opens the root (rather than the optional
+      // testing deep link), so without this flag a reviewer can see an empty
+      // production-shaped screen and conclude that the submitted UI did not
+      // land.  Keep this self-app-only: apps built on the platform own their
+      // own query-string semantics and must continue to receive an untouched
+      // preview URL. The URL API preserves an existing path/hash/query.
+      if (selfHosted) url.searchParams.set('demo', '1');
       url.searchParams.set('token', token);
       return url.toString();
     };
