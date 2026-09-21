@@ -149,6 +149,53 @@ Acceptance: one local command creates an issue and proposal and reaches a
 `Captured` card with the five media artifacts. No GitHub PR or production
 service is required.
 
+## Historical merged-change replay
+
+**Status: three real revisions from proposals whose visual evidence failed
+historically are available as local replay cases.** The read-only production
+proposal listing identified PR #2548 (`evidence_agent_failed`), #2678
+(`evidence_agent_timeout`), and #2688 (`evidence_agent_timeout`). Their exact
+base and head SHAs are pinned in `scripts/local-visual-evidence/run-historical.js`.
+The individual typed plans live alongside it. After setting up and starting
+the local Homeroom stack, run one case with:
+
+```sh
+npm run test:visual-evidence:historical -- 2548
+npm run test:visual-evidence:historical -- 2678
+npm run test:visual-evidence:historical -- 2688
+```
+
+The command fetches any missing Git objects, verifies each clean checkout's
+full SHA, builds both exact Docker revisions, snapshots the **local** database,
+and starts each revision against a separate clone. It mints the platform's
+normal short-lived capture JWTs for that local data. It runs the production
+browser replay and encoder twice, rebuilding the database clones between
+passes, then writes focused/context PNGs, paired WebMs, separate before/after
+review WebMs, and a manifest with SHA/digest provenance under
+`.local-visual-evidence/historical-<pr>-<run-id>/`. It removes temporary
+containers and cloned databases after the run. Only Git source and selected
+issue/proposal metadata came from the real platform; no production database,
+user data, or model credential is imported.
+
+The supplied plans have one visual checkpoint each, so their WebMs are short
+before/after views rather than continuous recordings of a long interaction.
+
+These cases establish whether deterministic replay and media generation can
+show the real change when handed a valid plan. Codex wrote the plans here;
+the historical evidence agent did not. A passing case does **not** mean the
+old agent timeout/failure or the normal HTTP proposal path is fixed. The
+remaining Milestone 2 route test and Milestone 3 planner test are the gates
+for that claim. Human review is still required to decide whether the media
+supports each change.
+
+The run exposed a local fixture blocker: a newly seeded `usernode-capture`
+member had no platform access, so authenticated captures loaded the waitlist
+and its API requests returned 403. The seed now grants that non-interactive,
+non-admin identity platform access on creation and repairs existing local
+fixtures on boot. This failure was observed in local revision containers; the
+historical proposal failure labels alone do not establish that it was their
+production root cause.
+
 ## Milestone 3: GPT planning and optional real metadata
 
 1. Keep the plan-file path as the deterministic baseline. Add an explicit
