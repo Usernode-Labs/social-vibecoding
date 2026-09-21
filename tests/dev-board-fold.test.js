@@ -903,7 +903,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 707 → 708: #2490 added one check on Home's Challenges block. On the
   // staging demo, finished challenges sit last under a Done header, after
   // every unfinished one. That leaves 22 slots, still clear of the floor.
-  assert.equal(DAPP.tests.length, 708);
+  //
+  // 707 → 708: independently on main, #2688 added one check on the native
+  // Android header, pinning the status-bar inset classification regression.
+  //
+  // 708 → 709: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 707 → 708 alone,
+  // with the #2490 check above; main independently took the same 707 to 708
+  // with the #2688 check above. Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 707 + 1 + 1 = 709.
+  assert.equal(DAPP.tests.length, 709);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
