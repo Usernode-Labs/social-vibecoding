@@ -4,19 +4,19 @@
   "rationale": "PR #2678 hides the season picker and card for a member without previous-season participation.",
   "stories": [
     {
-      "id": "new-member-season-picker",
-      "claim": "A new member sees the current standings without a season picker above them.",
+      "id": "member-board-alone",
+      "claim": "A member whose only rows are in the running season sees the board alone on the Leaderboard tab: no event picker and no event card between the tab strip and the standings table.",
       "persona": "member",
       "viewports": [
         { "name": "desktop", "width": 1280, "height": 800 }
       ],
       "intent": {
         "startPath": "/#leaderboard/topochain",
-        "steps": ["Open the Topochain Leaderboard as the capture member and wait for standings to load."],
+        "steps": ["Open the Leaderboard screen on its Leaderboard tab", "Wait for the standings table to render"],
         "checkpoint": "The base revision shows the season picker; the head revision omits it for this new member.",
         "focus": "Leaderboard standings and event bar",
         "baseState": "present",
-        "animation": "steps"
+        "animation": "none"
       },
       "replay": {
         "before": {
@@ -48,7 +48,7 @@
               { "type": "visible", "target": { "by": "css", "value": "#tc-lb-body" } }
             ]
           },
-          "animation": "steps"
+          "animation": "none"
         }
       }
     }

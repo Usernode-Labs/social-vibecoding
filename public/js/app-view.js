@@ -17190,7 +17190,8 @@ const AppView = {
         }
         if (animation) {
           const animationUrl = evidenceUrl(animation.url);
-          controls.push(`<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play interaction</summary><video src="${attr(animationUrl)}" controls preload="none" muted playsinline aria-label="Interaction replay for ${attr(claim.claim || '')}" style="display:block;width:100%;max-height:360px;margin-top:6px;border-radius:6px;background:rgba(0,0,0,0.35)"></video></details>`);
+          const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
+          controls.push(`<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play ${videoKind}</summary><video src="${attr(animationUrl)}" controls preload="none" muted playsinline aria-label="${videoKind === 'animation' ? 'Animation' : 'Interaction'} replay for ${attr(claim.claim || '')}" style="display:block;width:100%;max-height:360px;margin-top:6px;border-radius:6px;background:rgba(0,0,0,0.35)"></video></details>`);
         }
         viewportRows.push(`<div data-evidence-viewport="${attr(viewport)}" class="mt-3">
           <div class="mb-1 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewport)} · ${esc(claim.persona === 'read_only_admin' ? 'read-only admin' : 'member')}</div>
@@ -17210,7 +17211,10 @@ const AppView = {
     if (!rendered.length) {
       return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">Captured visual change preview metadata is incomplete; no claim can be displayed.</section>`;
     }
-    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Captured visual change preview" class="space-y-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">These captures passed replay checks. Review the images and video to decide whether they show the claimed change.</p>${rendered.join('')}</section>`;
+    const mediaCopy = artifacts.some((artifact) => artifact?.variant === 'animation')
+      ? 'Review the images and video to decide whether they show the claimed change.'
+      : 'Review the before-and-after images to decide whether they show the claimed change.';
+    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Captured visual change preview" class="space-y-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">These captures passed replay checks. ${mediaCopy}</p>${rendered.join('')}</section>`;
   },
 
   // Authenticated evidence uses full relative URLs rather than public

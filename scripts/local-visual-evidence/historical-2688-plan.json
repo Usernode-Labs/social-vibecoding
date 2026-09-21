@@ -4,7 +4,7 @@
   "rationale": "PR #2688 changes native WebView startup classification so the platform header keeps the simulated status-bar inset.",
   "stories": [
     {
-      "id": "native-header-safe-area",
+      "id": "native-header-status-bar",
       "claim": "The native header retains its status-bar safe area because startup classifies the document as native without applying the ordinary-browser override.",
       "persona": "member",
       "viewports": [
@@ -12,11 +12,11 @@
       ],
       "intent": {
         "startPath": "/?demo=1&un-native-webview=1&safe-bottom=1",
-        "steps": ["Open Homeroom home with the native presentation and a 47-pixel simulated safe area."],
+        "steps": ["Open Homeroom home using the existing native Android presentation override.", "Inspect the home button and title in the platform header."],
         "checkpoint": "The head revision reserves the status-bar space above the platform header controls.",
         "focus": "Platform header",
         "baseState": "present",
-        "animation": "steps"
+        "animation": "none"
       },
       "replay": {
         "before": {
@@ -48,7 +48,7 @@
               { "type": "visible", "target": { "by": "css", "value": "#platform-header" } }
             ]
           },
-          "animation": "steps"
+          "animation": "none"
         }
       }
     }

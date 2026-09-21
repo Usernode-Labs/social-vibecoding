@@ -51,7 +51,26 @@ test('verified cards are claim-first, escaped, authenticated, and never autoplay
   assert.match(html, /relative-pointer flow/);
   assert.match(html, /Captured/);
   assert.match(html, /Review the images and video to decide/);
+  assert.match(html, /Play interaction/);
   assert.doesNotMatch(html, /Verified visual change preview/);
+});
+
+test('motion evidence labels its recording as an animation', () => {
+  const value = evidence();
+  value.claims[0].animation = 'motion';
+  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
+  assert.match(html, /Play animation/);
+  assert.doesNotMatch(html, /Play interaction/);
+});
+
+test('a static verified claim shows before and after PNGs without suggesting a video', () => {
+  const value = evidence();
+  value.claims[0].animation = 'none';
+  value.artifacts = value.artifacts.filter((artifact) => artifact.variant !== 'animation');
+  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
+  assert.match(html, /Review the before-and-after images/);
+  assert.match(html, /<img src=/);
+  assert.doesNotMatch(html, /<video|Play interaction|Play animation|images and video/);
 });
 
 test('absence is labelled only when the author explicitly declared a new base state', () => {

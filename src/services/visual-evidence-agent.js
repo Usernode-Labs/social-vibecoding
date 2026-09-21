@@ -54,7 +54,10 @@ assertions:{before:[...],after:[...]}, animation }. Every assertion list is
 non-empty. Supported assertions are visible/hidden/attached/detached/checked/
 focusWithin with target; text with target,value,exact; count with target,count;
 value with target,value; or url with path. The checkpoint animation must equal
-the accepted intent animation. No arbitrary JavaScript, absolute URL, secret,
+the accepted intent animation. Use "none" for a static before/after state;
+"steps" requires an actual visible interaction on both revisions, and
+"motion" records real movement. Do not make a video from waits or repeated
+screenshots. No arbitrary JavaScript, absolute URL, secret,
 credential, upload, or request injection is accepted.`;
 }
 

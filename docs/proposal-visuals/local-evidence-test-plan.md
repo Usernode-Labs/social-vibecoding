@@ -152,12 +152,14 @@ service is required.
 ## Historical merged-change replay
 
 **Status: three real revisions from proposals whose visual evidence failed
-historically are available as local replay cases.** The read-only production
-proposal listing identified PR #2548 (`evidence_agent_failed`), #2678
+historically pass local replay.** Read-only production proposal records
+identified PR #2548 (`evidence_agent_failed`), #2678
 (`evidence_agent_timeout`), and #2688 (`evidence_agent_timeout`). Their exact
-base and head SHAs are pinned in `scripts/local-visual-evidence/run-historical.js`.
-The individual typed plans live alongside it. After setting up and starting
-the local Homeroom stack, run one case with:
+base and head SHAs, accepted claims, viewports, and media types are pinned in
+`scripts/local-visual-evidence/historical-cases.json`. Each typed plan is
+checked against that snapshot before replay, so a local test cannot silently
+omit a claim or turn a screenshot request into a video. After setting up and
+starting the local Homeroom stack, run one case with:
 
 ```sh
 npm run test:visual-evidence:historical -- 2548
@@ -170,23 +172,30 @@ full SHA, builds both exact Docker revisions, snapshots the **local** database,
 and starts each revision against a separate clone. It mints the platform's
 normal short-lived capture JWTs for that local data. It runs the production
 browser replay and encoder twice, rebuilding the database clones between
-passes, then writes focused/context PNGs, paired WebMs, separate before/after
-review WebMs, and a manifest with SHA/digest provenance under
+passes, then writes focused/context PNGs and a manifest with SHA/digest
+provenance under
 `.local-visual-evidence/historical-<pr>-<run-id>/`. It removes temporary
 containers and cloned databases after the run. Only Git source and selected
 issue/proposal metadata came from the real platform; no production database,
 user data, or model credential is imported.
 
-The supplied plans have one visual checkpoint each, so their WebMs are short
-before/after views rather than continuous recordings of a long interaction.
+The #2678 and #2688 claims request `animation: none`; each produces four PNGs
+and **no WebM**. Two #2548 claims also produce PNGs only. Its third claim
+requests `animation: steps`, so the browser records the actual Settings,
+Home, and Improve interaction on both revisions and produces a paired WebM
+for each viewport. A wait-only plan cannot request a steps video, and replay
+rejects a recording with no visible interaction. `animation: motion` likewise
+requires changing captured frames. The proposal card mentions video only
+when one was produced.
 
 These cases establish whether deterministic replay and media generation can
 show the real change when handed a valid plan. Codex wrote the plans here;
-the historical evidence agent did not. A passing case does **not** mean the
-old agent timeout/failure or the normal HTTP proposal path is fixed. The
-remaining Milestone 2 route test and Milestone 3 planner test are the gates
-for that claim. Human review is still required to decide whether the media
-supports each change.
+the historical evidence agent did not. The live failures happened before any
+capture artifacts were produced. A passing local replay does **not** prove
+that the live evidence agent will author a valid plan or complete before its
+timeout. The remaining Milestone 2 HTTP route test, Milestone 3 planner test,
+and a normal staging proposal run are the gates for that claim. Human review
+is still required to decide whether the media supports each change.
 
 The run exposed a local fixture blocker: a newly seeded `usernode-capture`
 member had no platform access, so authenticated captures loaded the waitlist
@@ -224,8 +233,8 @@ semantic review of the media.
 - The two local Git commits, their bundle, and the app change patch.
 - Each pass's result and diagnostics, plus the comparison verdict.
 - Artifact names, MIME types, byte counts, and SHA-256 digests.
-- The actual PNGs and WebM from pass two.
-- Side-specific review WebMs derived from the verified paired WebM.
+- The actual PNGs and any declared WebM from pass two.
+- Side-specific review WebMs only when a paired WebM exists.
 
 Milestone 1 uses real commit SHAs from a disposable local repository. The
 manifest labels them as local fixture commits. Milestone 2 uses the same

@@ -28,7 +28,7 @@ const EVENT_PREFIX = '__USERNODE_EVIDENCE__ ';
 const MAX_CONSOLE_ITEMS = 50;
 const MAX_DIAGNOSTIC_CHARS = 500;
 const FOCUS_PADDING = 24;
-const STEPS_FPS = 4;
+const STEPS_FPS = 8;
 const MOTION_FPS = 10;
 const MAX_ANIMATION_SECONDS = 8;
 const STEPS_TARGET_BYTES = 1_500_000;
@@ -180,13 +180,14 @@ function redactedUrl(value) {
   } catch { return clip(value, 300); }
 }
 
-function expectedFinalPath(startPath, pageUrl, origin, side = 'page') {
+function expectedFinalPath(startPath, pageUrl, origin, side = 'page', { allowDeclaredHome = false } = {}) {
   const finalUrl = new URL(pageUrl);
   const finalPath = publicRelativePath(finalUrl);
   if (finalUrl.origin !== origin) {
     throw new ReplayFailure('cross_origin_navigation', `${side} ended outside its evidence origin.`);
   }
-  if (startPath !== '/' && (finalPath === '/' || /^\/(?:login|signin|error)(?:[/?#]|$)/i.test(finalPath))) {
+  if (startPath !== '/' && ((finalPath === '/' && !allowDeclaredHome)
+      || /^\/(?:login|signin|error)(?:[/?#]|$)/i.test(finalPath))) {
     throw new ReplayFailure('unexpected_fallback', `${side} ended on ${finalPath} instead of its declared evidence state.`);
   }
   return finalPath;
@@ -374,20 +375,27 @@ async function cropPng(page, buffer, crop, viewport) {
   return Buffer.from(result, 'base64');
 }
 
-async function perceptualHash(page, buffer) {
-  return page.evaluate(async (data) => {
-    const image = new Image(); image.src = `data:image/png;base64,${data}`; await image.decode();
-    const canvas = document.createElement('canvas'); canvas.width = 9; canvas.height = 8;
-    const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0, 9, 8);
-    const pixels = ctx.getImageData(0, 0, 9, 8).data;
-    let bits = '';
-    const gray = (i) => 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
-    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-      const left = (y * 9 + x) * 4; const right = left + 4;
-      bits += gray(left) > gray(right) ? '1' : '0';
+function perceptualHash(buffer) {
+  // Decoding in Chromium's canvas produced different hashes for byte-identical
+  // PNGs in separate replay passes. Decode on the CPU so the reproducibility
+  // check measures the screenshot rather than a GPU resampling decision.
+  const { PNG } = require('pngjs');
+  const { width, height, data } = PNG.sync.read(buffer);
+  const cells = Array.from({ length: 8 }, (_, y) => Array.from({ length: 9 }, (_, x) => {
+    let sum = 0;
+    for (let sy = 0; sy < 4; sy++) for (let sx = 0; sx < 4; sx++) {
+      const px = Math.min(width - 1, Math.floor((x + (sx + 0.5) / 4) * width / 9));
+      const py = Math.min(height - 1, Math.floor((y + (sy + 0.5) / 4) * height / 8));
+      const offset = (py * width + px) * 4;
+      sum += 0.299 * data[offset] + 0.587 * data[offset + 1] + 0.114 * data[offset + 2];
     }
-    return BigInt(`0b${bits}`).toString(16).padStart(16, '0');
-  }, buffer.toString('base64'));
+    return sum / 16;
+  }));
+  let bits = '';
+  for (const row of cells) for (let x = 0; x < 8; x++) {
+    bits += row[x] > row[x + 1] + 0.5 ? '1' : '0';
+  }
+  return BigInt(`0b${bits}`).toString(16).padStart(16, '0');
 }
 
 function hammingHex(left, right) {
@@ -395,42 +403,6 @@ function hammingHex(left, right) {
   let count = 0;
   while (n) { count += Number(n & 1n); n >>= 1n; }
   return count;
-}
-
-function mergeStageOrder(beforeStages, headStages) {
-  const all = [...new Set([...beforeStages, ...headStages])];
-  const edges = new Map(all.map((stage) => [stage, new Set()]));
-  const indegree = new Map(all.map((stage) => [stage, 0]));
-  for (const list of [beforeStages, headStages]) {
-    for (let i = 1; i < list.length; i++) {
-      if (list[i - 1] === list[i] || edges.get(list[i - 1]).has(list[i])) continue;
-      edges.get(list[i - 1]).add(list[i]); indegree.set(list[i], indegree.get(list[i]) + 1);
-    }
-  }
-  const priority = new Map(all.map((stage, index) => [stage, index]));
-  const queue = all.filter((stage) => indegree.get(stage) === 0);
-  const out = [];
-  while (queue.length) {
-    queue.sort((a, b) => priority.get(a) - priority.get(b));
-    const stage = queue.shift(); out.push(stage);
-    for (const next of edges.get(stage)) {
-      indegree.set(next, indegree.get(next) - 1);
-      if (indegree.get(next) === 0) queue.push(next);
-    }
-  }
-  if (out.length !== all.length) throw new ReplayFailure('stage_order_conflict', 'Base and head stage order cannot be aligned.');
-  return out;
-}
-
-function frameAtOrBefore(frames, stage, order) {
-  const exact = frames.find((frame) => frame.stage === stage);
-  if (exact) return exact;
-  const target = order.indexOf(stage);
-  for (let i = target - 1; i >= 0; i--) {
-    const prior = frames.find((frame) => frame.stage === order[i]);
-    if (prior) return prior;
-  }
-  return frames[0];
 }
 
 async function composePairFrame(page, base, head, { label, width = 960 }) {
@@ -524,7 +496,13 @@ async function startMotionCapture(page) {
   await client.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 });
   return {
     frames,
-    async stop() { await client.send('Page.stopScreencast').catch(() => {}); await client.detach().catch(() => {}); },
+    durationMs: 0,
+    async stop() {
+      if (this.durationMs) return;
+      this.durationMs = Date.now() - startedAt;
+      await client.send('Page.stopScreencast').catch(() => {});
+      await client.detach().catch(() => {});
+    },
   };
 }
 
@@ -540,7 +518,9 @@ function screenshotFingerprint(result) {
 async function runSide(browser, scratchPage, input, story, viewport, side) {
   const origin = input.origins[side];
   const authToken = input.authTokens[story.persona] || '';
-  const motion = story.replay.checkpoint.animation === 'motion';
+  const animation = story.replay.checkpoint.animation;
+  const motion = animation === 'motion';
+  const recordInteraction = animation === 'steps';
   const diagnostics = { consoleErrors: [], pageErrors: [], failedRequests: [], blockedRequests: [] };
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
@@ -591,7 +571,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
     await settlePage(page, { motion });
     stages.push({ stage: '__start__', image: await page.screenshot({ type: 'png' }) });
-    if (motion) motionCapture = await startMotionCapture(page);
+    if (motion || recordInteraction) motionCapture = await startMotionCapture(page);
 
     const actionResults = [];
     const sideDeadline = Date.now() + planContract.MAX_SIDE_MS;
@@ -606,10 +586,12 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     }
     if (motionCapture) await motionCapture.stop();
 
-    const finalPath = expectedFinalPath(sidePlan.startPath, page.url(), origin, side);
+    const assertionList = story.replay.checkpoint.assertions[side === 'head' ? 'after' : 'before'];
+    const finalPath = expectedFinalPath(sidePlan.startPath, page.url(), origin, side, {
+      allowDeclaredHome: assertionList.some((assertion) => assertion.type === 'url' && assertion.path === '/'),
+    });
 
     const assertions = [];
-    const assertionList = story.replay.checkpoint.assertions[side === 'head' ? 'after' : 'before'];
     for (const assertion of assertionList) assertions.push(await evaluateAssertion(page, assertion, origin));
 
     const focusSpec = story.replay.checkpoint.focus[side === 'head' ? 'after' : 'before'];
@@ -634,13 +616,18 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     const result = {
       side, storyId: story.id, viewport: viewport.name, path: finalPath,
       actionResults, assertions, focusRect, contextPng, stages,
-      motionFrames: motionCapture?.frames || [], diagnostics,
+      motionFrames: motionCapture
+        ? [{ at: 0, data: stages[0].image }, ...motionCapture.frames,
+          { at: motionCapture.durationMs, data: contextPng }]
+        : [],
+      recordedFrameCount: motionCapture?.frames.length || 0,
+      diagnostics,
     };
     // The structural fingerprint proves the same route/actions/assertions and
     // focus geometry were reached. The perceptual hash separately binds the
     // verdict to rendered pixels while tolerating a couple of harmless raster
     // bits between clean Chromium runs.
-    result.contextHash = await perceptualHash(scratchPage, contextPng);
+    result.contextHash = perceptualHash(contextPng);
     result.fingerprint = screenshotFingerprint(result);
     return result;
   } finally {
@@ -650,30 +637,37 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   }
 }
 
-async function buildStepsAnimation(scratchPage, base, head, crops, viewport, checkpoint) {
-  const beforeStages = base.stages.map((frame) => frame.stage);
-  const headStages = head.stages.map((frame) => frame.stage);
-  const order = mergeStageOrder(beforeStages, headStages);
+async function buildStepsAnimation(scratchPage, base, head, viewport, checkpoint) {
+  if (base.recordedFrameCount < 2 || head.recordedFrameCount < 2) {
+    throw new ReplayFailure('no_visible_interaction',
+      'The interaction did not yield a browser recording on both revisions; use screenshots for a static claim.');
+  }
+  const fullViewport = { x: 0, y: 0, width: viewport.width, height: viewport.height };
+  const maxAt = Math.min(MAX_ANIMATION_SECONDS * 1000,
+    Math.max(base.motionFrames.at(-1)?.at || 0, head.motionFrames.at(-1)?.at || 0));
   const frames = [];
-  let previousHash = null;
-  const labels = [];
-  for (const stage of order) {
-    const before = frameAtOrBefore(base.stages, stage, order);
-    const after = frameAtOrBefore(head.stages, stage, order);
-    const baseCrop = await cropPng(scratchPage, before.image, crops.base, viewport);
-    const headCrop = await cropPng(scratchPage, after.image, crops.head, viewport);
-    const label = stage === '__start__' ? 'Start'
-      : stage === '__checkpoint__' ? checkpoint.label : stage.replace(/[-_]+/g, ' ');
-    const paired = await composePairFrame(scratchPage, baseCrop, headCrop, { label });
-    const hash = await perceptualHash(scratchPage, paired);
-    if (previousHash && hammingHex(previousHash, hash) <= 2) continue;
-    previousHash = hash; labels.push(label);
-    // Two identical encoded frames hold the stage for 500 ms at 4 fps.
-    frames.push(paired, paired);
+  const changed = { base: false, head: false };
+  let previousContent = null;
+  for (let at = 0; at <= maxAt && frames.length < STEPS_FPS * MAX_ANIMATION_SECONDS; at += 1000 / STEPS_FPS) {
+    const before = motionFrameAt(base.motionFrames, at)?.data;
+    const after = motionFrameAt(head.motionFrames, at)?.data;
+    const baseCrop = await cropPng(scratchPage, before, fullViewport, viewport);
+    const headCrop = await cropPng(scratchPage, after, fullViewport, viewport);
+    const content = [perceptualHash(baseCrop), perceptualHash(headCrop)];
+    if (previousContent) {
+      if (hammingHex(content[0], previousContent[0]) > 2) changed.base = true;
+      if (hammingHex(content[1], previousContent[1]) > 2) changed.head = true;
+    }
+    previousContent = content;
+    frames.push(await composePairFrame(scratchPage, baseCrop, headCrop, { label: checkpoint.label }));
+  }
+  if (!changed.base || !changed.head) {
+    throw new ReplayFailure('no_visible_interaction',
+      'The browser recording did not show interaction on both revisions; use screenshots for a static claim.');
   }
   return {
     data: await encodeWebm(frames, { fps: STEPS_FPS, targetBytes: STEPS_TARGET_BYTES, maxBytes: STEPS_MAX_BYTES }),
-    labels,
+    labels: [checkpoint.label],
   };
 }
 
@@ -690,12 +684,22 @@ async function buildMotionAnimation(scratchPage, base, head, crops, viewport, ch
   const maxAt = Math.min(MAX_ANIMATION_SECONDS * 1000,
     Math.max(base.motionFrames.at(-1)?.at || 0, head.motionFrames.at(-1)?.at || 0));
   const frames = [];
+  let previousContent = null;
+  let changed = false;
   for (let at = 0; at <= maxAt && frames.length < MOTION_FPS * MAX_ANIMATION_SECONDS; at += 1000 / MOTION_FPS) {
     const before = motionFrameAt(base.motionFrames, at)?.data || base.contextPng;
     const after = motionFrameAt(head.motionFrames, at)?.data || head.contextPng;
     const baseCrop = await cropPng(scratchPage, before, crops.base, viewport);
     const headCrop = await cropPng(scratchPage, after, crops.head, viewport);
+    const content = [perceptualHash(baseCrop), perceptualHash(headCrop)];
+    if (previousContent && content.some((hash, index) =>
+      hammingHex(hash, previousContent[index]) > 2)) changed = true;
+    previousContent = content;
     frames.push(await composePairFrame(scratchPage, baseCrop, headCrop, { label: checkpoint.label }));
+  }
+  if (!changed) {
+    throw new ReplayFailure('no_visible_motion',
+      'The motion flow did not record changing visual frames; use screenshots for a static claim.');
   }
   return {
     data: await encodeWebm(frames, { fps: MOTION_FPS, targetBytes: MOTION_TARGET_BYTES, maxBytes: MOTION_MAX_BYTES }),
@@ -717,8 +721,8 @@ async function runReplay(browser, input) {
         const crops = normalizeCropPair(base.focusRect, head.focusRect, viewport);
         const baseFocus = await cropPng(scratchPage, base.contextPng, crops.base, viewport);
         const headFocus = await cropPng(scratchPage, head.contextPng, crops.head, viewport);
-        const baseFocusHash = await perceptualHash(scratchPage, baseFocus);
-        const headFocusHash = await perceptualHash(scratchPage, headFocus);
+        const baseFocusHash = perceptualHash(baseFocus);
+        const headFocusHash = perceptualHash(headFocus);
         const storyResult = {
           id: story.id,
           viewport: viewport.name,
@@ -736,7 +740,7 @@ async function runReplay(browser, input) {
           if (story.replay.checkpoint.animation !== 'none') {
             const animation = story.replay.checkpoint.animation === 'motion'
               ? await buildMotionAnimation(scratchPage, base, head, crops, viewport, story.replay.checkpoint)
-              : await buildStepsAnimation(scratchPage, base, head, crops, viewport, story.replay.checkpoint);
+              : await buildStepsAnimation(scratchPage, base, head, viewport, story.replay.checkpoint);
             if (animation.data) artifacts.push({
               storyId: story.id, viewport: viewport.name, side: 'paired', variant: 'animation',
               media: 'webm', contentType: 'video/webm', width: 960, height: null,
@@ -811,8 +815,6 @@ module.exports = {
   paddedRect,
   centeredRect,
   normalizeCropPair,
-  mergeStageOrder,
-  frameAtOrBefore,
   hammingHex,
   screenshotFingerprint,
   runReplay,

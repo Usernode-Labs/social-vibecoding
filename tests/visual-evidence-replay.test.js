@@ -45,6 +45,7 @@ test('runner refuses undeclared home, auth, error, and cross-origin fallbacks', 
   const origin = 'http://base-evidence:3000';
   assert.equal(replay.expectedFinalPath('/settings', `${origin}/settings?tab=profile`, origin), '/settings?tab=profile');
   assert.throws(() => replay.expectedFinalPath('/settings', `${origin}/`, origin, 'base'), { code: 'unexpected_fallback' });
+  assert.equal(replay.expectedFinalPath('/settings', `${origin}/`, origin, 'base', { allowDeclaredHome: true }), '/');
   assert.throws(() => replay.expectedFinalPath('/settings', `${origin}/login`, origin, 'base'), { code: 'unexpected_fallback' });
   assert.throws(() => replay.expectedFinalPath('/settings', `${origin}/error?code=500`, origin, 'base'), { code: 'unexpected_fallback' });
   assert.throws(() => replay.expectedFinalPath('/settings', 'http://outside:3000/settings', origin, 'base'), { code: 'cross_origin_navigation' });
@@ -66,16 +67,6 @@ test('focus crops use the same dimensions and remain within the viewport', () =>
   }
 });
 
-test('stage alignment preserves both sides constraints and rejects cycles', () => {
-  assert.deepEqual(
-    replay.mergeStageOrder(['start', 'members', 'invite', 'checkpoint'], ['start', 'members', 'query', 'checkpoint']),
-    ['start', 'members', 'invite', 'query', 'checkpoint'],
-  );
-  assert.throws(() => replay.mergeStageOrder(['a', 'b'], ['b', 'a']), { code: 'stage_order_conflict' });
-  const frames = [{ stage: 'start', image: 's' }, { stage: 'end', image: 'e' }];
-  assert.equal(replay.frameAtOrBefore(frames, 'middle', ['start', 'middle', 'end']).image, 's');
-});
-
 test('perceptual hash distance is a bounded bit count', () => {
   assert.equal(replay.hammingHex('0000000000000000', '0000000000000000'), 0);
   assert.equal(replay.hammingHex('0000000000000000', 'ffffffffffffffff'), 64);
@@ -85,6 +76,7 @@ test('perceptual hash distance is a bounded bit count', () => {
 test('capture image contains the separate evidence runtime and its pinned dependencies', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'capture/Dockerfile'), 'utf8');
   assert.match(dockerfile, /playwright-core@1\.55\.1/);
+  assert.match(dockerfile, /pngjs@7\.0\.0/);
   assert.match(dockerfile, /COPY evidence\/replay-runner\.js \/app\/evidence-replay\.js/);
   assert.match(dockerfile, /COPY src\/services\/visual-evidence-plan\.js \/app\/visual-evidence-plan\.js/);
   const visuals = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');

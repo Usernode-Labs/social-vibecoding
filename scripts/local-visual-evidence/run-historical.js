@@ -18,23 +18,22 @@ const execFileAsync = promisify(execFile);
 const ROOT = path.resolve(__dirname, '../..');
 const DB_CONTAINER = 'vibecoding-db-dev';
 const NETWORK = 'usernode-net';
-const CASES = Object.freeze({
-  2548: {
-    baseSha: 'ab9fcb8756c1fa265d48599151026d3655fc2393',
-    headSha: 'd80779231ebb6ed1990a69ca6ac8fccc09374a37',
-    historicalFailure: 'evidence_agent_failed',
-  },
-  2678: {
-    baseSha: '07ab35a1b04fe5ef79e8f708d819466de2af584a',
-    headSha: 'b2a81b1668a77b791454bb7fb713b22f803912ff',
-    historicalFailure: 'evidence_agent_timeout',
-  },
-  2688: {
-    baseSha: 'e2ba51d646b20516d6b3dc4a98ebf13722f21372',
-    headSha: 'e1aedfc1299ab7671d0df91b7fe54164375718b0',
-    historicalFailure: 'evidence_agent_timeout',
-  },
-});
+const CASES = Object.freeze(require('./historical-cases.json').cases);
+
+function assertPlanMatchesRecordedClaims(plan, recorded) {
+  const claims = plan.stories.map((story) => ({
+    id: story.id,
+    claim: story.claim,
+    persona: story.persona,
+    viewports: story.viewports.map((viewport) => viewport.name),
+    steps: story.intent.steps,
+    baseState: story.intent.baseState,
+    animation: story.intent.animation,
+  }));
+  if (JSON.stringify(claims) !== JSON.stringify(recorded.claims)) {
+    throw new Error('The local plan differs from the claims and media types recorded on the live proposal.');
+  }
+}
 
 async function command(binary, args, options = {}) {
   const { stdout } = await execFileAsync(binary, args, {
@@ -157,6 +156,7 @@ async function main(pr) {
   const spec = CASES[pr];
   const planPath = path.join(__dirname, `historical-${pr}-plan.json`);
   const plan = contract.parseReplayPlan(JSON.parse(await fs.readFile(planPath, 'utf8')));
+  assertPlanMatchesRecordedClaims(plan, spec);
   const checkouts = {};
   const names = { base: `usernode-historical-${runId.slice(0, 8)}-base`,
     head: `usernode-historical-${runId.slice(0, 8)}-head` };
@@ -215,7 +215,26 @@ async function main(pr) {
     await startPair();
     const second = await replay.runPass(config, pr, input(2), { onEvent });
     const verdict = replay.comparePasses(first, second, { plan, provenance, runId });
-    if (!verdict.passed) throw new Error(`${verdict.code}: ${verdict.reason}`);
+    if (!verdict.passed) {
+      if (verdict.code === 'non_reproducible') {
+        const changes = first.result.stories.flatMap((left, index) => {
+          const right = second.result.stories[index];
+          return ['base', 'head'].flatMap((side) => {
+            const before = left[side];
+            const after = right?.[side];
+            if (['fingerprint', 'path', 'contextHash', 'focusHash'].every(
+              (key) => before[key] === after?.[key])) return [];
+            return [{ story: left.id, viewport: left.viewport, side,
+              fingerprint: [before.fingerprint, after?.fingerprint],
+              contextHash: [before.contextHash, after?.contextHash],
+              focusHash: [before.focusHash, after?.focusHash],
+              focusRect: [before.focusRect, after?.focusRect] }];
+          });
+        });
+        throw new Error(`${verdict.code}: ${verdict.reason} ${JSON.stringify(changes)}`);
+      }
+      throw new Error(`${verdict.code}: ${verdict.reason}`);
+    }
     const result = await writeResult(pr, runId, plan, provenance, first, second, verdict);
     process.stdout.write(`${JSON.stringify({ passed: true, pr, outputDir: result.outputDir,
       artifacts: result.artifacts.length, reviewVideos: result.reviewExports.length })}\n`);
@@ -243,4 +262,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { CASES, checkoutRevision, main };
+module.exports = { CASES, assertPlanMatchesRecordedClaims, checkoutRevision, main };
