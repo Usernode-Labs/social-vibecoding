@@ -84,17 +84,13 @@ function setup({ dispatch, storeArtifacts } = {}) {
       }),
       storeArtifacts: storeArtifacts || (async () => { calls.stored += 1; }),
     },
-    reviewer: { review: async () => { throw new Error('fallback reviewer should not run'); } },
+    reviewer: { review: async () => { throw new Error('no model reviewer should run'); } },
     evidenceAgent: {
       dispatch: async (_config, options) => {
         calls.dispatches += 1;
         if (dispatch) return dispatch(options, calls.dispatches);
         const control = controlPlane.forRequest({ runId: options.runId, sessionId: session.id });
-        const result = await control.runPlan(fixtures.plan());
-        control.finish({
-          status: 'verified', reason: 'The replayed pair demonstrates the dialog change.',
-          planHash: result.planHash,
-        });
+        await control.runPlan(fixtures.plan());
         return { backend: 'claude_code', threadId: 'thread-1' };
       },
     },
@@ -104,20 +100,21 @@ function setup({ dispatch, storeArtifacts } = {}) {
   return { pool, run, session, app, pair, artifacts, dependencies, transitions, calls };
 }
 
-async function execute(fixture) {
+async function execute(fixture, options = {}) {
   controlPlane._clearForTests();
   return orchestrator.executeRun({
-    visualEvidence: { maxRunMs: 60_000, maxAgentMs: 10_000 },
+    visualEvidence: { maxRunMs: 60_000, maxAgentMs: options.maxAgentMs || 10_000 },
   }, {
     pool: fixture.pool,
     run: fixture.run,
     session: fixture.session,
     app: fixture.app,
     revision: { baseSha: BASE, headSha: HEAD, files: [], filesComplete: true },
+    ...(options.authorPlan ? { authorPlan: options.authorPlan } : {}),
   }, fixture.dependencies);
 }
 
-test('a successful agent plan is replayed twice from fresh paired state before verification', async () => {
+test('a successful agent plan publishes captured media without a model verdict', async () => {
   const fixture = setup();
   const result = await execute(fixture);
   assert.equal(result.state, 'verified');
@@ -127,40 +124,96 @@ test('a successful agent plan is replayed twice from fresh paired state before v
   assert.equal(fixture.calls.cleaned, 1);
   assert.deepEqual(fixture.transitions.map((entry) => entry.next),
     ['provisioning', 'exploring', 'replaying', 'reviewing', 'verified']);
+  assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
 });
 
-test('an irrelevant first result gets exactly one corrected replay-plan attempt', async () => {
+test('an author plan uses the same two clean replays without a second model call', async () => {
+  const fixture = setup();
+  const result = await execute(fixture, { authorPlan: fixtures.plan() });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 0, 'the implementing agent already supplied the flow');
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.calls.stored, 1);
+  assert.equal(fixture.transitions.at(-1).next, 'verified');
+  assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
+});
+
+test('slow paired environment provisioning does not consume the agent exploration budget', async () => {
+  const fixture = setup();
+  const preparePair = fixture.dependencies.environment.preparePair;
+  fixture.dependencies.environment.preparePair = async (...args) => {
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    return preparePair(...args);
+  };
+  const result = await execute(fixture, { maxAgentMs: 20 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 1);
+});
+
+test('competing schedulers claim a planned run only once before launching paired replay', async (t) => {
+  const fixture = setup();
+  fixture.session.handoff_base_sha = BASE;
+  fixture.session.imported_pr_head_sha = HEAD;
+  fixture.session.source = 'imported';
+  fixture.session.visual_evidence_detail = { intent: fixtures.intent() };
+  fixture.pool.query = async (sql) => {
+    if (/FROM chat_sessions cs/.test(String(sql))) return { rows: [{ ...fixture.session, app_name: 'Demo' }] };
+    if (/SELECT active_turn/.test(String(sql))) return { rows: [{ active_turn: false }] };
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  };
+  fixture.dependencies.github = { compareRefs: async () => ({ files: [], filesComplete: true }) };
+  fixture.dependencies.state.createRun = async () => ({ created: true, run: fixture.run });
+  fixture.dependencies.state.clearNotStarted = async () => ({ cleared: true });
+  let claimed = false;
+  const transitionRun = fixture.dependencies.state.transitionRun;
+  fixture.dependencies.state.transitionRun = async (...args) => {
+    if (args[2] === 'provisioning') {
+      if (claimed) throw Object.assign(new Error('Already claimed'), { code: 'invalid_evidence_transition' });
+      claimed = true;
+    }
+    return transitionRun(...args);
+  };
+  const metadata = require('../src/services/pr-metadata');
+  const sync = metadata.syncEvidencePrBlock;
+  metadata.syncEvidencePrBlock = async () => {};
+  t.after(() => { metadata.syncEvidencePrBlock = sync; });
+  controlPlane._clearForTests();
+  const config = { visualEvidence: { execute: true, maxRunMs: 60_000, maxAgentMs: 10_000 } };
+  const options = { pool: fixture.pool, sessionId: 42, headSha: HEAD };
+  const results = await Promise.all([
+    orchestrator.scheduleForSession(config, options, fixture.dependencies),
+    orchestrator.scheduleForSession(config, options, fixture.dependencies),
+  ]);
+  assert.equal(results.filter((result) => result.scheduled).length, 1);
+  assert.equal(results.filter((result) => result.reason === 'already_running').length, 1);
+  await results.find((result) => result.scheduled).promise;
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.transitions.filter((entry) => entry.next === 'provisioning').length, 1);
+});
+
+test('an agent opinion cannot veto replay-checked captures meant for human review', async () => {
   const fixture = setup({
-    dispatch: async (options, attempt) => {
+    dispatch: async (options) => {
       const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
-      const nextPlan = JSON.parse(JSON.stringify(fixtures.plan()));
-      if (attempt === 2) nextPlan.stories[0].replay.after.actions[1].target.value = 'invite-member-v2';
-      const result = await control.runPlan(nextPlan);
-      control.finish(attempt === 1
-        ? { status: 'not_relevant', reason: 'The crop hid the changed list.' }
-        : { status: 'verified', reason: 'The corrected crop clearly shows the list.', planHash: result.planHash });
-      return { backend: 'claude_code', threadId: `thread-${attempt}` };
+      await control.runPlan(fixtures.plan());
+      control.finish({ status: 'not_relevant', reason: 'The crop may hide the changed list.' });
+      return { backend: 'claude_code', threadId: 'old-worker-thread' };
     },
   });
   const result = await execute(fixture);
   assert.equal(result.state, 'verified');
-  assert.equal(fixture.calls.dispatches, 2);
-  assert.deepEqual(fixture.calls.passes, [1, 2, 1, 2]);
-  assert.equal(fixture.transitions.filter((entry) => entry.next === 'replaying').length, 2);
-  assert.equal(fixture.transitions.at(-1).patch.repairAttempt, 1);
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.transitions.at(-1).patch.repairAttempt, 0);
 });
 
-test('a Codex model that fails before submitting a plan falls back to the platform vision agent', async () => {
+test('a Codex model that fails before submitting a plan falls back to the platform planner', async () => {
   const fixture = setup({
     dispatch: async (options, attempt) => {
       if (attempt === 1) throw Object.assign(new Error('model cannot use browser tools'), { code: 'evidence_agent_failed' });
       assert.equal(options.forceBackend, 'claude_code');
       const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
-      const result = await control.runPlan(fixtures.plan());
-      control.finish({
-        status: 'verified', reason: 'The fallback vision agent verified the exact replay.',
-        planHash: result.planHash,
-      });
+      await control.runPlan(fixtures.plan());
       return { backend: 'claude_code', threadId: 'fallback-thread' };
     },
   });
@@ -277,6 +330,20 @@ test('a refused schedule records why on the proposal and returns its reason', as
     assert.ok(note.reason.length > 20, 'the stored reason is a sentence a reviewer can read');
     assert.ok(!note.reason.includes('_'), `no bare refusal code reaches a reviewer: ${note.reason}`);
   }
+});
+
+test('an asynchronous schedule cannot launch evidence for a head that moved meanwhile', async () => {
+  const pool = {
+    query: async () => ({ rows: [{
+      id: 42, app_id: 9, app_slug: 'demo', source: 'imported',
+      imported_pr_head_sha: HEAD, visual_evidence_detail: { intent: fixtures.intent() },
+    }] }),
+  };
+  const result = await orchestrator.scheduleForSession(
+    { visualEvidence: { execute: true } },
+    { pool, sessionId: 42, headSha: 'c'.repeat(40) }
+  );
+  assert.deepEqual(result, { scheduled: false, reason: 'head_moved' });
 });
 
 test('the refusal reasons are a closed set, and the two non-failures are absent', () => {

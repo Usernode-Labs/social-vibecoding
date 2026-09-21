@@ -1,6 +1,7 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const net = require('node:net');
 const log = require('./logger');
 const platformJwt = require('./platform-jwt');
 const docker = require('./docker');
@@ -67,6 +68,22 @@ async function execWorkerCommand(runtimeName, command, stdinText = null, { timeo
 // for self-hosted deployments that put the platform on a different
 // hostname / port.
 const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usernode:3000';
+
+// Evidence controls are intentionally process-local: the run's paired
+// environments and callbacks live in the Pod that scheduled it. During a
+// rolling update the shared Service also points at the other color, so an
+// evidence worker must call this Pod directly or half its tools see an empty
+// control registry. Ordinary worker traffic remains on the shared Service.
+function evidenceControlUrl({ podIp = process.env.POD_IP, port = process.env.PORT,
+  fallback = PLATFORM_INTERNAL_URL } = {}) {
+  const family = net.isIP(String(podIp || ''));
+  const selectedPort = Number(port || 3000);
+  if (!family || !Number.isInteger(selectedPort) || selectedPort < 1 || selectedPort > 65535) {
+    return fallback;
+  }
+  const host = family === 6 ? `[${podIp}]` : podIp;
+  return `http://${host}:${selectedPort}`;
+}
 
 // Worker JWTs are short-lived but cover the entire chat session; 24h is
 // the cap any single session is allowed to run before re-auth becomes
@@ -2447,7 +2464,7 @@ async function execInWorker(sessionId, {
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
-    PLATFORM_URL: PLATFORM_INTERNAL_URL,
+    PLATFORM_URL: mode === 'evidence' ? evidenceControlUrl() : PLATFORM_INTERNAL_URL,
     ...(mode === 'evidence' ? {
       EVIDENCE_RUN_ID: evidenceRunId,
       EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
@@ -3851,6 +3868,7 @@ module.exports = {
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
   mintProdDebugJwt,
   mintEvidenceJwt,
+  evidenceControlUrl,
   buildTurnSecretEnv,
   // file-based dispatch-prompt transport (E2BIG fix; exported for tests)
   TURN_PROMPT_PATH,

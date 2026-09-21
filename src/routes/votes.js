@@ -39,7 +39,8 @@ const VISUAL_EVIDENCE_GATE_STATES = new Set(['verified', 'not_required', 'overri
 // Evidence enforcement is deliberately scoped to proposals that have entered
 // the v2 contract. Historical proposals with no declaration keep their old
 // voting lifecycle; a proposal whose detail says evidence is required must
-// have an accepted verdict for the exact current head. The artifact route
+// have replay-checked captures for the exact current head. People review
+// whether those captures support the claim. The artifact route
 // independently enforces the same revision fence.
 function visualEvidenceGateForSession(config, session) {
   if (!config?.visualEvidence?.enforce) return { applies: false, allowed: true, state: null };
@@ -55,7 +56,7 @@ function visualEvidenceGateForSession(config, session) {
   }
   const allowed = exactHead && VISUAL_EVIDENCE_GATE_STATES.has(evidenceState);
   const reason = !exactHead
-    ? 'The visual change preview has not been verified for the proposal’s current commit.'
+    ? 'The visual change preview has not been captured for the proposal’s current commit.'
     : evidenceState === 'failed'
       ? (detail.failureReason || 'The visual change preview failed and must be retried or overridden by an app administrator.')
       : `The visual change preview is ${String(evidenceState).replace(/_/g, ' ')}.`;

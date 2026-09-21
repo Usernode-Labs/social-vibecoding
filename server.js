@@ -239,6 +239,10 @@ app.use((req, res, next) => {
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
   if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
+  // A bounded executable evidence plan can exceed the global 100kb parser;
+  // its route validates the strict plan shape after its own 512kb parse.
+  if (req.method === 'POST'
+      && /^\/api\/apps\/[^/]+\/proposals\/[^/]+\/evidence\/plan$/.test(req.path)) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -960,6 +964,16 @@ async function becomeLeader() {
     .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }));
   runVisualEvidenceGc();
   setInterval(runVisualEvidenceGc, 6 * 60 * 60 * 1000).unref?.();
+  // Recover intent-only proposals separately from the six-hour retention
+  // sweep. A missed checks hand-off should start within minutes, while the
+  // durable run claim ensures this cannot duplicate a live runner.
+  const runUnstartedEvidence = () => visualEvidenceGc.recoverUnstarted(config, getPool(config))
+    .then(({ scheduled }) => {
+      if (scheduled) log.info('visual-evidence', 'Recovered unstarted visual evidence claims', { scheduled });
+    })
+    .catch((err) => log.warn('visual-evidence', 'Unstarted evidence recovery failed', { err: err.message }));
+  runUnstartedEvidence();
+  setInterval(runUnstartedEvidence, 2 * 60 * 1000).unref?.();
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables

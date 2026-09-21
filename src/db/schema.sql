@@ -8285,13 +8285,38 @@ CREATE TABLE IF NOT EXISTS visual_evidence_runs (
     'planned', 'provisioning', 'exploring', 'replaying', 'reviewing',
     'verified', 'failed', 'stale', 'cancelled', 'not_required', 'overridden'
   )),
-  CHECK (state <> 'verified' OR (plan_hash IS NOT NULL AND hard_verdict IS NOT NULL
-    AND semantic_verdict IS NOT NULL AND completed_at IS NOT NULL)),
+  CONSTRAINT visual_evidence_runs_verified_integrity_check
+    CHECK (state <> 'verified' OR (plan_hash IS NOT NULL AND hard_verdict IS NOT NULL
+      AND completed_at IS NOT NULL)),
   CHECK (state <> 'not_required' OR completed_at IS NOT NULL),
   CHECK (state <> 'overridden' OR (override_user_id IS NOT NULL
     AND NULLIF(BTRIM(override_reason), '') IS NOT NULL AND overridden_at IS NOT NULL
     AND completed_at IS NOT NULL))
 );
+-- Earlier releases required a model's semantic verdict before captures could
+-- be published. Capture integrity is still enforced; judging relevance now
+-- belongs to the people reviewing the proposal.
+DO $$
+DECLARE old_constraint TEXT;
+BEGIN
+  FOR old_constraint IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = 'visual_evidence_runs'::regclass AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%semantic_verdict%'
+  LOOP
+    EXECUTE format('ALTER TABLE visual_evidence_runs DROP CONSTRAINT %I', old_constraint);
+  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'visual_evidence_runs'::regclass
+       AND conname = 'visual_evidence_runs_verified_integrity_check'
+  ) THEN
+    ALTER TABLE visual_evidence_runs
+      ADD CONSTRAINT visual_evidence_runs_verified_integrity_check
+      CHECK (state <> 'verified' OR (plan_hash IS NOT NULL AND hard_verdict IS NOT NULL
+        AND completed_at IS NOT NULL));
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_visual_evidence_runs_session_created
   ON visual_evidence_runs(session_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_evidence_runs_current_head
