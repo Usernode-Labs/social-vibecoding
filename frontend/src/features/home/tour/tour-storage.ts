@@ -59,6 +59,63 @@ export function clearDone(userId: number | null): void {
   }
 }
 
+/*
+ * ── Where the viewer had got to, across a reload ───────────────────────
+ *
+ * The step is kept in sessionStorage, not localStorage, on purpose: it is a
+ * property of THIS visit. A page reload under the tour keeps the page session
+ * -- the shell switching itself to a newly cached build after a cold boot
+ * (App._reloadPrefetchedShellIfSafe), the boot-time session reconcile -- so
+ * the tour comes back at the step the viewer had reached instead of at step
+ * 1, which is what read as "looping between the first and second step". A
+ * new tab or the next launch is a new session, and a tour that was never
+ * finished starts from the top there, as it should.
+ *
+ * Per account, wrapped, and failing toward "nothing saved", for the reasons
+ * the done flag gives above.
+ */
+
+const STEP_PREFIX = 'usernode:home-tour-step:';
+
+export function stepKeyFor(userId: number | null): string | null {
+  return userId == null ? null : `${STEP_PREFIX}${userId}`;
+}
+
+/** The step a tour in progress had reached in this page session, or null. */
+export function readStep(userId: number | null): number | null {
+  const key = stepKeyFor(userId);
+  if (!key) return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    // Digits only: Number('') is 0, and a step 0 that nobody wrote is a
+    // restart dressed up as a resume.
+    return raw != null && /^\d+$/.test(raw) ? Number(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeStep(userId: number | null, index: number): void {
+  const key = stepKeyFor(userId);
+  if (!key) return;
+  try {
+    sessionStorage.setItem(key, String(index));
+  } catch {
+    /* A step that cannot be kept costs a reload its place, nothing more. */
+  }
+}
+
+/** Finish and Skip both clear it: a finished tour has nowhere to resume. */
+export function clearStep(userId: number | null): void {
+  const key = stepKeyFor(userId);
+  if (!key) return;
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    /* Nothing to keep, nothing lost. */
+  }
+}
+
 export function currentUserId(): number | null {
   const app = (window as { App?: { user?: { id?: number } | null } }).App;
   const id = app && app.user ? app.user.id : null;

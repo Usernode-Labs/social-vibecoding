@@ -113,9 +113,12 @@ ${sliceMethod(appJs, 'renderPlatformVersionPill(info) {')}
 // A minimal world: the pill's slot, a controller that hands us its port, and
 // a setTimeout we fire by hand so the 30s bail-out is testable in no time.
 function harness({
-  controller = true, postThrows = false, serverSha = null, controls = [],
+  controller = true, postThrows = false, serverSha = null, controls = [], tourLive = false,
 } = {}) {
   const slot = { innerHTML: '' };
+  // #home-tour as the gate sees it: the overlay is in the document either
+  // way (it ships in the prerender), and `hidden` is how it is off.
+  const tour = { classList: { contains: (name) => name === 'hidden' && !tourLive } };
   const timers = [];
   const posted = [];
   const reloads = [];
@@ -140,7 +143,11 @@ function harness({
     },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     document: {
-      getElementById: (id) => (id === 'platform-version-pill-slot' ? slot : null),
+      getElementById: (id) => {
+        if (id === 'platform-version-pill-slot') return slot;
+        if (id === 'home-tour') return tour;
+        return null;
+      },
       querySelectorAll: () => controls,
     },
     navigator: {
@@ -362,6 +369,25 @@ test('automatic switching never discards a draft', async () => {
   assert.equal(h.App.shellUpdate.state, 'ready');
   assert.match(h.slot.innerHTML, /<button/,
     'the explicit reload offer remains available after the draft is safe');
+});
+
+test('automatic switching never pulls the page out from under the welcome tour', async () => {
+  // #2584's tour opens in the first seconds on Home -- exactly when a cold
+  // stale boot's replacement build lands -- and a reload there restarted it
+  // at step 1 ("looping between the first and second step"). A live
+  // #home-tour is in-progress input, like the draft above: the switch is
+  // withheld and the explicit offer stays.
+  const h = harness({ serverSha: STALE.sha, tourLive: true });
+  h.App.loadedPlatformSha = BOOTED;
+
+  await h.App.loadVersion();
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 0);
+  assert.equal(h.App.shellUpdate.state, 'ready');
+  assert.match(h.slot.innerHTML, /<button/,
+    'the explicit reload offer remains available once the tour is done');
+  // And a finished (hidden) tour holds nothing: the plain boot above switches.
+  assert.equal(harness({ serverSha: STALE.sha }).App._hasUnsavedShellInput(), false);
 });
 
 test('a tab that becomes stale later offers the update without reloading itself', async () => {

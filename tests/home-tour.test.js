@@ -21,6 +21,16 @@
 //   - PERSISTENCE. Per user id, wrapped, failing toward showing the tour --
 //     the three decisions the banner's own test pinned, carried over to the
 //     new key. Executed against a localStorage stub, not grepped.
+//   - THE STEP ACROSS A RELOAD. The shell reloads itself under a tour in its
+//     first seconds on Home (a cold boot from the worker cache switching to
+//     the prefetched build, the boot session reconcile), and a tour that only
+//     remembered "finished" started over at step 1 every time. The step rides
+//     sessionStorage, the auto-start resumes there, and the automatic reload
+//     waits for a live tour the way it waits for a draft.
+//   - THE FOLLOW. The ring is measured every frame the overlay is up, not for
+//     a fixed window after each step: on a phone the Improve sheet keeps
+//     moving as its list loads, and a window that closed first left the ring
+//     on the row's old position.
 //   - THE FIRST RENDER. The island rule: the built document and the first
 //     client pass have to agree, so the overlay renders hidden with no
 //     measured geometry in it at all.
@@ -426,6 +436,99 @@ test('the key is new, so a dismissed banner is not a finished tour', () => {
   assert.doesNotMatch(STORAGE_SRC, /home-welcome-dismissed/);
 });
 
+// ── the step across a reload, executed ─────────────────────────────────
+
+function withSessionStorage({ throwing = false } = {}) {
+  const backing = new Map();
+  const deny = () => { throw new Error('denied'); };
+  globalThis.sessionStorage = throwing ? {
+    getItem: deny, setItem: deny, removeItem: deny,
+  } : {
+    getItem: (k) => (backing.has(k) ? backing.get(k) : null),
+    setItem: (k, v) => backing.set(k, String(v)),
+    removeItem: (k) => backing.delete(k),
+  };
+  return backing;
+}
+
+test('the step is kept for the page session, per account', () => {
+  const backing = withSessionStorage();
+  assert.equal(storageApi.stepKeyFor(null), null);
+  assert.equal(storageApi.stepKeyFor(7), 'usernode:home-tour-step:7');
+  assert.equal(storageApi.readStep(7), null, 'nothing kept, nothing to resume');
+  storageApi.writeStep(7, 3);
+  assert.equal(storageApi.readStep(7), 3);
+  assert.equal(storageApi.readStep(8), null, 'another account has its own place');
+  assert.deepEqual([...backing.keys()], ['usernode:home-tour-step:7']);
+  // sessionStorage, never localStorage: a reload keeps the page session and
+  // the place in the tour; a new tab or the next launch starts from the top.
+  const kept = STORAGE_SRC.slice(STORAGE_SRC.indexOf('const STEP_PREFIX'));
+  assert.doesNotMatch(kept, /localStorage/);
+  assert.equal((kept.match(/sessionStorage\./g) || []).length, 3);
+});
+
+test('finishing clears the kept step, and a bad value is no step at all', () => {
+  const backing = withSessionStorage();
+  storageApi.writeStep(7, 5);
+  storageApi.clearStep(7);
+  assert.equal(storageApi.readStep(7), null);
+  assert.equal(backing.size, 0);
+  for (const bad of ['x', '-1', '2.5', '']) {
+    backing.set('usernode:home-tour-step:7', bad);
+    assert.equal(storageApi.readStep(7), null, `${JSON.stringify(bad)} is not a step`);
+  }
+  // No viewer, no key: nothing is written under a bare global name.
+  storageApi.writeStep(null, 2);
+  assert.equal(backing.has('usernode:home-tour-step:null'), false);
+});
+
+test('a storage that throws costs a reload its place and nothing else', () => {
+  withSessionStorage({ throwing: true });
+  assert.equal(storageApi.readStep(7), null);
+  assert.doesNotThrow(() => storageApi.writeStep(7, 1));
+  assert.doesNotThrow(() => storageApi.clearStep(7));
+});
+
+test('a reload resumes where the viewer was, and a panel step at the Improve step', () => {
+  assert.equal(steps.resumeIndex(null), 0, 'nothing kept: from the top');
+  assert.equal(steps.resumeIndex(1), 1);
+  assert.equal(steps.resumeIndex(7), 7);
+  // A fresh document has no Improve panel open, so the three panel steps
+  // cannot be resumed as themselves: the arc restarts at "press Improve".
+  for (const saved of [3, 4, 5]) {
+    assert.equal(steps.resumeIndex(saved), steps.IMPROVE_STEP_INDEX, `step ${saved + 1} resumes at Improve`);
+  }
+  assert.equal(steps.resumeIndex(99), 7, 'clamped like every other index');
+  assert.equal(steps.resumeIndex(Number.NaN), 0);
+});
+
+test('the overlay keeps its step while it is up, resumes there, and clears it on finish', () => {
+  // Written on every step while open, under the viewer's id.
+  assert.match(OVERLAY_SRC, /if \(!open \|\| userId == null\) return;\s*writeStep\(userId, index\);\s*\}, \[open, index, userId\]\);/);
+  // The auto-start is the one path that resumes; a replay starts from the top.
+  const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
+  const body = start.slice(0, start.indexOf('}, [userId, start]);'));
+  assert.match(body, /start\(resumeIndex\(readStep\(userId\)\)\);/);
+  const replay = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const request = useTourRequest();'));
+  assert.match(replay.slice(0, replay.indexOf('}, [request, start]);')), /start\(\);/);
+  // Finish and Skip both go through finish(): done is written, the place is
+  // cleared, and neither can bring the tour back on the next reload.
+  assert.match(OVERLAY_SRC, /writeDone\(userId\);\s*clearStep\(userId\);/);
+});
+
+test("the shell's automatic reload waits for a tour in progress", () => {
+  // The gate the cold-boot switch consults before location.reload(): a live
+  // #home-tour is in-progress input, the same as a half-written reply. The
+  // visible reload offer stays, as it does for the draft; the detailed
+  // switching rules are tests/shell-update-prefetch.test.js's.
+  const APP_JS = read('public/js/app.js');
+  const gate = APP_JS.slice(APP_JS.indexOf('_hasUnsavedShellInput() {'));
+  const body = gate.slice(0, gate.indexOf('\n  }'));
+  assert.match(body, /const tour = document\.getElementById\('home-tour'\);\s*if \(tour && !tour\.classList\.contains\('hidden'\)\) return true;/);
+  assert.ok(body.indexOf("getElementById('home-tour')") < body.indexOf('querySelectorAll('),
+    'checked before the form controls, so a tour with no inputs on the page still holds the reload');
+});
+
 // ── the first render ───────────────────────────────────────────────────
 
 test('the first render is the hidden overlay, with nothing measured', () => {
@@ -516,10 +619,22 @@ test('Escape behaves like Skip, and focus stays in the card', () => {
   assert.match(OVERLAY_SRC, /const surface = confirmingRef\.current \? confirmRef\.current : bodyRef\.current;/);
 });
 
-test('the overlay re-measures on resize and on scroll', () => {
-  assert.match(OVERLAY_SRC, /window\.addEventListener\('resize', onChange\);/);
-  // Capture, because #home-screen is the scroller and scroll does not bubble.
-  assert.match(OVERLAY_SRC, /window\.addEventListener\('scroll', onChange, true\);/);
+test('the overlay follows its target every frame it is up, not for a fixed window', () => {
+  // The kit's sheet re-sizes under a list that loads after the panel opens,
+  // and a spring on a transform reports nothing: no event, no
+  // ResizeObserver. The next frame is the one signal right for all of it.
+  const pass = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('useIsomorphicLayoutEffect(() => {'));
+  const body = pass.slice(0, pass.indexOf('}, [live, index, confirming, panelOpen, apply]);'));
+  assert.match(body, /let frame = window\.requestAnimationFrame\(function follow\(\) \{\s*apply\(\);\s*frame = window\.requestAnimationFrame\(follow\);/);
+  assert.match(body, /return \(\) => window\.cancelAnimationFrame\(frame\);/);
+  // The bounded window is gone with the bug it caused: nothing here stops
+  // measuring while the overlay is live.
+  assert.doesNotMatch(OVERLAY_SRC, /SETTLE_MS|SETTLE_TICK_MS|setInterval\(apply/);
+  // A frame that measures the same numbers writes nothing, which is what
+  // makes a per-frame measure free: the geometry painted last is kept as one
+  // string and compared before any style is touched.
+  assert.match(OVERLAY_SRC, /const painted = JSON\.stringify\(\[hole, boxes, placed\]\);\s*if \(painted === paintedRef\.current\) return;/);
+  assert.match(body, /paintedRef\.current = '';/, 'the first pass after a state change always paints');
   assert.match(OVERLAY_SRC, /prefers-reduced-motion: reduce/);
   assert.match(OVERLAY_SRC, /motion-safe:transition/);
 });

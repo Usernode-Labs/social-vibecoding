@@ -16,6 +16,14 @@ const { reindexAfterHostMove } = require('./reindex-after-host-move');
 const mailRateLimit = require('../services/mail/rate-limit');
 
 async function migrate(config) {
+  const startedAt = Date.now();
+  const timings = {};
+  let phaseStartedAt = startedAt;
+  const finishPhase = (name) => {
+    const finishedAt = Date.now();
+    timings[name] = finishedAt - phaseStartedAt;
+    phaseStartedAt = finishedAt;
+  };
   const pool = getPool(config);
 
   const schema = fs.readFileSync(
@@ -28,10 +36,12 @@ async function migrate(config) {
   // invariant the PR-import feature is about to rely on is already
   // violated in this database. Read-and-throw only — it never mutates.
   await auditDuplicatePrSessions(pool);
+  finishPhase('preflightMs');
 
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool, schema);
   log.info('db', 'Schema up to date');
+  finishPhase('schemaMs');
 
   // One-off after the 2026-09 database host move: rows written before the
   // move were no longer findable through their unique text indexes (the
@@ -40,6 +50,7 @@ async function migrate(config) {
   // nothing comes back — against a broken index that manufactures
   // duplicates. Marker-guarded; see src/db/reindex-after-host-move.js.
   await reindexAfterHostMove(pool);
+  finishPhase('reindexMs');
 
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
@@ -48,6 +59,7 @@ async function migrate(config) {
   // hard-coded created_by = 900001. See seedStagingDemoUser.
   await seedStagingDemoUser(pool);
   await seedSelfApp(pool, config);
+  finishPhase('coreSeedMs');
   await seedStagingNotifications(pool, config);
   // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
   // off a notification id that seeder owns.
@@ -154,6 +166,7 @@ async function migrate(config) {
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
   await seedStagingPlatformMail(pool);
+  finishPhase('stagingFixturesMs');
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -169,6 +182,10 @@ async function migrate(config) {
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
+  finishPhase('maintenanceMs');
+  timings.totalMs = Date.now() - startedAt;
+  log.info('db', 'Migration phases complete', timings);
+  return timings;
 }
 
 // Proposal authorship predates proposal-level assignee votes, so existing
@@ -12005,6 +12022,12 @@ async function seedStagingTopochain(pool, config) {
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, VIEWER_WALLET, VIEWER_PUBKEY, SEASON_ID]
       );
+      // Both rows sit in the RUNNING season on purpose (issue #2495): the
+      // Leaderboard screen shows its event picker to admins and to members
+      // with a season to go back to, and usernode-capture — the member
+      // every screenshot signs as — is meant to show the new-member state,
+      // the board with no picker. The checks identity is an admin and sees
+      // the picker by role.
       await pool.query(
         `INSERT INTO user_enrollments
            (id, user_id, season_id, season_event_id, created_at, updated_at)
@@ -12301,6 +12324,17 @@ async function seedStagingProfileCustomization(pool, config) {
 // pre-migration state (still working with the shared superuser URL)
 // and will be retried on next boot.
 async function migrateAppDbsToPerRole(pool, config) {
+  // A preview owns one already-created clone and receives only that clone's
+  // DATABASE_URL. It deliberately has no DB_ADMIN_URL and must not inspect or
+  // repair roles for the production child-app fleet. The production platform
+  // runs this migration before the clone is made, so the copied app metadata
+  // is already current. Besides being unnecessary, spawning one psql role
+  // check per copied app added about 22 seconds to every self-app preview.
+  if (process.env.USERNODE_ENV === 'staging') {
+    log.info('db', 'Per-app role migration skipped in staging preview');
+    return;
+  }
+
   log.info('db', 'Running per-app role migration');
 
   const { rows } = await pool.query(

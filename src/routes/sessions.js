@@ -2437,7 +2437,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: try to reclaim a slot from a globally idle
@@ -2654,7 +2655,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -2830,7 +2832,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -4220,7 +4223,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -4460,7 +4464,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: reclaim a slot from a globally idle session
