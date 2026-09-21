@@ -2432,13 +2432,30 @@ const DevChat = {
       ? `$${remaining.toFixed(2)} of its $${limit.toFixed(2)}${cadence ? ` ${cadence}` : ''} allowance left`
       : `$${remaining.toFixed(2)} left`;
     const reset = cadence ? ` OpenRouter resets it ${cadence}.` : '';
+    // #2666: name the budget. This pill and the platform one occupy the
+    // same slot and measure DIFFERENT things — `limit $7.05/$50.00` is the
+    // platform's weekly allowance, this is what OpenRouter says is left on
+    // the KEY — so side by side across two sessions they read as one
+    // number that will not add up. It was reported as exactly that.
+    //
+    // The distinguishing fact was already written, in the `title` below.
+    // This file's own #593 note says why that is not enough: a title
+    // attribute "is invisible on touch and absent from every screenshot".
+    // The platform meter learned that lesson; this one had not.
+    //
+    // Rendered as its own part with no `title`, so the amount keeps being
+    // the only `span[title]` in `#dc-budget` — two declared dapp.json
+    // checks select it that way, and their expectText is unchanged.
     return {
       title: null,
-      parts: [{
-        text: `$${remaining.toFixed(2)} left${when}`,
-        className: color,
-        title: `${owner} has ${allowance}.${reset}`,
-      }],
+      parts: [
+        { text: 'OpenRouter ', className: 'text-zinc-500 dark:text-zinc-400' },
+        {
+          text: `$${remaining.toFixed(2)} left${when}`,
+          className: color,
+          title: `${owner} has ${allowance}.${reset}`,
+        },
+      ],
     };
   },
 
