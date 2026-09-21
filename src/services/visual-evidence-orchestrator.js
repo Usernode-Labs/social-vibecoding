@@ -453,7 +453,9 @@ async function executeRun(config, options, injected = {}) {
         replayBudgetStartedAt = replayStartedAt;
         try {
           progress(attempt === 1
-            ? 'Replaying the agent-authored UI flow twice…'
+            ? (authorPlan
+              ? 'Replaying the change author’s submitted UI flow twice…'
+              : 'Replaying the agent-authored UI flow twice…')
             : 'Replaying the corrected UI flow twice…');
           await deps.state.transitionRun(pool, run.id, 'replaying', {
             replayPlan: plan,
@@ -594,7 +596,6 @@ async function executeRun(config, options, injected = {}) {
       // The implementing agent already knows the UI flow. It supplies only
       // the typed plan; the same platform-owned two-pass replay and storage
       // decide whether the captured media is reproducible and complete.
-      progress('Replaying the change author’s submitted UI flow…');
       await registration.control.runPlan(authorPlan);
     } else {
       progress('The proposal agent is exploring the changed UI…');
@@ -609,7 +610,7 @@ async function executeRun(config, options, injected = {}) {
     }
 
     if (!latestHardVerdict?.passed || !latestArtifacts || !latestPlanHash) {
-      throw new VisualEvidenceOrchestrationError('missing_evidence_replay', 'The preview agent did not submit a passing replay plan.');
+      throw new VisualEvidenceOrchestrationError('missing_evidence_replay', 'The visual evidence replay did not produce a passing plan.');
     }
 
     // A successful run tears down its exact-revision environment before it

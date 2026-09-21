@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// Deliberately stateless, self-contained app fixture. The local harness starts
-// it once per side and replaces both containers before the second replay.
+// Deliberately stateless, self-contained app fixture. The local harness commits
+// this source as the base revision, then changes one UI behaviour in a second
+// local Git commit. Both app containers are replaced before the second replay.
 const http = require('node:http');
-
-const variant = process.env.EVIDENCE_VARIANT;
-if (!['base', 'head'].includes(variant)) throw new Error('EVIDENCE_VARIANT must be base or head');
 
 const html = `<!doctype html>
 <html lang="en">
@@ -60,7 +58,7 @@ const html = `<!doctype html>
     const suggestions = document.querySelector('[role=listbox]');
     document.getElementById('open-invite').addEventListener('click', () => { dialog.hidden = false; });
     document.getElementById('username').addEventListener('input', (event) => {
-      suggestions.hidden = ${variant === 'head' ? "event.target.value.trim().toLowerCase() !== 'ma'" : 'true'};
+      suggestions.hidden = true; // LOCAL_EVIDENCE_CHANGE_POINT
     });
   </script>
 </body>

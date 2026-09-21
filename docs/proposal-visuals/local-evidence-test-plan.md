@@ -14,7 +14,8 @@ replay fixes and the human-review change. The local harness lives on
 
 ## Boundaries
 
-- The default test uses synthetic users, app state, issue text, and commits.
+- The default test uses synthetic users and app state, with two real local Git
+  commits for the demo app.
   It makes no production API calls and needs no model credentials.
 - The fixture app, browser, capture image, and output files run locally in
   Milestone 1. Milestone 2 adds a local platform database. An optional OpenAI
@@ -43,17 +44,20 @@ with `npm ci`. The command pulls its Node fixture image if needed and builds
 the repository's capture image on first use. Fixture servers have no host
 ports; the run creates and removes its own Docker network.
 
-1. Start two isolated local fixture apps with the same initial state. The
-   head variant adds a username suggestion after the user opens Invite and
-   types into the dialog; the base variant does not.
+1. Create a disposable local Git repository with two exact commits of the
+   demo app. The head commit adds a username suggestion after the user opens
+   Invite and types into the dialog; the base commit does not. Start each
+   checkout in its own isolated container with the same initial state.
 2. Feed a checked-in, typed replay plan to the actual capture image and
    `evidence/replay-runner.js`. Recreate both app containers between passes.
 3. Use `src/services/visual-evidence-replay.js` to parse each run, enforce
    the plan hash, compare the two clean passes, and require the exact PNG/WebM
    artifact set.
 4. Write the second pass's focused/context PNGs, paired WebM, and a manifest
-   to `.local-visual-evidence/<run-id>/`. The manifest must identify this as
-   a **synthetic** fixture run, not a real proposal revision.
+   to `.local-visual-evidence/<run-id>/`. Also save the local Git bundle and
+   change patch, and split the paired WebM into individual before and after
+   review videos. The manifest must identify this as a **local Git fixture**
+   run, not a real proposal revision.
 5. Verify that the command exits nonzero on a replay or media failure, cleans
    up its containers/network, and leaves no success manifest on failure.
 
@@ -63,8 +67,9 @@ Run it with:
 npm run test:visual-evidence:local
 ```
 
-Acceptance: the command reports two matching passes and produces four PNGs
-plus one playable WebM. A person can compare before/after directly. This
+Acceptance: the command reports two matching passes and produces four PNGs,
+one paired WebM, and two playable side-specific review WebMs. A person can
+compare before/after directly. This
 milestone isolates browser, crop, animation, encoding, protocol, and replay
 failures from platform scheduling or model failures.
 
@@ -73,16 +78,46 @@ To try another deterministic flow, copy
 assertions, then run
 `npm run test:visual-evidence:local -- --plan /absolute/path/to/plan.json`.
 The fixture app is in `scripts/local-visual-evidence/fixture-app.js`; change
-both variants there when testing another UI behaviour. This mode exercises
+the base UI there and update the single-commit change at
+`LOCAL_EVIDENCE_CHANGE_POINT` in `run.js` when testing another behaviour.
+This mode exercises
 the real capture path without booting Homeroom or calling any model.
 
 The first run found a real platform defect: the browser runner included a
 null optional provenance field that the replay comparison did not expect.
-The comparison now normalizes that field. A subsequent run produced four
-PNGs and a 1.5-second, 4 fps VP9 WebM. A deliberately broken selector exited
-nonzero without leaving a success manifest, container, or Docker network.
+The comparison now normalizes that field. A subsequent Git-backed run
+produced four PNGs, a 1.5-second, 4 fps VP9 paired WebM, and two individual
+VP9 review videos. A deliberately broken selector exited nonzero without
+leaving a success manifest, container, or Docker network.
 
 ## Milestone 2: local Homeroom and proposal fixture
+
+**Status: local database/coordinator path exercised; HTTP author-plan and
+authenticated card review still pending.** To create a local-only development
+config and boot the platform, run:
+
+```sh
+npm run visual-evidence:local-setup
+make up
+npm run test:visual-evidence:platform-local
+```
+
+The setup command creates an ignored `.env` with generated secrets if no
+`.env` exists; it refuses to replace another configuration. The capture
+command checks that local configuration, then creates a labeled demo app,
+issue, and proposal in the local database and leaves them there for
+inspection. It injects only local Git resolution, fixture runtime
+provisioning, and fixture identities. The production coordinator, state
+transitions, two-pass replay, artifact persistence, and view serializer run
+unchanged. Its output includes the paired WebM and separate before/after
+review videos. The tested run reached `verified` with five stored artifacts
+and zero evidence-agent attempts.
+
+The normal issue creation route requires a GitHub twin, and the normal
+author-plan route currently invokes GitHub-backed revision provisioning.
+This command seeds local test records and invokes the same author-plan
+coordinator path directly. Finish the following steps before calling the
+entire HTTP issue-to-proposal flow local and offline:
 
 1. Add a local-only repository provider for evidence runs. Today
    `resolveRevisionContext` calls GitHub for the comparison and
@@ -95,10 +130,14 @@ nonzero without leaving a success manifest, container, or Docker network.
    data with another development stack. Supply generated local-only secrets
    through an ignored env file. Document the native node sidecar dependency
    and provide a preflight that reports precisely what is missing.
-3. Create a tiny Git fixture app with two commits and deterministic seed data.
-   Register it through the local platform, create an issue locally, and
-   submit a local proposal pointing to those exact commits. Use the same
-   visual intent and replay plan as Milestone 1.
+   The current local stack boots with generated local-only keys and a Quay
+   mirror for its pinned MinIO image. Its native node sidecar is unavailable
+   in this checkout; the direct capture harness does not need that sidecar.
+3. Route local test issue/proposal creation through a dedicated local-only
+   API adapter, so the standard author-plan HTTP route can schedule the same
+   two exact commits without a GitHub issue or pull request. Keep local
+   fixture records visibly labeled and never enable this adapter in a
+   production configuration.
 4. Exercise the author-plan route, evidence run state transitions, artifact
    storage, authenticated media routes, and the proposal card. Export the
    resulting captures into the same local output directory for inspection.
@@ -135,10 +174,12 @@ semantic review of the media.
 
 - The typed plan and its canonical hash.
 - Fixture identity and, in Milestone 2, exact base/head Git SHAs.
+- The two local Git commits, their bundle, and the app change patch.
 - Each pass's result and diagnostics, plus the comparison verdict.
 - Artifact names, MIME types, byte counts, and SHA-256 digests.
 - The actual PNGs and WebM from pass two.
+- Side-specific review WebMs derived from the verified paired WebM.
 
-The runner may use synthetic 40-character fixture revision labels in
-Milestone 1 because its input contract requires SHA-shaped provenance. The
-manifest must say so. Milestone 2 replaces them with real Git commit SHAs.
+Milestone 1 uses real commit SHAs from a disposable local repository. The
+manifest labels them as local fixture commits. Milestone 2 uses the same
+provenance contract for a proposal registered in the local platform database.
