@@ -211,6 +211,77 @@ test('the usage receipt feeds an OpenRouter session\'s figure and leaves a Claud
   assert.match(h.html(), /this turn ~\$0\.12/);
 });
 
+// #2666: "Seeing 'limit $7.05/$50.00' before I start a chat, and then a
+// different number (like '$48.57 remaining') after, not sure why they
+// don't line up."
+//
+// They do not line up because they are not the same budget. The platform
+// pill shows the WEEKLY PLATFORM allowance as spent/limit; the OpenRouter
+// pill shows what OpenRouter says is left on the KEY. Same slot, two
+// providers, and the only thing that said which was a `title` attribute —
+// which this file's own #593 note calls invisible on touch and absent
+// from every screenshot.
+test('the two meters say which budget they are measuring', () => {
+  const h = clientHarness();
+  h.useRealMeter();
+
+  // The OpenRouter one names the provider, in rendered text.
+  h.chat._isOpenRouterSession = () => true;
+  h.chat.openrouterAllowance = {
+    configured: true, source: 'usernode_managed', last4: '7f2c',
+    limit: 50, limitRemaining: 48.57, limitReset: 'daily',
+  };
+  h.chat.renderBudget();
+  // VISIBLE text, with the markup stripped. Matching the raw html would
+  // pass on the tooltip alone — which already said "OpenRouter" and is
+  // exactly the thing that was not enough.
+  const visible = (html) => html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const openrouter = visible(h.html());
+  assert.match(openrouter, /OpenRouter \$48\.57 left today/,
+    'the figure must be labelled in text you can actually see');
+  assert.match(h.html(), /\$48\.57 left today/, 'and the figure itself is unchanged');
+
+  // The platform one is a different shape AND a different label, so the
+  // two cannot be read as the same running total.
+  h.chat._isOpenRouterSession = () => false;
+  h.chat.budget = {
+    spentCents: 705, limitCents: 5000, remainingCents: 4295,
+    byokSpentCents: 0, aiEnabled: true, capWindow: 'weekly',
+  };
+  h.chat.renderBudget();
+  const platform = visible(h.html());
+  // The platform meter's shape is a spent/limit PAIR — you can see both
+  // halves and do the subtraction. The OpenRouter one is a single
+  // remaining figure. Different shape, different label, so the two cannot
+  // be read as one running total.
+  assert.match(platform, /\$7\.05/, 'spent');
+  assert.match(platform, /\/\$50\.00/, 'over the limit, as a pair');
+  assert.doesNotMatch(platform, /OpenRouter/,
+    'the platform allowance is not an OpenRouter figure');
+  assert.doesNotMatch(platform, /left/,
+    'and it does not use the other meter\'s wording either');
+});
+
+test('the OpenRouter label does not disturb the checked amount span', () => {
+  // Two declared dapp.json checks select `#dc-budget > span[title]` and
+  // assert its text. The label is a separate part with NO title, so the
+  // amount stays the only titled span and those checks keep passing.
+  const h = clientHarness();
+  h.useRealMeter();
+  h.chat._isOpenRouterSession = () => true;
+  h.chat.openrouterAllowance = {
+    configured: true, source: 'usernode_managed', last4: '7f2c',
+    limit: 1, limitRemaining: 0.86, limitReset: 'daily',
+  };
+  h.chat.renderBudget();
+  const html = h.html();
+  const titled = html.match(/<span[^>]*\stitle="/g) || [];
+  assert.equal(titled.length, 1, 'exactly one titled span, as the checks assume');
+  // And the label is outside it.
+  assert.match(html, /OpenRouter[^<]*<\/span>/,
+    'the label renders as its own untitled span');
+});
+
 test('an OpenRouter session\'s meter says what is left on the key, in the key\'s own window', () => {
   const h = clientHarness();
   h.useRealMeter();
