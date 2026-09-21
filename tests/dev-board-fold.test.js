@@ -907,20 +907,25 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // on it. ONE check, on the new ?order=link fixture shape, pins the anchor
   // and its destination.
   //
-  // 707 → 708: independently on main, the native/browser classification
-  // script's startup ordering could tag a native Android WebView as browser
-  // chrome too, dropping the safe-area inset the platform header needs
-  // under the status bar. ONE check pins that a native Android session
-  // keeps `#platform-header.un-safe-top-extend`.
+  // 707 → 709: independently on main, #2684 adds the Homeroom bot's admin
+  // dashboard, with two declared checks on its section (the verdict table
+  // renders; the intro says shadow mode posts nothing).
   //
-  // 708 → 709: the tallies above were computed on either side of this merge
-  // and cannot be read as one sequence. This branch took 707 → 708 alone,
-  // with the #2679/#2680 Link-GitHub check above; main independently took
-  // the same 707 to 708, with the native-Android-header check above.
-  // Neither set overlaps the other, so the merged manifest holds both:
-  // 707 + 1 + 1 = 709, which leaves 21 slots against MAX_DECLARED_TESTS
-  // (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 709);
+  // 707 → 708: also independently on main, the native/browser
+  // classification script's startup ordering could tag a native Android
+  // WebView as browser chrome too, dropping the safe-area inset the
+  // platform header needs under the status bar. ONE check pins that a
+  // native Android session keeps `#platform-header.un-safe-top-extend`.
+  //
+  // 708 → 711, 709 → 711: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 707 → 708 alone, with the #2679/#2680 Link-GitHub check above; main
+  // independently took the same 707 to 709 with the #2684 Homeroom-bot pair
+  // and to 708 with the native-Android-header check. None of the three sets
+  // overlaps another, so the merged manifest holds every one of them:
+  // 707 + 1 + 2 + 1 = 711, which leaves 19 slots against MAX_DECLARED_TESTS
+  // (730) — one past the 20-slot floor.
+  assert.equal(DAPP.tests.length, 711);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -34,6 +34,8 @@ const COMPONENTS = new Set([
   'coding_agent_scout',
   'coding_agent_build',
   'coding_agent_headless',
+  // #2684: the Homeroom bot's shadow-mode triage turn.
+  'homeroom_bot_triage',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([

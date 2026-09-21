@@ -3537,6 +3537,18 @@
       "expectText": "Estimates are per-token pricing times a typical change"
     },
     {
+      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684)",
+      "path": "/#admin/homeroom-bot",
+      "expectSelector": "#admin-homeroom-bot-table",
+      "expectText": "Verdict"
+    },
+    {
+      "name": "Homeroom bot dashboard says it posts nothing in shadow mode (#2684)",
+      "path": "/#admin/homeroom-bot",
+      "expectSelector": "#admin-homeroom-bot-intro",
+      "expectText": "It posts nothing, claims nothing and builds nothing"
+    },
+    {
       "name": "Model costs says what one change is and that it counts the coding agent (#2592)",
       "path": "/#admin/model-costs",
       "expectSelector": "#admin-model-costs-profile",
