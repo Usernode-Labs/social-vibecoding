@@ -253,6 +253,10 @@ function directItemActions(
     ];
   }
   if (result.renderer === 'issue' && slug) {
+    const explicitGithubIssueNumber = text(
+      item.github_issue_number || payload?.github_issue_number,
+      80,
+    );
     const issueNumber = text(
       item.number || item.issueNumber || item.issue_number || item.github_issue_number
         || payload?.issueNumber || payload?.issue_number || payload?.github_issue_number,
@@ -260,7 +264,7 @@ function directItemActions(
     );
     const governanceId = text(item.id, 80);
     const githubIssueCapability = /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId);
-    if (issueNumber && (githubIssueCapability || !text(item.kind, 80))) {
+    if (issueNumber && (explicitGithubIssueNumber || githubIssueCapability || !text(item.kind, 80))) {
       return [
         itemAction('Details', `Open ${targetLabel}`, 'issue.detail', { appSlug: slug, issueNumber }, 'inline'),
         itemAction('Comments', `Comments on ${targetLabel}`, 'issue.comments', { appSlug: slug, issueNumber }, 'inline'),
@@ -350,14 +354,21 @@ function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
     const governanceId = text(item.id, 80);
     const governanceKind = text(item.kind, 80);
     const githubIssueCapability = /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId);
-    if (governanceId && governanceKind && !githubIssueCapability) {
-      return `#app/${segment(slug)}/dev/governance/${segment(governanceId)}`;
-    }
+    const explicitGithubIssueNumber = text(
+      item.github_issue_number || payload?.github_issue_number,
+      80,
+    );
     const issueNumber = text(
       item.number || item.issueNumber || item.issue_number || item.github_issue_number
         || payload?.issueNumber || payload?.issue_number || payload?.github_issue_number,
       80,
     );
+    if (explicitGithubIssueNumber || (issueNumber && githubIssueCapability)) {
+      return `#app/${segment(slug)}/dev/issues/${segment(issueNumber)}`;
+    }
+    if (governanceId && governanceKind && !githubIssueCapability) {
+      return `#app/${segment(slug)}/dev/governance/${segment(governanceId)}`;
+    }
     if (issueNumber) return `#app/${segment(slug)}/dev/issues/${segment(issueNumber)}`;
     if (governanceId) return `#app/${segment(slug)}/dev/governance/${segment(governanceId)}`;
   }
@@ -544,6 +555,95 @@ function SettingInstruction({ item, title }: { item: JsonObject; title: string }
   );
 }
 
+const LOCAL_SETTING_EDITORS: Record<string, {
+  setting: string;
+  valueKey: string;
+  options: Array<{ label: string; value: string }>;
+}> = {
+  theme: {
+    setting: 'theme', valueKey: 'theme',
+    options: [
+      { label: 'System', value: 'system' },
+      { label: 'Light', value: 'light' },
+      { label: 'Dark', value: 'dark' },
+    ],
+  },
+  alerts: {
+    setting: 'devAlerts', valueKey: 'devAlerts',
+    options: [{ label: 'On', value: 'true' }, { label: 'Off', value: 'false' }],
+  },
+  'dev-console': {
+    setting: 'devConsoleMode', valueKey: 'devConsoleMode',
+    options: [
+      { label: 'Always', value: 'always' },
+      { label: 'Errors only', value: 'errors-only' },
+    ],
+  },
+  'admin-preview': {
+    setting: 'adminPreview', valueKey: 'adminPreview',
+    options: [{ label: 'On', value: 'true' }, { label: 'Off', value: 'false' }],
+  },
+};
+
+function LocalSettingEditor({ item, title }: { item: JsonObject; title: string }) {
+  const group = text(item.group || item.id, 80);
+  const editor = LOCAL_SETTING_EDITORS[group];
+  const initial = editor ? text(item[editor.valueKey], 40) : '';
+  const [saved, setSaved] = useState(initial);
+  const [selected, setSelected] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  if (!editor) return null;
+
+  async function save() {
+    if (!selected || selected === saved || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const results = await loadGlobalChatInlineResults(
+        'settings.local.update',
+        { setting: editor.setting, value: selected },
+        title,
+      );
+      const pending = results.find((result) => clientAction(result));
+      if (!pending) throw new Error('The setting update was not returned.');
+      const applied = await runGlobalChatClientAction(pending);
+      if (!applied) throw new Error('Could not apply this setting.');
+      setSaved(selected);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save this setting.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="global-chat-setting-controls" aria-label={`Change ${title}`}>
+      <div className="global-chat-inline-actions">
+        {editor.options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={selected === option.value ? 'global-chat-action-primary' : ''}
+            aria-pressed={selected === option.value}
+            onClick={() => setSelected(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={!selected || selected === saved || saving}
+          onClick={() => void save()}
+        >
+          {saving ? 'Saving…' : selected === saved ? 'Saved' : 'Save'}
+        </button>
+      </div>
+      {error ? <div className="global-chat-inline-error" role="alert">{error}</div> : null}
+    </div>
+  );
+}
+
 function ItemRow({
   result,
   value,
@@ -686,7 +786,9 @@ function ItemRow({
               <GlobalChatResultBlock key={loaded.id} result={loaded} nested />
             ))}
             {result.renderer === 'setting' && result.capabilityId === 'settings.inspect'
-              ? <SettingInstruction item={item} title={title} />
+              ? (LOCAL_SETTING_EDITORS[text(item.group || item.id, 80)]
+                ? <LocalSettingEditor item={item} title={title} />
+                : <SettingInstruction item={item} title={title} />)
               : null}
           </div>
         ) : null}
@@ -773,10 +875,24 @@ export function GlobalChatResultBlock({
 }) {
   const payload = unwrapped(result);
   const confirmation = object(payload)?.status === 'confirmation_required';
-  const items = useMemo(() => findItems(payload), [payload]);
+  const action = clientAction(result);
+  const items = useMemo(() => action ? [] : findItems(payload), [action, payload]);
   const pageSize = result.renderer === 'app' ? 6 : 3;
   const [visibleCount, setVisibleCount] = useState(pageSize);
   if (confirmation) return <ConfirmationResult result={result} payload={object(payload) || {}} />;
+  if (action) {
+    return (
+      <section
+        className={`global-chat-result${nested ? ' global-chat-result-nested' : ''}`}
+        data-renderer={result.renderer}
+      >
+        <header className="global-chat-result-head">
+          <span>{action.transport === 'navigation' ? 'Open in Classic' : 'Ready to apply'}</span>
+        </header>
+        <ClientActionResult result={result} />
+      </section>
+    );
+  }
   if (result.renderer === 'setting'
       && result.capabilityId === 'settings.inspect'
       && object(payload)?.group === 'global-chat') {
@@ -815,7 +931,6 @@ export function GlobalChatResultBlock({
   }
 
   const visible = items.slice(0, visibleCount);
-  const action = clientAction(result);
   return (
     <section
       className={`global-chat-result${nested ? ' global-chat-result-nested' : ''}${itemSelection ? ' global-chat-result-selector' : ''}`}
@@ -846,8 +961,7 @@ export function GlobalChatResultBlock({
           Show more <ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       ) : null}
-      {action ? <ClientActionResult result={result} /> : null}
-      {!items.length && !action ? (
+      {!items.length ? (
         <div className="global-chat-result-done">{emptyResultMessage(result)}</div>
       ) : null}
     </section>

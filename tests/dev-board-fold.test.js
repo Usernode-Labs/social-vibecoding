@@ -899,7 +899,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Neither set overlaps the other, so the merged manifest holds every one
   // of them: 703 + 1 + 2 + 1 = 707, which leaves 23 slots against
   // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 707);
+  //
+  // 707 → 709: #2684 adds the Homeroom bot's admin dashboard, with two
+  // declared checks on its section (the verdict table renders; the intro
+  // says shadow mode posts nothing). 21 slots remain, still clear of the
+  // 20-slot floor.
+  //
+  // 707 → 708: independently on main, the native Android header safe-area
+  // classification regression adds one declared check.
+  //
+  // 709 → 710, 708 → 710: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 707 → 709 alone, with the #2684 pair above; main independently took the
+  // same 707 to 708, with the native-classification check above. Neither set
+  // overlaps the other, so the merged manifest holds every one of them:
+  // 707 + 2 + 1 = 710.
+  assert.equal(DAPP.tests.length, 710);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

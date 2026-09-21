@@ -17,28 +17,76 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
 
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
   const dockerfile = read('Dockerfile.kubernetes');
+  assert.match(dockerfile, /FROM node:22-alpine AS asset-deps/);
   assert.match(dockerfile, /FROM node:22-alpine AS shell/);
-  assert.match(dockerfile, /RUN node frontend\/scripts\/build-shell\.mjs/);
-  assert.match(dockerfile, /FROM node:22-alpine AS css/);
-  assert.match(dockerfile, /RUN npm run build:css/);
+  assert.match(dockerfile, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs/);
+  assert.match(dockerfile, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node scripts\/build-tailwind\.js/);
+  assert.doesNotMatch(dockerfile, /FROM node:22-alpine AS css/,
+    'a second dependency-bearing asset stage makes rootless BuildKit restore it separately');
 
-  const sourceCopy = dockerfile.lastIndexOf('COPY --chown=node:node . .');
-  for (const asset of [
-    '/build/public/index.html ./public/index.html',
-    // The directory: every lazy chunk the React build emits, not the entry alone.
-    '/build/public/shell/assets/ ./public/shell/assets/',
-    '/build/public/css/tailwind.css ./public/css/tailwind.css',
+  const shellBuild = dockerfile.indexOf('node frontend/scripts/build-shell.mjs');
+  const publicCopy = dockerfile.indexOf('COPY public ./public');
+  const cssBuild = dockerfile.indexOf('node scripts/build-tailwind.js');
+  assert.ok(shellBuild > -1 && shellBuild < publicCopy && publicCopy < cssBuild,
+    'Tailwind must scan the shell generated earlier in the same stage');
+
+  const shellStage = dockerfile.slice(
+    dockerfile.indexOf('FROM node:22-alpine AS shell'),
+    dockerfile.lastIndexOf('\nFROM node:22-alpine\n'),
+  );
+  assert.doesNotMatch(shellStage, /RUN npm ci/,
+    'asset dependencies must stay outside the generated-output snapshot');
+
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  assert.doesNotMatch(runtime, /^COPY --chown=node:node \. \.$/m,
+    'the runtime image must not ship tests, docs, or builder sources');
+  for (const source of [
+    'COPY --chown=node:node server.js dapp.json ./',
+    'COPY --chown=node:node src ./src',
+    'COPY --chown=node:node scripts ./scripts',
+    'COPY --chown=node:node worker ./worker',
+    'COPY --chown=node:node --from=shell /build/public ./public',
   ]) {
-    const assetCopy = dockerfile.lastIndexOf(asset);
-    assert.ok(assetCopy > sourceCopy,
-      `${asset} must be copied into the runtime after the source tree`);
+    assert.ok(runtime.includes(source), `${source} must be present in the runtime stage`);
   }
+  assert.doesNotMatch(runtime, /^COPY .*frontend/m);
+  assert.doesNotMatch(runtime, /^COPY .*tests/m);
+  assert.doesNotMatch(runtime, /^COPY .*docs/m);
 });
 
 test('Docker keeps boot migrations while Kubernetes can delegate them to a Job', () => {
   const source = read('server.js');
   assert.match(source, /RUN_MIGRATIONS_ON_STARTUP !== 'false'/);
-  assert.match(source, /await withMigrationLock\(getPool\(config\), \(\) => migrate\(config\)\)/);
+  assert.match(source, /migration = await withMigrationLock\(getPool\(config\), \(\) => migrate\(config\)\)/);
+});
+
+test('startup diagnostics expose coarse public-safe phases through health', () => {
+  const server = read('server.js');
+  const migrate = read('src/db/migrate.js');
+  assert.match(server, /startup: startupDiagnostics/);
+  assert.match(server, /migrationsOnStartup/);
+  assert.match(server, /servicesMs: Date\.now\(\) - servicesStartedAt/);
+  for (const phase of [
+    'preflightMs', 'schemaMs', 'reindexMs', 'coreSeedMs',
+    'stagingFixturesMs', 'maintenanceMs', 'totalMs',
+  ]) {
+    assert.match(migrate, new RegExp(phase));
+  }
+  assert.match(migrate, /log\.info\('db', 'Migration phases complete', timings\)/);
+  assert.match(migrate, /return timings;/);
+});
+
+test('self-app previews skip production fleet role maintenance', () => {
+  const migrate = read('src/db/migrate.js');
+  const start = migrate.indexOf('async function migrateAppDbsToPerRole(pool, config)');
+  const end = migrate.indexOf('\nasync function ', start + 1);
+  assert.ok(start > -1 && end > start, 'per-app role migration function is located');
+  const body = migrate.slice(start, end);
+  const stagingGuard = body.indexOf("if (process.env.USERNODE_ENV === 'staging')");
+  const fleetQuery = body.indexOf('SELECT id, slug, container_id');
+  assert.ok(stagingGuard > -1 && stagingGuard < fleetQuery,
+    'the preview returns before reading or administering production child apps');
+  assert.match(body, /Per-app role migration skipped in staging preview/);
 });
 
 test('Kubernetes platform rollout preserves availability and singleton ownership', () => {

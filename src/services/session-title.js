@@ -97,6 +97,185 @@ function parseIssueSeed(text) {
   };
 }
 
+// #2653: a session named "just the first line of what I typed". The trim
+// below used to be a blind prefix — collapse the message, cut at 72, add an
+// ellipsis — which spends the whole budget on whatever the person happened
+// to write first. For anyone who opens with a greeting, or whose first
+// sentence runs long, that is a severed quotation rather than a name.
+//
+// Three rules, in order, all of which USE MORE OF THE MESSAGE rather than
+// more of its opening:
+//
+//   1. Drop the conversational lead-in. "Hey, could you please " is 21 of
+//      the 72 characters and says nothing about the change.
+//   2. Prefer a WHOLE sentence. If one or more complete sentences fit, take
+//      as many as fit — two short ones say more than one truncated one —
+//      and drop the closing period, because a title has none.
+//   3. Only then truncate, and at a word boundary rather than mid-word.
+//
+// A session started from an issue card keeps skipping all of this: its
+// issue title is already a name, and re-phrasing a name is how you lose it.
+const DETERMINISTIC_TITLE_MIN = 24;
+
+// Openers worth spending no characters on. Matched repeatedly from the
+// front, so "Hey — could you please …" loses all three pieces.
+//
+// The `(?![\w-])` after the alternation is load-bearing: without it the
+// trailing punctuation class eats the hyphen in "Right-click the account
+// menu" and "Hi-res image uploads", leaving "click the account menu" and
+// "res image uploads". A hyphen glued to the next word is part of that
+// word, not conversational punctuation.
+// Openers that are filler wherever they appear. None of these begins an
+// ordinary sentence about software.
+const ALWAYS_LEAD_IN = [
+  '(?:hi|hey|hello)\\b',
+  '(?:thanks|thank you)\\b',
+  '(?:please|pls|plz|kindly)\\b',
+  '(?:can|could|would|will)(?:n.?t)?\\s+(?:you|we|i)\\b',
+  'i.?d\\s+like\\s+(?:you\\s+)?to\\b',
+  'i\\s+(?:want|need|would\\s+like)\\s+(?:you\\s+)?to\\b',
+  'we\\s+(?:should|need\\s+to|want\\s+to)\\b',
+  'let.?s\\b',
+  '(?:go\\s+ahead\\s+and|try\\s+to|help\\s+me|i\\s+think\\s+we\\s+should)\\b',
+];
+
+// Openers that are ALSO ordinary words. "OK button remains disabled" and
+// "Right sidebar overlaps the content" are not greetings, and stripping the
+// first word takes the name of the control or the side of the screen with
+// it. These only count as filler when punctuation follows, which is what a
+// real greeting has: "OK, " / "Right — " / "Actually: ".
+//
+// The cost is missing an unpunctuated "OK so I need you to …", which leaves
+// two words of filler in a title. That is the right way round: leaving
+// filler is untidy, eating the subject is wrong.
+const AMBIGUOUS_LEAD_IN = [
+  '(?:ok|okay|so|right|alright|actually|yo|cheers|quick one)\\b',
+];
+
+const PUNCTUATION = '[\\s,:;.!?\\u2013\\u2014-]';
+const LEAD_IN_RE = new RegExp(
+  `^(?:(?:${ALWAYS_LEAD_IN.join('|')})(?![\\w-])${PUNCTUATION}*`
+  + `|(?:${AMBIGUOUS_LEAD_IN.join('|')})(?![\\w-])\\s*[,:;.!?\\u2013\\u2014-]${PUNCTUATION}*)`,
+  'i',
+);
+
+// Words whose trailing dot is not the end of a sentence. Without this,
+// "Fix the etc. case" would be titled "Fix the etc".
+const NOT_SENTENCE_END = new Set([
+  'etc', 'vs', 'fig', 'no', 'approx', 'cf', 'al', 'ie', 'eg',
+  'dr', 'mr', 'mrs', 'ms', 'st', 'jan', 'feb', 'mar', 'apr', 'jun',
+  'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec',
+]);
+
+// A dotted initialism — "e.g", "i.e", "U.S", "a.k.a" — read as a whole
+// rather than listed, because the list will always be missing one. An
+// allowlist got "Fix the e.g. case" right and still turned "Add filtering
+// for U.S. accounts" into "Add filtering for U.S".
+const DOTTED_INITIALISM_RE = /^(?:[a-z]\.)+[a-z]$/i;
+
+function endsSentence(previousWord) {
+  if (!previousWord) return false;
+  if (NOT_SENTENCE_END.has(previousWord)) return false;
+  if (DOTTED_INITIALISM_RE.test(previousWord)) return false;
+  // A single initial: "Fix J. Random's bug".
+  return !/^[a-z]$/i.test(previousWord);
+}
+
+// The other way an ambiguous word is plainly a greeting: it is followed by
+// another lead-in. "OK, so I need you to …" strips "OK," and then stalls on
+// "so", because "so" alone is not filler — but "so I need you to" is. The
+// lookahead keeps this syntactic: a greeting chain, not a guess at meaning.
+const AMBIGUOUS_BEFORE_LEAD_IN_RE = new RegExp(
+  `^(?:${AMBIGUOUS_LEAD_IN.join('|')})(?![\\w-])\\s+(?=(?:${ALWAYS_LEAD_IN.join('|')}))`,
+  'i',
+);
+
+function stripLeadIns(text) {
+  let out = text;
+  // Bounded rather than `while`: a pathological input must not spin here,
+  // and no real opening stacks more than a few of these.
+  for (let i = 0; i < 6; i += 1) {
+    const next = out
+      .replace(LEAD_IN_RE, '')
+      .replace(AMBIGUOUS_BEFORE_LEAD_IN_RE, '');
+    if (next === out) break;
+    out = next;
+  }
+  out = out.trim();
+  // A message that is ONLY a greeting still has to be named something, and
+  // the greeting beats an empty title.
+  return out || text;
+}
+
+// NOT DONE HERE: dropping URLs. An earlier revision removed them, on the
+// reasoning that a link is long and is rarely what a change is called. It
+// went twice: "Fix https://a.co callback" became "Fix callback", and once
+// that was fixed by only removing links from over-long prose, "Allow
+// https://example.com/callback as an OAuth redirect origin" became "Allow as
+// an OAuth redirect origin". Both times the link was the SUBJECT.
+//
+// Nothing available here tells a pointer ("have a look at <url> and fix the
+// header") from a subject, and the leftover-still-reads-like-a-title test
+// does not: the OAuth example passes it and still loses its point. A rule
+// that silently deletes what the sentence is about is worse than a title
+// with a long link in it, so links are left exactly where the person put
+// them and simply take their share of the budget.
+
+// The longest run of COMPLETE sentences that fits in `max`, with the
+// closing period dropped. '' when the first sentence does not fit.
+function sentencesWithin(text, max) {
+  let best = '';
+  const re = /[.!?](?=\s|$)/g;
+  let m = re.exec(text);
+  while (m) {
+    const end = m.index + 1;
+    if (end > max) break;
+    const previousWord = text.slice(0, m.index).split(/\s+/).pop().toLowerCase();
+    // An abbreviation or an initialism is not a sentence boundary; keep
+    // scanning for a real one.
+    if (endsSentence(previousWord)) best = text.slice(0, end);
+    m = re.exec(text);
+  }
+  // Only the full stop goes: a question keeps its mark, because "Why does
+  // the avatar upload 500?" reads as the name it is.
+  return best.replace(/\.+$/, '').trim();
+}
+
+// Does this read as a name rather than as a fragment? Both tests matter:
+// "Two things" clears the word count and fails the length, "internationalise"
+// clears the length and fails the word count.
+const SENTENCE_MIN_CHARS = 16;
+const SENTENCE_MIN_WORDS = 3;
+
+function isSubstantial(sentence) {
+  return sentence.length >= SENTENCE_MIN_CHARS
+    && sentence.split(' ').filter(Boolean).length >= SENTENCE_MIN_WORDS;
+}
+
+// Truncate at the last word boundary before `max`, falling back to a hard
+// cut when a single token is longer than the whole budget.
+// A hard cut must not land between the halves of a surrogate pair. This
+// file counts UTF-16 units, so an emoji is two, and slicing at an odd
+// offset inside a no-space run of them leaves a lone high surrogate. That
+// is not cosmetic: llm.stripLoneSurrogates exists in this codebase because
+// one malformed character in old chat history poisoned a later model call,
+// and this title is persisted and fed to prompts.
+function sliceWholeCharacters(text, max) {
+  const end = Math.min(max, text.length);
+  const last = text.charCodeAt(end - 1);
+  const orphanedHighSurrogate = last >= 0xD800 && last <= 0xDBFF;
+  return text.slice(0, orphanedHighSurrogate ? end - 1 : end);
+}
+
+function truncateAtWord(text, max) {
+  const slice = sliceWholeCharacters(text, max);
+  const space = slice.lastIndexOf(' ');
+  const cut = space >= DETERMINISTIC_TITLE_MIN ? slice.slice(0, space) : slice;
+  // Trailing punctuation rides along with the last whole word, and
+  // "groups by day,…" reads worse than "groups by day…".
+  return cut.trimEnd().replace(/[\s,;:.!?–—-]+$/, '');
+}
+
 function deterministicTitle(text) {
   // A seeded message names the change after its issue, not after the
   // instruction wrapped around it. The body is the fallback for the
@@ -108,9 +287,37 @@ function deterministicTitle(text) {
     .replace(/[#>*_`~\[\]()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return plain.length > DETERMINISTIC_TITLE_MAX
-    ? `${plain.slice(0, DETERMINISTIC_TITLE_MAX - 1).trimEnd()}…`
-    : plain;
+
+  // Something that already fits is returned in the person's own words. The
+  // rules below exist to spend a budget well, so they only run once there
+  // is a budget to spend — rephrasing a message that fits would be taking
+  // words out of someone's mouth for nothing.
+  if (plain.length <= DETERMINISTIC_TITLE_MAX) return plain;
+
+  // An issue title is already a name, so none of the prose rules may
+  // rewrite it — including the sentence rule. An issue called
+  // `Fix imports from foo.js. Preserve the compatibility path` must not
+  // become `Fix imports from foo.js`; it is over the cap, so it gets cut,
+  // and that is all.
+  if (seed && seed.title) {
+    return `${truncateAtWord(plain, DETERMINISTIC_TITLE_MAX - 1)}…`;
+  }
+
+  // Everything below is for prose a person typed at a chat box.
+  const body = stripLeadIns(plain);
+  // Dropping the lead-in can be the whole fix: "Hey, could you please …"
+  // is 21 characters of nothing.
+  if (body.length <= DETERMINISTIC_TITLE_MAX) return body;
+
+  const sentences = sentencesWithin(body, DETERMINISTIC_TITLE_MAX);
+  // A complete short sentence beats a truncated long one — "Fix the login
+  // redirect" is a better name than "Fix the login redirect. It sends
+  // people to the dash…" — but only once it says something. A fragment
+  // ("Two things." / "One more thing.") is not a name, so it has to clear
+  // both a length and a word count before it wins.
+  if (isSubstantial(sentences)) return sentences;
+
+  return `${truncateAtWord(body, DETERMINISTIC_TITLE_MAX - 1)}…`;
 }
 
 // Model inputs for a request history that may open with the issue-card

@@ -127,7 +127,10 @@ test('the console island imports every admin module, console first', () => {
   assert.deepEqual(order.slice(1).sort(), [
     'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
-    'admin-gallery', 'admin-limits', 'admin-mail', 'admin-merges',
+    'admin-gallery',
+    // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
+    'admin-homeroom-bot',
+    'admin-limits', 'admin-mail', 'admin-merges',
     // #2570: Model costs, where the picker's per-model notes and cost
     // estimates are kept honest against what changes actually cost.
     'admin-model-costs',

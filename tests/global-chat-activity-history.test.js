@@ -91,7 +91,12 @@ test('history reads enforce a small bounded count and stay behind signed-in acce
   assert.equal(registry.get('issues.closed_by_me').access(signedOut), false);
   assert.equal(registry.get('issues.closed_by_me').access(signedIn), true);
   assert.equal(registry.get('governance.merged_by_me').access(signedIn), true);
+  assert.equal(registry.get('governance.completed').access(signedIn), true);
   const result = await registry.execute('issues.closed_by_me', { limit: 10 }, signedIn);
   assert.equal(result.renderer, 'issue');
   assert.deepEqual(result.authoritativeResult.data.items, []);
+
+  const completed = await registry.execute('governance.completed', { limit: 10 }, signedIn);
+  assert.equal(completed.renderer, 'proposal');
+  assert.deepEqual(completed.authoritativeResult.data.items, []);
 });

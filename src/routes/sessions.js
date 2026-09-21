@@ -1131,6 +1131,14 @@ async function persistScoutPublication({
   return { applied: true, ...value };
 }
 
+// How much of a coding turn's summary is handed back to the Mayor as
+// tool_result content. This is a PROMPT bound — an unbounded agent summary
+// crowds out the Mayor's own context — and #2641 is the record of it being
+// applied where it did not belong: a direct chat turn's summary is the
+// agent's answer to the person, not a tool result, and cutting it at this
+// length truncated long replies mid-sentence.
+const MAYOR_TOOL_RESULT_CHAR_MAX = 4000;
+
 const AGENT_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
 
 class AgentSelectionError extends Error {
@@ -2427,7 +2435,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: try to reclaim a slot from a globally idle
@@ -2644,7 +2653,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -2820,7 +2830,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -4210,7 +4221,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -4450,7 +4462,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
+            AND source IS DISTINCT FROM 'imported'
+            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: reclaim a slot from a globally idle session
@@ -12583,7 +12596,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   }
 
   return {
-    toolResultText: summaryParts.join('\n\n').slice(0, 4000)
+    // Scout's summary really is a tool result — the Mayor writes the
+    // wrap-up from it — so the prompt bound stays. The spec itself is
+    // persisted separately and in full (persistScoutPublication).
+    toolResultText: summaryParts.join('\n\n').slice(0, MAYOR_TOOL_RESULT_CHAR_MAX)
       || (isError ? 'Scout did not complete successfully.' : 'Scout finished with no summary.'),
     isError,
     turnId: durableTurnId,
@@ -15242,10 +15258,32 @@ ${buildGuidance.testingGuidance}`;
     // the sweeper in server.js) and session archive own teardown.
   }
 
-  const toolResultText = summaryParts.join('\n\n').slice(0, 4000)
-    || (isError
-      ? `${executionAgentName} did not complete successfully.`
-      : `${executionAgentName} finished with no summary.`);
+  // #2641: "long GLM responses seem to be getting truncated". They were,
+  // here. The 4000-character bound is a PROMPT bound — this text goes back
+  // to the Mayor as tool_result content, and an unbounded agent summary
+  // would crowd out its context.
+  //
+  // A DIRECT SESSION TURN has no Mayor. It is the single-provider
+  // OpenRouter path, and its own comment says so: "no Anthropic Mayor,
+  // wrap-up, or quick-reply generation runs around it". Nothing re-prompts
+  // with this string; the caller writes it straight into
+  // `chat_session_messages.content` — a TEXT column with no limit of its
+  // own — as the assistant's message, for the person who asked to read.
+  //
+  // So a reply of about six hundred words was silently cut mid-sentence,
+  // which is exactly the "not even that long" in the report. The bound now
+  // applies only where there is a prompt to bound.
+  //
+  // Keyed on `directSessionTurn`, NOT on whether the turn happened to
+  // change files: a build turn on this path persists the same text just as
+  // directly, so a long build summary was cut in exactly the same way.
+  const summaryText = summaryParts.join('\n\n');
+  const fallbackSummary = isError
+    ? `${executionAgentName} did not complete successfully.`
+    : `${executionAgentName} finished with no summary.`;
+  const toolResultText = (directSessionTurn
+    ? summaryText
+    : summaryText.slice(0, MAYOR_TOOL_RESULT_CHAR_MAX)) || fallbackSummary;
   // commitSha is exposed (in addition to ccLog/stagingUrl) for the
   // caller's bookkeeping (PR card metadata, etc.). Null if CC made no
   // changes.

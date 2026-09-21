@@ -130,6 +130,18 @@ function strictObjectSchema(value, field) {
   return structuredClone(value);
 }
 
+function discoveryPriority(value, field) {
+  if (value == null) return 0;
+  if (!Number.isInteger(value) || value < -100 || value > 100) {
+    throw new CapabilityRegistryError(
+      'invalid_definition',
+      `${field} must be an integer from -100 to 100`,
+      { field },
+    );
+  }
+  return value;
+}
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!plainObject(value)) return value;
@@ -212,6 +224,7 @@ function normalizeDefinition(definition) {
     title: requiredText(definition.title, `${id}.title`, 80),
     summary: requiredText(definition.summary, `${id}.summary`, 400),
     keywords: Object.freeze(stringList(definition.keywords || [], `${id}.keywords`)),
+    discoveryPriority: discoveryPriority(definition.discoveryPriority, `${id}.discoveryPriority`),
     searchRequires: Object.freeze(stringList(
       definition.searchRequires || [],
       `${id}.searchRequires`,
@@ -247,6 +260,7 @@ function descriptorForHash(definition) {
     title: definition.title,
     summary: definition.summary,
     keywords: definition.keywords,
+    discoveryPriority: definition.discoveryPriority,
     searchRequires: definition.searchRequires,
     inputSchema: definition.inputSchema,
     resultSchema: definition.resultSchema,
@@ -350,16 +364,23 @@ function searchScore(definition, terms, { hasNumericIdentifier = false } = {}) {
   };
   let score = 0;
   let matchedTerms = 0;
+  let strongMatchedTerms = 0;
   for (const term of terms) {
     let matched = false;
-    if (fields.id.has(term)) { score += 8; matched = true; }
-    if (fields.title.has(term)) { score += 6; matched = true; }
-    if (fields.keywords.has(term)) { score += 4; matched = true; }
-    if (fields.domain.has(term)) { score += 3; matched = true; }
+    let strongMatched = false;
+    if (fields.id.has(term)) { score += 8; matched = true; strongMatched = true; }
+    if (fields.title.has(term)) { score += 6; matched = true; strongMatched = true; }
+    if (fields.keywords.has(term)) { score += 4; matched = true; strongMatched = true; }
+    if (fields.domain.has(term)) { score += 3; matched = true; strongMatched = true; }
     if (fields.summary.has(term)) { score += 1; matched = true; }
     if (matched) matchedTerms += 1;
+    if (strongMatched) strongMatchedTerms += 1;
   }
   if (!matchedTerms) return 0;
+  // A semantic capability may outrank a raw route only when it covers the
+  // complete normalized request. Otherwise a generic word such as "app"
+  // must not make "app discussions" beat the actual app-list operation.
+  if (strongMatchedTerms === terms.length) score += definition.discoveryPriority;
   const requestedActions = terms.filter((term) => SEARCH_ACTION_TERMS.has(term));
   const requestedObjects = terms.filter((term) => !SEARCH_ACTION_TERMS.has(term));
   if (requestedObjects.length && !requestedObjects.some(
@@ -387,6 +408,19 @@ function searchScore(definition, terms, { hasNumericIdentifier = false } = {}) {
   // Partial matching is intentional: the strongest matching descriptor wins,
   // while a small coverage bonus keeps multi-word intent above generic routes.
   return score + matchedTerms * 2;
+}
+
+function preciseSemanticMatch(definition, terms) {
+  if (definition.discoveryPriority <= 0 || !terms.length) return false;
+  if (definition.searchRequires.length
+      && !definition.searchRequires.every((required) => terms.includes(required))) return false;
+  const strongTerms = new Set(searchTerms([
+    definition.id,
+    definition.title,
+    definition.domain,
+    definition.keywords.join(' '),
+  ].join(' ')));
+  return terms.every((term) => strongTerms.has(term));
 }
 
 function isAuthorized(definition, executionContext) {
@@ -495,15 +529,24 @@ class CapabilityRegistry {
   search(query, executionContext, { limit = 8 } = {}) {
     const boundedLimit = Math.max(1, Math.min(20, Number.isInteger(limit) ? limit : 8));
     const terms = searchTerms(query);
+    const compoundRequest = /\b(?:also|and|plus|then)\b|,/i.test(String(query || ''));
     const hasNumericIdentifier = /(?:^|\D)\d+(?:\D|$)/.test(String(query || ''));
-    return [...this._byId.values()]
+    const ranked = [...this._byId.values()]
       .filter((definition) => isAuthorized(definition, executionContext))
       .map((definition) => ({
         definition,
         score: searchScore(definition, terms, { hasNumericIdentifier }),
       }))
       .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score || a.definition.id.localeCompare(b.definition.id))
+      .sort((a, b) => b.score - a.score || a.definition.id.localeCompare(b.definition.id));
+    // When one or more purpose-built semantic operations cover the complete
+    // request, do not also hand a weak model several lower-level API routes
+    // that merely contain the same nouns. Compound requests still expose all
+    // matching operations because no single definition covers every clause.
+    const semantic = compoundRequest
+      ? []
+      : ranked.filter((entry) => preciseSemanticMatch(entry.definition, terms));
+    return (semantic.length ? semantic : ranked)
       .slice(0, boundedLimit)
       .map((entry) => discoveryDescriptor(entry.definition));
   }

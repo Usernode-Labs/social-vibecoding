@@ -8610,6 +8610,90 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NUL
 -- through rebuildProduction and record their failures on last_failure.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
 
+-- #2684: the Homeroom bot (`homeroom_bot`, a synthetic user) triages open
+-- requests in shadow mode: it reads an issue, its discussion and the app's
+-- repository in a read-only scout turn and records ONE verdict per issue —
+-- the question it would ask, that the issue is ready to build, or that it
+-- needs a person — without posting, claiming, building or notifying. These
+-- two tables are the whole of what the bot writes in that mode; the admin
+-- console's "Homeroom bot" section reads them.
+--
+-- homeroom_bot_queue: what it will look at next. One row per (app, issue),
+-- refreshed from the GitHub issue cache, drained per app in batches so one
+-- worker container per app stays warm across issues. `priority` 0 is an
+-- admin's "run now", 1 an issue the bot has never triaged, 2 one whose
+-- thread changed since its last run. `thread_seen_at` is the newest thread
+-- activity known when the row was queued.
+CREATE TABLE IF NOT EXISTS homeroom_bot_queue (
+  id             SERIAL PRIMARY KEY,
+  app_id         INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number   INTEGER NOT NULL,
+  priority       SMALLINT NOT NULL DEFAULT 2,
+  reason         TEXT NOT NULL DEFAULT 'refresh',
+  thread_seen_at TIMESTAMPTZ,
+  requested_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  enqueued_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at     TIMESTAMPTZ,
+  UNIQUE (app_id, issue_number)
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_queue_order
+  ON homeroom_bot_queue(app_id, priority, enqueued_at);
+
+-- homeroom_bot_runs: the ledger and the calibration record. The verdict as
+-- the model made it (`determined` / `missing_fact` are the belief model's
+-- prior), the text it would have posted, whether a live cap would have
+-- suppressed it, what the run cost, and how an admin rated it. Not marked
+-- staging:private: every row derives from public GitHub issues and the
+-- platform's own verdicts, and a staging preview of the dashboard needs
+-- rows to show.
+CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
+  id               SERIAL PRIMARY KEY,
+  app_id           INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number     INTEGER NOT NULL,
+  session_id       INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  mode             TEXT NOT NULL,
+  verdict          TEXT NOT NULL,
+  determined       BOOLEAN,
+  missing_fact     TEXT,
+  question         TEXT,
+  question_default TEXT,
+  build_note       TEXT,
+  reason           TEXT,
+  cap_suppressed   TEXT,
+  rating           TEXT,
+  rating_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  rating_note      TEXT,
+  rated_at         TIMESTAMPTZ,
+  posted_at        TIMESTAMPTZ,
+  thread_seen_at   TIMESTAMPTZ,
+  model            TEXT,
+  cost_usd         NUMERIC(18,8),
+  input_tokens     BIGINT,
+  output_tokens    BIGINT,
+  duration_ms      INTEGER,
+  error            TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT homeroom_bot_runs_verdict_check
+    CHECK (verdict IN ('question', 'ready', 'person', 'failed')),
+  CONSTRAINT homeroom_bot_runs_rating_check
+    CHECK (rating IS NULL OR rating IN ('yes', 'no'))
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_issue
+  ON homeroom_bot_runs(app_id, issue_number, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_created
+  ON homeroom_bot_runs(created_at DESC);
+
+-- The bot's own knobs, admin-tunable from its console section. `mode` is
+-- `off` (the loop idles), `shadow` (triage and record only) or `live`
+-- (reserved: refused by the settings route until a later slice posts and
+-- builds). Ships `off` so the change that adds the bot is itself inert.
+INSERT INTO platform_settings (key, value) VALUES
+  ('homeroom_bot_mode', 'off'),
+  ('homeroom_bot_concurrency', '1'),
+  ('homeroom_bot_batch_size', '10'),
+  ('homeroom_bot_paused_apps', '[]')
+ON CONFLICT (key) DO NOTHING;
+
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --
 -- Keep this the LAST block in the file: tests/preview-lifecycle.test.js
