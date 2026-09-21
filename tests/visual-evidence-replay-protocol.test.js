@@ -88,6 +88,29 @@ test('two clean passes must agree before evidence is reproducible', () => {
   assert.equal(replay.comparePasses(pass(), second({ artifacts: false })).code, 'missing_artifacts');
 });
 
+test('runner-normalized optional provenance matches the exact submitted fixture', () => {
+  const submitted = {
+    baseSha: 'b'.repeat(40), headSha: 'c'.repeat(40), fixtureFingerprint: 'paired-fixture',
+    baseImageDigest: 'sha256:base', headImageDigest: 'sha256:head',
+  };
+  const normalized = runner.validateInput({
+    runId: 'a'.repeat(32), pass: 1,
+    origins: { base: 'http://base:3000', head: 'http://head:3000' },
+    authTokens: { member: 'fixture-member', read_only_admin: 'fixture-admin' },
+    provenance: submitted,
+    plan: require('./fixtures/visual-evidence').plan(),
+  }).provenance;
+  assert.equal(normalized.hostedAssetRevision, null);
+  const first = pass();
+  const second = pass();
+  first.result.provenance = normalized;
+  second.result.provenance = normalized;
+  second.result.pass = 2;
+  assert.equal(replay.comparePasses(first, second, { provenance: submitted }).passed, true);
+  second.result.provenance = { ...normalized, headImageDigest: 'sha256:other' };
+  assert.equal(replay.comparePasses(first, second, { provenance: submitted }).code, 'provenance_changed');
+});
+
 test('a passing replay must cover every declared story, viewport, and requested artifact exactly', () => {
   const plan = require('./fixtures/visual-evidence').plan();
   const planHash = require('../src/services/visual-evidence-plan').planHash(plan);

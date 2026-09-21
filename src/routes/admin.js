@@ -23,6 +23,7 @@ const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const modelCosts = require('../services/model-costs');
+const homeroomBot = require('../services/homeroom-bot');
 const {
   accountRecovery,
   withTransaction,
@@ -932,6 +933,74 @@ function adminRoutes(config) {
       res.json(await modelCosts.adminPayload(pool));
     } catch (err) {
       log.error('admin', 'Update model cost failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Homeroom bot (#2684) ───────────────────────────────────
+  //
+  // The bot's shadow-mode dashboard: its settings, the queue it will look
+  // at next, the ledger of what it would have asked or built, and the two
+  // one-tap ratings per row that calibrate it. services/homeroom-bot.js
+  // owns every query; this layer only validates and gates.
+  //
+  // PERMISSIONS: the read is open to view-only admins, like /model-costs —
+  // the verdicts are the point of the screen. The three writes (settings,
+  // a rating, a "run now") are requireAdminWrite, like every mutation here.
+  router.get('/api/admin/homeroom-bot', async (req, res) => {
+    try {
+      const q = req.query || {};
+      const app = typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null;
+      const verdict = ['question', 'ready', 'person', 'failed'].includes(q.verdict) ? q.verdict : null;
+      const before = /^\d+$/.test(String(q.before || '')) ? Number(q.before) : null;
+      res.json(await homeroomBot.adminPayload(pool, config, { app, verdict, before }));
+    } catch (err) {
+      log.error('admin', 'Read homeroom bot failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/homeroom-bot/settings', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await homeroomBot.writeSettings(pool, req.body || {}, req.user.id, config);
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot settings updated', {
+        by: req.user.username, patch: Object.keys(req.body || {}),
+      });
+      res.json(await homeroomBot.adminPayload(pool, config, {}));
+    } catch (err) {
+      log.error('admin', 'Update homeroom bot settings failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/homeroom-bot/runs/:id/rating', requireAdminWrite, async (req, res) => {
+    try {
+      const { rating = null, note = null } = req.body || {};
+      const result = await homeroomBot.rateRun(pool, {
+        id: req.params.id, rating, note, actorId: req.user.id,
+      });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      res.json({ run: result.run });
+    } catch (err) {
+      log.error('admin', 'Rate homeroom bot run failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/homeroom-bot/run', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      const { slug, issueNumber } = req.body || {};
+      const result = await homeroomBot.enqueueNow(pool, {
+        slug, issueNumber, actorId: req.user.id,
+      });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot run requested', {
+        by: req.user.username, slug, issueNumber: Number(issueNumber),
+      });
+      res.status(202).json({ item: result.item });
+    } catch (err) {
+      log.error('admin', 'Homeroom bot run request failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

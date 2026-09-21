@@ -107,10 +107,39 @@ test('schema carries private revision-scoped runs, artifacts, session pointers a
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8');
   assert.match(schema, /CREATE TABLE IF NOT EXISTS visual_evidence_runs/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS visual_evidence_artifacts/);
+  assert.match(schema, /visual_evidence_runs_verified_integrity_check/);
+  assert.doesNotMatch(schema, /AND semantic_verdict IS NOT NULL AND completed_at/);
   assert.match(schema, /ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_state/);
   assert.match(schema, /idx_visual_evidence_runs_current_head[\s\S]*state NOT IN \('stale', 'cancelled'\)/);
   assert.match(schema, /COMMENT ON TABLE visual_evidence_runs IS 'staging:private'/);
   assert.match(schema, /COMMENT ON TABLE visual_evidence_artifacts IS 'staging:private'/);
+});
+
+test('a passing replay can publish captures without a model relevance verdict', async () => {
+  const runId = 'd'.repeat(32);
+  const planHash = 'c'.repeat(64);
+  const row = {
+    id: runId, session_id: 42, current_run_id: runId, state: 'reviewing',
+    base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40),
+    intent: intent(), plan_hash: planHash, hard_verdict: { passed: true },
+    semantic_verdict: null,
+  };
+  const statements = [];
+  const pool = { query: async (sql, values) => {
+    statements.push({ sql: String(sql), values });
+    if (/SELECT r\.\*/.test(sql)) return { rows: [row] };
+    if (/UPDATE visual_evidence_runs/.test(sql)) {
+      return { rows: [{ ...row, state: 'verified', completed_at: new Date() }] };
+    }
+    if (/FROM visual_evidence_artifacts/.test(sql)) return { rows: [] };
+    if (/UPDATE chat_sessions/.test(sql)) return { rowCount: 1 };
+    throw new Error(`Unexpected query: ${sql}`);
+  } };
+
+  const published = await state.transitionRun(pool, runId, 'verified');
+  assert.equal(published.state, 'verified');
+  assert.doesNotMatch(statements[1].sql, /semantic_verdict/);
+  assert.equal(JSON.parse(statements[3].values[3]).verifiedReason, null);
 });
 
 test('public run summary includes claims and artifact metadata but no executable plan or internal fixture', () => {
@@ -124,7 +153,7 @@ test('public run summary includes claims and artifact metadata but no executable
         intent: { steps: ['Open dialog'], animation: 'none' },
       }],
     },
-    semantic_verdict: { relevant: true, focusAccurate: true, reason: 'The pair shows the dialog.' },
+    semantic_verdict: null,
     trace_summary: { runs: 2, relativePointer: true },
     repair_attempt: 1, plan_hash: 'c'.repeat(64), updated_at: new Date('2026-09-17T00:00:00Z'),
     replay_plan: { secret: 'must not escape' }, fixture_fingerprint: 'private-fixture',
@@ -135,6 +164,7 @@ test('public run summary includes claims and artifact metadata but no executable
   assert.equal(summary.replayCount, 2);
   assert.equal(summary.repairCount, 1);
   assert.equal(summary.relativePointer, true);
+  assert.equal(summary.verifiedReason, null);
   assert.equal(Object.hasOwn(summary, 'replayPlan'), false);
   assert.equal(Object.hasOwn(summary, 'fixtureFingerprint'), false);
 });

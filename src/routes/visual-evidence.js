@@ -1,6 +1,6 @@
 'use strict';
 
-const { Router } = require('express');
+const { Router, json } = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
@@ -9,6 +9,7 @@ const orchestrator = require('../services/visual-evidence-orchestrator');
 const plan = require('../services/visual-evidence-plan');
 const state = require('../services/visual-evidence-state');
 const view = require('../services/visual-evidence-view');
+const { visualHeadForSession } = require('../services/pr-vote-revision');
 
 const ARTIFACT_ID_RE = /^[0-9a-f]{32}$/;
 
@@ -140,6 +141,82 @@ function visualEvidenceRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // The agent that wrote the revision may submit its executable UI flow.
+  // It cannot submit media or a verdict: the ordinary paired replay generates
+  // and checks every PNG/WebM artifact; people review what the media shows.
+  router.post('/api/apps/:slug/proposals/:sessionId/evidence/plan',
+    json({ limit: '512kb' }), async (req, res) => {
+      const id = sessionId(req.params.sessionId);
+      if (!id) return res.status(404).json({ error: 'Proposal not found' });
+      if (!config.visualEvidence?.execute) {
+        return res.status(503).json({ error: 'visual_evidence_disabled' });
+      }
+      try {
+        const ctx = await loadContext(pool, req.params.slug, id, req.user, 'collab');
+        if (!ctx || ctx.session.user_id !== req.user?.id) {
+          return res.status(404).json({ error: 'Proposal not found' });
+        }
+        if (!['active', 'promoted'].includes(ctx.session.status)) {
+          return res.status(409).json({ error: 'proposal_not_open' });
+        }
+        const currentHead = visualHeadForSession(ctx.session);
+        if (!currentHead || req.body?.headSha !== currentHead) {
+          return res.status(409).json({
+            error: 'evidence_head_moved',
+            message: 'Read the proposal’s current head and submit a plan for that exact commit.',
+          });
+        }
+        const accepted = ctx.session.visual_evidence_detail?.intent;
+        if (!accepted) {
+          return res.status(409).json({ error: 'missing_visual_evidence_intent' });
+        }
+        const executable = plan.parseReplayPlan(req.body?.plan);
+        if (plan.canonicalJson(plan.semanticIntentFromPlan(executable))
+            !== plan.canonicalJson(plan.parseIntent(accepted))) {
+          return res.status(409).json({
+            error: 'evidence_intent_mismatch',
+            message: 'The replay plan must preserve the accepted visual claims.',
+          });
+        }
+        if (ctx.session.visual_evidence_run_id) {
+          if (ctx.session.visual_evidence_state === 'failed') {
+            await state.rerunSameHead(pool, ctx.session.visual_evidence_run_id, {
+              trigger: 'author-plan',
+            });
+          } else if (ctx.session.visual_evidence_state !== 'planned') {
+            return res.status(409).json({
+              error: 'evidence_run_in_progress',
+              message: 'The current visual evidence run must finish before the author can resubmit its plan.',
+            });
+          }
+        }
+        const scheduled = await orchestrator.scheduleForSession(config, {
+          pool, sessionId: id, headSha: currentHead, trigger: 'author-plan',
+          authorPlan: executable,
+        });
+        if (!scheduled.scheduled) {
+          if (scheduled.reason === 'head_moved') {
+            return res.status(409).json({
+              error: 'evidence_head_moved',
+              message: 'The proposal head moved while the replay was being scheduled.',
+            });
+          }
+          return res.status(409).json({
+            error: 'evidence_run_in_progress',
+            message: `The visual evidence run could not start (${scheduled.reason}).`,
+          });
+        }
+        return res.status(202).json({
+          ok: true, runId: scheduled.runId, visualEvidenceState: 'provisioning',
+          headSha: currentHead,
+        });
+      } catch (err) {
+        if (err?.code || err instanceof plan.VisualEvidenceValidationError) return sendError(res, err);
+        log.error('visual-evidence', 'Author replay plan failed', { sessionId: id, err: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
 
   router.post('/api/apps/:slug/proposals/:sessionId/evidence/rerun', async (req, res) => {
     const id = sessionId(req.params.sessionId);

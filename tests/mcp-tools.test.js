@@ -1425,6 +1425,25 @@ test('submit_work documents direct v1 evidence input when the helper tool is abs
   assert.match(block, /validates both paths identically/);
 });
 
+test('submit_visual_evidence_plan forwards the exact typed flow to the owner-scoped platform route', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'POST');
+    assert.equal(pathname, '/api/apps/demo/proposals/42/evidence/plan');
+    return { runId: '1'.repeat(32), headSha: 'b'.repeat(40), visualEvidenceState: 'planned' };
+  }, { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const replayPlan = require('./fixtures/visual-evidence').plan();
+    const result = await c.handlers.get('submit_visual_evidence_plan')({
+      proposalId: 42, slug: 'demo', headSha: 'b'.repeat(40), plan: replayPlan,
+    });
+    assert.equal(result.isError, undefined);
+    assert.equal(result.structuredContent.runId, '1'.repeat(32));
+    assert.equal(c.calls.length, 1);
+    assert.deepEqual(c.calls[0].body.plan, replayPlan,
+      'the connector does not crop, transcode, or substitute the author flow');
+  } finally { c.restore(); }
+});
+
 test('list_requests says when the board itself could not be read in full', () => {
   // Distinct from `truncated`, which is only about this page. A degraded
   // fetch means "no duplicate found" is not evidence of anything, and the
@@ -1560,7 +1579,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // for why that is a different category from the acting tools below.
     'notify_awaiting_input', 'notify_input_received',
     'prepare_work', 'release_request',
-    'start_platform_build', 'submit_platform_build', 'submit_work',
+    'start_platform_build', 'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work',
     'update_proposal_issues', 'whoami',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
@@ -1727,7 +1746,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
     'create_request', 'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
     'prepare_work', 'start_platform_build',
-    'submit_platform_build', 'submit_work', 'update_proposal_issues',
+    'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work', 'update_proposal_issues',
   ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
@@ -1859,7 +1878,7 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
 
 test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
-    'create_request', 'prepare_work', 'submit_work',
+    'create_request', 'prepare_work', 'submit_work', 'submit_visual_evidence_plan',
     'start_platform_build', 'answer_questions', 'submit_platform_build',
     'demo_mode', 'demo_propose', 'demo_promote', 'demo_vote', 'demo_reset',
   ];

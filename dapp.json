@@ -3537,6 +3537,18 @@
       "expectText": "Estimates are per-token pricing times a typical change"
     },
     {
+      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684)",
+      "path": "/#admin/homeroom-bot",
+      "expectSelector": "#admin-homeroom-bot-table",
+      "expectText": "Verdict"
+    },
+    {
+      "name": "Homeroom bot dashboard says it posts nothing in shadow mode (#2684)",
+      "path": "/#admin/homeroom-bot",
+      "expectSelector": "#admin-homeroom-bot-intro",
+      "expectText": "It posts nothing, claims nothing and builds nothing"
+    },
+    {
       "name": "Model costs says what one change is and that it counts the coding agent (#2592)",
       "path": "/#admin/model-costs",
       "expectSelector": "#admin-model-costs-profile",
@@ -4433,6 +4445,12 @@
       "path": "/?demo=1&order=connect&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions button[data-flow-action=\"link-connector\"]",
       "expectText": "Connect Homeroom"
+    },
+    {
+      "name": "Link GitHub in the walkthrough goes to GitHub itself, not to Settings (#2679, #2680)",
+      "path": "/?demo=1&order=link&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"github\"][data-flow-step-state=\"current\"] a[data-flow-action=\"link-github\"][target=\"_blank\"][href=\"/api/me/social-identities/github/connect?intent=connect\"]",
+      "expectText": "Link GitHub"
     },
     {
       "name": "A continuation says the work lands as an update, not a second copy",

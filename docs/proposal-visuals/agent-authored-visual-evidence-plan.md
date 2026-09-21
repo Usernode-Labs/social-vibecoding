@@ -1,6 +1,16 @@
 # Agent-authored visual evidence for proposal reviews
 
-Status: implemented, merged, and deployed. Collection, execution, and
+> **Implementation update (2026-09-21):** The semantic image-review gate
+> described below has been removed. The implementing agent can submit the
+> bounded interaction plan; otherwise an evidence agent explores and submits
+> one. Homeroom checks the exact revisions and fixture, replays the plan twice,
+> and stores the PNG/WebM captures. The proposal displays them as **Captured**
+> for people to inspect and judge while voting. The internal `verified` state
+> now means only that replay and artifact integrity checks passed. The older
+> agent verdict, fallback vision reviewer, and semantic repair loop in this
+> historical plan are no longer part of the active flow.
+
+Original #2380 status: implemented, merged, and deployed. Collection, execution, and
 presentation are default-on and advisory; one emergency kill switch can stop
 the mechanism without restoring legacy default-route screenshots.
 
