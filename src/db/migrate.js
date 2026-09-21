@@ -16,6 +16,14 @@ const { reindexAfterHostMove } = require('./reindex-after-host-move');
 const mailRateLimit = require('../services/mail/rate-limit');
 
 async function migrate(config) {
+  const startedAt = Date.now();
+  const timings = {};
+  let phaseStartedAt = startedAt;
+  const finishPhase = (name) => {
+    const finishedAt = Date.now();
+    timings[name] = finishedAt - phaseStartedAt;
+    phaseStartedAt = finishedAt;
+  };
   const pool = getPool(config);
 
   const schema = fs.readFileSync(
@@ -28,10 +36,12 @@ async function migrate(config) {
   // invariant the PR-import feature is about to rely on is already
   // violated in this database. Read-and-throw only — it never mutates.
   await auditDuplicatePrSessions(pool);
+  finishPhase('preflightMs');
 
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool, schema);
   log.info('db', 'Schema up to date');
+  finishPhase('schemaMs');
 
   // One-off after the 2026-09 database host move: rows written before the
   // move were no longer findable through their unique text indexes (the
@@ -40,6 +50,7 @@ async function migrate(config) {
   // nothing comes back — against a broken index that manufactures
   // duplicates. Marker-guarded; see src/db/reindex-after-host-move.js.
   await reindexAfterHostMove(pool);
+  finishPhase('reindexMs');
 
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
@@ -48,6 +59,7 @@ async function migrate(config) {
   // hard-coded created_by = 900001. See seedStagingDemoUser.
   await seedStagingDemoUser(pool);
   await seedSelfApp(pool, config);
+  finishPhase('coreSeedMs');
   await seedStagingNotifications(pool, config);
   // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
   // off a notification id that seeder owns.
@@ -154,6 +166,7 @@ async function migrate(config) {
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
   await seedStagingPlatformMail(pool);
+  finishPhase('stagingFixturesMs');
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -169,6 +182,10 @@ async function migrate(config) {
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
+  finishPhase('maintenanceMs');
+  timings.totalMs = Date.now() - startedAt;
+  log.info('db', 'Migration phases complete', timings);
+  return timings;
 }
 
 // Proposal authorship predates proposal-level assignee votes, so existing

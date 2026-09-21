@@ -20,6 +20,24 @@ until that finishes, then cloning if the clone is still running.
 Completed Kubernetes images can also be reused across sessions; see
 [kpack image reuse](kpack-build-retention.md#completed-image-reuse-across-sessions).
 
+## Platform image build
+
+The Kubernetes platform image builds the React shell and Tailwind stylesheet
+in one stage from `frontend/package-lock.json`. This keeps the required
+shell-before-CSS order while avoiding a second dependency-bearing stage that
+rootless BuildKit would have to restore only to extract the stylesheet. The
+runtime stage copies an explicit allowlist (`server.js`, `dapp.json`, `src/`,
+`scripts/`, `worker/`, and the generated `public/` tree), so tests, docs,
+frontend sources, and build-only dependencies are not shipped.
+
+`GET /health` includes public-safe startup durations. `startup.migration`
+breaks migrations into preflight, schema, reindex, core seed, staging fixture,
+and maintenance milliseconds; `startup.servicesMs` covers the remaining
+blocking service initialization. Kubernetes production delegates migrations
+to its Job, so its health response reports `migrationsOnStartup: false` while
+the Job logs the same migration phase object. Self-app previews run migrations
+on startup and expose the full breakdown.
+
 ## Startup fixture batching
 
 The self-app's staging seed order stays sequential, including dependency guards
