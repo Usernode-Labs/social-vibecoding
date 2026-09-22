@@ -38,6 +38,12 @@ Account deletion affects Homeroom-controlled account data. Shared content is del
 ## Verification
 Test populated accounts with browser/mobile/CLI/MCP credentials, waitlist/mail records, votes, usage, messages and attachments; verify personal data removal and retained message bytes/Deleted user attribution. Exercise both admin endpoints and self-service, wrong-password/confirmation refusal, view-only admin refusal, last-admin concurrency, idempotent retries, transient provider failures, stale tokens, and deleted direct-message read/send behavior. Run SQL validation, frontend typecheck/build, and the repository’s affected test suites. Submit the exact tested tree to Homeroom, wait for staging/checks, and supply reviewer interactions before promotion.
 
+### Cross-account authorization verification
+- The self-service route selects both the actor and target from the authenticated browser identity. Client-supplied account ids, roles, and deletion modes have no authority. The service separately verifies actor/target equality and a live session belonging to that target.
+- `tests/account-deletion-postgres.test.js` exercises the real cookie-auth middleware against disposable PostgreSQL accounts: forged ids in the body/query/headers, forged admin flags, absent/fabricated/expired sessions, password and confirmation bypass attempts, and replay after deletion. Successful self-deletion leaves the other account, its session, and its deletion-receipt state unchanged.
+- Both admin deletion APIs reject ordinary users. Full administrators intentionally retain account-management authority; view-only or stale administrator authority is rejected, with the database role checked again inside the deletion transaction.
+- The isolated PostgreSQL run passed all 10 scenarios (11 reported tests including the parent suite) on 2026-09-22. This does not replace the outstanding staging/browser and real external-cleanup verification.
+
 ## How to test / observe
 - Settings → Account → Delete account: inspect the retained-content explanation; cancel safely; use a disposable staging account to confirm deletion and verify sign-out and rejected old credentials.
 - Messages: after deleting a disposable participant, the remaining participant sees the existing transcript and attachments under Deleted user; the composer is disabled for the direct conversation.

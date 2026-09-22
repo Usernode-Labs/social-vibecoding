@@ -25,7 +25,10 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 8 });
+  const config = { databaseUrl: String(url), jwtSecret: 'synthetic-test-only' };
+  const routePool = require('../src/db/pool').getPool(config);
   t.after(async () => {
+    await routePool.end();
     await pool.end();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();
@@ -54,6 +57,8 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     const readonly = await user({ readonly: true });
     await assert.rejects(deletion.deleteAccount(pool, { userId: target.id, actorId: owner.id, mode: 'admin' }), { code: 'confirmation_required' });
     await assert.rejects(deletion.deleteAccount(pool, { userId: target.id, actorId: readonly.id, mode: 'admin', confirmation: 'DELETE' }), { code: 'forbidden' });
+    await assert.rejects(deletion.deleteAccount(pool, { userId: target.id, actorId: readonly.id, mode: 'self', confirmation: 'DELETE', password, sessionToken: readonly.token }), { code: 'forbidden' });
+    await assert.rejects(deletion.deleteAccount(pool, { userId: target.id, actorId: target.id, mode: 'self', confirmation: 'DELETE', password, sessionToken: readonly.token }), { code: 'session_required' });
     await assert.rejects(deletion.deleteAccount(pool, { userId: target.id, actorId: target.id, mode: 'self', confirmation: 'DELETE', password: 'wrong', sessionToken: target.token }), { code: 'password_required' });
     const noPassword = await user({ passwordSet: false });
     await pool.query(`UPDATE sessions SET created_at = NOW() - INTERVAL '1 hour' WHERE token = $1`, [noPassword.token]);
@@ -222,9 +227,76 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     } finally { await new Promise(resolve=>server.close(resolve)); }
   });
 
+  await t.test('real cookie authentication prevents cross-account deletion and forged admin authority', async () => {
+    const attacker = await user(), victim = await user();
+    await pool.query('UPDATE users SET has_platform_access = TRUE WHERE id = ANY($1::int[])', [[attacker.id, victim.id]]);
+    const expiredToken = crypto.randomBytes(24).toString('hex');
+    await pool.query(`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, NOW() - INTERVAL '1 hour')`, [expiredToken, attacker.id]);
+
+    // Exercise the real identity lookup rather than assigning req.user in a
+    // test stub: request JSON, query parameters and headers cannot name it.
+    const app = express(); app.use(express.json(), cookieParser());
+    app.use(require('../src/middleware/auth').authMiddleware(config));
+    app.use(require('../src/routes/account-deletion').accountDeletionRoutes(config));
+    app.use(require('../src/routes/admin').adminRoutes(config));
+    app.use(require('../src/routes/topochain/admin/users').usersAdminRoutes(config));
+    const server = app.listen(0); await new Promise(resolve => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const headers = { 'Content-Type': 'application/json', Cookie: `session=${attacker.token}` };
+    const forged = { confirmation: 'DELETE', password, id: victim.id, userId: victim.id,
+      user_id: victim.id, actorId: owner.id, mode: 'admin', isAdmin: true, canAdminWrite: true };
+    try {
+      for (const token of [null, 'fabricated-session', expiredToken]) {
+        const response = await fetch(base + '/api/auth/account', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json', ...(token ? { Cookie: `session=${token}` } : {}) },
+          body: JSON.stringify(forged),
+        });
+        assert.equal(response.status, 401, 'missing, forged and expired sessions have no deletion authority');
+      }
+      for (const [prefix, deniedStatus] of [['/api/admin/users/', 302], ['/api/v4/admin/users/', 403]]) {
+        const response = await fetch(base + prefix + victim.id, {
+          method: 'DELETE', headers: { ...headers, 'X-User-Id': String(owner.id), 'X-Admin': 'true' },
+          body: JSON.stringify(forged), redirect: 'manual',
+        });
+        // The legacy admin router redirects non-admins to /; v4 returns
+        // JSON 403. Neither response may reach the deletion handler.
+        assert.equal(response.status, deniedStatus, 'ordinary accounts cannot use either admin deletion endpoint');
+        if (deniedStatus === 302) assert.equal(response.headers.get('location'), '/');
+      }
+      assert.equal((await fetch(base + `/api/auth/account/${victim.id}`, {
+        method: 'DELETE', headers, body: JSON.stringify(forged),
+      })).status, 404, 'there is no caller-selected account deletion route');
+      assert.equal((await fetch(base + '/api/auth/account', {
+        method: 'DELETE', headers: { ...headers, 'Content-Type': 'text/plain' }, body: JSON.stringify(forged),
+      })).status, 415, 'simple cross-origin request content types cannot delete accounts');
+      assert.equal((await fetch(base + '/api/auth/account', {
+        method: 'DELETE', headers, body: JSON.stringify({ ...forged, password: 'incorrect' }),
+      })).status, 403, 'spoofing admin mode does not bypass the caller password');
+      assert.equal((await fetch(base + '/api/auth/account', {
+        method: 'DELETE', headers, body: JSON.stringify({ ...forged, confirmation: '' }),
+      })).status, 400, 'spoofing admin mode does not bypass explicit confirmation');
+      for (const account of [attacker, victim]) {
+        assert.equal(await count('users', 'id', account.id), 1);
+        assert.equal(await count('account_deletions', 'user_id', account.id), 0);
+      }
+
+      // Even with another id in every client-controlled location, a valid
+      // self-delete can affect only the owner of this browser session.
+      const response = await fetch(base + `/api/auth/account?userId=${victim.id}&id=${victim.id}`, {
+        method: 'DELETE', headers: { ...headers, 'X-User-Id': String(victim.id) }, body: JSON.stringify(forged),
+      });
+      assert.equal(response.status, 200);
+      assert.equal(await count('users', 'id', attacker.id), 0);
+      assert.equal(await count('users', 'id', victim.id), 1);
+      assert.equal(await count('sessions', 'token', victim.token), 1);
+      assert.equal(await count('account_deletions', 'user_id', victim.id), 0);
+      assert.equal((await fetch(base + '/api/auth/account', {
+        method: 'DELETE', headers, body: JSON.stringify(forged),
+      })).status, 401, 'the deleted account cannot replay its old cookie');
+    } finally { await new Promise(resolve => server.close(resolve)); }
+  });
+
   await t.test('both admin APIs use erasure, refuse self deletion and reject stale/view-only authority', async () => {
-    const config = { databaseUrl: String(url), jwtSecret: 'synthetic-test-only' };
-    const routePool = require('../src/db/pool').getPool(config);
     const app = express(); app.use(express.json());
     let actor = { id: owner.id, isAdmin: true, canAdminWrite: true };
     app.use((req,res,next) => { req.user = actor; next(); });
@@ -254,7 +326,6 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
       await new Promise(resolve=>server.close(resolve));
       // Let the route's already-started synthetic cleanup pass finish.
       await cleanup.sweep(pool,{}, {run:async()=>{}});
-      await routePool.end();
     }
   });
 
