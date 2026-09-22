@@ -53,10 +53,18 @@ test('the app menu carries no platform destination at all', () => {
     assert.ok(!nav.includes(gone), `#${gone} left the menu`);
   }
   // …and what IS there is the app's, which is the other half of the split.
+  //
+  // `improve-row-feedback` LEFT THIS LIST (#2718 review), and not to a
+  // platform destination — it is a filled button in the Improve panel's own
+  // well again, beside "New change", which is where it was before this issue
+  // made it a row. A control that says what it DOES had become the first of
+  // eight rows in a place you go to navigate. The split this test is about is
+  // untouched: nothing here is the platform's.
   for (const row of [
-    'improve-row-feedback', 'app-menu-row-workshop',
-    'app-menu-row-discussion', 'app-menu-row-about',
+    'app-menu-row-workshop', 'app-menu-row-discussion', 'app-menu-row-about',
   ]) {
     assert.ok(nav.includes(`id="${row}"`), `#${row} is the app's own`);
   }
+  assert.ok(!nav.includes('id="improve-row-feedback"'),
+    'and feedback is a button in the Improve panel, not a row here');
 });

@@ -268,6 +268,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
     'M7 3v5h8',
     'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
+    // THE SPEECH BUBBLE, added by #2718's review. It was the leading glyph of
+    // the app menu's "Give feedback" row, which is a filled button in the
+    // Improve panel again — and that panel renders behind state, so its
+    // buttons carry no glyph into a cold document. The bell's own
+    // "All messages" row still draws this bubble, but only on the Messages
+    // tab, which is likewise a press away.
+    'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
     'M8.25 15L12 18.75 15.75 15',
     'M8.25 9L12 5.25 15.75 9',
     'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
