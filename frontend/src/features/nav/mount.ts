@@ -43,7 +43,15 @@ if (typeof window !== 'undefined') {
      */
     setScreen(screenId: string | null) {
       const screen = screenId || null;
-      navStore.set({ screen, tab: screen ? tabForScreen(screen) : null });
+      // `peek: false` on every screen change, because that is what a peek is
+      // FOR: you reveal the rail over an app to leave it, and the thing you
+      // tapped has now happened. Leaving it set would hand the next screen an
+      // overlay rail on top of its own.
+      navStore.set({
+        screen,
+        tab: screen ? tabForScreen(screen) : null,
+        peek: false,
+      });
     },
     /**
      * @param count Conversations with something unread. Clamped at zero so a

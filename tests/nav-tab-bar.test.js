@@ -277,6 +277,40 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
 
+test('the rail peeks back over an open app, and reserves nothing while it does', () => {
+  // An app covers the rail, which is what makes it feel like a program
+  // rather than a page, and on a laptop the pointer is already at the left
+  // edge half the time. The navigation comes back on hover and stops
+  // spending width while you work.
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
+  assert.match(bar, /screen === 'app-view' \? \(/,
+    'and it exists only inside an app — everywhere else the rail is there');
+  // THE PEEK IS NOT THE BAR'S VISIBILITY. The router still says hidden, the
+  // screens reserve no band, and the app is full width; this is an overlay
+  // on top of that answer.
+  assert.match(bar, /useHiddenClass\(barRef, !visible && !peek\);/);
+  assert.match(bar, /useClassToggle\(barRef, 'platform-tabs-peek', !visible && peek\);/);
+  assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\)/,
+    'a peeking bar reserves nothing — reflowing the app under the pointer '
+    + 'that revealed it is the bug this excludes');
+  // A phone has no pointer to hover with, and an invisible strip down the
+  // left edge of a touch screen eats the swipe that goes back.
+  assert.match(css, /@media \(max-width: 767px\) \{\s*\.platform-rail-peek \{ display: none; \}/);
+  // A fade, not a slide: a rail that slides in races the pointer that
+  // summoned it and arrives under it.
+  assert.match(css, /animation: platform-rail-peek-in 140ms ease-out;/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}animation: none;/);
+});
+
+test('every screen change clears the peek', () => {
+  // That is what a peek is FOR: you reveal the rail over an app to leave it,
+  // and the thing you tapped has now happened. Leaving it set would hand the
+  // next screen an overlay rail on top of its own.
+  const mount = read('frontend/src/features/nav/mount.ts');
+  assert.match(mount, /setScreen\(screenId: string \| null\) \{[\s\S]{0,600}peek: false,/);
+});
+
 test('the reservation is keyed off the bar\'s own hidden class', () => {
   // No second flag to keep in step: the island publishes `hidden` and the
   // screens read it, the same shape the wallpaper's route test uses.
@@ -291,8 +325,9 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
   assert.match(css, /--platform-rail-w: 0px;\n\}/,
     'and the rail costs a phone no width at all');
   assert.match(css,
-    /body:has\(#platform-tabs:not\(\.hidden\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-safe-bottom, 0px\)\);/,
-    'the strip adds its own band, and only while the bar is there to sit on');
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-safe-bottom, 0px\)\);/,
+    'the strip adds its own band, and only while the bar is there to sit on '
+    + 'for real rather than peeking over an app');
   assert.match(css, /\.platform-parked \{[^}]*bottom: var\(--platform-bar-h, 0px\);/,
     'and it rests ON the bar, so neither reserves the home-indicator twice');
   assert.match(css, /html\.un-kb #platform-tabs \{\s*display: none;/,

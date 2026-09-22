@@ -62,7 +62,7 @@
  * the next render. The class string below is a constant prop.
  */
 
-import { useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import {
   BoardIcon,
@@ -72,7 +72,7 @@ import {
   UserIcon,
 } from '@/components/ui/icons';
 
-import { useHiddenClass } from '../../lib/legacy-dom';
+import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from './nav-store.js';
@@ -156,18 +156,102 @@ function TabBadge({ count }: { count: number }) {
   );
 }
 
+/**
+ * The rail, peeked back over an open app (#2718, desktop only).
+ *
+ * ── The problem, on a laptop ──────────────────────────────────────────
+ *
+ * An app covers the rail — "the app is the whole window" is what makes a
+ * mini-app feel like a program rather than a page — and the way out is the ✕
+ * in the header. That is right on a phone, where the ✕ is under your thumb.
+ * On a laptop the pointer is already at the left edge half the time, and the
+ * five places you might want are behind a control at the top-left corner and
+ * a screen swap.
+ *
+ * So the rail comes BACK on hover, over the app, and going anywhere from it
+ * leaves the app the way tapping a tab always does. WeChat's floating
+ * capsule, a desktop OS's auto-hiding dock and Slack's own collapsed rail are
+ * all the same move: the navigation is still there, it is just not spending
+ * width while you are working.
+ *
+ * ── Why the peek is its own fact ──────────────────────────────────────
+ *
+ * It is NOT the bar's visibility. The router's answer is still "hidden" —
+ * `App._syncPlatformTabs` said so, the screens reserve no band, and the app
+ * is full width. The peek is a temporary overlay ON TOP of that answer, which
+ * is why it is a separate field and why the CSS that reserves the band
+ * excludes a peeking bar explicitly: a rail that reserved 224px on the way in
+ * would reflow the app under the pointer.
+ *
+ * ── The grace period, and what it is for ──────────────────────────────
+ *
+ * The pointer has to cross a gap to get from the hot zone onto the rail, and
+ * on the way back out it crosses the same gap. Un-peeking the moment either
+ * element is left makes the rail flicker away under a pointer that is on its
+ * way to it. A short delay, cancelled by entering either one, is the whole
+ * fix — and it is cancelled on unmount so a screen swap cannot land a timer
+ * on a bar that has since become the real one.
+ */
+function useRailPeek(peek: boolean) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clear = useCallback(() => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+  }, []);
+  useEffect(() => clear, [clear]);
+  const enter = useCallback(() => {
+    clear();
+    if (!navStore.get().peek) navStore.set({ peek: true });
+  }, [clear]);
+  const leave = useCallback(() => {
+    clear();
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      navStore.set({ peek: false });
+    }, 280);
+  }, [clear]);
+  return { enter, leave: peek ? leave : clear };
+}
+
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  useHiddenClass(barRef, !visible);
-
-  const { tab, messages } = useStoreState(navStore);
+  const { tab, messages, screen, peek } = useStoreState(navStore);
+  // A peek un-hides the bar without the router having changed its mind, so
+  // the class it renders is the OR of the two and the overlay treatment is a
+  // second class app.css keys the peeking case off.
+  useHiddenClass(barRef, !visible && !peek);
+  useClassToggle(barRef, 'platform-tabs-peek', !visible && peek);
+  const { enter, leave } = useRailPeek(peek);
 
   return (
-    <nav ref={barRef} id="platform-tabs" className="platform-tabs" aria-label="Sections">
+    <>
+      {/*
+          THE HOT ZONE. A strip at the window's left edge, and the only thing
+          that can start a peek. It renders only inside an app — everywhere
+          else the rail is already there — and app.css hides it below the
+          desktop breakpoint, because a phone has no pointer to hover with and
+          a hidden touch target at the screen edge would eat swipes.
+      */}
+      {screen === 'app-view' ? (
+        <div
+          id="platform-rail-peek"
+          className="platform-rail-peek"
+          aria-hidden="true"
+          onMouseEnter={enter}
+          onMouseLeave={leave}
+        />
+      ) : null}
+      <nav
+        ref={barRef}
+        id="platform-tabs"
+        className="platform-tabs"
+        aria-label="Sections"
+        onMouseEnter={enter}
+        onMouseLeave={leave}
+      >
       {TABS.map(({ key, label, href, Icon }) => (
         <a
           key={key}
@@ -206,6 +290,7 @@ export function PlatformTabs() {
           <span className="platform-tab-label">{label}</span>
         </a>
       ))}
-    </nav>
+      </nav>
+    </>
   );
 }

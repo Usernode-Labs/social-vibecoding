@@ -16005,7 +16005,11 @@ body {
      side. 0 on a phone, where they are a bar and cost width nothing. */
   --platform-rail-w: 0px;
 }
-html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
+/* `:not(.platform-tabs-peek)` because a PEEKING bar reserves nothing: the
+   router still says the bar is hidden (see features/nav/tab-bar.tsx), the app
+   under it is full width, and a rail that claimed 224px on the way in would
+   reflow the app under the pointer that revealed it. */
+html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) {
   --platform-bar-h: calc(56px + var(--platform-safe-bottom, 0px));
   --platform-tabs-h: calc(56px + var(--platform-safe-bottom, 0px));
 }
@@ -16017,7 +16021,7 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
    the element the property is DECLARED on — see the note at the head of this
    section — so `calc(52px + var(--platform-bar-h))` here would read the 0px
    from the plain `body` rule rather than the value the selector above sets. */
-html:not(.un-kb) body:has(#platform-tabs:not(.hidden)):has(#platform-parked:not(.hidden)) {
+html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {
   --platform-tabs-h: calc(52px + 56px + var(--platform-safe-bottom, 0px));
 }
 
@@ -16529,4 +16533,61 @@ html.un-kb #platform-tabs {
   background: var(--brand-tint);
   color: var(--brand-ink);
   border: 1px solid var(--brand-line);
+}
+
+
+/* ── The rail, peeked back over an open app (#2718) ──────────────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
+   the rail, which is what makes it feel like a program rather than a page,
+   and on a laptop the pointer is already at the left edge half the time. The
+   navigation comes back on hover and stops spending width while you work —
+   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
+   rail are all this move. */
+
+/* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
+   it never intercepts a pointer heading for the app's own left edge, wide
+   enough to be findable without aiming. */
+.platform-rail-peek {
+  position: fixed;
+  left: 0;
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
+    + var(--platform-safe-top, 0px));
+  bottom: 0;
+  width: 18px;
+  /* UNDER the peeked rail and OVER the app, so the pointer can cross from one
+     to the other without passing through the app's own hover targets. */
+  z-index: 39;
+}
+/* A PHONE HAS NO POINTER TO HOVER WITH, and an invisible strip down the left
+   edge of a touch screen eats the swipe that goes back. Below the desktop
+   breakpoint the zone is not there at all — which is also why the peek can
+   only ever happen on the layout that has a rail to peek. */
+@media (max-width: 767px) {
+  .platform-rail-peek { display: none; }
+}
+
+@media (min-width: 768px) {
+  /* THE PEEKED RAIL: the same element, over the app instead of beside it.
+     Everything about its inside — the rows, the labels, the lit tab — is the
+     rail's own, because it IS the rail; what changes is that it floats. */
+  .platform-tabs.platform-tabs-peek {
+    z-index: 40;
+    background-color: var(--dc-sheet);
+    border-right: 1px solid var(--app-sheet-line);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    /* A FADE, NOT A SLIDE. A rail that slides in from the edge races the
+       pointer that summoned it and arrives under it; one that fades is
+       already where it is going to be. It was tried both ways in the design
+       study and this is the one that stopped feeling like a mistake. */
+    animation: platform-rail-peek-in 140ms ease-out;
+  }
+}
+
+@keyframes platform-rail-peek-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-tabs.platform-tabs-peek { animation: none; }
 }
