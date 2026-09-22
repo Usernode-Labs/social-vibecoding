@@ -53,3 +53,37 @@ test('the evidence turn stays live after waiting for bounded platform replay', a
   assert.equal(control.finish({ status: 'verified', reason: 'The replayed pair proves the claim.', planHash }).status,
     'verified');
 });
+
+test('a rejected locator exposes the failed plan and permits one changed replay only', async () => {
+  const rejected = fixtures.plan();
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const mismatch = Object.assign(new Error('open-members matched 0 elements; exactly one is required.'), {
+    code: 'ambiguous_locator',
+  });
+  let replays = 0;
+  const control = new RunControl({
+    runId: 'c'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (plan) => {
+      replays += 1;
+      if (replays === 1) throw mismatch;
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(plan) };
+    },
+  });
+  await assert.rejects(control.runPlan(rejected), { code: 'ambiguous_locator' });
+  control.allowRepair('Inspect the actual control in both revisions.', {
+    code: 'ambiguous_locator', detail: { side: 'base', actionId: 'open-members' },
+  });
+  const context = control.getContext();
+  assert.equal(context.attempt, 2);
+  assert.equal(context.repair.failure.detail.actionId, 'open-members');
+  assert.deepEqual(context.repair.rejectedPlan, contract.parseReplayPlan(rejected));
+  await assert.rejects(control.runPlan(rejected), { code: 'evidence_repair_unchanged' });
+  assert.equal(replays, 1, 'an unchanged plan never spends a replay');
+  await control.runPlan(corrected);
+  assert.equal(replays, 2);
+  await assert.rejects(control.runPlan(corrected), { code: 'evidence_plan_attempt_exhausted' });
+});

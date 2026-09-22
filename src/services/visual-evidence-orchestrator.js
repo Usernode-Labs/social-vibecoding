@@ -449,6 +449,7 @@ function newRunMetrics() {
     agentAttempts: 0,
     agentDispatches: [],
     repairCount: 0,
+    repairTrigger: null,
     artifactBytes: 0,
     tokenUsage: {},
   };
@@ -488,6 +489,7 @@ function traceSummary(metrics, extra = {}) {
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
     repairCount: metrics.repairCount,
+    ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
     artifactBytes: metrics.artifactBytes,
     planSource: metrics.planSource || null,
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
@@ -783,7 +785,7 @@ async function executeRun(config, options, injected = {}) {
       },
     });
 
-    const dispatchOnce = async (forceBackend = null) => {
+    const dispatchOnce = async (forceBackend = null, repairAttempt = 0) => {
       if (agentWindowStartedAt == null) {
         agentWindowStartedAt = Date.now();
         agentWindowSuspendedAt = suspendedMs();
@@ -794,6 +796,7 @@ async function executeRun(config, options, injected = {}) {
       const dispatchTrace = {
         requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64),
         requestedModel: safeModelId(session.agent_model || session.model),
+        repairAttempt,
       };
       metrics.agentDispatches.push(dispatchTrace);
       try {
@@ -818,6 +821,7 @@ async function executeRun(config, options, injected = {}) {
           onProgress: (line) => progress(`Evidence agent: ${line}`),
           resumeThreadId: agentThreadId,
           forceBackend,
+          repairAttempt,
           timeoutMs: remainingAgentMs,
           suspendedMs,
         }, injected.agentDependencies || {});
@@ -857,7 +861,49 @@ async function executeRun(config, options, injected = {}) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
       }
+      const replayFailure = registration.control.lastReplayFailure?.error;
+      if (!latestHardVerdict && registration.control.planCalls === 1
+          && ['pass_1', 'pass_2'].includes(failurePhase)
+          && errorCode(replayFailure) === 'ambiguous_locator') {
+        // A wrong role/name is a planner error, not a reason to publish
+        // partial captures or silently substitute another DOM element.
+        // The platform explicitly starts one correction turn with the exact
+        // failed plan and replay location; its replacement still has to pass
+        // both clean, provenance-fenced replay passes.
+        const failureDetail = boundedReplayDetail(replayFailure);
+        registration.control.allowRepair(
+          'The first replay found zero or multiple elements for a planned locator. Inspect the actual control on both revisions and correct the complete plan.',
+          {
+            code: 'ambiguous_locator',
+            message: visibleError(replayFailure),
+            detail: failureDetail,
+          }
+        );
+        metrics.repairTrigger = {
+          code: 'ambiguous_locator',
+          ...(Number.isInteger(metrics.lastReplayEvent?.pass)
+            ? { pass: metrics.lastReplayEvent.pass } : {}),
+          ...(['base', 'head'].includes(failureDetail?.side)
+            ? { side: failureDetail.side } : {}),
+          ...(/^[a-z0-9][a-z0-9_-]{0,95}$/.test(String(failureDetail?.actionId || ''))
+            ? { actionId: failureDetail.actionId } : {}),
+        };
+        // The failed pass may have changed its fixture. Restore the same
+        // pinned pair before the planner inspects the control again.
+        failurePhase = 'repair_reset';
+        const repairResetStartedAt = Date.now();
+        try { await registration.control.resetSide('base'); }
+        finally { replaySuspendedMs += Date.now() - repairResetStartedAt; }
+        metrics.repairCount = 1;
+        failurePhase = 'agent_repair';
+        progress('A planned control did not match the page; the evidence agent is inspecting and correcting it once…');
+        const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
+        agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, 1);
+      }
       if (agentOutcome.error && !latestHardVerdict) {
+        if (metrics.repairCount === 1 && registration.control.planCalls === 1) {
+          throw agentOutcome.error;
+        }
         throw registration.control.lastReplayFailure?.error
           || registration.control.lastToolFailure?.error || agentOutcome.error;
       }

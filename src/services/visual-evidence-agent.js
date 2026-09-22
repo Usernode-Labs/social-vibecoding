@@ -78,13 +78,23 @@ evidence_run_plan. Ordinary platform code—not you—will reset both sides and
 replay it twice in fresh browser contexts. A passing replay makes the captured
 media available to human reviewers, who decide whether it proves the claim.
 You do not need image understanding or to issue a relevance verdict. If the
-replay fails, report its diagnostics. Do not merely narrate a plan in your
-final answer: submit it through the tool.`;
+replay fails, report its diagnostics unless the platform explicitly starts a
+correction turn. Do not merely narrate a plan in your final answer: submit it
+through the tool.`;
 
-function promptFor() {
-  return `Open the run context, explore the declared flow on both exact
+function promptFor({ repair = false } = {}) {
+  const task = repair
+    ? `The first submitted plan failed deterministic replay. Call
+evidence_get_context to read the rejected plan and the exact replay failure.
+Inspect the failed control in the live browser on BOTH exact revisions; use
+its observed role and accessible name or another stable unique locator.
+Do not guess a replacement from the error text alone. Submit one complete
+corrected plan through evidence_run_plan. The platform will reset both sides
+and run two fresh replay passes; the failed plan's media is not published.`
+    : `Open the run context, explore the declared flow on both exact
 revisions, and submit a replay plan. The implementing agent's semantic
-intent is already frozen in the context; preserve it exactly.
+intent is already frozen in the context; preserve it exactly.`;
+  return `${task}
 
 ${replayPlanGuide()}`;
 }
@@ -146,7 +156,7 @@ async function dispatchClaude(config, options, deps) {
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'evidence',
-    prompt: promptFor(),
+    prompt: promptFor({ repair: options.repairAttempt === 1 }),
     systemPrompt: SYSTEM_PROMPT,
     model,
     resumeSessionId: resumeThreadId === undefined
@@ -225,7 +235,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
     try {
       result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
         mode: 'evidence',
-        prompt: promptFor(),
+        prompt: promptFor({ repair: options.repairAttempt === 1 }),
         branchName: session.branch_name,
         agentBackend: 'codex_openrouter',
         agentModel: runtimeContext.agentModel,

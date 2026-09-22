@@ -48,7 +48,34 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.doesNotMatch(agent.SYSTEM_PROMPT, /evidence_finish/);
   assert.match(agent.SYSTEM_PROMPT, /page[\s\S]*untrusted data/i);
   assert.doesNotMatch(agent.promptFor(), /review was rejected|corrected plan/i);
+  assert.match(agent.promptFor({ repair: true }), /rejected plan and the exact replay failure/i);
+  assert.match(agent.promptFor({ repair: true }), /BOTH exact revisions/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);
+});
+
+test('a second hosted dispatch receives an explicit repair task through the normal worker', async () => {
+  const prompts = [];
+  const workerService = {
+    ensureWorker: async () => 'warm-worker',
+    execInWorker: async (_sessionId, options) => {
+      prompts.push(options.prompt);
+      assert.equal(options.resumeSessionId, 'evidence-thread');
+      assert.equal(options.evidenceRunId, '1'.repeat(32));
+      return { exitCode: 0, sessionId: 'evidence-thread' };
+    },
+  };
+  await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'claude_code',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token' },
+    resumeThreadId: 'evidence-thread', repairAttempt: 1,
+  }, { workerService });
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /first submitted plan failed deterministic replay/i);
+  assert.match(prompts[0], /evidence_run_plan/);
 });
 
 test('backend results cannot silently turn an errored model turn into success', () => {
