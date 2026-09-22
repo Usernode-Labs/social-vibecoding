@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 651,
-    "mappedRoutes": 513,
+    "totalRoutes": 652,
+    "mappedRoutes": 514,
     "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 362,
+    "clientApiReferences": 363,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -268,7 +268,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 250,
+      "line": 251,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -277,7 +277,7 @@
     },
     {
       "source": "server.js",
-      "line": 286,
+      "line": 287,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -304,7 +304,7 @@
     },
     {
       "source": "server.js",
-      "line": 316,
+      "line": 317,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -313,7 +313,7 @@
     },
     {
       "source": "server.js",
-      "line": 356,
+      "line": 357,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -339,7 +339,7 @@
     },
     {
       "source": "server.js",
-      "line": 361,
+      "line": 362,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -358,7 +358,7 @@
     },
     {
       "source": "server.js",
-      "line": 383,
+      "line": 384,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -367,7 +367,7 @@
     },
     {
       "source": "server.js",
-      "line": 665,
+      "line": 667,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +376,7 @@
     },
     {
       "source": "server.js",
-      "line": 847,
+      "line": 849,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +385,7 @@
     },
     {
       "source": "server.js",
-      "line": 851,
+      "line": 853,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +394,7 @@
     },
     {
       "source": "server.js",
-      "line": 855,
+      "line": 857,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +403,7 @@
     },
     {
       "source": "server.js",
-      "line": 859,
+      "line": 861,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +412,7 @@
     },
     {
       "source": "server.js",
-      "line": 863,
+      "line": 865,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,7 +421,7 @@
     },
     {
       "source": "server.js",
-      "line": 867,
+      "line": 869,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -6634,6 +6634,25 @@
       "classicPath": "#settings",
       "clientReferences": [
         "frontend/src/features/settings/settings.js"
+      ]
+    },
+    {
+      "source": "src/routes/messages-overview.js",
+      "line": 114,
+      "method": "GET",
+      "path": "/api/messages/app-discussions",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.messages.app.discussions.27ed1cdf",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/messages/store.ts"
       ]
     },
     {
