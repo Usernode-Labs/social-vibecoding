@@ -83,6 +83,70 @@ function visualEvidenceRoutes(config) {
     }
   });
 
+  // The proposal owner can inspect a failed run's exact submitted plan and
+  // bounded replay trace, including an older run selected by its id after a
+  // same-proposal retry. The public evidence view contains only the reviewer
+  // result, while these diagnostics support local reproduction.
+  router.get('/api/apps/:slug/proposals/:sessionId/evidence/diagnostics', async (req, res) => {
+    const id = sessionId(req.params.sessionId);
+    if (!config.visualEvidence?.present || !id) return res.status(404).json({ error: 'Evidence diagnostics not found' });
+    try {
+      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view');
+      if (!ctx || ctx.session.user_id !== req.user?.id) {
+        return res.status(404).json({ error: 'Evidence diagnostics not found' });
+      }
+      const runId = req.query.runId || ctx.session.visual_evidence_run_id;
+      if (!ARTIFACT_ID_RE.test(String(runId || ''))) {
+        return res.status(404).json({ error: 'Evidence diagnostics not found' });
+      }
+      const { rows } = await pool.query(
+        `SELECT id, base_sha, head_sha, state, replay_plan, plan_hash,
+                trace_summary, failure_code, failure_reason
+           FROM visual_evidence_runs
+          WHERE id = $1 AND session_id = $2
+            AND state IN ('failed', 'stale') AND failure_code IS NOT NULL`,
+        [runId, id]
+      );
+      const run = rows[0];
+      if (!run) return res.status(404).json({ error: 'Evidence diagnostics not found' });
+      const replayPlan = run.replay_plan ? plan.parseReplayPlan(run.replay_plan) : null;
+      if (replayPlan && plan.planHash(replayPlan) !== run.plan_hash) {
+        throw new Error('Stored evidence replay plan hash does not match its plan.');
+      }
+      const trace = run.trace_summary && typeof run.trace_summary === 'object'
+        ? run.trace_summary : {};
+      res.set({
+        'Cache-Control': 'private, no-store',
+        Vary: 'Cookie, Authorization',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.json({ diagnostics: {
+        runId: run.id,
+        state: run.state,
+        baseSha: run.base_sha,
+        headSha: run.head_sha,
+        planHash: run.plan_hash,
+        replayPlan,
+        failureCode: run.failure_code,
+        failureReason: run.failure_reason,
+        trace: {
+          timingsMs: trace.timingsMs || null,
+          replayPasses: trace.replayPasses || [],
+          lastReplayEvent: trace.lastReplayEvent || null,
+          agentAttempts: trace.agentAttempts || 0,
+          agentDispatches: trace.agentDispatches || [],
+          repairCount: trace.repairCount || 0,
+          terminalFailureClass: trace.terminalFailureClass || null,
+          failure: trace.failure || null,
+          control: trace.control || null,
+        },
+      } });
+    } catch (err) {
+      log.error('visual-evidence', 'Evidence diagnostics read failed', { sessionId: id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/apps/:slug/proposals/:sessionId/evidence/:artifactId', async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!config.visualEvidence?.present || !id || !ARTIFACT_ID_RE.test(String(req.params.artifactId || ''))) {

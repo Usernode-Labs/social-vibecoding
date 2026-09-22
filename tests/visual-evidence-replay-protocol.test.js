@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const replay = require('../src/services/visual-evidence-replay');
+const kubernetes = require('../src/services/kubernetes');
 const runner = require('../evidence/replay-runner');
 
 const event = (value) => `${replay.EVENT_PREFIX}${JSON.stringify(value)}`;
@@ -51,6 +52,44 @@ test('protocol parser rejects malformed, mismatched, duplicate, and failed-resul
     event({ type: 'result', runId: 'a'.repeat(32), pass: 2, passed: true, planHash: 'b'.repeat(64), stories: [], artifactCount: 0 }),
     { planHash: 'c'.repeat(64) },
   ), { code: 'replay_plan_hash_mismatch' });
+});
+
+test('a partial browser job keeps its termination reason and last checkpoint', async (t) => {
+  const saved = kubernetes.runEvidenceJob;
+  kubernetes.runEvidenceJob = async () => ({
+    stdout: event({ type: 'viewport_started', runId: 'a'.repeat(32), pass: 1,
+      storyId: 'invite-suggestions', viewport: 'desktop' }),
+    partial: true, partialReason: 'capture OOM killed',
+  });
+  t.after(() => { kubernetes.runEvidenceJob = saved; });
+  await assert.rejects(replay.runPass({ captureRuntime: 'kubernetes' }, 42, {
+    runId: 'a'.repeat(32), pass: 1, plan: require('./fixtures/visual-evidence').plan(),
+  }), (error) => {
+    assert.equal(error.code, 'missing_replay_result');
+    assert.deepEqual(error.detail.execution, {
+      partial: true, partialReason: 'capture OOM killed',
+      lastEvent: { type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' },
+    });
+    return true;
+  });
+});
+
+test('a browser job launcher error keeps its original code with bounded runtime context', async (t) => {
+  const saved = kubernetes.runEvidenceJob;
+  const launchError = Object.assign(new Error('Job timed out at http://internal/?token=secret.jwt'), {
+    code: 'ETIMEDOUT', killed: true,
+  });
+  kubernetes.runEvidenceJob = async () => { throw launchError; };
+  t.after(() => { kubernetes.runEvidenceJob = saved; });
+  await assert.rejects(replay.runPass({ captureRuntime: 'kubernetes' }, 42, {
+    runId: 'a'.repeat(32), pass: 1, plan: require('./fixtures/visual-evidence').plan(),
+  }), (error) => {
+    assert.equal(error, launchError);
+    assert.equal(error.code, 'ETIMEDOUT');
+    assert.equal(error.detail.runtime.killed, true);
+    assert.doesNotMatch(error.detail.runtime.reason, /secret\.jwt/);
+    return true;
+  });
 });
 
 test('artifact variants and media types cannot be relabelled', () => {

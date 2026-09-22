@@ -253,6 +253,47 @@ function visibleError(error) {
   return message.slice(0, 2000) || 'The visual change preview could not be produced.';
 }
 
+function safeDiagnosticValue(value, depth = 0) {
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    return value.slice(0, 200)
+      .replace(/([?&]token=)[^&\s"'<>)]*/gi, '$1[redacted]')
+      .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]');
+  }
+  if (depth >= 4) return '[nested detail omitted]';
+  if (Array.isArray(value)) {
+    const limit = value.every((item) => typeof item === 'string' || typeof item === 'number') ? 12 : 2;
+    return value.slice(0, limit).map((item) => safeDiagnosticValue(item, depth + 1));
+  }
+  if (typeof value !== 'object') return null;
+  return Object.fromEntries(Object.entries(value).slice(0, 16)
+    .filter(([key]) => !/^(?:token|authorization|cookie|password|secret|payload|data)$/i.test(key))
+    .map(([key, item]) => [key, safeDiagnosticValue(item, depth + 1)]));
+}
+
+function boundedReplayDetail(error) {
+  try {
+    const value = error?.detail || (error?.issues ? { issues: error.issues } : null);
+    if (value == null) return null;
+    const serialized = JSON.stringify(safeDiagnosticValue(value));
+    return serialized.length <= 4000
+      ? JSON.parse(serialized)
+      : { truncated: true, excerpt: serialized.slice(0, 2000) };
+  } catch { return null; }
+}
+
+function replayProgressEvent(event, pass) {
+  const type = String(event?.type || 'unknown');
+  const storyId = String(event?.storyId || '');
+  const viewport = String(event?.viewport || '');
+  return {
+    pass,
+    type: /^[a-z_]{1,40}$/.test(type) ? type : 'unknown',
+    ...(/^[a-z0-9][a-z0-9_-]{0,95}$/.test(storyId) ? { storyId } : {}),
+    ...(/^[a-z0-9][a-z0-9_-]{0,31}$/.test(viewport) ? { viewport } : {}),
+  };
+}
+
 function newRunMetrics() {
   return {
     startedAtMs: Date.now(),
@@ -265,7 +306,9 @@ function newRunMetrics() {
       cleanup: 0,
     },
     replayPasses: [],
+    lastReplayEvent: null,
     agentAttempts: 0,
+    agentDispatches: [],
     repairCount: 0,
     artifactBytes: 0,
     tokenUsage: {},
@@ -300,7 +343,9 @@ function traceSummary(metrics, extra = {}) {
       total: Math.max(0, Date.now() - metrics.startedAtMs),
     },
     replayPasses: metrics.replayPasses.slice(0, 12),
+    lastReplayEvent: metrics.lastReplayEvent,
     agentAttempts: metrics.agentAttempts,
+    agentDispatches: metrics.agentDispatches.slice(0, 4),
     repairCount: metrics.repairCount,
     artifactBytes: metrics.artifactBytes,
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
@@ -362,6 +407,7 @@ async function executeRun(config, options, injected = {}) {
   let latestArtifacts = null;
   let latestPlanHash = null;
   let latestHardVerdict = null;
+  let failurePhase = 'load_run';
   let agentThreadId;
   const metrics = newRunMetrics();
   const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
@@ -397,6 +443,7 @@ async function executeRun(config, options, injected = {}) {
     }
     if (run.state === 'not_required') return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
 
+    failurePhase = 'wait_for_idle';
     const idleStartedAt = Date.now();
     await waitForSessionIdle(pool, session.id, {
       timeoutMs: Math.min(config.visualEvidence?.maxRunMs || 720_000, 120_000),
@@ -404,6 +451,7 @@ async function executeRun(config, options, injected = {}) {
     });
     addTiming(metrics, 'idleWait', idleStartedAt);
     progress('Preparing exact base and head revisions for visual evidence…');
+    failurePhase = 'prepare_pair';
     const provisioningStartedAt = Date.now();
     if (run.state === 'planned') {
       await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
@@ -414,6 +462,7 @@ async function executeRun(config, options, injected = {}) {
     }
     notifyEvidence(session, app, 'provisioning');
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
+    failurePhase = 'exploration_reset';
     const exploration = await deps.environment.resetPair(config, pair);
     const expectedProvenance = {
       baseSha: run.base_sha,
@@ -425,7 +474,9 @@ async function executeRun(config, options, injected = {}) {
     if (!sameProvenance(exploration, expectedProvenance)) {
       throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'The paired exploration environment did not match its prepared fixture and images.');
     }
+    failurePhase = 'mint_fixture_identities';
     const authTokens = await deps.identities.mintEvidenceAuthTokens(pool, app.id);
+    failurePhase = 'persist_exploration';
     await deps.state.transitionRun(pool, run.id, 'exploring', {
       fixtureFingerprint: pair.fixtureFingerprint,
       baseImageDigest: pair.sides.base.imageDigest,
@@ -435,6 +486,7 @@ async function executeRun(config, options, injected = {}) {
     notifyEvidence(session, app, 'exploring');
 
     const context = evidenceContext({ run, session, revision, pair, deployment: exploration, intent });
+    failurePhase = 'register_control';
     registration = deps.evidenceControl.registerRun({
       runId: run.id,
       sessionId: session.id,
@@ -457,6 +509,7 @@ async function executeRun(config, options, injected = {}) {
               ? 'Replaying the change author’s submitted UI flow twice…'
               : 'Replaying the agent-authored UI flow twice…')
             : 'Replaying the corrected UI flow twice…');
+          failurePhase = 'persist_replay_plan';
           await deps.state.transitionRun(pool, run.id, 'replaying', {
             replayPlan: plan,
             planHash: planContract.planHash(plan),
@@ -464,38 +517,49 @@ async function executeRun(config, options, injected = {}) {
           });
           notifyEvidence(session, app, 'replaying');
           const planHash = planContract.planHash(plan);
+          failurePhase = 'reset_pass_1';
           const firstDeployment = await deps.environment.resetPair(config, pair);
           if (!sameProvenance(firstDeployment, expectedProvenance)) {
             throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass one did not use the prepared fixture and images.');
           }
           const firstStartedAt = Date.now();
+          failurePhase = 'pass_1';
           const first = await deps.replay.runPass(
             config,
             session.id,
             replayInput({ run, plan, deployment: firstDeployment, authTokens, provenance: expectedProvenance, pass: 1 }),
-            { onEvent: (event) => progress(`Evidence pass 1: ${event.type}`), previewRunId: run.id }
+            { onEvent: (event) => {
+              if (event?.type !== 'result') metrics.lastReplayEvent = replayProgressEvent(event, 1);
+              progress(`Evidence pass 1: ${event.type}`);
+            }, previewRunId: run.id }
           );
           metrics.replayPasses.push({
             attempt,
             pass: 1,
             durationMs: Math.max(0, Date.now() - firstStartedAt),
           });
+          failurePhase = 'reset_pass_2';
           const secondDeployment = await deps.environment.resetPair(config, pair);
           if (!sameProvenance(secondDeployment, expectedProvenance)) {
             throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass two did not use the prepared fixture and images.');
           }
           const secondStartedAt = Date.now();
+          failurePhase = 'pass_2';
           const second = await deps.replay.runPass(
             config,
             session.id,
             replayInput({ run, plan, deployment: secondDeployment, authTokens, provenance: expectedProvenance, pass: 2 }),
-            { onEvent: (event) => progress(`Evidence pass 2: ${event.type}`), previewRunId: run.id }
+            { onEvent: (event) => {
+              if (event?.type !== 'result') metrics.lastReplayEvent = replayProgressEvent(event, 2);
+              progress(`Evidence pass 2: ${event.type}`);
+            }, previewRunId: run.id }
           );
           metrics.replayPasses.push({
             attempt,
             pass: 2,
             durationMs: Math.max(0, Date.now() - secondStartedAt),
           });
+          failurePhase = 'compare';
           const hardVerdict = deps.replay.comparePasses(first, second, {
             plan,
             provenance: expectedProvenance,
@@ -510,6 +574,7 @@ async function executeRun(config, options, injected = {}) {
             stories: hardVerdict.stories,
             relativePointer: hardVerdict.relativePointer,
           });
+          failurePhase = 'persist_replay_verdict';
           await deps.state.transitionRun(pool, run.id, 'reviewing', {
             hardVerdict,
             traceSummary: replayTrace,
@@ -517,6 +582,7 @@ async function executeRun(config, options, injected = {}) {
           });
           notifyEvidence(session, app, 'reviewing');
           const artifactPersistStartedAt = Date.now();
+          failurePhase = 'store_artifacts';
           await deps.replay.storeArtifacts(pool, run.id, second.artifacts, {
             headSha: run.head_sha,
             planHash,
@@ -530,6 +596,7 @@ async function executeRun(config, options, injected = {}) {
           latestArtifacts = second.artifacts;
           latestPlanHash = planHash;
           latestHardVerdict = hardVerdict;
+          failurePhase = 'agent_exploration';
           return {
             hardVerdict,
             planHash,
@@ -555,6 +622,8 @@ async function executeRun(config, options, injected = {}) {
       const dispatchStartedAt = Date.now();
       const suspendedAtStart = suspendedMs();
       metrics.agentAttempts += 1;
+      const dispatchTrace = { requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64) };
+      metrics.agentDispatches.push(dispatchTrace);
       try {
         // Provisioning and deterministic replay are platform work. Starting
         // this clock before the paired images/fixtures were ready spent the
@@ -582,8 +651,12 @@ async function executeRun(config, options, injected = {}) {
         }, injected.agentDependencies || {});
         addAgentUsage(metrics, dispatched);
         agentThreadId = dispatched.threadId || agentThreadId || null;
+        dispatchTrace.backend = String(dispatched.backend || dispatchTrace.requestedBackend).slice(0, 64);
+        dispatchTrace.outcome = 'completed';
         return { dispatched, error: null };
       } catch (error) {
+        dispatchTrace.outcome = 'failed';
+        dispatchTrace.code = errorCode(error);
         return { dispatched: null, error };
       } finally {
         metrics.timingsMs.agentExploration += Math.max(0,
@@ -591,6 +664,7 @@ async function executeRun(config, options, injected = {}) {
       }
     };
 
+    failurePhase = 'agent_exploration';
     let agentOutcome = null;
     if (authorPlan) {
       // The implementing agent already knows the UI flow. It supplies only
@@ -606,10 +680,19 @@ async function executeRun(config, options, injected = {}) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
       }
-      if (agentOutcome.error && !latestHardVerdict) throw agentOutcome.error;
+      if (agentOutcome.error && !latestHardVerdict) {
+        throw registration.control.lastToolFailure?.error || agentOutcome.error;
+      }
     }
 
     if (!latestHardVerdict?.passed || !latestArtifacts || !latestPlanHash) {
+      // The run-plan tool can fail while the model turn itself exits normally.
+      // Preserve that platform replay error instead of replacing it with the
+      // unhelpful "missing replay" fallback.
+      if (registration.control.lastToolFailure) throw registration.control.lastToolFailure.error;
+      if (registration.control.finished?.status === 'failed') {
+        throw new VisualEvidenceOrchestrationError('evidence_agent_reported_failure', registration.control.finished.reason);
+      }
       throw new VisualEvidenceOrchestrationError('missing_evidence_replay', 'The visual evidence replay did not produce a passing plan.');
     }
 
@@ -617,6 +700,7 @@ async function executeRun(config, options, injected = {}) {
     // becomes reviewer-visible. Cleanup is part of the durable timing trace,
     // and no verified row can leave private fixture runtimes live.
     if (pair) {
+      failurePhase = 'cleanup';
       const cleanupStartedAt = Date.now();
       await deps.environment.cleanupPair(config, pair);
       addTiming(metrics, 'cleanup', cleanupStartedAt);
@@ -629,6 +713,7 @@ async function executeRun(config, options, injected = {}) {
       relativePointer: latestHardVerdict?.relativePointer === true,
       terminalFailureClass: null,
     });
+    failurePhase = 'verify';
     await deps.state.transitionRun(pool, run.id, 'verified', {
       hardVerdict: latestHardVerdict,
       planHash: latestPlanHash,
@@ -644,7 +729,26 @@ async function executeRun(config, options, injected = {}) {
     progress('Visual evidence captured for human review.');
     return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
   } catch (error) {
-    const failureTrace = traceSummary(metrics, { terminalFailureClass: errorCode(error) });
+    const control = registration?.control;
+    const toolFailure = control?.lastToolFailure;
+    const diagnosticError = toolFailure?.error || error;
+    const replayDetail = boundedReplayDetail(diagnosticError);
+    const failureTrace = traceSummary(metrics, {
+      terminalFailureClass: errorCode(error),
+      failure: {
+        phase: toolFailure?.operation === 'run-plan' && control.planCalls === 0
+          ? 'plan_validation' : failurePhase,
+        code: errorCode(diagnosticError),
+        message: visibleError(diagnosticError),
+        ...(toolFailure ? { tool: toolFailure.operation } : {}),
+        ...(replayDetail ? { detail: replayDetail } : {}),
+      },
+      ...(control ? { control: {
+        planCalls: control.planCalls,
+        finishStatus: control.finished?.status || null,
+        finishReason: control.finished?.reason || null,
+      } } : {}),
+    });
     const failed = await failCurrentRun(
       pool,
       run?.id || options.runId,
