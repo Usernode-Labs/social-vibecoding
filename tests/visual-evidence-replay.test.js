@@ -51,6 +51,92 @@ test('runner refuses undeclared home, auth, error, and cross-origin fallbacks', 
   assert.throws(() => replay.expectedFinalPath('/settings', 'http://outside:3000/settings', origin, 'base'), { code: 'cross_origin_navigation' });
 });
 
+test('element resolution waits for a late accessible target before counting matches', async () => {
+  let ready = false;
+  const calls = [];
+  const visibleLocator = {
+    first: () => ({
+      waitFor: async (options) => {
+        calls.push(['wait', options.state, options.timeout]);
+        ready = true;
+      },
+    }),
+    count: async () => {
+      calls.push(['visible-count']);
+      return ready ? 1 : 0;
+    },
+    nth: () => ({ isVisible: async () => ready }),
+  };
+  const includingHiddenLocator = {
+    count: async () => 1,
+    nth: () => ({ isVisible: async () => ready }),
+  };
+  const page = {
+    getByRole: (_role, options) => options.includeHidden
+      ? includingHiddenLocator
+      : visibleLocator,
+  };
+
+  const resolved = await replay.resolveOne(page, {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  }, 'wait-browse-button', { state: 'visible', timeoutMs: 5000 });
+
+  assert.equal(resolved, visibleLocator);
+  assert.deepEqual(calls[0], ['wait', 'visible', 5000]);
+  assert.equal(calls.some(([name]) => name === 'visible-count'), true);
+});
+
+test('element resolution distinguishes a hidden role target from a missing target', async () => {
+  const visibleLocator = {
+    first: () => ({ waitFor: async () => { throw new Error('timeout'); } }),
+    count: async () => 0,
+    nth: () => ({ isVisible: async () => false }),
+  };
+  const includingHiddenLocator = {
+    count: async () => 1,
+    nth: () => ({ isVisible: async () => false }),
+  };
+  const page = {
+    getByRole: (_role, options) => options.includeHidden
+      ? includingHiddenLocator
+      : visibleLocator,
+  };
+
+  await assert.rejects(replay.resolveOne(page, {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  }, 'wait-browse-button', { state: 'visible', timeoutMs: 5000 }), (error) => {
+    assert.equal(error.code, 'locator_not_visible');
+    assert.deepEqual(error.detail, {
+      kind: 'role', role: 'button', matchedCount: 0, attachedCount: 1,
+      visibleCount: 0, waitState: 'visible', timeoutMs: 5000,
+    });
+    return true;
+  });
+});
+
+test('failure diagnostics describe browser state without exposing tokens or cookie values', async () => {
+  const page = {
+    url: () => 'http://base-evidence:3000/?token=secret.jwt&shot=test#waiting',
+    evaluate: async () => ({
+      readyState: 'complete', bodyChildCount: 4,
+      visibleLandmarkIds: ['auth-waitlist-screen'],
+      visibleMainCount: 1, visibleDialogCount: 0,
+      visibleButtonCount: 2, visibleLinkCount: 3,
+    }),
+  };
+  const context = {
+    cookies: async () => [{ name: 'session', value: 'never-emit-this' }],
+  };
+  const state = await replay.failurePageState(
+    page, context, 'http://base-evidence:3000', { status: 200 }
+  );
+  assert.equal(state.navigationStatus, 200);
+  assert.equal(state.sessionCookiePresent, true);
+  assert.deepEqual(state.queryKeys, ['shot']);
+  assert.deepEqual(state.visibleLandmarkIds, ['auth-waitlist-screen']);
+  assert.doesNotMatch(JSON.stringify(state), /secret\.jwt|never-emit-this/);
+});
+
 test('browser failures name the failing story and side without exposing fixture tokens', async () => {
   let contexts = 0;
   const browser = { newContext: async () => {
@@ -77,7 +163,12 @@ test('a failed browser action identifies its plan action and stage', async () =>
   const page = {
     on: () => {}, off: () => {}, goto: async () => {}, evaluate: async () => {},
     waitForTimeout: async () => {}, screenshot: async () => Buffer.from('png'),
-    getByRole: () => ({ count: async () => 0 }),
+    url: () => 'http://base-evidence:3000/?token=member.jwt',
+    getByRole: () => ({
+      first: () => ({ waitFor: async () => { throw new Error('timeout'); } }),
+      count: async () => 0,
+      nth: () => ({ isVisible: async () => false }),
+    }),
   };
   const browser = { newContext: async () => {
     contexts += 1;
@@ -88,11 +179,16 @@ test('a failed browser action identifies its plan action and stage', async () =>
     };
   } };
   await assert.rejects(replay.runReplay(browser, replay.validateInput(input({ plan: replayPlan }))), (error) => {
-    assert.equal(error.code, 'ambiguous_locator');
+    assert.equal(error.code, 'locator_not_found');
     assert.deepEqual(Object.fromEntries(['storyId', 'viewport', 'side', 'phase', 'actionId', 'actionStage', 'actionType']
       .map((key) => [key, error.detail[key]])), {
       storyId: 'invite-suggestions', viewport: 'desktop', side: 'base',
       phase: 'action', actionId: 'open-members', actionStage: 'members', actionType: 'click',
+    });
+    assert.equal(error.detail.pageState.sameOrigin, true);
+    assert.equal(error.detail.pageState.queryKeys.includes('token'), false);
+    assert.deepEqual(error.detail.targetStates[0], {
+      kind: 'role', role: 'button', matchedCount: 0, attachedCount: 0, visibleCount: 0,
     });
     return true;
   });
