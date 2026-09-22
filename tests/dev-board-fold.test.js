@@ -940,7 +940,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // floor. The ceiling itself already moved from 730 to 750 on main's side,
   // once its own total stood on the old ceiling's 20-slot floor; that move
   // carries over unchanged (services/app-manifest.js).
-  assert.equal(DAPP.tests.length, 712);
+  //
+  // 712 → 714: the share-view Homeroom mark (#2705) adds two, and both are
+  // assertions of an ABSENCE — that the platform's own document does not
+  // draw the mark the bridge draws on an app's subdomain. One rides the
+  // existing chromeless-view path, where a failure would be the mark
+  // sitting beside #chromeless-pill (the "not twice" case); one rides Home.
+  // Neither is a new screen, so neither is tagged visual: the surface the
+  // change is actually visible on is an app's own hostname, which no
+  // declared check can navigate to. 714 leaves 36 slots against
+  // MAX_DECLARED_TESTS (750).
+  assert.equal(DAPP.tests.length, 714);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
