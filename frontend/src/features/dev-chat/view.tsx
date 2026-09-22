@@ -16,6 +16,7 @@ import { SessionChecksPanel } from '../dev-board/modals/session-checks';
 import { SessionList } from './session-list';
 import { SpecViewer } from './spec-viewer';
 import { DevChatTranscript } from './transcript';
+import { ConnectorSetupInline } from './connector-setup-inline';
 import { OwnToolsGuide } from './own-tools-guide';
 import { devViewStore, type DevViewState, type PaneView } from './view-store';
 
@@ -177,6 +178,22 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
           {s.ownToolsGuide ? (
             <div id="dc-launchpad-slot" className="dc-launchpad-slot">
               <OwnToolsGuide view={s.ownToolsGuide} />
+            </div>
+          ) : s.connectorSetup ? (
+            /* #2706: the walkthrough card is still DevFlowSelect's innerHTML
+               and the connector steps are React, so they are SIBLINGS here
+               rather than one tree — the statefulness rule in AGENTS.md is
+               exactly that no React-owned subtree may share an owner. The
+               card moves down a level in this branch, which every declared
+               check on it survives because they all select it as a
+               DESCENDANT of the slot.
+
+               Only this branch nests: an ordinary session must leave the
+               slot genuinely empty, or `.dc-launchpad-slot:empty` stops
+               collapsing it and every chat grows a bordered strip. */
+            <div id="dc-launchpad-slot" className="dc-launchpad-slot">
+              <div dangerouslySetInnerHTML={{ __html: s.launchpadHtml }} />
+              <ConnectorSetupInline view={s.connectorSetup} />
             </div>
           ) : (
             <div

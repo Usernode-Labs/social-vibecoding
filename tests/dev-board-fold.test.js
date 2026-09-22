@@ -965,14 +965,23 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // alone, with the #2681 check above, then independently 712 → 715 with the
   // #2707 trio above. One +1 and one +3 against a shared 712 is 716.
   //
-  // 714 → 718, 716 → 718: the tallies above were computed on either side of
+  // 716 → 720: #2706 puts the connector walkthrough inline on the dev
+  // session page instead of sending the reader to Settings, and that is a
+  // screen state with four things to pin — the steps themselves, the live
+  // MCP server URL beside them, the ChatGPT hand-off getting ChatGPT's
+  // steps rather than Claude's, and Settings still being one tap away. Both
+  // sides of the 713 → 716 merge happened to land on 716 from different
+  // additions, which is a coincidence and not a sequence: main reached it
+  // with #2681 and #2707, and these four are new against it.
+  //
+  // 714 → 718, 720 → 722: the tallies above were computed on either side of
   // THIS merge and cannot be read as one sequence either. This branch took
   // 712 → 714 alone, with the #2704 pair above; main independently took the
-  // same 712 to 716, with the #2681 and #2707 checks above. Neither set
-  // overlaps the other, so the merged manifest holds every one of them:
-  // 712 + 2 + 1 + 3 = 718, which leaves 32 slots against
+  // same 712 to 720, with the #2681, #2707 and #2706 checks above. Neither
+  // set overlaps the other, so the merged manifest holds every one of them:
+  // 712 + 2 + 1 + 3 + 4 = 722, which leaves 28 slots against
   // MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 718);
+  assert.equal(DAPP.tests.length, 722);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

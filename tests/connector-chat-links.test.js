@@ -20,6 +20,9 @@ const path = require('node:path');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const TSX = 'frontend/src/features/settings/sections/connectors.tsx';
+// #2706: the two walkthroughs are rendered by the pane but written here,
+// because the dev session page's launchpad teaches the same connector now.
+const STEPS_TSX = 'frontend/src/features/settings/connector-setup-steps.tsx';
 const SETTINGS = 'frontend/src/features/settings/settings.js';
 
 test('#1607: both links exist and open in a new tab without handing over the opener', () => {
@@ -53,7 +56,7 @@ test('#2370: the guided chat is offered INSIDE its route, not beside the routes'
   const chatgptLink = at('<GuidedSetup id="connector-open-chatgpt"');
   assert.ok(claudeRow < claudeLink && claudeLink < chatgptRow, 'Claude\'s link is inside the Claude.ai row');
   assert.ok(chatgptRow < chatgptLink && chatgptLink < codexRow, 'ChatGPT\'s link is inside the ChatGPT row');
-  assert.ok(claudeLink < tsx.indexOf('<SetupStep n={1} title="Open connector settings."'),
+  assert.ok(claudeLink < at('<ClaudeSetupSteps />'),
     'and it comes before the written steps');
   assert.doesNotMatch(tsx.replace(/\/\*[\s\S]*?\*\//g, ''), /Set it up in (Claude|ChatGPT)/,
     'the old labels are gone from the markup');
@@ -109,6 +112,13 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   // fails here too. Whether the route starts open was never the point.
   assert.match(tsx, /6 steps &middot; also sets up Claude Code/);
   assert.match(tsx, /7 steps &middot; needs Developer mode/);
-  assert.match(tsx, /Turn on Developer mode\./);
-  assert.match(tsx, /Paste your MCP server URL\./);
+  // #2706: still complete, still authoritative, one module further out —
+  // and the pane still renders both, which is what the counts above are a
+  // promise about. tests/connector-setup-shared.test.js holds the counts
+  // themselves to the module.
+  const steps = read(STEPS_TSX);
+  assert.match(tsx, /<ClaudeSetupSteps \/>/);
+  assert.match(tsx, /<ChatgptSetupSteps \/>/);
+  assert.match(steps, /Turn on Developer mode\./);
+  assert.match(steps, /Paste your MCP server URL\./);
 });

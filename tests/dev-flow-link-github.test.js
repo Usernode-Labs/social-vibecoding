@@ -168,10 +168,16 @@ test('a bundle without the bridge method falls back to Settings, where the row s
   assert.equal(sandbox.location.hash, '#settings/connectors');
 });
 
-test('"Connect Homeroom" still goes to Settings, where the connector is added', async () => {
-  const { DevChat, sandbox } = await makeDevChat();
+test('"Connect Homeroom" opens the steps in place, and sends nobody to Settings (#2706)', async () => {
+  // It used to assign the Settings hash, which is the trip #2706 removed:
+  // the steps are rendered under the card now, from the same source
+  // Settings renders. This is the sibling of the #2679 change above — both
+  // steps used to answer a question by navigating away from it.
+  const { DevChat, sandbox, repaints } = await makeDevChat();
   await DevChat._devFlowAction('link-connector', {}, { preventDefault() {} });
-  assert.equal(sandbox.location.hash, '#settings/connectors');
+  assert.equal(sandbox.location.hash, '', 'the tab stays on the session');
+  assert.equal(DevChat._devFlow.connectorSteps, true);
+  assert.equal(repaints.length, 1, 'and the launchpad repaints with them on it');
 });
 
 test('the bridge publishes the Settings helper for the dev chat to reach by name', () => {
