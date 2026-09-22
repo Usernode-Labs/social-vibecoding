@@ -958,7 +958,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with the #2681 check above; main independently took the same 712 to 715
   // with the #2707 trio above. One +1 and one +3 against a shared 712 is
   // 716, which leaves 34 slots against MAX_DECLARED_TESTS (750).
-  assert.equal(DAPP.tests.length, 716);
+  //
+  // 716 → 720: #2706 puts the connector walkthrough inline on the dev
+  // session page instead of sending the reader to Settings, and that is a
+  // screen state with four things to pin — the steps themselves, the live
+  // MCP server URL beside them, the ChatGPT hand-off getting ChatGPT's
+  // steps rather than Claude's, and Settings still being one tap away. 30
+  // slots left against MAX_DECLARED_TESTS (750), still clear of the
+  // 20-slot floor. Both sides of this merge happened to land on 716 from
+  // different additions, which is a coincidence and not a sequence: main
+  // reached it with #2681 and #2707, and these four are new against it.
+  assert.equal(DAPP.tests.length, 720);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
