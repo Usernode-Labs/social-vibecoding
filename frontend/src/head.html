@@ -405,6 +405,23 @@
   </script>
   <script src="/usernode-bridge.js"></script>
   <script>
+    // THIS DOCUMENT IS THE PLATFORM, and the bridge above needs telling.
+    //
+    // Its __USERNODE_PLATFORM_LINK__ block draws the Homeroom mark in the
+    // corner of a top-frame page served from an app's own subdomain — a
+    // shared link, where nothing else says the page is a Homeroom app. The
+    // shell loads that same bridge, in the top frame, from the platform's
+    // apex, and the two are indistinguishable by hostname shape alone:
+    // `<slug>.<domain>` and the platform's own `<domain>` are both a label
+    // in front of a registrable domain, and only the platform knows which
+    // of the two it is serving. So the shell says so outright rather than
+    // leaving the bridge to guess, and the guess it used to make instead
+    // is why the mark never appeared on a shared link at all.
+    //
+    // Read at DOMContentLoaded, which is strictly after this head-blocking
+    // script has run.
+    window.__usernodePlatformShell = true;
+
     // Mark the document when running as the top frame of the Homeroom
     // Flutter WebView. This used to hide the header title as well — the
     // shell shows the screen name in its own AppBar — but on a device

@@ -975,13 +975,32 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with #2681 and #2707, and these four are new against it.
   //
   // 714 → 718, 720 → 722: the tallies above were computed on either side of
-  // THIS merge and cannot be read as one sequence either. This branch took
+  // THAT merge and cannot be read as one sequence either. This branch took
   // 712 → 714 alone, with the #2704 pair above; main independently took the
   // same 712 to 720, with the #2681, #2707 and #2706 checks above. Neither
-  // set overlaps the other, so the merged manifest holds every one of them:
-  // 712 + 2 + 1 + 3 + 4 = 722, which leaves 28 slots against
+  // set overlaps the other, so that merged manifest held every one of them:
+  // 712 + 2 + 1 + 3 + 4 = 722, which left 28 slots against
   // MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 722);
+  //
+  // 712 → 714 (again, independently): the share-view Homeroom mark (#2705)
+  // adds two, and both are assertions of an ABSENCE — that the platform's
+  // own document does not draw the mark the bridge draws on an app's
+  // subdomain. One rides the existing chromeless-view path, where a failure
+  // would be the mark sitting beside #chromeless-pill (the "not twice"
+  // case); one rides Home. Neither is a new screen, so neither is tagged
+  // visual: the surface the change is actually visible on is an app's own
+  // hostname, which no declared check can navigate to. That is where main
+  // stood alone, against the same shared 712 the #2704 pair stood against.
+  //
+  // 722 → 724: the tallies above were computed on either side of THIS merge
+  // and cannot be read as one sequence either. Both stand on the shared 720
+  // (712 + the #2681, #2707 and #2706 checks): this branch already carries
+  // that 720 forward to 722 with the #2704 pair, and main independently
+  // carries the same 720 to 722 with the #2705 pair. Neither pair overlaps
+  // the other, so the merged manifest holds every one of them: 720 + 2 + 2 =
+  // 724, which leaves 26 slots against MAX_DECLARED_TESTS (750) —
+  // comfortably clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 724);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

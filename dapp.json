@@ -2585,6 +2585,16 @@
       "expectSelector": "#chromeless-pill"
     },
     {
+      "name": "Chromeless share-link view draws ONE affordance, not two (#2705)",
+      "path": "/#app/usernode-2d5619/full",
+      "expectSelector": "body:has(#chromeless-pill):not(:has(#__un-platform-link))"
+    },
+    {
+      "name": "The platform's own shell never draws the app-subdomain mark (#2705)",
+      "path": "/",
+      "expectSelector": "body:not(:has(#__un-platform-link)) #home-search-input"
+    },
+    {
       "name": "Home feed renders with the app search bar",
       "path": "/",
       "expectSelector": "#home-search-input"
