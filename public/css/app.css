@@ -2495,6 +2495,40 @@ html[data-un-vt]:has(#platform-tabs.hidden)::view-transition-old(platform-tabs) 
    note above will reach for this, and the answer is that the images are
    already doing the work. */
 
+/* ── AND THE GROUND UNDER THEM STAYS THE WALLPAPER (#2758) ──────────────
+   Pinning the two bars stopped them moving; it did not stop them flickering.
+   The desktop swap is the kit's fade-through, so for a stretch in the middle
+   of every tab change BOTH root snapshots are near opacity 0 — and the
+   wallpaper is the body's background, inside those snapshots. What showed
+   through the translucent bars for those frames was the flat canvas instead:
+   the rail at (100, 600) measured rgb(255,241,232) at rest, rgb(250,249,242)
+   40-80ms into a Home -> Discover push, and rgb(255,241,232) again from
+   120ms. A tint pulse across the whole chrome, on every press.
+
+   `--un-vt-ground` is the body's `--home-wallpaper`, copied onto <html> by
+   frontend/src/lib/transition-ground.ts as the transition starts — every
+   ::view-transition pseudo inherits from <html>, which cannot see a property
+   declared on the body. On a route with no wallpaper it is unset, the
+   declaration is invalid at computed time, and the ground is the canvas it
+   always was. After the fix the same pixel reads rgb(255,241,232) on every
+   sampled frame.
+
+   The page's own fade-through is unchanged: the content still leaves before
+   the next screen arrives (#1920), it just passes through the wallpaper, which
+   is the "container's own ground" that design always meant.
+
+   Nor is this the opaque-bar idea the note above rules out: the bars stay
+   the translucent pictures they were, and what changed is only what they are
+   pictures OVER.
+
+   DESKTOP ONLY. The phone's bottom bar is being reworked separately (#2766),
+   and the iOS lane slides an opaque snapshot over this ground anyway. */
+@media (min-width: 768px) {
+  html[data-un-vt]::view-transition {
+    background: var(--un-vt-ground);
+  }
+}
+
 /* Infinite decorative effects keep compositing even when the user is idle.
    Their state must remain legible without motion: lifecycle colors stay in
    place and busy session dots gain a static ring.  Functional progress
