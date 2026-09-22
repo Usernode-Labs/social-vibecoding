@@ -30,7 +30,10 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
   t.after(async () => {
     await routePool.end();
     await pool.end();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    // pg-pool can resolve end() before every client's socket has closed.
+    // A normal drop waits for those disconnects; FORCE can interrupt them
+    // with an uncaught idle-client error after all assertions have passed.
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
