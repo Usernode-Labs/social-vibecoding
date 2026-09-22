@@ -107,6 +107,26 @@ selects a skill.
   (the slowest file takes about twelve seconds); a test that never settles
   fails after three minutes instead of holding the summary open.
 
+## Verify author-written visual evidence before opening a PR
+
+Before opening a PR for a platform UI change with `visualEvidence` impact
+`ui` or `motion`, write the semantic intent and replay plan locally, then run
+`npm run verify:visual-evidence:local -- --base <40-char-sha> --head <40-char-sha> --intent <file> --plan <file>`
+against the final committed head. The command uses the local development
+database and the production browser replay/encoder on exact base and head
+builds. Read its manifest and inspect the resulting PNGs and any WebM before
+submitting the plan. If an action, assertion, reproducibility check, or media
+generation fails, correct the plan or app and run it again. Any head commit
+change requires another run. If local data cannot represent the claim, report
+that blocker before opening the PR. Do not submit a guessed plan or claim
+local verification from schema validation or the synthetic fixture harness.
+
+This local verifier currently supports this platform repository and its
+running local Homeroom stack. Other apps need their own local runtime and
+representative fixture before the same gate can be claimed. See
+`docs/proposal-visuals/pre-pr-local-plan-verification.md` for setup and the
+remaining live-proposal boundary.
+
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
 - The shell's markup is React now. **Do not edit `public/index.html`** — it is
