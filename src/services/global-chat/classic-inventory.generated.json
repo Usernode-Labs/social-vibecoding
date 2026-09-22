@@ -10601,7 +10601,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 172,
+      "line": 196,
       "method": "GET",
       "path": "/api/v4/admin/waitlist",
       "expression": null,
@@ -10620,7 +10620,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 241,
+      "line": 265,
       "method": "GET",
       "path": "/api/v4/admin/waitlist/export-csv",
       "expression": null,
@@ -10640,7 +10640,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 285,
+      "line": 309,
       "method": "POST",
       "path": "/api/v4/admin/waitlist/:id/release",
       "expression": null,
@@ -10659,7 +10659,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 326,
+      "line": 350,
       "method": "DELETE",
       "path": "/api/v4/admin/waitlist/:id",
       "expression": null,
@@ -10680,7 +10680,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 349,
+      "line": 373,
       "method": "POST",
       "path": "/api/v4/admin/waitlist/bulk-delete",
       "expression": null,
@@ -10700,7 +10700,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 371,
+      "line": 395,
       "method": "POST",
       "path": "/api/v4/admin/users/:id/grant-access",
       "expression": null,
@@ -10719,7 +10719,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 389,
+      "line": 413,
       "method": "GET",
       "path": "/api/v4/admin/bp-queue",
       "expression": null,
@@ -10738,7 +10738,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 422,
+      "line": 446,
       "method": "POST",
       "path": "/api/v4/admin/users/:id/release-bp",
       "expression": null,
