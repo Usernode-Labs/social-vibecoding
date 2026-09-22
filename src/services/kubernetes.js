@@ -1294,6 +1294,25 @@ async function deleteWorker(config, sessionId, { deleteVolume = false } = {}) {
   if (deleteVolume) await deleteIfPresent(core, 'deleteNamespacedPersistentVolumeClaim', withSuffix(name, 'state'), namespace);
 }
 
+// A deletion acceptance is not proof that pods/PVCs finished terminating.
+// Account erasure keeps its durable task pending while finalizers run.
+async function eraseWorker(config, sessionId) {
+  await deleteWorker(config, sessionId, { deleteVolume: true });
+  const { apps, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const name = dnsName(`sv-worker-s${sessionId}`);
+  const absent = async (api, method, resourceName) => {
+    try { await api[method]({ namespace, name: resourceName }); }
+    catch (err) { if (isNotFound(err)) return; throw err; }
+    throw new Error('worker_erasure_pending');
+  };
+  await absent(apps, 'readNamespacedDeployment', name);
+  await absent(core, 'readNamespacedSecret', withSuffix(name, 'env'));
+  await absent(core, 'readNamespacedPersistentVolumeClaim', withSuffix(name, 'state'));
+  const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${name}` });
+  if (pods.items?.length) throw new Error('worker_erasure_pending');
+}
+
 async function listWorkers(config) {
   const namespace = config.kubernetes.workerNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
@@ -2182,7 +2201,7 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runEvidenceJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
-  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, listWorkers, cloneWorkerVolume,
+  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,

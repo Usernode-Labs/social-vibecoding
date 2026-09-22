@@ -3639,7 +3639,7 @@
       }
     },
 
-    async logout() {
+    async logout({ accountDeleted = false } = {}) {
       const btn = document.getElementById('settings-logout');
       if (btn) btn.disabled = true;
 
@@ -3682,7 +3682,7 @@
       try {
         if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
         controller = typeof AbortController === 'function' ? new AbortController() : null;
-        const request = fetch('/api/auth/logout', {
+        const request = accountDeleted ? Promise.resolve({ ok: true }) : fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
           ...(controller ? { signal: controller.signal } : {}),
         });

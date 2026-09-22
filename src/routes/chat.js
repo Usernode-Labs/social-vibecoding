@@ -213,7 +213,9 @@ function chatRoutes(config) {
         LIMIT $${params.length}`;
 
       const { rows } = await pool.query(query, params);
-      const messages = rows.reverse();
+      const messages = rows.reverse().map(message => ({ ...message,
+        username: message.username || (message.msg_type === 'message' && message.user_id == null ? 'Deleted user' : message.username),
+      }));
 
       // #25: attach emoji reactions so the chat renders them on load (live
       // updates arrive separately over the per-app WS 'reaction' event).

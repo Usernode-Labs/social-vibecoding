@@ -8737,3 +8737,94 @@ CREATE TABLE IF NOT EXISTS preview_operations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE preview_operations IS 'staging:private';
+
+
+-- #2716 account deletion: the receipt carries only opaque record ids, never
+-- an erased username, email, IP, password, or credential. It intentionally
+-- outlives users so retries and restore reconciliation cannot revive access.
+CREATE TABLE IF NOT EXISTS account_deletions (
+  id VARCHAR(32) PRIMARY KEY,
+  user_id INTEGER NOT NULL UNIQUE,
+  requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  mode VARCHAR(8) NOT NULL CHECK (mode IN ('self', 'admin')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS account_deletion_tasks (
+  id BIGSERIAL PRIMARY KEY,
+  deletion_id VARCHAR(32) NOT NULL REFERENCES account_deletions(id) ON DELETE CASCADE,
+  kind VARCHAR(32) NOT NULL CHECK (kind IN ('openrouter_key', 'worker', 'object', 'key_reconciliation')),
+  target TEXT NOT NULL,
+  state VARCHAR(16) NOT NULL DEFAULT 'pending'
+    CHECK (state IN ('pending', 'processing', 'completed', 'review')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error_code VARCHAR(64),
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  UNIQUE (deletion_id, kind, target)
+);
+CREATE INDEX IF NOT EXISTS account_deletion_tasks_due
+  ON account_deletion_tasks (next_attempt_at) WHERE state IN ('pending', 'processing');
+CREATE INDEX IF NOT EXISTS account_deletion_tasks_worker
+  ON account_deletion_tasks (target) WHERE kind = 'worker';
+COMMENT ON TABLE account_deletions IS 'staging:private';
+COMMENT ON TABLE account_deletion_tasks IS 'staging:private';
+
+-- Preserve necessary historical totals and published attachments. The service
+-- withdraws votes on open decisions BEFORE deleting the identity; completed
+-- decisions keep their anonymous ballots and accounting keeps its amounts.
+DO $$
+DECLARE
+  item RECORD;
+  fk RECORD;
+BEGIN
+  FOR item IN SELECT * FROM (VALUES
+    ('pr_votes', 'user_id'), ('issue_votes', 'user_id'),
+    ('pr_undo_votes', 'user_id'), ('llm_usage', 'user_id'),
+    ('app_llm_usage', 'user_id'),
+    ('global_chat_usage', 'user_id'), ('token_allocation', 'user_id'),
+    ('agent_turns', 'user_id'), ('pr_kudos', 'giver_user_id'),
+    ('issue_screenshots', 'user_id')
+  ) AS retained(table_name, column_name)
+  LOOP
+    FOR fk IN
+      SELECT c.conname FROM pg_constraint c
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+      WHERE c.conrelid = to_regclass(item.table_name)
+        AND c.confrelid = 'users'::regclass AND c.contype = 'f'
+        AND a.attname = item.column_name AND c.confdeltype <> 'n'
+    LOOP
+      EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', item.table_name, fk.conname);
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP NOT NULL', item.table_name, item.column_name);
+      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES users(id) ON DELETE SET NULL',
+        item.table_name, fk.conname, item.column_name);
+    END LOOP;
+  END LOOP;
+END $$;
+
+-- Only deletion-archived direct conversations get this exception. Ordinary
+-- archived/blocked/declined conversations retain their existing access rules.
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS deleted_peer BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Old @mentions and manifest-admin declarations must never be inherited by
+-- someone registering an erased account's handle. Keep only a fingerprint,
+-- with no account id, original spelling, timestamp, or redirect target.
+CREATE TABLE IF NOT EXISTS deleted_username_reservations (
+  fingerprint TEXT PRIMARY KEY
+);
+COMMENT ON TABLE deleted_username_reservations IS 'staging:private';
+CREATE OR REPLACE FUNCTION reject_deleted_username() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND LOWER(NEW.username) = LOWER(OLD.username) THEN RETURN NEW; END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('deleted-username:' || LOWER(NEW.username), 0));
+  IF EXISTS (SELECT 1 FROM deleted_username_reservations
+    WHERE fingerprint = encode(sha256(convert_to(LOWER(NEW.username), 'UTF8')), 'hex')) THEN
+    RAISE EXCEPTION 'username is unavailable' USING ERRCODE = '23505', CONSTRAINT = 'deleted_username_reserved';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS users_deleted_username_guard ON users;
+CREATE TRIGGER users_deleted_username_guard BEFORE INSERT OR UPDATE OF username ON users
+  FOR EACH ROW EXECUTE FUNCTION reject_deleted_username();

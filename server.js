@@ -513,6 +513,10 @@ app.use(topochainMobileRoutes(config));
 // can never be confused for one of those distinct credentials.
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
+worker.setAccountDeletionGuard(sessionId => require('./src/services/account-deletion-cleanup')
+  .assertWorkerAllowed(getPool(config), sessionId));
+app.use(require('./src/services/account-deletion-runtime').trackResponse);
+app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));
 // Social identity proofs are a platform account surface, independent of
 // the hosted MCP connector. They remain reviewable (with fixtures only) in
@@ -1149,6 +1153,12 @@ async function becomeLeader() {
           log.warn('server', 'Quick-reply backfill failed', { err: err.message });
         });
     });
+
+  // Durable deletion tasks survive provider outages and platform restarts.
+  const runAccountDeletionCleanup = () => require('./src/services/account-deletion-cleanup')
+    .sweep(getPool(config), config).catch(err => log.warn('account-deletion', 'Cleanup sweep failed', { code: err.code }));
+  void runAccountDeletionCleanup();
+  setInterval(runAccountDeletionCleanup, 60_000).unref();
 
   // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
   // reclaims that memory after a tunable idle period. The CC volume

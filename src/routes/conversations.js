@@ -417,9 +417,9 @@ function conversationRoutes(config) {
   // conversation, so a readable id from one cannot be used to save a message
   // out of another.
   async function readableMessage(user, conversationId, messageId) {
-    const membership = await conversations.loadMembership(pool, conversationId, user.id);
+    const membership = await conversations.loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
     if (!membership) return false;
-    if (!await conversations.canDirectInteract(pool, membership, user.id)) return false;
+    if (!await conversations.canReadConversation(pool, membership, user.id)) return false;
     return !!await conversations.getMessage(pool, user, conversationId, messageId);
   }
 
@@ -625,8 +625,8 @@ function conversationRoutes(config) {
         };
       }
     }
-    const membership = await conversations.loadMembership(pool, id, req.user.id);
-    if (!membership || !(await conversations.canDirectInteract(pool, membership, req.user.id))) return null;
+    const membership = await conversations.loadMembership(pool, id, req.user.id, { allowDeletedPeer: true });
+    if (!membership || !(await conversations.canReadConversation(pool, membership, req.user.id))) return null;
     const { rows } = await pool.query(
       `SELECT id, kind, filename, content_type, data, message_id, user_id
          FROM conversation_message_attachments

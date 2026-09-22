@@ -29,6 +29,7 @@ const DDL = `
     id SERIAL PRIMARY KEY,
     kind VARCHAR(16) NOT NULL CHECK (kind IN ('direct', 'group')),
     title VARCHAR(80),
+    deleted_peer BOOLEAN NOT NULL DEFAULT FALSE,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'active'
       CHECK (status IN ('active', 'archived')),

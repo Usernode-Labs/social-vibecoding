@@ -97,7 +97,7 @@ export function MessageRow({ message, conversationId, shape = 'row' }: { message
   // message that goes INSIDE the bubble, or stands as the row's text.
   const body = (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>@{message.reply.sender.username}</span><p>{message.reply.content || 'Attachment'}</p></button> : null}
+      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{message.reply.sender.id ? '@' : ''}{message.reply.sender.username}</span><p>{message.reply.content || 'Attachment'}</p></button> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
       ) : message.content ? <MessageMarkdown content={message.content} /> : null}
@@ -180,7 +180,7 @@ export function MessageRow({ message, conversationId, shape = 'row' }: { message
     <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${stateClasses}`} {...pointerProps}>
       <UserAvatar user={message.sender} size="md" shape="square" />
       <div className="min-w-0 flex-1">
-        <div className="messages-message-head"><span className={mine ? 'text-violet-700 dark:text-violet-300' : ''}>@{message.sender.username}</span><time title={fullTime(message.createdAt)}>{time}</time>{message.editedAt ? <span title={fullTime(message.editedAt)}>edited</span> : null}{message.pending ? <span>sending…</span> : null}{message.failed ? <span className="text-red-700 dark:text-red-400">not sent</span> : null}</div>
+        <div className="messages-message-head"><span className={mine ? 'text-violet-700 dark:text-violet-300' : ''}>{message.sender.id ? '@' : ''}{message.sender.username}</span><time title={fullTime(message.createdAt)}>{time}</time>{message.editedAt ? <span title={fullTime(message.editedAt)}>edited</span> : null}{message.pending ? <span>sending…</span> : null}{message.failed ? <span className="text-red-700 dark:text-red-400">not sent</span> : null}</div>
         {body}
         {extras}
       </div>

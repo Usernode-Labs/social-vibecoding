@@ -112,16 +112,16 @@ async function blockedEitherWay(db, a, b) {
   return rows.length > 0;
 }
 
-async function loadMembership(db, conversationId, userId, { forUpdate = false, allowInvited = false } = {}) {
+async function loadMembership(db, conversationId, userId, { forUpdate = false, allowInvited = false, allowDeletedPeer = false } = {}) {
   const { rows } = await db.query(
     `SELECT c.id, c.kind, c.title, c.status AS conversation_status,
-            c.created_by, c.created_at, c.updated_at,
+            c.created_by, c.created_at, c.updated_at, c.deleted_peer,
             cm.role, cm.status AS membership_status, cm.invited_by,
             cm.joined_at, cm.last_read_message_id
        FROM conversations c
        JOIN conversation_members cm ON cm.conversation_id = c.id
       WHERE c.id = $1 AND cm.user_id = $2
-        AND c.status = 'active'
+        AND (c.status = 'active' OR (${allowDeletedPeer ? 'TRUE' : 'FALSE'} AND c.status = 'archived' AND c.deleted_peer))
         AND cm.status ${allowInvited ? "IN ('member', 'invited')" : "= 'member'"}
       ${forUpdate ? 'FOR UPDATE OF c, cm' : ''}`,
     [conversationId, userId]
@@ -145,6 +145,13 @@ async function canDirectInteract(db, membership, userId) {
   if (membership.kind !== 'direct') return true;
   const otherId = await loadDirectPeer(db, membership.id, userId, { forShare: true });
   return !!otherId && !(await blockedEitherWay(db, userId, otherId));
+}
+
+// Deleted-peer archives are only marked for accepted, unblocked members
+// by account deletion. Writes keep canDirectInteract's live-peer gate.
+async function canReadConversation(db, membership, userId) {
+  if (membership.deleted_peer && membership.membership_status === 'member') return true;
+  return canDirectInteract(db, membership, userId);
 }
 
 // Canonical ordering for every direct-conversation write:
@@ -289,7 +296,7 @@ async function hydrateMessages(db, user, rows) {
     conversationId: row.conversation_id,
     sender: {
       id: row.sender_id || 0,
-      username: row.sender_username || 'deleted user',
+      username: row.sender_username || 'Deleted user',
       avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
     },
     content: row.content,
@@ -299,7 +306,7 @@ async function hydrateMessages(db, user, rows) {
       id: row.reply_id,
       sender: {
         id: row.reply_sender_id || 0,
-        username: row.reply_sender_username || 'deleted user',
+        username: row.reply_sender_username || 'Deleted user',
         avatarUrl: row.reply_sender_avatar_id ? `/avatars/${row.reply_sender_avatar_id}` : null,
       },
       content: row.reply_content || '',
@@ -333,8 +340,8 @@ async function getMessage(db, user, conversationId, messageId) {
 }
 
 async function listMessages(pool, user, conversationId, { before = null, limit = 50 } = {}) {
-  const membership = await loadMembership(pool, conversationId, user.id);
-  if (!membership || !(await canDirectInteract(pool, membership, user.id))) return null;
+  const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
+  if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
   const params = [conversationId];
   let beforeSql = '';
@@ -360,7 +367,7 @@ async function listMessages(pool, user, conversationId, { before = null, limit =
 
 async function conversationRow(db, user, conversationId) {
   const { rows } = await db.query(
-    `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at,
+    `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer,
             me.role AS my_role, me.status AS membership_status, me.invited_by,
             me.last_read_message_id,
             inviter.username AS requester_username,
@@ -383,7 +390,7 @@ async function conversationRow(db, user, conversationId) {
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id ORDER BY id DESC LIMIT 1
        ) latest ON TRUE
-      WHERE c.id = $1 AND c.status = 'active'
+      WHERE c.id = $1 AND (c.status = 'active' OR (c.status = 'archived' AND c.deleted_peer))
         AND me.status IN ('member', 'invited')`,
     [conversationId, user.id]
   );
@@ -397,7 +404,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     ? await getMessage(db, user, row.id, row.latest_message_id)
     : null;
   let unread = 0;
-  if (row.membership_status === 'member') {
+  if (row.membership_status === 'member' && !row.deleted_peer) {
     const result = await db.query(
       `SELECT COUNT(*)::int AS count FROM conversation_messages
         WHERE conversation_id = $1 AND id > COALESCE($2, 0) AND sender_id IS DISTINCT FROM $3`,
@@ -419,13 +426,14 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     username: row.requester_username,
     avatarUrl: row.requester_avatar_id ? `/avatars/${row.requester_avatar_id}` : null,
   } : null;
-  const title = row.kind === 'direct' ? (peer?.username || 'Direct message') : row.title;
+  const title = row.kind === 'direct' ? (peer?.username || (row.deleted_peer ? 'Deleted user' : 'Direct message')) : row.title;
   return {
     id: row.id,
     kind: row.kind,
     title,
     status: row.status,
     archived: row.status === 'archived',
+    deletedPeer: !!row.deleted_peer,
     members,
     memberCount: accepted ? members.filter((member) => member.status === 'member').length : 0,
     membershipStatus: row.membership_status,
@@ -444,7 +452,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
 
 async function getConversation(pool, user, conversationId) {
   const row = await conversationRow(pool, user, conversationId);
-  if (!row || !(await canDirectInteract(pool, row, user.id))) return null;
+  if (!row || !(await canReadConversation(pool, row, user.id))) return null;
   return serializeConversation(pool, user, row);
 }
 
@@ -452,7 +460,7 @@ async function listConversations(pool, user) {
   const { rows } = await pool.query(
     `SELECT c.id FROM conversations c
       JOIN conversation_members me ON me.conversation_id = c.id
-      WHERE me.user_id = $1 AND c.status = 'active'
+      WHERE me.user_id = $1 AND (c.status = 'active' OR (c.status = 'archived' AND c.deleted_peer))
         AND me.status IN ('member', 'invited')
       ORDER BY c.updated_at DESC, c.id DESC
       LIMIT 200`,
@@ -1262,6 +1270,7 @@ module.exports = {
   loadMembership,
   loadDirectPeer,
   canDirectInteract,
+  canReadConversation,
   lockInteractionMembership,
   withLockedAudience,
   activeMemberIds,

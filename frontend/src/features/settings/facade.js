@@ -286,8 +286,8 @@ const Facade = {
     return whenLoaded((real) => real.showTermsSheet(onAccepted, opts));
   },
 
-  async logout() {
-    return whenLoaded((real) => real.logout());
+  async logout(options) {
+    return whenLoaded((real) => real.logout(options));
   },
 };
 

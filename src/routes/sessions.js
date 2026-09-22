@@ -2331,7 +2331,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m
                   WHERE m.session_id = cs.id) AS message_count,
-                cs.user_id, u.username, cs.shared_at, cs.created_at,
+                cs.user_id, COALESCE(u.username, 'Deleted user') AS username, cs.shared_at, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 (SELECT COUNT(*)::int FROM chat_messages cm
                   WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
@@ -2339,7 +2339,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 (SELECT MAX(cm.created_at) FROM chat_messages cm
                   WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) AS last_message_at
          FROM chat_sessions cs
-         JOIN users u ON u.id = cs.user_id
+         LEFT JOIN users u ON u.id = cs.user_id
          LEFT JOIN LATERAL (
            SELECT MAX(created_at) AS last_message_at
            FROM chat_session_messages

@@ -40,6 +40,7 @@ import { ensureSettings } from '../settings/facade.js';
 import { NodePillRow } from '../header/node-pill-row';
 import { WalletRow } from '../header/wallet-row';
 import { StakingRow } from './staking-sheet';
+import { DeleteAccount } from './delete-account';
 
 export function AccountPanel() {
   const pending = useRef(false);
@@ -90,6 +91,7 @@ export function AccountPanel() {
       >
         {loggingOut ? 'Logging out…' : 'Log out'}
       </Button>
+      <DeleteAccount />
       {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
     </section>
   );

@@ -37,6 +37,7 @@ const NEXT = 'b'.repeat(40);
 const queries = [];
 const fakePool = {
   async query(sql, params = []) {
+    if (/SELECT id FROM users WHERE id = \$1/.test(sql)) return { rows: [{ id: params[0] }] };
     queries.push(sql);
     if (/FROM sessions s JOIN users u/.test(sql)) {
       if (params[0] !== VALID_SESSION) return { rows: [] };

@@ -1749,7 +1749,7 @@ test('the wallet-recovery demo deep link is read-only and declared', () => {
 test('sign-out closes once, then uses terminal protocol 2 or web navigation',
   () => {
   const logout = settingsJs.slice(
-    settingsJs.indexOf('    async logout() {'),
+    settingsJs.indexOf('    async logout({ accountDeleted = false } = {}) {'),
     settingsJs.indexOf('    _clearSwApiCache() {'),
   );
   const closeAt = logout.indexOf('NativeChrome.prepareWebLogout()');
