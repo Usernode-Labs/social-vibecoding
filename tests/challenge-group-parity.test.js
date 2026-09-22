@@ -120,11 +120,12 @@ test('the two "setup finished" rules agree, each fed rows in its own shape', () 
 
 // The ORDER, fed the payload each surface really gets. The tab's public list
 // (src/routes/topochain/public.js) is sorted display_order then id and
-// attaches per-user `progress` only to setup cards; every other card carries
-// the organiser's `completed` flag, and `featured` arrives on the viewer's
-// personalization row (`_mine`). Home's rows carry the viewer's `progress` on
-// every card (my_done), plus `completed`, `featured` and `display_order`, in
-// whatever sequence the server sent them.
+// attaches the signed-in viewer's `progress` to every card, as Home's rows do
+// (my_done), so both surfaces sink a card the viewer finished, in every group
+// (#2490). Both carry the organiser's `completed` flag too, which neither
+// reads while a row has progress. On the tab `featured` arrives on the
+// viewer's personalization row (`_mine`); Home's rows carry `featured` and
+// `display_order` themselves, in whatever sequence the server sent them.
 test('Home orders the same challenges in the tab\'s sequence, each fed its real payload shape', () => {
   // [id, label, display_order, viewer done, organiser completed, featured]
   const cards = [
@@ -132,7 +133,7 @@ test('Home orders the same challenges in the tab\'s sequence, each fed its real 
     [2, 'ONBOARDING', 1, true, false, false],
     [3, 'WEEKLY', 0, true, false, false],
     [4, 'WEEKLY', 1, false, false, false],
-    [8, 'WEEKLY', 2, true, true, false],
+    [8, 'WEEKLY', 2, false, true, false],
     [5, 'PERSISTENT', 0, true, false, false],
     [6, 'PERSISTENT', 1, false, false, false],
     [9, 'PERSISTENT', 3, false, false, true],
@@ -141,8 +142,7 @@ test('Home orders the same challenges in the tab\'s sequence, each fed its real 
   const publicOrder = cards.slice().sort((a, b) => (a[2] - b[2]) || (a[0] - b[0]));
   const tabIds = (list, onboarding) => {
     TAB._challenges = list.map(([id, label, , done, completed]) => ({
-      id, card_preview: { label }, completed,
-      ...(String(label).toUpperCase() === 'ONBOARDING' ? { progress: { done } } : {}),
+      id, card_preview: { label }, completed, progress: { done },
     }));
     TAB._mine = new Map(list.map(([id, , , , completed, featured]) => [id, { id, completed, featured }]));
     TAB._onboarding = onboarding;
@@ -170,19 +170,37 @@ test('Home orders the same challenges in the tab\'s sequence, each fed its real 
   ]) {
     assert.deepEqual(homeIds(list, onboarding), tabIds(list, onboarding), name);
   }
-  assert.deepEqual(tabIds(publicOrder, { unlocked: true }), [3, 4, 8, 9, 5, 6, 7, 1, 2],
-    'a card the viewer finished keeps its place outside Get started; the organiser-closed one sinks; '
-    + 'featured lifts; finished Get started goes last');
-  assert.deepEqual(tabIds(setupOpen, null), [2, 1, 3, 4, 8, 9, 5, 6, 7],
+  assert.deepEqual(tabIds(publicOrder, { unlocked: true }), [4, 8, 3, 9, 6, 5, 7, 1, 2],
+    "the viewer's own progress decides on every card: a finished card sinks inside its group and "
+    + 'an organiser-closed one the viewer never did does not; featured lifts; finished Get started goes last');
+  assert.deepEqual(tabIds(setupOpen, null), [2, 1, 4, 8, 3, 9, 6, 5, 7],
     'setup unfinished leads, its open card first');
 
-  // Collapsed is the first four of that list.
-  const drawn = [...HOME.visibleSlots({
-    key: 'challenges',
-    onboarding: { unlocked: true },
-    challenges: publicOrder.map(([id, label, display_order, done, completed, featured]) => ({
-      id, label, display_order, featured, completed, progress: { done, current: null, target: null },
-    })),
-  }).rows].map((c) => c.id);
-  assert.deepEqual(plain(drawn), tabIds(publicOrder, { unlocked: true }).slice(0, 4));
+  // Collapsed (#2490): that list with its unfinished cards first, cut to four.
+  // A finished card only takes a slot the unfinished ones leave. The tab's own
+  // order is the oracle, so the pick cannot drift from the list it picks from.
+  const collapsed = (list) => {
+    const out = HOME.visibleSlots({
+      key: 'challenges',
+      onboarding: { unlocked: true },
+      challenges: list.map(([id, label, display_order, done, completed, featured]) => ({
+        id, label, display_order, featured, completed, progress: { done, current: null, target: null },
+      })),
+    });
+    return { ids: plain([...out.rows].map((c) => c.id)), doneFrom: out.doneFrom };
+  };
+  const pick = (list) => {
+    const finished = new Set(list.filter((c) => c[3]).map((c) => c[0]));
+    const order = tabIds(list, { unlocked: true });
+    return [...order.filter((id) => !finished.has(id)), ...order.filter((id) => finished.has(id))].slice(0, 4);
+  };
+  const busy = collapsed(publicOrder);
+  assert.deepEqual(busy.ids, pick(publicOrder));
+  assert.deepEqual(busy.ids, [4, 8, 9, 6], 'five unfinished cards: the first four draw, and no finished one');
+  assert.equal(busy.doneFrom, null);
+  const nearlyDone = publicOrder.map((c) => ([4, 8, 6].includes(c[0]) ? [c[0], c[1], c[2], true, c[4], c[5]] : c));
+  const light = collapsed(nearlyDone);
+  assert.deepEqual(light.ids, pick(nearlyDone));
+  assert.deepEqual(light.ids, [9, 7, 3, 4], "two unfinished cards, then the first two finished in the tab's order");
+  assert.equal(light.doneFrom, 2);
 });

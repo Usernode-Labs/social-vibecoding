@@ -34,10 +34,10 @@
  * That is what `interactive`, `advanceOn` and the two surface flags are for:
  *
  *   * `interactive` lets the cut-out pass clicks through to the control it is
- *     drawn around, while the dimmed area keeps blocking them. It is on for
- *     the whole Improve arc, because pressing a row IS a thing a viewer may
- *     do there, and ./index.tsx's pause rule exists to handle it gracefully
- *     rather than to prevent it.
+ *     drawn around, while the dimmed area keeps blocking them. Exactly ONE
+ *     step has it: the Improve step, which the viewer completes by pressing
+ *     the real button. The three rows INSIDE the panel are described, not
+ *     driven — see "The panel rows are shown, not pressed" below.
  *   * `advanceOn: 'improve-open'` is a step with NO Next. It ends when the
  *     panel opens, which the overlay learns by subscribing to improveStore.
  *     The click is never intercepted; the tour only watches.
@@ -54,6 +54,25 @@
  *     steps that carry it spotlight the header, and a surface drawn over the
  *     header would put the cut-out around something the viewer cannot see.
  *     Never by writing to either subtree, both of which are React-owned.
+ *
+ * ── The panel rows are shown, not pressed ─────────────────────────
+ *
+ * Feedback, New change and Workshop spent a round `interactive`, on the
+ * argument that pressing a row is a thing a viewer may do while the tour is
+ * pointing at it. In use it is the other way round: every one of those three
+ * LEAVES the tour. Feedback presents a kit dialog, New change starts a
+ * session, and Workshop navigates off Home — so a viewer four steps into an
+ * eight step tour, following a spotlight that reads as an instruction, lands
+ * somewhere else with the tour paused behind them. ./index.tsx's pause and
+ * fallback rules recover from that, which is not the same as it being a good
+ * thing to invite.
+ *
+ * The keyboard already said as much. The focus move and the Tab handler in
+ * ./index.tsx both open up only for a step with `advanceOn`, so these three
+ * rows have never been reachable from a keyboard while their step was up; the
+ * cut-out passing a POINTER through was the odd one out. Both halves agree
+ * now: the spotlight describes the row, Next moves on, and the row is
+ * pressable again the moment the tour is done with it.
  *
  * ── `targets`: a LIST, first visible one wins ──────────────────────────
  *
@@ -111,27 +130,40 @@ export const TOUR_STEPS: readonly TourStep[] = [
     advanceOn: 'improve-open',
   },
   {
+    // BACK FROM THE MERGE, and correct again. #2718 deleted this step because
+    // it moved "Give feedback" out of the panel and into the mark's menu;
+    // its review moved the control back to a button in this very well, so
+    // the step it deleted is the step the product wants. Taking main's copy
+    // verbatim rather than rewriting it: nothing about what it teaches
+    // changed while it was away.
+    id: 'feedback',
+    title: 'Give feedback',
+    body: "Feedback sends the app's group a note about what should change.",
+    targets: ['#improve-row-feedback'],
+    needsPanel: true,
+  },
+  {
     id: 'new-change',
     title: 'New change',
     body: 'New change starts a working session on the app: describe it, try the preview, then put it to a vote.',
     targets: ['#improve-row-new-session'],
-    interactive: true,
     needsPanel: true,
   },
   {
-    // #2718 turned this step around. "Give feedback" was a row of the Improve
-    // panel and is the lead row of the APP'S OWN MENU now — the one behind
-    // the Homeroom mark, which also holds the app's Workshop, its discussion
-    // and the developer terminal. Pointing at the mark rather than at the row
-    // inside it is the better step either way: it teaches the control that is
-    // on screen on every route, and the rows behind it are then self-evident.
+    // #2718 added this step, on the reading that the mark is the control on
+    // screen on every route and the rows behind it are then self-evident.
+    // That holds, and what it says had to change twice: it called itself
+    // 'feedback' and led with "give feedback", both of which were true only
+    // while that row lived in this menu. The review put feedback back in the
+    // Improve panel — where the step above now points — so this one is about
+    // the menu itself and is named for it.
     //
     // It CLOSES the panel on the way in, which the Challenges step used to do
     // one later: the mark is in the header, and a panel drawn over the header
     // would put the cut-out around something the viewer cannot see.
-    id: 'feedback',
+    id: 'app-menu',
     title: "The app's own menu",
-    body: 'The mark opens the menu for the app you are in: give feedback, open its Workshop, go to its discussion.',
+    body: 'The mark opens the menu for the app you are in: its Workshop, its discussion, its developer terminal.',
     targets: ['#platform-mark-btn'],
     interactive: true,
     closesPanel: true,

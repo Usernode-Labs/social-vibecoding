@@ -204,7 +204,15 @@ test('app.css keys the wallpaper and the bar\'s tokens off the tone beside .dark
     const at = css.indexOf(sel);
     assert.ok(at > 0, `app.css has ${sel.split('\n')[0]}`);
     const block = css.slice(at, css.indexOf('}', at));
-    for (const token of ['--brand-ink', '--brand-tint', '--brand-line', '--app-sheet-line', '--app-sheet-shadow-near', '--app-sheet-shadow-far']) {
+    for (const token of [
+      '--brand-ink', '--brand-tint', '--brand-line',
+      '--app-sheet-line', '--app-sheet-shadow-near', '--app-sheet-shadow-far',
+      // #2704: the ground was repainted page-wide while the ink and the
+      // surfaces stayed on the shell's theme, which is what made a toned
+      // strip a hybrid rather than a dark one.
+      '--text-primary', '--text-secondary', '--text-muted', '--text-faint',
+      '--bg-primary', '--bg-secondary', '--border', '--border-light',
+    ]) {
       assert.ok(block.includes(token + ':'), `${sel.split('\n')[0]} sets ${token}`);
     }
   }
@@ -216,11 +224,35 @@ test('app.css keys the wallpaper and the bar\'s tokens off the tone beside .dark
   const darkBlock = css.slice(darkAt, css.indexOf('\n}', darkAt));
   const toneDark = css.slice(css.indexOf('[data-app-tone="dark"]:not(.dark) #platform-header,'));
   const toneLight = css.slice(css.indexOf('.dark[data-app-tone="light"] #platform-header,'));
-  for (const token of ['--brand-ink', '--brand-tint', '--brand-line', '--app-sheet-line']) {
+  for (const token of [
+    '--brand-ink', '--brand-tint', '--brand-line', '--app-sheet-line',
+    '--text-primary', '--text-secondary', '--text-muted', '--text-faint',
+    '--bg-primary', '--bg-secondary', '--border', '--border-light',
+  ]) {
     assert.equal(value(toneDark, token), value(darkBlock, token), `${token} dark tone = .dark`);
     assert.equal(value(toneLight, token), value(rootBlock, token), `${token} light tone = :root`);
   }
   assert.doesNotMatch(css, /\[data-app-tone="dark"\]:not\(\.dark\)\s*\{/, 'nothing is set on <html> itself');
+  // The body's own ink is `text-zinc-900 dark:text-zinc-100`, a utility keyed
+  // on .dark rather than a token, so it cannot ride the ramp — the tone
+  // re-inks it by hand with the literal the theme resolves to, exactly as it
+  // does the chip's subtitle.
+  assert.match(toneDark.slice(0, 400), /\n  color: #eaeaea;/, 'the dark tone carries the body\'s dark ink');
+  assert.match(toneLight.slice(0, 400), /\n  color: #1c1c1e;/, 'the light tone carries the body\'s light ink');
+  // .app-icon-tile is the one surface dark mode moves with a CLASS rule
+  // (--bg-primary is near-black, so the tile steps UP to --bg-secondary and
+  // its ring DOWN to --border) — under a tone that step needs its own twin,
+  // or the app's icon stays a white square on the night cover.
+  for (const [sel, bg, border] of [
+    ['[data-app-tone="dark"]:not(.dark) #app-frame-host .app-icon-tile', '--bg-secondary', '--border'],
+    ['.dark[data-app-tone="light"] #app-frame-host .app-icon-tile', '--bg-primary', '--border-light'],
+  ]) {
+    const at = css.indexOf(sel + ' {');
+    assert.ok(at > 0, `app.css has ${sel}`);
+    const block = css.slice(at, css.indexOf('}', at));
+    assert.match(block, new RegExp(`background-color: var\\(${bg}\\);`), `${sel} faces ${bg}`);
+    assert.match(block, new RegExp(`border-color: var\\(${border}\\);`), `${sel} rings ${border}`);
+  }
 });
 
 test('the head pins the theme from ?theme= as well as ?shot=', () => {
@@ -239,7 +271,11 @@ test('the two screenshot states mount a frame with the page colour of that tone'
   const at = view.indexOf('  showAppToneShot(tone) {');
   assert.ok(at > 0);
   const body = view.slice(at, view.indexOf('\n  },', at));
-  assert.match(body, /frame\.mount\(\{ slug, faded: false \}\)/, 'a pending frame, like the settled launch shot');
+  assert.match(
+    body,
+    /frame\.mount\(\{ slug, cover: AppView\._coverDescriptor\(AppView\.appData\), faded: false \}\)/,
+    'a pending frame WITH its launch cover (#2704): the cover is the surface whose ink the tone decides',
+  );
   assert.match(body, /frame\.setBackground\?\.\(dark \? '#0b0d1b' : '#f4f2e4'\)/, 'the page colour goes through the bridge path');
   assert.doesNotMatch(body, /setSrc|\.src\s*=/, 'no document is loaded behind it');
   assert.match(body, /App\._setScreenVisible\('app-view', true\)/);

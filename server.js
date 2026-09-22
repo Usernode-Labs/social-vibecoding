@@ -13,6 +13,7 @@ const {
 const { authMiddleware } = require('./src/middleware/auth');
 const { errorHandler } = require('./src/middleware/error-handler');
 const { explorerProxyRoutes } = require('./src/routes/explorer-proxy');
+const { githubWebhookRoutes } = require('./src/routes/github-webhook');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
@@ -188,6 +189,14 @@ app.use(mcpPreAuthRoutes(config));
 // limit, an allow-list of methods and a path-traversal refusal.
 app.use(explorerProxyRoutes(config));
 
+// ── GitHub webhook ─────────────────────────────────────────────────────────
+// #2737. Mounted HERE for the same two reasons as the passthrough above: the
+// signature is over the RAW bytes, so it must precede the JSON parser, and
+// the caller is GitHub, which has no session for authMiddleware to find. The
+// route verifies an HMAC before it reads anything, and is off entirely when
+// no secret is configured. src/routes/github-webhook.js carries the rest.
+app.use(githubWebhookRoutes(config));
+
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
 // external leaderboard deployment. Since the topochain merge the same five
@@ -240,8 +249,12 @@ app.use((req, res, next) => {
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
   if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
-  // A bounded executable evidence plan can exceed the global 100kb parser;
-  // its route validates the strict plan shape after its own 512kb parse.
+  // A bounded executable evidence plan can exceed the global 100kb parser.
+  // PR import parses here; the dedicated plan route mounts its own parser.
+  if (req.method === 'POST'
+      && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
+    return express.json({ limit: '512kb' })(req, res, next);
+  }
   if (req.method === 'POST'
       && /^\/api\/apps\/[^/]+\/proposals\/[^/]+\/evidence\/plan$/.test(req.path)) return next();
   express.json()(req, res, next);

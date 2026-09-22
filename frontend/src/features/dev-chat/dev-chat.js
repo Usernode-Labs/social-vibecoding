@@ -965,6 +965,47 @@ const DevChat = {
     }
   },
 
+  // #2706. Is the inline connector walkthrough on screen right now? An
+  // explicit answer from the toggle wins; otherwise it is open exactly when
+  // the hand-off step is asking for a connector, which is the state the
+  // request is about — nobody should have to press a button to be told how
+  // to satisfy the step they are stuck on.
+  _connectorStepsOpen() {
+    const flow = DevChat._devFlow;
+    if (typeof flow.connectorSteps === 'boolean') return flow.connectorSteps;
+    const status = flow.status;
+    if (!status || status.available === false) return false;
+    return !(status.connectors && status.connectors.count > 0);
+  },
+
+  // The card's own primary button. Closing it and re-reading the status are
+  // one act: if the connector did land, the step ticks over and the card
+  // would be wrong to stay; if it did not, the derivation above reopens it.
+  async _devFlowConnectorDone() {
+    DevChat._devFlow.connectorSteps = false;
+    await DevChat._devFlowEnsureStatus(true);
+  },
+
+  // What view.tsx renders beside the walkthrough card, or null for nothing.
+  // Only in a WEB hand-off launchpad: the own-tools venue needs no connector
+  // (a local agent is handed a token instead), and an ordinary chat has no
+  // launchpad at all.
+  _connectorSetupView() {
+    const venue = DevChat._launchpadVenue();
+    if (venue !== 'web-claude-code' && venue !== 'web-codex') return null;
+    if (!DevChat._connectorStepsOpen()) return null;
+    const status = DevChat._devFlow.status;
+    return {
+      // The connector belongs to the account the AGENT signs in as: Claude
+      // Code runs as a Claude.ai account and Codex as a ChatGPT one. Same
+      // mapping DevFlowSelect.connectorProduct makes for the step's copy.
+      product: venue === 'web-codex' ? 'ChatGPT' : 'Claude',
+      // Live, never written into the prose — the same rule Settings follows.
+      url: `${window.location.origin}/mcp`,
+      connected: !!(status && status.connectors && status.connectors.count > 0),
+    };
+  },
+
   // Repaint whichever surface the walkthrough is currently living on.
   //
   // Every dev-flow action used to end in renderMessages(), because the card
@@ -3326,6 +3367,13 @@ const DevChat = {
     // rest of this session without writing a preference.
     dismissed: false,
     brief: null,
+    // #2706: is the inline connector walkthrough on screen? `null` means
+    // nobody has said, and the answer is derived from the status — open
+    // when there is no connector, because that is the step the reader is
+    // standing on. `true`/`false` are the "Connect Homeroom" toggle and
+    // "I've added it", and they outrank the derivation so a reader can put
+    // six steps away without first satisfying them.
+    connectorSteps: null,
   },
 
   // Deep link: ?flow=claude-code|codex opens straight into that
@@ -3356,6 +3404,8 @@ const DevChat = {
       // null means "not typed yet", which is what lets the session title
       // seed it once without overwriting an edit.
       brief: null,
+      // #2706: unset, so the next status read decides — see _devFlow above.
+      connectorSteps: null,
     };
   },
 
@@ -3549,9 +3599,21 @@ const DevChat = {
     }
     if (action === 'link-github') return DevChat._devFlowLinkGithub(event);
     if (action === 'link-connector') {
-      // The Homeroom connector is added in Settings → Connectors, and there
-      // is no shorter road to it: that screen has the per-account steps.
-      window.location.hash = '#settings/connectors';
+      // #2706: the steps open HERE. This used to assign
+      // `#settings/connectors` — a whole screen away, to read six lines
+      // and find the way back — and the ask was to teach it in place.
+      // Settings still holds the rest of the reference (Claude Code's
+      // permission rules, Codex, the connector list), and the card links
+      // to it; what moved is the part this step is actually about.
+      //
+      // Always OPEN, never a toggle. The card is already on screen by
+      // default whenever the step is unsatisfied, and the way it closes is
+      // its own "I've added it — check again" — which re-reads the status,
+      // so closing means something. A button still labelled "Connect
+      // Homeroom" that HID the instructions would be the opposite of what
+      // it says, and it is also what puts the card back after that.
+      flow.connectorSteps = true;
+      DevChat._repaintDevFlow();
       return;
     }
     // #1281: the vendor toggle at the top of the launchpad. Switching is
@@ -9802,6 +9864,8 @@ const DevChat = {
       // makes it reversible — it is the way back to a chat.
       launchpadHtml: DevChat._launchpadHtml(),
       ownToolsGuide: DevChat._ownToolsGuideView(),
+      // #2706: the connector steps, inline under the hand-off card.
+      connectorSetup: DevChat._connectorSetupView(),
       // Is there anything left in the bottom bar to draw a border around?
       // The composer is hidden in a launchpad and the venue note is usually
       // absent, and an empty bordered strip reads as a broken composer.

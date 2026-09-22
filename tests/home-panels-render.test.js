@@ -319,29 +319,35 @@ test('progressPercent: clamped, and safe against a zero/NaN target', () => {
 
 test('orderRows: not-done rows come first, stably', () => {
   const { HP } = makeHomePanels();
+  const done = { done: true, current: null, target: null };
   const rows = [
-    challenge({ id: 1, completed: true }),
+    challenge({ id: 1, progress: done }),
     challenge({ id: 2 }),
-    challenge({ id: 3, completed: true }),
+    challenge({ id: 3, progress: done }),
     challenge({ id: 4 }),
   ];
   assert.deepEqual([...HP.orderRows(rows)].map((c) => c.id), [2, 4, 1, 3]);
   assert.deepEqual(rows.map((c) => c.id), [1, 2, 3, 4], 'input is not mutated');
 });
 
-// The tab's not-done key (_isDone) is the viewer's progress only for a Get
-// started card, the one its public list attaches progress to; every other card
-// sinks only when the organiser closed it. The check mark still reads progress.
-test('orderRows: done means the viewer inside Get started, the organiser elsewhere', () => {
+// The tab's not-done key (_isDone) is the viewer's own progress on every card:
+// the tab's public list carries it on every card now, and Home's rows always
+// did. A row without progress falls back to the organiser's flag, as on the
+// tab. This key used to read the organiser's flag outside Get started, which
+// is never set on an open challenge, so a card the viewer had finished kept
+// its place (#2490).
+test("orderRows: done is the viewer's own progress on every card, as on the tab", () => {
   const { HP } = makeHomePanels();
   const done = { done: true, current: null, target: null };
   assert.equal(HP.orderDone(challenge({ label: 'ONBOARDING', progress: done })), true);
-  assert.equal(HP.orderDone(challenge({ label: 'ONBOARDING', completed: true })), false,
-    'setup reads the viewer, not the organiser flag');
-  assert.equal(HP.orderDone(challenge({ label: 'WEEKLY', progress: done })), false,
-    'a card the viewer finished but the organiser left open keeps its place');
-  assert.equal(HP.orderDone(challenge({ label: 'WEEKLY', completed: true })), true);
-  assert.equal(HP.orderDone(challenge({ label: 'COMMUNITY', completed: 'yes' })), false, 'only a real true');
+  assert.equal(HP.orderDone(challenge({ label: 'WEEKLY', progress: done })), true,
+    'a card the viewer finished sinks outside Get started too');
+  assert.equal(HP.orderDone(challenge({ label: 'WEEKLY', completed: true })), false,
+    "the viewer's progress decides over the organiser flag when the row carries it");
+  const bare = { id: 9, label: 'WEEKLY', completed: true };
+  assert.equal(HP.orderDone(bare), true, 'a row without progress falls back to the organiser flag');
+  assert.equal(HP.orderDone({ ...bare, completed: 'yes' }), false, 'only a real true');
+  assert.equal(HP.orderDone(challenge({ progress: { done: 1 } })), false, 'only a real true');
   assert.equal(HP.orderDone(null), false);
 
   const rows = [
@@ -350,8 +356,8 @@ test('orderRows: done means the viewer inside Get started, the organiser elsewhe
     challenge({ id: 3, label: 'ONBOARDING', display_order: 0, progress: done }),
     challenge({ id: 4, label: 'ONBOARDING', display_order: 1 }),
   ];
-  assert.deepEqual([...HP.orderRows(rows)].map((c) => c.id), [4, 3, 1, 2],
-    'Get started sinks its finished card; This week keeps display order');
+  assert.deepEqual([...HP.orderRows(rows)].map((c) => c.id), [4, 3, 2, 1],
+    'every group sinks its finished card: Get started, and This week too');
 });
 
 // S10 (owner decision, 2026-09-15): Home's block is the Challenges tab's list
@@ -364,7 +370,7 @@ test('orderRows: the Challenges tab order, group, unfinished, featured, then dis
   const rows = [
     challenge({ id: 7, label: 'COMMUNITY', display_order: 1 }),
     challenge({ id: 6, label: 'PERSISTENT', display_order: 5 }),
-    challenge({ id: 5, label: 'PERSISTENT', display_order: 2, completed: true }),
+    challenge({ id: 5, label: 'PERSISTENT', display_order: 2, progress: done }),
     challenge({ id: 4, label: 'PERSISTENT', display_order: 9, featured: true }),
     challenge({ id: 3, label: 'WEEKLY', display_order: 3 }),
     challenge({ id: 2, label: 'WEEKLY', display_order: 3 }),
@@ -462,15 +468,119 @@ test('visibleSlots: overflow keeps all four row slots — the footer owns it', (
 test('visibleSlots: not-done rows win the slots when the cap trims', () => {
   const { HP } = makeHomePanels();
   const rows = [
-    challenge({ id: 1, completed: true }),
+    challenge({ id: 1, progress: { done: true, current: null, target: null } }),
     challenge({ id: 2 }),
     challenge({ id: 3 }),
     challenge({ id: 4 }),
     challenge({ id: 5 }),
   ];
   const out = HP.visibleSlots(panel({ total: 7, challenges: rows }));
-  assert.deepEqual(out.rows.map((c) => c.id), [2, 3, 4, 5],
+  assert.deepEqual([...out.rows].map((c) => c.id), [2, 3, 4, 5],
     'the actionable rows survive; the finished one is what gets dropped');
+  assert.equal(out.doneFrom, null, 'four unfinished rows leave no slot to fill');
+});
+
+// #2490 (owner decision, 2026-09-21: option B of the prototype). Unfinished
+// challenges take the slots first, in the tab's order, across groups; finished
+// ones fill only the slots that are left, in the same order, and draw last.
+test('visibleSlots: finished rows fill only the slots unfinished ones leave, and come last', () => {
+  const { HP } = makeHomePanels();
+  const done = { done: true, current: null, target: null };
+  const rows = [
+    challenge({ id: 1, label: 'WEEKLY', display_order: 1, progress: done }),
+    challenge({ id: 2, label: 'WEEKLY', display_order: 2, progress: done }),
+    challenge({ id: 3, label: 'WEEKLY', display_order: 3 }),
+    challenge({ id: 4, label: 'PERSISTENT', display_order: 4 }),
+    challenge({ id: 5, label: 'PERSISTENT', display_order: 5, progress: done }),
+  ];
+  const out = HP.visibleSlots(panel({ total: 5, challenges: rows }));
+  assert.deepEqual([...out.rows].map((c) => c.id), [3, 4, 1, 2],
+    "both unfinished rows first, then the first two finished ones in the tab's order");
+  assert.equal(out.doneFrom, 2, 'the finished fill starts after the unfinished rows');
+
+  const allDone = rows.map((c) => ({ ...c, progress: done }));
+  const finished = HP.visibleSlots(panel({ total: 5, challenges: allDone }));
+  assert.deepEqual([...finished.rows].map((c) => c.id), [1, 2, 3, 4],
+    'a season the viewer has finished still draws four cards');
+  assert.equal(finished.doneFrom, 0);
+
+  HP._expanded.challenges = true;
+  const open = HP.visibleSlots(panel({ total: 5, challenges: rows }));
+  assert.deepEqual([...open.rows].map((c) => c.id), [3, 1, 2, 4, 5],
+    "expanded keeps the tab's order: a finished card sinks inside its own group");
+  assert.equal(open.doneFrom, null, 'and there is no finished fill to head');
+});
+
+test('challengesView: the finished fill sits last under one Done header, with no clock', () => {
+  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+  const { HP } = makeHomePanels({ slots: [] });
+  const done = { done: true, current: null, target: null };
+  const view = HP.challengesView(panel({
+    season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
+    total: 5,
+    challenges: [
+      challenge({ id: 1, label: 'WEEKLY', display_order: 1, progress: done }),
+      challenge({ id: 2, label: 'WEEKLY', display_order: 2, progress: done }),
+      challenge({ id: 3, label: 'WEEKLY', display_order: 3 }),
+      challenge({ id: 4, label: 'PERSISTENT', display_order: 4 }),
+      challenge({ id: 5, label: 'PERSISTENT', display_order: 5, progress: done }),
+    ],
+  }));
+  const groups = [...view.groups];
+  assert.deepEqual(groups.map((g) => [g.key, g.heading, g.meta, [...g.rows].map((r) => r.id)]), [
+    ['week', 'This week', '3d left', ['3']],
+    ['always', 'Always open', 'no deadline', ['4']],
+    ['done', 'Done', null, ['1', '2']],
+  ], 'the unfinished cards under their own headers, then the finished fill under Done');
+  assert.deepEqual([...view.rows].map((r) => r.id), ['3', '4', '1', '2'], "`rows` is the groups' sequence");
+  assert.deepEqual([...view.rows].map((r) => r.deadline), [null, null, null, null]);
+  assert.deepEqual([...groups[2].rows].map((r) => r.stateLabel), ['Done', 'Done']);
+  assert.equal(HP.DONE_GROUP.heading, 'Done');
+  assert.equal(view.expandable, true, 'the fifth card is behind the toggle');
+});
+
+test('challengesView: while setup gates the season, its finished card moves under Done', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const done = { done: true, current: null, target: null };
+  const view = HP.challengesView(panel({
+    total: 2,
+    onboarding: { total: 2, completed: 1, unlocked: false, hidden_count: 7 },
+    challenges: [
+      challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: done }),
+      challenge({ id: 2, label: 'ONBOARDING', display_order: 1 }),
+    ],
+  }));
+  assert.deepEqual([...view.groups].map((g) => [g.heading, [...g.rows].map((r) => r.id)]),
+    [['Get started', ['2']], ['Done', ['1']]]);
+  assert.equal(view.lockedCount, 7, 'the locked placeholder still follows the cards');
+});
+
+// The #2490 report: one member's Pre Season 2 board while it was open. This
+// week held one unfinished and three finished challenges, Always open three
+// unfinished ones, and setup was done. The block used to draw This week's four
+// cards, three of them finished, and none of Always open.
+test("#2490: the block shows what is left to do, not This week's finished cards", () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const done = { done: true, current: null, target: null };
+  const view = HP.challengesView(panel({
+    total: 9,
+    onboarding: { total: 0, completed: 0, unlocked: true },
+    challenges: [
+      challenge({ id: 76, label: 'PERSISTENT', display_order: 2 }),
+      challenge({ id: 77, label: 'PERSISTENT', display_order: 3 }),
+      challenge({ id: 78, label: 'PERSISTENT', display_order: 4 }),
+      challenge({ id: 79, label: 'WEEKLY', display_order: 5 }),
+      challenge({ id: 74, label: 'ONBOARDING', display_order: 0, progress: done }),
+      challenge({ id: 75, label: 'ONBOARDING', display_order: 1, progress: done }),
+      challenge({ id: 80, label: 'WEEKLY', display_order: 6, progress: done }),
+      challenge({ id: 81, label: 'WEEKLY', display_order: 7, progress: done }),
+      challenge({ id: 82, label: 'WEEKLY', display_order: 8, progress: done }),
+    ],
+  }));
+  assert.deepEqual([...view.groups].map((g) => [g.heading, [...g.rows].map((r) => r.id)]), [
+    ['This week', ['79']],
+    ['Always open', ['76', '77', '78']],
+  ], 'the four unfinished challenges, and no finished card');
 });
 
 test('visibleSlots: expanded draws every row the server sent', () => {
@@ -832,44 +942,82 @@ test('render: the group headers sit inside the rows list, before their cards, wi
     "the Challenges tab's header, shared");
 });
 
-// S10: the cap is the first ROW_SLOTS rows of the grouped, ordered list, so it
-// takes the first groups in the tab's order and may cut the last one short.
-// Expanded draws the whole grouped list.
-test('the cap: collapsed draws the first four rows of the grouped list, cutting a group mid-way', () => {
+test('render: the Done header follows every unfinished card, carries its hook, and no clock', () => {
+  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+  const done = { done: true, current: null, target: null };
+  const { html } = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({
+      season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
+      total: 3,
+      challenges: [
+        challenge({ id: 1, label: 'WEEKLY', display_order: 1, progress: done }),
+        challenge({ id: 2, label: 'WEEKLY', display_order: 2 }),
+        challenge({ id: 3, label: 'PERSISTENT', display_order: 3 }),
+      ],
+    })],
+  });
+  assert.match(html, /data-rows="3"/, 'data-rows still counts cards, not headers');
+  const body = html.slice(html.indexOf('class="home-panel-body'), html.indexOf('</article>'));
+  const rows = body.slice(body.indexOf('home-panel-rows'));
+  const at = (frag) => {
+    const i = rows.indexOf(frag);
+    assert.ok(i > 0, `${frag} is inside .home-panel-body .home-panel-rows`);
+    return i;
+  };
+  const order = ['>This week</span>', 'data-challenge-id="2"', '>Always open</span>', 'data-challenge-id="3"',
+    '<h3 class="home-challenge-done-head">', '>Done</span>', 'data-challenge-id="1"'].map(at);
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), 'the finished card comes last, under Done');
+  assert.equal((rows.match(/home-challenge-done-head/g) || []).length, 1, 'one Done header');
+  const tail = rows.slice(rows.indexOf('home-challenge-done-head'));
+  assert.doesNotMatch(tail.slice(0, tail.indexOf('home-challenge-card')), /\d+[dh] left|no deadline/,
+    'the Done header carries no clock');
+  assert.equal((rows.match(/<h3 class="[^"]+"/g) || []).length, 1,
+    'the other headers carry no class of their own');
+});
+
+// S10 and #2490: collapsed, the four slots go to unfinished rows first, in the
+// grouped, ordered list's sequence, so the cap can cut a group mid-way, and a
+// finished row only takes a slot the unfinished ones leave. Expanded draws the
+// whole grouped list.
+test('the cap: collapsed gives its four slots to unfinished rows, cutting a group mid-way', () => {
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const data = () => ({
     registry: [], hidden: [],
     panels: [panel({
       season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
-      total: 6, all_total: 6,
+      total: 7, all_total: 7,
       challenges: [
         challenge({ id: 1, label: 'COMMUNITY', display_order: 1 }),
         challenge({ id: 2, label: 'PERSISTENT', display_order: 2 }),
         challenge({ id: 3, label: 'PERSISTENT', display_order: 3 }),
-        challenge({ id: 4, label: 'WEEKLY', display_order: 4, completed: true }),
+        challenge({ id: 4, label: 'WEEKLY', display_order: 4, progress: DONE }),
         challenge({ id: 5, label: 'WEEKLY', display_order: 5 }),
         challenge({ id: 6, label: 'PERSISTENT', display_order: 6 }),
+        challenge({ id: 7, label: 'PERSISTENT', display_order: 7 }),
       ],
     })],
   });
   const { HP } = makeHomePanels({ slots: [] });
   assert.equal(HP.ROW_SLOTS, 4);
   const view = HP.challengesView(data().panels[0]);
-  assert.deepEqual([...view.rows].map((r) => r.id), ['5', '4', '2', '3'],
-    'This week whole, then Always open cut after two of its three');
+  assert.deepEqual([...view.rows].map((r) => r.id), ['5', '2', '3', '6'],
+    "This week's unfinished card, then Always open cut after three of its four; "
+    + 'the finished card gives up its slot');
   assert.deepEqual([...view.groups].map((g) => [g.key, [...g.rows].map((r) => r.id)]),
-    [['week', ['5', '4']], ['always', ['2', '3']]]);
-  assert.equal(view.expandable, true, 'four drawn of six');
+    [['week', ['5']], ['always', ['2', '3', '6']]]);
+  assert.equal(view.expandable, true, 'four drawn of seven');
 
   const { html } = renderWith(data());
   assert.match(html, /data-rows="4"/);
-  assert.doesNotMatch(html, /data-challenge-id="1"|data-challenge-id="6"/, 'past the cap');
-  assert.match(html, />See all 6 challenges</);
+  assert.doesNotMatch(html, /data-challenge-id="(1|4|7)"/, 'past the cap');
+  assert.doesNotMatch(html, /home-challenge-done-head/, 'no finished fill to head');
+  assert.match(html, />See all 7 challenges</);
 
   HP._expanded.challenges = true;
   const open = HP.challengesView(data().panels[0]);
-  assert.deepEqual([...open.rows].map((r) => r.id), ['5', '4', '2', '3', '6', '1'],
-    'expanded: the whole grouped list');
+  assert.deepEqual([...open.rows].map((r) => r.id), ['5', '4', '2', '3', '6', '7', '1'],
+    'expanded: the whole grouped list, the finished card last in its own group');
   assert.deepEqual([...open.groups].map((g) => g.key), ['week', 'always', 'other']);
 });
 

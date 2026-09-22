@@ -1761,6 +1761,16 @@ function parseImportVisualEvidence(body) {
   return visualEvidencePlan.parseIntent(body.visualEvidence);
 }
 
+function parseImportVisualEvidencePlan(body, intent, revisions) {
+  if (!body || body.visualEvidencePlan === undefined) return undefined;
+  if (!intent) {
+    throw new visualEvidencePlan.VisualEvidenceValidationError([{
+      path: ['visualEvidencePlan'], message: 'A matching visualEvidence intent is required',
+    }]);
+  }
+  return visualEvidencePlan.parseAuthorPlanSubmission(body.visualEvidencePlan, intent, revisions);
+}
+
 // Keep internal failures opaque, but name the import boundary a caller can
 // act on. The connector turns these fields into an `import_failed` response,
 // so an agent can retry the SAME open pull request instead of manufacturing a
@@ -1771,6 +1781,14 @@ function prImportFailureBody(err) {
       error: 'PR import failed while recording visualEvidence.',
       stage: 'visual_evidence_intent',
       field: 'visualEvidence',
+      retryable: true,
+    };
+  }
+  if (err?.prImportStage === 'visual_evidence_plan') {
+    return {
+      error: 'PR import failed while recording visualEvidencePlan.',
+      stage: 'visual_evidence_plan',
+      field: 'visualEvidencePlan',
       retryable: true,
     };
   }
@@ -2823,13 +2841,18 @@ function voteRoutes(config) {
       // three columns NULL, exactly as before.
       const importTesting = parseImportTesting(req.body);
       let importVisualEvidence;
+      let importVisualEvidencePlan;
       try {
         importVisualEvidence = parseImportVisualEvidence(req.body);
+        importVisualEvidencePlan = parseImportVisualEvidencePlan(req.body, importVisualEvidence, { baseSha, headSha });
       } catch (err) {
         return res.status(400).json({
           error: err.code || 'invalid_visual_evidence',
           message: err.message,
         });
+      }
+      if (importVisualEvidencePlan && !config.visualEvidence?.collect) {
+        return res.status(503).json({ error: 'visual_evidence_disabled' });
       }
       // The request this pull request implements (#1217). A submission
       // prepared from a request knows its number — prepare_work records it,
@@ -2913,6 +2936,30 @@ function voteRoutes(config) {
             throw err;
           }
         }
+        if (importVisualEvidencePlan) {
+          try {
+            const { run } = await visualEvidenceState.createRunInTransaction(importClient, {
+              sessionId: inserted[0].id,
+              baseSha, headSha, intent: importVisualEvidence,
+              authorPlan: importVisualEvidencePlan.plan, trigger: 'import-author-plan',
+            });
+            visualEvidenceResult = {
+              ...visualEvidenceResult,
+              state: run.state,
+              runId: run.id,
+              detail: {
+                ...visualEvidenceState.pendingDetail(importVisualEvidence, { headSha }),
+                runId: run.id, baseSha, state: run.state,
+              },
+            };
+          } catch (err) {
+            if (err && typeof err === 'object') {
+              err.prImportStage = 'visual_evidence_plan';
+              err.prImportField = 'visualEvidencePlan';
+            }
+            throw err;
+          }
+        }
         await importClient.query('COMMIT');
       } catch (err) {
         await importClient.query('ROLLBACK').catch(() => {});
@@ -2921,6 +2968,13 @@ function voteRoutes(config) {
         importClient.release();
       }
       const sessionId = inserted[0].id;
+      if (importVisualEvidencePlan) {
+        log.info('votes', 'PR imported with author visual evidence plan', {
+          sessionId, prNumber, baseSha, headSha,
+          planHash: importVisualEvidencePlan.planHash,
+          runId: visualEvidenceResult.runId,
+        });
+      }
       const session = {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
@@ -2945,6 +2999,7 @@ function voteRoutes(config) {
         testing_path: importTesting.testingPath,
         testing_paths: importTesting.testingPaths,
         visual_evidence_state: visualEvidenceResult?.state || null,
+        visual_evidence_run_id: visualEvidenceResult?.runId || null,
         visual_evidence_detail: visualEvidenceResult?.detail || null,
       };
 
@@ -6833,6 +6888,7 @@ module.exports = {
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
   parseImportVisualEvidence,
+  parseImportVisualEvidencePlan,
   prImportFailureBody,
   visualEvidenceGateForSession,
   readVisualEvidenceGate,

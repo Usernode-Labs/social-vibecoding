@@ -294,7 +294,7 @@ test('the work order separates manual testing routes from interaction evidence',
   assert.match(order, /user-visible claim/);
   assert.match(order, /real interaction steps/);
   assert.match(order, /bounded plan/);
-  assert.match(order, /replays it twice against exact\s+base and head revisions/);
+  assert.match(order, /replays\s+it\s+twice\s+against\s+exact\s+base\s+and\s+head\s+revisions/);
 
   // The submission response distinguishes a malformed manual route from the
   // evidence lifecycle instead of silently replacing either with '/'.

@@ -1457,7 +1457,8 @@ const App = {
     if (shot !== 'feedback' && shot !== 'feedback-spent'
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
         && shot !== 'feedback-capture-failed'
-        && shot !== 'feedback-required' && shot !== 'feedback-first') return;
+        && shot !== 'feedback-required' && shot !== 'feedback-choose'
+        && shot !== 'feedback-first') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -1481,6 +1482,14 @@ const App = {
     // real Submit and photographs the real refusal; the controller returns
     // before any fetch, so this posts nothing either.
     const requiredError = shot === 'feedback-required';
+    // #2707: the dialog as somebody with an app open meets it — two real
+    // destinations, neither chosen, Submit dead and the row saying why. The
+    // shot routes cannot reach that state on their own: `/` has no app open,
+    // and this app's own dev screen is self-hosted, which is the one case
+    // that forces the Platform target. So it pins the label the way
+    // ?shot=feedback-spent pins the kudos budget, and drives the shipped
+    // branch through the controller's own hook. Files nothing.
+    const chooseTarget = shot === 'feedback-choose';
     // ONCE PER DOCUMENT. _applyRouteShots dedupes on the hash, not on the
     // applier, so a fragment that changes after boot re-runs this one — and
     // this shot is not idempotent the way the others are. Its
@@ -1582,6 +1591,20 @@ const App = {
             if (--capTries > 0) setTimeout(runFailure, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(runFailure, 50);
+        }
+        if (chooseTarget) {
+          // Same retry shape, and for the same reason, as the two above: the
+          // dialog's own open-time reset decides the destination row, so a
+          // pose that lands before it is wiped. What the check asserts is
+          // the hint being VISIBLE, so that is what this waits for.
+          let chooseTries = App.IMPROVE_SHOT_TRIES;
+          const poseChoice = () => {
+            const hint = document.getElementById('feedback-target-hint');
+            if (hint && !hint.classList.contains('hidden')) return;
+            try { App._simulateFeedbackTargetChoice?.('Example App'); } catch (e) { /* ignore */ }
+            if (--chooseTries > 0) setTimeout(poseChoice, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(poseChoice, 50);
         }
         if (requiredError) {
           // Same retry shape, and for the same reason, as captureFailed

@@ -22,9 +22,13 @@
  *     NOT intercepted: the tour subscribes to `improveStore` and advances when
  *     `open` goes true, so what opens the panel is the product's own handler
  *     and the tour is only watching;
- *   * steps 4 to 6 spotlight `#improve-row-new-session` inside the panel the
- *     viewer just opened, then the mark and the Workshop tab, and Next moves
- *     between them;
+ *   * steps 4 and 5 spotlight `#improve-row-feedback` and
+ *     `#improve-row-new-session` INSIDE the panel the viewer just opened, and
+ *     Next moves between them. Both are DESCRIBED, not driven: the cut-out
+ *     blocks the press the way the dim around it does, because each of them
+ *     leaves the tour (a dialog, a new session) and a spotlight is not an
+ *     instruction to press. ./tour-steps.ts carries the whole argument;
+ *   * steps 6 and 7 leave the panel for the mark and the Workshop tab;
  *   * step 7 shuts the panel through `Improve.close()`, the controller's own
  *     close path and never a write into its DOM, then points at Challenges.
  *

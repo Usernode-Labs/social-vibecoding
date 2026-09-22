@@ -3058,11 +3058,13 @@ function registerTools(server, ctx) {
       summary: z.string().optional()
         .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description.'),
       testingPaths: z.array(z.string()).optional()
-        .describe('Backward-compatible routes for the manual “Test this change” link and legacy checks. They do not count as replay-checked visual evidence. For evidence-v2 proposals, describe the actual user interaction in visualEvidence; Homeroom’s evidence agent explores it and the platform replays it against exact base/head revisions. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing routes.'),
+        .describe('Backward-compatible routes for the manual “Test this change” link and legacy checks. They do not count as replay-checked visual evidence. For evidence-v2 proposals, describe the actual user interaction in visualEvidence; Homeroom replays it against exact base/head revisions, using a supplied local plan or a hosted agent-authored one. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing routes.'),
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       visualEvidence: z.unknown().optional()
-        .describe('Required evidence intent for this revision. Pass the version-1 object returned by record_visual_evidence_intent, or construct that documented v1 shape directly when the helper is not exposed in this connector session: impact "ui" or "motion" with 1-3 claims and their real user flows, or impact "none" with a concrete rationale. Homeroom validates both paths identically, explores the UI, and deterministically replays the resulting plan against the exact base and head revisions. Do not add screenshot-only routes or secrets.'),
+        .describe('Required evidence intent for this revision. Pass the version-1 object returned by record_visual_evidence_intent, or construct that documented v1 shape directly when the helper is not exposed in this connector session: impact "ui" or "motion" with 1-3 claims and their real user flows, or impact "none" with a concrete rationale. Homeroom validates both paths identically. With visualEvidencePlan it directly replays that plan; otherwise a hosted agent explores the UI to author one. Both paths replay against the exact base and head revisions. Do not add screenshot-only routes or secrets.'),
+      visualEvidencePlan: z.unknown().optional()
+        .describe('For a NEW PR import only: the locally replayed executable plan for visualEvidence, supplied in the same submit_work call. Pass {baseSha, headSha, planHash, plan} from the successful local verifier handoff. Homeroom checks the exact PR revisions, hash and claims, stores the plan atomically with the import, and independently replays it twice. Omit when no local pass was possible; then the hosted evidence planner authors the plan.'),
       expectedHeadSha: z.string().optional()
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
       recheck: z.boolean().optional()
@@ -3133,7 +3135,8 @@ function registerTools(server, ctx) {
     annotations: writeAnnotations,
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, summary, agent,
-    testingPaths, testingSteps, visualEvidence, expectedHeadSha, propose, recheck, share,
+    testingPaths, testingSteps, visualEvidence, visualEvidencePlan: submittedVisualEvidencePlan,
+    expectedHeadSha, propose, recheck, share,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -3145,7 +3148,24 @@ function registerTools(server, ctx) {
         return toolError('invalid_visual_evidence', err.message);
       }
     }
+    let acceptedVisualEvidencePlan;
+    if (submittedVisualEvidencePlan !== undefined) {
+      if (!acceptedVisualEvidence) {
+        return toolError('invalid_visual_evidence_plan', 'visualEvidencePlan requires a matching visualEvidence intent.');
+      }
+      try {
+        acceptedVisualEvidencePlan = visualEvidencePlan.parseAuthorPlanSubmission(
+          submittedVisualEvidencePlan, acceptedVisualEvidence
+        );
+      } catch (err) {
+        return toolError('invalid_visual_evidence_plan', err.message);
+      }
+    }
     const updating = Number.isInteger(proposalId) && proposalId > 0;
+    if (acceptedVisualEvidencePlan && (updating || share === true)) {
+      return toolError('invalid_visual_evidence_plan',
+        'The atomic author-plan handoff currently applies to a new PR import. For an existing proposal, submit the update and use submit_visual_evidence_plan for its new head.');
+    }
     // #2066. `share` belongs to the taskId shape: the reshare path keys off
     // the TASK's session_id, so passing it here did nothing at all. Silently.
     //
@@ -3235,6 +3255,7 @@ function registerTools(server, ctx) {
         ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
         ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
         ...(extra.visualEvidence ? { visualEvidence: extra.visualEvidence } : {}),
+        ...(extra.visualEvidencePlan ? { visualEvidencePlan: extra.visualEvidencePlan } : {}),
         // The About sheet's user-facing half, carried on the same POST as the
         // testing notes. Omitted when the agent sent none, so the route writes
         // null and the proposal reads exactly as it did before — the platform
@@ -3286,6 +3307,7 @@ function registerTools(server, ctx) {
       // on home-page screenshots of a change to somewhere else entirely.
       testing,
       visualEvidence: acceptedVisualEvidence,
+      visualEvidencePlan: acceptedVisualEvidencePlan,
       share: share === true,
       importProposal,
       updateProposal,
