@@ -318,6 +318,19 @@ const ADDED_IDS = {
   //
   // `switcher-row-admin` survives as a published FLAG name — app.js still
   // publishes it and Profile reads it — which is a capability, not a row.
+  // ── #2718: the Workshop gets a scope, three tabs and a plus ──────
+  //
+  // #workshop-picker, #workshop-picker-all, #workshop-plus-change,
+  // #workshop-plus-issue, #workshop-plus-create and #workshop-tab-empty are
+  // NOT in this map and that is not an omission: all six render only once
+  // somebody has tapped or once a tab has filtered to nothing, so none of
+  // them is in the prerendered document, which is what this map is for.
+  'workshop-scope': '#2718: the scope chip. It reads "All apps" on this screen, because this screen IS the all-apps one — narrowing navigates to that app\'s own Workshop rather than filtering here, which is the link-out every mini-app host in the study draws under a mini-app (Telegram to the bot\'s chat, Steam to the game\'s hub, Slack to the channel\'s files). Disabled with no apps rather than opening an empty list.',
+  'workshop-tabs': '#2718: the tab strip, drawn with @/components/ui/tabs and its SECTION_TAB_* tables — the same underlined-pill strip the Leaderboard screen\'s sections wear, rather than a second one derived here.',
+  'workshop-tab-status': '#2718: Current status — the apps where something of yours is in flight. The app\'s OWN Workshop opens on the same word, so the two screens read as one place at two scopes; this is the default for the same reason it is there.',
+  'workshop-tab-needs': '#2718: Needs you — the apps where a decision is owed. Same word, same question, one level up.',
+  'workshop-tab-all': '#2718: All items — every app you have. The widening move, which is why it is last.',
+  'workshop-plus': '#2718: the plus at the trailing edge of the tab strip, where Messages already puts the control that starts something (#messages-new). It holds what you can ADD from a screen about every app — a change, a problem report, a new app — each of which asks which app first. The MANAGE half of that menu (members, approvals, secrets, the fork) is per-app and stays on the app\'s own Workshop, which the scope chip is the way to.',
   'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
   'app-menu-row-workshop': '#2718: "Open in Workshop", scoped to the app in context. It is the move the study found under every mini-app whose deeper options go somewhere: Telegram sends you to the bot\'s chat as a row of Chats, Steam to that game\'s community hub, Slack and Teams to the channel\'s files. This is the Workshop tab, arriving filtered rather than at the top of a list. Outside an app it falls back to #workshop, the unscoped screen.',
   'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',

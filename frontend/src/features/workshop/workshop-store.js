@@ -36,10 +36,28 @@ import { createStore } from '../../lib/plain-store.js';
  */
 
 /**
+ * @typedef {'status'|'needs'|'all'} WorkshopTab
+ *
+ * THE SAME THREE WORDS THE APP'S OWN WORKSHOP USES, one level up (#2718).
+ * features/dev-board/workshop/workshop.tsx opens on "Current status" with
+ * "Needs you" and "All items" beside it, and those three answer the question
+ * for ONE app; this screen answers them across every app you have. Reusing
+ * the words rather than inventing a second set is the whole of why the two
+ * screens read as one place at two scopes: you pick a tab here, pick an app,
+ * and land on the same tab there.
+ */
+
+/**
  * @typedef {object} WorkshopState
  * @property {boolean} open   The router has this screen on show.
  * @property {WorkshopRow[]|null} rows  Null until the first load answers.
  * @property {boolean} error The load failed; the screen offers a retry.
+ * @property {WorkshopTab} tab  Which of the three is showing.
+ * @property {null|'scope'|'change'|'issue'} picker  Which in-screen panel is
+ *   expanded, or null for none. It is one field rather than three booleans
+ *   because exactly one can be open: the scope chip's app list, and the two
+ *   the plus offers, all occupy the same place on the screen and opening one
+ *   has to close the others.
  */
 
 /** @type {WorkshopState} */
@@ -47,6 +65,11 @@ const INITIAL = {
   open: false,
   rows: null,
   error: false,
+  // 'status' is where the app's own Workshop opens, so this does too: the
+  // question people arrive with is "what is in flight", and "all items" is
+  // what you widen to once you have answered it.
+  tab: 'status',
+  picker: null,
 };
 
 export const workshopStore = createStore(INITIAL);

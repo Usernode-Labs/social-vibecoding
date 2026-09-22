@@ -197,8 +197,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     //
     // OUT OF IT, because the navigation change draws them unconditionally:
     // the tab bar's five glyphs are in the document on every route, the app
-    // menu draws a chat bubble and an info circle, and the parked strip
-    // draws an ✕.
+    // menu draws a chat bubble and an info circle, the parked strip draws an
+    // ✕, and the Workshop's scope chip draws the grid.
     //
     // INTO IT, and every one is a row of the app chip's menu that is not
     // there any more. The platform's destinations left that menu for the tab
@@ -251,7 +251,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-    'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
     'M4 6h16M4 12h16M4 18h16',
     'M4 9.5h16',
     'M4.5 12.75l6 6 9-13.5',
