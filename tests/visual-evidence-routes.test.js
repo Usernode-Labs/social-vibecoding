@@ -189,6 +189,8 @@ test('the change author can submit only a matching plan for the current proposal
   };
   const retry = await submit({ headSha: head, plan: fixtures.plan() });
   assert.equal(retry.status, 202);
-  assert.deepEqual(retries, [{ runId: '2'.repeat(32), options: { trigger: 'author-plan' } }]);
+  assert.deepEqual(retries, [{ runId: '2'.repeat(32), options: {
+    trigger: 'author-plan', authorPlan: planContract.parseReplayPlan(fixtures.plan()),
+  } }]);
   assert.equal(scheduled.length, 2);
 });

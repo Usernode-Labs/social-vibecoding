@@ -35,6 +35,30 @@ test('recovery starts settled intent-only proposals once for their current check
   assert.match(queryText, /recoveryAttemptAt/);
 });
 
+test('recovery also starts an import-time author plan whose checks settled after a restart', async () => {
+  const head = 'a'.repeat(40);
+  const queries = [];
+  const calls = [];
+  const pool = { query: async (sql) => {
+    queries.push(String(sql));
+    return { rows: [{ id: 45, source: 'imported', imported_pr_head_sha: head,
+      checks_commit_sha: head }] };
+  } };
+  const result = await gc.recoverUnstarted({ visualEvidence: { execute: true } }, pool, {
+    schedule: async (_config, options) => { calls.push(options); return { scheduled: true }; },
+  });
+  assert.deepEqual(result, { examined: 1, scheduled: 1 });
+  assert.equal(calls[0].sessionId, 45);
+  assert.match(queries[0], /LEFT JOIN visual_evidence_runs r ON r\.id = cs\.visual_evidence_run_id/);
+  assert.match(queries[0], /r\.state = 'planned' AND r\.author_plan IS NOT NULL/);
+  const interrupted = [];
+  await gc.recoverInterrupted({ visualEvidence: {} }, { query: async (sql) => {
+    interrupted.push(String(sql));
+    return { rows: [] };
+  } });
+  assert.match(interrupted[0], /NOT \(r\.state = 'planned' AND r\.author_plan IS NOT NULL\)/);
+});
+
 test('an unlaunchable planned claim is deferred so it cannot starve later claims', async () => {
   const head = 'a'.repeat(40);
   const writes = [];

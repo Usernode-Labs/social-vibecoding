@@ -439,7 +439,8 @@ async function executeRun(config, options, injected = {}) {
     }
     const intent = planContract.parseIntent(run.intent || intentForSession(session));
     const authorPlan = options.authorPlan == null
-      ? null : planContract.parseReplayPlan(options.authorPlan);
+      ? (run.author_plan == null ? null : planContract.parseReplayPlan(run.author_plan))
+      : planContract.parseReplayPlan(options.authorPlan);
     if (authorPlan && planContract.canonicalJson(planContract.semanticIntentFromPlan(authorPlan))
         !== planContract.canonicalJson(intent)) {
       throw new VisualEvidenceOrchestrationError(
@@ -852,8 +853,15 @@ async function scheduleForSession(config, options, injected = {}) {
     intent,
     trigger,
     heuristicUi,
+    authorPlan,
   });
   const run = created.run;
+  if (run.author_plan) {
+    log.info('visual-evidence', 'Scheduling submitted author plan', {
+      sessionId, runId: run.id, headSha: run.head_sha,
+      planHash: planContract.planHash(run.author_plan),
+    });
+  }
   notifyEvidence(session, publicSessionAndApp(session).app, run.state);
   require('./pr-metadata').syncEvidencePrBlock(pool, sessionId).catch((error) => {
     log.warn('visual-evidence', 'Could not publish the authenticated evidence link to the PR', {
@@ -891,7 +899,7 @@ async function scheduleForSession(config, options, injected = {}) {
     app,
     revision,
     onProgress,
-    authorPlan,
+    authorPlan: run.author_plan || authorPlan,
   }, injected).catch((error) => {
     log.warn('visual-evidence', 'Visual evidence run failed', {
       sessionId,
