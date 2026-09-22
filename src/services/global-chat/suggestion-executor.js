@@ -307,8 +307,13 @@ function createSuggestionExecutor({ pool, config, registry, store = defaultStore
     const action = resolveAction({ actionId, parameters, targetLabel });
     const settled = await Promise.allSettled(action.steps.map(async (step) => {
       const definition = registry.get(step.capabilityId);
+      const safeLocalSettingWrite = action.id === 'settings.local.update'
+        && step.capabilityId === 'settings.local.update'
+        && definition?.risk === 'reversible_write'
+        && definition?.confirmation === 'never';
       if (!definition || definition.access(executionContext) !== true
-          || definition.risk !== 'read' || definition.confirmation !== 'never') {
+          || (!safeLocalSettingWrite
+            && (definition.risk !== 'read' || definition.confirmation !== 'never'))) {
         throw new SuggestionExecutionError(
           'direct_action_not_found',
           'That inline detail is no longer available.',

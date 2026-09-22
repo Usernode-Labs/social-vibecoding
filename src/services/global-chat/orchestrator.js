@@ -12,6 +12,7 @@ const {
   MAX_RESULT_REFS,
   automaticPresentation,
   enrichPresentation,
+  PresentationError,
   validatePresentation,
 } = require('./presentation');
 const { validateJsonSchema, JsonSchemaValidationError } = require('./json-schema');
@@ -31,17 +32,21 @@ const MAX_EXPOSED_CAPABILITIES = 60;
 const MAX_HISTORY_MESSAGES = 30;
 const MAX_TOOL_CONTENT_BYTES = 64 * 1024;
 const TURN_TIMEOUT_MS = 35_000;
-// OpenRouter now owns provider failover inside one latency-routed request.
-// Keep the application deadline short and never repeat the same model request
-// blindly: that old 15s + 15s retry was the source of the observed 30s turns.
-const PROVIDER_TIMEOUT_MS = 8_000;
-// OpenRouter uses session_id as a sticky provider key. Bump this routing-only
-// suffix whenever the routing policy changes so existing chats adopt it
-// automatically instead of remaining pinned to a previously slow endpoint.
-const PROVIDER_SESSION_REVISION = 'latency-v1';
-const SYNTHESIS_REQUEST_RE = /\b(?:analyse|analyze|compare|contrast|difference|explain|recommend|summari[sz]e|why|which\s+(?:is|are|should)|best)\b/i;
+// A short first attempt keeps the common case responsive. One bounded retry
+// is safe because no platform tool runs until the model response is complete.
+const PROVIDER_TIMEOUT_MS = 10_000;
+const REROUTE_TIMEOUT_MS = 12_000;
+const RETRYABLE_MODEL_ERRORS = new Set([
+  'timeout', 'network', 'provider_unavailable', 'provider_error',
+  'invalid_response', 'stream_error', 'output_limit',
+]);
+// OpenRouter's session_id pins a provider, not conversation state. Scope it to
+// this turn and use a fresh key after a transient failure.
+const PROVIDER_SESSION_REVISION = 'turn-v1';
+const SYNTHESIS_REQUEST_RE = /\b(?:analyse|analyze|compare|contrast|difference|explain|recommend|summari[sz]e|why|which\s+(?:is|are|should)|should|help\s+me\s+choose|best)\b/i;
 const WRITE_REQUEST_RE = /\b(?:add|change|close|configure|continue|create|delete|edit|fork|install|merge|remove|rename|reply|redeploy|send|set|start|update|vote)\b/i;
 const MULTI_CLAUSE_REQUEST_RE = /\b(?:also|and|plus|then)\b|,/i;
+const SIMPLE_READ_REQUEST_RE = /^(?:(?:please\s+)?(?:show|list|find|view|open)|(?:can|could)\s+you\s+(?:show|list|find|view|open))\b/i;
 
 class GlobalChatOrchestrationError extends Error {
   constructor(code, message, details = {}) {
@@ -100,6 +105,8 @@ function toolFailure(error) {
     rate_limited: 'The chat model is busy right now. Please try again.',
     provider_unavailable: 'The chat model is temporarily unavailable. Please try again.',
     provider_error: 'The chat model could not complete that request. Please try again.',
+    output_limit: 'The chat model’s response was cut off. Please try a shorter request.',
+    stream_error: 'The chat model’s response ended early. Please try again.',
     invalid_metadata: 'Global Chat could not prepare that request. Please try again.',
     presentation_required: 'The chat model returned an incomplete response. Please try again.',
     iteration_limit: 'The chat model could not finish that request. Please try again.',
@@ -155,7 +162,10 @@ function confirmationPreview(definition, input, executionContext) {
 }
 
 function historyForModel(messages) {
-  return messages.map((message) => {
+  const recentAssistantIndexes = new Set(messages.map((message, index) => (
+    message.role === 'assistant' ? index : -1
+  )).filter((index) => index >= 0).slice(-2));
+  return messages.map((message, index) => {
     if (message.role === 'user') return { role: 'user', content: message.text };
     const presentation = message.payload?.presentation;
     const modelPresentation = presentation ? {
@@ -165,8 +175,9 @@ function historyForModel(messages) {
         ? presentation.suggestions.map((suggestion) => ({
           id: suggestion.id,
           label: suggestion.label,
-          prompt: suggestion.prompt,
-          capabilityHint: suggestion.capabilityHint || null,
+          ...(recentAssistantIndexes.has(index)
+            ? { prompt: suggestion.prompt, capabilityHint: suggestion.capabilityHint || null }
+            : {}),
         }))
         : [],
     } : null;
@@ -229,11 +240,8 @@ async function inBatches(items, size, worker) {
 
 function invocationMessages(workflowPrompt, metadata, transcript, loop) {
   return [
-    // OpenRouter Chat Completions is stateless. Re-send the same complete,
-    // versioned operating manual as the stable first message on every model
-    // invocation so even a weak model never has to infer the platform rules
-    // from an earlier request. A short workflow prompt may narrow the current
-    // stage, but it never replaces the manual.
+    // OpenRouter Chat Completions is stateless, so each call gets the same
+    // compact, versioned operating contract followed by current metadata.
     { role: 'system', content: SYSTEM_PROMPT },
     ...(workflowPrompt ? [{ role: 'system', content: workflowPrompt }] : []),
     { role: 'system', content: serializeRuntimeMetadata(metadata) },
@@ -244,6 +252,7 @@ function invocationMessages(workflowPrompt, metadata, transcript, loop) {
 
 function canFastCompleteReads(messageText, capabilityCalls, outcomes) {
   if (!capabilityCalls.length
+      || !SIMPLE_READ_REQUEST_RE.test(messageText)
       || SYNTHESIS_REQUEST_RE.test(messageText)
       || (capabilityCalls.length === 1 && MULTI_CLAUSE_REQUEST_RE.test(messageText))
       || (WRITE_REQUEST_RE.test(messageText)
@@ -278,6 +287,21 @@ function completedSuggestionActionIds(capabilityCalls) {
     aliases.add(capabilityId);
   }
   return [...aliases];
+}
+
+function automaticPresentationWithFallback(options) {
+  try {
+    return automaticPresentation(options);
+  } catch (error) {
+    if (!(error instanceof PresentationError) || error.code !== 'suggestions_exhausted') {
+      throw error;
+    }
+    // Old suggestions remain in the transcript, but completing the current
+    // request must never require another model round trip just because the
+    // finite trusted catalog has already been seen. Reusing the most relevant
+    // server-owned options is safer than failing or asking the model for filler.
+    return automaticPresentation({ ...options, excludedSuggestionIds: [] });
+  }
 }
 
 function createGlobalChatOrchestrator({
@@ -397,8 +421,10 @@ function createGlobalChatOrchestrator({
       const loopMessages = [];
       const exposed = new Map();
       const confirmationEvents = [];
-      let capabilityAttempted = false;
+      let providerRoute = 1;
       let servedModel = model.id;
+      const completedDomains = new Set();
+      const completedActionIds = new Set();
 
       async function exposeCapability(capabilityId) {
         if (exposed.has(capabilityId)) return exposed.get(capabilityId);
@@ -572,21 +598,11 @@ function createGlobalChatOrchestrator({
           );
         }
         const suggestionOnly = kind === 'more_suggestions';
-        const mustUseCapability = kind === 'user_turn'
-          && exposed.size > 0
-          && turnResultIds.length === 0
-          && !capabilityAttempted;
         const currentToolSet = toolSet(suggestionOnly ? [] : [...exposed.values()], {
           includeSearch: !suggestionOnly,
           includeDescribe: !suggestionOnly,
-          // When a selected capability requires a value the user did not
-          // provide and no read can discover, the model needs one safe escape
-          // from forced tool use instead of looping with guessed arguments.
-          includeAsk: mustUseCapability,
-          // For a platform-data request, do not let the model skip straight to
-          // a plausible-sounding answer. At least one authoritative capability
-          // must finish before presentation becomes an available tool.
-          includePresent: !mustUseCapability,
+          includeAsk: !suggestionOnly,
+          includePresent: true,
         });
         const metadata = buildRuntimeMetadata({
           request: {
@@ -608,9 +624,12 @@ function createGlobalChatOrchestrator({
             // Summary text is derived and bounded by the owned server-side
             // transcript store. A caller-provided summary must never enter a
             // system message, even though its underlying conversation text
-            // remains untrusted data under rule 2 of the system prompt.
+            // remains untrusted data under the system prompt.
             threadSummary: ownedThread?.summary || null,
-            excludedSuggestionIds: [...excludedSuggestionIds],
+            // The browser may send hundreds of previously shown ids. The
+            // server validates against all of them, but only the newest 100
+            // need to occupy model context (the metadata schema is bounded).
+            excludedSuggestionIds: [...excludedSuggestionIds].slice(-100),
           },
           globalChatProfile,
           developmentProfile,
@@ -638,7 +657,7 @@ function createGlobalChatOrchestrator({
           iteration === 1 ? 'Planning the fastest safe path…' : 'Planning the next step…',
           { attempt: 1, iteration },
         );
-        const waitingTimer = setTimeout(() => {
+        let waitingTimer = setTimeout(() => {
           void emitProgress(
             'waiting_model',
             `Waiting for ${model.name || model.id}…`,
@@ -646,40 +665,59 @@ function createGlobalChatOrchestrator({
           );
         }, 4_000);
         let response;
+        let retryAfterOutputLimit = false;
         try {
-          providerInvocationCount += 1;
-          response = await accounting.invokeAccounted({
-            pool,
-            config,
-            apiKey,
-            userId,
-            threadId,
-            messageId: userMessage.id,
-            model,
-            reasoningEffort: globalChatProfile.reasoningEffort,
-            spendCapUsd: globalChatProfile.spendCapUsd,
-            providerAllowance,
-            attemptNumber: 1,
-            messages,
-            tools: currentToolSet.tools,
-            sessionId: `${threadId}:${PROVIDER_SESSION_REVISION}`,
-            // Five or six compact suggestions plus a strict tool envelope fit
-            // comfortably inside the transport default. Keeping the full
-            // 800-token allowance avoids turning a provider-side length
-            // cutoff into an incomplete turn; the one-call read fast path
-            // is what removes latency, not an unsafe output cap.
-            maxOutputTokens: 800,
-            temperature: model.supportsTemperature === false ? null : 0.1,
-            parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
-            toolChoice: suggestionOnly
-              ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
-              : (mustUseCapability ? 'required' : 'auto'),
-            timeoutMs: Math.max(1_000, Math.min(
-              PROVIDER_TIMEOUT_MS,
-              deadlineAt - Date.now(),
-            )),
-            signal,
-          });
+          for (let attempt = 1; attempt <= 2; attempt += 1) {
+            providerInvocationCount += 1;
+            try {
+              response = await accounting.invokeAccounted({
+                pool,
+                config,
+                apiKey,
+                userId,
+                threadId,
+                messageId: userMessage.id,
+                model,
+                reasoningEffort: globalChatProfile.reasoningEffort,
+                spendCapUsd: globalChatProfile.spendCapUsd,
+                providerAllowance,
+                attemptNumber: attempt,
+                messages,
+                tools: currentToolSet.tools,
+                sessionId: `${turnId}:${PROVIDER_SESSION_REVISION}:route-${providerRoute}`,
+                maxOutputTokens: attempt === 2 && retryAfterOutputLimit
+                  ? 1_800
+                  : (suggestionOnly ? 800 : 1_000),
+                temperature: model.supportsTemperature === false ? null : 0.1,
+                parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
+                toolChoice: suggestionOnly
+                  ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
+                  : 'auto',
+                timeoutMs: Math.max(1_000, Math.min(
+                  attempt === 1 ? PROVIDER_TIMEOUT_MS : REROUTE_TIMEOUT_MS,
+                  deadlineAt - Date.now(),
+                )),
+                signal,
+              });
+              break;
+            } catch (error) {
+              if (attempt === 2 || !RETRYABLE_MODEL_ERRORS.has(error?.code)
+                  || signal?.aborted || deadlineAt - Date.now() <= 1_000) throw error;
+              providerRoute += 1;
+              retryAfterOutputLimit = error?.code === 'output_limit';
+              clearTimeout(waitingTimer);
+              await emitProgress('retrying', retryAfterOutputLimit
+                ? 'Response was cut off—retrying with more room…'
+                : 'Model request failed—trying a fresh route…', {
+                attempt: 2, iteration,
+              });
+              waitingTimer = setTimeout(() => {
+                void emitProgress('waiting_model', `Waiting for ${model.name || model.id}…`, {
+                  attempt: 2, iteration,
+                });
+              }, 4_000);
+            }
+          }
         } catch (error) {
           if (Date.now() >= deadlineAt) {
             throw new GlobalChatOrchestrationError(
@@ -692,7 +730,21 @@ function createGlobalChatOrchestrator({
           clearTimeout(waitingTimer);
         }
         servedModel = response.servedModel || servedModel;
-        const rawCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+        let rawCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+        if (!rawCalls.length && kind === 'user_turn' && String(response.content || '').trim()) {
+          const message = String(response.content)
+            .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
+            .trim()
+            .slice(0, 2_000);
+          rawCalls = [{
+            id: 'guidance_response',
+            type: 'function',
+            function: {
+              name: BASE_TOOL_NAMES.PRESENT,
+              arguments: JSON.stringify({ message, resultRefs: [], suggestions: [] }),
+            },
+          }];
+        }
         if (!rawCalls.length) {
           throw new GlobalChatOrchestrationError(
             'presentation_required',
@@ -784,7 +836,6 @@ function createGlobalChatOrchestrator({
 
         const reads = capabilityCalls.filter(({ definition }) => definition.risk === 'read');
         const writes = capabilityCalls.filter(({ definition }) => definition.risk !== 'read');
-        if (capabilityCalls.length) capabilityAttempted = true;
         if (capabilityCalls.length) {
           const titles = capabilityCalls.map(({ definition }) => definition.title);
           const summary = titles.length === 1
@@ -812,6 +863,12 @@ function createGlobalChatOrchestrator({
         for (const entry of writes) {
           outcomes.set(entry.call.id, await executeCapability(entry.call, entry.capabilityId));
         }
+        for (const entry of capabilityCalls) {
+          completedDomains.add(entry.definition.domain);
+          for (const actionId of completedSuggestionActionIds([entry])) {
+            completedActionIds.add(actionId);
+          }
+        }
 
         let presentation = null;
         if (presentationCalls.length === 1) {
@@ -825,22 +882,26 @@ function createGlobalChatOrchestrator({
                 resultRefs: turnResultIds.slice(-MAX_RESULT_REFS),
               }
               : requestedPresentation;
-            if (!presentationCall.clarification
-                && kind === 'user_turn'
-                && exposed.size > 0
-                && turnResultIds.length === 0
-                && !capabilityAttempted) {
-              throw new GlobalChatOrchestrationError(
-                'capability_required',
-                'Use an authoritative Homeroom capability before presenting platform facts.',
-              );
+            const domain = completedDomains.size === 1
+              ? [...completedDomains][0]
+              : suggestionContext;
+            if (presentationCall.clarification || kind === 'more_suggestions') {
+              presentation = enrichPresentation(validatePresentation(presentationInput, {
+                availableResultIds: knownResultIds,
+                excludedSuggestionIds,
+                allowShortSuggestions: presentationCall.clarification,
+              }), { context: domain });
+            } else {
+              const modelPresentation = validatePresentation(presentationInput, {
+                availableResultIds: knownResultIds,
+                excludedSuggestionIds,
+                allowShortSuggestions: true,
+                // A weak model may repeat one old option inside an otherwise
+                // useful answer. Drop only those duplicates, not the answer.
+                dropRepeatedSuggestions: true,
+              });
+              presentation = enrichPresentation(modelPresentation, { context: domain });
             }
-            presentation = enrichPresentation(validatePresentation(presentationInput, {
-              availableResultIds: knownResultIds,
-              excludedSuggestionIds,
-            }), {
-              context: capabilityCalls.at(-1)?.definition?.domain || suggestionContext,
-            });
             outcomes.set(presentationCall.call.id, { ok: true, accepted: true });
           } catch (error) {
             outcomes.set(presentationCalls[0].call.id, toolFailure(error));
@@ -862,22 +923,15 @@ function createGlobalChatOrchestrator({
         if (!presentation && presentationCalls.length === 0
             && canFastCompleteReads(messageText, capabilityCalls, outcomes)) {
           try {
-            const completedDomains = new Set(
-              capabilityCalls.map(({ definition }) => definition.domain),
-            );
-            presentation = automaticPresentation({
+            presentation = automaticPresentationWithFallback({
               domain: completedDomains.size === 1
-                ? capabilityCalls[0].definition.domain
+                ? [...completedDomains][0]
                 : 'general',
               resultRefs: turnResultIds.slice(-MAX_RESULT_REFS),
               excludedSuggestionIds,
-              excludedActionIds: completedSuggestionActionIds(capabilityCalls),
+              excludedActionIds: [...completedActionIds],
             });
-          } catch {
-            // A long-lived thread can exhaust the deterministic option pool.
-            // In that rare case the normal model presentation loop remains the
-            // safe fallback and can generate genuinely new suggestions.
-          }
+          } catch {}
         }
 
         for (const call of calls) {

@@ -13,7 +13,6 @@ const {
   MAX_SUGGESTION_LABEL_CHARS,
   MAX_SUGGESTION_PROMPT_CHARS,
   MAX_SUGGESTIONS_PER_RESPONSE,
-  MIN_SUGGESTIONS_PER_RESPONSE,
 } = require('./presentation');
 
 const BASE_TOOL_NAMES = Object.freeze({
@@ -58,7 +57,7 @@ const PRESENTATION_SCHEMA = Object.freeze({
   properties: {
     message: {
       type: 'string', maxLength: MAX_MESSAGE_CHARS,
-      description: 'At most two short sentences. State only facts supported by Homeroom tools; rendered results carry list details.',
+      description: 'A useful conversational answer or question. Ground current platform facts in Homeroom tool results.',
     },
     resultRefs: {
       type: 'array',
@@ -68,10 +67,10 @@ const PRESENTATION_SCHEMA = Object.freeze({
     },
     suggestions: {
       type: 'array',
-      minItems: MIN_SUGGESTIONS_PER_RESPONSE,
+      minItems: 0,
       maxItems: MAX_SUGGESTIONS_PER_RESPONSE,
       items: SUGGESTION_SCHEMA,
-      description: 'Five or six distinct, relevant, new button options. Never add filler or repeat the action just completed. Never include More suggestions, Fewer suggestions, Back, Cancel, or Open in Classic.',
+      description: 'Zero to six short contextual options; [] is valid when no button helps. For more_suggestions, provide five or six new options. Do not include More, Back, Cancel, or Open in Classic.',
     },
   },
   required: ['message', 'resultRefs', 'suggestions'],
@@ -83,14 +82,14 @@ const CLARIFICATION_SCHEMA = Object.freeze({
   properties: {
     question: {
       type: 'string', minLength: 1, maxLength: MAX_MESSAGE_CHARS,
-      description: 'One short, specific question asking only for the required value that is missing. End with a question mark and make no platform claim.',
+      description: 'One short, specific question about a missing goal, target, value, or preference. End with a question mark and make no unsupported platform claim.',
     },
     suggestions: {
       type: 'array',
-      minItems: MIN_SUGGESTIONS_PER_RESPONSE,
+      minItems: 0,
       maxItems: MAX_SUGGESTIONS_PER_RESPONSE,
       items: SUGGESTION_SCHEMA,
-      description: 'Five or six compact, distinct answer or discovery options relevant to the question.',
+      description: 'Zero to six compact answer or discovery options relevant to the question.',
     },
   },
   required: ['question', 'suggestions'],
@@ -143,7 +142,7 @@ const BASE_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: BASE_TOOL_NAMES.ASK,
-      description: 'Stop and ask the user for one required input that is absent from the user request, runtime metadata, and authoritative results. Use only when the capability cannot be called safely without that value. Do not use this tool to answer a platform question, claim an action failed, or replace a required confirmation.',
+      description: 'Ask one focused question when the user\'s goal, target, or preference is ambiguous. Options are optional. Never replace a required confirmation.',
       strict: true,
       parameters: CLARIFICATION_SCHEMA,
     },
@@ -152,7 +151,7 @@ const BASE_TOOLS = Object.freeze([
     type: 'function',
     function: {
       name: BASE_TOOL_NAMES.PRESENT,
-      description: 'Finish the turn after all required platform tools have completed. Call exactly once. Keep the message compact, leave resultRefs empty for this turn, and supply five or six useful new button suggestions without repeating the completed action. Homeroom renders authoritative results and adds More suggestions and Open in Classic controls itself.',
+      description: 'Finish with a conversational answer, optional existing results, and zero to six contextual buttons. Use resultRefs [] for results created this turn; Homeroom attaches them. Do not claim platform facts without tool evidence.',
       strict: true,
       parameters: PRESENTATION_SCHEMA,
     },

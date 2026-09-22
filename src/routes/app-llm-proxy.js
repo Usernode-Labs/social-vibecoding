@@ -6,6 +6,10 @@ const { rateLimit } = require('express-rate-limit');
 const { appLlmAuth } = require('../middleware/app-llm-auth');
 const { getPool } = require('../db/pool');
 const limits = require('../services/limits');
+// #2513: the read-through cache, failing CLOSED on a database error. Shared
+// with anthropic-proxy.js — the two held separate copies of this logic, which
+// is how one could be fixed and the other left behind.
+const spendCache = require('../services/spend-cache');
 const anthropicStream = require('../services/anthropic-stream');
 const log = require('../services/logger');
 
@@ -63,80 +67,65 @@ const userBudgetCache = new Map();
 
 async function refreshAppUsage(pool, appId, userId) {
   const key = `${appId}:${userId}`;
-  const cached = appUsageCache.get(key);
-  const now = Date.now();
-  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) return cached;
-  try {
-    const { rows } = await pool.query(
-      `SELECT total_cost_cents, byok_cost_cents FROM app_llm_usage
-        WHERE app_id = $1 AND user_id = $2 AND date = CURRENT_DATE`,
-      [appId, userId]
-    );
-    const totalAtCheckpointCents =
-      parseFloat(rows[0]?.total_cost_cents || 0) + parseFloat(rows[0]?.byok_cost_cents || 0);
-    const fresh = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
-    appUsageCache.set(key, fresh);
-    return fresh;
-  } catch (err) {
-    log.warn('app-llm-proxy', 'App usage refresh failed; failing open', {
-      appId, userId, err: err.message,
-    });
-    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
-    appUsageCache.set(key, fresh);
-    return fresh;
-  }
+  const fresh = await spendCache.readSpend({
+    previous: appUsageCache.get(key),
+    ttlMs: CACHE_TTL_MS,
+    load: async () => {
+      const { rows } = await pool.query(
+        `SELECT total_cost_cents, byok_cost_cents FROM app_llm_usage
+          WHERE app_id = $1 AND user_id = $2 AND date = CURRENT_DATE`,
+        [appId, userId]
+      );
+      return parseFloat(rows[0]?.total_cost_cents || 0)
+        + parseFloat(rows[0]?.byok_cost_cents || 0);
+    },
+    onError: (err) => log.warn('app-llm-proxy',
+      'App usage refresh failed; failing closed', { appId, userId, err: err.message }),
+  });
+  appUsageCache.set(key, fresh);
+  return fresh;
 }
 
 async function refreshUserBudget(pool, userId) {
-  const cached = userBudgetCache.get(userId);
-  const now = Date.now();
-  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) return cached;
-  try {
-    const { rows } = await pool.query(
-      'SELECT total_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
-      [userId]
-    );
-    const totalAtCheckpointCents = parseFloat(rows[0]?.total_cost_cents || 0);
-    const fresh = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
-    userBudgetCache.set(userId, fresh);
-    return fresh;
-  } catch (err) {
-    log.warn('app-llm-proxy', 'User budget refresh failed; failing open', {
-      userId, err: err.message,
-    });
-    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
-    userBudgetCache.set(userId, fresh);
-    return fresh;
-  }
+  const fresh = await spendCache.readSpend({
+    previous: userBudgetCache.get(userId),
+    ttlMs: CACHE_TTL_MS,
+    load: async () => {
+      const { rows } = await pool.query(
+        'SELECT total_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
+        [userId]
+      );
+      return parseFloat(rows[0]?.total_cost_cents || 0);
+    },
+    onError: (err) => log.warn('app-llm-proxy',
+      'User budget refresh failed; failing closed', { userId, err: err.message }),
+  });
+  userBudgetCache.set(userId, fresh);
+  return fresh;
 }
 
-// #1788: weekly companion to the tracker above. Same TTL, same fail-open
-// posture; only consulted when a weekly cap actually applies to the user.
+// #1788: weekly companion to the tracker above. Same TTL and — since #2513 —
+// the same fail-CLOSED posture; only consulted when a weekly cap applies.
 const weeklyBudgetCache = new Map();
 
 async function refreshUserWeeklySpend(pool, userId) {
-  const cached = weeklyBudgetCache.get(userId);
-  const now = Date.now();
-  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) return cached;
-  try {
-    const { rows } = await pool.query(
-      `SELECT COALESCE(SUM(total_cost_cents), 0) AS total
-         FROM llm_usage
-        WHERE user_id = $1 AND date >= $2`,
-      [userId, limits.weekStartUtc()]
-    );
-    const totalAtCheckpointCents = parseFloat(rows[0]?.total || 0);
-    const fresh = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
-    weeklyBudgetCache.set(userId, fresh);
-    return fresh;
-  } catch (err) {
-    log.warn('app-llm-proxy', 'Weekly budget refresh failed; failing open', {
-      userId, err: err.message,
-    });
-    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
-    weeklyBudgetCache.set(userId, fresh);
-    return fresh;
-  }
+  const fresh = await spendCache.readSpend({
+    previous: weeklyBudgetCache.get(userId),
+    ttlMs: CACHE_TTL_MS,
+    load: async () => {
+      const { rows } = await pool.query(
+        `SELECT COALESCE(SUM(total_cost_cents), 0) AS total
+           FROM llm_usage
+          WHERE user_id = $1 AND date >= $2`,
+        [userId, limits.weekStartUtc()]
+      );
+      return parseFloat(rows[0]?.total || 0);
+    },
+    onError: (err) => log.warn('app-llm-proxy',
+      'Weekly budget refresh failed; failing closed', { userId, err: err.message }),
+  });
+  weeklyBudgetCache.set(userId, fresh);
+  return fresh;
 }
 
 // Limit-first payer decision, scoped by the grant: platform key while
@@ -234,7 +223,21 @@ function appLlmProxyRoutes(config) {
     // isn't known until after headers have flushed).
     const capCents = grant.dailyCapCents;
     const appUsage = await refreshAppUsage(pool, appId, userId);
-    const appSpentBefore = appUsage.totalAtCheckpointCents + appUsage.liveDeltaCents;
+    // #2513: refuse an UNREADABLE ledger with a code that says "try again",
+    // before the spend header formats it (Infinity serialises as 0) and
+    // before the per-app gate reports it as `app_cap_exceeded` with a
+    // "resets at midnight" message. A transient outage must not be dressed
+    // up as an exhausted cap — the user would wait until tomorrow for
+    // something that clears in a second.
+    if (spendCache.isUnavailable(appUsage)) {
+      log.warn('app-llm-proxy', 'App usage ledger unavailable; refusing', { appId, appSlug, userId });
+      return res.status(429).json({
+        ok: false,
+        code: 'budget_unavailable',
+        message: 'Spending records are briefly unavailable. Try again in a moment.',
+      });
+    }
+    const appSpentBefore = spendCache.spendTotal(appUsage);
     res.setHeader('x-usernode-llm-spent-cents', spentCentsHeaderValue(appSpentBefore));
     res.setHeader('x-usernode-llm-cap-cents', String(capCents));
 
@@ -273,15 +276,41 @@ function appLlmProxyRoutes(config) {
     const userCapCents = userCaps && userCaps.dailyApplies ? userCaps.dailyLimitCents : null;
     const userBudget = payer.byok ? null : await refreshUserBudget(pool, userId);
     const userSpentBefore = userBudget
-      ? userBudget.totalAtCheckpointCents + userBudget.liveDeltaCents
+      ? spendCache.spendTotal(userBudget)
       : 0;
     const weeklyCapCents = userCaps && userCaps.weeklyApplies ? userCaps.weeklyLimitCents : null;
     const weeklyBudget = weeklyCapCents != null
       ? await refreshUserWeeklySpend(pool, userId)
       : null;
     const weeklySpentBefore = weeklyBudget
-      ? weeklyBudget.totalAtCheckpointCents + weeklyBudget.liveDeltaCents
+      ? spendCache.spendTotal(weeklyBudget)
       : 0;
+
+    // #2513: if a snapshot the kill depends on could not be READ, refuse
+    // before forwarding rather than sending the call and hoping the
+    // mid-stream kill catches it. Those two snapshots exist to be watched
+    // during the stream; an unavailable one means nothing is watching, and
+    // the call has already been paid for by the time that shows.
+    //
+    // `appSpentBefore` needs no branch here — unavailable reads as Infinity
+    // and the per-app gate above has already returned.
+    // NULL is not the same as unavailable: `userBudget` is null on the BYOK
+    // path and `weeklyBudget` is null when no weekly cap applies. Those mean
+    // "this cap does not apply to this call", and refusing them would break
+    // every BYOK call — so only a PRESENT-but-unreadable snapshot refuses.
+    const snapshotMissing = (e) => e != null && spendCache.isUnavailable(e);
+    if (snapshotMissing(userBudget) || snapshotMissing(weeklyBudget)) {
+      log.warn('app-llm-proxy', 'Spend snapshot unavailable; refusing rather than forwarding', {
+        appId, appSlug, userId,
+        userUnavailable: snapshotMissing(userBudget),
+        weeklyUnavailable: snapshotMissing(weeklyBudget),
+      });
+      return res.status(429).json({
+        ok: false,
+        code: 'budget_unavailable',
+        message: 'Spending records are briefly unavailable. Try again in a moment.',
+      });
+    }
 
     const upstreamUrl = `${anthropicStream.ANTHROPIC_UPSTREAM}/${upstreamPathRaw}`;
 

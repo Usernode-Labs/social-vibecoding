@@ -347,11 +347,12 @@ async function streamChat({
       .map(([, call]) => call);
     const finishReason = choice?.finish_reason || null;
 
-    // A missing terminal reason or a length cutoff is incomplete for the
-    // tool-only protocol and must never be accepted as a partial action.
+    // A missing terminal reason or a length cutoff is incomplete and must
+    // never be accepted as a partial action. Distinguish output exhaustion so
+    // the orchestrator can grant just one larger retry.
     if (!finishReason || finishReason === 'length') {
       throw new GlobalChatProviderError(
-        'stream_error',
+        finishReason === 'length' ? 'output_limit' : 'stream_error',
         finishReason === 'length'
           ? 'Global Chat model response reached its output limit'
           : 'Global Chat model response ended before completion',

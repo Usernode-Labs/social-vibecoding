@@ -5,7 +5,7 @@
 // actions, or the always-present More suggestions control; the server/client
 // derive those from the capability registry.
 
-const MAX_MESSAGE_CHARS = 600;
+const MAX_MESSAGE_CHARS = 2_000;
 const MAX_RESULT_REFS = 5;
 const MIN_SUGGESTIONS_PER_RESPONSE = 5;
 const MAX_SUGGESTIONS_PER_RESPONSE = 6;
@@ -111,6 +111,9 @@ function normalizeSuggestion(value, index) {
 function validatePresentation(value, {
   availableResultIds = [],
   excludedSuggestionIds = [],
+  allowEmptySuggestions = false,
+  allowShortSuggestions = false,
+  dropRepeatedSuggestions = false,
 } = {}) {
   if (!plainObject(value)) {
     throw new PresentationError('invalid_presentation', 'Presentation must be an object');
@@ -147,21 +150,34 @@ function validatePresentation(value, {
     }
   }
 
+  const minimumSuggestions = allowShortSuggestions
+    ? 0
+    : allowEmptySuggestions && value.suggestions?.length === 0
+    ? 0
+    : MIN_SUGGESTIONS_PER_RESPONSE;
   if (!Array.isArray(value.suggestions)
-      || value.suggestions.length < MIN_SUGGESTIONS_PER_RESPONSE
+      || value.suggestions.length < minimumSuggestions
       || value.suggestions.length > MAX_SUGGESTIONS_PER_RESPONSE) {
     throw new PresentationError(
       'invalid_presentation',
-      `suggestions must contain ${MIN_SUGGESTIONS_PER_RESPONSE} to ${MAX_SUGGESTIONS_PER_RESPONSE} options`,
+      allowShortSuggestions
+        ? `suggestions must contain at most ${MAX_SUGGESTIONS_PER_RESPONSE} options`
+        : allowEmptySuggestions
+        ? `suggestions must be empty or contain ${MIN_SUGGESTIONS_PER_RESPONSE} to ${MAX_SUGGESTIONS_PER_RESPONSE} options`
+        : `suggestions must contain ${MIN_SUGGESTIONS_PER_RESPONSE} to ${MAX_SUGGESTIONS_PER_RESPONSE} options`,
     );
   }
-  const suggestions = value.suggestions.map(normalizeSuggestion);
+  const normalizedSuggestions = value.suggestions.map(normalizeSuggestion);
+  const suggestions = [];
   const seenSuggestions = new Set();
   const seenLabels = new Set();
   const seenPrompts = new Set();
-  for (const suggestion of suggestions) {
+  for (const suggestion of normalizedSuggestions) {
     const labelKey = suggestion.label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const promptKey = suggestion.prompt.toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (dropRepeatedSuggestions && (seenSuggestions.has(suggestion.id)
+        || excludedSuggestions.has(suggestion.id)
+        || seenLabels.has(labelKey) || seenPrompts.has(promptKey))) continue;
     if (seenSuggestions.has(suggestion.id)) {
       throw new PresentationError(
         'duplicate_suggestion',
@@ -186,10 +202,19 @@ function validatePresentation(value, {
     seenSuggestions.add(suggestion.id);
     seenLabels.add(labelKey);
     seenPrompts.add(promptKey);
+    suggestions.push(suggestion);
+  }
+
+  const message = text(value.message, 'message', MAX_MESSAGE_CHARS, { optional: true });
+  if (!message && !resultRefs.length && !suggestions.length) {
+    throw new PresentationError(
+      'invalid_presentation',
+      'A response needs text, a result, or at least one option',
+    );
   }
 
   return {
-    message: text(value.message, 'message', MAX_MESSAGE_CHARS, { optional: true }),
+    message,
     resultRefs,
     suggestions,
   };
@@ -218,7 +243,7 @@ const SUGGESTION_CATALOG = Object.freeze({
     ['next.governance.votes', 'My votes', 'Show proposals I can vote on.'],
     ['next.governance.recent', 'Recent proposals', 'Show recently updated proposals.'],
     ['next.governance.issues', 'Related issues', 'Show issues related to current proposals.'],
-    ['next.governance.completed', 'Completed work', 'Show recently completed proposals.'],
+    ['next.governance.completed', 'Completed work', 'Show recently completed proposals.', 'governance.completed', 'governance'],
   ]),
   development: Object.freeze([
     ['next.development.active', 'Active development', 'Show my active development work.', 'development.active', 'development'],

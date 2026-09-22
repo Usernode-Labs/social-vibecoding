@@ -141,6 +141,7 @@ const config = loadConfig();
 log.setLevel(config.logLevel);
 
 const app = express();
+let startupDiagnostics = null;
 
 // Express never trusts forwarding headers globally. Docker mode resolves one
 // configured proxy peer; Kubernetes mode lets Cilium/Envoy supply the client
@@ -238,6 +239,10 @@ app.use((req, res, next) => {
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
   if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
+  // A bounded executable evidence plan can exceed the global 100kb parser;
+  // its route validates the strict plan shape after its own 512kb parse.
+  if (req.method === 'POST'
+      && /^\/api\/apps\/[^/]+\/proposals\/[^/]+\/evidence\/plan$/.test(req.path)) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -247,7 +252,7 @@ app.get('/health', (_req, res) => {
   // existing health check") — a static presence flag confirming this
   // deployment carries the /api/v4 topochain surface, not a live subsystem
   // probe (there's no separate topochain process to be unhealthy).
-  res.json({ status: 'ok', topochain: true });
+  res.json({ status: 'ok', topochain: true, startup: startupDiagnostics });
 });
 
 // The platform is never a dapp in "mock mode". The shared usernode-bridge
@@ -959,6 +964,16 @@ async function becomeLeader() {
     .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }));
   runVisualEvidenceGc();
   setInterval(runVisualEvidenceGc, 6 * 60 * 60 * 1000).unref?.();
+  // Recover intent-only proposals separately from the six-hour retention
+  // sweep. A missed checks hand-off should start within minutes, while the
+  // durable run claim ensures this cannot duplicate a live runner.
+  const runUnstartedEvidence = () => visualEvidenceGc.recoverUnstarted(config, getPool(config))
+    .then(({ scheduled }) => {
+      if (scheduled) log.info('visual-evidence', 'Recovered unstarted visual evidence claims', { scheduled });
+    })
+    .catch((err) => log.warn('visual-evidence', 'Unstarted evidence recovery failed', { err: err.message }));
+  runUnstartedEvidence();
+  setInterval(runUnstartedEvidence, 2 * 60 * 1000).unref?.();
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
@@ -1083,6 +1098,10 @@ async function becomeLeader() {
   // advisory-locked so only one instance sends, and the counterweight to
   // new-proposal notifications now defaulting off.
   require('./src/services/vote-digest').start(config);
+  // #2684: the Homeroom bot's shadow-mode triage loop. Leader-only for the
+  // same reason the digests are — a pass runs container turns that cost
+  // money — and inert until an admin switches homeroom_bot_mode on.
+  require('./src/services/homeroom-bot').start(config);
   // #1688: the Friday "this week on <app>" card. Same shape as the digest
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.
@@ -1300,6 +1319,9 @@ async function becomeLeader() {
 }
 
 async function start() {
+  const startedAt = Date.now();
+  const migrationsOnStartup = process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false';
+  let migration = null;
   // Schema migration is serialized across colors with an advisory lock so
   // two booting platform containers can't run DDL concurrently during a
   // blue-green rollout. No-op wrapper in single-instance mode. Orthogonal
@@ -1308,9 +1330,10 @@ async function start() {
   // lock contention with pg_dump'ing staging clones.
   // Kubernetes runs the same migration through a bounded pre-deploy Job;
   // Docker/single-server mode keeps the advisory-lock boot migration.
-  if (process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false') {
-    await withMigrationLock(getPool(config), () => migrate(config));
+  if (migrationsOnStartup) {
+    migration = await withMigrationLock(getPool(config), () => migrate(config));
   }
+  const servicesStartedAt = Date.now();
   await mobilePush.initialize(config);
   await github.init(config);
   // Configure the collection kill switch even on deployments with no
@@ -1318,6 +1341,12 @@ async function start() {
   // own paths and still need the provider-neutral collector.
   llmTelemetry.init(config);
   await llm.init(config);
+  startupDiagnostics = Object.freeze({
+    totalMs: Date.now() - startedAt,
+    migrationsOnStartup,
+    migration,
+    servicesMs: Date.now() - servicesStartedAt,
+  });
 
   worker.ensureWorkerImage().catch((err) => {
     log.warn('server', 'Worker image build deferred', { err: err.message });

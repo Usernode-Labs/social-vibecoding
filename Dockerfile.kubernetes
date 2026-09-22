@@ -1,29 +1,36 @@
-# Build the generated React shell from the same lockfile-pinned frontend tree
-# as the Docker runtime image. The outputs are intentionally excluded from the
-# build context, so every Kubernetes image must create them itself.
-FROM node:22-alpine AS shell
+# Install the one lockfile-pinned dependency tree used by both browser builds.
+# This stage is mounted ephemerally into the asset commands below instead of
+# being their parent: the generated-output snapshot therefore contains no
+# node_modules layer for rootless BuildKit to restore when the runtime copies
+# public/ out of it. `rw` lets Vite create its temporary config bundle; writes
+# to a bind mount from another stage are discarded after the RUN.
+FROM node:22-alpine AS asset-deps
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts
+
+# Build every generated browser asset in a lightweight output stage. The
+# outputs are intentionally excluded from the build context, so every
+# Kubernetes image must create them itself.
+FROM node:22-alpine AS shell
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
 COPY src/services/countries.json ./src/services/countries.json
-RUN node frontend/scripts/build-shell.mjs
+RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
+    node frontend/scripts/build-shell.mjs
 
-# Compile Tailwind only after the current shell has been prerendered because
-# public/index.html is one of the compiler's content sources.
-FROM node:22-alpine AS css
+# Compile Tailwind in the same stage, only after the current shell has been
+# prerendered because public/index.html is one of the compiler's content
+# sources. Generated files are excluded by .dockerignore, so merging public/
+# here cannot replace the shell output produced above.
 WORKDIR /build
-COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
 COPY tailwind.config.js ./
 COPY styles ./styles
 COPY scripts/build-tailwind.js ./scripts/build-tailwind.js
 COPY public ./public
-COPY --from=shell /build/public/index.html ./public/index.html
-COPY frontend ./frontend
-RUN npm run build:css
+RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
+    node scripts/build-tailwind.js
 
 FROM node:22-alpine
 
@@ -34,17 +41,17 @@ RUN apk add --no-cache git postgresql-client
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY --chown=node:node . .
-# Generated assets must be copied after the source tree so ignored local
-# artifacts can never replace the outputs built from this image's revision.
-COPY --chown=node:node --from=shell /build/public/index.html ./public/index.html
-# The whole directory, not shell.js alone: the React build emits lazy route
-# chunks beside the entry (frontend/vite.config.ts — the admin console's
-# sections and the settings module). Naming one file left every other chunk
-# out of the image while every test passed locally, where the build output
-# is simply on disk. Same as the compose Dockerfile.
-COPY --chown=node:node --from=shell /build/public/shell/assets/ ./public/shell/assets/
-COPY --chown=node:node --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
+# Ship only runtime inputs. In particular, tests, docs, frontend sources and
+# both builder dependency trees stay out of the final image. scripts/ includes
+# the Kubernetes migration/asset entry points and shell-stamp.js, while
+# worker/ remains available for the single-server fallback path.
+COPY --chown=node:node server.js dapp.json ./
+COPY --chown=node:node src ./src
+COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node worker ./worker
+# Copy the whole generated public tree: it contains the source assets plus the
+# prerendered document, every lazy shell chunk, and the compiled stylesheet.
+COPY --chown=node:node --from=shell /build/public ./public
 
 # Numeric on purpose: the app's preview and production pods run with
 # runAsNonRoot (services/kubernetes.js podSecurityContext) and no runAsUser,

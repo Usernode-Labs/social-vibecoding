@@ -125,11 +125,107 @@ test('buildUserClaudeMd: managed header + one section per instruction, skills ex
 
 // ── buildSyncShellScript ─────────────────────────────────────────────
 
-test('buildSyncShellScript: always wipes both managed paths, even with no files', () => {
+test('buildSyncShellScript: always wipes every managed path, even with no files', () => {
   const script = uaf.buildSyncShellScript([]);
   assert.match(script, /rm -f \/home\/node\/\.claude\/CLAUDE\.md/);
   assert.match(script, /rm -rf \/home\/node\/\.claude\/skills/);
+  // #2654 added a third managed path, and a wipe that misses it is how a
+  // deleted instruction file keeps being handed to Codex for ever.
+  assert.match(script, /rm -f "\$CODEX_HOME_RESOLVED\/AGENTS\.md"/);
   assert.ok(!script.includes('base64 -d'));
+});
+
+// ── #2654: the Codex agent gets the same personal context ────────────
+//
+// Reported: "check if the openrouter/codex agent is getting all of the
+// platform context, like the claude/claude code models are". It was not.
+// Both paths above are Claude Code's OWN discovery paths, and the sync
+// that writes them is not gated on the backend — it runs on a
+// codex_openrouter dispatch too, writing files that agent never reads.
+
+test('the user\'s instructions are written where Codex actually looks', () => {
+  const files = [{ kind: 'instruction', name: 'code-style', content: 'Prefer short functions.' }];
+  const script = uaf.buildSyncShellScript(files);
+  const m = script.match(
+    /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > "\$CODEX_HOME_RESOLVED\/AGENTS\.md"/);
+  assert.ok(m, 'expected a base64 write of the Codex AGENTS.md');
+  assert.equal(Buffer.from(m[1], 'base64').toString('utf8'), uaf.buildUserClaudeMd(files));
+  assert.match(script, /mkdir -p "\$CODEX_HOME_RESOLVED"/);
+});
+
+test('both agents are told exactly the same thing', () => {
+  // One assembly function, two destinations. If these ever diverge, two
+  // agents are being given different instructions by the same person.
+  const files = [
+    { kind: 'instruction', name: 'a', content: "Quotes ' and $vars and `ticks`" },
+    { kind: 'instruction', name: 'b', content: 'Second file.' },
+  ];
+  const script = uaf.buildSyncShellScript(files);
+  const payloads = [...script.matchAll(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > (\S+)/g)]
+    .filter(([, , dest]) => /CLAUDE\.md|AGENTS\.md/.test(dest));
+  assert.equal(payloads.length, 2, 'both destinations must be written');
+  assert.equal(payloads[0][1], payloads[1][1], 'byte-identical payloads');
+  assert.ok(Buffer.from(payloads[0][1], 'base64').toString('utf8')
+    .includes("Quotes ' and $vars and `ticks`"), 'and it survives the encoding');
+});
+
+test('the destination is DERIVED the way the runner derives it', () => {
+  // The whole fix depends on agreeing with worker/run-codex-agent.sh. A
+  // second hard-coded copy of the default would write the files somewhere
+  // Codex does not look the moment anyone sets CODEX_HOME — the same bug,
+  // restored silently. So the script resolves it in the container with the
+  // runner's own expression rather than matching a literal.
+  const runner = fs.readFileSync(
+    path.join(__dirname, '..', 'worker', 'run-codex-agent.sh'), 'utf8');
+  const EXPR = /CODEX_HOME:-\/home\/node\/\.claude\/codex-home\}/;
+  assert.match(runner, EXPR, 'the runner no longer uses the expression this mirrors');
+
+  const script = uaf.buildSyncShellScript([{ kind: 'instruction', name: 'x', content: 'y' }]);
+  assert.match(script, /^CODEX_HOME_RESOLVED="\$\{CODEX_HOME:-\/home\/node\/\.claude\/codex-home\}"$/m,
+    'the sync must resolve it the same way, not restate the default');
+  assert.match(script, EXPR, 'and from the same default');
+
+  // `:-` guarantees non-empty, so the `rm -rf` can never become `/skills`.
+  assert.doesNotMatch(script, /rm -rf "?\/skills/);
+
+  // It must stay outside the checkout, or run-cc.sh's `git add -A` would
+  // commit a user's private instructions into the app repo.
+  assert.ok(!'/home/node/.claude/codex-home'.startsWith('/home/node/workspace'));
+});
+
+test('a personal skill reaches BOTH agents, as a skill', () => {
+  // An earlier revision of #2654 mirrored only the instructions and
+  // asserted Codex had no personal-skills mechanism. That was wrong:
+  // review demonstrated, and `codex debug prompt-input` confirms, that the
+  // bundled CLI discovers $CODEX_HOME/skills/<slug>/SKILL.md exactly the
+  // way Claude Code discovers ~/.claude/skills — reading the frontmatter
+  // name and description, loading the body on demand.
+  const files = [{ kind: 'skill', name: 'deployer', description: 'd', content: 'body' }];
+  const script = uaf.buildSyncShellScript(files);
+
+  const writes = [...script.matchAll(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > (\S+SKILL\.md"?)/g)];
+  assert.equal(writes.length, 2, 'both discovery directories must get the skill');
+  assert.deepEqual(writes.map(([, , dest]) => dest).sort(), [
+    '"$CODEX_HOME_RESOLVED/skills/deployer/SKILL.md"',
+    '/home/node/.claude/skills/deployer/SKILL.md',
+  ]);
+  assert.equal(writes[0][1], writes[1][1], 'and the same bytes, from one assembly');
+
+  // Both directories are wiped every dispatch, or a skill deleted in
+  // Settings keeps being offered to one agent for ever.
+  assert.match(script, /rm -rf \/home\/node\/\.claude\/skills/);
+  assert.match(script, /rm -rf "\$CODEX_HOME_RESOLVED\/skills"/);
+
+  // The wipe is the skills SUBDIRECTORY, never CODEX_HOME itself — that
+  // also holds config.toml and the rollout state the runner depends on.
+  assert.doesNotMatch(script, /rm -rf "\$CODEX_HOME_RESOLVED"\s*$/m);
+});
+
+test('a bad slug is refused for both agents, not just one', () => {
+  const script = uaf.buildSyncShellScript([
+    { kind: 'skill', name: '../escape', description: '', content: 'evil' },
+  ]);
+  assert.doesNotMatch(script, /escape/, 'path traversal must not reach either directory');
 });
 
 test('buildSyncShellScript: base64 payload round-trips the generated CLAUDE.md', () => {

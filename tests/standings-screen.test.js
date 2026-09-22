@@ -55,6 +55,7 @@ const ctxJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard
 // decides it read the module.
 const barTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/event-bar.tsx'), 'utf8');
 const barStore = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/event-bar-store.js'), 'utf8');
+const publicJs = fs.readFileSync(path.join(root, 'src/routes/topochain/public.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
@@ -423,6 +424,33 @@ test('one module owns the event list, the picker and the hero', () => {
   assert.match(barStore, /export const eventBarStore/);
   assert.match(ctxJs, /import \{ eventBarStore \} from '\.\/event-bar-store\.js'/);
   assert.match(barTsx, /import \{ eventBarStore \} from '\.\/event-bar-store\.js'/);
+});
+
+// Issue #2495: the bar is for someone with the season history — an admin, or
+// a member with a season to go back to. The server decides on the events list
+// — the one fetch the bar already makes — and the three files between it and
+// the screen each carry the verdict, never a rule of their own.
+test('the bar is drawn only for a viewer the server gives the season history', () => {
+  assert.match(publicJs, /const viewer = req\.user\?\.id \? \{ history: await viewerHasHistory\(req\.user\) \} : null;/,
+    'signed out is null — unknown, not no — and signed in is one boolean');
+  assert.match(publicJs, /async function viewerHasHistory\(user\) \{\n\s*if \(user\.isAdmin\) return true;/,
+    'an admin gets it by role, before any table is read');
+  assert.match(publicJs, /return ok\(res, \{ data, viewer \}\);/, 'sent with the list, not as a second round trip');
+  // Enrolled, credited, or on a board — in a season other than the DEFAULT
+  // event's, which is what the picker would otherwise be reaching past.
+  for (const table of ['user_enrollments', 'user_activities', 'leaderboard_snapshots']) {
+    assert.match(publicJs, new RegExp(`FROM ${table} \\w+[\\s\\S]*?IS DISTINCT FROM \\$2::bigint`),
+      `${table} counts, measured against the default season`);
+  }
+  assert.match(publicJs, /const current = await resolveDefaultPublicEvent\(pool\);/,
+    'the default season is the one the screen opens on, not the calendar\'s');
+  assert.match(ctxJs, /_history = data\.viewer\?\.history === true;/, 'the context takes the verdict from the list');
+  assert.match(barStore, /history: false,/, 'the store ships without it');
+  assert.match(barTsx, /if \(!mounted \|\| !history\) return null;/, 'and the component renders nothing without it');
+  // Every screenshot signs as usernode-capture, a member with no trace
+  // outside the running season, so captures of this screen show the
+  // new-member state; the checks identity is an admin and sees the picker
+  // by role. tests/topochain-staging-seed.test.js pins the seed side.
 });
 
 test('neither pane fetches or renders an event picker of its own any more', () => {

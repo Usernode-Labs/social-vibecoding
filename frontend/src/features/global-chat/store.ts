@@ -1133,10 +1133,10 @@ function applyLocalSetting(action: Record<string, unknown>) {
 
 export async function runGlobalChatClientAction(result: GlobalChatResult) {
   const action = clientAction(result);
-  if (!action || state.clientActionStates[result.id] === 'running') return;
+  if (!action || state.clientActionStates[result.id] === 'running') return false;
   if (action.transport === 'navigation') {
     closeGlobalChat(result.classicPath);
-    return;
+    return true;
   }
   publish((current) => ({
     clientActionStates: { ...current.clientActionStates, [result.id]: 'running' },
@@ -1147,7 +1147,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
       publish((current) => ({
         clientActionStates: { ...current.clientActionStates, [result.id]: 'done' },
       }));
-      return;
+      return true;
     }
     const url = clientActionUrl(action);
     const method = String(action.method || 'GET').toUpperCase();
@@ -1175,18 +1175,20 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
         }));
         closeGlobalChat(result.classicPath || String(action.classicPath || '#workshop'));
         void drainResponse(response.body);
-        return;
+        return true;
       }
       await response.json().catch(() => ({}));
     }
     publish((current) => ({
       clientActionStates: { ...current.clientActionStates, [result.id]: 'done' },
     }));
+    return true;
   } catch (error) {
     publish((current) => ({
       error: errorText(error, 'That browser action could not be completed.'),
       clientActionStates: { ...current.clientActionStates, [result.id]: 'error' },
     }));
+    return false;
   }
 }
 

@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const replay = require('../src/services/visual-evidence-replay');
+const kubernetes = require('../src/services/kubernetes');
 const runner = require('../evidence/replay-runner');
 
 const event = (value) => `${replay.EVENT_PREFIX}${JSON.stringify(value)}`;
@@ -53,6 +54,44 @@ test('protocol parser rejects malformed, mismatched, duplicate, and failed-resul
   ), { code: 'replay_plan_hash_mismatch' });
 });
 
+test('a partial browser job keeps its termination reason and last checkpoint', async (t) => {
+  const saved = kubernetes.runEvidenceJob;
+  kubernetes.runEvidenceJob = async () => ({
+    stdout: event({ type: 'viewport_started', runId: 'a'.repeat(32), pass: 1,
+      storyId: 'invite-suggestions', viewport: 'desktop' }),
+    partial: true, partialReason: 'capture OOM killed',
+  });
+  t.after(() => { kubernetes.runEvidenceJob = saved; });
+  await assert.rejects(replay.runPass({ captureRuntime: 'kubernetes' }, 42, {
+    runId: 'a'.repeat(32), pass: 1, plan: require('./fixtures/visual-evidence').plan(),
+  }), (error) => {
+    assert.equal(error.code, 'missing_replay_result');
+    assert.deepEqual(error.detail.execution, {
+      partial: true, partialReason: 'capture OOM killed',
+      lastEvent: { type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' },
+    });
+    return true;
+  });
+});
+
+test('a browser job launcher error keeps its original code with bounded runtime context', async (t) => {
+  const saved = kubernetes.runEvidenceJob;
+  const launchError = Object.assign(new Error('Job timed out at http://internal/?token=secret.jwt'), {
+    code: 'ETIMEDOUT', killed: true,
+  });
+  kubernetes.runEvidenceJob = async () => { throw launchError; };
+  t.after(() => { kubernetes.runEvidenceJob = saved; });
+  await assert.rejects(replay.runPass({ captureRuntime: 'kubernetes' }, 42, {
+    runId: 'a'.repeat(32), pass: 1, plan: require('./fixtures/visual-evidence').plan(),
+  }), (error) => {
+    assert.equal(error, launchError);
+    assert.equal(error.code, 'ETIMEDOUT');
+    assert.equal(error.detail.runtime.killed, true);
+    assert.doesNotMatch(error.detail.runtime.reason, /secret\.jwt/);
+    return true;
+  });
+});
+
 test('artifact variants and media types cannot be relabelled', () => {
   assert.throws(() => replay.validateArtifact(artifact({ variant: 'animation', side: 'base' })), { code: 'invalid_artifact' });
   assert.throws(() => replay.validateArtifact(artifact({ media: 'webm', contentType: 'video/webm' })), { code: 'invalid_artifact' });
@@ -86,6 +125,29 @@ test('two clean passes must agree before evidence is reproducible', () => {
   assert.equal(replay.comparePasses(pass(), second({ planHash: 'b'.repeat(64) })).code, 'plan_hash_changed');
   assert.equal(replay.comparePasses(pass(), second(), { plan: require('./fixtures/visual-evidence').plan() }).code, 'plan_hash_mismatch');
   assert.equal(replay.comparePasses(pass(), second({ artifacts: false })).code, 'missing_artifacts');
+});
+
+test('runner-normalized optional provenance matches the exact submitted fixture', () => {
+  const submitted = {
+    baseSha: 'b'.repeat(40), headSha: 'c'.repeat(40), fixtureFingerprint: 'paired-fixture',
+    baseImageDigest: 'sha256:base', headImageDigest: 'sha256:head',
+  };
+  const normalized = runner.validateInput({
+    runId: 'a'.repeat(32), pass: 1,
+    origins: { base: 'http://base:3000', head: 'http://head:3000' },
+    authTokens: { member: 'fixture-member', read_only_admin: 'fixture-admin' },
+    provenance: submitted,
+    plan: require('./fixtures/visual-evidence').plan(),
+  }).provenance;
+  assert.equal(normalized.hostedAssetRevision, null);
+  const first = pass();
+  const second = pass();
+  first.result.provenance = normalized;
+  second.result.provenance = normalized;
+  second.result.pass = 2;
+  assert.equal(replay.comparePasses(first, second, { provenance: submitted }).passed, true);
+  second.result.provenance = { ...normalized, headImageDigest: 'sha256:other' };
+  assert.equal(replay.comparePasses(first, second, { provenance: submitted }).code, 'provenance_changed');
 });
 
 test('a passing replay must cover every declared story, viewport, and requested artifact exactly', () => {

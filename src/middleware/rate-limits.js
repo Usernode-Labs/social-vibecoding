@@ -31,7 +31,7 @@ function retryPhrase(seconds) {
 // a falsy value to fall through to the keyByUser / IP default below. That
 // fallthrough is load-bearing: the waitlist token bucket keys on the path
 // token, and one route in the same family carries no token.
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null }) {
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null, v4Envelope = false }) {
   const options = {
     windowMs,
     max,
@@ -61,8 +61,40 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
         path: req.path,
       });
       // No `code` field here — clients discriminate billing 429s by
-      // their code tag (#463), so throttles must stay code-free.
+      // their code tag (#463), so throttles must stay code-free. That rule
+      // holds on the v4 surface too: `v4Envelope` adds the envelope, never
+      // a code.
+      //
+      // The envelope exists because /api/v4 answers every OTHER error
+      // through routes/topochain/helpers.js `fail`, which returns
+      // `{ success: false, error, ... }`. A throttle on those routes was
+      // the one reply on that surface without `success`, so a client
+      // reading `body.success` got `undefined` rather than `false`. It is
+      // not global because this same helper builds the limiters for the
+      // platform's own API, whose clients read the bare shape.
+      //
+      // TWO WAYS IN, and both are needed:
+      //
+      //   * THE PATH. Any request under /api/v4 gets it, whichever limiter
+      //     answered. That covers a limiter SHARED with non-v4 routes —
+      //     `attachmentUploadLimiter` gates POST
+      //     /api/v4/admin/challenge-illustrations as well as conversations,
+      //     chat, sessions and app illustrations, so a limiter-level flag
+      //     could not fix the v4 route without changing the other four.
+      //     Deciding per request does. It also means a v4 limiter added
+      //     later cannot forget.
+      //   * THE FLAG, for the routes that share the envelope but not the
+      //     prefix: `/challenges-api/**` reuses the very same topochain
+      //     handlers and the same `fail`, so it needs the envelope and a
+      //     path test alone would miss it.
+      //
+      // Still no `code`, either way — see #463 above.
+      //
+      // `Retry-After` is already set by express-rate-limit and needs
+      // nothing here — verified against a live 429 before writing this.
+      const envelope = v4Envelope || String(req.path || '').startsWith('/api/v4');
       res.status(429).json({
+        ...(envelope ? { success: false } : null),
         error: typeof message === 'function'
           ? message(retryAfterSeconds)
           : (message || 'Too many requests, please slow down'),
@@ -266,6 +298,8 @@ const mobileWalletClaimLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 10,
   name: 'mobile-wallet-claim',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
   keyByUser: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many claim attempts. Try again ${retryPhrase(s)}.`,
@@ -344,6 +378,216 @@ const explorerProxyLimiter = makeLimiter({
   max: 120,
   name: 'explorer-proxy',
   message: 'Too many explorer requests, slow down for a minute',
+});
+
+// #2526: the heavy topochain mobile reads. 120 / minute / user.
+//
+// `GET /api/v4/mobile/{me, me/ranking, me/breakdown, event/points,
+// leaderboard, challenges, seasons}` each run real aggregate queries against
+// the points ledger, and none carried a limiter — unlike their own siblings
+// in the same file (`mobileWalletClaimLimiter`) and next door
+// (`topochainMobilePushRegistrationLimiter`, mobile-push-registration.js).
+// This is per-principal abuse rather than anonymous: the caller holds a valid
+// mobile bearer. That makes it a cost bound, not an auth gate.
+//
+// Five of those seven handlers are ALSO mounted under `/challenges-api/**`
+// for the web session, as the same function objects, so both mounts share
+// this limiter. One person on a phone and a laptop therefore shares one
+// budget, which is the intended reading: the budget belongs to the user, not
+// to the device.
+//
+// NOT `POST /api/v4/mobile/zkpassport/complete`, though it is the other
+// unlimited v4 mobile route and looks like it belongs here. It is a write,
+// not a read, and it is already idempotent THREE ways (mobile.js): a prior
+// completion short-circuits to `already_recorded: true`, a reused zkPassport
+// session 409s, and a reused nullifier 409s. So it cannot inflate points —
+// the harm this issue is about — and putting it in a 120/min READ budget
+// would let a busy leaderboard screen block a once-per-challenge claim.
+// Bounding its query cost is a separate limiter with a separate number.
+//
+// 120/minute is far above a phone's real behaviour — a screen refresh reads a
+// handful of these — and far below a loop. Keyed by user, since every one of
+// these routes runs behind `mobileTokenAuth` or `optionalSessionAuth` and so
+// has a `req.user.id` by the time the limiter runs.
+//
+// Failures count: a rejected read has already run its query.
+const topochainMobileReadLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'topochain-mobile-read',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
+  keyByUser: true,
+  message: (s) => `Too many requests. Try again ${retryPhrase(s)}.`,
+});
+
+// #2526: the partner point-award, bounded TWICE. The two limiters answer
+// two different questions, and neither alone is enough.
+//
+// `POST /api/v4/user-activities` is NON-IDEMPOTENT BY CONTRACT — the route's
+// own comment cites SPEC 1350 §4.8 "carried quirks": every call inserts a new
+// `user_activities` row, so a retried request awards the points twice. That
+// is a deliberate, spec'd decision and this does not change it; an
+// idempotency key would, and belongs to whoever owns that spec. What it
+// changes is that the double-award used to be UNBOUNDED.
+//
+// (1) PER PARTICIPANT — 60/minute. This is the one that actually bounds the
+// harm the issue names. "Point inflation" means driving up ONE participant's
+// score, so that is what the bucket is keyed on.
+//
+// It is keyed here, and not on the caller, because the caller cannot be
+// identified and cannot be pinned down:
+//
+//   - The API KEY is not an identity. `partnerApiKey`
+//     (middleware/topochain-auth.js) compares X-API-Key against ONE shared
+//     secret — "v1's `api.key` middleware compared X-API-Key against one
+//     shared secret with no per-client keys or scopes; v4 keeps that exact
+//     comparison". Every partner presents the same string, so a key-derived
+//     bucket is one global bucket: any partner's retry storm refuses all of
+//     them.
+//   - The ADDRESS is forgeable by this exact adversary. In Kubernetes
+//     server.js passes `trustDirectPeer: true`, so services/client-ip.js
+//     trusts any peer to supply a single X-Forwarded-For — its own TODO says
+//     as much ("so a generated app cannot deliberately forge a single
+//     forwarding header"). A partner making direct calls can therefore pick
+//     its own bucket and rotate through as many as it likes.
+//
+// Keying on the participant survives both. An attacker who rotates the
+// participant identifier to escape the bucket has stopped inflating the
+// participant it was targeting, which is the goal it came for.
+//
+// 60/minute per participant is far above any real award pattern — activities
+// are completions, not a stream — and turns "unbounded" into a rate a human
+// notices before a leaderboard is meaningless.
+//
+// KNOWN CEILING, because it would be easy to read this as tighter than it
+// is: the bucket is per (identifier_type, identifier) SPELLING, not per
+// human. One person reachable as an email, a Telegram handle and a Discord
+// handle is three buckets, so the real bound on that person is 3 x 60 = 180
+// a minute. It is a small fixed multiplier on a previously unbounded number,
+// not a bypass — but it is not the "60 per participant" the name suggests.
+//
+// Closing it properly needs the key to be the RESOLVED user id, and this
+// limiter cannot have it: resolution is the `SELECT id FROM users WHERE
+// <column> = $1` inside the route (routes/topochain/partner.js), which runs
+// after this middleware. Doing it right means resolving the participant in
+// its own middleware ahead of the limiter and having the handler read that
+// instead of re-querying — a restructure of a handler whose comments carry
+// four documented SPEC judgment calls, and not something to do incidentally
+// inside a rate-limit fix. Whoever takes that on: key this on the user id,
+// drop identifier_type from the key, and this note goes with it.
+// The identifier types the partner route accepts, mirroring
+// `IDENTIFIER_COLUMNS` in routes/topochain/partner.js (SPEC 1330-1339's
+// `in:email,telegram,discord`). Two copies, because middleware importing a
+// route module is the wrong direction — tests/topochain-rate-limits.test.js
+// pins that they agree, which is what stops them drifting.
+const PARTNER_IDENTIFIER_TYPES = new Set(['email', 'telegram', 'discord']);
+
+const partnerActivityParticipantLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'partner-user-activities-participant',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
+  // The key has to be the participant the ROUTE will resolve, not the bytes
+  // the caller happened to send, or the bound is bypassable by respelling.
+  //
+  // Each field is trimmed SEPARATELY. Composing first and trimming the whole
+  // thing — which is what identifierKey's own trim does — leaves interior
+  // whitespace in place, so `"email:" + " p@x"` and `"email:" + "p@x"` hash
+  // to two buckets while the route's own `participant_identifier.trim()`
+  // (routes/topochain/partner.js) resolves both to one user. That is not a
+  // rounding error: it multiplies the cap by however many spellings the
+  // caller cares to use.
+  //
+  // `identifier_type` is part of the key because the same string can be a
+  // valid email and a valid telegram handle — different participants — and
+  // the two are separated by a NUL, which neither field can contain
+  // meaningfully, so no pair of fields can compose into another pair's key.
+  //
+  // The type must match EXACTLY, not after trimming or lowercasing, because
+  // this bucket can be exhausted and the route's own check
+  // (`IDENTIFIER_COLUMNS[identifierType]`, routes/topochain/partner.js) is an
+  // exact lookup. Normalising " email" or "EMAIL" into the `email` bucket
+  // would let a caller spend a REAL participant's budget on 60 requests the
+  // route then 422s — denying that participant their legitimate awards
+  // without ever awarding anything. An unrecognised type gets no participant
+  // bucket at all; the address bound below still sees it, and the route
+  // rejects it a moment later.
+  //
+  // identifierKey then lowercases. For the identifier that is deliberately
+  // STRICTER than the route, whose `WHERE <column> = $1` is case-sensitive:
+  // two case variants share one bucket. Over-counting a participant costs a
+  // little fairness between two spellings of one address; under-counting is
+  // the bypass above. The asymmetry is the whole reason for the direction.
+  //
+  // Anything not a string yields null. Reading the fields by type rather
+  // than interpolating them also means a crafted object cannot run a
+  // `toString` inside the key generator.
+  key: (req) => {
+    const body = req.body;
+    if (!body || typeof body !== 'object') return null;
+    const type = body.identifier_type;
+    if (!PARTNER_IDENTIFIER_TYPES.has(type)) return null;
+    const who = typeof body.participant_identifier === 'string'
+      ? body.participant_identifier.trim() : '';
+    if (!who) return null;
+    return identifierKey('partner-activity', `${type}\u0000${who}`);
+  },
+  // A REJECTED award must not spend the participant's budget. It awards no
+  // points, so it is not the inflation this bound exists for — but counted,
+  // it would let a caller fire 60 well-typed requests naming a real
+  // participant and failing on the season, the challenge or the enrollment,
+  // and thereby block that participant's legitimate awards for the minute
+  // without ever awarding anything. Denial of service dressed as a limiter.
+  //
+  // The address bound below deliberately does NOT skip failures: junk still
+  // costs the caller its volume budget, so this is not a free channel.
+  skipFailedRequests: true,
+  message: (s) => `Too many activity submissions for this participant. Try again ${retryPhrase(s)}.`,
+});
+
+// (2) PER ADDRESS — 600/minute. This one is NOT a security boundary, and
+// the distinction matters enough to state rather than imply.
+//
+// It bounds the ACCIDENT: a partner integration whose retry loop runs away,
+// which is the likeliest way this endpoint actually misbehaves and the one
+// that needs no attacker at all. Against that it works, because a buggy
+// client does not rotate its own forwarding header.
+//
+// It does NOT bound a deliberate attacker. In Kubernetes server.js passes
+// `trustDirectPeer: true`, so a caller supplies its own single
+// X-Forwarded-For and picks this bucket; rotating that header and the
+// participant identifier together gives a fresh bucket in both limiters on
+// every request. An earlier draft of this comment claimed this limiter
+// capped total volume and in-memory bucket growth. It does not, and saying
+// so was worse than saying nothing — it reads like a guard.
+//
+// So what actually holds against a deliberate attacker is limiter (1)
+// alone, and only for the participant it is targeting: it cannot inflate
+// any single participant past 60/minute however it presents itself, which
+// is the harm #2526 names. It CAN still issue unbounded requests in total.
+//
+// CLOSING THAT NEEDS AN IDENTITY THIS ENDPOINT DOES NOT HAVE. Both possible
+// caller keys are dead ends today: the API key is one shared secret (every
+// partner sends the same string, so the bucket would be global and any
+// partner's storm would refuse all of them), and the address is caller-
+// supplied. The fix is per-partner API keys — already recorded as future
+// work in the SPEC note quoted above — after which this limiter should key
+// on the partner's identity and this comment should be replaced by one that
+// can honestly call it a caller bound.
+//
+// 600/minute is deliberately generous for the accident it does bound: a
+// partner legitimately awarding a batch of participants should never meet
+// it, and a runaway loop stops at ten a second instead of as fast as the
+// socket allows.
+const partnerActivityLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 600,
+  name: 'partner-user-activities',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
+  message: (s) => `Too many activity submissions. Try again ${retryPhrase(s)}.`,
 });
 
 // Separate from provisioning so asking for slots never consumes a create attempt.
@@ -578,25 +822,40 @@ const issueScreenshotLimiter = makeLimiter({
 // siblings above were limited from the start and this one was not, so a
 // signed-in user could loop it and mint an unbounded stream of real
 // GitHub issues on live repos, each one also paying for a Haiku title
-// call out of the shared LLM budget. Filing is a deliberate, typed
-// action: honest use is one or two reports in a sitting, and the offline
-// outbox that replays queued reports caps itself at 10 entries, so
-// 10 / hour clears a full flush and still never bites, while a scripted
-// loop bounces after ten.
+// call out of the shared LLM budget.
+//
+// #2669 raised it from 10/hour to 30. The original sizing argued that "the
+// offline outbox that replays queued reports caps itself at 10 entries, so
+// 10 / hour clears a full flush and still never bites". The premise is
+// right and the conclusion does not follow: the outbox's MAX_ENTRIES is
+// exactly 10 (public/js/feedback-queue.js), so a full flush spends the
+// ENTIRE hour's budget, and the next report — the one the person is
+// typing now, having just come back online — is refused. It cleared the
+// flush and then bit immediately, which is how this got reported.
+//
+// 30 leaves a full flush at a third of the budget, so twenty live reports
+// still fit behind it. A scripted loop still bounces, which is the point:
+// the bound exists for the outbound GitHub writes and the shared Haiku
+// spend, and neither is something thirty an hour threatens.
 //
 // Every attempt counts, deliberately — unlike issueCreateLimiter this one
 // does NOT refund failures. The expensive half of the route (title
 // generation) runs before the GitHub call, so a 502 from a repo the bot
 // cannot reach has already spent a Haiku call; refunding it would leave
 // exactly that loop unbounded. Admins are not exempt for the same reason:
-// the cost here is outbound and shared, and ten reports an hour is not a
-// limit real triage runs into. Per-user keyed for shared-NAT fairness.
+// the cost here is outbound and shared. Per-user keyed for shared-NAT
+// fairness.
+const FEEDBACK_SUBMITS_PER_HOUR = 30;
 const feedbackSubmitLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
-  max: 10,
+  max: FEEDBACK_SUBMITS_PER_HOUR,
   name: 'feedback-submit',
   keyByUser: true,
-  message: (s) => `Rate limit reached: up to 10 issue reports per hour. You can try again ${retryPhrase(s)}.`,
+  // Interpolated rather than written twice: this message is what the
+  // person actually reads, and a message that disagrees with the limit is
+  // worse than no message at all.
+  message: (s) => `Rate limit reached: up to ${FEEDBACK_SUBMITS_PER_HOUR} issue reports per hour.`
+    + ` You can try again ${retryPhrase(s)}.`,
 });
 
 // Profile customization writes (issue #982): PATCH /api/me/profile plus
@@ -762,6 +1021,8 @@ const topochainMobilePushRegistrationLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
   name: 'topochain-mobile-push-registration',
+  // /api/v4 answers every other error with the envelope (#2526 follow-up).
+  v4Envelope: true,
   keyByUser: true,
   message: 'Too many push registration updates. Slow down for a minute.',
 });
@@ -1051,4 +1312,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups. Please slow down.',
 });
 
-module.exports = { appAllowanceRequestLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };
+module.exports = { FEEDBACK_SUBMITS_PER_HOUR, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };

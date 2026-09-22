@@ -44,6 +44,16 @@ const TopochainEventContext = {
   // themselves: from then on the selection is theirs, not a fallback.
   _endedFallback: false,
 
+  // True when the server gave the signed-in viewer the season history
+  // (`viewer.history` on the events list, issue #2495): an admin, or a
+  // member with a trace in a season other than the default event's. Only
+  // such a viewer gets the picker and the hero: the picker reaches standings
+  // other than the ones on screen, and a member enrolled fresh into the
+  // season on screen — or anyone signed out — has none to reach. Remembered
+  // across close()/open() with the rest of the resolved state, so a re-open
+  // paints the bar at once instead of after the list lands again.
+  _history: false,
+
   // Detail for the hero (GET /season-events/:id).
   _detail: null,
   _detailLoading: false,
@@ -157,7 +167,9 @@ const TopochainEventContext = {
   //
   // The picker starts on its `Loading…` placeholder and the hero starts EMPTY,
   // which is exactly what the string version's markup said — loadEvents() and
-  // _loadDetail() fill each in turn.
+  // _loadDetail() fill each in turn. On a FIRST open nothing shows until the
+  // list lands, because whether this viewer gets a bar at all arrives with
+  // the list; a re-open remembers the answer and paints at once.
   _renderShell() {
     eventBarStore.set({
       mounted: true,
@@ -165,6 +177,7 @@ const TopochainEventContext = {
       placeholder: 'Loading…',
       selectedId: null,
       hero: null,
+      history: TopochainEventContext._history,
     });
   },
 
@@ -177,6 +190,10 @@ const TopochainEventContext = {
     if (!TopochainEventContext._mounted) return;
     if (ok && data?.success && Array.isArray(data.data)) {
       TopochainEventContext._events = data.data;
+      // The viewer's standing travels with the list (null when signed out),
+      // so the bar never paints a picker it then has to take back.
+      TopochainEventContext._history = data.viewer?.history === true;
+      eventBarStore.set({ history: TopochainEventContext._history });
       if (TopochainEventContext.eventId == null && window.TopochainEvents) {
         const pick = TopochainEvents.pickDefault(data.data);
         if (pick) {

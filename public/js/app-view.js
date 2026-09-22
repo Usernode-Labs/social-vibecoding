@@ -5932,6 +5932,7 @@ const AppView = {
     AppView._mergedHasMore = false;
     AppView._mergedLoadingMore = false;
     AppView._mergedTotal = 0;
+    AppView._mergedCtx = null;
     AppView._doneShowAll = false;
   },
   _mergedPagerFor(slug) {
@@ -6227,7 +6228,12 @@ const AppView = {
           ? promotedData.releaseStall : null,
       };
       AppView._merged = merged;
-      AppView._mergedCtx = { majority, activeUsers };
+      AppView._mergedCtx = {
+        majority,
+        activeUsers,
+        deployment: mergedData.deployment && typeof mergedData.deployment === 'object'
+          ? mergedData.deployment : null,
+      };
       // Refreshes retain the expanded range; the next page continues after
       // its last surviving row, not after the first page of the refresh.
       AppView._mergedHasMore = !!mergedData.hasMore;
@@ -6901,8 +6907,8 @@ const AppView = {
       const after = find('head');
       if (!before && !after) return null;
       return {
-        path: claim?.claim || 'Verified visual change preview',
-        claim: claim?.claim || 'Verified visual change preview',
+        path: claim?.claim || 'Captured visual change preview',
+        claim: claim?.claim || 'Captured visual change preview',
         mobile: viewport === 'mobile',
         before: before?.url || null,
         after: after?.url || null,
@@ -9507,6 +9513,7 @@ const AppView = {
         ? { kind: 'loadMerged', loading: !!AppView._mergedLoadingMore, n: moreCount }
         : { kind: 'moreCompleted', n: moreCount };
     }
+    const doneDeployment = AppView._doneDeploymentStatus();
 
     // `refOf` names the kind and item the row's conversation hangs off
     // (_attachRowConversation). A column that passes none gets a bare row:
@@ -9558,6 +9565,7 @@ const AppView = {
         rows: cardRows(kDone, (m) => AppView._mergedRowModel(m)),
         empty: kDone.length ? null : emptyNote,
         footer: doneFooter,
+        status: doneDeployment,
       },
     ];
     // The In progress column's own empty note has to come after its rows are
@@ -9579,6 +9587,43 @@ const AppView = {
   _doneShowAll: false,
   DONE_RECENT_DAYS: 7,
   DONE_RECENT_MIN: 3,
+  _doneDeploymentStatus() {
+    const d = AppView._mergedCtx && AppView._mergedCtx.deployment;
+    if (!d || typeof d !== 'object') return null;
+    const pending = Number.isFinite(Number(d.pendingCount)) ? Math.max(0, Number(d.pendingCount)) : null;
+    const noun = pending === 1 ? 'change' : 'changes';
+    if (pending > 0) {
+      if (d.state === 'stalled') {
+        return {
+          tone: 'blocked',
+          text: `${pending} merged ${noun} · deployment stalled`,
+          title: 'Production is still running an earlier revision. The release watcher has detected a stalled deployment.',
+        };
+      }
+      return {
+        tone: 'progress',
+        text: `${pending} merged ${noun} waiting to go live`,
+        title: 'Production is still running an earlier revision.',
+      };
+    }
+    const sha = /^[0-9a-f]{7,40}$/i.test(String(d.runningSha || ''))
+      ? String(d.runningSha).slice(0, 7) : null;
+    if (d.state === 'deployed') {
+      const boundary = d.livePrNumber
+        ? `PR #${d.livePrNumber}${sha ? ` · ${sha}` : ''}`
+        : (sha || 'the latest merged change');
+      return {
+        tone: 'ok',
+        text: `Production live through ${boundary}`,
+        title: 'Every merged change through this point is live in production.',
+      };
+    }
+    return {
+      tone: 'neutral',
+      text: 'Production deployment could not be matched to completed history',
+      title: sha ? `Production is running ${sha}, but no completed proposal records that merge commit.` : undefined,
+    };
+  },
   _recentDone(rows) {
     const list = Array.isArray(rows) ? rows : [];
     const cutoff = Date.now() - AppView.DONE_RECENT_DAYS * 86400000;
@@ -15435,6 +15480,9 @@ const AppView = {
         AppView._mergedHasMore = !!data.hasMore;
         AppView._mergedCursor = cursor;
         if (typeof data.total === 'number') AppView._mergedTotal = data.total;
+        if (data.deployment && typeof data.deployment === 'object') {
+          AppView._mergedCtx = { ...(AppView._mergedCtx || {}), deployment: data.deployment };
+        }
         pager.expanded = true;
         // Close-issue rows never enter the PR-keyed vote maps.
         if (AppView.voteState && AppView.voteState.bySession) {
@@ -16532,8 +16580,8 @@ const AppView = {
             : evidence.state === 'failed' ? 'Visual change preview failed' : 'Visual change preview needed',
         detail: (notStarted ? AppView._evidenceNotStartedReason(evidence) : evidence.failureReason)
           || (enforced
-            ? 'Voting and merging wait for a verified visual change preview of the current proposal commit.'
-            : 'This proposal does not yet have a verified visual change preview for its current commit.'),
+            ? 'Voting and merging wait for a replay-checked visual change preview of the current proposal commit.'
+            : 'This proposal does not yet have captured visual evidence for its current commit.'),
         running,
         soft: !enforced,
       });
@@ -16703,8 +16751,22 @@ const AppView = {
     const lock = !!(p.requires_explicit_approval && isOpenRow);
     const base = { yes, no, majority: maj, advisory, lock, reasons: [] };
 
-    // 0 — settled.
+    // 0 — settled. `merged` is the stored lifecycle; deployment_state is a
+    // derived answer from /merged. Missing/unknown is deliberately the old
+    // label so legacy history never makes a claim it cannot support.
     if (p.status === 'merged') {
+      if (p.deployment_state === 'deployed') {
+        return { ...base, tier: 0, key: 'deployed', label: '✓ Deployed', tone: 'ok', lock: false, advisory: 0,
+          title: 'This change is live in production.' };
+      }
+      if (p.deployment_state === 'deploying') {
+        return { ...base, tier: 0, key: 'deploying', label: 'Merged · deploying…', tone: 'progress', spinner: true, lock: false, advisory: 0,
+          title: 'This change has merged, but production is still running an earlier revision.' };
+      }
+      if (p.deployment_state === 'stalled') {
+        return { ...base, tier: 0, key: 'deployment_stalled', label: 'Merged · deployment stalled', tone: 'blocked', lock: false, advisory: 0,
+          title: 'This change has merged, but its production deployment is stalled.' };
+      }
       return { ...base, tier: 0, key: 'merged', label: '✓ Merged', tone: 'ok', lock: false, advisory: 0 };
     }
     // 1 — in flight.
@@ -17107,12 +17169,12 @@ const AppView = {
       provisioning: ['Preparing the preview', 'Homeroom is building isolated copies of the exact base and proposal revisions.'],
       exploring: ['Finding the relevant UI state', 'The preview agent is working through the declared user flow on both revisions.'],
       replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
-      reviewing: ['Checking relevance', 'The replay passed its hard checks and is being checked against the author’s claim.'],
-      failed: ['Visual change preview failed', e.failureReason || 'The declared UI state could not be reached or verified.'],
+      reviewing: ['Saving captures', 'The replay passed its technical checks and the media is being stored.'],
+      failed: ['Visual change preview failed', e.failureReason || 'The declared UI state could not be captured reliably.'],
       stale: ['Visual change preview is stale', e.failureReason || 'A newer proposal revision superseded these artifacts.'],
       cancelled: ['Visual change preview cancelled', e.failureReason || 'This run was superseded before it finished.'],
       not_required: ['No visual change preview required', e.rationale || 'The author declared that this change has no user-visible effect.'],
-      overridden: ['Preview requirement overridden', e.overrideReason || 'An app administrator allowed review to continue without a verified visual change preview.'],
+      overridden: ['Preview requirement overridden', e.overrideReason || 'An app administrator allowed review to continue without captured visual evidence.'],
     };
   },
 
@@ -17137,7 +17199,7 @@ const AppView = {
       state,
       verified: state === 'verified',
       notStarted,
-      label: state === 'verified' ? 'Verified' : copy[0],
+      label: state === 'verified' ? 'Captured' : copy[0],
       sentence: notStarted
         ? `Visual change preview: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Nothing has been captured for this commit yet.`
         : settled
@@ -17165,7 +17227,7 @@ const AppView = {
     };
     const stateCopy = AppView._evidenceStateCopy(evidence);
     const badge = state === 'verified'
-      ? '<span class="dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">Verified</span>'
+      ? '<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">Captured</span>'
       : `<span class="dev-badge ${state === 'failed' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Preview pending'])[0])}</span>`;
     const provenance = `<span>base <code>${esc(shortSha(evidence.baseSha))}</code></span><span aria-hidden="true">→</span><span>head <code>${esc(shortSha(evidence.headSha))}</code></span>`;
 
@@ -17226,7 +17288,8 @@ const AppView = {
         }
         if (animation) {
           const animationUrl = evidenceUrl(animation.url);
-          controls.push(`<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play interaction</summary><video src="${attr(animationUrl)}" controls preload="none" muted playsinline aria-label="Interaction replay for ${attr(claim.claim || '')}" style="display:block;width:100%;max-height:360px;margin-top:6px;border-radius:6px;background:rgba(0,0,0,0.35)"></video></details>`);
+          const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
+          controls.push(`<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play ${videoKind}</summary><video src="${attr(animationUrl)}" controls preload="none" muted playsinline aria-label="${videoKind === 'animation' ? 'Animation' : 'Interaction'} replay for ${attr(claim.claim || '')}" style="display:block;width:100%;max-height:360px;margin-top:6px;border-radius:6px;background:rgba(0,0,0,0.35)"></video></details>`);
         }
         viewportRows.push(`<div data-evidence-viewport="${attr(viewport)}" class="mt-3">
           <div class="mb-1 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewport)} · ${esc(claim.persona === 'read_only_admin' ? 'read-only admin' : 'member')}</div>
@@ -17238,16 +17301,18 @@ const AppView = {
         <div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${badge}</div>
         ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
         ${viewportRows.join('')}
-        <details class="mt-2 text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">View verification details</summary>
+        <details class="mt-2 text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">View capture details</summary>
           <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>plan <code>${esc(String(evidence.planHash || '').slice(0, 12) || 'unknown')}</code></span>${evidence.replayCount === 2 ? '<span>2 clean replays</span>' : ''}${evidence.repairCount === 1 ? '<span>1 bounded repair</span>' : ''}${evidence.relativePointer === true ? '<span>relative-pointer flow</span>' : ''}</div>
-          ${evidence.verifiedReason ? `<p class="mt-1">${esc(evidence.verifiedReason)}</p>` : ''}
         </details>
       </article>`);
     }
     if (!rendered.length) {
-      return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">Verified visual change preview metadata is incomplete; no claim can be displayed.</section>`;
+      return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">Captured visual change preview metadata is incomplete; no claim can be displayed.</section>`;
     }
-    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Verified visual change preview" class="space-y-3">${rendered.join('')}</section>`;
+    const mediaCopy = artifacts.some((artifact) => artifact?.variant === 'animation')
+      ? 'Review the images and video to decide whether they show the claimed change.'
+      : 'Review the before-and-after images to decide whether they show the claimed change.';
+    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Captured visual change preview" class="space-y-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">These captures passed replay checks. ${mediaCopy}</p>${rendered.join('')}</section>`;
   },
 
   // Authenticated evidence uses full relative URLs rather than public
@@ -19137,6 +19202,15 @@ const AppView = {
         url = new URL(visit || '/', resolved);
         if (url.origin !== new URL(resolved).origin) url = new URL('/', resolved);
       } catch { return null; }
+      // #2691: the self-app's staging database is deliberately sparse, and
+      // its review fixtures are request-time data gated on `?demo=1`.  The
+      // ordinary Preview action opens the root (rather than the optional
+      // testing deep link), so without this flag a reviewer can see an empty
+      // production-shaped screen and conclude that the submitted UI did not
+      // land.  Keep this self-app-only: apps built on the platform own their
+      // own query-string semantics and must continue to receive an untouched
+      // preview URL. The URL API preserves an existing path/hash/query.
+      if (selfHosted) url.searchParams.set('demo', '1');
       url.searchParams.set('token', token);
       return url.toString();
     };

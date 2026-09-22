@@ -43,6 +43,18 @@
     codex: 'https://chatgpt.com/codex',
   };
 
+  // Where "Link GitHub" goes (#2679, #2680): the same route the Connect row
+  // on Settings → Social accounts uses. It answers with a redirect to
+  // GitHub's own authorization page, and the callback lands on Settings with
+  // the outcome. The step used to be a button that sent the person to
+  // Settings and left them to find that row — a whole screen between the
+  // step and the one thing it asks for — and that detour is what #2680
+  // caught broken. It is a real anchor now, for the reason every other trip
+  // out of this card is one (#1312). Inside the Homeroom app the click is
+  // taken over by dev-chat.js, which hands the account-pinned form of this
+  // URL to the system browser instead; see _devFlowLinkGithub there.
+  var GITHUB_CONNECT_HREF = '/api/me/social-identities/github/connect?intent=connect';
+
   // Same allowlist as DEV_FLOWS in src/routes/auth.js and the CHECK on
   // users.dev_flow_preference. tests/dev-flow-preference.test.js pins the
   // three together so a fourth flow cannot land in one place only.
@@ -126,7 +138,9 @@
         detail: gh.linked
           ? 'Linked as ' + (gh.login || 'your GitHub account') + '.'
           : 'Identity only. Homeroom asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
-        actions: gh.linked ? [] : [{ action: 'link-github', label: 'Link GitHub', primary: true }],
+        actions: gh.linked
+          ? []
+          : [{ action: 'link-github', label: 'Link GitHub', primary: true, href: GITHUB_CONNECT_HREF }],
       },
       {
         key: 'fork',
@@ -405,11 +419,17 @@
   // renders never stack handlers (the same guard CreditOptions uses).
   //
   // `handlers`:
-  //   onAction(action, button)  – a walkthrough button; 'open-fork' and
-  //                               'open-agent' are anchors whose navigation
-  //                               the BROWSER owns (see actionHtml) and are
-  //                               still reported, so the caller can re-poll
-  //                               after the trip out.
+  //   onAction(action, button, event)
+  //                             – a walkthrough button; 'open-fork',
+  //                               'open-agent' and 'link-github' are anchors
+  //                               whose navigation the BROWSER owns (see
+  //                               actionHtml) and are still reported, so the
+  //                               caller can re-poll after the trip out. The
+  //                               event rides along for the one host that has
+  //                               to take an anchor over: the Homeroom app's
+  //                               webview cannot follow 'link-github' itself,
+  //                               so dev-chat.js cancels it there and sends
+  //                               the URL out through the bridge instead.
   function wire(root, handlers) {
     if (!root || typeof root.addEventListener !== 'function') return;
     if (root.__devFlowWired) return;
@@ -437,13 +457,14 @@
           window.open(href, '_blank', 'noopener');
         }
       }
-      if (typeof h.onAction === 'function') h.onAction(action, target);
+      if (typeof h.onAction === 'function') h.onAction(action, target, event);
     });
   }
 
   var DevFlowSelect = {
     FLOWS: FLOWS,
     AGENT_URLS: AGENT_URLS,
+    GITHUB_CONNECT_HREF: GITHUB_CONNECT_HREF,
     agentLabel: agentLabel,
     agentUrl: agentUrl,
     connectorProduct: connectorProduct,

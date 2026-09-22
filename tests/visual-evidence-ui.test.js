@@ -22,7 +22,7 @@ function evidence(overrides = {}) {
     }],
     baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), planHash: 'c'.repeat(64),
     replayCount: 2, repairCount: 1, relativePointer: true,
-    verifiedReason: 'The focused pair demonstrates the claim.',
+    verifiedReason: null,
     artifacts: [
       { id: id('1'), storyId: 'dialog', viewport: 'desktop', side: 'base', variant: 'focus', media: 'png', url: url('1') },
       { id: id('2'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'focus', media: 'png', url: url('2') },
@@ -49,6 +49,28 @@ test('verified cards are claim-first, escaped, authenticated, and never autoplay
   assert.match(html, /2 clean replays/);
   assert.match(html, /1 bounded repair/);
   assert.match(html, /relative-pointer flow/);
+  assert.match(html, /Captured/);
+  assert.match(html, /Review the images and video to decide/);
+  assert.match(html, /Play interaction/);
+  assert.doesNotMatch(html, /Verified visual change preview/);
+});
+
+test('motion evidence labels its recording as an animation', () => {
+  const value = evidence();
+  value.claims[0].animation = 'motion';
+  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
+  assert.match(html, /Play animation/);
+  assert.doesNotMatch(html, /Play interaction/);
+});
+
+test('a static verified claim shows before and after PNGs without suggesting a video', () => {
+  const value = evidence();
+  value.claims[0].animation = 'none';
+  value.artifacts = value.artifacts.filter((artifact) => artifact.variant !== 'animation');
+  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
+  assert.match(html, /Review the before-and-after images/);
+  assert.match(html, /<img src=/);
+  assert.doesNotMatch(html, /<video|Play interaction|Play animation|images and video/);
 });
 
 test('absence is labelled only when the author explicitly declared a new base state', () => {
