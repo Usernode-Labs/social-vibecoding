@@ -1100,6 +1100,80 @@ function onBusMessage(data) {
 
 const RUNS_PAGE = 50;
 
+// One static statement, filters as nullable parameters, so the SQL lint's
+// inventory stays static and the shadow database checks every column. The
+// dashboard's page and the CSV export are the same query at different page
+// sizes — `$3` is a keyset cursor (`id <`) over the `id DESC` order, which
+// is what lets the export walk the whole ledger a chunk at a time.
+const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, r.missing_fact,
+            r.question, r.question_default, r.build_note, r.reason, r.cap_suppressed,
+            r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
+            r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
+            a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
+       FROM homeroom_bot_runs r
+       JOIN apps a ON a.id = r.app_id
+       LEFT JOIN users u ON u.id = r.rating_by
+      WHERE ($1::text IS NULL OR a.slug = $1::text)
+        AND ($2::text IS NULL OR r.verdict = $2::text)
+        AND ($3::int IS NULL OR r.id < $3::int)
+      ORDER BY r.id DESC
+      LIMIT $4`;
+
+/** The issue this run triaged, on GitHub. Null when the app has no repo. */
+function issueUrlFor(row) {
+  return row.repo_url
+    ? `${String(row.repo_url).replace(/\.git$/, '')}/issues/${row.issue_number}`
+    : null;
+}
+
+// The CSV's columns, in order: the whole record, so the file can answer
+// questions the dashboard cannot (how often `ready` was rated wrong, what a
+// verdict costs by app, which questions repeat). `repo_url` is left out —
+// `issue_url` already carries it in the form a reader wants.
+const EXPORT_COLUMNS = Object.freeze([
+  'id', 'created_at', 'app_slug', 'app_name', 'issue_number', 'issue_url',
+  'mode', 'verdict', 'determined', 'missing_fact',
+  'question', 'question_default', 'build_note', 'reason', 'cap_suppressed',
+  'rating', 'rating_note', 'rated_by', 'rated_at',
+  'model', 'cost_usd', 'input_tokens', 'output_tokens', 'duration_ms',
+  'error', 'thread_seen_at',
+]);
+
+/** One run as the values of EXPORT_COLUMNS, in that order. */
+function exportRow(row) {
+  const flat = { ...row, issue_url: issueUrlFor(row) };
+  return EXPORT_COLUMNS.map((key) => {
+    const v = flat[key];
+    if (v == null) return '';
+    if (v instanceof Date) return v.toISOString();
+    return v;
+  });
+}
+
+// How many rows one export query takes. Bounded so a ledger of any size
+// streams in constant memory; not a cap on how many rows the file holds.
+const EXPORT_CHUNK = 500;
+
+/**
+ * Every run matching the filters, oldest page last, a chunk at a time.
+ *
+ * Keyset paging rather than OFFSET: rows are only ever appended, so `id <`
+ * the last id of the previous chunk cannot skip or repeat a row while the
+ * export runs. Caller writes each chunk out and never holds the whole set.
+ */
+async function* iterateRunsForExport(pool, { app = null, verdict = null, chunk = EXPORT_CHUNK } = {}) {
+  const size = Math.min(Math.max(Number(chunk) || EXPORT_CHUNK, 1), 2000);
+  let cursor = null;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const { rows } = await pool.query(RUNS_SQL, [app || null, verdict || null, cursor, size]);
+    if (!rows.length) return;
+    yield rows;
+    if (rows.length < size) return;
+    cursor = rows[rows.length - 1].id;
+  }
+}
+
 async function adminPayload(pool, config, { app = null, verdict = null, before = null, limit = RUNS_PAGE } = {}) {
   const settings = await readSettings(pool);
   const limits = require('./limits');
@@ -1178,23 +1252,9 @@ async function adminPayload(pool, config, { app = null, verdict = null, before =
     'SELECT COUNT(*)::int AS depth FROM homeroom_bot_queue WHERE started_at IS NULL',
   );
 
-  // One static statement, filters as nullable parameters, so the SQL lint's
-  // inventory stays static and the shadow database checks every column.
   const pageSize = Math.min(Math.max(Number(limit) || RUNS_PAGE, 1), 200);
   const { rows: runRows } = await pool.query(
-    `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, r.missing_fact,
-            r.question, r.question_default, r.build_note, r.reason, r.cap_suppressed,
-            r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
-            r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
-            a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
-       FROM homeroom_bot_runs r
-       JOIN apps a ON a.id = r.app_id
-       LEFT JOIN users u ON u.id = r.rating_by
-      WHERE ($1::text IS NULL OR a.slug = $1::text)
-        AND ($2::text IS NULL OR r.verdict = $2::text)
-        AND ($3::int IS NULL OR r.id < $3::int)
-      ORDER BY r.id DESC
-      LIMIT $4`,
+    RUNS_SQL,
     [app || null, verdict || null, before == null ? null : Number(before), pageSize],
   );
 
@@ -1209,10 +1269,7 @@ async function adminPayload(pool, config, { app = null, verdict = null, before =
     loop: lastPass,
     totals,
     queue: { depth: depthRows[0]?.depth || 0, items: queueRows },
-    runs: runRows.map((r) => ({
-      ...r,
-      issueUrl: r.repo_url ? `${String(r.repo_url).replace(/\.git$/, '')}/issues/${r.issue_number}` : null,
-    })),
+    runs: runRows.map((r) => ({ ...r, issueUrl: issueUrlFor(r) })),
     apps: appRows,
     caps: { proposalsPerApp: PROPOSALS_PER_APP_CAP, questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY },
   };
@@ -1277,6 +1334,10 @@ module.exports = {
   validateSettingsPatch,
   parseSettings,
   adminPayload,
+  iterateRunsForExport,
+  exportRow,
+  EXPORT_COLUMNS,
+  EXPORT_CHUNK,
   rateRun,
   enqueueNow,
   wake,

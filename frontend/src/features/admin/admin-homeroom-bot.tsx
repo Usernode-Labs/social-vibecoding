@@ -14,11 +14,13 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // notifying anybody. This screen is the only place those verdicts show,
 // and the two one-tap ratings per row are the calibration signal the later
 // slices (posting, building) are gated on. services/homeroom-bot.js has the
-// full reasoning; routes/admin.js the four endpoints.
+// full reasoning; routes/admin.js the five endpoints.
 //
-// PERMISSIONS: visible to any admin; the controls, the "run now" box and
-// the ratings are gated on AdminConsole.canWrite(), and the server enforces
-// the same with requireAdminWrite on the three writes.
+// PERMISSIONS: visible to any admin; the controls, the "run now" box, the
+// ratings and the CSV export are gated on AdminConsole.canWrite(), and the
+// server enforces the same with requireAdminWrite on the four of them that
+// are not the page read. The export is a write-gated READ — routes/admin.js
+// says why a bulk download sits with the mutations rather than the screen.
 
 interface Settings {
   mode: 'off' | 'shadow' | 'live';
@@ -239,6 +241,16 @@ function HomeroomBotSection() {
       rating ? `#${run.issue_number} rated.` : `#${run.issue_number} rating cleared.`);
     if (data) load();
   };
+
+  // A plain link, not a fetch: the endpoint streams the file and the browser
+  // is better at receiving one than a Blob assembled in page memory. It
+  // carries whatever filters the table is showing, so "all verdicts" is the
+  // export with both filters cleared.
+  const exportParams = new URLSearchParams();
+  if (appFilter) exportParams.set('app', appFilter);
+  if (verdictFilter) exportParams.set('verdict', verdictFilter);
+  const exportQs = exportParams.toString();
+  const exportHref = `/api/admin/homeroom-bot/export.csv${exportQs ? `?${exportQs}` : ''}`;
 
   const runNow = async () => {
     const n = Number(runIssue);
@@ -468,6 +480,14 @@ function HomeroomBotSection() {
               <option value="person">Needs a person</option>
               <option value="failed">Failed</option>
             </select>
+            {canWrite ? (
+              <a
+                id="admin-homeroom-bot-export"
+                className={AdminUI.btn.outlineSm}
+                href={exportHref}
+                download
+              >Download CSV</a>
+            ) : null}
           </div>
         </div>
         <div className={AdminUI.tableWrap}>

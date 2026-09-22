@@ -1,4 +1,9 @@
-node_modules/
+# No trailing slash: `node_modules/` matches only a DIRECTORY, so a
+# symlink named node_modules is not ignored — and one was committed that
+# way (#2694), pointing at an absolute path on the machine that made it.
+# Every checkout then materialized a dangling link where the install
+# belongs, which breaks the shell build until somebody deletes it.
+node_modules
 /public/index.html
 /public/css/tailwind.css
 /public/shell/assets/

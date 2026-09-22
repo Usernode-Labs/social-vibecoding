@@ -690,6 +690,28 @@
       "expectText": "Please add a description"
     },
     {
+      "id": "feedback.destination-choice",
+      "name": "With two destinations available, neither is preselected and the row says to choose (#2707)",
+      "path": "/?shot=feedback-choose",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-target:has(#feedback-target-app[aria-checked=\"false\"]):has(#feedback-target-platform[aria-checked=\"false\"]) + #feedback-target-hint:not(.hidden)",
+      "expectText": "Choose where this feedback goes",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/dialogs/feedback.tsx",
+        "frontend/src/features/dialogs/feedback-controller.js"
+      ]
+    },
+    {
+      "name": "Submit stays dead until a destination is picked (#2707)",
+      "path": "/?shot=feedback-choose",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)) #feedback-submit:disabled"
+    },
+    {
+      "name": "With only one destination reachable it stays selected and Submit is live (#2707)",
+      "path": "/?shot=feedback",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-platform[aria-checked=\"true\"]):has(#feedback-target-hint.hidden) #feedback-submit:not(:disabled)"
+    },
+    {
       "name": "Challenges: every Home card draws the shared progress rail (Iteration 03 card)",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
@@ -4472,6 +4494,12 @@
       "path": "/?demo=1&order=continue&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-step-detail",
       "expectText": "update to it rather than as a second copy"
+    },
+    {
+      "name": "#2681: the walkthrough's way back out names the platform in full",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] .dc-flow-actions-footer button[data-flow-action=\"cancel\"]",
+      "expectText": "Build on the Homeroom platform instead"
     },
     {
       "name": "#2038: an approved proposal being brought up to date says so on the card",

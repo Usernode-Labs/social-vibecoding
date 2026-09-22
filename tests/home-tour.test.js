@@ -122,11 +122,23 @@ test('the Improve step waits for the viewer, and has no Next to skip it with', (
 
 test('the cut-out passes the press through only where pressing is the point', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
-  for (const id of ['improve', 'feedback', 'new-change', 'workshop']) {
-    assert.equal(byId[id].interactive, true, `${id} lets the real control be pressed`);
-  }
-  for (const id of ['welcome', 'create', 'challenges', 'settings']) {
+  // ONE step is pressed through: the Improve step, which the viewer completes
+  // by opening the panel itself and which has no Next to do it for them.
+  assert.equal(byId.improve.interactive, true, 'the Improve step lets the real button be pressed');
+  // Everything else DESCRIBES its target, the three highlighted rows of the
+  // Improve bar included. Feedback presents a dialog, New change starts a
+  // session and Workshop navigates off Home, so a press there walks out of a
+  // tour that is only pointing at them; the keyboard has always been shut out
+  // of these three by the focus move and the Tab handler below, and the
+  // pointer now agrees.
+  for (const id of ['welcome', 'create', 'feedback', 'new-change', 'workshop', 'challenges', 'settings']) {
     assert.equal(byId[id].interactive, undefined, `${id} only describes its target`);
+  }
+  // The rule stated once more against the table itself, so a step added later
+  // cannot quietly become pressable: `interactive` belongs to `advanceOn`.
+  for (const step of steps.TOUR_STEPS) {
+    if (!step.interactive) continue;
+    assert.ok(step.advanceOn, `${step.id} is interactive, so it must be a step the viewer ACTS on`);
   }
   // The root blocks nothing; the four shades block everything around the
   // hole. A box-shadow could not, which is why there are four of them.

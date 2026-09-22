@@ -941,6 +941,24 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // once its own total stood on the old ceiling's 20-slot floor; that move
   // carries over unchanged (services/app-manifest.js).
   //
+  // 712 -> 713: #2681 renames the dev walkthrough's footer button to "Build
+  // on the Homeroom platform instead", and no declared check asserted the
+  // old string, so the rename adds one rather than editing one. 37 slots
+  // left against MAX_DECLARED_TESTS (750).
+  //
+  // 712 → 715: independently on main, #2707 declares three, all on the Send
+  // Feedback dialog — the unchosen destination row and its dead Submit on
+  // ?shot=feedback-choose, and the one-destination case on ?shot=feedback,
+  // which is the half a later refactor is most likely to lose (there, a
+  // destination IS selected and Submit IS live, because a tap with one
+  // possible answer is a tax).
+  //
+  // 713 → 716: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 712 → 713 alone,
+  // with the #2681 check above; main independently took the same 712 to 715
+  // with the #2707 trio above. One +1 and one +3 against a shared 712 is
+  // 716, which leaves 34 slots against MAX_DECLARED_TESTS (750).
+  //
   // 712 → 714: the share-view Homeroom mark (#2705) adds two, and both are
   // assertions of an ABSENCE — that the platform's own document does not
   // draw the mark the bridge draws on an app's subdomain. One rides the
@@ -948,9 +966,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // sitting beside #chromeless-pill (the "not twice" case); one rides Home.
   // Neither is a new screen, so neither is tagged visual: the surface the
   // change is actually visible on is an app's own hostname, which no
-  // declared check can navigate to. 714 leaves 36 slots against
-  // MAX_DECLARED_TESTS (750).
-  assert.equal(DAPP.tests.length, 714);
+  // declared check can navigate to. That is where this branch stood alone,
+  // against the same shared 712 the two notes above start from.
+  //
+  // 716 → 718: the tallies above were computed on either side of THIS
+  // merge and cannot be read as one sequence. Both stand on the shared
+  // 712: main took it to 716 (the #2681 rename check, plus the #2707
+  // trio), and this branch took it to 714 with the two #2705 absence
+  // checks. +4 and +2 against that shared 712 is 718, which leaves 32
+  // slots against MAX_DECLARED_TESTS (750).
+  assert.equal(DAPP.tests.length, 718);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
