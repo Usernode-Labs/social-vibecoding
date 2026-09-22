@@ -21,6 +21,59 @@ const worker = require('./worker');
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+function progressPhase(event) {
+  if (!event || typeof event !== 'object') return null;
+  if (typeof event.stage === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(event.stage)) {
+    return event.stage;
+  }
+  // kpack reports container names and log lines. Persist only the phase name;
+  // never put build output, fixture values, or internal origins in the view.
+  if (typeof event.phase === 'string') {
+    const phase = event.phase.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 57);
+    return phase ? `build_${phase}` : null;
+  }
+  return null;
+}
+
+function startRunHeartbeat(pool, runId, stateService, observer = null, intervalMs = HEARTBEAT_INTERVAL_MS) {
+  let phase = 'provisioning';
+  let stopped = false;
+  let writing = false;
+  let pending = false;
+  const flush = () => {
+    if (stopped || typeof stateService.heartbeatRun !== 'function') return;
+    if (writing) { pending = true; return; }
+    writing = true;
+    Promise.resolve().then(async () => {
+      do {
+        pending = false;
+        await stateService.heartbeatRun(pool, runId, phase);
+      } while (pending && !stopped);
+    }).catch((error) => {
+      log.warn('visual-evidence', 'Evidence heartbeat failed', { runId, error: error.message });
+    }).finally(() => {
+      writing = false;
+      if (pending && !stopped) flush();
+    });
+  };
+  const timer = setInterval(flush, intervalMs);
+  timer.unref?.();
+  flush();
+  return {
+    onProgress(event) {
+      if (typeof observer === 'function') {
+        try { observer(event); } catch (error) {
+          log.warn('visual-evidence', 'Evidence progress observer failed', { runId, error: error.message });
+        }
+      }
+      const next = progressPhase(event);
+      if (next && next !== phase) { phase = next; flush(); }
+    },
+    stop() { stopped = true; clearInterval(timer); },
+  };
+}
 
 class VisualEvidenceOrchestrationError extends Error {
   constructor(code, message, detail = null) {
@@ -426,6 +479,7 @@ async function executeRun(config, options, injected = {}) {
   const progress = (message) => {
     if (typeof onProgress === 'function') onProgress(message);
   };
+  const stage = (name) => progress({ stage: name });
 
   try {
     if (!run || !session || !app) {
@@ -451,6 +505,7 @@ async function executeRun(config, options, injected = {}) {
     if (run.state === 'not_required') return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
 
     failurePhase = 'wait_for_idle';
+    stage(failurePhase);
     const idleStartedAt = Date.now();
     await waitForSessionIdle(pool, session.id, {
       timeoutMs: Math.min(config.visualEvidence?.maxRunMs || 720_000, 120_000),
@@ -459,6 +514,7 @@ async function executeRun(config, options, injected = {}) {
     addTiming(metrics, 'idleWait', idleStartedAt);
     progress('Preparing exact base and head revisions for visual evidence…');
     failurePhase = 'prepare_pair';
+    stage(failurePhase);
     const provisioningStartedAt = Date.now();
     if (run.state === 'planned') {
       await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
@@ -470,6 +526,7 @@ async function executeRun(config, options, injected = {}) {
     notifyEvidence(session, app, 'provisioning');
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
     failurePhase = 'exploration_reset';
+    stage(failurePhase);
     const exploration = await deps.environment.resetPair(config, pair);
     const expectedProvenance = {
       baseSha: run.base_sha,
@@ -482,8 +539,10 @@ async function executeRun(config, options, injected = {}) {
       throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'The paired exploration environment did not match its prepared fixture and images.');
     }
     failurePhase = 'mint_fixture_identities';
+    stage(failurePhase);
     const authTokens = await deps.identities.mintEvidenceAuthTokens(pool, app.id);
     failurePhase = 'persist_exploration';
+    stage(failurePhase);
     await deps.state.transitionRun(pool, run.id, 'exploring', {
       fixtureFingerprint: pair.fixtureFingerprint,
       baseImageDigest: pair.sides.base.imageDigest,
@@ -491,9 +550,11 @@ async function executeRun(config, options, injected = {}) {
     });
     addTiming(metrics, 'provisioning', provisioningStartedAt);
     notifyEvidence(session, app, 'exploring');
+    stage('exploring');
 
     const context = evidenceContext({ run, session, revision, pair, deployment: exploration, intent });
     failurePhase = 'register_control';
+    stage(failurePhase);
     registration = deps.evidenceControl.registerRun({
       runId: run.id,
       sessionId: session.id,
@@ -517,6 +578,7 @@ async function executeRun(config, options, injected = {}) {
               : 'Replaying the agent-authored UI flow twice…')
             : 'Replaying the corrected UI flow twice…');
           failurePhase = 'persist_replay_plan';
+          stage(failurePhase);
           await deps.state.transitionRun(pool, run.id, 'replaying', {
             replayPlan: plan,
             planHash: planContract.planHash(plan),
@@ -525,12 +587,14 @@ async function executeRun(config, options, injected = {}) {
           notifyEvidence(session, app, 'replaying');
           const planHash = planContract.planHash(plan);
           failurePhase = 'reset_pass_1';
+          stage(failurePhase);
           const firstDeployment = await deps.environment.resetPair(config, pair);
           if (!sameProvenance(firstDeployment, expectedProvenance)) {
             throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass one did not use the prepared fixture and images.');
           }
           const firstStartedAt = Date.now();
           failurePhase = 'pass_1';
+          stage(failurePhase);
           const first = await deps.replay.runPass(
             config,
             session.id,
@@ -548,12 +612,14 @@ async function executeRun(config, options, injected = {}) {
             durationMs: Math.max(0, Date.now() - firstStartedAt),
           });
           failurePhase = 'reset_pass_2';
+          stage(failurePhase);
           const secondDeployment = await deps.environment.resetPair(config, pair);
           if (!sameProvenance(secondDeployment, expectedProvenance)) {
             throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass two did not use the prepared fixture and images.');
           }
           const secondStartedAt = Date.now();
           failurePhase = 'pass_2';
+          stage(failurePhase);
           const second = await deps.replay.runPass(
             config,
             session.id,
@@ -571,6 +637,7 @@ async function executeRun(config, options, injected = {}) {
             durationMs: Math.max(0, Date.now() - secondStartedAt),
           });
           failurePhase = 'compare';
+          stage(failurePhase);
           const hardVerdict = deps.replay.comparePasses(first, second, {
             plan,
             provenance: expectedProvenance,
@@ -586,6 +653,7 @@ async function executeRun(config, options, injected = {}) {
             relativePointer: hardVerdict.relativePointer,
           });
           failurePhase = 'persist_replay_verdict';
+          stage(failurePhase);
           await deps.state.transitionRun(pool, run.id, 'reviewing', {
             hardVerdict,
             traceSummary: replayTrace,
@@ -594,6 +662,7 @@ async function executeRun(config, options, injected = {}) {
           notifyEvidence(session, app, 'reviewing');
           const artifactPersistStartedAt = Date.now();
           failurePhase = 'store_artifacts';
+          stage(failurePhase);
           await deps.replay.storeArtifacts(pool, run.id, second.artifacts, {
             headSha: run.head_sha,
             planHash,
@@ -608,6 +677,7 @@ async function executeRun(config, options, injected = {}) {
           latestPlanHash = planHash;
           latestHardVerdict = hardVerdict;
           failurePhase = 'agent_exploration';
+          stage(failurePhase);
           return {
             hardVerdict,
             planHash,
@@ -676,6 +746,7 @@ async function executeRun(config, options, injected = {}) {
     };
 
     failurePhase = 'agent_exploration';
+    stage(failurePhase);
     let agentOutcome = null;
     if (authorPlan) {
       // The implementing agent already knows the UI flow. It supplies only
@@ -714,6 +785,7 @@ async function executeRun(config, options, injected = {}) {
     // and no verified row can leave private fixture runtimes live.
     if (pair) {
       failurePhase = 'cleanup';
+      stage(failurePhase);
       const cleanupStartedAt = Date.now();
       await deps.environment.cleanupPair(config, pair);
       addTiming(metrics, 'cleanup', cleanupStartedAt);
@@ -727,6 +799,7 @@ async function executeRun(config, options, injected = {}) {
       terminalFailureClass: null,
     });
     failurePhase = 'verify';
+    stage(failurePhase);
     await deps.state.transitionRun(pool, run.id, 'verified', {
       hardVerdict: latestHardVerdict,
       planHash: latestPlanHash,
@@ -892,13 +965,17 @@ async function scheduleForSession(config, options, injected = {}) {
   // The run is under way, so whatever an earlier attempt recorded about it
   // not starting is no longer true (#2601/#2558).
   await (injected.state || state).clearNotStarted(pool, sessionId).catch(() => {});
+  const heartbeat = startRunHeartbeat(
+    pool, run.id, injected.state || state, onProgress,
+    injected.heartbeatIntervalMs || HEARTBEAT_INTERVAL_MS
+  );
   const promise = executeRun(config, {
     pool,
     run: { ...run, state: 'provisioning' },
     session: sessionValue,
     app,
     revision,
-    onProgress,
+    onProgress: heartbeat.onProgress,
     authorPlan: run.author_plan || authorPlan,
   }, injected).catch((error) => {
     log.warn('visual-evidence', 'Visual evidence run failed', {
@@ -908,7 +985,10 @@ async function scheduleForSession(config, options, injected = {}) {
       error: visibleError(error),
     });
     throw error;
-  }).finally(() => inFlight.delete(key));
+  }).finally(() => {
+    heartbeat.stop();
+    inFlight.delete(key);
+  });
   // Attach a rejection observer now so fire-and-forget callers never create
   // an unhandled rejection; callers that need completion may still await the
   // original promise returned below.
@@ -938,6 +1018,8 @@ module.exports = {
   addTiming,
   addAgentUsage,
   traceSummary,
+  progressPhase,
+  startRunHeartbeat,
   notifyEvidence,
   failCurrentRun,
   executeRun,

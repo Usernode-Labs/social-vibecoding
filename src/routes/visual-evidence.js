@@ -130,6 +130,7 @@ function visualEvidenceRoutes(config) {
         failureCode: run.failure_code,
         failureReason: run.failure_reason,
         trace: {
+          progress: trace.progress || null,
           timingsMs: trace.timingsMs || null,
           replayPasses: trace.replayPasses || [],
           lastReplayEvent: trace.lastReplayEvent || null,
