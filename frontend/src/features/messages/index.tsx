@@ -28,7 +28,7 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { startNewGlobalChat, useGlobalChatState } from '../global-chat/store';
+import { initializeGlobalChat, startNewGlobalChat, useGlobalChatState } from '../global-chat/store';
 import {
   INBOX_FILTERS, buildInbox,
   type AgentChat, type AppDiscussion, type InboxFilter,
@@ -660,6 +660,26 @@ export function MessagesScreen() {
   const snap = useMessagesSnapshot();
   useVisibilityHiddenClass(screenRef, 'messages-screen', false);
   useEffect(() => initializeMessagesStore(), []);
+  // THE AGENT HALF OF THIS INBOX HAS TO ASK FOR ITSELF (#2718 review).
+  //
+  // `useGlobalChatState()` below reads a store that nothing on this screen
+  // was filling: the ONLY caller of initializeGlobalChat outside Settings
+  // was the Improve panel's own New chat button. So an inbox opened without
+  // ever having opened Improve saw `bootstrap: null`, which reads as "the
+  // feature is off" — no agent rows in the list, and no way to start one
+  // under the Agents tab. The tab was there and did nothing, which is what
+  // "there is no new agent button under agents" is.
+  //
+  // The same shape that button uses, and for the same reason: a boot-time
+  // 401 is expected before app.js has established the session, so `sv:authed`
+  // asks again. The call is idempotent — it returns the bootstrap it already
+  // has unless forced — so two surfaces asking costs one request.
+  useEffect(() => {
+    void initializeGlobalChat();
+    const retry = () => { void initializeGlobalChat({ force: true }); };
+    window.addEventListener('sv:authed', retry);
+    return () => window.removeEventListener('sv:authed', retry);
+  }, []);
   useEffect(() => { if (snap.route.open) syncChrome(); }, [snap.active?.title, snap.route.open, snap.route.conversationId]);
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes

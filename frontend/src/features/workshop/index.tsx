@@ -305,7 +305,15 @@ export function WorkshopScreen() {
             what each is for. They render whether or not the list has
             answered: a screen whose controls appear after its data does is a
             screen that moves under the thumb reaching for them. */}
-        <div className="px-4 pb-2 flex items-center gap-2">
+        {/* `pt-5` CLEARS THE HEADER'S NOTCH (#2718 review). The bar is
+            `rounded-b-2xl -mb-2`, so every screen root starts 8px UNDER its
+            bottom edge and whatever leads a screen has to step down past it.
+            The retired <h1> was carrying that step in its own `padding-top`,
+            and taking the title away took the clearance with it: the chip's
+            top 8px went under the bar, sliced flat by it. 20px is the 8 the
+            notch owes plus 12 of air, which is what Messages' own first
+            element steps down by. */}
+        <div className="px-4 pt-5 pb-2 flex items-center gap-2">
           <WorkshopScope apps={all} open={state.picker === 'scope'} />
         </div>
         {state.picker

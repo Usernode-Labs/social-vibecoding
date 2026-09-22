@@ -2961,6 +2961,13 @@ const AppView = {
       // The app's name stays the chip's label and the subtitle qualifies it —
       // replacing the name here was the chip forgetting which app it was in.
       App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Discussion');
+      // A LEVEL INSIDE MESSAGES (#2718 review). This thread is a row in the
+      // Messages inbox, beside the people and the agent chats — which is why
+      // the Workshop stopped offering it — so the Messages tab is what lights
+      // for it (App._syncPlatformTabs) and #messages is what it hangs off.
+      // The reset above publishes 'none', which is right for the Workshop and
+      // the board; this thread has somewhere to go up TO, and said nothing.
+      App.setBackIcon?.('arrow', '#messages');
       AppView._renderChatSubView(content);
       return;
     }

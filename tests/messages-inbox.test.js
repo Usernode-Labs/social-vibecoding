@@ -176,3 +176,22 @@ test('one row shape per kind, and only two of them wear a pill', () => {
   assert.doesNotMatch(conversationRow, /KindPill/,
     'a person gets none: they are the majority, and a pill on every row says nothing');
 });
+
+// ── The agent half has to ask for itself (#2718 review) ────────────────
+
+test('the inbox initialises the global-chat bootstrap it reads', () => {
+  // `useGlobalChatState()` reads a store nothing on this screen was filling:
+  // the only caller of initializeGlobalChat outside Settings was the Improve
+  // panel's own New chat button. So an inbox opened without ever having
+  // opened Improve saw `bootstrap: null` — which reads as "the feature is
+  // off" — and drew no agent rows and no way to start one under the Agents
+  // tab, which is what "there is no new agent button under agents" was.
+  assert.match(SCREEN, /import \{ initializeGlobalChat, startNewGlobalChat, useGlobalChatState \}/);
+  const screen = SCREEN.slice(SCREEN.indexOf('export function MessagesScreen'));
+  assert.match(screen, /void initializeGlobalChat\(\);/);
+  // The same shape the button uses: a boot-time 401 is expected before
+  // app.js has established the session, so `sv:authed` asks again. The call
+  // is idempotent, so two surfaces asking costs one request.
+  assert.match(screen, /window\.addEventListener\('sv:authed', retry\);/);
+  assert.match(screen, /return \(\) => window\.removeEventListener\('sv:authed', retry\);/);
+});

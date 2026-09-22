@@ -4201,6 +4201,21 @@ const App = {
     // at all — it reveals #app-view itself — but a `keepAlso` reveal during a
     // zoom-out would, and clearing on the way OUT of an app is right anyway.
     if (revealId !== 'app-view') App._appBackHref = null;
+    // AND THE INBOX VISIT ENDS THE SAME WAY (#2718 review), for the same
+    // reason and at the same single choke point.
+    //
+    // `_inMessages` says a visit to the inbox is in progress, and
+    // navigateToMessages returns EARLY when it is — routing the island and
+    // revealing nothing, because the screen is supposed to be up already.
+    // Only navigateToWorkshop and the global-chat route were clearing it, so
+    // Messages -> Home -> Messages found the flag still true, took that early
+    // return and did nothing at all. That is the whole of "sometimes I am
+    // unable to click the messages tab": not sometimes, but always, after any
+    // of the six routes that did not know to clear it.
+    //
+    // Here rather than in those six: a flag that says "this screen is the one
+    // showing" belongs to the function that decides which screen is showing.
+    if (revealId !== 'messages-screen' && App._inMessages) App._exitMessages();
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     //
@@ -4339,9 +4354,18 @@ const App = {
     // the tab you came through stays lit and takes you back to all of them.
     // Passed explicitly rather than mapped, for the reason the bridge's own
     // note gives.
+    //
+    // …EXCEPT THE DISCUSSION, WHICH IS A MESSAGE THREAD (#2718 review).
+    // `dev/chat` is the app's general chat, and it is a ROW IN THE MESSAGES
+    // INBOX — that is the whole reason it stopped being offered from the
+    // Workshop's Current status pane. Lighting Workshop there put the reader
+    // in a section they had not been in, and the way back it offered led to
+    // the Workshop rather than to the list they opened the thread from.
     window.UsernodeReact?.nav?.setScreen?.(
       screen,
-      screen === 'app-view' && !inApp ? 'workshop' : null,
+      screen === 'app-view' && !inApp
+        ? (App.currentSubTab === 'chat' ? 'messages' : 'workshop')
+        : null,
     );
   },
 
@@ -5010,7 +5034,13 @@ const App = {
   // notifications.js's conversation rows still say it.
   navigateToMessages(conversationId) {
     const messages = window.UsernodeReact?.messages;
-    if (App._inMessages && messages?.isOpen?.()) {
+    // ALREADY HERE: route the island in place rather than replaying a screen
+    // swap onto the screen you are on. The screen ITSELF is asked, not just
+    // the flag — a stale `_inMessages` used to make this return early with
+    // nothing revealed, which is a tab press that does nothing. The clearer
+    // in _showOnlyScreen is what keeps the flag honest; this is the belt to
+    // its braces, and costs one condition.
+    if (App._inMessages && App._isScreenVisible('messages-screen') && messages?.isOpen?.()) {
       messages.route?.(conversationId || null);
       return;
     }

@@ -147,17 +147,19 @@ test('the platform header wears the same glass as the tab bar', () => {
   const at = APP_CSS.indexOf('THE BAR IS THE SAME MATERIAL AS THE BAR AT THE FOOT');
   assert.ok(at > 0, 'the rule states its reason');
   const block = APP_CSS.slice(at, APP_CSS.indexOf('\n}', APP_CSS.indexOf('#platform-header {', at)));
-  // THROUGH TOKENS, so the one place that has to override them can (#2718
-  // review): `html[data-un-vt]` flips both to the opaque fallback while a
-  // view transition runs. A named view-transition group composites ABOVE
-  // ::view-transition-group(root), so a translucent bar over a blur showed
-  // the sliding root snapshot straight through itself and smeared it. The
-  // fallbacks are the frosted values, which is what every other route gets.
-  assert.match(block, /background-color: var\(--platform-bar-fill, var\(--dc-sheet-fill\)\);/);
-  assert.match(block, /backdrop-filter: var\(--platform-bar-frost, var\(--dc-frost\)\);/);
-  assert.match(block, /-webkit-backdrop-filter: var\(--platform-bar-frost, var\(--dc-frost\)\);/);
-  assert.match(APP_CSS, /html\[data-un-vt\] \{\s*\n\s*--platform-bar-fill: var\(--dc-sheet\);\s*\n\s*--platform-bar-frost: none;/,
-    'and both bars go opaque for the length of a transition');
+  assert.match(block, /background-color: var\(--dc-sheet-fill\);/);
+  assert.match(block, /backdrop-filter: var\(--dc-frost\);/);
+  assert.match(block, /-webkit-backdrop-filter: var\(--dc-frost\);/);
+  // AND IT KEEPS THAT GLASS THROUGH A TRANSITION (#2718 review). Forcing the
+  // opaque fallback under `html[data-un-vt]` was tried, on the reading that a
+  // named view-transition group composites above the root group and so has to
+  // be opaque. It made both bars `#ffffff` for the length of every navigation
+  // — over a cream wallpaper they read as a pale wash of it — so the cure was
+  // a white flash on every tab press. Pinning the two IMAGES is what does the
+  // work: a snapshot is a picture, not a live surface sampling a moving
+  // backdrop.
+  assert.ok(!APP_CSS.includes('--platform-bar-fill'),
+    'no token indirection survives, because nothing overrides these any more');
   const selector = block.slice(block.indexOf('body:has('), block.indexOf('{', block.indexOf('body:has(')));
   // NOT INSIDE AN APP. The strip takes the APP's tone there (#1945) and a
   // frost over somebody else's page colour is a smear, not a surface — and

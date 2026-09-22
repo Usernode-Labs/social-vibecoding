@@ -360,7 +360,7 @@ test('every screen change clears the peek, and nothing else does', () => {
   // back control" from being in it, which the app view's ✕ contradicts.
   assert.match(mount, /tab: tabOverride \|\| \(screen \? tabForScreen\(screen\) : null\),/);
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp \? 'workshop' : null,/,
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/,
     'and app.js is the one place that decides which of the two it is');
   // ON A CHANGE, not on every call. Re-asserting the screen you are already
   // on is not navigation, and clearing there yanks the rail out from under
@@ -512,4 +512,36 @@ test('a tab label has room for its descenders', () => {
   const label = css.slice(css.indexOf('\n.platform-tab-label {'));
   assert.match(label.slice(0, label.indexOf('\n}')), /line-height: 1\.35;/,
     'a unitless multiplier is the one value correct at both sizes');
+});
+
+test('the Messages tab cannot be dead, whatever the flag says', () => {
+  // navigateToMessages returns EARLY when `_inMessages` is set — routing the
+  // island and revealing nothing, because the screen is supposed to be up
+  // already. Only navigateToWorkshop and the global-chat route cleared that
+  // flag, so Messages → Home → Messages found it still true, took the early
+  // return and did nothing at all.
+  const appJs = read('public/js/app.js');
+  const reveal = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
+  assert.match(reveal.slice(0, reveal.indexOf('\n  },\n')),
+    /if \(revealId !== 'messages-screen' && App\._inMessages\) App\._exitMessages\(\);/,
+    'one clearer, at the choke point every reveal passes through — the same '
+    + 'place and the same reasoning as `_appBackHref` beside it');
+  // And the early return asks the SCREEN, not just the flag.
+  assert.match(appJs,
+    /if \(App\._inMessages && App\._isScreenVisible\('messages-screen'\) && messages\?\.isOpen\?\.\(\)\)/);
+});
+
+test('an app\'s discussion belongs to Messages, and says so', () => {
+  // `dev/chat` is the app's general chat, and it is a row in the Messages
+  // inbox — which is why the Workshop's Current status stopped offering it.
+  // Lighting Workshop there put the reader in a section they had not been
+  // in, and the way out it offered led to the Workshop rather than to the
+  // list they opened the thread from.
+  assert.match(read('public/js/app.js'),
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/);
+  const appView = read('public/js/app-view.js');
+  const branch = appView.slice(appView.indexOf("if (subTab === 'chat') {"));
+  assert.match(branch.slice(0, branch.indexOf('\n    }')),
+    /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
+    'a level inside Messages shows the way up to it');
 });

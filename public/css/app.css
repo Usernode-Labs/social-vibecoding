@@ -2441,18 +2441,43 @@ html[data-un-vt]::view-transition-new(platform-tabs) {
   opacity: 1;
 }
 
-/* AND BOTH GO OPAQUE WHILE A TRANSITION RUNS. A named group composites
-   ABOVE ::view-transition-group(root) — the note above says so, and says the
-   bar has to be opaque for it — and this review made both bars translucent
-   over a backdrop-filter. The sliding root snapshot then showed straight
-   through them AND was smeared by the blur, which is the other half of the
-   flash. Tokens rather than a second copy of each surface rule: they are
-   declared on the root, inherit to both bars, and fall back to the frosted
-   values everywhere else. */
-html[data-un-vt] {
-  --platform-bar-fill: var(--dc-sheet);
-  --platform-bar-frost: none;
+/* EXCEPT WHEN THE RAIL IS THE THING GOING AWAY (#2718 review). Opening an
+   app hides it, so its group has an OLD image and no new one — and the rule
+   above then reads as "remove it on frame 0", which opened a 224px hole down
+   the left of the window and held it there while the page behind it was
+   still fading. The sidebar vanished, and only then did the app arrive.
+
+   Held at full opacity instead, the bar simply stays where it is for the
+   length of the transition and the app rises over it, which is what "an app
+   covers the rail" should look like. It leaves when the transition does,
+   under a screen that is by then covering that column.
+
+   `:has()` against the LIVE DOM is what tells the two cases apart: during a
+   transition the document is already in its new state, so `#platform-tabs`
+   carrying `hidden` means this bar is gone on the other side. A tab-to-tab
+   change has the rail in both states and keeps the rule above, where the old
+   image must go — two translucent rails stacked would double the fill and
+   light two rows at once. */
+html[data-un-vt]:has(#platform-tabs.hidden)::view-transition-old(platform-tabs) {
+  opacity: 1;
 }
+
+/* THEY DO NOT GO OPAQUE, and that was tried. The note above says a named
+   group has to paint an opaque background because it composites ABOVE
+   ::view-transition-group(root) — true of an element being COMPOSITED, and
+   these are not: pinning the two images means the group renders the NEW
+   snapshot at full opacity, and a snapshot is a picture, not a live surface
+   sampling a backdrop that is moving underneath it.
+
+   Forcing `--dc-sheet` here instead made both bars `#ffffff` for the length
+   of every navigation — over a cream wallpaper they normally read as a pale
+   wash of it, so the cure was a white flash on every tab press, which is
+   worse than what it was aimed at. Measured: `rgba(255,255,255,0.5)` with a
+   blur at rest, `rgb(255,255,255)` opaque mid-push.
+
+   Left as prose rather than as a disabled rule: the next person to read the
+   note above will reach for this, and the answer is that the images are
+   already doing the work. */
 
 /* Infinite decorative effects keep compositing even when the user is idle.
    Their state must remain legible without motion: lifecycle colors stay in
@@ -2920,9 +2945,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
              #global-chat-screen):not(.hidden)) #platform-header {
-  background-color: var(--platform-bar-fill, var(--dc-sheet-fill));
-  backdrop-filter: var(--platform-bar-frost, var(--dc-frost));
-  -webkit-backdrop-filter: var(--platform-bar-frost, var(--dc-frost));
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -10685,7 +10710,14 @@ a.drawer-ver--fork:hover {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 24rem;
+  /* 26rem, NOT 24 (#2718 review). The filter strip grew a fourth tab —
+     Agents, for what is running — and four of them plus the unread count's
+     own parenthesis ran the last one, All, flush against the panel's edge.
+     The strip scrolls (its scrollbar is hidden), so nothing was unreachable;
+     it just read as cut off, which is the same thing to a reader. 2rem is
+     what puts air back after the last tab at a two-digit count, and `max-width`
+     still keeps the panel off a narrow window's far edge. */
+  width: 26rem;
   max-width: 90vw;
   border-left-width: 1px;
   transform: translateX(100%);
@@ -16318,9 +16350,9 @@ html.un-kb #platform-tabs {
      the edge is also what lets it spend the home-indicator inset itself,
      which is what keeps the arithmetic above to one number. */
   border-top: 1px solid var(--app-sheet-line);
-  background-color: var(--platform-bar-fill, var(--dc-sheet-fill));
-  backdrop-filter: var(--platform-bar-frost, var(--dc-frost));
-  -webkit-backdrop-filter: var(--platform-bar-frost, var(--dc-frost));
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .platform-tabs { background-color: var(--dc-sheet); }
@@ -16902,7 +16934,12 @@ html.un-kb #platform-tabs {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  margin: 12px 16px 10px;
+  /* 20px AT THE TOP, NOT 12: the header is `rounded-b-2xl -mb-2`, so this
+     pane starts 8px under its bottom edge and 12 of those were spent getting
+     back to level — 4px of air under the bar, which reads as none. The 8 the
+     notch owes plus 12 of air, matching the step the Workshop's chip takes
+     for the same reason. */
+  margin: 20px 16px 10px;
 }
 .messages-search-glyph {
   position: absolute;

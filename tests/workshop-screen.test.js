@@ -658,7 +658,10 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
   assert.match(body, /const inApp = screen === 'app-view' && App\.currentTab === 'app';/,
     'the app itself covers the rail; its Workshop does not');
   assert.match(body, /!!screen && !App\.chromeless && !inApp,/);
-  assert.match(body, /screen === 'app-view' && !inApp \? 'workshop' : null,/,
+  // The Workshop tab is lit, so the rail knows where you are — except on the
+  // app's DISCUSSION, which is a row in the Messages inbox and lights that
+  // instead (#2718 review).
+  assert.match(body, /\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/,
     'and the Workshop tab is lit, so the rail knows where you are');
 
   // A TAB HOP inside the app crosses that line without a screen reveal, so
