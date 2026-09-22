@@ -2324,9 +2324,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "The Workshop's Current status no longer carries the app's general discussion (#2718 review)",
+      "name": "The Workshop's Current status no longer carries the app's general discussion (#2718 review), and on a desktop the header over it names the app with no second icon beside the scope chip (#2768)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop:not(:has([data-discussion-row]))"
+      "expectSelector": "body:has(#dev-workshop #dev-ws-scope-chip):has(#header-title > span > span:first-child > #header-title-name) #dev-body #dev-workshop:not(:has([data-discussion-row]))"
     },
     {
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
@@ -2897,9 +2897,9 @@
       "expectSelector": "#workshop-list a[data-workshop-app]:first-of-type [data-workshop-needs]:not([data-workshop-needs=\"0\"])"
     },
     {
-      "name": "The Workshop screen draws no empty-state line while it has rows",
+      "name": "The Workshop screen draws no empty-state line while it has rows, and no scope chip over its flat list of apps (#2759)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
+      "expectSelector": "#workshop-screen:not(.hidden):not(:has(#workshop-scope)):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
