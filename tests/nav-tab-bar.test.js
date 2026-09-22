@@ -314,8 +314,15 @@ test('the rail peeks back over an open app, and reserves nothing while it does',
   // class toggle below uses, deliberately — `collapsed` is also true on the
   // chromeless and signed-out shells, where a strip that peeked a rail in
   // would be conjuring navigation out of nothing.
-  assert.match(bar, /screen === 'app-view' \|\| !railOpen \? \(/,
+  assert.match(bar, /\(screen === 'app-view' && !visible\) \|\| !railOpen \? \(/,
     'and it exists where the rail is out of the way, by either route');
+  // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
+  // its Workshop the rail is UP. This strip is `z-index: 39` against the
+  // rail's 30, so rendering it there lays an invisible 18px column down the
+  // left edge of the tabs and swallows the press meant for the one under the
+  // pointer.
+  assert.ok(!bar.includes("{screen === 'app-view' ? ("),
+    'the app view alone is not the question — whether its rail is down is');
   // THE PEEK IS NOT THE BAR'S VISIBILITY. The router still says hidden, the
   // screens reserve no band, and the app is full width; this is an overlay
   // on top of that answer.
