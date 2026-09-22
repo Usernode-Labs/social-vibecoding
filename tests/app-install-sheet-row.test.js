@@ -52,16 +52,33 @@ const renderSheet = (patch) => {
 
 // ── Not in the chip's sheet any more ────────────────────────────────
 
-test('the app chip sheet renders no Add to Home Screen row, with or without an app', () => {
+test('the app chip menu renders no Add to Home Screen row, with or without an app', () => {
   for (const slug of [null, 'recipe-box']) {
     const html = renderSheet({ slug });
     assert.doesNotMatch(html, /app-context-add-to-home/);
     assert.doesNotMatch(html, /Add to Home Screen/);
     assert.doesNotMatch(html, /\/install"/);
-    // The platform rows are untouched by its absence.
-    assert.match(html, /id="switcher-row-home"/);
+    // The app's own rows are untouched by its absence.
+    assert.match(html, /id="app-menu-row-about"/);
   }
-  assert.doesNotMatch(SHEET, /AddToHomeScreenRow|detectInstallHost|mobile-install/);
+  assert.doesNotMatch(SHEET, /AddToHomeScreenRow|detectInstallHost/);
+});
+
+// #2718 put a home-screen SENTENCE in the sheet's About pane, and it is not
+// this row coming back. The distinction is what #2320 was about: this row was
+// a per-app install of ONE app, reached from the only surface that knows
+// which app you are inside — so somebody looking for it had to already be in
+// the app. About says how to add whatever you are looking at to a home
+// screen, in words, because there is no install API to call (iOS Safari has
+// none and Android's `beforeinstallprompt` fires when Chrome decides it
+// should). Instructions are not an entrance, and the entrance is still the
+// card menu.
+test('About explains the home screen in words, and offers no per-app install route', () => {
+  const about = read('frontend/src/features/app-context/about-pane.tsx');
+  assert.match(about, /A2HS_STEPS/,
+    'the sentence is the one ../mobile-install/detect.ts already wrote');
+  assert.doesNotMatch(about, /app-context-add-to-home|\/install/,
+    'and no per-app install address is offered from here');
 });
 
 // ── Whether the device has a home screen ────────────────────────────

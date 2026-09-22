@@ -1,12 +1,20 @@
 'use strict';
 
-// #2382: the app chip's menu carries the native Wallet and Validator rows in
-// its You group, between Profile and Settings. Profile keeps its own account
-// rows; these are extra entrances, native only.
+// The native Wallet and Validator rows, and where they live.
+//
+// #2382 put them in the app chip's menu, in its You group between Profile and
+// Settings — extra entrances beside the ones Profile already had, because an
+// admin asked to reach them from inside an app.
+//
+// #2718 took the platform's destinations out of that menu: it holds the APP's
+// options now, and the host's own places are the tab bar and the Me tab. So
+// these two are back to ONE entrance, the Profile screen's account group,
+// where #1443 left them and where their readouts have always been. The Me tab
+// is what makes that cheap again — it is on the bar, so Profile is one tap
+// from inside an app rather than a trip through Home.
 //
 // No dapp.json check declares them: the rows ship hidden on every surface a
-// declared check can capture (a desktop browser), and the manifest sits
-// exactly at its 20-slot headroom floor under MAX_DECLARED_TESTS.
+// declared check can capture (a desktop browser).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -14,58 +22,32 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
-const html = read('public/index.html');
 const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const panel = read('frontend/src/features/profile/account-panel.tsx');
 
-const nav = html.slice(html.indexOf('id="switcher-nav"'));
-const anchor = (id) => {
-  const at = nav.indexOf(`id="${id}"`);
-  assert.ok(at > 0, `#${id} is in the prerendered menu`);
-  return nav.slice(nav.lastIndexOf('<a ', at), nav.indexOf('</a>', at));
-};
-
-test('the prerendered menu has Wallet and Validator between Profile and Settings', () => {
-  const order = ['profile', 'wallet', 'validator', 'settings', 'admin']
-    .map((row) => nav.indexOf(`id="switcher-row-${row}"`));
-  assert.ok(order.every((at) => at > 0), 'every row is in #switcher-nav');
-  assert.deepEqual([...order].sort((a, b) => a - b), order,
-    'Profile, Wallet, Validator, Settings, Admin in that order');
-});
-
-test('both rows ship hidden, with an icon and a real href', () => {
-  const wallet = anchor('switcher-row-wallet');
-  const validator = anchor('switcher-row-validator');
-  for (const row of [wallet, validator]) {
-    assert.match(row, /class="hidden /, 'hidden until the native bridge reveals it');
-    assert.match(row, /<svg/, 'with an icon like its siblings');
+test('the app menu carries neither row any more', () => {
+  for (const id of ['switcher-row-wallet', 'switcher-row-validator']) {
+    assert.doesNotMatch(sheet, new RegExp(`id="${id}"`), `#${id} left the menu`);
   }
-  assert.match(wallet, /href="#profile"/, 'a modified click opens the screen whose row opens the sheet');
-  assert.match(wallet, />Wallet</);
-  assert.match(validator, /href="#settings\/usernode"/, 'block production lives in Settings › Homeroom app');
-  assert.match(validator, />Validator</);
+  // …and with them went the two native stores this file was written to pin.
+  // A component reading walletSheetStore to hide a row it does not render is
+  // a subscription with nothing behind it.
+  assert.doesNotMatch(sheet, /walletSheetStore|nodePillStore/,
+    'the menu subscribes to no native capability store');
 });
 
-test('visibility comes from the native stores, through the hidden-class seam', () => {
-  assert.match(sheet, /useStoreState\(walletSheetStore\)/);
-  assert.match(sheet, /useStoreState\(nodePillStore\)/);
-  assert.match(sheet, /useHiddenClass\(walletRef, !walletVisible\)/);
-  assert.match(sheet, /useHiddenClass\(validatorRef, !nodeVisible\)/);
-  for (const [ref, id] of [['walletRef', 'switcher-row-wallet'], ['validatorRef', 'switcher-row-validator']]) {
-    const row = new RegExp(`elRef=\\{${ref}\\}\\s+shipsHidden\\s+id="${id}"`);
-    assert.match(sheet, row, `#${id} ships hidden through MenuRow's constant className`);
-  }
-  const code = sheet.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.doesNotMatch(code, /IS_STAGING|USERNODE_ENV/,
-    'the rows exist identically in staging and production');
+test('Profile is the one entrance, readouts and all', () => {
+  // These are not destinations — "your node is producing", "this is your
+  // balance" — which is why every arrangement of this screen has left them
+  // on it. The components are unchanged; only the second copy is gone.
+  assert.match(panel, /<WalletRow \/>/, 'the wallet row');
+  assert.match(panel, /<NodePillRow \/>/, 'and the node row');
+  assert.match(panel, /<StakingRow \/>/, 'and staking beside them');
 });
 
-test('a Wallet tap presents the sheet only after the menu has dismissed', () => {
-  const at = sheet.indexOf('id="switcher-row-wallet"');
-  const row = sheet.slice(at, sheet.indexOf('/>', sheet.indexOf('openFromRow', at)));
-  assert.match(row, /NavLink\?\.isNativeClick\?\.\(e\)\) return;/,
-    'a modified click falls through to the anchor');
-  assert.match(row, /e\.preventDefault\(\);/);
-  assert.match(row,
-    /AppContext\.dismissForNav\(\)\.then\(\(\) => \{\s*win\.WalletSheet\?\.openFromRow\?\.\(\);/,
-    'a kit sheet cannot present while this one is still dismissing');
+test('and the Me tab is what makes one entrance enough', () => {
+  // #2382's complaint was the distance from inside an app, not the number of
+  // doors. The bar answers it: Profile is a tab, on every platform screen.
+  const html = read('public/index.html');
+  assert.match(html, /id="platform-tab-me"[^>]*href="#profile"/);
 });

@@ -21,7 +21,7 @@
  * from this bundle. It goes through `window.UsernodeReact.backButton`
  * (published in ./mount.ts) and lands here, exactly the header-title shape.
  *
- * ── THREE modes now, and 'home' finally means what it says ─────────────
+ * ── FOUR modes now, and 'home' finally means what it says ──────────────
  *
  * `mode` used to be a boolean wearing three names: only 'arrow' showed the
  * anchor, and 'home' meant HIDDEN — a leftover from #1443, which retired the
@@ -39,6 +39,14 @@
  *            so a screen gets a way out by existing rather than by
  *            remembering to ask for one.
  *   'arrow'  the chevron, linking one level UP to `href`.
+ *   'close'  the ✕, inside a running app (#2718). It is NOT a fourth name
+ *            for 'arrow': leaving an app is not going up a level, it is
+ *            stepping out of somebody else's program, and every mini-app
+ *            host in the study that this navigation is modelled on draws
+ *            that as an ✕. Where it LANDS is still `href` — the Workshop
+ *            when that is where you came from (App._appBackHref), home
+ *            otherwise — so the destination logic is untouched and only the
+ *            glyph knows the difference.
  *
  * Redefining 'home' rather than adding a fourth name is deliberate: ~40 call
  * sites already spell the default that way, and every one of them meant "no
@@ -60,7 +68,7 @@ import { createStore } from '../../lib/plain-store.js';
 
 /**
  * @typedef {object} BackButtonState
- * @property {'none'|'home'|'arrow'} mode  Which glyph, or none at all.
+ * @property {'none'|'home'|'arrow'|'close'} mode  Which glyph, or none at all.
  * @property {string|null} href     The resolved destination, or null before
  *                                  the first setBackIcon() — which is the one
  *                                  state that renders no href attribute, so

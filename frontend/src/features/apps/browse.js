@@ -263,17 +263,27 @@ const Browse = {
     // #2639: the LIST shows the house. #1569 read the list and Home as peer
     // destinations and kept their bars identical, which left the directory
     // with an empty bar and the chip menu's Home row as the only way out.
-    // Browse is somewhere you GO — from Home's "Find more apps" — so it takes
-    // the house like every other screen you navigate into. Details are
-    // unchanged: the arrow up to the list, or the house when the detail was
-    // opened from a Home card and there is no list behind it.
+    // Browse took the house after that, like every other screen you navigate
+    // into.
+    //
+    // IT IS A TAB ROOT NOW (#2718 review), so the list level shows NOTHING:
+    // Discover is its own tab, the bar is on screen beside it, and a corner
+    // control that goes home is a second way to press a button already in
+    // view. The empty bar #2639 fixed is not back — what fixed it was giving
+    // the viewer a way out, and the tab bar is a better one than the house.
+    //
+    // DETAILS ARE UNCHANGED in shape and differ in one case: the arrow up to
+    // the list when there is a list behind it, and otherwise nothing, because
+    // a detail opened from a Home card has the same tab bar under it and no
+    // list to go up to.
     //
     // This runs AFTER _showOnlyScreen inside the same transition and calls
     // setBackIcon unconditionally, so it is the value that survives. The two
     // have to agree or the later one silently wins — which is exactly how a
-    // first attempt at this issue changed only app.js and did nothing at all.
+    // first attempt at #2639 changed only app.js and did nothing at all.
+    // App._BACK_SLOT is the other writer; 'browse-screen' is a root there.
     const upToList = onDetail && Browse._detailOrigin !== 'home';
-    const backMode = onDetail ? (upToList ? 'arrow' : 'home') : 'home';
+    const backMode = upToList ? 'arrow' : 'none';
     App.setBackIcon(backMode, upToList ? '#apps' : undefined);
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);

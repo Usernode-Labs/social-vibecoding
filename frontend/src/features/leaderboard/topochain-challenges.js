@@ -1069,10 +1069,16 @@ const TopochainChallenges = {
       app.setHeaderTitle('Challenge');
       return;
     }
-    // Any section: "Leaderboard" is the whole screen's title, and a page left
-    // for another tab must not keep the page's chevron and word.
-    app.setBackIcon('home');
-    app.setHeaderTitle('Leaderboard');
+    // Any section: the screen names the SECTION you are on, and a page left
+    // for another tab must not keep the page's own chevron and word.
+    //
+    // AN ARROW TO ME, not the house (#2718 review): this screen's three
+    // sections are reached from the Profile screen's rows, so there is a
+    // level above and the chevron is honest about it. The section's own name
+    // comes from App.LEADERBOARD_TITLES, which is the table both entries into
+    // this screen read — restating the word here is how the two drift.
+    app.setBackIcon('arrow', '#profile');
+    app.setHeaderTitle(app._leaderboardTitle?.(lb?.section) || 'Leaderboard');
   },
 
   // The platform header's back chevron (and Escape), claimed the way Settings

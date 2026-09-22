@@ -383,28 +383,28 @@ test('the dashboard is drawn every visit; "since" needs a baseline read once', (
   assert.equal(Later._workshopView().since.opened, 1);
 });
 
-test('the discussion is a row at the foot of the dashboard pane, not a pane of its own', () => {
+test('the discussion opens from Messages, and from nowhere on this tab', () => {
   const AppView = makeAppView();
   seed(AppView);
   const html = workshopHtml(AppView);
-  // It had a section: an eyebrow, a frosted surface, and a DevCard inside
-  // it — three surfaces around one row whose only job is to navigate to the
-  // chat, and the card drew its own surface too. It belongs to the
-  // dashboard because it is the same subject: that pane says where the app
-  // is, and this is where people are talking about it. Nothing on it is
-  // about the viewer, which is what the pane below is for.
+  // IT HAD A SECTION, then a row at the foot of the dashboard pane, and now
+  // neither (#2718 review). The section went because three surfaces around
+  // one navigating row is two too many; the row goes because the pane it sat
+  // in says WHERE THE APP IS, and a door out to a chat screen is not a fact
+  // about where the app is.
+  //
+  // It lost nothing by going: the app's discussion is a row in Messages, the
+  // platform's one inbox, beside the people and the agent chats — which is
+  // the list somebody looking for "what was said" actually opens. One
+  // destination, one place that offers it.
   assert.ok(!html.includes('data-ws-discussion'), 'the section is gone');
   assert.ok(!html.includes('Talk about the app'), 'and so is its eyebrow');
-  assert.match(html, /data-ws-dashboard=""[\s\S]*?class="dev-ws-chat-row"[\s\S]*?data-discussion-row="1"/,
-    'the row is inside the dashboard pane and still carries the hook');
-  // The delegated handler on #dev-body selects on `data-discussion-row` to
-  // switch to the chat sub-view, so the attribute is the control, not
-  // decoration. It rides a <button> now that there is no card to click.
-  assert.match(html, /<button[^>]*class="dev-ws-chat-row"[^>]*data-discussion-row="1"/);
-  // And it closes the pane: nothing is drawn after it inside that section.
-  const pane = html.slice(html.indexOf('data-ws-dashboard'));
-  assert.ok(pane.indexOf('dev-ws-chat-row') < pane.indexOf('</section>'),
-    'the row is the last thing in the pane');
+  assert.ok(!html.includes('data-discussion-row'), 'and so is the row that replaced it');
+  assert.ok(!html.includes('dev-ws-chat-row'), 'with the surface it drew');
+  // The MODEL stays published — app-view.js `_discussionCardModel` — because
+  // the board's own surfaces draw from it. What went is this screen's copy.
+  const appView = read('public/js/app-view.js');
+  assert.ok(appView.includes('_discussionCardModel'), 'the card model is not retired with it');
 });
 
 test('the discussion row is drawn as a row of its own', () => {
@@ -879,80 +879,6 @@ test('the walk’s depth belongs to the pane, because two controls read it', () 
   assert.equal([...at(1).matchAll(/data-ws-card="/g)].length, 1);
   assert.equal([...at(2).matchAll(/data-ws-card="/g)].length, 2);
   assert.ok(!at(2).includes('data-ws-week-more'), 'and the control goes when the walk is spent');
-});
-
-test('the discussion row is a button, so its branch runs BEFORE the control guard', () => {
-  const AppView = makeAppView();
-  seed(AppView);
-  const html = workshopHtml(AppView);
-
-  // The two facts that made this row dead, pinned together because neither
-  // is a bug on its own.
-  //
-  // ONE: the row is a `<button>`. #2341 retired the card around it, and with
-  // the card gone the row IS the control — so it stopped being a `div` with
-  // a click hook and became the element it behaves like.
-  assert.match(html, /<button[^>]*class="dev-ws-chat-row"[^>]*data-discussion-row="1"/);
-
-  // TWO: the delegated `#dev-body` handler opens with
-  // `if (e.target.closest('a, button, input, form')) return;` — the guard
-  // that stops a vote button or a PR link inside a card also opening the
-  // card. A row that IS a button matches it, so every click returned there
-  // and the branch below was unreachable. Nothing failed loudly: the row
-  // just did nothing, on pointer AND on Enter, since Enter on a button
-  // fires the same click.
-  const body = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("bodyEl.addEventListener('click'"));
-  const handler = body.slice(0, body.indexOf('{ signal: devBodySignal }'));
-  const guard = handler.indexOf("e.target.closest('a, button, input, form')");
-  const branch = handler.indexOf("e.target.closest('[data-discussion-row]')");
-  assert.ok(guard > 0 && branch > 0, 'both the guard and the branch are in the handler');
-  assert.ok(branch < guard,
-    'the discussion branch must be reached before the guard that swallows buttons');
-  // Exactly one branch: the fix moved the check rather than adding a second.
-  assert.equal(handler.split("e.target.closest('[data-discussion-row]')").length - 1, 1);
-
-  // AND THE FOLD CHECK STAYS AHEAD OF BOTH. A folded discussion card on the
-  // Board carries the same hook (card/fold.tsx `ITEM_HOOKS`) and belongs to
-  // its fold, which opens and closes it in place — hoisting the branch past
-  // that would make a folded card switch screens instead.
-  const fold = handler.indexOf('AppView._inFoldWrapper(e)');
-  assert.ok(fold > 0 && fold < branch, 'the fold owns its own card first');
-
-  // The same precedent this follows, three lines up: a `<button>` inside a
-  // card is handled before the guard, not after it.
-  assert.ok(handler.indexOf('gc-explore-chat-btn') < guard);
-});
-
-test('the discussion row says whose chat it is, over the last thing said', () => {
-  const AppView = makeAppView();
-  seed(AppView);
-  AppView.appData = { ...AppView.appData, name: 'Homeroom' };
-  const html = workshopHtml(AppView);
-
-  // NAMED FOR ITS APP. This row is the foot of a pane headed "Where the app
-  // is", and "General discussion" alone does not say whose — the Dev screen
-  // opens from a notification or a direct link, so the app's name is not
-  // reliably on screen above it.
-  assert.match(html, /class="dev-ws-chat-title">General discussion for Homeroom</);
-
-  // TWO LINES, in the card order the Board has always used: what this is,
-  // then what was last said in it. The row was one line carrying only the
-  // preview, which made the one heading on the pane that never changes
-  // change every time somebody spoke.
-  assert.match(html, /class="dev-ws-chat-said">Talk with everyone building this app</);
-  assert.ok(html.indexOf('dev-ws-chat-title') < html.indexOf('dev-ws-chat-said'));
-  // The title is the row's own name and never wraps; the saying under it is
-  // somebody else's sentence of any length, and a row that grew to hold one
-  // would stop being a row.
-  assert.match(CSS, /\.dev-ws-chat-said \{[^}]*text-overflow: ellipsis/);
-  assert.match(CSS, /\.dev-ws-chat-said \{[^}]*white-space: nowrap/);
-  // The glyph aligns to the TITLE, not to the middle of a two-line block.
-  assert.match(CSS, /\.dev-ws-chat-row \{ align-items: flex-start; \}/);
-
-  // An app whose name has not loaded gets a heading that is short rather
-  // than one that says "for undefined".
-  AppView.appData = { slug: 'demo-app', can_collaborate: true };
-  assert.equal(AppView._workshopView().discussion.card.title.text, 'General discussion');
 });
 
 test('a window is a block on a rule: its heading, what it paid, then its line', async () => {
@@ -1459,14 +1385,14 @@ test('#2573: the button is offered on the gate the Improve panel offers New chan
   seedUntouched(AppView);
   const before = improveStore.get().readOnly;
   try {
-    // The same field, on the same store instance, that improve-panel.tsx
+    // The same field, on the same store instance, that the Improve panel
     // reads to decide whether to draw `#improve-row-new-session` at all.
     improveStore.set({ readOnly: true });
     const html = workshopHtml(AppView);
     assert.match(html, /data-ws-start-here=""/,
       'a read-only viewer is still told what state the app is in');
     assert.ok(!html.includes('data-ws-start-here-btn'),
-      'but is not offered a change they could not start from the panel either');
+      'but is not offered a change they could not start from the menu either');
   } finally {
     improveStore.set({ readOnly: before });
   }
@@ -1476,12 +1402,16 @@ test('#2573: the button is offered on the gate the Improve panel offers New chan
 
 // The entry point is BORROWED, not rebuilt: two copies of "navigate to the
 // app, then create a proposal" is the duplication this reuses away.
-test('#2573: the banner presses the Improve panel\'s own New change', () => {
+test('#2573: the banner presses the same New change the menu does', () => {
   assert.match(WORKSHOP, /import \{ Improve \} from '\.\.\/\.\.\/improve\/improve-controller\.js'/);
   assert.match(WORKSHOP, /onClick=\{\(\) => Improve\.startSession\(\)\}/);
-  const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
-  assert.match(PANEL, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
-    'which is the method the panel\'s row calls');
+  // The other button was the Improve panel's row; the panel retired (#2718
+  // review) and its two actions are the mark menu's, in ../improve/actions.tsx.
+  // Same method, which is the whole point of asserting both: two buttons
+  // saying "new change" have to mean it.
+  const ACTIONS = read('frontend/src/features/improve/actions.tsx');
+  assert.match(ACTIONS, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
+    'which is the method the menu\'s button calls');
 });
 
 test('"try taking this one next" names an open issue nobody is on', () => {
@@ -1574,16 +1504,17 @@ test('the strips are ordered for a returning member: state, then what to do, the
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const html = workshopHtml(AppView);
-  // Where the app is — with the door to its chat closing that pane — then
-  // what YOU have in flight, then the one block about what changed. The
-  // discussion no longer opens a section of its own: it is the last row of
-  // the dashboard, because it is about the app and not about you.
-  const order = ['data-ws-dashboard', 'data-discussion-row', 'data-ws-mine', 'data-ws-since-head']
+  // Where the app is, then what YOU have in flight, then the one block about
+  // what changed. The discussion is not in this ladder any more (#2718
+  // review): it was the dashboard's last row, and it is a row in Messages
+  // now — this tab is about the app, not about where to go and talk.
+  const order = ['data-ws-dashboard', 'data-ws-mine', 'data-ws-since-head']
     .map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
   assert.deepEqual(order.slice().sort((a, b) => a - b), order,
-    'where the app is, where to talk about it, your own work, then what changed');
+    'where the app is, your own work, then what changed');
   assert.ok(!html.includes('data-ws-discussion'), 'and the discussion has no section');
+  assert.ok(!html.includes('data-discussion-row'), 'nor a row');
   // The order changed with the "since" move: the pane used to lead with what
   // had moved for this reader, which put a personal footnote above the app's
   // own state. What is left on this tab is the app itself, the door to its

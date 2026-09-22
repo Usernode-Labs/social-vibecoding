@@ -82,6 +82,7 @@ import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { ParkedStrip, PlatformTabs } from './features/nav';
 import { GlobalChatScreen } from './features/global-chat';
 import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
@@ -387,6 +388,38 @@ export function Shell() {
           #app-content write — see features/app-frame/app-frame.tsx.
       */}
       <Island name="AppViewIsland"><AppViewIsland /></Island>
+      {/*
+          #platform-tabs — the shell's five sections, as a permanent bar at
+          the foot of the screen. New in this change; features/nav/tab-bar.tsx
+          carries the whole of why, and public/css/app.css the arithmetic that
+          reserves its band on the screens above it.
+
+          HERE, after the last screen root and before every panel and overlay,
+          for a reason that is only half about z-index (it has one, and the
+          panels' is higher): this is a NAVIGATION control for the screens
+          above it, and a reader of this file should meet it where the screens
+          end rather than among the sheets. It is `position: fixed`, so its
+          place in the flow decides nothing about where it paints.
+
+          It is NOT inside any of the roots above. A bar that belonged to a
+          screen would be re-created on every swap, and the one thing a tab
+          bar must never do is flicker when you use it.
+      */}
+      {/*
+          #platform-parked — the app you left, offered above the bar until it
+          is resumed or dismissed. The bar makes the platform's five places
+          one tap each and in doing so makes the app you were IN the one thing
+          that is not: no tab, no header strip once you leave, and Home's grid
+          is every app rather than the one you were halfway through. Every
+          host that runs other people's programs keeps a handle to the thing
+          you stepped out of; this is that handle.
+
+          BEFORE the bar in this file and ABOVE it on screen: it is a
+          temporary offer sitting on top of permanent furniture, which is what
+          both orders say.
+      */}
+      <Island name="ParkedStrip"><ParkedStrip /></Island>
+      <Island name="PlatformTabs"><PlatformTabs /></Island>
       {/*
           #notifications-panel (the bell dropdown) and #work-drawer-panel (the
           header-cog "your work" drawer) both used to be islands here — same

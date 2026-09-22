@@ -465,7 +465,13 @@ test('refreshVoteControls patches the phase with the tint on hosts, and the phas
   assert.match(render[1], /publishTranscript\(\s*GroupChat\.messages\.map\(GroupChat\._messageView\),\s*'main',/);
   assert.match(render[1], /exhausted: !GroupChat\.hasMore/);
   assert.match(render[1], /canPost: !GroupChat\._readOnly\(\)/);
-  assert.match(render[1], /appName: \(typeof AppView !== 'undefined' && AppView\.appData && AppView\.appData\.name\)/);
+  // THE MOUNTING CALLER'S APP, not AppView's (#2718 review). This read went
+  // straight to AppView.appData, which is the app view's own state — correct
+  // while that screen was the only surface mounting this module, and wrong
+  // once the Messages screen mounts a discussion for an app the app view has
+  // not opened. `_appName()` prefers what mount() was told and falls back to
+  // AppView, so the app view's path is unchanged.
+  assert.match(render[1], /appName: GroupChat\._appName\(\)/);
 
   const append = stripped.match(/\n {2}appendMessage\(msg\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(append, 'appendMessage() found');

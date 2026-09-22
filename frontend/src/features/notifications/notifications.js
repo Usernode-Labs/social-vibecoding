@@ -445,19 +445,22 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
-  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That tab is
-  // React state inside the sheet, so without a URL that reaches it neither the
-  // capture pipeline nor a declared check could see the tab, its collapsed
-  // conversation rows, or its "All messages" entry — the platform's own rule
-  // for a screen that is otherwise only reachable by clicking. The sheet reads
-  // the same parameter for the tab; this only has to open it.
+  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB, and
+  // `?shot=notifications-agents` on the AGENTS tab. Both are React state
+  // inside the sheet, so without a URL that reaches them neither the capture
+  // pipeline nor a declared check could see the tab, its collapsed
+  // conversation rows, its "All messages" entry, or the session rows Agents
+  // draws — the platform's own rule for a screen that is otherwise only
+  // reachable by clicking. The sheet reads the same parameter for the tab;
+  // this only has to open it.
   //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages'
+      && shot !== 'notifications-agents') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather
@@ -832,8 +835,9 @@ const Notifications = {
     // invites, session kinds included. There is no second badge and no
     // split.
     //
-    // The split it replaces put unread session kinds on #improve-btn, on the
-    // grounds that the sessions themselves are behind that button so its
+    // The split it replaces put unread session kinds on #improve-btn — the
+    // header pill #2718 has since retired altogether — on the grounds that
+    // the sessions themselves are behind that button so its
     // count sent you somewhere the bell could not. What it actually did was
     // put a count on a control that CANNOT CLEAR IT: the only things that
     // mark a session notification read are a click on its row in this list,
@@ -846,9 +850,11 @@ const Notifications = {
     // _badgeTotal) and the home-screen icon badge (_publishAppBadge, which
     // reads `unread`).
     //
-    // #improve-btn keeps a LIVE indicator — the working pulse dot — because
-    // "a session is running right now" is a fact about that button, not an
-    // event waiting to be read.
+    // The pulse dot survived both moves and is the reason the distinction
+    // matters: "a session is running right now" is a live fact, true only
+    // while it is true, so it needs no dismissal and belongs wherever the
+    // work is — the Homeroom mark, since #2718 — while a COUNT is an event
+    // waiting to be read and belongs where reading happens.
     const notifCount = Notifications._badgeTotal();
 
     const paint = (id, count) => {

@@ -308,7 +308,14 @@ test('navigateToLeaderboard routes every section segment to the section', () => 
   assert.ok(fn.length > 0, 'navigateToLeaderboard located');
   assert.match(fn, /sub === 'topochain' \|\| sub === 'kudos' \|\| sub === 'challenges'/,
     "every section segment selects the section rather than falling through to _setSub");
-  assert.match(fn, /App\.setHeaderTitle\('Leaderboard'\)/, 'the screen is titled Leaderboard');
+  // #2718 REVIEW: the screen is titled after the SECTION it is showing.
+  // It said "Leaderboard" for every one of them, so arriving at Challenges
+  // from the Me tab's Challenges row put a word on the bar that matched
+  // neither the row pressed nor the tab still lit. The table is
+  // App.LEADERBOARD_TITLES and the fallback is the old word, for a section
+  // nobody has named yet.
+  assert.match(fn, /App\.setHeaderTitle\(App\._leaderboardTitle\(sub, profileUser\)\)/,
+    'the screen is titled after the section it shows');
   // openProfile must still win over both — _setSub/_setSection would
   // replaceState the profile hash away.
   assert.ok(

@@ -944,11 +944,14 @@ test('showDetail / showList publish the level, which drives both containers', ()
 
   Browse.showList();
   assert.equal(state.level, 'list');
-  // #2639: the list gets the house. #1569 shared Home's bare root header
-  // here, which left the directory with no way out but the chip menu. The
-  // detail level is unchanged above: a drill-in still borrows the chevron.
-  assert.equal(chrome.backIcon, 'home');
-  assert.equal(chrome.backHref, undefined, 'the house needs no explicit target');
+  // #2639 gave the list the house, because #1569's bare root header had left
+  // the directory with no way out but the chip menu. #2718's review takes it
+  // away again and the reason is the same one read forwards: Discover is a
+  // TAB now, so the way out is the bar under it and the house would be the
+  // Home tab twice. The detail level is unchanged above: a drill-in still
+  // borrows the chevron.
+  assert.equal(chrome.backIcon, 'none');
+  assert.equal(chrome.backHref, undefined, 'an empty slot needs no target');
   assert.equal(chrome.title, 'All apps');
 });
 
@@ -974,8 +977,12 @@ test('handleBack goes HOME when the detail page was entered from home', () => {
   Browse.noteDetailOrigin('home');
   Browse.showDetail('a');
   assert.equal(Browse._detailOrigin, 'home');
-  assert.equal(chrome.backIcon, 'home', 'a detail opened from Home keeps its Home button');
-  assert.equal(Browse.handleBack(), true, 'still claims the button');
+  // #2718 review: no button at all. An arrow would promise a list level this
+  // detail never came through, and the house is the Home tab twice over. What
+  // survives is the BEHAVIOUR below — the OS back gesture and the tab bar
+  // both still leave the screen rather than showing a list nobody visited.
+  assert.equal(chrome.backIcon, 'none', 'a detail with no list above it shows no slot');
+  assert.equal(Browse.handleBack(), true, 'still claims the gesture');
   assert.equal(chrome.wentHome, 1, 'leaves the screen instead of showing the list');
   assert.equal(location.hash, '',
     'no #apps write — navigateHome owns the URL from here');

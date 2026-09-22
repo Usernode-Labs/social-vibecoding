@@ -15,7 +15,7 @@
  *   * the header bar — the "+" button and its dropdown, including every
  *     `data-plus` row and the two `data-plus-group` headings. The Feed/Kanban
  *     tab strip is NOT here any more: the Board's two layouts are a choice
- *     under the Improve panel's Board row now (see improve-panel.tsx), because
+ *     under the Improve panel's Board row (both retired, #2718 review), because
  *     a strip whose first tab restated the destination the header chip had
  *     just named was navigation drawn twice;
  *   * `#dev-forum-scroll` and, on the kanban only, the General-discussion

@@ -94,8 +94,6 @@ export function boardHref(slug, boardView) {
 
 /**
  * @typedef {object} ImproveState
- * @property {boolean} open
- * @property {boolean} adopted
  * @property {'app'|'platform'|null} target
  * @property {string|null} slug
  * @property {string} name
@@ -115,7 +113,14 @@ export function boardHref(slug, boardView) {
  * @property {boolean} loadingSessions
  * @property {boolean} sessionsLoaded
  * @property {boolean} working
- * @property {'idle'|'deploying'|'stale'} versionState
+ * @property {'idle'|'deploying'|'downloading'|'ready'|'failed'} versionState
+ *   Every value Improve.setVersionState() can publish. It read
+ *   `'idle'|'deploying'|'stale'` until #2718, which is the vocabulary from
+ *   BEFORE that method split 'stale' into downloading / ready / failed — the
+ *   three states the panel has branched on ever since, and which this typedef
+ *   had never caught up with. Nothing changed about the values; only the
+ *   annotation, which had been quietly wrong for as long as a consumer
+ *   happened to read the store in a way that widened it to `string`.
  * @property {boolean} appUpdateReady
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
  * @property {'workshop'|'kanban'} boardView
@@ -127,19 +132,20 @@ export function boardHref(slug, boardView) {
 
 /** @type {ImproveState} */
 const INITIAL = {
-  /** Whether the panel is presented. `hidden` on the root is derived from it. */
-  open: false,
-  /**
-   * Whether the presentation is a KIT sheet (touch) rather than the CSS
-   * slide-over. The kit brings its own backdrop, so #improve-overlay only
-   * raises when this is false — see ./improve-controller.js.
+  /*
+   * `open` AND `adopted` USED TO LEAD THIS LIST, and they retired with the
+   * surface they described (#2718 review). They were the Improve panel's
+   * presentation — is it up, and is it up as a KIT sheet — and the panel is
+   * gone: its two actions, its build notice and its view strip are rows of
+   * the app-context sheet, whose own store holds those two flags for the one
+   * surface that has them. Left here they would have been read by
+   * `Improve.toggle()` and `Improve.dismissForNav()` and written by nobody.
    */
-  adopted: false,
   /**
-   * What the panel is ABOUT.
+   * What Improve is ABOUT.
    *
-   * `null` means there is nothing improvable on screen and the header button is
-   * hidden; the panel can never be opened in that state.
+   * `null` means there is nothing improvable on screen, so the controls that
+   * act on it have no subject.
    */
   target: null,
   /**
@@ -212,15 +218,18 @@ const INITIAL = {
   // SessionState's live entries and the platform version pill.
   //
   // There used to be a third and a fourth, `sessionUnread` / `sessionDone`:
-  // the unread session count Notifications._renderBadge published so this
-  // button could render it. #1610 retired both. The count is on the bell now,
-  // because the bell's list is the only surface that can mark a session
-  // notification read, and a number on a control that cannot clear it is what
-  // sent the reporter back to press Improve a second time.
+  // the unread session count Notifications._renderBadge published so the
+  // header's Improve button could render it. #1610 retired both. The count is
+  // on the bell now, because the bell's list is the only surface that can mark
+  // a session notification read, and a number on a control that cannot clear
+  // it is what sent the reporter back to press Improve a second time.
 
   /**
    * A dev session the viewer can see is mid-turn. Drives #improve-working-dot,
-   * so "something is running" is legible without opening anything.
+   * so "something is running" is legible without opening anything — which is
+   * why that dot followed the control it sat on rather than going with it when
+   * #2718 retired #improve-btn: it is on the Homeroom mark now
+   * (../header/platform-mark.tsx), the one thing on screen on every route.
    * From `SessionState.anyActive()`.
    */
   working: false,

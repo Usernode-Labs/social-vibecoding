@@ -67,14 +67,19 @@ test('the note is the exact sentence, from the shared constant', () => {
   assert.match(html, /col-span-full/, 'it spans the four columns of the canvas');
 });
 
-test('the launcher and the app chip say it with one constant, not two strings', () => {
-  for (const rel of [GRID, SHEET]) {
-    const src = read(rel);
-    assert.match(src, /from '\.\.\/apps\/no-apps-yet'/, `${rel} imports the shared copy`);
-    assert.ok(!src.includes(SENTENCE),
-      `${rel} hand-types the sentence — a wording change would reach only one of the two`);
-    assert.match(src, /NO_APPS_YET/, `${rel} renders the constant`);
-  }
+test('the launcher says it with a constant, and nothing hand-types it', () => {
+  // ONE CALLER NOW, not two. The app chip's sheet used to open on a strip of
+  // your other apps and needed this sentence for the account that has none;
+  // #2718's review took the strip out — a rail of other apps at the top of a
+  // menu about ONE app is an invitation to leave it — so there is no second
+  // surface to keep in step with. The constant stays: it is still the
+  // launcher's copy, and the rule that matters is the one below, that NOBODY
+  // hand-types the sentence.
+  const src = read(GRID);
+  assert.match(src, /from '\.\.\/apps\/no-apps-yet'/, `${GRID} imports the shared copy`);
+  assert.match(src, /NO_APPS_YET/, `${GRID} renders the constant`);
+  assert.ok(!read(SHEET).includes(SENTENCE),
+    'and the app menu, which no longer lists apps, does not carry a copy');
 });
 
 // ── 2. when it draws, and when it must not ────────────────────────────

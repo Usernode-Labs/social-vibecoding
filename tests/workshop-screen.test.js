@@ -439,7 +439,10 @@ test('the screen is built from the grouped-list primitives, not a copy of them',
   // language draws any more.
   const src = read('frontend/src/features/workshop/index.tsx');
   assert.match(src, /from '@\/components\/ui\/grouped-list'/);
-  for (const name of ['GroupedList', 'ListRow', 'SectionHeader']) {
+  // SectionHeader left this list with the screen's own <h1> (#2718 review):
+  // the bar above already says Workshop, and the one group on this screen is
+  // the whole of it, so there is no group WITHIN a screen left to label.
+  for (const name of ['GroupedList', 'ListRow']) {
     assert.match(src, new RegExp(`\\b${name}\\b`), `${name} is used`);
   }
   for (const wrong of [/\bdivide-y\b/, /\bbackdrop-blur/, /\bring-1\b/, /rounded-\[22px\]/]) {
@@ -569,12 +572,22 @@ test('#workshop is a route of its own', () => {
   assert.match(appJs, /navigateToWorkshop\(\) \{/);
   assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
   assert.match(appJs, /App\.setHeaderTitle\('Workshop'\)/);
-  // The menu row is the door, and it sits between Home and Discover.
-  const nav = /switcher-row-home([\s\S]*?)switcher-row-discover/.exec(sheetTsx);
-  assert.ok(nav, 'the Platform group still runs Home → … → Discover');
-  assert.match(nav[1], /id="switcher-row-workshop"/);
-  assert.match(nav[1], /href="#workshop"/);
-  assert.match(nav[1], /label="Workshop"/);
+  // THE DOOR IS A TAB (#2718). It was a menu row between Home and Discover,
+  // on the rule that the app chip's menu listed every destination; the bar
+  // carries them now, and Workshop is the fourth of five.
+  const html = read('public/index.html');
+  assert.match(html, /id="platform-tab-workshop"[^>]*href="#workshop"/,
+    'the unscoped screen is a tab');
+  // The app menu keeps the SCOPED entrance — the link-out every mini-app host
+  // in the study draws under a mini-app — but as the view strip's Workshop
+  // SEGMENT rather than as a row (#2718 review). The row and the segment
+  // named one destination, one above the other, and the strip is the only
+  // one of the two that also gets you back to the running app.
+  const tabs = read('frontend/src/features/improve/view-tabs.tsx');
+  assert.match(tabs, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/,
+    "and the app's menu links out to it, scoped");
+  assert.ok(!/id="app-menu-row-workshop"/.test(sheetTsx),
+    'the row that duplicated that segment is gone');
 });
 
 test('the app-entry breadcrumb has one writer and one clearer', () => {
@@ -600,19 +613,108 @@ test('the app-entry breadcrumb has one writer and one clearer', () => {
     'revealing any other screen ends the app visit the breadcrumb was about');
 });
 
-test('the Dev lander points back at the Workshop screen, and only the lander', () => {
-  assert.match(appViewJs, /if \(App\._appBackHref\) App\.setBackIcon\?\.\('arrow', App\._appBackHref\);/);
-  // AFTER the lander's own title publish, which is inside the card-list
-  // branch — the session, chat and topic sub-views all return before it, so
-  // none of them inherits the arrow.
-  const landerTitle = appViewJs.indexOf("App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Workshop');");
-  const arrow = appViewJs.indexOf('if (App._appBackHref) App.setBackIcon');
-  assert.ok(landerTitle > 0 && arrow > landerTitle,
-    'the override sits in the lander branch, under the title it belongs to');
-  const chatBranch = appViewJs.indexOf("if (subTab === 'chat') {");
-  assert.ok(chatBranch > 0 && chatBranch < landerTitle,
-    'and the chat branch returns before it');
-  // An arrow WITH an href is also what turns the phone's back gesture on.
+test('the Dev lander needs no back arrow, because the rail is beside it', () => {
+  // IT HAD ONE, and it was the whole of the way out: `App._appBackHref` said
+  // the app had been opened from the Workshop screen, and the lander
+  // published a ← to it. That was the best available answer on a surface
+  // with no rail — and it only pointed anywhere at all for readers who
+  // arrived by that one route.
+  //
+  // The rail is there now (#2718 review). The app's Workshop is a platform
+  // screen scoped to one app, App._syncPlatformTabs keeps the bar up on it
+  // and lights the Workshop tab, and that tab lands on the very screen the
+  // arrow pointed at — for everyone, however they got here.
+  assert.ok(!appViewJs.includes("App.setBackIcon?.('arrow', App._appBackHref)"),
+    'the lander publishes no arrow of its own');
+  assert.match(appViewJs, /App\.setBackIcon\?\.\('none'\);/,
+    'and the sub-view reset is an empty slot, not the house');
+  // The reset still sits ABOVE the branches, so the session's own ← to the
+  // board survives it and nothing else inherits that arrow.
+  const reset = appViewJs.indexOf("App.setBackIcon?.('none');");
+  const session = appViewJs.indexOf("if (subTab === 'sessions' && ref) {");
+  assert.ok(reset > 0 && session > reset,
+    'the reset leads, so every sub-view that wants a slot claims it after');
+  assert.match(appViewJs, /App\.setBackIcon\?\.\('arrow', App\._appUrl\(/,
+    'and a session still leads with a real ← to the board');
+  // `_appBackHref` is not retired: the ✕ on the app tab still lands wherever
+  // the visit began.
+  assert.match(read('public/js/app.js'), /App\.setBackIcon\('close', App\._appBackHref \|\| undefined\);/);
+  // An arrow WITH an href is what turns the phone's back gesture on — still
+  // true, and still what the session sub-view relies on.
   assert.match(read('frontend/src/features/header/native-back-navigation.ts'),
     /mode === 'arrow' && !!href/);
+});
+
+// ── One Workshop, two scopes (#2718 review) ────────────────────────────
+
+test('the app\'s own Workshop keeps the rail, and lights the tab it came through', () => {
+  // "should preserve the side bar. It doesn't need a back button anymore
+  // because of the side bar."
+  //
+  // #app-view is TWO screens behind one id: the running app, which takes the
+  // whole window because that is what makes it feel like a program, and on
+  // the `dev` tab the platform's own Workshop for that app. The second is a
+  // platform screen that happens to be scoped, and hiding the rail there left
+  // it as the one such screen with no navigation at all.
+  const appJs = read('public/js/app.js');
+  const sync = appJs.slice(appJs.indexOf('  _syncPlatformTabs(revealId) {'));
+  const body = sync.slice(0, sync.indexOf('\n  },\n'));
+  assert.match(body, /const inApp = screen === 'app-view' && App\.currentTab === 'app';/,
+    'the app itself covers the rail; its Workshop does not');
+  assert.match(body, /!!screen && !App\.chromeless && !inApp,/);
+  // The Workshop tab is lit, so the rail knows where you are — except on the
+  // app's DISCUSSION, which is a row in the Messages inbox and lights that
+  // instead (#2718 review).
+  assert.match(body, /\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/,
+    'and the Workshop tab is lit, so the rail knows where you are');
+
+  // A TAB HOP inside the app crosses that line without a screen reveal, so
+  // it is the only other place that has to re-sync.
+  const hop = appJs.slice(appJs.indexOf('  async switchTab(tab, ref, subTab, options) {'));
+  assert.match(hop.slice(0, hop.indexOf('\n  },\n')),
+    /if \(App\._isScreenVisible\?\.\('app-view'\)\) App\._syncPlatformTabs\('app-view'\);/,
+    'the rail moves with the tab');
+
+  // And the pill at the foot of the app's Workshop rests ON the platform's
+  // bar rather than through it.
+  const css = read('public/css/app.css');
+  assert.match(css,
+    /html:not\(\.un-kb\) body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\) \{\s*--ws-lift: calc\(var\(--platform-tabs-h, 0px\) \+ 8px\);/);
+});
+
+test('the app\'s own Workshop wears the same scope chip, read from the other end', () => {
+  // "should preserve the app switcher". The all-apps screen's chip says "All
+  // apps" and picking one navigates here; this one names the app and its
+  // panel offers the others — and All apps, which is the way back up and the
+  // other half of why the back arrow is gone.
+  const chrome = read('frontend/src/features/workshop/workshop-chrome.tsx');
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+
+  assert.match(ws, /import \{ AppWorkshopScope \} from '\.\.\/\.\.\/workshop\/workshop-chrome';/,
+    'ONE component, not a second chip that can drift from the first');
+  assert.match(ws, /<AppWorkshopScope\n\s+slug=\{slug\}/);
+  // Its name and artwork come from the store the header's own tile reads, so
+  // the two cannot disagree about which app this is, and no second fetch.
+  assert.match(ws, /name=\{app\.name \|\| undefined\}/);
+  assert.match(ws, /iconUrl=\{app\.iconUrl\}/);
+  assert.match(ws, /const app = useStoreState\(improveStore\);/);
+
+  // THE PANEL'S "All apps" ROW IS A TICK HERE AND A DESTINATION THERE.
+  assert.match(chrome, /onClick=\{\(\) => \{ close\(\); if \(scope\) goToAllApps\(\); \}\}/);
+  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#workshop';/,
+    'a hash assignment, so the rail\'s Workshop tab and this are one route');
+  // The app you are already in closes the panel and goes nowhere: a row that
+  // re-navigated to the current route would throw this screen's scroll
+  // position and its open windows away to arrive where it started.
+  assert.match(chrome, /if \(scope && scope\.slug === app\.slug\) \{ close\(\); return; \}/);
+
+  // ITS OWN OPEN STATE, not workshopStore.picker: the all-apps screen stays
+  // mounted while this one is on show, and a panel left open on one would
+  // greet the other.
+  const island = chrome.slice(chrome.indexOf('export function AppWorkshopScope('));
+  assert.match(island, /const \[open, setOpen\] = useState\(false\);/);
+  assert.ok(!island.includes('workshopStore'), 'the two surfaces share no flag');
+  // The list loads in an effect and never during render.
+  assert.match(island, /useEffect\(\(\) => \{[\s\S]{0,600}fetch\(`\/api\/apps\$\{demoQuery\(\)\}`\)/);
+  assert.match(island, /catch \{/, 'and offline leaves the chip working');
 });

@@ -1000,7 +1000,50 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the other, so the merged manifest holds every one of them: 720 + 2 + 2 =
   // 724, which leaves 26 slots against MAX_DECLARED_TESTS (750) —
   // comfortably clear of the 20-slot floor.
-  assert.equal(DAPP.tests.length, 724);
+  //
+  // 711, ceiling 730 → 750: main alone stood exactly ON the floor (710), so
+  // this branch's one check crossed it, and the two tests that state the
+  // floor (tests/improve-session-spinner.test.js and
+  // tests/proposal-tests-manifest.test.js) both say to move the ceiling
+  // rather than delete a check. It moved with this branch
+  // (services/app-manifest.js, 730 → 750, still not a coupled move), so
+  // 711 left 39 slots, clear of the 20-slot floor.
+  //
+  // 715 with #2718. The navigation change rewrote NINE checks in place — the
+  // app chip's menu no longer holds the platform's destinations, so each one
+  // names the control that carries it now (a tab, a Profile row, the app's
+  // own menu row) rather than being deleted — and ADDED four for what the
+  // change introduces: the mark as the header's menu button, About as the
+  // menu's second pane, the app strip inside a running app, and the bar's
+  // absence there. 715 leaves 35 slots, still clear of the floor.
+  //
+  // 716 with the same change's last commit, which retires #improve-btn. Seven
+  // MORE were rewritten in place on the same principle and none deleted: four
+  // asserted the header pill was on screen and now assert the menu row it
+  // became, two carried it as bar-shape context in a `:has()` chain (the mark
+  // is that context now), and one pinned that it wore no notification count —
+  // a claim that followed the two work dots onto the mark. The one ADDED is
+  // the retirement itself: a header with no #improve-btn in it, and a mark
+  // with both dots on it. A check that only says an id is gone would pass on
+  // a bar that lost the mark too, which is why it says both in one selector.
+  //
+  // 724 AND 716 ARE TWO TALLIES OF ONE MANIFEST, computed either side of
+  // this merge, and neither is a sequence the other continues. The block
+  // above is main's, ending at 724; the block below is #2718's, ending at
+  // 716. They stand on different shared totals because each counted its own
+  // additions against the base it was cut from.
+  //
+  // The merged manifest simply holds both sets: git took every entry from
+  // each side of dapp.json, and no check appears on both (the navigation
+  // change rewrote its nine in place and added thirteen; main's additions are
+  // the #2704 and #2705 pairs, the #2681 rename, #2707, #2706 and the
+  // Link-GitHub and Homeroom-bot checks). Counted rather than derived: the
+  // arithmetic on either side above is the reasoning each change owes for
+  // its OWN additions, and a third sum reconciling them would be a number
+  // nobody could check. 729 leaves 21 slots against MAX_DECLARED_TESTS
+  // (750) — clear of the 20-slot floor, and close enough to it that the next
+  // change to add checks should move the ceiling rather than squeeze.
+  assert.equal(DAPP.tests.length, 729);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -961,35 +961,65 @@ const App = {
     App._applyAppContextShot();
   },
 
-  // Screenshot-state deep link `?shot=improve`: open the Improve panel at
-  // boot, so the surface THE UI OVERHAUL built — sessions, the dev links, the
-  // repo and version rows — is reachable by URL for the before/after
-  // screenshots, the "Test this change" button and the dapp.json checks. It is
-  // only reachable by TAPPING the header button otherwise, which no still
-  // frame and no plain route can do.
+  // Screenshot-state deep links `?shot=improve` and `?shot=app-context`: open
+  // the surface Improve's controls sit on at boot, so it is reachable by URL
+  // for the before/after screenshots, the "Test this change" button and the
+  // dapp.json checks. It is only reachable by TAPPING the mark otherwise,
+  // which no still frame and no plain route can do.
   //
-  // Deliberately NOT env-gated, for exactly the reason ?shot=improve is not: pure
-  // UI state with no writes, and an IS_STAGING-only link would starve the
-  // production "before" shot forever while an ungated one starts working the
-  // moment it ships. Pair it with ?demo=1 in staging so the session sections
-  // have mock rows to render.
+  // THE TWO NAME ONE SURFACE NOW (#2718 review). `?shot=improve` opened the
+  // Improve panel and `?shot=app-context` the mark's menu; the panel retired
+  // and its contents moved into that menu, so both links open it and the
+  // older name is kept because checks and captures already say it.
   //
-  // It WAITS FOR A TARGET rather than firing on a fixed delay. Without one the
-  // panel refuses to open — correct behaviour, not something to work around —
-  // and on an /app/<slug> route the target is published by
-  // App.ImproveStatus.setAppOpen(), which runs after openApp()'s fetch has
-  // landed. A single 50ms tick (what ?shot=improve can afford, because the panel
-  // needs nothing but a settled shell) fired long before that, so the panel
-  // stayed shut and both of its declared checks failed on an empty surface.
+  // Deliberately NOT env-gated: pure UI state with no writes, and an
+  // IS_STAGING-only link would starve the production "before" shot forever
+  // while an ungated one starts working the moment it ships. Pair it with
+  // ?demo=1 in staging so the session sections have mock rows to render.
   //
-  // Polls instead, on the checks runner's own budget: an app route gets as
-  // long as its fetch needs. Bounded, so a route with no target at all — home
-  // included, which publishes none since the Improve button left that screen —
-  // stops trying rather than spinning for the life of the page. (A bare
-  // `/?shot=improve` therefore never opens the panel; its remaining dapp.json
-  // check asserts panel MARKUP that renders closed, not an open surface.)
+  // ONE THING CHANGED WITH THE SURFACE, and it is worth saying rather than
+  // discovering: the panel refused to open without a target, so a bare
+  // `/?shot=improve` never opened anything. The menu opens on Home too — the
+  // one screen you most need it from — so these links now reach a real
+  // surface on every route, and what differs between them is which rows have
+  // a subject.
   IMPROVE_SHOT_TRIES: 40,
   IMPROVE_SHOT_INTERVAL_MS: 100,
+
+  /**
+   * Open the surface Improve's controls sit on, then run `ready` once.
+   *
+   * ONE LOOP, WHERE THERE WERE FIVE COPIES. Each applier below polled for
+   * `#improve-panel[data-open]`; the Improve panel retired (#2718 review) and
+   * `Improve.open()` forwards to the app-context sheet, so there is one
+   * surface to wait for and one place that knows its id.
+   *
+   * It POLLS rather than firing on a fixed delay because what these shots
+   * need is not just a settled shell: on an /app/<slug> route the target is
+   * published by App.ImproveStatus.setAppOpen(), after openApp()'s fetch has
+   * landed, and a row gated on that target is not in the document until it
+   * does. A single 50ms tick fired long before that, which is how two
+   * declared checks once ran against an empty surface. Bounded, so a route
+   * that never publishes one stops trying rather than spinning for the life
+   * of the page.
+   *
+   * `ready` returns false to keep waiting — for a row that needs more than
+   * the surface itself — and anything else to stop.
+   */
+  _openImproveShot(ready) {
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.Improve?.open();
+        const surface = document.getElementById('apps-switcher-sheet');
+        if (surface && surface.hasAttribute('data-open')) {
+          if (!ready || ready() !== false) return;
+        }
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
 
   // `?shot=app-context`: open the APPS SWITCHER sheet at boot — the surface
   // behind the header's "app name ⌄" tab (Streamlined Concept). Same
@@ -1000,16 +1030,7 @@ const App = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'app-context') return;
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.AppContext?.open();
-        const panel = document.getElementById('apps-switcher-sheet');
-        if (panel && panel.hasAttribute('data-open')) return;
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot();
   },
 
   // Screenshot-state deep links `?shot=platform-updating` and
@@ -1031,31 +1052,21 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'platform-updating' && shot !== 'platform-update-ready') return;
     const ready = shot === 'platform-update-ready';
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.Improve?.open();
-        const panel = document.getElementById('improve-panel');
-        if (panel && panel.hasAttribute('data-open')) {
-          // A boot baseline that differs from what the row is handed is the
-          // whole of `isStale`; the prefetch state is what picks the shape.
-          App.loadedPlatformSha = '0000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-          const sha = '1111111bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-          App.shellUpdate = { sha, state: ready ? 'ready' : 'fetching' };
-          const info = { sha, repoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
-          App._lastVersionInfo = info;
-          // The 10s poll would repaint this row out from under the shot with
-          // the real answer, which for a local or staging build is `dev` — an
-          // entirely different branch. Pin the row for as long as the shot is
-          // on screen; nothing else reads this flag.
-          App._platformUpdateShot = true;
-          App.renderPlatformVersionPill(info);
-          return;
-        }
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot(() => {
+      // A boot baseline that differs from what the row is handed is the
+      // whole of `isStale`; the prefetch state is what picks the shape.
+      App.loadedPlatformSha = '0000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const sha = '1111111bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      App.shellUpdate = { sha, state: ready ? 'ready' : 'fetching' };
+      const info = { sha, repoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
+      App._lastVersionInfo = info;
+      // The 10s poll would repaint this row out from under the shot with
+      // the real answer, which for a local or staging build is `dev` — an
+      // entirely different branch. Pin the row for as long as the shot is
+      // on screen; nothing else reads this flag.
+      App._platformUpdateShot = true;
+      App.renderPlatformVersionPill(info);
+    });
   },
 
   // Screenshot-state deep links `?shot=app-updating` and
@@ -1069,37 +1080,20 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'app-updating' && shot !== 'app-update-ready') return;
     const ready = shot === 'app-update-ready';
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.Improve?.open();
-        const panel = document.getElementById('improve-panel');
-        if (panel && panel.hasAttribute('data-open')) {
-          window.Improve.update({ deploying: !ready, appUpdateReady: ready });
-          return;
-        }
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot(() => {
+      // `update()` no-ops without a slug, and the menu opens before the app
+      // fetch lands — see Improve.hasTarget()'s note. Keep waiting.
+      if (!window.Improve?.hasTarget?.()) return false;
+      window.Improve.update({ deploying: !ready, appUpdateReady: ready });
+      return true;
+    });
   },
 
   _applyImproveShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'improve') return;
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.Improve?.open();
-        // open() is a no-op without a target, so the panel's own state is
-        // what says whether it took.
-        const panel = document.getElementById('improve-panel');
-        if (panel && panel.hasAttribute('data-open')) return;
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot();
   },
 
   // Screenshot-state deep links `?shot=dev-terminal` and
@@ -1127,35 +1121,28 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'dev-terminal' && shot !== 'dev-terminal-open') return;
     const openIt = shot === 'dev-terminal-open';
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        // Stand in for the app frame that normally publishes this. All three
-        // calls are needed: _refreshButtonVisibility() shows the row only when
-        // there is an app slug AND an iframe on screen AND one of
-        // always-mode / a logged error / an already-open panel. A fresh
-        // browser has no localStorage and no errors, so without the mode call
-        // the row is correctly absent and the link would capture a panel with
-        // nothing in it to press.
-        const slug = App.currentApp;
-        if (slug && window.DevConsole) {
-          window.DevConsole.setCurrentApp(slug);
-          window.DevConsole.setButtonVisible(true);
-          window.DevConsole.setMode(window.DevConsole.MODE_ALWAYS);
-        }
-        window.Improve?.open();
-        const panel = document.getElementById('improve-panel');
-        const row = document.getElementById('improve-row-terminal');
-        if (panel && panel.hasAttribute('data-open') && row) {
-          // The panel closes on the way, so the row has to be pressed once
-          // and only once — a repeat would reopen nothing and re-hide this.
-          if (openIt) row.click();
-          return;
-        }
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    // Stand in for the app frame that normally publishes this. All three
+    // calls are needed: _refreshButtonVisibility() shows the row only when
+    // there is an app slug AND an iframe on screen AND one of always-mode /
+    // a logged error / an already-open surface. A fresh browser has no
+    // localStorage and no errors, so without the mode call the row is
+    // correctly absent and the link would capture a menu with nothing in it
+    // to press. Re-run on every attempt, because `App.currentApp` is not set
+    // until the route resolves.
+    App._openImproveShot(() => {
+      const slug = App.currentApp;
+      if (slug && window.DevConsole) {
+        window.DevConsole.setCurrentApp(slug);
+        window.DevConsole.setButtonVisible(true);
+        window.DevConsole.setMode(window.DevConsole.MODE_ALWAYS);
+      }
+      const row = document.getElementById('improve-row-terminal');
+      if (!row) return false;
+      // The surface closes on the way, so the row has to be pressed once and
+      // only once — a repeat would reopen nothing and re-hide this.
+      if (openIt) row.click();
+      return true;
+    });
   },
 
 
@@ -3842,6 +3829,21 @@ const App = {
         // ids, so keep their signed-int32 bound local to this route;
         // _numericSegment also serves BIGSERIAL-backed Topochain routes.
         App.setChromeless(false);
+        // AN APP'S DISCUSSION IS A THREAD IN THIS INBOX (#2718 review), so it
+        // has an address in this inbox: `#messages/app/<slug>`. It used to be
+        // listed here and addressed as `#app/<slug>/dev/chat`, which is a
+        // different SCREEN ROOT — so the row promised a pane beside the list
+        // and delivered a full-window takeover with the app view's own back
+        // slot. A row in a list opens beside that list.
+        if (parts[1] === 'app' && parts[2]) {
+          // The raw segment, like the #app route's own slug a few blocks
+          // below: the store validates it and the server is the authority on
+          // whether it names anything.
+          App.navigateToMessages(null, parts[2]);
+          return;
+        }
+        // Conversations use SERIAL ids, so keep their signed-int32 bound
+        // local to this route.
         const conversationId = App._numericSegment(parts[1]);
         App.navigateToMessages(
           conversationId != null && conversationId <= 2147483647
@@ -4130,6 +4132,11 @@ const App = {
     App.chromeless = enable;
     App.Visibility.publish('platform-header', !enable);
     App.Visibility.publish('chromeless-pill', enable);
+    // The tab bar goes with the header, but through _syncPlatformTabs rather
+    // than a publish of its own: chromeless is only ONE of the three things
+    // that hide it (an app view and the signed-out shell are the others), so
+    // the bar has one place that decides and this tells it to decide again.
+    App._syncPlatformTabs();
     if (typeof AppView !== 'undefined' && AppView.scheduleSafeAreaBroadcast) {
       AppView.scheduleSafeAreaBroadcast();
     }
@@ -4219,16 +4226,172 @@ const App = {
     // at all — it reveals #app-view itself — but a `keepAlso` reveal during a
     // zoom-out would, and clearing on the way OUT of an app is right anyway.
     if (revealId !== 'app-view') App._appBackHref = null;
+    // AND THE INBOX VISIT ENDS THE SAME WAY (#2718 review), for the same
+    // reason and at the same single choke point.
+    //
+    // `_inMessages` says a visit to the inbox is in progress, and
+    // navigateToMessages returns EARLY when it is — routing the island and
+    // revealing nothing, because the screen is supposed to be up already.
+    // Only navigateToWorkshop and the global-chat route were clearing it, so
+    // Messages -> Home -> Messages found the flag still true, took that early
+    // return and did nothing at all. That is the whole of "sometimes I am
+    // unable to click the messages tab": not sometimes, but always, after any
+    // of the six routes that did not know to clear it.
+    //
+    // Here rather than in those six: a flag that says "this screen is the one
+    // showing" belongs to the function that decides which screen is showing.
+    if (revealId !== 'messages-screen' && App._inMessages) App._exitMessages();
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     //
-    // #2639: HOME is the only root. #1569 grouped Browse with it, on the
-    // reading that both are top-level lists — but Browse is not somewhere you
-    // arrive, it is somewhere you go, from Home's "Find more apps". Arriving
-    // there and finding the bar empty left the chip menu's Home row as the
-    // only way back, which is an inch away and behind a menu. Every other
-    // screen you navigate INTO offers the house; Browse now does too.
-    App.setBackIcon(revealId === 'home-screen' ? 'none' : 'home');
+    // WHAT IT PUBLISHES IS A TABLE now, not a ternary — App._BACK_SLOT, one
+    // row per screen, read through App._backSlotFor. The ternary it replaced
+    // had accumulated three answers over #1569, #2639 and #2718 and still
+    // disagreed with the screens that wrote their own slot a moment later
+    // (Browse, Settings, Admin, the Challenges pane), so the bar's corner
+    // depended on which writer ran last. A table can be read against
+    // features/nav/nav-store.js's TAB_FOR_SCREEN, and
+    // tests/header-back-home.test.js derives each from the other.
+    //
+    // The rule it encodes, from #2718's review: A TAB ROOT SHOWS NOTHING,
+    // because the bar beneath it already answers "how do I get out of here",
+    // and a house on a root is either the Home tab twice or a jump past the
+    // tab that is still lit. A sub-page shows an ARROW to the root it hangs
+    // off. An APP shows a close button, because leaving an app is not going
+    // up a level — you are stepping out of somebody's program back to the
+    // platform, and every mini-app host in the study draws that as an ✕
+    // rather than a chevron. `_appBackHref` still decides WHERE the ✕ lands
+    // (the Workshop, when that is where you came from), which is what
+    // _backSlotFor resolves.
+    App.setBackIcon(...App._backSlotFor(revealId));
+    // ...and the tab bar, in the same callback and for the same reason the
+    // comment above gives for the title and the back slot: they are all part
+    // of the swap, and the kit captures the outgoing page from whatever this
+    // callback did before it returned.
+    App._syncPlatformTabs(revealId);
+    App._syncParkedApp(revealId);
+  },
+
+  // ── #platform-parked — the app you left ─────────────────────────────
+  //
+  // The bar makes the platform's five places one tap each, and in doing so it
+  // makes the app you were IN the one thing that is not: it has no tab, the
+  // header's app strip goes with it, and Home's grid is every app rather than
+  // the one you were halfway through. So leaving an app leaves a handle to
+  // it, above the bar, until it is resumed or dismissed.
+  //
+  // HERE, in the one place every screen swap passes through, rather than at
+  // the eight `leavingApp` call sites that each run AppView.close(): they all
+  // reveal a screen through this function on their next line, and a rule
+  // spelled once cannot be half-applied. It runs AFTER the reveal for the
+  // same reason the rest of this callback does — the kit snapshots what the
+  // callback did.
+  //
+  // THE DISPLAY DATA IS CAPTURED, not looked up later. The strip's promise is
+  // to be instant, and a handle that has to fetch a name and an icon before
+  // it can draw is a handle that appears after you have stopped looking for
+  // it. `launchRecordFor` is the launcher's own cached row — the same one
+  // navigateToApp reads to decide an app's default tab — and AppView.appData
+  // is the record the app view itself loaded; either answers, and a slug on
+  // its own is enough to offer the app by name-as-slug if neither does.
+  _syncParkedApp(revealId) {
+    const bridge = window.UsernodeReact?.nav;
+    if (!bridge || typeof bridge.park !== 'function') return;
+    // Entering the app clears its own handle: resuming the app you are in is
+    // a shortcut to where you already are.
+    if (revealId === 'app-view') { bridge.park(null); return; }
+    const slug = App.currentApp;
+    if (!slug) return;
+    let rec = null;
+    try {
+      rec = (typeof AppView !== 'undefined'
+        && (AppView.launchRecordFor?.(slug)
+          || (AppView.appData?.slug === slug ? AppView.appData : null))) || null;
+    } catch (_) { /* a record we cannot read is a name we do without */ }
+    bridge.park({
+      slug,
+      name: rec?.name || slug,
+      iconUrl: rec?.icon_url || null,
+      iconEmoji: rec?.icon_emoji || null,
+    });
+  },
+
+  // ── #platform-tabs — one place decides ──────────────────────────────
+  //
+  // The bar is up on the platform's own screens and down on three routes:
+  // inside a running app (the header becomes that app's strip and the way
+  // out is its close button), in chromeless mode (the whole shell is gone),
+  // and on the signed-out screens (there is nothing behind them to tab to).
+  // Each of those is published from a different place — the router here,
+  // setChromeless above, AuthScreens.show/hideAll in auth-screens.js — so
+  // the DECISION lives here and those three only say "look again".
+  //
+  // `revealId` is what the caller is in the middle of revealing, passed
+  // because `_revealedScreen` is assigned inside the same callback and a
+  // caller may want the answer for a root it has not committed to yet
+  // (navigateToApp hides the bar as it reveals #app-view, one transition
+  // callback before _showOnlyScreen records it).
+  //
+  // THE FALLBACK IS HOME, not "nothing". `_revealedScreen` is null until the
+  // first screen swap of the session, and a plain "/" boot never swaps — the
+  // no-hash branch of restoreFromHash is already-on-home and calls
+  // Home.load() without one. Reading null as "no section" would leave the
+  // bar hidden on the single most-visited route in the product. Home is what
+  // the shipped markup shows, which is the same reading _isScreenVisible's
+  // DOM fallback takes for the same state.
+  _syncPlatformTabs(revealId) {
+    const onAuth = !!(window.AuthScreens && AuthScreens._current);
+    // null on the signed-out screens, and the RAW id everywhere else —
+    // `app-view` included. The bar has no tab for the app view and goes away
+    // there, but the HEADER needs to know it is in one (its left slot becomes
+    // a close button and the app's tile appears beside its name), so what is
+    // published is the screen and what is derived from it is the tab. See
+    // features/nav/nav-store.js.
+    const screen = onAuth ? null : (revealId || App._revealedScreen || 'home-screen');
+    // AN APP COVERS THE RAIL. THE PLATFORM'S WORKSHOP FOR IT DOES NOT (#2718
+    // review).
+    //
+    // `#app-view` hosts two unlike things behind one id: the running app on
+    // the `app` tab, and on `dev` the platform's own surface ABOUT that app —
+    // its Workshop, its board, its sessions, its discussion. The first is
+    // somebody's program and takes the whole window, which is what makes it
+    // feel like a program rather than a page. The second is a platform screen
+    // that happens to be scoped to one app, and hiding the rail there left it
+    // as the one such screen with no navigation, reachable only by a back
+    // arrow to the screen it was opened from.
+    //
+    // App.currentTab is assigned before every call that can reach here:
+    // navigateToApp commits the destination while the click is still
+    // synchronous (see its note), and switchTab re-syncs after assigning it.
+    const inApp = screen === 'app-view' && App.currentTab === 'app';
+    App.Visibility.publish(
+      'platform-tabs',
+      !!screen && !App.chromeless && !inApp,
+    );
+    // Published even when the bar is down: the store keeps the last screen
+    // otherwise, and the bar coming back for a tab that has since changed
+    // would light the wrong one for a frame.
+    //
+    // AND THE APP'S WORKSHOP LIGHTS THE WORKSHOP TAB, which is the other half
+    // of the rail being there: a rail with nothing lit says you are somewhere
+    // it does not know about. You are on the Workshop section seen through
+    // one app — the row you pressed to get here is on that very screen — so
+    // the tab you came through stays lit and takes you back to all of them.
+    // Passed explicitly rather than mapped, for the reason the bridge's own
+    // note gives.
+    //
+    // …EXCEPT THE DISCUSSION, WHICH IS A MESSAGE THREAD (#2718 review).
+    // `dev/chat` is the app's general chat, and it is a ROW IN THE MESSAGES
+    // INBOX — that is the whole reason it stopped being offered from the
+    // Workshop's Current status pane. Lighting Workshop there put the reader
+    // in a section they had not been in, and the way back it offered led to
+    // the Workshop rather than to the list they opened the thread from.
+    window.UsernodeReact?.nav?.setScreen?.(
+      screen,
+      screen === 'app-view' && !inApp
+        ? (App.currentSubTab === 'chat' ? 'messages' : 'workshop')
+        : null,
+    );
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -4458,18 +4621,16 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('leaderboard-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Leaderboard');
+      App.setHeaderTitle(App._leaderboardTitle(sub, profileUser));
       // NO DEAD ENDS: every screen the viewer can reach shows a way back.
       // The hamburger used to be that way — it was on every bar, and it held
       // the nav rows — so these screens shipped with the back slot hidden.
       //
-      // This was `arrow` with no href, which RESOLVED to home: the right
-      // destination drawn as the wrong glyph, a chevron promising a level
-      // above where there is none. The house says the same thing honestly,
-      // and it is the default, so the explicit call goes entirely — see the
-      // 'home' publish in _showOnlyScreen. Left here as a comment because
-      // "why does this screen not set its own back state" is a fair question
-      // to have an answer to.
+      // It is an ARROW TO ME now, published from App._BACK_SLOT by
+      // _showOnlyScreen. This screen's three sections are reached from the
+      // Profile screen's rows, so there genuinely is a level above and the
+      // chevron is honest about it — which was the objection when the arrow
+      // resolved to home and the house replaced it.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
     App._routeLeaderboard(sub, profileUser, challengeTarget);
@@ -4494,7 +4655,41 @@ const App = {
   // cohort of a document, does not. Reset explicitly so both arrivals render
   // the same screen. _setSection early-returns when the section is already
   // current, so the common case costs nothing.
+  /*
+      WHAT THE BAR SAYS ON THIS SCREEN, per section.
+
+      It said "Leaderboard" for all of them, which is the name of the SCREEN
+      that hosts the three rather than the name of the one you asked for — so
+      tapping "Challenges" on the Me screen landed on a page titled
+      Leaderboard, and the Me tab stayed lit beside it. Two different things
+      claiming to be where you are.
+
+      The sections are the three `_setSection` validates against
+      (frontend/src/features/leaderboard/leaderboard.js), and the default with
+      no sub is `challenges`, which _routeLeaderboard picks.
+
+      A USER DRILL-IN OUTRANKS THE SECTION, because a profile is a page about
+      somebody rather than a tab of this screen — it is what the address
+      `#leaderboard/<section>/<user>` is carrying, and the name is the
+      answer to "where am I".
+  */
+  LEADERBOARD_TITLES: {
+    challenges: 'Challenges',
+    kudos: 'Kudos',
+    topochain: 'Topochain',
+  },
+
+  _leaderboardTitle(sub, profileUser) {
+    if (profileUser) return `@${profileUser}`;
+    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard';
+  },
+
   _routeLeaderboard(sub, profileUser, challengeTarget) {
+    // The title follows an in-screen section change too: this method is the
+    // one both entries funnel through — the cold navigation above and the tab
+    // taps that never re-enter it — so naming the screen here is what keeps
+    // the bar honest on the second tap.
+    App.setHeaderTitle(App._leaderboardTitle(sub, profileUser));
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
@@ -4561,21 +4756,21 @@ const App = {
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
       App.setHeaderTitle(username ? `@${username}` : 'Profile');
-      // A HOUSE ON THE ACCOUNT SCREENS, not nothing and not a chevron.
+      // NOTHING IN THE LEFT SLOT. Me is a tab root: the bar is on screen
+      // beside it, so a control in the corner that goes home is a second way
+      // to press a button already in view.
       //
-      // Profile, Settings and Admin & moderation lost the arrow once, on the
-      // reasoning that they form a stack of their own (Home → Profile →
-      // Settings/Admin) whose own rows are the way back up. What that left
-      // was three screens with nothing in the bar at all — and "every page
-      // should have a back or a home button, except Home" is the rule now.
+      // It was the house, and the house was right at the time — Profile,
+      // Settings and Admin lost the arrow in #1569 on the reasoning that they
+      // are their own stack, which left three screens with nothing in the bar
+      // at all, and "every page should have a back or a home button, except
+      // Home" was the rule that fixed it. The bar answers that rule for all
+      // five roots now. Settings and Admin keep a glyph and it is an ARROW,
+      // because they are reached from here — see App._BACK_SLOT.
       //
-      // The arrow does not come back: these screens have no level above them
-      // that is not home, and a chevron would promise one. The house is the
-      // honest glyph, and it is what `'home'` DRAWS now rather than a synonym
-      // for hidden (see features/header/back-button-store.js). The call is
-      // kept explicit even though _showOnlyScreen publishes the same default
-      // a moment earlier: this is the screen where the question was asked.
-      App.setBackIcon('home');
+      // _showOnlyScreen has already published this from the table; the call
+      // is not repeated, because a second writer of one fact is how the two
+      // disagree.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
     if (window.Profile?.open) Profile.open(username);
@@ -4698,11 +4893,9 @@ const App = {
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
       App.setHeaderTitle('Workshop');
-      // The house, like every other platform screen: there is no level above
-      // this one that is not home. _showOnlyScreen has already published the
-      // same default; the call is kept explicit because this is the screen
-      // whose back slot the change is about.
-      App.setBackIcon('home');
+      // Nothing in the left slot: the Workshop is a tab root, and its tab is
+      // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
+      // — see the table for why a root shows no glyph at all.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -4864,10 +5057,16 @@ const App = {
   //
   // The `navigateToMessages` name is kept below because push handling and
   // notifications.js's conversation rows still say it.
-  navigateToMessages(conversationId) {
+  navigateToMessages(conversationId, appSlug) {
     const messages = window.UsernodeReact?.messages;
-    if (App._inMessages && messages?.isOpen?.()) {
-      messages.route?.(conversationId || null);
+    // ALREADY HERE: route the island in place rather than replaying a screen
+    // swap onto the screen you are on. The screen ITSELF is asked, not just
+    // the flag — a stale `_inMessages` used to make this return early with
+    // nothing revealed, which is a tab press that does nothing. The clearer
+    // in _showOnlyScreen is what keeps the flag honest; this is the belt to
+    // its braces, and costs one condition.
+    if (App._inMessages && App._isScreenVisible('messages-screen') && messages?.isOpen?.()) {
+      messages.route?.(conversationId || null, appSlug || null);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -4883,7 +5082,7 @@ const App = {
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
     // effects resolve, and chrome remains suspended until the callback below.
-    messages?.route?.(conversationId || null);
+    messages?.route?.(conversationId || null, appSlug || null);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
@@ -5310,6 +5509,13 @@ const App = {
     const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
+      // The bar leaves WITH the app arriving, not after it. `after` below
+      // runs _showOnlyScreen, which would sync it a transition later — and
+      // the kit captures the incoming page from what this callback did, so
+      // a bar still painted here rides the zoom in and then vanishes. The
+      // parked handle goes with it, for the same reason and the same frame.
+      App._syncPlatformTabs('app-view');
+      App._syncParkedApp('app-view');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
@@ -5498,14 +5704,89 @@ const App = {
   // a message thread, a dev session) pass their own up-level hash. Because App._showOnlyScreen calls this
   // on EVERY screen change, there is no state in which the href can go
   // stale — same reasoning that makes the icon itself reliable.
+  // WHAT THE HEADER'S LEFT SLOT SHOWS, per screen — as a table, because the
+  // answer stopped being a two-way question when the tab bar landed (#2718).
+  //
+  // A TAB ROOT SHOWS NOTHING. Discover, Messages, Workshop and Me are reached
+  // by their own tab and the bar is on screen beside them, so a control in the
+  // corner that goes home is a second way to press a button already in view.
+  // It used to be the house, and the house used to be right: before the bar
+  // there was no other way out of these screens, which is what "every page
+  // should have a back or a home button, except Home" was about. Home has
+  // answered that for all five of them since the bar shipped.
+  //
+  // A SUB-PAGE SHOWS AN ARROW TO ITS TAB'S ROOT. Settings, Admin and the
+  // Leaderboard's three sections are reached FROM Me, and the app's own chat
+  // from Messages — so there is a level above, the chevron is honest about it,
+  // and it lands on the screen you came from rather than on Home.
+  //
+  // AN APP SHOWS THE ✕. Leaving an app is stepping out of somebody's program,
+  // not going up a level (see _showOnlyScreen).
+  //
+  // THIS TABLE HAS TO AGREE WITH TAB_FOR_SCREEN in
+  // frontend/src/features/nav/nav-store.js, which decides which tab lights up
+  // for the same screen. Two tables saying one thing is a thing that rots, so
+  // tests/header-back-home.test.js pins them against each other: every screen
+  // the map calls a root is listed here as a root, and every screen it maps to
+  // a tab it is not the root of is listed here with that tab's address.
+  _BACK_SLOT: {
+    'home-screen': ['none'],
+    'browse-screen': ['none'],
+    'messages-screen': ['none'],
+    'workshop-screen': ['none'],
+    'profile-screen': ['none'],
+    'app-view': ['close'],
+    'global-chat-screen': ['arrow', '#messages'],
+    'leaderboard-screen': ['arrow', '#profile'],
+    'settings-screen': ['arrow', '#profile'],
+    'admin-screen': ['arrow', '#profile'],
+  },
+
+  // The slot for a screen, as setBackIcon's own arguments. Anything off the
+  // table keeps the house: the auth screens are outside the tab bar entirely,
+  // and a screen nobody has classified is better off offering a way out than
+  // nothing at all.
+  _backSlotFor(revealId) {
+    const slot = App._BACK_SLOT[revealId];
+    if (!slot) return ['home'];
+    if (revealId === 'app-view') {
+      // THE DISCUSSION IS A LEVEL INSIDE MESSAGES, not a program to step out
+      // of (#2718 review, twice). `/app/<slug>/dev/chat` is a ROW IN THE
+      // INBOX — that is why the Workshop stopped offering it — so its slot is
+      // a chevron up to Messages.
+      //
+      // _repaintDevBody's chat branch already published exactly that, and it
+      // was not enough: navigateToApp reveals #app-view through
+      // PlatformUI.transition, whose `after` callback runs _showOnlyScreen,
+      // which runs this. So two writers RACED for the slot, and the ✕ to the
+      // Workshop won often enough to be reported as "clicking back goes to
+      // the workshop" — "for some reason", because the reason was which
+      // callback the transition happened to run last. (The note in
+      // _showOnlyScreen saying navigateToApp never comes through it is about
+      // the reveal, not about `after`.) The fix is the one this file
+      // already states for setBackIcon's two writers: THE TWO HAVE TO AGREE. Both now say
+      // the same thing, so the order stopped mattering.
+      if (App.currentTab === 'dev' && App.currentSubTab === 'chat') return ['arrow', '#messages'];
+      // The ✕'s DESTINATION is the breadcrumb navigateToApp recorded — the
+      // Workshop, when that is where this app was opened from — and home on
+      // every other route, which is what setBackIcon falls back to. The table
+      // holds the glyph; this holds the cases where the address is not the
+      // glyph's default.
+      if (App._appBackHref) return ['close', App._appBackHref];
+    }
+    return slot;
+  },
+
   setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
-    // THREE modes now (features/header/back-button-store.js): 'arrow' is a
-    // level up, 'home' is the house, and 'none' hides the slot outright.
-    // Home and the top-level Browse list use 'none' for their shared root
-    // header (#1569). Other screens keep the default Home button, or an arrow
-    // when they have a level above them.
-    const slot = arrow ? 'arrow' : (mode === 'none' ? 'none' : 'home');
+    // FOUR modes now (features/header/back-button-store.js): 'arrow' is a
+    // level up, 'home' is the house, 'close' is the ✕ that steps out of an
+    // app, and 'none' hides the slot outright. Home and the top-level Browse
+    // list use 'none' for their shared root header (#1569). Other screens keep
+    // the default Home button, or an arrow when they have a level above them.
+    const slot = arrow ? 'arrow'
+      : mode === 'close' ? 'close'
+        : (mode === 'none' ? 'none' : 'home');
     const target = href || (window.NavLink ? NavLink.homeHref() : '/');
     // The slot is React's (features/header/platform-header.tsx), so its
     // appearance is PUBLISHED, not written: a rendered className belongs to
@@ -5537,8 +5818,13 @@ const App = {
       // group collapses with it.
       btn.classList.toggle('hidden', slot === 'none');
       btn.setAttribute('href', target);
-      document.getElementById('back-icon-arrow')?.classList.toggle('hidden', !arrow);
-      document.getElementById('back-icon-home')?.classList.toggle('hidden', arrow);
+      // FOUR slots, three glyphs. Exactly one is shown and the other two are
+      // hidden — spelled as a comparison per glyph rather than as `!arrow`,
+      // which was right while there were two of them and silently draws the
+      // house for 'close'.
+      document.getElementById('back-icon-arrow')?.classList.toggle('hidden', slot !== 'arrow');
+      document.getElementById('back-icon-home')?.classList.toggle('hidden', slot !== 'home');
+      document.getElementById('back-icon-close')?.classList.toggle('hidden', slot !== 'close');
     }
   },
 
@@ -5581,7 +5867,7 @@ const App = {
   // file already joins title fragments with elsewhere.
   setHeaderTitle(text, subtitle) {
     // Streamlined Concept: #header-title is React-owned now
-    // (frontend/src/features/header/app-switcher-chip.tsx renders it as the
+    // (frontend/src/features/header/header-title.tsx renders it as the
     // tappable app-context tab), so the text goes through the bridge into
     // header-title-store — never a direct textContent write, which React
     // would reconcile away.
@@ -5701,6 +5987,13 @@ const App = {
     // Improve store, so this publishes the fact instead of repainting a node:
     // one owner for the attribute, which is the whole ownership rule.
     window.Improve?.setTab(tab, App.currentSubTab);
+    // AND THE RAIL, which is up on the app's Workshop and down on the app
+    // itself (see _syncPlatformTabs). This hop is the only way to cross that
+    // line without a screen reveal, so it is the only other place that has to
+    // say so. Guarded on the app view actually being on screen: switchTab is
+    // app-scoped, and publishing `app-view` as the current screen from
+    // anywhere else would light no tab and lose the one that is lit.
+    if (App._isScreenVisible?.('app-view')) App._syncPlatformTabs('app-view');
 
     // Leaving the Sessions sub-tab. The cross-app active-sessions POLL used
     // to be torn down here; it and the panel it drove are retired (#1367),
@@ -5723,7 +6016,12 @@ const App = {
       // The session screen's ← is renderDevView's; leaving Dev for the app
       // itself must take it back down (sub-view hops never pass
       // _showOnlyScreen, the usual owner of this reset).
-      App.setBackIcon('home');
+      //
+      // THE ✕, not the house: this is still inside the app, and the slot an
+      // app shows is the close button (#2718). It said 'home' because that was
+      // the default for everything that was not Home, and the reset was
+      // written before an app had a slot of its own.
+      App.setBackIcon('close', App._appBackHref || undefined);
       AppView.renderAppTab();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);
@@ -5844,6 +6142,20 @@ App._applyBootScreen = function _applyBootScreen() {
   if (!target || target === 'home-screen') return;
   App._revealBootScreen('home-screen', false);
   App._revealBootScreen(target, true);
+  // The tab bar's cold-boot answer, published for the same reason the screen
+  // roots' is: a bar that paints on a deep link into an app and is taken away
+  // by the router a moment later is a flash on the route people arrive on
+  // most. VISIBILITY ONLY — the store, not the class, because unlike the
+  // roots above this element is new markup that no prerendered document
+  // carries a `hidden` on, so React's first render and the document agree by
+  // construction and the island's layout effect applies the class before the
+  // first paint. Which TAB is lit is deliberately NOT set here: the bridge
+  // that carries it is installed by the bundle, which has not evaluated yet,
+  // and lighting a tab before hydration would be a first render that
+  // disagrees with the prerender.
+  if (target === 'app-view' || target.startsWith('auth-')) {
+    App.Visibility.publish('platform-tabs', false);
+  }
 };
 
 /**

@@ -40,6 +40,12 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} open   The router has this screen on show.
  * @property {WorkshopRow[]|null} rows  Null until the first load answers.
  * @property {boolean} error The load failed; the screen offers a retry.
+ * @property {null|'scope'} picker  Whether the scope chip's app list is
+ *   expanded. It was one field with three values rather than three booleans,
+ *   because the chip's list and the two panels the plus offered all occupied
+ *   the same place and opening one had to close the others; the plus is
+ *   retired from this screen (#2718 review), so one value is left and the
+ *   field is now a two-state thing that kept its shape.
  */
 
 /** @type {WorkshopState} */
@@ -47,6 +53,7 @@ const INITIAL = {
   open: false,
   rows: null,
   error: false,
+  picker: null,
 };
 
 export const workshopStore = createStore(INITIAL);

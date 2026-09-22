@@ -1,17 +1,19 @@
 /**
- * The legacy → React seam for the Improve panel.
+ * The legacy → React seam for the Improve feature.
  *
  * Same shape as ../work-drawer/mount.ts: the controller already imports its
- * store directly (it is an importing module — it needs the kit-surface seam),
- * so all this file does is install the flush and publish the controller on the
- * bridge.
+ * store directly, so all this file does is install the flush and publish the
+ * controller on the bridge.
  *
- * `setFlush(flushSync)` is load-bearing here for the reason it is everywhere
- * else in the shell: `Improve.open()` publishes `open: true` and then hands
+ * `setFlush(flushSync)` was load-bearing for a presentation this controller
+ * no longer owns: `Improve.open()` published `open: true` and then handed
  * `#improve-panel` to the kit, which measures the content's height ONCE at
- * present time to seed the sheet's slide-up spring. Batched, that measurement
- * would read the previous frame — a panel whose rows have not rendered — and
- * the sheet would spring to the wrong height.
+ * present time to seed the sheet's slide-up spring — batched, that
+ * measurement read the previous frame and the sheet sprang to the wrong
+ * height. The panel retired (#2718 review) and ../app-context/ makes that
+ * measurement now. It stays because the rule is not about presentation: a
+ * store this shell's classic scripts write has to flush synchronously, or a
+ * publish and the DOM it implies land in different frames.
  */
 
 import { flushSync } from 'react-dom';

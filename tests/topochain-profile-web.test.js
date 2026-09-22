@@ -56,13 +56,17 @@ const profilePublicTsx = read('frontend/src/features/profile/public-profile-card
 // Settings and Admin. dapp.json pins its POSITION among the destinations;
 // this pins that it ships visible and navigates by hash.
 
-test('the menu ships the profile entrance, with no `hidden` class', () => {
-  const at = indexHtml.indexOf('id="switcher-row-profile"');
-  assert.ok(at > -1, 'the profile row must exist in the shipped shell');
+test('the shell ships the profile entrance, with no `hidden` class', () => {
+  // It was `#switcher-row-profile` in the app chip's menu; #2718 made it the
+  // Me TAB. What this test is about is unchanged and is the reason it is in
+  // this file: the entrance must be in the shipped document and visible, not
+  // behind a native capability probe.
+  const at = indexHtml.indexOf('id="platform-tab-me"');
+  assert.ok(at > -1, 'the profile entrance must exist in the shipped shell');
   const anchor = indexHtml.slice(indexHtml.lastIndexOf('<a ', at), indexHtml.indexOf('</a>', at));
   const classAttr = (anchor.match(/class="([^"]*)"/) || [])[1] || '';
   assert.ok(!/\bhidden\b/.test(classAttr),
-    'the row must ship visible — a `hidden` class puts it back behind the bridge');
+    'the tab must ship visible — a `hidden` class puts it back behind the bridge');
   assert.match(anchor, /href="#profile"/, 'and hash navigation drives the screen');
 });
 

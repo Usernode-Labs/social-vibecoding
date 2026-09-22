@@ -123,7 +123,7 @@ test('the count rides only on a genuine collapse', () => {
 
 test('the sheet filters a Messages tab off the row flag, not off kind', () => {
   assert.match(SHEET_SRC, /const messages = all\.filter\(\(view\) => view\.conversation\)/);
-  assert.match(SHEET_SRC, /tab === 'unread' \? unread : tab === 'messages' \? messages : all/);
+  assert.match(SHEET_SRC, /tab === 'unread' \? unread\s*\n\s*: tab === 'messages' \? messages\s*\n\s*: tab === 'agents' \? \[\] : all/);
   // The flag is set where CONVERSATION_NOTIF_KINDS already lives, so the tab
   // cannot drift from the set the routing and the row copy agree on.
   assert.match(FE_SRC, /conversation: true,/);

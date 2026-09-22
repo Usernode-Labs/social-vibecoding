@@ -1384,9 +1384,11 @@ export function init() {
     // untouched.
     //
     // The button's outbox dot moved rather than went: #feedback-queue-dot
-    // keeps its id and its writer (paintQueueDot) and now renders on
-    // #improve-btn, which is the only way to reach this dialog from the
-    // header.
+    // keeps its id and its writer (paintQueueDot) through two moves — onto
+    // #improve-btn, and onto the Homeroom mark when #2718 retired that pill.
+    // It sits on whatever control is the way to reach this dialog from the
+    // header, and the mark is that control now: "Give feedback" is the lead
+    // row of its menu.
     // Admin/moderation console (#588) is a drawer row now, not a header
     // button — its click handler is wired in HeaderMenu.init() (close the
     // drawer; the anchor's #admin href does the navigating). The row is

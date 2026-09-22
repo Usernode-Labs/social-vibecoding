@@ -49,7 +49,7 @@
 import { useRef, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
-import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { HandRaisedIcon, SpeechCheckIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
@@ -57,6 +57,9 @@ import { AppsLoadError } from '../apps/load-error';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { workshopStore } from './workshop-store.js';
+import {
+  WorkshopPicker, WorkshopScope,
+} from './workshop-chrome';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
 // capture fixtures assert the revealed screen inside the same task — so the
@@ -100,6 +103,7 @@ export function orderRows(apps: WorkshopRow[]): WorkshopRow[] {
 }
 
 /** Join a counts map onto the app rows. A slug with no entry is two zeroes. */
+
 export function joinCounts(apps: Array<Omit<WorkshopRow, 'working' | 'needs'>>, counts: Counts): WorkshopRow[] {
   return apps.map((app) => {
     const found = counts[app.slug];
@@ -244,10 +248,37 @@ export function WorkshopScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
+    picker: null | 'scope';
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
+  // ONE LIST, EVERY APP. The three tabs — Current status / Needs you / All
+  // items — are gone from this screen (see ./workshop-chrome.tsx): they are
+  // the APP Workshop's tabs, about one app's items, and up here they were
+  // filtering a list of apps by whether a number on it was non-zero. Each row
+  // already carries both numbers, so the filter hid apps to say something the
+  // rows were saying anyway.
   const rows = state.rows ? orderRows(state.rows) : null;
-  const empty = !!rows && rows.length === 0 && !state.error;
+  const all = rows;
+  // `#workshop-empty` keeps its ONE meaning — you have no apps at all — and
+  // that is a contract rather than a nicety: dapp.json selects
+  // `#workshop-empty.hidden` to prove the card is gone once the list has
+  // rows, so a tab that merely filters to nothing must not raise it. A tab
+  // with nothing in it says so in its own line below.
+  // The totals the legend prints. Across EVERY app, not the filtered tab:
+  // the question is "how much is there altogether", and an answer that moved
+  // when you changed tabs would be answering a different one. Null until the
+  // list has answered — see the legend's note.
+  // Nothing to total with no apps: the empty card below already says why the
+  // screen is bare, and "0 working on · 0 waiting on your vote" over it is the
+  // same nothing said twice, in the confident voice of a measurement.
+  const TOTAL = 'font-semibold text-zinc-900 dark:text-zinc-100';
+  const totals = all && all.length > 0
+    ? all.reduce((acc, row) => ({
+      working: acc.working + (row.working || 0),
+      needs: acc.needs + (row.needs || 0),
+    }), { working: 0, needs: 0 })
+    : null;
+  const empty = !!all && all.length === 0 && !state.error;
 
   return (
     <main
@@ -264,19 +295,72 @@ export function WorkshopScreen() {
           floats on. `max-w-2xl mx-auto` is the only thing here that is this
           screen's own — GroupedList owns its own `mx-4` gutter and radius. */}
       <div className="max-w-2xl mx-auto pb-8">
-        <SectionHeader>Your apps</SectionHeader>
+        {/* NO TITLE HERE (#2718 review). This screen and Messages both drew
+            their own name under a bar that was already saying it — the same
+            word twice, an inch apart, on the two screens that had been made
+            to agree about what a title IS. The bar is the title, which is
+            what it is for on every other screen in the shell; the chip below
+            says which workshop, which is the thing the bar cannot. */}
+        {/* THE CHIP, THE TABS AND THE PLUS — see ./workshop-chrome.tsx for
+            what each is for. They render whether or not the list has
+            answered: a screen whose controls appear after its data does is a
+            screen that moves under the thumb reaching for them. */}
+        {/* `pt-5` CLEARS THE HEADER'S NOTCH (#2718 review). The bar is
+            `rounded-b-2xl -mb-2`, so every screen root starts 8px UNDER its
+            bottom edge and whatever leads a screen has to step down past it.
+            The retired <h1> was carrying that step in its own `padding-top`,
+            and taking the title away took the clearance with it: the chip's
+            top 8px went under the bar, sliced flat by it. 20px is the 8 the
+            notch owes plus 12 of air, which is what Messages' own first
+            element steps down by. */}
+        <div className="px-4 pt-5 pb-2 flex items-center gap-2">
+          <WorkshopScope apps={all} open={state.picker === 'scope'} />
+        </div>
+        {state.picker
+          ? <WorkshopPicker apps={all} />
+          : null}
         {/* THE LEGEND IS NOT DECORATION. Two bare numbers on a row cannot be
             read, and the per-pill tooltip is not available to a thumb — so the
             two glyphs are named once, here, in the muted line the language
-            uses under a section label. */}
-        <p className="px-4 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
+            uses under a section label.
+
+            IT CARRIES THE TOTALS NOW (#2718). The design study put three
+            count cards at the top of this screen — "4 in vote / 2 working / 7
+            open issues" — and the question they answer is a fair one this
+            screen could not answer: the rows say which APPS need you, and
+            nowhere said how much there is altogether.
+
+            As numbers in the legend rather than as cards, because the legend
+            is already the line that explains these two glyphs, and a card
+            deck above a list whose every row carries the same two figures
+            would be the third telling of one fact. "Open issues" is not here:
+            /api/workshop/counts folds governance issues into `working`
+            alongside sessions and promoted proposals, so a third figure would
+            have to be invented rather than read.
+
+            Null until the list answers — the totals are a fact about the
+            rows, so they wait for the rows rather than printing a confident
+            zero over skeletons.
+
+            THE WORDS ARE NOT THE NUMBER'S TO CHANGE. This first shipped as
+            "2 working on" / "3 waiting on your vote", which reworded the
+            legend on the way past — and a declared check pins the phrase
+            "Votes waiting on you" on this screen, so it went red on the
+            platform's own run. The number is ADDITIVE: the legend says
+            exactly what it said before and gains a figure at the end. That is
+            also the better reading, because the glyph's name and its count
+            are two different things and the name is the one that has to be
+            legible cold. */}
+        <p className="px-4 pt-2 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
           <span className="inline-flex items-center gap-1">
             <HandRaisedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
             You are working on
+            {totals ? <b id="workshop-total-working" className={TOTAL}>{totals.working}</b> : null}
           </span>
           <span className="inline-flex items-center gap-1">
             <SpeechCheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
             Votes waiting on you
+            {totals ? <b id="workshop-total-needs" className={TOTAL}>{totals.needs}</b> : null}
           </span>
         </p>
         <GroupedList id="workshop-list">

@@ -4,7 +4,7 @@
 // presentations, all of them decided in app.css: a kit bottom sheet on touch,
 // a CSS bottom sheet below `sm`, and at `sm`+ for a mouse a panel hanging
 // under the chip that opened it. That last one used to be the same
-// full-height right-edge slide-over as #improve-panel and the notifications
+// full-height right-edge slide-over as the retired #improve-panel and the notifications
 // sheet, which is right for a list with no natural end and wrong for a menu:
 // the trigger sits in the middle of the top bar, and on a wide display the
 // answer arrived a foot away from the question.
@@ -224,10 +224,13 @@ test('the panel follows the chip when the title is not centred', () => {
 
 // ── The backdrop ───────────────────────────────────────────────────────
 
-test('the backdrop dims exactly as the Improve panel\'s does', () => {
-  // These two panels open from the same bar and dismiss the same way, so one
-  // dimming the page and the other not made them read as two different KINDS
-  // of surface. The desktop transparency override that did that is gone.
+test('the backdrop dims at every width, and catches the dismissing click', () => {
+  // This guarded SAMENESS with the Improve panel's backdrop, because the two
+  // opened from the same bar and dismissed the same way — one dimming the
+  // page and the other not made them read as two different KINDS of surface.
+  // The panel is retired (#2718 review), so there is no second backdrop to be
+  // the same as, and what is left is the rule that mattered: the dim is not a
+  // width choice.
   // Narrowed from "no desktop rule may touch the backdrop at all". That was
   // the right guard when the only reason to reach for one was to turn the dim
   // off, and too broad the moment a desktop rule moved where the dim STARTS
@@ -243,13 +246,8 @@ test('the backdrop dims exactly as the Improve panel\'s does', () => {
       'nor fade it out: opacity is the open/closed switch, not a width choice');
   }
 
-  // Sameness by construction rather than by two copies of a value: both
-  // overlays ship one class string and share one pair of opacity rules.
-  const IMPROVE = read('frontend/src/features/improve/improve-panel.tsx');
-  const cls = /id="improve-overlay"[\s\S]{0,200}?className="([^"]*)"/.exec(IMPROVE);
-  assert.ok(cls, 'the Improve panel states its backdrop classes');
-  assert.ok(SHEET.includes(`className="${cls[1]}"`),
-    `the switcher's backdrop must carry the same run: ${cls[1]}`);
+  // It covers the page and nothing else decides that.
+  assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,300}?className="fixed inset-0/);
 
   // And it is still the thing that catches the dismissing click.
   assert.match(rule('#apps-switcher-overlay[data-open]'), /pointer-events:\s*auto/);
@@ -293,22 +291,6 @@ test('the sheet markup is one panel — the presentation is entirely CSS', () =>
 });
 
 // ── The panel's contents ───────────────────────────────────────────────
-
-test('the app strip revalidates on every open without clearing cached rows', () => {
-  const start = SHEET.indexOf('// The viewer\'s apps, in the home grid');
-  const end = SHEET.indexOf('// Every way into an app funnels through', start);
-  assert.ok(start >= 0 && end > start, 'located the app-list loading effect');
-  const effect = SHEET.slice(start, end);
-
-  assert.match(effect, /if \(!open\) return;/,
-    'a closed sheet does not fetch during prerender or while hidden');
-  assert.doesNotMatch(effect, /if \(!open\s*\|\||\|\|\s*apps\)/,
-    'a previous response must not suppress the next open-time refresh');
-  assert.match(effect, /\}, \[open\]\);/,
-    'each closed-to-open transition reruns the request');
-  assert.doesNotMatch(effect, /setApps\(null\)/,
-    'the last successful strip stays visible while it revalidates');
-});
 
 test('the panel is deliberately wider than the rails, and still fits', () => {
   const block = switcherDesktopBlock();
@@ -355,17 +337,21 @@ test('the panel meets the header rather than floating under it', () => {
     'the hairline is the brand one the chip itself wears');
 });
 
-test('the Apps label is the same label as In this app, not a heading', () => {
-  // The row it sits in cannot use SECTION — it holds Create New and the close
-  // button too — so the type half is shared as a constant and the row states
-  // SECTION's own padding. Both halves have to hold for "the same as In this
-  // app" to be true.
+test('the label row is a label, not a heading', () => {
+  // The row it sits in cannot use SECTION — it holds the close button too —
+  // so the type half is shared as a constant and the row states SECTION's own
+  // padding. Both halves have to hold for it to read as a label.
+  //
+  // IT SAYS THE APP'S NAME NOW. "Apps" was right while a strip of every app
+  // sat under it; with the strip retired (#2718 review) this row names what
+  // the sheet is about, and the duplicate label that used to open the list
+  // below went with it.
   assert.match(SHEET, /const SECTION_TYPE = 'text-\[0\.7rem\] font-semibold uppercase tracking-wide '/,
     'the type half is a constant of its own');
   assert.match(SHEET, /const SECTION = 'px-5 pt-4 pb-1 ' \+ SECTION_TYPE;/,
     'and SECTION is that constant plus the row it owns');
-  assert.match(SHEET, /className=\{'flex-1 min-w-0 block ' \+ SECTION_TYPE\}/,
-    'the Apps label reads as a label…');
+  assert.match(SHEET, /className=\{'flex-1 min-w-0 block truncate ' \+ SECTION_TYPE\}/,
+    'the label reads as a label…');
   assert.match(SHEET, /className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0"/,
     '…in a row carrying SECTION\'s own padding');
   assert.doesNotMatch(SHEET, /text-lg font-semibold text-zinc-900/,
@@ -373,77 +359,44 @@ test('the Apps label is the same label as In this app, not a heading', () => {
 });
 
 test('every group in the menu announces itself', () => {
-  // Apps, the platform's destinations, the viewer's own. Home/Discover/
-  // Messages were the one group without a label, which read as rows left
-  // over above "You".
+  // ONE GROUP NOW. "Platform" and "You" were the platform's destinations and
+  // the viewer's, and both left with #2718 — the tab bar carries the first
+  // and the Profile screen the second. The apps strip was the third and left
+  // on the owner's review, so what remains is named after the APP, which is
+  // what every row in it is about.
   //
-  // "In this app" is NOT in this list any more, and its absence is the point:
-  // the App | Board | Activity strip it captioned has left this menu. The
-  // menu picks WHICH APP, so a control about the app you are already inside
-  // sat between you and the list you opened it for. The Improve panel keeps
-  // the strip and the header's back arrow is the way out of a Board — see
-  // the assertion below, which is what stops it drifting back.
-  for (const label of ['Apps', 'Platform', 'You']) {
-    assert.ok(SHEET.includes('>' + label + '<') || SHEET.includes('\n            ' + label + '\n'),
-      `the ${label} group is labelled`);
-  }
-  // It goes INSIDE #switcher-nav, above Home — which keeps Home and Discover
-  // adjacent siblings, and dapp.json selects on exactly that.
+  // "In this app" is not in this list either, and its absence is older: the
+  // App | Board | Activity strip it captioned left when the menu was still
+  // picking WHICH APP, because a control about the app you are already inside
+  // sat between you and the list you opened it for.
+  assert.match(SHEET, /\{appLabel\}\n\s+<\/span>/,
+    "the one group is labelled with the app's name");
   const nav = SHEET.slice(SHEET.indexOf('id="switcher-nav"'));
-  const label = nav.indexOf('>Platform<');
-  const home = nav.indexOf('id="switcher-row-home"');
-  assert.ok(label > 0 && label < home, 'the label precedes the rows it names');
-  assert.doesNotMatch(nav.slice(label, home), /id="switcher-row-/,
-    'and nothing sits between it and Home, so #switcher-row-home + '
-    + '#switcher-row-discover still resolves (dapp.json)');
+  assert.ok(!nav.includes('{appLabel}</div>'),
+    'and not a second time inside the list — the header row is the label now');
+  assert.doesNotMatch(nav, /id="switcher-row-/,
+    'and no platform destination is left in this menu at all — they are tabs '
+    + 'and Profile rows now (#2718)');
 });
 
-test('the menu is the APP PICKER — the view strip is not in it', () => {
-  // The regression this guards: the strip is one module rendered from a
-  // caller-supplied id map, so a second surface is one import away, and a
-  // duplicated navigation control is the kind of thing that reads as
-  // harmless in a diff. Two owners of one decision is what view-tabs.tsx's
-  // own header warned about; the chip's copy was it.
-  assert.ok(!/AppViewTabs/.test(SHEET),
-    'no view strip in the chip menu');
+test('the view strip is single-homed — in the menu, and nowhere twice', () => {
+  // THE RULE IS THE SAME; THE HOME MOVED (#2718 review). The strip is one
+  // module rendered from a caller-supplied id map, so a second surface is one
+  // import away and a duplicated navigation control is the kind of thing that
+  // reads as harmless in a diff. It used to live in the Improve panel and the
+  // menu was forbidden it; the panel is retired, so the menu is where it
+  // lives and the duplicate to guard against is the `Open in Workshop` ROW
+  // that named the same destination one row below it.
+  assert.match(SHEET, /<AppViewTabs/, 'the strip is here now');
+  assert.ok(!/id="app-menu-row-workshop"/.test(SHEET),
+    'and the row that named the same destination is gone');
+  // The row was the only one of the two carrying the vote count, so the count
+  // came with it rather than going away.
+  assert.match(TABS, /id="app-menu-workshop-owed"/);
+  assert.match(SHEET, /owed=\{owed\}/);
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
-    'and no caption left behind for it — comments explaining the removal '
-    + 'are fine, rendered text is not');
-});
-
-test('equal air above and below the app strip, which is not equal padding', () => {
-  const strip = SHEET.match(/id="apps-switcher-list"[\s\S]{0,200}?className="([^"]*)"/);
-  assert.ok(strip, 'the strip states its padding');
-  const pt = strip[1].match(/\bpt-(\d+)\b/);
-  const pb = strip[1].match(/\bpb-(\d+)\b/);
-  assert.ok(pt && pb, 'both paddings are explicit');
-
-  // Every term, read from the source rather than restated, because the whole
-  // point is that the four of them do not cancel out the way they look like
-  // they should.
-  const labelRow = SHEET.match(/className="flex items-center gap-3 px-5 pt-\d+ pb-(\d+) shrink-0"/);
-  assert.ok(labelRow, 'the Apps label row states its bottom padding');
-  const section = SHEET.match(/const SECTION = 'px-5 pt-(\d+) pb-\d+ ' \+ SECTION_TYPE;/);
-  assert.ok(section, 'SECTION states the padding it opens with');
-
-  // The selected tile's ring paints outside its own box: ring-2 ring-offset-2.
-  const tile = SHEET.match(/ring-(\d+) ring-offset-(\d+)/);
-  assert.ok(tile, 'the selected tile states its ring');
-  const RING = Number(tile[1]) + Number(tile[2]);
-
-  // What the EYE measures, on each side of the tiles:
-  //   above — the label row's own bottom padding, plus the strip's top
-  //           padding, LESS the ring that paints up into it
-  //   below — the strip's bottom padding, plus the padding the next label
-  //           opens with
-  const above = step(Number(labelRow[1])) + step(Number(pt[1])) - RING;
-  const below = step(Number(pb[1])) + step(Number(section[1]));
-  assert.equal(above, below,
-    `the tiles read ${above}px above and ${below}px below — the ring outset `
-    + "and the next label's own padding are why symmetric padding is not "
-    + 'symmetric air');
-  assert.ok(step(Number(pt[1])) >= RING,
-    'and the top padding still clears the ring, or its top arc is sliced flat');
+    'and no caption left behind — comments explaining a move are fine, '
+    + 'rendered text is not');
 });
 
 // ── The segmented control's pill ───────────────────────────────────────

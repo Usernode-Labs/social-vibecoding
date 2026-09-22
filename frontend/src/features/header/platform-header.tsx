@@ -11,9 +11,9 @@
  * (App.setBackIcon on #back-btn, the title text, the red unread badge), so
  * React must never reconcile over those nodes: every class string below is a
  * constant prop, rendered once at hydration and never again. The exceptions
- * are React-owned end to end: <ImproveButton/> (which carries the work-in-
- * flight indicators) and <AppSwitcherChip/> — both of whose
- * writers publish through improveStore rather than touching the DOM.
+ * are React-owned end to end: <HeaderTitle/> and <PlatformMark/> (which
+ * carries the work-in-flight indicators) — both of whose writers publish
+ * through improveStore rather than touching the DOM.
  *
  * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
  * (`#app/<slug>/app`) hides the whole header, and App.setChromeless used to do
@@ -34,6 +34,7 @@ import {
   BellIcon,
   ChevronLeftIcon,
   HomeIcon,
+  XIcon,
 } from '@/components/ui/icons';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -41,8 +42,9 @@ import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
-import { AppSwitcherChip } from './app-switcher-chip';
-import { ImproveButton } from '../improve/improve-button';
+import { HeaderTitle } from './header-title';
+import { PlatformMark } from './platform-mark';
+import { SidebarToggle } from '../nav/sidebar-toggle';
 import { boardHref, improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
@@ -83,7 +85,7 @@ import '../notifications/mount';
 // Both halves are fixed in one place instead: the chip renders on session
 // routes now, and the pill is its subtitle. Same store, same component, same
 // #header-status-pill id and still inside #platform-header — see
-// ./app-switcher-chip.tsx.
+// ./header-title.tsx.
 
 // LIGHT-MODE SURFACES ARE zinc-50, NOT zinc-100. tailwind.config.js overrides
 // the ramp, and `zinc-100` there is #eaeaea — byte-identical to the light page
@@ -104,6 +106,12 @@ import '../notifications/mount';
 // pinned to 28px (tests/header-height-parity.test.js, and #909 before it), so
 // the ratio scales rather than the row. The hairline is inside the h-7 box
 // (border-box), so the row's ceiling holds.
+// The left group's class string, hoisted for the reason every other one in
+// this file is: it has to be a CONSTANT, rendered once at hydration and never
+// recomputed. `.platform-header-left` is what app.css hangs the group's own
+// visibility on; nothing here decides it.
+const LEFT_GROUP_CLASS = 'h-7 shrink-0 flex items-center gap-1.5 min-w-0 platform-header-left';
+
 const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
   + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
   + ' text-[color:var(--brand-ink)] un-touch-target';
@@ -191,7 +199,7 @@ export function PlatformHeader() {
   // publishes here rather than writing `hidden` into React-owned DOM.
   const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
   // …and INSIDE AN APP the slot is derived from the ROUTE, not from the
-  // imperative call. <AppSwitcherChip/> already gates on exactly this
+  // imperative call. <HeaderTitle/> already gates on exactly this
   // condition — it is what swaps the chip's subtitle for the lifecycle pill —
   // so leaving the back slot to an ordering-dependent setBackIcon() call was
   // the odd one out, and it is the one that kept coming up hidden on staging
@@ -208,8 +216,16 @@ export function PlatformHeader() {
   // everything else keeps whatever the last setBackIcon() published, which on
   // a platform screen is 'home' by default and 'arrow' where that screen owns
   // a sub-level of its own (a Settings section, a Browse detail, a thread).
-  const mode = routeUp ? 'arrow' : backMode;
+  // #2718: the app view's own 'close' outranks the route's level-up. Inside
+  // an app the ✕ is the whole way out — the Workshop and the app's other
+  // views are rows of the mark's menu now, not a chevron's destination — so a
+  // sub-route that used to earn an arrow gets the ✕ that leaves the app
+  // instead. The DESTINATION is unchanged either way: `resolvedBackHref`
+  // still prefers the route's up-level href, so ✕ from a session lands on
+  // that app's Workshop exactly as ← did.
+  const mode = backMode === 'close' ? 'close' : (routeUp ? 'arrow' : backMode);
   const backArrow = mode === 'arrow';
+  const backClose = mode === 'close';
   const resolvedBackHref = routeUp
     || (mode === 'home' ? homeHref() : backHref);
 
@@ -386,12 +402,38 @@ export function PlatformHeader() {
 
             Derived from the same two flags the children use, so there is no
             third source of truth about whether this group has content.
+
+            AND ITS CLASS IS A CONSTANT AGAIN (#2718 review). It spent a
+            round varying with the rail's visibility, so that a tab root whose
+            back slot is empty could still show the sidebar toggle. That read
+            `useVisibility('platform-tabs')` DURING RENDER — and the visibility
+            store is published by public/js/app.js, a classic script, which
+            runs BEFORE this deferred module hydrates. So the prerender used
+            the default `true` and the first client render saw the router's
+            real answer, and the two disagreed about this element's className
+            AND about whether it had a toggle in it: React error #418 on every
+            route, which is a console error, which fails every declared check.
+            Found by building the shell against React's development bundle and
+            reading the diff it prints.
+
+            Whether this group has anything IN it is now entirely app.css's
+            question — it can see the back anchor's own `hidden`, the bar's
+            own `hidden` and the viewport, and it is not part of hydration.
+            That is the same division ../nav/tab-bar.tsx already makes for the
+            bar itself, and the reason it lands its visibility through
+            `useHiddenClass` rather than through a rendered className.
         */}
-        <div
-          ref={leftGroupRef}
-          className={'h-7 shrink-0 flex items-center gap-1.5 min-w-0'
-            + (mode === 'none' ? ' hidden' : '')}
-        >
+        <div ref={leftGroupRef} className={LEFT_GROUP_CLASS}>
+          {/*
+                FIRST IN THE GROUP, so it sits in the window's top-left
+                corner — where VS Code, Slack, Linear, Notion and the design
+                study's own prototype all put this control. It is inside the
+                measured group rather than beside it so use-header-layout.ts
+                counts it without being told: that hook decides whether the
+                title can centre from the group's INNER EDGE, and a control
+                outside the group is 28px of room it would hand to the title.
+            */}
+          <SidebarToggle />
           {/*
                 #1036: a real anchor, not a button, so cmd/ctrl-click,
                 middle-click and right-click → "Open in new tab" work on it.
@@ -426,7 +468,7 @@ export function PlatformHeader() {
           <a
             id="back-btn"
             className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
-            aria-label={backArrow ? 'Back' : 'Home'}
+            aria-label={backArrow ? 'Back' : backClose ? 'Close app' : 'Home'}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
           >
             {/*
@@ -444,24 +486,41 @@ export function PlatformHeader() {
             />
             <HomeIcon
               id="back-icon-home"
-              className={backArrow ? 'hidden w-5 h-5' : 'w-5 h-5'}
+              className={mode === 'home' ? 'w-5 h-5' : 'hidden w-5 h-5'}
+            />
+            {/*
+                #2718's third glyph. It ships `hidden`, like the arrow, and
+                the house's test had to change with it: `!backArrow` drew the
+                house for every mode that was not 'arrow', which is exactly
+                the bug a third one introduces. Each glyph now names its own
+                mode. public/js/app.js's pre-hydration fallback in
+                setBackIcon() spells the same three comparisons.
+            */}
+            <XIcon
+              id="back-icon-close"
+              className={backClose ? 'w-5 h-5' : 'hidden w-5 h-5'}
             />
           </a>
         </div>
         {/*
-            The chip: the screen's only h1, and on every screen but a dev
-            session a tappable "(avatar) name ⌄" control that opens the
-            switcher menu. #1431 gated it on being inside an app; #1443
-            made it unconditional, which is what lets every other header
-            slot go. See app-switcher-chip.tsx.
+            The screen's only h1 — a NAME, not a control, since #2718. It was
+            a chip whose menu listed every platform destination; the tab bar
+            carries those now, so the menu behind it became the app's own and
+            a name that opens a menu about something else is a label that
+            lies. The menu has its own button at the other end of the bar
+            (./platform-mark.tsx) and this went back to naming where you are.
+            Inside an app it is that app's tile and name. See
+            ./header-title.tsx.
         */}
-        <AppSwitcherChip titleRef={titleRef} />
-        {/* `gap-2.5`, not `gap-1`. The bell and Improve are an ALERT and an
-            ACTION — one tells you something happened, the other starts work —
-            and at 4px they read as two halves of one segmented control, which
-            is what "they look joined together" was. 10px is the smallest gap
-            that separates them without the right group growing enough to
-            change the title's centred-vs-flow decision on a 390pt screen. */}
+        <HeaderTitle titleRef={titleRef} />
+        {/* `gap-2.5`, not `gap-1`. The bell and the mark are an ALERT and a
+            MENU — one tells you something happened, the other opens the app's
+            options — and at 4px they read as two halves of one segmented
+            control, which is what "they look joined together" was. 10px is the
+            smallest gap that separates them without the right group growing
+            enough to change the title's centred-vs-flow decision on a 390pt
+            screen. It was measured with Improve between them and holds
+            without it: the gap is between neighbours, not across the group. */}
         <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center gap-2.5">
           {/*
               HEADER SLIM-DOWN: the fork label, the platform + app build pills
@@ -480,11 +539,14 @@ export function PlatformHeader() {
                 #app-mode-switch   the App/Dev segmented control. An app is
                                    just an app now; "Dev" is a destination the
                                    panel links to rather than a mode the header
-                                   toggles. `#improve-btn` inherits its exact
-                                   show/hide lifecycle.
-                #feedback-btn      → the panel's "Give feedback" row. Its
-                                   outbox dot (#feedback-queue-dot) moved onto
-                                   #improve-btn, keeping its id and its writer.
+                                   toggles. `#improve-btn` inherited its exact
+                                   show/hide lifecycle, and #2718 passed that
+                                   on again to #app-menu-row-improve.
+                #feedback-btn      → the panel's "Give feedback" row, a row of
+                                   the mark's menu since #2718. Its outbox dot
+                                   (#feedback-queue-dot) went to #improve-btn
+                                   and then to the mark, keeping its id and its
+                                   writer through both moves.
                 #work-drawer-btn   → the panel's session sections, split into
                                    this app's and everything else.
                 #dev-console-btn   → the panel's "Developer terminal" row,
@@ -503,7 +565,23 @@ export function PlatformHeader() {
               availability change their contents, never whether the rows exist.
           */}
           {/*
-              The Improve button. It MUST stay inside this right-group div:
+              #improve-btn IS RETIRED (#2718), and this is where it stood.
+
+              It was the bar's one filled control — a violet "Improve" pill
+              between the bell and the mark — and it went for the reason the
+              mark's own note below gives: inside an app the bar is that app's
+              (its tile, its name, its close button) plus the platform's
+              signature, and a third control that is neither is what made the
+              right group read as a toolbar. The design draws two.
+
+              Nothing it did was dropped. The panel it opened is a row of the
+              mark's menu (#app-menu-row-improve, ../app-context/
+              app-context-sheet.tsx) carrying its glyph; its two dots are on
+              the mark (../header/platform-mark.tsx). The three things it
+              itself replaced — #app-mode-switch, #feedback-btn,
+              #work-drawer-btn — are all still reachable, by the same panel.
+
+              WHATEVER GOES HERE NEXT MUST STAY INSIDE THIS right-group div.
               rightGroupRef is what use-header-layout.ts measures as the
               title's right side group, so a control moved out of it stops
               counting towards the clearance the centering measurement needs.
@@ -511,10 +589,6 @@ export function PlatformHeader() {
               nextElementSibling, and a sibling wedged in between broke the
               measurement silently; the ref removed that particular trap, not
               the requirement.)
-
-              Unlike everything else in this bar it is React-owned end to end —
-              no public/js/** module writes to it — so its className is
-              rendered rather than constant. See ../improve/improve-button.tsx.
           */}
           {/*
               The App / Feed / Kanban segmented control rode here between
@@ -529,14 +603,16 @@ export function PlatformHeader() {
               bell survives here — see the #1443 note in RETIRED_IDS for
               where the chat bubble went.
 
-              IT SITS TO IMPROVE'S LEFT, which is the arrangement the board
+              IT SITS TO THE MARK'S LEFT, which is the arrangement the board
               draws and the one this bar has always had. It was moved to the
               far right for a round on the argument that a standing alert
-              wants a fixed address and Improve's width moves it; the
+              wants a fixed address and Improve's width moved it; the
               arrangement was preferred as it was, so the alert reads inward
-              from the edge and the ACTION owns the corner your thumb reaches
-              for. Both orders are defensible — this is the one we ship, and
-              a declared check pins it so it does not drift back by accident.
+              from the edge and the corner your thumb reaches for goes to the
+              control that never moves. Improve is retired (#2718) and the
+              argument only got stronger: the mark is a fixed 26px tile, so
+              the bell's address is now fixed too. A declared check pins the
+              order so it does not drift back by accident.
 
               THE UI OVERHAUL folded both into the hamburger and the
               Streamlined Concept takes that back, for a reason the drawer
@@ -561,13 +637,13 @@ export function PlatformHeader() {
           */}
           {/*
               The experimental chat toggle rode here, between Improve and the
-              bell, as a pill flipping `Chat` / `Classic`. It is Improve's now
-              — the head of "Changes in progress", as "New chat
-              (experimental)" — for a reason the two labels make plain: it
-              STARTS something, and everything else that starts something on
-              this app lives in that panel. See
-              ../global-chat/new-chat-button.tsx for the rest of the argument,
-              including why the return trip did not need a header control.
+              bell, as a pill flipping `Chat` / `Classic`. It went to the
+              Improve panel as an entry point — it STARTS something, and the
+              return trip already had two owners inside the chat screen — and
+              from there to the Messages inbox, which is where the chats it
+              starts are listed and resumed (`#messages-new-agent`, gated on
+              the same two flags as the rows). The panel retired with it
+              already gone (#2718 review).
           */}
           <a
             id="notifications-btn"
@@ -599,7 +675,23 @@ export function PlatformHeader() {
             >
             </span>
           </a>
-          <ImproveButton />
+          {/*
+              THE MARK, LAST, and the corner is the whole argument for the
+              position. This is the one control on the bar that is always
+              there and always means the same thing — the platform's own menu
+              — and a thumb reaching the top-right corner should find the
+              thing that never moves, not the thing whose width changes with
+              the app's state. It also puts the platform's signature at the
+              edge of a bar that, inside an app, is otherwise entirely that
+              app's: its tile, its name, its close button.
+
+              The group is bell · mark now. #improve-btn stood between them
+              for four commits of this run, while its rows were being taken
+              into this menu one at a time; the commit that emptied it is the
+              one that removed it, so the bar never spent a commit offering a
+              control with nothing behind it.
+          */}
+          <PlatformMark />
           {/*
               The "Create new app" entry point used to live here in the header
               as a "+" pill; it's been moved into the home-screen feed itself,
