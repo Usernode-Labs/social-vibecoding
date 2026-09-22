@@ -580,12 +580,13 @@ async function listen(app) {
   return { server, base: `http://127.0.0.1:${server.address().port}` };
 }
 
-test('the screen loads in one request: measures, rules and recent runs', async () => {
+test('the screen loads in one request: measures, rules and recent runs', async (t) => {
   // The GET handler reads the PROCESS clock (`Date.now()`), not the pinned
-  // `NOW` the pure-function tests pass in — so this one row's window has to
-  // straddle the real instant, or the fixture ages into "window has closed"
-  // the week after the pinned date (which is how it first failed).
-  const live = challengeRow({ schedule_start: iso(Date.now() - 3 * DAY), schedule_end: iso(Date.now() + 4 * DAY) });
+  // `NOW` the pure-function tests pass in — so freeze it to `NOW` here, or
+  // the fixture ages into "window has closed" the week after the pinned
+  // date (which is how it first failed).
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const live = challengeRow();
   currentMockPool = scriptedPool({ challenges: [live] });
   currentMockPool.query = async (sql) => {
     if (sql.includes('LEFT JOIN challenge_templates ct ON ct.id = r.challenge_template_id')) {

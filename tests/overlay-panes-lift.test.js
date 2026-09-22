@@ -1,37 +1,8 @@
 'use strict';
 
-// THE SHELL'S THREE FLOATING PANES ARE ONE SURFACE, AND IT CASTS ITS OWN DIM.
-//
-// The bell's rail, the Improve rail and the app chip's menu are the three
-// things in the shell that present over a scrim. They had drifted into three
-// different surfaces: the bell wore `.dc-lift dc-lift-session` (the dev
-// screen's glass), the other two wore `bg-white dark:bg-zinc-900` with a zinc
-// hairline and `shadow-2xl` — the pre-lift panel look.
-//
-// The bell's glass looked DULL, and the cause was where the dim came from.
-// Each pane raised a sibling backdrop at z-40 carrying `bg-black/40` and sat
-// above it at z-50. `backdrop-filter` samples everything painted behind the
-// element, so the thing the glass was frosting was a page already dimmed 40%.
-// On the home ground: #f4f2e4 → #929189 under the backdrop → #cac7c3 under the
-// pane. Grey, on the surface meant to be the brightest thing on screen.
-//
-// Making the pane opaque fixed that and cost the glass — three flat white
-// slabs. Both halves are wanted, so the dim moved ONTO the pane as an outer
-// box-shadow. An outer shadow is clipped to outside the border box, so it is
-// never part of the element's own backdrop: the pane frosts the UNDIMMED page
-// while the same declaration darkens everything around it. Measured at
-// (200,700) and (1100,650), 1280x860, light:
-//
-//   opaque + backdrop dim   page #948a84   pane #ffffff   (flat)
-//   glass  + no dim         page #f7e7dc   pane #fcf6ee   (not modal)
-//   glass  + backdrop dim   page #948a84   pane #cac7c3   (the dull one)
-//   glass  + cast dim       page #948a84   pane #fcf6ee   (both)
-//
-// What this file pins is that arrangement: the shared surface, the glass, the
-// scrim living on the pane rather than behind it, the backdrops staying as
-// transparent click targets, and the dev screen's own planes untouched.
-//
-// Run with: node --test tests/overlay-panes-lift.test.js
+// Shared frosted material, bounded shadows and delayed closed-pane visibility.
+// Executable animation, stacking and hit-testing coverage is in
+// browser/overlay-scrim.mjs.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -108,78 +79,29 @@ test('the pane surface is GLASS, the same the dev screen wears', () => {
   assert.match(panel, /-webkit-backdrop-filter: var\(--dc-frost\)/);
 });
 
-test('the dim is cast BY the pane, so it is not in the pane\'s own backdrop', () => {
-  // The whole fix in one declaration. An outer box-shadow paints only outside
-  // the border box, so it darkens the page without ever reaching the area the
-  // backdrop-filter samples. 100vmax covers the viewport from wherever the
-  // pane is docked — which is why this works for a right rail, a bottom sheet
-  // and a centred dropdown without any of them knowing its own geometry.
-  const open = rule('.dc-lift-panel[data-open]');
-  assert.match(open, /box-shadow: var\(--dc-lift-shadow\), 0 0 0 100vmax var\(--pane-scrim\)/);
-  for (const tok of ['--pane-scrim:', '--dc-lift-shadow:']) {
-    const decls = APP_CSS.match(new RegExp(`${tok}[^;]+;`, 'g')) || [];
-    assert.ok(decls.length >= 2, `${tok} must be declared in both themes`);
-  }
-  // The lift reads the same token the panes append to, so the two copies of
-  // its two layers cannot drift apart.
-  assert.match(rule('.dc-lift'), /box-shadow: var\(--dc-lift-shadow\)/);
-});
-
-test('the closed state keeps the same shadow COUNT, so the dim fades', () => {
-  // box-shadow interpolates componentwise; a list that changes length snaps.
-  // Closed carries the scrim as `transparent` rather than dropping the layer.
-  const shut = rule('.dc-lift-panel');
-  assert.match(shut, /box-shadow: var\(--dc-lift-shadow\), 0 0 0 100vmax transparent/);
-  const count = (s) => (s.match(/box-shadow:[^;]+;/)[0].match(/0 0 0 100vmax/g) || []).length;
-  assert.equal(count(shut), count(rule('.dc-lift-panel[data-open]')));
-  // And each pane's transition has to carry box-shadow, or the dim snaps on at
-  // the start of the open and off at the start of the close.
-  for (const cls of ['.nav-sheet-transition', '.improve-panel-transition',
-    '.app-context-transition']) {
-    assert.match(rule(cls), /transition:[^;]*box-shadow/, `${cls} fades its dim`);
+test('panes keep bounded lift shadows and an owned cutout decoration', () => {
+  assert.match(rule('.dc-lift-panel'), /box-shadow: var\(--dc-lift-shadow\);/);
+  assert.doesNotMatch(APP_CSS, /100vmax/);
+  assert.match(rule('.overlay-scrim'), /pointer-events: none/);
+  for (const { id, overlay, src } of PANES) {
+    assert.ok(src.includes(`<OverlayScrim panelId="${id}" backdropId="${overlay}" />`));
   }
 });
 
-test('a CLOSED pane is not painted, because the scrim layer is 100vmax', () => {
-  // A performance rule. All three panes are always mounted — a closed rail is
-  // translated off-screen, not unmounted — and a 100vmax shadow is rasterised
-  // even when its colour is `transparent`. Measured in Chromium at 1280x860
-  // over 60 forced style-recalc + paint cycles:
-  //
-  //   painted while closed          frame median 51.9ms   p95 72.7ms
-  //   opacity: 0 while closed                 16.7ms          35.2ms
-  //   visibility: hidden while closed         16.7ms          17.1ms
-  //
-  // 3x the frame cost on EVERY screen, which is enough to make
-  // timing-dependent checks fail on a slow container.
-  const shut = rule('.dc-lift-panel:not([data-open])');
-  assert.match(shut, /opacity: 0/, 'a closed pane suppresses its paint');
-  // The delay is what keeps the slide-out visible: opacity drops AFTER the
-  // 200ms transition, and opening carries no delay so it paints all the way in.
-  assert.match(shut, /transition:[^;]*opacity 0s linear 200ms/,
-    'and only once the pane has finished sliding out');
-  assert.match(shut, /transition:[^;]*transform 200ms/,
-    'restating the transition here must not drop the slide');
-  assert.match(shut, /transition:[^;]*box-shadow 200ms/, 'nor the dim fade');
+test('closed panes hide only after exit and kit adoption owns its own lifetime', () => {
+  const shut = rule('.dc-lift-panel:not([data-open]):not(.platform-sheet-adopted)');
+  assert.match(shut, /visibility: hidden/);
+  assert.match(shut, /visibility 0s linear 200ms/);
+  assert.match(shut, /opacity 0s linear 200ms/);
+  assert.match(shut, /transform 200ms/);
+  assert.match(rule('.dc-lift-panel'), /visibility: visible/);
 });
 
-test('...and it does NOT use visibility, which would hide the panes\' TEXT', () => {
-  // The regression this replaced. `visibility: hidden` is marginally faster and
-  // removes the subtree from `innerText` — and dapp.json reads text out of
-  // these panes on routes where they are CLOSED. "Improve panel leads with
-  // Give feedback" asserts that string on `/`, where #improve-panel is shut.
-  // Any future check of the same shape would have gone the same way.
-  const shut = rule('.dc-lift-panel:not([data-open])');
-  assert.doesNotMatch(shut, /visibility:\s*hidden/,
-    'a closed pane must stay in innerText — see the declared checks that read it');
-
-  // The contract, stated against the real thing: the built shell ships that
-  // string inside the closed panel, so nothing may make it unreadable.
-  const shell = read('public/index.html');
-  const at = shell.indexOf('id="improve-panel"');
-  assert.ok(at > 0, 'the built shell carries the always-mounted Improve panel');
-  assert.ok(shell.indexOf('Give feedback', at) > at,
-    'and "Give feedback" inside it, which a declared check reads on `/`');
+test('the declared feedback text check opens its pane before reading it', () => {
+  const manifest = JSON.parse(read('dapp.json'));
+  const check = manifest.tests.find(t => t.name.startsWith('Improve panel leads'));
+  assert.match(check.path, /shot=improve/);
+  assert.match(check.expectSelector, /#improve-panel\[data-open\]/);
 });
 
 test('the backdrops stay, transparent — they are the click target', () => {

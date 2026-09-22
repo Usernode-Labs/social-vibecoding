@@ -1630,10 +1630,16 @@ async function reconcileNativeReviewedHead({
   // it onto the new head would leave the row 'pending' with nothing building
   // until the stale sweeper noticed ten minutes later — the exact dead wait
   // #1728 measured. 'error' is a preview that did not boot, which a rebuild
-  // against the merged commit is the right way to find out about.
+  // against the merged commit is the right way to find out about. And only a
+  // GREEN verdict carries (#2693): a settled failure used to ride along on
+  // the premise that a merge of main does not change what the author must
+  // fix — false exactly when main is what fixes it (a red base repaired, a
+  // test main mended). The merged tree is the only thing that can turn that
+  // verdict green and nobody has tested it, so it is re-checked. Same rule as
+  // CARRIABLE_CHECK_STATES on the imported path (services/pr-import-sync.js).
   const checksCarry = move.kind === 'mechanical'
     && sameSha(session.checks_commit_sha, oldHead)
-    && ['passing', 'skipped', 'failing'].includes(session.check_state);
+    && ['passing', 'skipped'].includes(session.check_state);
   const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
   if (needsChecks) {
     if (deferChecks) {

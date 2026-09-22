@@ -41,11 +41,9 @@
  * screen as two different objects. The lift supplies fill, hairline and
  * shadow, so there is nothing here to keep in step by hand.
  *
- * The fill is frosted glass, and the modal dim is one of the shadow layers
- * rather than a paint on #improve-overlay — an outer shadow cannot reach the
- * element's own backdrop-filter, which is what lets the panel frost an
- * UNDIMMED page while darkening everything around it. app.css's
- * `.dc-lift-panel` block carries the measurements.
+ * The fill remains frosted glass. OverlayScrim paints the surrounding dim
+ * through a rounded cutout, after the panel at the same z-index. This keeps
+ * its backdrop undimmed while the original overlay remains the click target.
  *
  * The one thing this file states rather than inherits is the SHAPE, in
  * app.css: `.dc-lift` rounds the two corners of a sheet docked to the floor,
@@ -59,6 +57,7 @@
  * produces. Sessions load from `Improve.open()`, never from render.
  */
 
+import { OverlayScrim } from '../../lib/overlay-scrim-view';
 import { useCallback, type ReactNode } from 'react';
 
 import {
@@ -738,6 +737,7 @@ export function ImprovePanel() {
           </div>
         </div>
       </div>
+      <OverlayScrim panelId="improve-panel" backdropId="improve-overlay" />
     </>
   );
 }

@@ -193,13 +193,20 @@ async function classifyImportedHeadMove({ session, oldHead, newHead }) {
   }
 }
 
-// Verdicts that describe a finished run. Only these can be carried onto a
-// mechanically merged head: a 'pending' verdict is a run still going (or one
-// the sync just superseded), and carrying its stamp forward would leave the
-// row 'pending' with nothing building — the ten-minute stale wait of #1728.
-// 'error' is left out too: it usually means the preview did not boot, which
-// a rebuild against the merged commit is the right way to find out about.
-const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped', 'failing']);
+// Verdicts that can be carried onto a mechanically merged head. Only a
+// GREEN one: a 'pending' verdict is a run still going (or one the sync just
+// superseded), and carrying its stamp forward would leave the row 'pending'
+// with nothing building — the ten-minute stale wait of #1728. 'error' is
+// left out too: it usually means the preview did not boot, which a rebuild
+// against the merged commit is the right way to find out about. And a
+// 'failing' verdict never carries (#2693): it used to, on the premise that a
+// merge of main does not change what the author must fix — which is false
+// exactly when main is what fixes it (a red base repaired, a test main
+// mended, a dependency main bumped). Proposal 4654 sat red, pinned to a
+// commit that contained the fix, with nothing building and no way to re-run
+// short of an authored push. The merged tree is the only thing that can turn
+// the verdict green, and nobody has tested it, so it is tested.
+const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped']);
 
 // Apply a head change: advance the stored SHA, decide what the move costs the
 // approvals and the checks, refresh drift, and re-run SHA-pinned checks where

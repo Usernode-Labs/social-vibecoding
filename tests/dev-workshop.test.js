@@ -76,6 +76,7 @@ function makeAppView(over) {
   const store = o.localStorage || {};
   const sandbox = {
     console,
+    Date,
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),
     escapeAttr: (s) => String(s == null ? '' : s),
@@ -120,7 +121,6 @@ function makeAppView(over) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
-  vm.runInContext(`Date.now = () => ${FIXED_NOW};`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };
   return AppView;
@@ -132,7 +132,9 @@ function makeAppView(over) {
 // file, in the host (these helpers) and in every sandbox (makeAppView), so
 // the fixtures mean the same thing whatever day the suite runs on.
 const FIXED_NOW = Date.parse('2026-09-16T12:00:00Z');
-Date.now = () => FIXED_NOW;
+// Freeze Date construction too: the rendered relative timestamp uses new Date().
+test.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW });
+test.after(() => test.mock.timers.reset());
 const at = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString();
 
 // Values built inside the vm realm carry that realm's prototypes, which trips

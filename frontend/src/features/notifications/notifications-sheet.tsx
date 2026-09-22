@@ -92,6 +92,7 @@
  * exactly what the SSG prerender ships.
  */
 
+import { OverlayScrim } from '../../lib/overlay-scrim-view';
 import { useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -633,6 +634,7 @@ export function NotificationsSheetView() {
       ) : null}
       </div>
       </div>
+      <OverlayScrim panelId="notifications-sheet" backdropId="notifications-sheet-overlay" />
     </>
   );
 }
