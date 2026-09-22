@@ -4701,6 +4701,11 @@
       "name": "An app's Workshop keeps the rail, which only a running app covers (#2718 review)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden)) #platform-header"
+    },
+    {
+      "name": "Folded-sidebar peek (#2764): the sidebar toggle sits in the header's left corner above the rail it controls, starting open, with the edge hot zone absent until the rail is folded",
+      "path": "/?demo=1",
+      "expectSelector": "body:has(#platform-tabs[aria-label=\"Sections\"]:not(.platform-tabs-folded)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-controls=\"platform-tabs\"][aria-pressed=\"true\"]"
     }
   ],
   "governance": {
