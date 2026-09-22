@@ -246,6 +246,37 @@ test('the bar spends the home-indicator inset exactly once', () => {
   }
 });
 
+test('the same five tabs stand up at desktop, and the band goes away', () => {
+  // A bottom bar is a PHONE shape: at 1280px its five tabs sit 250px apart
+  // along the foot of the window, which is a row of unrelated buttons rather
+  // than a set of places. Slack, Discord, Teams and Telegram Desktop all turn
+  // the same bar into a left rail, and so does this.
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
+  assert.ok(at > 0, 'the desktop block must exist, at the shell\'s own md breakpoint');
+  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+
+  assert.match(block, /--platform-rail-w: 224px;/, 'the rail has a width');
+  assert.match(block, /--platform-tabs-h: var\(--platform-safe-bottom\);/,
+    'and the band at the foot is the home-indicator inset and nothing else');
+  assert.match(block, /width: var\(--platform-rail-w\);/, 'the bar takes that width');
+  assert.match(block, /grid-template-columns: none;/,
+    'and stops being five equal columns');
+  assert.match(block, /align-content: start;/,
+    'five rows spread over 800px of rail is the bar\'s own mistake on its side');
+  assert.match(block, /padding-left: var\(--platform-rail-w, 0px\);/,
+    'the screens move over by PADDING, so nothing about the flex chain moves');
+  // …and the app view is NOT one of the roots that move over: an app covers
+  // the rail, which is what "the app is the whole window" means. The prose
+  // above the rule says so, so the check is on the selector itself.
+  const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-left: var('));
+  assert.doesNotMatch(roots, /#app-view/, 'an app covers the rail');
+  assert.match(roots, /#messages-screen/, 'every platform root does move over');
+  // The parked strip is the rail's footer, and its pill becomes a caption
+  // because four things do not fit across 224px.
+  assert.match(block, /\.platform-parked \{[\s\S]{0,300}width: var\(--platform-rail-w\);/);
+  assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
+});
+
 test('the reservation is keyed off the bar\'s own hidden class', () => {
   // No second flag to keep in step: the island publishes `hidden` and the
   // screens read it, the same shape the wallpaper's route test uses.
@@ -256,7 +287,9 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
   // why the parked strip's rule spells both terms out rather than adding 52px
   // to `--platform-bar-h`.
   assert.match(css, /\nbody \{\n(?:  \/\*[^]*?\*\/\n)?  --platform-bar-h: 0px;/);
-  assert.match(css, /--platform-tabs-h: 0px;\n\}/);
+  assert.match(css, /--platform-tabs-h: 0px;/);
+  assert.match(css, /--platform-rail-w: 0px;\n\}/,
+    'and the rail costs a phone no width at all');
   assert.match(css,
     /body:has\(#platform-tabs:not\(\.hidden\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-safe-bottom, 0px\)\);/,
     'the strip adds its own band, and only while the bar is there to sit on');

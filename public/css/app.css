@@ -16001,6 +16001,9 @@ body {
   /* Everything at the foot of the screen, stacked — what a surface above has
      to clear. With no strip it is the bar; with one it is both. */
   --platform-tabs-h: 0px;
+  /* The RAIL's width at desktop, where the same five tabs stand on their
+     side. 0 on a phone, where they are a bar and cost width nothing. */
+  --platform-rail-w: 0px;
 }
 html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
   --platform-bar-h: calc(56px + var(--platform-safe-bottom, 0px));
@@ -16278,4 +16281,152 @@ html.un-kb #platform-tabs {
   color: var(--text-muted);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   THE SAME FIVE TABS, STANDING UP — desktop from 768px (#2718)
+   ═══════════════════════════════════════════════════════════════════
+
+   A bottom bar is a PHONE shape, and it does not survive the trip: at
+   1280px the five tabs sit 250px apart along the foot of the screen, which
+   is a row of unrelated buttons rather than a set of places, and it spends
+   the one dimension a desktop has plenty of to save the one it does not.
+
+   Every host in the study does the same thing here, and it is not a
+   compromise — it is what their desktop apps have always been. Slack,
+   Discord, Teams and Telegram Desktop all turn their phone tab bar into a
+   LEFT RAIL: the sections stand up, get their labels beside their glyphs
+   instead of under them, and the content takes the width back.
+
+   UNDER THE HEADER, not beside it. That is this shell's own arrangement
+   rather than a borrowed one, and it is the half of the design the product
+   owner chose: the bar names where you are and carries the platform's own
+   controls, so it spans the window and the rail hangs below it. It also
+   means the header is the SAME OBJECT on both sides of every navigation,
+   so nothing about it animates when a screen swaps.
+
+   768px because that is `md`, which is where every other two-level layout in
+   this file switches (the Settings sidebar, the Admin console's nav, the
+   Messages list-and-thread split). One breakpoint, not a fourth opinion. */
+@media (min-width: 768px) {
+  /* THE BAND AT THE FOOT GOES AWAY ENTIRELY. What a screen has to clear
+     below it is the home-indicator inset and nothing else — on a desktop
+     that is 0, and the expression keeps it correct on a tablet that has one.
+     The rail's width takes its place, as padding rather than as a band. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
+    --platform-rail-w: 224px;
+    --platform-bar-h: 0px;
+    --platform-tabs-h: var(--platform-safe-bottom);
+  }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)):has(#platform-parked:not(.hidden)) {
+    --platform-tabs-h: var(--platform-safe-bottom);
+  }
+
+  /* THE SCREENS MOVE OVER, and they move over by PADDING rather than by a
+     layout change: every root is a `flex-1` child of the body column and
+     stays one, so nothing about the flex chain, the scroll containers or the
+     view transitions is touched. A root's own centred column then centres in
+     what is left, which is what it should do.
+
+     #app-view is deliberately absent: an app covers the rail, which is what
+     "the app is the whole window" means, and the rail is hidden there anyway
+     so the token would be 0 even if it were listed. */
+  :is(#home-screen, #browse-screen, #workshop-screen, #leaderboard-screen,
+      #profile-screen, #admin-screen, #settings-screen, #messages-screen,
+      #global-chat-screen) {
+    padding-left: var(--platform-rail-w, 0px);
+  }
+
+  .platform-tabs {
+    /* FROM UNDER THE HEADER TO THE FLOOR. The header is `position: relative`
+       in normal flow, so its height is a token rather than something to
+       measure — `--platform-header-h`, which the bar's own py-3 arithmetic
+       keeps true, plus whatever strips are above it. */
+    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
+      + var(--platform-safe-top, 0px));
+    right: auto;
+    bottom: 0;
+    width: var(--platform-rail-w);
+
+    /* A COLUMN THAT DOES NOT STRETCH. `grid-template-rows: repeat(5, 1fr)`
+       would spread five rows over 800px of rail, which is the bottom bar's
+       mistake turned on its side. */
+    grid-template-columns: none;
+    grid-auto-rows: max-content;
+    align-content: start;
+    gap: 2px;
+    padding: 8px;
+    padding-bottom: calc(8px + var(--platform-safe-bottom, 0px));
+
+    border-top: 0;
+    border-right: 1px solid var(--app-sheet-line);
+  }
+
+  /* A ROW, not a stack: the glyph leads and the label sits beside it at
+     reading size. Under a glyph at 11px the word is a caption on a target;
+     beside it at 15px it is the name of a place, which is what a rail's
+     rows are. */
+  .platform-tab {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: 12px;
+    font-size: 15px;
+  }
+  .platform-tab[aria-current="page"] {
+    background: var(--brand-tint);
+  }
+  .platform-tab-label {
+    max-width: none;
+  }
+
+  /* THE PARKED STRIP IS THE RAIL'S FOOTER. It is the app you left, and the
+     rail is the list of places you can go — so it belongs at the bottom of
+     that list rather than across a window whose content has nothing to do
+     with it. Same element, same store, same ✕. */
+  .platform-parked {
+    right: auto;
+    width: var(--platform-rail-w);
+    padding-bottom: var(--platform-safe-bottom, 0px);
+    height: auto;
+    min-height: 52px;
+    border-top: 1px solid var(--app-sheet-line);
+    border-right: 1px solid var(--app-sheet-line);
+  }
+  /* ABOVE the rail, so its hairline reads as the footer's edge rather than
+     as a line the rail draws through it. */
+  .platform-parked { z-index: 31; }
+
+  /* TWO LINES IN A 224px RAIL. On a phone the strip runs the width of the
+     screen and "Resume" fits beside the name as a pill; here the same four
+     things — tile, name, pill, ✕ — leave the name about 60px, which is two
+     characters and an ellipsis. So the pill goes ABOVE as a caption, which
+     is what a rail's own section labels look like, and the name gets the
+     whole row.
+
+     `order: -1` rather than moving the element: the pill is inside the
+     anchor because the whole strip is one target (a button inside an anchor
+     is invalid markup), and that has to stay true in both layouts. */
+  .platform-parked-open {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 6px 8px;
+    row-gap: 1px;
+  }
+  .platform-parked-pill {
+    order: -1;
+    width: 100%;
+    height: auto;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
 }
