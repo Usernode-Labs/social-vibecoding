@@ -11736,7 +11736,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 150,
+      "line": 151,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/:artifactId",
       "expression": null,
@@ -11755,7 +11755,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 212,
+      "line": 213,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/plan",
       "expression": null,
@@ -11773,7 +11773,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 286,
+      "line": 287,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/rerun",
       "expression": null,
@@ -11792,7 +11792,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 326,
+      "line": 327,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/override",
       "expression": null,

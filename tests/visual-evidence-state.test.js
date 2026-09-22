@@ -42,6 +42,38 @@ test('terminal-state and required-evidence policy distinguish an explicit no-imp
   });
 });
 
+test('evidence heartbeat renews only the current active run and stores a bounded stage', async () => {
+  let statement;
+  const pool = { query: async (sql, values) => {
+    statement = { sql: String(sql), values };
+    return { rowCount: 1 };
+  } };
+  const id = 'f'.repeat(32);
+  assert.deepEqual(await state.heartbeatRun(pool, id, 'checkout_revisions'), { active: true });
+  assert.deepEqual(statement.values, [id, 'checkout_revisions']);
+  assert.match(statement.sql, /s\.visual_evidence_run_id = r\.id/);
+  assert.match(statement.sql, /r\.state IN \('provisioning','exploring','replaying','reviewing'\)/);
+  assert.match(statement.sql, /trace_summary = jsonb_set/);
+  await assert.rejects(state.heartbeatRun(pool, id, 'https://private.internal'), {
+    code: 'invalid_evidence_heartbeat',
+  });
+});
+
+test('interrupted recovery rechecks the heartbeat under the transition lock', async () => {
+  const id = 'f'.repeat(32);
+  const pool = { query: async (sql) => {
+    if (String(sql).includes('FOR UPDATE OF r, s')) {
+      return { rows: [{ id, current_run_id: id, state: 'provisioning', updated_at: new Date() }] };
+    }
+    throw new Error('a renewed run must not be updated');
+  } };
+  await assert.rejects(state.transitionRun(pool, id, 'failed', {
+    failureCode: 'evidence_run_interrupted',
+    failureReason: 'Worker stopped.',
+    recoveryMinIdleMs: 60_000,
+  }), { code: 'evidence_run_active' });
+});
+
 test('recordIntentInTransaction reuses its caller-owned client without reconnecting or releasing it', async () => {
   const queries = [];
   let connectCalls = 0;
