@@ -189,9 +189,19 @@ test('the legend carries the totals, and says nothing when there is nothing', ()
   assert.match(decl, /acc\.working \+ \(row\.working \|\| 0\)/);
   assert.match(decl, /acc\.needs \+ \(row\.needs \|\| 0\)/);
   assert.ok(!decl.includes('rows'), 'it sums `all`, not the tab-filtered rows');
-  // Null until the list answers, so the prerender ships the wordy legend and
-  // hydration has nothing to correct.
-  assert.match(screen, /\{totals \? \(/);
+  // THE WORDS ARE NOT THE NUMBER'S TO CHANGE, which is the whole reason this
+  // assertion exists in this shape. The totals first shipped as "2 working
+  // on" / "3 waiting on your vote" — a rewording on the way past — and a
+  // declared check pins the phrase "Votes waiting on you" on this screen, so
+  // it went red on the platform's own run. The number is additive now: the
+  // legend says what it always said and gains a figure at the end.
+  assert.match(screen, /You are working on\n\s+\{totals \? <b id="workshop-total-working"/);
+  assert.match(screen, /Votes waiting on you\n\s+\{totals \? <b id="workshop-total-needs"/);
+  const dapp = JSON.parse(read('dapp.json'));
+  const pinned = dapp.tests.find((t) => t.expectText === 'Votes waiting on you');
+  assert.ok(pinned, 'the phrase is still a declared check\'s expectText');
+  assert.ok(read('public/index.html').includes('Votes waiting on you'),
+    'and the cold document still carries it, with no figure to wait for');
   assert.ok(!HTML.includes('id="workshop-total-working"'),
     'a figure read from data is not in a cold document');
 });

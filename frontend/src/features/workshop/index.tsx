@@ -283,6 +283,7 @@ export function WorkshopScreen() {
   // Nothing to total with no apps: the empty card below already says why the
   // screen is bare, and "0 working on · 0 waiting on your vote" over it is the
   // same nothing said twice, in the confident voice of a measurement.
+  const TOTAL = 'font-semibold text-zinc-900 dark:text-zinc-100';
   const totals = all && all.length > 0
     ? all.reduce((acc, row) => ({
       working: acc.working + (row.working || 0),
@@ -346,19 +347,27 @@ export function WorkshopScreen() {
 
             Null until the list answers — the totals are a fact about the
             rows, so they wait for the rows rather than printing a confident
-            zero over skeletons. */}
+            zero over skeletons.
+
+            THE WORDS ARE NOT THE NUMBER'S TO CHANGE. This first shipped as
+            "2 working on" / "3 waiting on your vote", which reworded the
+            legend on the way past — and a declared check pins the phrase
+            "Votes waiting on you" on this screen, so it went red on the
+            platform's own run. The number is ADDITIVE: the legend says
+            exactly what it said before and gains a figure at the end. That is
+            also the better reading, because the glyph's name and its count
+            are two different things and the name is the one that has to be
+            legible cold. */}
         <p className="px-4 pt-2 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
           <span className="inline-flex items-center gap-1">
             <HandRaisedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-            {totals ? (
-              <><b id="workshop-total-working" className="font-semibold text-zinc-900 dark:text-zinc-100">{totals.working}</b>{' working on'}</>
-            ) : 'You are working on'}
+            You are working on
+            {totals ? <b id="workshop-total-working" className={TOTAL}>{totals.working}</b> : null}
           </span>
           <span className="inline-flex items-center gap-1">
             <SpeechCheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-            {totals ? (
-              <><b id="workshop-total-needs" className="font-semibold text-zinc-900 dark:text-zinc-100">{totals.needs}</b>{' waiting on your vote'}</>
-            ) : 'Votes waiting on you'}
+            Votes waiting on you
+            {totals ? <b id="workshop-total-needs" className={TOTAL}>{totals.needs}</b> : null}
           </span>
         </p>
         <GroupedList id="workshop-list">
