@@ -4,7 +4,7 @@
 // presentations, all of them decided in app.css: a kit bottom sheet on touch,
 // a CSS bottom sheet below `sm`, and at `sm`+ for a mouse a panel hanging
 // under the chip that opened it. That last one used to be the same
-// full-height right-edge slide-over as #improve-panel and the notifications
+// full-height right-edge slide-over as the retired #improve-panel and the notifications
 // sheet, which is right for a list with no natural end and wrong for a menu:
 // the trigger sits in the middle of the top bar, and on a wide display the
 // answer arrived a foot away from the question.

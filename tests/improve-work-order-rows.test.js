@@ -42,9 +42,10 @@ const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 // (Streamlined Concept) — the Improve panel slimmed to its two actions, and
 // the board's drawer is the app's own surface.
 const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
-// The app's rows merged into the Improve panel — one surface for the app's
-// navigation and its work. This file used to read app-context-rows.tsx.
-const SHEET_TSX = read('frontend/src/features/improve/actions.tsx');
+// The surface that RENDERS the rows. It was the Improve panel, and the panel
+// retired (#2718 review): the sessions are the notifications sheet's Agents
+// tab, which is the one place that maps them to <SessionRow>.
+const SHEET_TSX = read('frontend/src/features/notifications/notifications-sheet.tsx');
 const SERVICE = read('src/services/external-agent-tasks.js');
 
 function loadImproveController(fetch) {
@@ -61,17 +62,28 @@ function loadImproveController(fetch) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // The one surface still listing these sessions. Flip `sheet.open` in a
+  // test that needs the reload gate open; it is the notifications sheet's
+  // flag, not the Improve panel's — that panel retired (#2718 review).
+  const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor: (app) => ({ kind: 'letter', letter: app.name[0] }) },
-      '../../lib/kit-surface': { adoptKitSurface: () => null },
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
+      // Improve panel's root through lib/kit-surface and swept the other
+      // sheets through lib/sheet-controller; the panel retired, `open()`
+      // forwards to the app-context sheet, and both stubs went with it. What
+      // it does import is the notifications sheet's own open flag — the one
+      // surface still listing these sessions, and the gate on reloading them.
+      '../notifications/notifications-sheet-store.js': {
+        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
+      },
       './improve-store.js': { improveStore: store },
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
     tail: 'window.__improve = Improve;',
   });
-  return { Improve: sandbox.__improve, store };
+  return { Improve: sandbox.__improve, store, sheet };
 }
 
 // A pool that answers one query and records what it was asked, so a test
@@ -183,10 +195,16 @@ test('the session lists are fetched before the panel is opened', () => {
     'never on top of a load that has happened or is happening');
   assert.match(body, /\.catch\(\(\) => \{\}\)/,
     'fire-and-forget: a preload that fails must not break a target publish');
-  // `open()` still loads — the point is that it now refreshes a list that is
-  // already on screen rather than drawing one.
-  const open = CONTROLLER.slice(CONTROLLER.indexOf('  open() {'));
-  assert.match(open.slice(0, open.indexOf('\n  },')), /Improve\.loadSessions\(\)/);
+  // THE REFRESH IS THE PUSH'S NOW, not `open()`'s. `open()` loaded the list
+  // again on the way in, which was the second half of this: prefetch draws
+  // it, the open refreshes it. The Improve panel retired (#2718 review) and
+  // `open()` is a forward to the surface's own controller, so the refresh
+  // moved to where it was always more accurate — `onSessionStateChanged`,
+  // driven by SessionState's tick and gated on that surface being up.
+  const changed = CONTROLLER.slice(CONTROLLER.indexOf('  onSessionStateChanged() {'));
+  assert.match(changed.slice(0, changed.indexOf('\n  },')),
+    /notificationsSheetStore\.get\(\)\.open\) Improve\.loadSessions\(\)/,
+    'and it refreshes a list that is already on screen rather than drawing one');
   // …and `loadSessions` only raises the placeholder when nothing has ever
   // loaded, which is what makes the refresh invisible.
   assert.match(CONTROLLER,

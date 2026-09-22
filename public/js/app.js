@@ -961,35 +961,65 @@ const App = {
     App._applyAppContextShot();
   },
 
-  // Screenshot-state deep link `?shot=improve`: open the Improve panel at
-  // boot, so the surface THE UI OVERHAUL built — sessions, the dev links, the
-  // repo and version rows — is reachable by URL for the before/after
-  // screenshots, the "Test this change" button and the dapp.json checks. It is
-  // only reachable by TAPPING the header button otherwise, which no still
-  // frame and no plain route can do.
+  // Screenshot-state deep links `?shot=improve` and `?shot=app-context`: open
+  // the surface Improve's controls sit on at boot, so it is reachable by URL
+  // for the before/after screenshots, the "Test this change" button and the
+  // dapp.json checks. It is only reachable by TAPPING the mark otherwise,
+  // which no still frame and no plain route can do.
   //
-  // Deliberately NOT env-gated, for exactly the reason ?shot=improve is not: pure
-  // UI state with no writes, and an IS_STAGING-only link would starve the
-  // production "before" shot forever while an ungated one starts working the
-  // moment it ships. Pair it with ?demo=1 in staging so the session sections
-  // have mock rows to render.
+  // THE TWO NAME ONE SURFACE NOW (#2718 review). `?shot=improve` opened the
+  // Improve panel and `?shot=app-context` the mark's menu; the panel retired
+  // and its contents moved into that menu, so both links open it and the
+  // older name is kept because checks and captures already say it.
   //
-  // It WAITS FOR A TARGET rather than firing on a fixed delay. Without one the
-  // panel refuses to open — correct behaviour, not something to work around —
-  // and on an /app/<slug> route the target is published by
-  // App.ImproveStatus.setAppOpen(), which runs after openApp()'s fetch has
-  // landed. A single 50ms tick (what ?shot=improve can afford, because the panel
-  // needs nothing but a settled shell) fired long before that, so the panel
-  // stayed shut and both of its declared checks failed on an empty surface.
+  // Deliberately NOT env-gated: pure UI state with no writes, and an
+  // IS_STAGING-only link would starve the production "before" shot forever
+  // while an ungated one starts working the moment it ships. Pair it with
+  // ?demo=1 in staging so the session sections have mock rows to render.
   //
-  // Polls instead, on the checks runner's own budget: an app route gets as
-  // long as its fetch needs. Bounded, so a route with no target at all — home
-  // included, which publishes none since the Improve button left that screen —
-  // stops trying rather than spinning for the life of the page. (A bare
-  // `/?shot=improve` therefore never opens the panel; its remaining dapp.json
-  // check asserts panel MARKUP that renders closed, not an open surface.)
+  // ONE THING CHANGED WITH THE SURFACE, and it is worth saying rather than
+  // discovering: the panel refused to open without a target, so a bare
+  // `/?shot=improve` never opened anything. The menu opens on Home too — the
+  // one screen you most need it from — so these links now reach a real
+  // surface on every route, and what differs between them is which rows have
+  // a subject.
   IMPROVE_SHOT_TRIES: 40,
   IMPROVE_SHOT_INTERVAL_MS: 100,
+
+  /**
+   * Open the surface Improve's controls sit on, then run `ready` once.
+   *
+   * ONE LOOP, WHERE THERE WERE FIVE COPIES. Each applier below polled for
+   * `#improve-panel[data-open]`; the Improve panel retired (#2718 review) and
+   * `Improve.open()` forwards to the app-context sheet, so there is one
+   * surface to wait for and one place that knows its id.
+   *
+   * It POLLS rather than firing on a fixed delay because what these shots
+   * need is not just a settled shell: on an /app/<slug> route the target is
+   * published by App.ImproveStatus.setAppOpen(), after openApp()'s fetch has
+   * landed, and a row gated on that target is not in the document until it
+   * does. A single 50ms tick fired long before that, which is how two
+   * declared checks once ran against an empty surface. Bounded, so a route
+   * that never publishes one stops trying rather than spinning for the life
+   * of the page.
+   *
+   * `ready` returns false to keep waiting — for a row that needs more than
+   * the surface itself — and anything else to stop.
+   */
+  _openImproveShot(ready) {
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.Improve?.open();
+        const surface = document.getElementById('apps-switcher-sheet');
+        if (surface && surface.hasAttribute('data-open')) {
+          if (!ready || ready() !== false) return;
+        }
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
 
   // `?shot=app-context`: open the APPS SWITCHER sheet at boot — the surface
   // behind the header's "app name ⌄" tab (Streamlined Concept). Same
@@ -1000,16 +1030,7 @@ const App = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'app-context') return;
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.AppContext?.open();
-        const panel = document.getElementById('apps-switcher-sheet');
-        if (panel && panel.hasAttribute('data-open')) return;
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot();
   },
 
   // Screenshot-state deep links `?shot=platform-updating` and
@@ -1031,31 +1052,21 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'platform-updating' && shot !== 'platform-update-ready') return;
     const ready = shot === 'platform-update-ready';
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.Improve?.open();
-        const panel = document.getElementById('improve-panel');
-        if (panel && panel.hasAttribute('data-open')) {
-          // A boot baseline that differs from what the row is handed is the
-          // whole of `isStale`; the prefetch state is what picks the shape.
-          App.loadedPlatformSha = '0000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-          const sha = '1111111bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-          App.shellUpdate = { sha, state: ready ? 'ready' : 'fetching' };
-          const info = { sha, repoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
-          App._lastVersionInfo = info;
-          // The 10s poll would repaint this row out from under the shot with
-          // the real answer, which for a local or staging build is `dev` — an
-          // entirely different branch. Pin the row for as long as the shot is
-          // on screen; nothing else reads this flag.
-          App._platformUpdateShot = true;
-          App.renderPlatformVersionPill(info);
-          return;
-        }
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot(() => {
+      // A boot baseline that differs from what the row is handed is the
+      // whole of `isStale`; the prefetch state is what picks the shape.
+      App.loadedPlatformSha = '0000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const sha = '1111111bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      App.shellUpdate = { sha, state: ready ? 'ready' : 'fetching' };
+      const info = { sha, repoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
+      App._lastVersionInfo = info;
+      // The 10s poll would repaint this row out from under the shot with
+      // the real answer, which for a local or staging build is `dev` — an
+      // entirely different branch. Pin the row for as long as the shot is
+      // on screen; nothing else reads this flag.
+      App._platformUpdateShot = true;
+      App.renderPlatformVersionPill(info);
+    });
   },
 
   // Screenshot-state deep links `?shot=app-updating` and
@@ -1069,37 +1080,20 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'app-updating' && shot !== 'app-update-ready') return;
     const ready = shot === 'app-update-ready';
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.Improve?.open();
-        const panel = document.getElementById('improve-panel');
-        if (panel && panel.hasAttribute('data-open')) {
-          window.Improve.update({ deploying: !ready, appUpdateReady: ready });
-          return;
-        }
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot(() => {
+      // `update()` no-ops without a slug, and the menu opens before the app
+      // fetch lands — see Improve.hasTarget()'s note. Keep waiting.
+      if (!window.Improve?.hasTarget?.()) return false;
+      window.Improve.update({ deploying: !ready, appUpdateReady: ready });
+      return true;
+    });
   },
 
   _applyImproveShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'improve') return;
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.Improve?.open();
-        // open() is a no-op without a target, so the panel's own state is
-        // what says whether it took.
-        const panel = document.getElementById('improve-panel');
-        if (panel && panel.hasAttribute('data-open')) return;
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot();
   },
 
   // Screenshot-state deep links `?shot=dev-terminal` and
@@ -1127,35 +1121,28 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'dev-terminal' && shot !== 'dev-terminal-open') return;
     const openIt = shot === 'dev-terminal-open';
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        // Stand in for the app frame that normally publishes this. All three
-        // calls are needed: _refreshButtonVisibility() shows the row only when
-        // there is an app slug AND an iframe on screen AND one of
-        // always-mode / a logged error / an already-open panel. A fresh
-        // browser has no localStorage and no errors, so without the mode call
-        // the row is correctly absent and the link would capture a panel with
-        // nothing in it to press.
-        const slug = App.currentApp;
-        if (slug && window.DevConsole) {
-          window.DevConsole.setCurrentApp(slug);
-          window.DevConsole.setButtonVisible(true);
-          window.DevConsole.setMode(window.DevConsole.MODE_ALWAYS);
-        }
-        window.Improve?.open();
-        const panel = document.getElementById('improve-panel');
-        const row = document.getElementById('improve-row-terminal');
-        if (panel && panel.hasAttribute('data-open') && row) {
-          // The panel closes on the way, so the row has to be pressed once
-          // and only once — a repeat would reopen nothing and re-hide this.
-          if (openIt) row.click();
-          return;
-        }
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    // Stand in for the app frame that normally publishes this. All three
+    // calls are needed: _refreshButtonVisibility() shows the row only when
+    // there is an app slug AND an iframe on screen AND one of always-mode /
+    // a logged error / an already-open surface. A fresh browser has no
+    // localStorage and no errors, so without the mode call the row is
+    // correctly absent and the link would capture a menu with nothing in it
+    // to press. Re-run on every attempt, because `App.currentApp` is not set
+    // until the route resolves.
+    App._openImproveShot(() => {
+      const slug = App.currentApp;
+      if (slug && window.DevConsole) {
+        window.DevConsole.setCurrentApp(slug);
+        window.DevConsole.setButtonVisible(true);
+        window.DevConsole.setMode(window.DevConsole.MODE_ALWAYS);
+      }
+      const row = document.getElementById('improve-row-terminal');
+      if (!row) return false;
+      // The surface closes on the way, so the row has to be pressed once and
+      // only once — a repeat would reopen nothing and re-hide this.
+      if (openIt) row.click();
+      return true;
+    });
   },
 
 

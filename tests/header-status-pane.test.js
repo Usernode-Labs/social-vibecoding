@@ -196,15 +196,19 @@ test('the version state is the glyph, not a second dot beside it', () => {
   assert.ok(!html.includes('id="improve-version-dot"'), 'the dot is gone');
   assert.ok(!html.includes('id="header-menu-deploy-dot"'),
     'and so is the hamburger-era copy — this is a retirement, not a move');
-  // The glyph is its own module since #2718 retired the button it led; it
-  // leads #app-menu-row-improve in the app's own menu now.
-  const glyph = fs.readFileSync(
-    path.join(root, 'frontend/src/features/improve/improve-glyph.tsx'), 'utf8');
-  assert.match(glyph, /BUSY_STATES = \['deploying', 'downloading'\]/);
-  assert.match(glyph, /READY_STATES = \['ready', 'failed'\]/);
-  assert.match(glyph, /versionState: string/,
-    'the glyph still reads the state the dot used to colour');
-  assert.doesNotMatch(glyph, /VERSION_DOT/, 'and the colour table went with it');
+  // AND SO IS THE GLYPH THAT REPLACED IT (#2718 review). It led
+  // #app-menu-row-improve, which opened the Improve panel; the panel retired
+  // and the row with it. What reads `versionState` now is the menu's own
+  // update row, which says the state in WORDS rather than colouring a mark —
+  // and it is no further away than the glyph was, because the glyph was
+  // inside this same closed menu. A cue inside a closed menu is not a cue;
+  // neither was the one it replaced, which is why the dots below are the
+  // header's whole at-rest budget.
+  const actions = fs.readFileSync(
+    path.join(root, 'frontend/src/features/improve/actions.tsx'), 'utf8');
+  assert.match(actions, /const \{ versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
+  assert.match(actions, /id="improve-update-ready"/, 'the ready state offers the reload');
+  assert.doesNotMatch(actions, /VERSION_DOT/, 'and the colour table is long gone');
 
   // THE TWO LIVE DOTS OUTLIVED THE BUTTON. They are on the mark, which is
   // what the header has where the pill used to be — and it had to be a

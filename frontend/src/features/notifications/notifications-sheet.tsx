@@ -338,9 +338,13 @@ export function NotificationsSheetView() {
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
 
-  // `?shot=notifications-messages` lands on the Messages tab, so the capture
-  // pipeline and the declared checks can reach a view that is otherwise only
-  // one click away and therefore invisible to both.
+  // `?shot=notifications-messages` lands on the Messages tab and
+  // `?shot=notifications-agents` on Agents, so the capture pipeline and the
+  // declared checks can reach a view that is otherwise only one click away
+  // and therefore invisible to both. Agents needs its own link for a second
+  // reason: the session rows it draws were the Improve panel's, and when the
+  // panel retired (#2718 review) six declared checks lost the only address
+  // that reached them.
   //
   // In an effect and not in the initial state, for the reason every deep link
   // in this bundle is: the SSG pass renders this island in Node, where there
@@ -352,6 +356,7 @@ export function NotificationsSheetView() {
     try { shot = new URLSearchParams(window.location.search).get('shot'); }
     catch { shot = null; }
     if (shot === 'notifications-messages') setTab('messages');
+    if (shot === 'notifications-agents') setTab('agents');
   }, []);
 
   const all = snap.screenList || [];

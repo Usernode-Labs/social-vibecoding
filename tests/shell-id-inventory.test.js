@@ -339,7 +339,6 @@ const ADDED_IDS = {
   // them is in the prerendered document, which is what this map is for.
   'workshop-scope': '#2718: the scope chip. It reads "All apps" on this screen, because this screen IS the all-apps one — narrowing navigates to that app\'s own Workshop rather than filtering here, which is the link-out every mini-app host in the study draws under a mini-app (Telegram to the bot\'s chat, Steam to the game\'s hub, Slack to the channel\'s files). Disabled with no apps rather than opening an empty list.',
   'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
-  'app-menu-row-workshop': '#2718: "Open in Workshop", scoped to the app in context. It is the move the study found under every mini-app whose deeper options go somewhere: Telegram sends you to the bot\'s chat as a row of Chats, Steam to that game\'s community hub, Slack and Teams to the channel\'s files. This is the Workshop tab, arriving filtered rather than at the top of a list. Outside an app it falls back to #workshop, the unscoped screen.',
   'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',
   // ── Three ids from #2718's second pass that are NOT in this map ──
   //
@@ -350,7 +349,6 @@ const ADDED_IDS = {
   // the same test a stray id does — so a conditional id is recorded in prose
   // rather than in the map. They are listed here so the inventory is still
   // the complete log of what this branch added.
-  'app-menu-row-improve': '#2718: "Improve this app" / "Improve the platform" — the header pill #improve-btn, as a row. Retiring that pill is what lands the app bar on the two controls the design draws (close · tile + name · bell · mark), and nothing it did was dropped: this row opens the same panel, carries the same three-state glyph (#improve-btn-glyph), and the two corner dots it wore are on the mark. Rendered always and `hidden` without a target, which is the pill\'s exact lifecycle and the reason its glyph is still in this inventory. A button rather than an anchor, for the About row\'s reason: what it opens is a panel, not an address.',
   'app-menu-row-about': '#2718: the row that opens the sheet\'s SECOND PANE — the repository, sharing, the running version and how to add the app to a home screen. A button and not an anchor, which is the honest shape: there is no address to open in a new tab, because the pane is this sheet in another state. Two panes of one sheet rather than two sheets, because the kit cannot present a sheet while it is still dismissing another.',
   // ── #2718: the platform's five places get a bar ──────────────────
   // The app chip's menu was carrying two unlike lists — the app's own
@@ -459,7 +457,6 @@ const ADDED_IDS = {
   // ── Home area labels: the block chrome moved above the card ──────
   'home-browse-btn': 'Discover\'s way into the #apps directory. Not a new control — it has always been the block\'s browse link — but it is in the COLD DOCUMENT now, which is why it is a new id here. The block\'s title moved out of the card to become the section\'s label, its controls followed (a card whose first row was chrome with one link floating at the end of it reads worse than one that opens on content), and a section heading is constant markup where the block behind it is fetched. So the control ships with the shell instead of appearing when /api/home-panels answers — which is also one less thing that pops in on a cached load.',
   // ── Platform UI pass: the update state, and where the versions live ──
-  'improve-btn-glyph': 'The Improve control\'s leading glyph, and a named element rather than a bare <svg> so a declared check can read `data-state` off it. Three states: a lightbulb at rest, a spinner while this app or the platform is building or downloading a build, and an arrow-path once one is ready to reload onto. It led the header pill until #2718 retired it and now leads #app-menu-row-improve, sized `w-5` to the menu\'s icons rather than `w-4` to the header\'s 28px content row. That move is also what cost the build state its at-rest cue — see frontend/src/features/improve/improve-glyph.tsx for why that is the acceptable half of the trade.',
   'settings-about-section': 'Settings → About: the three version rows. They have moved twice before (#1431 built an About block, #1443 took them to the Improve panel\'s footer). They are back because the question they were being read for — "is something happening, and is there a new version yet" — is answered directly by that footer now, as a note and a reload button. What is left over is reference material, and this is the reference screen.',
   'about-row-app-version': 'The open app\'s latest merged main, in that pane. Gated on `slug && !selfHosted`, exactly as the Improve panel\'s copy was: on the platform\'s own app this row IS the platform, so it and "Platform version" under it printed the same seven characters twice.',
   'about-app-version-slot': 'Its value. A store-fed island rather than a legacy innerHTML target — the pane around it is static, and a version arriving when an app opens should repaint one row, not the settings screen.',
@@ -468,7 +465,6 @@ const ADDED_IDS = {
   'more-followed': 'The "I followed along" checkbox, stored as `answers.followed_claim`. It is a SELF-REPORT and is deliberately kept out of `answers.verified`: LinkedIn returns aggregate follower statistics with no identity, Instagram exposes a count and no relationship lookup, and X retired its boolean friendship endpoint, so no network will confirm a follow for us. Hidden here because its label is shown only once at least one follow URL is configured.',
   // ── #1443: what came back ───────────────────────────────────────
   'messages-screen': 'The Messages screen root, restored. #1431 made it #messages-sheet because a header chat bubble on every route left a full-screen Messages with no honest answer to "back to where?" — the bubble is gone and Messages is a menu row now, so the screen is both the honest shape and the one every messaging product uses for reading past conversations.',
-  'improve-footer': 'The panel\'s reference block, restored. #1431 dissolved it and rehomed each fact separately; every move was defensible alone and the sum meant leaving the app to read facts about the app you were standing in.',
   'drawer-row-native-app-version': 'The installed Flutter release, back in that footer. #1431 renamed it #about-row-native-app-version for the Settings About block it built; the block is gone with the rows it existed to hold, so the name goes back too. `.drawer-ver-row` is the shared CSS recipe, not a claim about a drawer.',
   // ── #1443: the app's own views stayed in the Improve panel ──────
   // They spent one round of #1443 as menu rows, on the argument that they are
@@ -668,14 +664,8 @@ const ADDED_IDS = {
   // violet "Improve" pill, between the bell and the mark. The panel it opened
   // is reached from #app-menu-row-improve below; its glyph and both its dots
   // kept their ids and are listed here still, on the row and on the mark.
-  'improve-overlay': 'Backdrop behind the Improve panel. Never uses `hidden` — opacity fades it and pointer-events stops a closed backdrop eating clicks.',
-  'improve-panel': 'The panel root. Right-edge slide-over at `sm` and up, bottom sheet below it, and a real native-kit sheet on touch where the kit is loaded.',
-  'improve-target-name': 'Which app the panel is about — the platform\'s own row on the home screen.',
-  'improve-close': 'Close button in the Improve panel header.',
-  'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
   'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
-  'improve-sessions': 'The changes in flight, here and on the viewer\'s other apps — and the panel\'s ONE scroller, which is what keeps the actions and the views on screen at any height.',
   // #improve-version-dot is NOT here any more, and did not move: it is
   // retired. Amber while a build was deploying or downloading, violet once
   // one was here to reload onto — and the button's LEADING GLYPH already
@@ -841,6 +831,33 @@ const ADDED_IDS = {
   'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
   // ── #2707: the feedback destination is chosen, never assumed ────
   'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
+  // ── #2718 REVIEW: the Improve panel retired, and ten ids with it ─────
+  //
+  // These were added by this branch and by the two chunks before it, so they
+  // leave this map rather than entering RETIRED_IDS — the frozen baseline
+  // never had them, and an id the baseline never had cannot be retired from
+  // it. Listed here as a group so the removal reads as one decision:
+  //
+  //   improve-panel, improve-overlay, improve-body, improve-sessions,
+  //   improve-footer, improve-target-name, improve-close
+  //       The drawer itself: its root, its backdrop, its scroller, the
+  //       changes in flight, the reference footer, the app name in its title
+  //       bar and the control that shut it. The sessions became the
+  //       Workshop's and the notifications sheet's Agents tab, the footer's
+  //       facts became the menu's About pane, and what was left was two
+  //       buttons behind a tap — so the buttons moved up into the menu
+  //       (#improve-quick-actions, still here) and the drawer went.
+  //   app-menu-row-improve, improve-btn-glyph
+  //       The row that opened it and the three-state glyph that row carried.
+  //       The glyph's states are the mark's two dots (#feedback-queue-dot,
+  //       #improve-working-dot), which are on screen on every route rather
+  //       than inside a closed menu.
+  //   app-menu-row-workshop
+  //       "Open in Workshop". The view strip's Workshop segment
+  //       (#app-context-row-workshop) is one band above it in the same sheet
+  //       and goes to the same place; the row's one unique job was the vote
+  //       count, which moved with it as #app-menu-workshop-owed.
+
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

@@ -1385,14 +1385,14 @@ test('#2573: the button is offered on the gate the Improve panel offers New chan
   seedUntouched(AppView);
   const before = improveStore.get().readOnly;
   try {
-    // The same field, on the same store instance, that improve-panel.tsx
+    // The same field, on the same store instance, that the Improve panel
     // reads to decide whether to draw `#improve-row-new-session` at all.
     improveStore.set({ readOnly: true });
     const html = workshopHtml(AppView);
     assert.match(html, /data-ws-start-here=""/,
       'a read-only viewer is still told what state the app is in');
     assert.ok(!html.includes('data-ws-start-here-btn'),
-      'but is not offered a change they could not start from the panel either');
+      'but is not offered a change they could not start from the menu either');
   } finally {
     improveStore.set({ readOnly: before });
   }
@@ -1402,12 +1402,16 @@ test('#2573: the button is offered on the gate the Improve panel offers New chan
 
 // The entry point is BORROWED, not rebuilt: two copies of "navigate to the
 // app, then create a proposal" is the duplication this reuses away.
-test('#2573: the banner presses the Improve panel\'s own New change', () => {
+test('#2573: the banner presses the same New change the menu does', () => {
   assert.match(WORKSHOP, /import \{ Improve \} from '\.\.\/\.\.\/improve\/improve-controller\.js'/);
   assert.match(WORKSHOP, /onClick=\{\(\) => Improve\.startSession\(\)\}/);
-  const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
-  assert.match(PANEL, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
-    'which is the method the panel\'s row calls');
+  // The other button was the Improve panel's row; the panel retired (#2718
+  // review) and its two actions are the mark menu's, in ../improve/actions.tsx.
+  // Same method, which is the whole point of asserting both: two buttons
+  // saying "new change" have to mean it.
+  const ACTIONS = read('frontend/src/features/improve/actions.tsx');
+  assert.match(ACTIONS, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
+    'which is the method the menu\'s button calls');
 });
 
 test('"try taking this one next" names an open issue nobody is on', () => {

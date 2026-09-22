@@ -94,8 +94,6 @@ export function boardHref(slug, boardView) {
 
 /**
  * @typedef {object} ImproveState
- * @property {boolean} open
- * @property {boolean} adopted
  * @property {'app'|'platform'|null} target
  * @property {string|null} slug
  * @property {string} name
@@ -134,19 +132,20 @@ export function boardHref(slug, boardView) {
 
 /** @type {ImproveState} */
 const INITIAL = {
-  /** Whether the panel is presented. `hidden` on the root is derived from it. */
-  open: false,
-  /**
-   * Whether the presentation is a KIT sheet (touch) rather than the CSS
-   * slide-over. The kit brings its own backdrop, so #improve-overlay only
-   * raises when this is false — see ./improve-controller.js.
+  /*
+   * `open` AND `adopted` USED TO LEAD THIS LIST, and they retired with the
+   * surface they described (#2718 review). They were the Improve panel's
+   * presentation — is it up, and is it up as a KIT sheet — and the panel is
+   * gone: its two actions, its build notice and its view strip are rows of
+   * the app-context sheet, whose own store holds those two flags for the one
+   * surface that has them. Left here they would have been read by
+   * `Improve.toggle()` and `Improve.dismissForNav()` and written by nobody.
    */
-  adopted: false,
   /**
-   * What the panel is ABOUT.
+   * What Improve is ABOUT.
    *
-   * `null` means there is nothing improvable on screen and the header button is
-   * hidden; the panel can never be opened in that state.
+   * `null` means there is nothing improvable on screen, so the controls that
+   * act on it have no subject.
    */
   target: null,
   /**

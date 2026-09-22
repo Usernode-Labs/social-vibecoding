@@ -574,16 +574,20 @@ test('#workshop is a route of its own', () => {
   assert.match(appJs, /App\.setHeaderTitle\('Workshop'\)/);
   // THE DOOR IS A TAB (#2718). It was a menu row between Home and Discover,
   // on the rule that the app chip's menu listed every destination; the bar
-  // carries them now, and Workshop is the fourth of five. What the app menu
-  // keeps is the SCOPED entrance — "Open in Workshop", filtered to the app
-  // you are in — which is the link-out every mini-app host in the study
-  // draws under a mini-app.
+  // carries them now, and Workshop is the fourth of five.
   const html = read('public/index.html');
   assert.match(html, /id="platform-tab-workshop"[^>]*href="#workshop"/,
     'the unscoped screen is a tab');
-  assert.match(sheetTsx, /id="app-menu-row-workshop"/,
+  // The app menu keeps the SCOPED entrance — the link-out every mini-app host
+  // in the study draws under a mini-app — but as the view strip's Workshop
+  // SEGMENT rather than as a row (#2718 review). The row and the segment
+  // named one destination, one above the other, and the strip is the only
+  // one of the two that also gets you back to the running app.
+  const tabs = read('frontend/src/features/improve/view-tabs.tsx');
+  assert.match(tabs, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/,
     "and the app's menu links out to it, scoped");
-  assert.match(sheetTsx, /label="Open in Workshop"/);
+  assert.ok(!/id="app-menu-row-workshop"/.test(sheetTsx),
+    'the row that duplicated that segment is gone');
 });
 
 test('the app-entry breadcrumb has one writer and one clearer', () => {

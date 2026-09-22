@@ -184,12 +184,11 @@ export function activeAppView(
   return null;
 }
 
-export function AppViewTabs({ ids, onNavigate, className, activeChat = false, owed = null }: {
+export function AppViewTabs({ ids, onNavigate, className, owed = null }: {
   /** Element ids for the track and its two segments. */
   ids: { root: string; app: string; workshop: string };
   onNavigate: () => void;
   className?: string;
-  activeChat?: boolean;
   /**
    * Votes this viewer owes on the app in context, or null.
    *
@@ -203,7 +202,11 @@ export function AppViewTabs({ ids, onNavigate, className, activeChat = false, ow
   owed?: number | null;
 }): ReactNode {
   const { name, slug, selfHosted, tab, subTab } = useStoreState(improveStore);
-  const active = activeChat ? 'chat' : activeAppView(tab, subTab);
+  // `activeChat` retired with its one caller. The global chat's Improve
+  // section passed it to mark NEITHER segment while that chat was up; the
+  // section went with the panel (#2718 review), and a prop nobody passes is
+  // a state the strip can no longer be in.
+  const active = activeAppView(tab, subTab);
 
   // The platform's own row is not an iframe, so its first segment is Home —
   // the same relabelling the row it replaces carried (#1386).
@@ -238,9 +241,17 @@ export function AppViewTabs({ ids, onNavigate, className, activeChat = false, ow
         onClick={onNavigate}
       >
         <span className="min-w-0 truncate">Workshop</span>
+        {/* THE WORDS SURVIVE WHERE THEY STILL READ. The row this came from
+            printed "2 to vote"; a segment is too narrow for a sentence, so
+            the figure is a count badge — the folder-saying-how-many-files
+            shape the row's own note reached for — and "to vote" is what the
+            control is CALLED, so a reader who hovers or uses a screen reader
+            still gets the noun and never has to guess what 2 counts. */}
         {owed ? (
           <span
             id="app-menu-workshop-owed"
+            title={`${owed} to vote`}
+            aria-label={`${owed} to vote`}
             className="ml-1.5 shrink-0 rounded-full bg-violet-600 px-1.5 text-[0.6875rem] font-semibold leading-5 text-white"
           >
             {owed}
@@ -262,14 +273,20 @@ export function AppViewTabs({ ids, onNavigate, className, activeChat = false, ow
           [data-context-row="workshop"]`; no id, because a conditional element
           is not in the built document and the shell's id inventory is a list
           of the ones that are.
+
+          IT SAID "Chat" TOO, for the global chat, which reached the strip
+          through `activeChat`. That prop's one caller was the Improve panel's
+          Chats section and both retired (#2718 review), so 'chat' is a state
+          this strip can no longer be in — and a branch on a value the type
+          rules out is a branch nobody can reach.
       */}
-      {active === 'session' || active === 'chat' ? (
+      {active === 'session' ? (
         <span
           data-context-row={active}
           aria-current="page"
           className={segClass(true)}
         >
-          <span className="min-w-0 truncate">{active === 'chat' ? 'Chat' : 'Change'}</span>
+          <span className="min-w-0 truncate">Change</span>
         </span>
       ) : null}
     </div>

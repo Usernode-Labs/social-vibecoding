@@ -421,5 +421,4 @@ export function GlobalChatScreen() {
   );
 }
 
-export { GlobalChatNewChatButton } from './new-chat-button';
 export { useGlobalChatState } from './store';

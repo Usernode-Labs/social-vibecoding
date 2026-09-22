@@ -53,11 +53,14 @@ const FRAME = FRAME_ONLY + '\n' + ACTIONS;
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
-// The Kanban|Feed control lives here now, not in the board frame.
-const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
-// The App | Board | Activity strip, rendered by BOTH the Improve panel and the
-// header chip's menu — and the store's only reader now that Kanban|Feed is
-// retired. See the note in that file: the two layouts WERE Board and Activity.
+// The Improve panel WAS read here, as the host of the strip below and of a
+// Kanban|Feed sub-strip under its Board row. The panel retired (#2718
+// review) and the strip's one remaining host is the mark's menu, so the
+// sheet is what the two assertions about that host now read.
+const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+// The App | Workshop | Activity strip, rendered by the mark's menu — and no
+// longer a reader of the store at all. See the note in that file: the two
+// layouts WERE Board and Activity.
 const VIEW_TABS = read('frontend/src/features/improve/view-tabs.tsx');
 // Streamlined Concept: the Board draws its own Kanban|Feed control now,
 // inside the frame itself — there is no separate toggle module to read.
@@ -382,8 +385,8 @@ test('the view toggle is real React state, and the className writer is gone', ()
     'the view strip no longer reads the store — it marks Workshop in either layout');
   assert.match(FRAME_ONLY, /useDevViewMode\(\)/,
     'the board frame does, which is the half that is unchanged');
-  assert.ok(!/useDevViewMode\(\)/.test(PANEL),
-    'and the panel reads it only through the strip');
+  assert.ok(!/useDevViewMode\(\)/.test(SHEET),
+    'and the strip\u2019s host reads it only through the strip');
   // The FRAME reads the mode too, and for something that is not a control:
   // the General-discussion card draws on the kanban only, because the Feed
   // draws the same fact as an activity row (see ./discussion-store.ts). What
@@ -412,8 +415,9 @@ test('the view toggle is real React state, and the className writer is gone', ()
     'the discussion card, the body skeleton and the toolbar\u2019s home, and nothing else');
   assert.match(frameCode, /mode === 'workshop' \? null : \(\s*<DevActionsRow/,
     'and the third reader is exactly that: no toolbar on the Workshop');
-  assert.ok(!PANEL.includes('id="improve-board-layouts"'),
-    'the Kanban|Feed sub-strip under the Board row is retired');
+  assert.ok(!SHEET.includes('id="improve-board-layouts"'),
+    'the Kanban|Feed sub-strip that sat under the Board row is retired, and '
+    + 'did not follow the strip into the mark\u2019s menu');
   assert.ok(!FRAME.includes('id="dev-view-toggle"'),
     'the Board draws no view tab strip above its cards');
   // The click still runs the module's behaviour, unchanged.
@@ -439,7 +443,7 @@ test('the view toggle is real React state, and the className writer is gone', ()
     'the Workshop segment reports whether it is the one you are on');
   assert.match(VIEW_TABS, /data-context-row="workshop"/,
     'each view still names itself with data-context-row');
-  assert.ok(!PANEL.includes('data-view-segment') && !FRAME.includes('data-view-segment'),
+  assert.ok(!SHEET.includes('data-view-segment') && !FRAME.includes('data-view-segment'),
     'the retired sub-strip left no data-view-segment behind');
   // The Workshop is a hash route, so it has to be an anchor — cmd/ctrl-click
   // and "open in new tab" work on it, the rule tests/nav-new-tab.test.js pins

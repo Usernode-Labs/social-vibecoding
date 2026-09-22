@@ -1392,44 +1392,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   width: 100%;
   overflow: hidden;
 }
-/*
- * The experimental chat entry, at the head of Improve's dedicated Chats
- * section (frontend/src/features/global-chat/new-chat-button.tsx).
- *
- * It wore `.global-chat-mode-switch` and a header bar's 28px while it was a
- * toggle up there. The `.is-chat` fill went with the toggle rather than being
- * renamed: it marked "you are in chat mode", and the chat screen covers this
- * button the moment it opens, so there is no longer a moment at which that
- * state could be seen.
- *
- * MARGINS, not padding on a wrapper — this is a direct child of the
- * #improve-sessions scroller, and 16px is the `px-4` every label and row in
- * that panel is set to, so the pill's left edge lines up with the heading
- * below it.
+/* THE EXPERIMENTAL CHAT ENTRY IS THE INBOX'S NOW (#2718 review).
+ * `.global-chat-new-chat-btn` styled a pill at the head of the Improve
+ * panel's Chats section — first a header toggle flipping `Chat` / `Classic`,
+ * then an entry point in the panel. The panel retired, and the control had
+ * already been superseded: `#messages-new-agent` under the Messages inbox's
+ * Agents filter starts a chat, gated on the same two flags, beside the rows
+ * that resume one. One list, one way in.
  */
-.global-chat-new-chat-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-height: 30px;
-  margin: 10px 16px 2px;
-  padding: 0 12px;
-  border: 1px solid var(--brand-line);
-  border-radius: 9999px;
-  color: var(--brand-ink);
-  background: var(--brand-tint);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  white-space: nowrap;
-}
-/* "(experimental)" as the qualifier it is, in the weight and colour the chat
-   screen's own `h2 span` gives the same word. */
-.global-chat-new-chat-btn span span {
-  color: var(--text-muted);
-  font-weight: 500;
-}
 .global-chat-toolbar {
   display: flex;
   align-items: center;
@@ -1969,7 +1939,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   background: currentColor;
 }
 @media (max-width: 639px) {
-  .global-chat-new-chat-btn { min-height: 44px; }
   .global-chat-toolbar { padding-right: 12px; padding-left: 12px; }
   .global-chat-toolbar p { display: none; }
   .global-chat-budget { display: none; }
@@ -2217,7 +2186,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    notched phone is 54pt — so at the cap the sheet's head slid UNDER the clock
    and the signal bars, which is the one place the gap exists to prevent. The
    fallback keeps desktop and any browser without the env() unchanged. */
-.platform-sheet-adopted#improve-panel,
 .platform-sheet-adopted#messages-sheet {
   max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem) !important;
 }
@@ -2277,7 +2245,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    takes a `pointercancel` (native.js handles it with v=0 and springs back);
    a drag starting anywhere else in the sheet still dismisses it, and so
    does the grabber. */
-.un-sheet:has(#improve-panel),
 .un-sheet:has(#notifications-sheet),
 .un-sheet:has(#messages-sheet) {
   touch-action: pan-y;
@@ -3940,7 +3907,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    rails of ~13rem cards bleeding to both screen edges is most of the
    Discover block, so on a phone that was a band you could not scroll the
    page from at all — put a finger on a card, drag up, and nothing moved, not
-   even the rubber band. (`.un-sheet:has(#improve-panel)` a thousand lines up
+   even the rubber band. (`.un-sheet:has(#notifications-sheet)` a thousand lines up
    has to opt vertical panning back IN for its scroller for exactly this
    reason, and states the rule correctly.)
 
@@ -10482,163 +10449,52 @@ a.drawer-ver--fork:hover {
   transition: transform 200ms ease-out;
 }
 
-/* ── Improve panel: side panel on desktop, bottom sheet on mobile ──
-   ONE element, two idioms, because that is the product requirement and
-   not a fallback: "the improve button, on desktop opens a panel from the
-   side, on mobile, from the bottom".
+/* ── The Improve panel is RETIRED (#2718 review) ───────────────────────
+   Every rule that drew it stood here: a right-edge rail over the header on
+   desktop, a bottom sheet below `sm`, its overlay's fade, and the corner and
+   hairline the rail shared with the bell's. It was one element, two idioms,
+   and its whole remaining content was two buttons — the session list the
+   Workshop took earlier in this issue, and a build notice. A drawer you open
+   to press a button is a tap to reach a tap, so the buttons, the notice and
+   the view strip went up into the mark's menu and the drawer went with its
+   CSS. `#apps-switcher-sheet` below is where they draw now.
 
-   Like #header-menu-panel above, the panel is ALWAYS in the document and
-   translated off-screen rather than `hidden` — that is what gives the
-   slide a transition to run, with no display:none reflow dance for the
-   controller to get right. `data-open` is the switch, and React renders
-   it: the native kit writes CLASSES to this node when it adopts it
-   (.platform-sheet-adopted), never attributes, so this one is safe to
-   reconcile where `className` is not.
+   Two things it left behind on purpose. `.platform-sheet-adopted` still
+   neutralises the fixed chrome by CLASS rather than by id, which is what
+   made this block removable without touching the kit path at all; and the
+   dim's geometry, which was never this panel's:
 
-   The kit path overrides all of this anyway — on touch, where the kit is
-   loaded, features/improve/improve-controller.js hands the element to
-   PlatformUI.sheet() and .platform-sheet-adopted (above) neutralises the
-   fixed chrome. These rules are what a mobile WEB browser with no kit
-   gets, and they have to be a bottom sheet there too.
-
-   The overlay never uses `hidden`: opacity carries the fade and
-   pointer-events is what stops a transparent backdrop from eating clicks
-   while the panel is closed. */
-/* IT COVERS THE HEADER. A full-height rail over the whole right edge,
-   the bar included — which is what it was before it was made to hang from
-   the bar's underside, and what it is again.
-
-   The intervening arrangement was argued from one interaction: with the
-   backdrop stopping at the bar you could press the bell while Improve was
-   open and move straight between the two panels. That is real, and it is
-   what this gives up. What it bought was worse — a rail and a dim that
-   stopped short of the top of the screen, so an open panel left a lit strip
-   of chrome above it that belonged to neither the panel nor the page. A
-   modal surface that covers everything is the ordinary reading of a modal
-   surface, and moving between panels is two clicks, which is what it is
-   everywhere else in the product.
-
-   `bottom: 0` still takes it to the floor; only where it STARTS moved back.
-   Below `sm` the block further down resets `top` for the bottom sheet, and
-   `.platform-sheet-adopted` neutralises inset entirely on the kit path. */
-/* THE RAIL'S OWN CORNER AND HAIRLINE, which is the whole of what this panel
-   took from the bell's when both went onto `.dc-lift dc-lift-panel`. The two
-   are the same object at two names — a right-edge rail, floor to ceiling,
-   over a scrim — so the shape statement is the one #notifications-sheet
-   already makes further up ("The bell's sheet on the ladder"): ONE corner is
-   rounded, the top-left, because it is the only corner of this panel that is
-   a corner of anything. The top-right, bottom-right and bottom-left all sit
-   on an edge of the display.
-
-   `.dc-lift` ships `1.75rem 1.75rem 0 0`, which is right for a sheet docked
-   to the FLOOR and wrong for one docked to the right, so the desktop shape is
-   restated here rather than inherited; the `max-width: 639px` block below
-   puts the pair of top corners back for the bottom sheet.
-
-   The hairline is `--app-sheet-line` for all four sides, not the zinc pair
-   this wore before. Only the left edge is drawn (`border-left-width`, and
-   `.dc-lift`'s own `border-top`), but naming the colour once keeps the two
-   drawn edges from having to agree by coincidence. */
-#improve-panel {
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 20rem;
-  max-width: 85vw;
-  border-left-width: 1px;
-  border-color: var(--app-sheet-line);
-  border-radius: 1.75rem 0 0 0;
-  transform: translateX(100%);
-}
-#improve-panel[data-open] {
-  transform: translateX(0);
-}
-/* `box-shadow` rides along with the slide because the modal dim is one of this
-   element's shadow layers now (see `.dc-lift-panel`). Without it here the dim
-   would snap on at the start of the open and off at the start of the close,
-   which is the exact complaint the kit-adopted backdrop note records. */
-.improve-panel-transition {
-  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
-}
-#improve-overlay {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 200ms ease-out;
-}
-#improve-overlay[data-open] {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* ── THE HEADER IS INSIDE THE DIM ──────────────────────────────────────
+   ── THE HEADER IS INSIDE THE DIM ──────────────────────────────────────
    Every backdrop ships `inset-0`, so the bar is dimmed along with the page
-   and a click on it dismisses the panel like a click anywhere else. There
-   is no rule here any more, and that is the point: `inset-0` is what the
-   markup already says, and a desktop override that lifted the dim off the
-   bar was the whole of the previous arrangement.
+   and a click on it dismisses the surface like a click anywhere else. There
+   is no rule here, and that is the point: `inset-0` is what the markup
+   already says, and a desktop override that lifted the dim off the bar was
+   the whole of an arrangement this reverted.
 
-   WHAT THIS COSTS, because it is not nothing. The backdrop is `z-40` over
-   the header's `z-10`, so with a panel open a press on the bell lands on
-   the backdrop: the panel closes and nothing else happens. Moving from
-   Improve to notifications is two clicks, and the first one looks like it
-   did nothing. That was the reported problem the offset fixed, and it comes
-   back with it.
+   WHAT THAT COSTS, because it is not nothing. The backdrop is `z-40` over
+   the header's `z-10`, so with a sheet open a press on the bell lands on
+   the backdrop: the sheet closes and nothing else happens. Moving between
+   two of them is two clicks, and the first one looks like it did nothing.
+   That was the reported problem the offset fixed, and it comes back with it.
 
    It is the right trade anyway. A dim that stops 60px short of the top of
-   the screen leaves a lit band of chrome above an open panel, and a bar
+   the screen leaves a lit band of chrome above an open sheet, and a bar
    that is live while a modal surface is up is a claim the rest of the
    product does not make. One click to dismiss, one to open the next, is
-   what a scrim means.
+   what a scrim means. */
 
-   The behaviour the offset made reachable — Improve.open() dismissing the
-   other registered sheets — STAYS. It is unreachable from the header again,
-   but it is still the correct thing for a panel to do when something else
-   opens it, and removing it would be undoing a fix rather than a geometry
-   change. tests/header-stays-live.test.js pins both halves. */
-
-/* Below `sm` (640px — the same boundary HomeLayout.BREAKPOINT_PX and the
-   kanban media queries use, so the shell has ONE phone/desktop line) the
-   panel comes up from the bottom instead. `max-height` matches the kit
-   sheet's own 70vh cap so the two presentations agree on how much of the
-   screen a sheet may take. */
-@media (max-width: 639px) {
-  #improve-panel {
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: auto;
-    max-width: none;
-    /* GROWS WITH ITS CONTENT, up to nearly the whole screen. A short sheet is
-       short; a long one climbs to this cap and then its own scroller takes
-       over (see .nav-sheet-scroll below). 3rem of ground stays visible so the
-       thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
-       a mobile browser's collapsing toolbar must not push the foot of the
-       sheet under itself. */
-    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
-    border-left-width: 0;
-    border-top-width: 1px;
-    border-top-left-radius: 1.75rem;
-    border-top-right-radius: 1.75rem;
-    transform: translateY(100%);
-  }
-  #improve-panel[data-open] {
-    transform: translateY(0);
-  }
-}
 /* ── App-context sheet (Streamlined Concept) ──────────────────────
    The surface behind the header's "app name ⌄" tab. THREE presentations,
    one always-mounted element with the same `data-open` mechanics: a real kit
    sheet on touch, a bottom sheet below `sm`, and — at `sm`+ for a mouse — a
-   DROPDOWN under the chip that opened it. Only the last of those differs from
-   #improve-panel above; read that block's comment for the mechanics, which
-   transfer wholesale. */
+   DROPDOWN under the chip that opened it. Only the last of those differs
+   from the notifications/messages rails below; read that block's comment for
+   the mechanics, which transfer wholesale. */
 /* IT DROPS FROM THE CHIP; IT IS NOT A RAIL.
    It was a right-edge slide-over reaching floor to ceiling, the same idiom as
-   #improve-panel and the notifications/messages sheets. Those three earn it:
-   an inbox and a workbench are surfaces you DWELL in, they hold as many rows
-   as there are, and a full-height column is the right shape for a list with
-   no natural end.
+   the notifications and messages sheets. Those earn it: an inbox is a surface
+   you DWELL in, it holds as many rows as there are, and a full-height column
+   is the right shape for a list with no natural end.
    This one is a MENU — a strip of apps and six destinations — opened from a
    control that sits in the middle of the top bar. Answering from the opposite
    edge of the screen made the eye travel the width of a 27" display away from
@@ -10774,10 +10630,10 @@ a.drawer-ver--fork:hover {
    dimming the page and the other not made them read as two different KINDS of
    surface, which is a distinction the shell does not otherwise draw. Sameness
    beat the popover precedent.
-   There is nothing to write here to achieve it — #improve-overlay and
-   #apps-switcher-overlay ship the same `fixed inset-0 z-40 bg-black/40` and
-   share the opacity rules above, so deleting the override is the whole change
-   and the two cannot drift apart by construction. */
+   There is nothing to write here to achieve it — #notifications-sheet-overlay
+   and #apps-switcher-overlay ship the same `fixed inset-0 z-40 bg-black/40`
+   and share the opacity rules above, so deleting the override is the whole
+   change and the two cannot drift apart by construction. */
 /* Below `sm` it is a bottom sheet, and these are its own geometry rather than
    overrides of the block above: the two media queries are disjoint now that
    the dropdown states its own, so nothing here is undoing anything. */
@@ -10808,9 +10664,9 @@ a.drawer-ver--fork:hover {
 }
 
 /* ── Notifications and Messages sheets ────────────────────────────────
-   The bell and the speech bubble present as #improve-panel does — right-edge
-   slide-over at `sm`+ for a mouse, a bottom sheet below it, a real kit sheet
-   on touch — because they stopped being screens. A screen reachable from
+   The bell and the speech bubble present the way the retired Improve panel
+   did — right-edge slide-over at `sm`+ for a mouse, a bottom sheet below it,
+   a real kit sheet on touch — because they stopped being screens. A screen reachable from
    every route has to answer "back to where?", and both of these answered
    "home", which was wrong every time they were opened from somewhere else.
 

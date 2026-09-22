@@ -234,8 +234,8 @@ export function AppsSwitcherSheet(): ReactNode {
   const {
     slug, name, showTerminal, target, versionState, deploying, appUpdateReady,
   } = useStoreState(improveStore);
-  // Votes this viewer owes on the app in context — the trailing figure on the
-  // Workshop row. See the fetch below.
+  // Votes this viewer owes on the app in context — the badge on the view
+  // strip's Workshop segment. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
 
   // "About Notes", not "About this app". The name is what the viewer is
@@ -252,8 +252,10 @@ export function AppsSwitcherSheet(): ReactNode {
   // recency here counts a home tile, an /app/<slug> deep link and a
   // notification tap as uses too.
   //
-  // THE ONE READER OF THAT HISTORY WAS THE STRIP, and the strip is retired
-  // (see the note in the markup). The write stays because the history is a
+  // THE ONE READER OF THAT HISTORY WAS THE APPS RAIL — the horizontal strip
+  // of recent apps that headed this menu, not the App|Workshop strip below,
+  // which is a different control that arrived later. The rail is retired (see
+  // the note in the markup). The write stays because the history is a
   // fact about this device rather than a fact about this sheet —
   // ../nav/parked-store.js's header already points at it as the thing that
   // knows which apps this device opens, and it is three lines and a
@@ -286,9 +288,11 @@ export function AppsSwitcherSheet(): ReactNode {
       promoted proposals and governance issues somebody else opened that this
       viewer has not voted on.
 
-      Loaded on OPEN, like the strip above, and never during render: the
-      prerender ships no figure and a fetch here would be a hydration
-      mismatch. Failure is silence — a menu row that works is worth more than
+      Loaded on OPEN, and never during render: the prerender ships no figure
+      and a fetch here would be a hydration mismatch. The strip that shows it
+      renders unconditionally for that same reason; what is conditional is
+      the BADGE, which is fine because a number arriving later changes a
+      subtree React already owns rather than the child count it hydrated. Failure is silence — a menu row that works is worth more than
       a count, so a refused or offline request leaves `owed` null and the row
       renders exactly as it did before this existed.
   */
@@ -419,23 +423,29 @@ export function AppsSwitcherSheet(): ReactNode {
             can do about it, and — inside an app — which part of it you are
             looking at.
 
-            THE STRIP AND THE `Open in Workshop` ROW BOTH NAME THE WORKSHOP,
-            which is the "two owners of one decision" view-tabs.tsx's own
-            header warns about, and it is kept on purpose for now: the strip
-            is the only control that gets you back to the RUNNING app from its
-            Workshop, and the row is the only thing that carries the vote
-            count. Collapsing them means moving `#app-menu-workshop-owed` onto
-            the strip's Workshop segment; worth doing, and not worth doing
-            silently inside a change that was asked to remove a drawer. */}
+            THE `Open in Workshop` ROW IS RETIRED, because the strip's
+            Workshop segment already goes there: two owners of one decision,
+            which is the thing view-tabs.tsx's own header warns about. The
+            row's one unique job was the vote count, so that moved WITH it —
+            `#app-menu-workshop-owed` is a badge on the segment now. The
+            strip kept the other direction the row never had: it is also how
+            you get back to the RUNNING app from its Workshop. */}
         <UpdateStatus />
         <ImproveQuickActions />
-        {slug ? (
-          <AppViewTabs
-            ids={IMPROVE_VIEW_IDS}
-            onNavigate={() => void AppContext.dismissForNav()}
-            owed={owed}
-          />
-        ) : null}
+        {/* UNCONDITIONAL, the way the panel rendered it, and for a reason
+            that is not taste: a `slug ? … : null` here renders a different
+            NUMBER of children before and after the classic writers publish
+            a target, and `public/js/app.js` is a classic script that runs
+            before this bundle hydrates. That is React #418 — the error that
+            failed all 291 declared checks earlier in this issue — and the
+            strip reads its own null slug perfectly well (`href` falls back
+            to '#'). It is inside a closed sheet until something opens it. */}
+        <AppViewTabs
+          ids={IMPROVE_VIEW_IDS}
+          onNavigate={() => void AppContext.dismissForNav()}
+          className="mx-4 mb-2"
+          owed={owed}
+        />
 
         {/* THE ONLY VERTICAL SCROLLER. Everything above is `shrink-0`. */}
         <nav

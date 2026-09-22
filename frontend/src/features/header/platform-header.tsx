@@ -637,13 +637,13 @@ export function PlatformHeader() {
           */}
           {/*
               The experimental chat toggle rode here, between Improve and the
-              bell, as a pill flipping `Chat` / `Classic`. It is Improve's now
-              — the head of "Changes in progress", as "New chat
-              (experimental)" — for a reason the two labels make plain: it
-              STARTS something, and everything else that starts something on
-              this app lives in that panel. See
-              ../global-chat/new-chat-button.tsx for the rest of the argument,
-              including why the return trip did not need a header control.
+              bell, as a pill flipping `Chat` / `Classic`. It went to the
+              Improve panel as an entry point — it STARTS something, and the
+              return trip already had two owners inside the chat screen — and
+              from there to the Messages inbox, which is where the chats it
+              starts are listed and resumed (`#messages-new-agent`, gated on
+              the same two flags as the rows). The panel retired with it
+              already gone (#2718 review).
           */}
           <a
             id="notifications-btn"

@@ -13,7 +13,6 @@ const test = require('node:test');
 const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const screen = read('frontend', 'src', 'features', 'global-chat', 'index.tsx');
-const newChatButton = read('frontend', 'src', 'features', 'global-chat', 'new-chat-button.tsx');
 const inbox = read('frontend', 'src', 'features', 'messages', 'index.tsx');
 const store = read('frontend', 'src', 'features', 'global-chat', 'store.ts');
 const renderers = read('frontend', 'src', 'features', 'global-chat', 'renderers.tsx');
@@ -47,8 +46,14 @@ test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   assert.match(appJs, /parts\[0\] === 'chat'/);
   assert.match(appJs, /navigateToGlobalChat\(threadId\)/);
   assert.match(appJs, /App\._showOnlyScreen\('global-chat-screen'\)/);
-  assert.match(newChatButton, /!snapshot\.bootstrap\?\.parityReady[\s\S]*profiles\.globalChat\.enabled !== true/);
-  assert.match(newChatButton, /New chat \(experimental\)/);
+  // THE WAY IN IS THE INBOX'S (#2718 review). `new-chat-button.tsx` was the
+  // head of the Improve panel's Chats section, and the panel retired; the
+  // control it duplicated is `#messages-new-agent`, which sits beside the
+  // rows that RESUME a chat rather than one surface away from them. The gate
+  // travelled with it unchanged — both flags, read once and driving the
+  // rows, the tab and the compose button together.
+  assert.match(inbox, /parityReady\s*\n?\s*&& chat\.bootstrap\.profiles\.globalChat\.enabled === true/);
+  assert.match(inbox, /id="messages-new-agent"/);
 });
 
 test('the inbox lists resumable chats, and is where one is deleted', () => {
@@ -67,7 +72,7 @@ test('the inbox lists resumable chats, and is where one is deleted', () => {
   assert.match(inbox, /Delete this chat\?/);
   assert.match(inbox, /\{removing \? 'Deleting…' : 'Delete'\}/);
   assert.match(inbox, /DraftTrashIcon/);
-  assert.match(newChatButton, /void startNewGlobalChat\(\)/);
+  assert.match(inbox, /void startNewGlobalChat\(\)/);
 });
 test('chat navigation uses the shared screen router instead of a body-wide mode', () => {
   assert.match(store, /open:\s*false/);
@@ -238,7 +243,6 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
   assert.match(store, /event\.type === 'tool\.completed'/);
   assert.match(css, /\.global-chat-composer[\s\S]*var\(--platform-safe-bottom/);
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-suggestions button \{ min-height: 42px; \}/);
-  assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-new-chat-btn \{ min-height: 44px; \}/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.global-chat-activity svg \{ animation: none; \}/);
   assert.match(css, /\.global-chat-progress-current/);
 });

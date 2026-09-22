@@ -233,11 +233,22 @@ function loadImprove(initial) {
     imports: { '../../lib/plain-store.js': { createStore: () => store } },
     tail: 'window.__improveStore = { improveStore, boardHref };',
   });
+  // The one surface still listing these sessions. Flip `sheet.open` in a
+  // test that needs the reload gate open; it is the notifications sheet's
+  // flag, not the Improve panel's — that panel retired (#2718 review).
+  const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', IMPROVE_CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor: () => ({}) },
-      '../../lib/kit-surface': { adoptKitSurface: () => null },
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
+      // Improve panel's root through lib/kit-surface and swept the other
+      // sheets through lib/sheet-controller; the panel retired, `open()`
+      // forwards to the app-context sheet, and both stubs went with it. What
+      // it does import is the notifications sheet's own open flag — the one
+      // surface still listing these sessions, and the gate on reloading them.
+      '../notifications/notifications-sheet-store.js': {
+        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
+      },
       './improve-store.js': sandbox.__improveStore,
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },

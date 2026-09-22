@@ -7,10 +7,17 @@
 //
 // A session is not a further DESTINATION — it is reached from a card or a
 // notification, never from this strip — so the extra segment is inert and
-// exists only while you are in one. Global Chat follows the same location
-// pattern after #2543: Chat replaces Change in that one conditional slot
-// while a durable chat route is current. Outside either context the control
-// is the two destination segments it has.
+// exists only while you are in one. Outside that context the control is the
+// two destination segments it has.
+//
+// Global Chat followed the same location pattern after #2543: Chat replaced
+// Change in that one conditional slot while a durable chat route was current.
+// It reached the strip through an `activeChat` prop, whose one caller was the
+// Improve panel's Chats section, and both retired in #2718's review — so
+// 'chat' is a state this strip can no longer be in, and the slot says Change
+// or nothing. `activeAppView('dev', 'chat')` still answers null, which is the
+// other half of that: the general chat is a different kind of place and
+// selects no segment.
 //
 // The Board segment retired after this: the Workshop and the kanban are ONE
 // screen in two layouts, so the strip stopped offering the layout as a
@@ -67,17 +74,22 @@ test('the board layout is the Workshop segment, not a segment of its own', () =>
     'and nothing in the strip subscribes to the layout any more');
 });
 
-test('the extra segment is inert, and only exists inside a change or chat', () => {
-  assert.match(src, /\{active === 'session' \|\| active === 'chat' \? \(/,
+test('the extra segment is inert, and only exists inside a change', () => {
+  assert.match(src, /\{active === 'session' \? \(/,
     'rendered only while you are in one');
-  const segment = src.slice(src.indexOf("{active === 'session' || active === 'chat' ? ("));
+  const segment = src.slice(src.indexOf("{active === 'session' ? ("));
   const upToEnd = segment.slice(0, segment.indexOf('</div>'));
   assert.match(upToEnd, /<span\s/, 'a span, not a control you cannot use');
   assert.doesNotMatch(upToEnd, /<button|<a\s|onClick/,
     'the segment you are already on must not offer to take you there');
   assert.match(upToEnd, /aria-current="page"/);
   assert.match(upToEnd, /data-context-row=\{active\}/);
-  assert.match(upToEnd, /active === 'chat' \? 'Chat' : 'Change'/);
+  assert.match(upToEnd, />Change</, 'and says the one thing it can be');
+  // Comment-stripped: the note at the head of this slot NAMES the prop while
+  // explaining its retirement, and prose about a prop is not a prop.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/\bactiveChat\b/.test(code),
+    'the prop the Chat label arrived on is retired with its one caller');
   assert.match(upToEnd, /segClass\(true\)/,
     'it wears the same selected treatment as the others');
 });
@@ -87,9 +99,9 @@ test('it comes last, and claims no id from the shell inventory', () => {
   // (`app ~ workshop`), so a further segment is only safe after them.
   const app = src.indexOf('data-context-row="app"');
   const workshop = src.indexOf('data-context-row="workshop"');
-  const conditional = src.indexOf("{active === 'session' || active === 'chat' ? (");
+  const conditional = src.indexOf("{active === 'session' ? (");
   assert.ok(app !== -1 && workshop > app && conditional > workshop,
-    'app, workshop, then the conditional change/chat segment');
+    'app, workshop, then the conditional change segment');
 
   const segment = src.slice(conditional);
   assert.doesNotMatch(segment.slice(0, segment.indexOf('</div>')), /\bid=/,

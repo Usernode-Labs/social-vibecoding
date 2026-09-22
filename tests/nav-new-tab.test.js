@@ -514,7 +514,7 @@ test('#browse-detail-back keeps its own layout as an anchor', () => {
 // #improve-btn, the header pill it replaced when #2718 retired that. It opens
 // a panel rather than navigating, so there is no destination for a cmd-click
 // to open; the panel's own rows are where navigation happens, and those ARE
-// anchors (see features/improve/improve-panel.tsx's SessionRow). Same for
+// anchors (see features/improve/session-row.tsx). Same for
 // #app-menu-row-about, a button for the same reason: the pane it opens is the
 // sheet in another state, not an address.
 test('the retired App/Dev switch left no interception behind', () => {

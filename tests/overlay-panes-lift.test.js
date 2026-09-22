@@ -13,13 +13,19 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP_CSS = read('public/css/app.css');
 
 const NOTIFICATIONS = read('frontend/src/features/notifications/notifications-sheet.tsx');
-const IMPROVE = read('frontend/src/features/improve/improve-panel.tsx');
 const SWITCHER = read('frontend/src/features/app-context/app-context-sheet.tsx');
 
-/** The three panes, by the id each one's root carries. */
+/**
+ * The panes, by the id each one's root carries.
+ *
+ * TWO, where there were three: #improve-panel retired (#2718 review) and its
+ * two actions are rows of the switcher below. The rules this file pins are
+ * about the LADDER these surfaces share, so a retired pane simply leaves the
+ * list — what it must not do is leave its CSS behind, which the sweep at the
+ * end of this file checks.
+ */
 const PANES = [
   { id: 'notifications-sheet', src: NOTIFICATIONS, overlay: 'notifications-sheet-overlay' },
-  { id: 'improve-panel', src: IMPROVE, overlay: 'improve-overlay' },
   { id: 'apps-switcher-sheet', src: SWITCHER, overlay: 'apps-switcher-overlay' },
 ];
 
@@ -99,18 +105,23 @@ test('closed panes hide only after exit and kit adoption owns its own lifetime',
 
 test('the declared feedback text checks open their pane before reading it', () => {
   const manifest = JSON.parse(read('dapp.json'));
-  // WHICH PANE IT IS HAS CHANGED TWICE; the rule has not. #2718 moved Give
-  // feedback out of the Improve panel and into the app's menu, so the pane to
-  // open was the MENU's; its review moved the control back to a button in the
-  // panel's own well, so it is the panel's again. Either way a text check that
-  // reads a LIFTED pane must ask for that pane to be presented, or it reads an
-  // empty root — which is the whole point of this test and the reason it is
-  // written against the manifest rather than against one check's name.
+  // WHICH PANE IT IS HAS CHANGED THREE TIMES; the rule has not. #2718 moved
+  // Give feedback out of the Improve panel into the app's menu, so the pane
+  // to open was the MENU's; its review moved the control back to a button in
+  // a well; and that well is in the menu, because the review then retired the
+  // panel outright. Either way a text check that reads a LIFTED pane must ask
+  // for that pane to be presented, or it reads an empty root — which is the
+  // whole point of this test and the reason it is written against the
+  // manifest rather than against one check's name.
+  //
+  // `?shot=improve` and `?shot=app-context` both open that one pane now (see
+  // App._openImproveShot), so either name is a pane that is actually up.
   const checks = manifest.tests.filter((t) => t.expectText === 'Give feedback');
   assert.equal(checks.length, 2, 'the two feedback text checks must exist');
   for (const check of checks) {
-    assert.match(check.path, /shot=improve/, `${check.name} opens the pane it reads`);
-    assert.match(check.expectSelector, /#improve-panel\[data-open\]/);
+    assert.match(check.path, /shot=(improve|app-context)/,
+      `${check.name} opens the pane it reads`);
+    assert.match(check.expectSelector, /#apps-switcher-sheet\[data-open\]/);
   }
 });
 
@@ -163,11 +174,15 @@ test('no pane keeps the pre-lift panel look', () => {
 
 // ── The shape, which differs by how each pane docks ────────────────────
 
-test('the two rails round the one corner that is a corner of anything', () => {
+test('the rail rounds the one corner that is a corner of anything', () => {
   // A right-edge rail runs floor to ceiling against the right of the display,
   // so three of its four corners sit on an edge. `.dc-lift` ships the
   // floor-docked shape (1.75rem 1.75rem 0 0) and each rail restates its own.
-  for (const id of ['notifications-sheet', 'improve-panel']) {
+  //
+  // THERE WERE TWO. #improve-panel was the other, and it retired (#2718
+  // review) with every rule that drew it; the bell's sheet is the idiom's
+  // remaining tenant, and the app menu below is deliberately not one.
+  for (const id of ['notifications-sheet']) {
     const r = rule(`#${id}`);
     assert.match(r, /border-radius: 1\.75rem 0 0 0/,
       `#${id}'s desktop shape is the top-LEFT corner only`);
@@ -188,13 +203,15 @@ test('the app menu keeps the menu shape it earned, and only takes the surface', 
   assert.doesNotMatch(dropdown, /1\.75rem/, 'it must not adopt the docked radius');
 });
 
-test('all three bottom sheets round to the same 1.75rem, by reading it', () => {
+test('both bottom sheets round to the same 1.75rem, by reading it', () => {
   // Below sm every one of these is a bottom sheet docked to the floor, which
-  // is the shape `.dc-lift` itself ships — so the three agree on the number.
+  // is the shape `.dc-lift` itself ships — so they agree on the number.
   // The bell used to restate it with `!important` to beat a stale `1rem` in
   // its own geometry block; that block says 1.75rem now, so the override is
   // gone and there is one declaration per pane rather than two.
-  for (const id of ['improve-panel', 'apps-switcher-sheet', 'notifications-sheet']) {
+  //
+  // THREE, until #improve-panel retired with its panel (#2718 review).
+  for (const id of ['apps-switcher-sheet', 'notifications-sheet']) {
     const sheet = bottomSheetRule(id);
     assert.match(sheet, /border-top-left-radius: 1\.75rem/, `#${id}'s left corner`);
     assert.match(sheet, /border-top-right-radius: 1\.75rem/, `#${id}'s right corner`);

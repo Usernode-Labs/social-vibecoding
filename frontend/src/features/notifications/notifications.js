@@ -445,19 +445,22 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
-  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That tab is
-  // React state inside the sheet, so without a URL that reaches it neither the
-  // capture pipeline nor a declared check could see the tab, its collapsed
-  // conversation rows, or its "All messages" entry — the platform's own rule
-  // for a screen that is otherwise only reachable by clicking. The sheet reads
-  // the same parameter for the tab; this only has to open it.
+  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB, and
+  // `?shot=notifications-agents` on the AGENTS tab. Both are React state
+  // inside the sheet, so without a URL that reaches them neither the capture
+  // pipeline nor a declared check could see the tab, its collapsed
+  // conversation rows, its "All messages" entry, or the session rows Agents
+  // draws — the platform's own rule for a screen that is otherwise only
+  // reachable by clicking. The sheet reads the same parameter for the tab;
+  // this only has to open it.
   //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages'
+      && shot !== 'notifications-agents') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather
