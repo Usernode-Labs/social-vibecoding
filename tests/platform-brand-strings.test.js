@@ -31,10 +31,14 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 // would serve two different texts from one origin.
 const BRIDGE_COPIES = ['public/usernode-bridge/v1/bridge.js', 'public/usernode-bridge.js'];
 
-test('the chromeless "Open in" pill names the platform', () => {
+// The share-view affordance is a MARK now, not a labelled pill (#2705), so
+// there is no visible string left to check: the brand rides in the tooltip
+// and the accessible name, and both are asserted here instead. The stale
+// spelling stays barred either way.
+test('the chromeless share-view mark names the platform', () => {
   for (const p of BRIDGE_COPIES) {
     const src = read(p);
-    assert.match(src, /label\.textContent = "Open in Homeroom";/, `${p}: visible label`);
+    assert.match(src, /link\.title = "Open this app on Homeroom";/, `${p}: tooltip`);
     assert.match(src, /"aria-label", "Open this app on Homeroom"/, `${p}: accessible name`);
     assert.doesNotMatch(src, /Open in Usernode|Open this app on Usernode/, `${p}: no stale brand`);
   }

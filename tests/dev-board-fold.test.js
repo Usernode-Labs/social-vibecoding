@@ -968,7 +968,31 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 20-slot floor. Both sides of this merge happened to land on 716 from
   // different additions, which is a coincidence and not a sequence: main
   // reached it with #2681 and #2707, and these four are new against it.
-  assert.equal(DAPP.tests.length, 720);
+  //
+  // 712 → 714: the share-view Homeroom mark (#2705) adds two, and both are
+  // assertions of an ABSENCE — that the platform's own document does not
+  // draw the mark the bridge draws on an app's subdomain. One rides the
+  // existing chromeless-view path, where a failure would be the mark
+  // sitting beside #chromeless-pill (the "not twice" case); one rides Home.
+  // Neither is a new screen, so neither is tagged visual: the surface the
+  // change is actually visible on is an app's own hostname, which no
+  // declared check can navigate to. That is where this branch stood alone,
+  // against the shared 712.
+  //
+  // 716 → 718: the tallies above were computed on either side of THIS
+  // merge and cannot be read as one sequence. Both stand on the shared
+  // 712: main took it to 716 (the #2681 rename check, plus the #2707
+  // trio), and this branch took it to 714 with the two #2705 absence
+  // checks. +4 and +2 against that shared 712 is 718, which leaves 32
+  // slots against MAX_DECLARED_TESTS (750).
+  //
+  // 720 → 722: the tallies above were computed on either side of THIS
+  // merge too, and are again not one sequence. Both stand on the shared
+  // 716: main took it to 720 with the #2706 connector-walkthrough four,
+  // and this branch took it to 718 with the two #2705 absence checks. +4
+  // and +2 against that shared 716 is 722, which leaves 28 slots against
+  // MAX_DECLARED_TESTS (750).
+  assert.equal(DAPP.tests.length, 722);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
