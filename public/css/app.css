@@ -16643,6 +16643,14 @@ html.un-ios {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
+/* KEYBOARD UP, STRIP GONE (#2762), for the reason `html.un-kb #platform-tabs`
+   gives for the bar under it: with the bar gone the strip's floor
+   (`--platform-bar-h`) drops to 0 and it would ride on top of the keyboard,
+   over the very field being typed into. It comes back with the bar. Not the
+   `hidden` class, which the island owns — this is presentation. */
+html.un-kb #platform-parked {
+  display: none;
+}
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -16951,8 +16959,14 @@ html.un-ios {
   .platform-tab[aria-current="page"] {
     background: var(--brand-tint);
   }
+  /* `min-width: 0` so the label can SHRINK in the row and the ellipsis the
+     base rule asks for actually appears (#2760). The fifth tab carries the
+     reader's username now, up to 32 characters, and a flex item's automatic
+     minimum is its whole text — so a long name was cut off flat by the tab's
+     `overflow: hidden` instead of ending in "…". */
   .platform-tab-label {
     max-width: none;
+    min-width: 0;
   }
 
   /* THE PARKED STRIP IS THE RAIL'S FOOTER. It is the app you left, and the
@@ -17230,6 +17244,12 @@ html.un-ios {
   .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) {
     display: none;
   }
+  /* …AND ITS FOOTER GOES WITH IT (#2762). The parked strip is fixed to the
+     rail's corner rather than drawn inside the rail, so a folded rail would
+     otherwise leave it floating alone over the foot of the page. */
+  body:has(#platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)) .platform-parked {
+    display: none;
+  }
 
   /* THE PEEKED RAIL: the same element, over the app instead of beside it.
      Everything about its inside — the rows, the labels, the lit tab — is the
@@ -17245,6 +17265,14 @@ html.un-ios {
        study and this is the one that stopped feeling like a mistake. */
     animation: platform-rail-peek-in 140ms ease-out;
   }
+  /* The peeked rail's footer: the parked strip rides ON the rail rather than
+     under it (a peeking rail is 40, above the strip's 31 beside a docked one)
+     and fades in with it. Only a platform screen's folded rail can carry one — over a
+     running app the strip is hidden with the bar (features/nav/parked-strip.tsx). */
+  body:has(#platform-tabs.platform-tabs-peek) .platform-parked {
+    z-index: 41;
+    animation: platform-rail-peek-in 140ms ease-out;
+  }
 }
 
 @keyframes platform-rail-peek-in {
@@ -17253,5 +17281,6 @@ html.un-ios {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .platform-tabs.platform-tabs-peek { animation: none; }
+  .platform-tabs.platform-tabs-peek,
+  body:has(#platform-tabs.platform-tabs-peek) .platform-parked { animation: none; }
 }

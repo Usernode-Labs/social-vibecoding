@@ -2755,6 +2755,11 @@
       "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] #platform-tabs-badge"
     },
     {
+      "name": "#2760: the fifth tab is named after the signed-in user instead of \"Me\", on the phone bar and the desktop rail alike",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs a#platform-tab-me[href=\"#profile\"][aria-label$=\", your profile\"]"
+    },
+    {
       "name": "A message notification is listed in the notifications sheet",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"]",

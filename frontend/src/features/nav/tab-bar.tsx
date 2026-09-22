@@ -52,8 +52,9 @@
  * survives.
  *
  * WHICH TAB is lit comes from ./nav-store.js through the bridge, like the
- * header title and the back button beside it. Nothing writes it before
- * hydration, so it can be rendered directly.
+ * header title and the back button beside it, and so does WHOSE NAME the
+ * fifth tab carries (#2760). Nothing writes either before hydration, so both
+ * can be rendered directly.
  *
  * The visibility lands as `useHiddenClass` rather than a rendered
  * `className`, for the reason ../header/platform-header.tsx gives: this is
@@ -107,8 +108,41 @@ const TABS = [
   { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
   { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'Workshop', href: '#workshop', Icon: BoardIcon },
+  // "Me" is the label only until somebody is signed in: from then on this tab
+  // is named after them (#2760) — see tabLabel below.
   { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
 ];
+
+/**
+ * What a tab says, and what it is called (#2760).
+ *
+ * The fifth tab is the reader's own account, and "Me" was a word standing in
+ * for a name the shell already has. So once somebody is signed in it carries
+ * their USERNAME, on the phone's bar and the desktop rail alike — the owner
+ * asked for both — the way the account row at the foot of Slack's, Discord's
+ * and Linear's sidebars names you rather than a pronoun.
+ *
+ * "Me" STAYS THE PRERENDER. The document is built in Node with no session, so
+ * the shipped markup can only say "Me", and a first client render that said
+ * anything else would be React #418 on every route. `viewer` is null in the
+ * nav store's INITIAL and is published from App.enterAuthed, which runs after
+ * hydration, so the name arrives as an update — exactly how the lit tab does.
+ *
+ * THE ACCESSIBLE NAME KEEPS SAYING WHAT THE TAB IS. A bare username among
+ * Home, Discover, Messages and Workshop would be read out as a person rather
+ * than a place, so the label names both, and it starts with the visible text
+ * so a voice command that says what is on screen still finds it. Long names
+ * are cut by app.css with an ellipsis; usernames are at most 32 characters
+ * and never contain a space, so a clipped one is still recognisably yours.
+ */
+export function tabLabel(
+  key: string,
+  label: string,
+  viewer: string | null,
+): { text: string; ariaLabel: string | undefined } {
+  if (key === 'me' && viewer) return { text: viewer, ariaLabel: `${viewer}, your profile` };
+  return { text: label, ariaLabel: undefined };
+}
 
 /**
  * Home's plain click, routed in place.
@@ -204,7 +238,7 @@ export function PlatformTabs() {
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  const { tab, messages, screen, peek, railOpen } = useStoreState(navStore);
+  const { tab, messages, screen, peek, railOpen, viewer } = useStoreState(navStore);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -278,6 +312,7 @@ export function PlatformTabs() {
           // checks select on, and it costs no second attribute to keep in
           // step with. The colour comes from app.css keying off it.
           aria-current={tab === key ? 'page' : undefined}
+          aria-label={tabLabel(key, label, viewer).ariaLabel}
           onClick={key === 'home' ? onHomeClick : undefined}
         >
           <span className="platform-tab-mark">
@@ -301,7 +336,7 @@ export function PlatformTabs() {
             */}
             {key === 'messages' ? <TabBadge count={messages} /> : null}
           </span>
-          <span className="platform-tab-label">{label}</span>
+          <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
         </a>
       ))}
       </nav>
