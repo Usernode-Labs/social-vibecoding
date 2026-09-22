@@ -158,6 +158,60 @@ test('browser contexts forward the app-scoped token and failures never expose it
   assert.deepEqual(options[1].extraHTTPHeaders, { 'x-usernode-token': 'member.jwt' });
 });
 
+test('internal HTTP replay bootstraps the clone-local platform session cookie', async () => {
+  const calls = [];
+  let cookies = [];
+  const response = {
+    headersArray: () => [
+      { name: 'set-cookie', value: 'other=ignored; Path=/' },
+      { name: 'Set-Cookie', value: 'session=clone-session-token; Path=/; HttpOnly; Secure; SameSite=Lax' },
+    ],
+    dispose: async () => { calls.push(['dispose']); },
+  };
+  const context = {
+    cookies: async (origin) => {
+      calls.push(['cookies', origin]);
+      return cookies;
+    },
+    request: {
+      get: async (url, options) => {
+        calls.push(['get', url, options]);
+        return response;
+      },
+    },
+    addCookies: async (values) => {
+      calls.push(['addCookies', values]);
+      cookies = values;
+    },
+  };
+
+  assert.equal(await replay.bootstrapInternalSession(
+    context, 'http://base-evidence:3000', '/?fixture=1#apps', 'member.jwt'
+  ), true);
+  const get = calls.find(([name]) => name === 'get');
+  assert.equal(new URL(get[1]).searchParams.get('token'), 'member.jwt');
+  assert.deepEqual(get[2].headers, { 'x-usernode-token': 'member.jwt' });
+  assert.equal(get[2].maxRedirects, 0);
+  assert.deepEqual(cookies, [{
+    name: 'session', value: 'clone-session-token', url: 'http://base-evidence:3000',
+    httpOnly: true, secure: false, sameSite: 'Lax',
+  }]);
+  assert.equal(calls.some(([name]) => name === 'dispose'), true);
+});
+
+test('session bootstrap accepts only a bounded session cookie value', () => {
+  assert.equal(replay.sessionCookieValue([
+    { name: 'set-cookie', value: 'theme=light; Path=/' },
+    { name: 'set-cookie', value: 'session=abc.def_123==; Secure; HttpOnly' },
+  ]), 'abc.def_123==');
+  assert.equal(replay.sessionCookieValue([
+    { name: 'set-cookie', value: 'theme=light; Path=/' },
+  ]), null);
+  assert.throws(() => replay.sessionCookieValue([
+    { name: 'set-cookie', value: 'session=bad,value; Secure' },
+  ]), { code: 'invalid_session_cookie' });
+});
+
 test('a failed browser action identifies its plan action and stage', async () => {
   const replayPlan = plan();
   replayPlan.stories[0].intent.animation = 'none';
@@ -178,6 +232,7 @@ test('a failed browser action identifies its plan action and stage', async () =>
     if (contexts === 1) return { newPage: async () => ({}), close: async () => {} };
     return {
       route: async () => {}, addInitScript: async () => {},
+      cookies: async () => [{ name: 'session' }],
       newPage: async () => page, close: async () => {},
     };
   } };
