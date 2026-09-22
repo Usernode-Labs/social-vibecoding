@@ -107,6 +107,9 @@ import { notificationsStore } from './notifications-store.js';
 import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
+import { improveStore } from '../improve/improve-store.js';
+import { SessionRow } from '../improve/session-row';
+import type { SessionRowView } from '../improve/session-row';
 import type { NotificationRowView } from './notifications-list';
 
 type ScreenRowView = NotificationRowView & {
@@ -131,7 +134,7 @@ type ScreenRowView = NotificationRowView & {
   count?: number;
 };
 
-type Tab = 'all' | 'unread' | 'messages';
+type Tab = 'all' | 'unread' | 'messages' | 'agents';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
@@ -354,7 +357,23 @@ export function NotificationsSheetView() {
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
   const messages = all.filter((view) => view.conversation);
-  const rows = tab === 'unread' ? unread : tab === 'messages' ? messages : all;
+  // WHAT YOU ARE WORKING ON, from the store that already answers it (#2718
+  // review). The Improve panel splits the same list in two — this app's and
+  // everywhere else — because it is standing inside an app; the bell is not,
+  // so it is one list and every row names its app. No second fetch and no
+  // second model: a tab that recomputed "which sessions are live" would be a
+  // second answer to a question the platform already answers once.
+  const improve = useStoreState(improveStore) as {
+    sessions: SessionRowView[];
+    otherSessions: SessionRowView[];
+    sessionsLoaded: boolean;
+  };
+  const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])]
+    .slice()
+    .sort((a, b) => (b.sortAt || 0) - (a.sortAt || 0));
+  const rows = tab === 'unread' ? unread
+    : tab === 'messages' ? messages
+      : tab === 'agents' ? [] : all;
   // The tab counts NOTIFICATIONS, not rows. A collapsed conversation row
   // stands for `count` of them, so summing is what keeps this number equal to
   // the one on the bell — after collapsing, `unread.length` would say 1 where
@@ -477,6 +496,23 @@ export function NotificationsSheetView() {
         >
           Messages
         </button>
+        {/*
+            AGENTS, THIRD. It is not a filter on the feed like the two before
+            it — it lists what is RUNNING rather than what has happened — and
+            that is exactly why it belongs on the bell: a session working on
+            your behalf is the one thing you check on without anything having
+            pinged you. It sits after the two filters and before All, which
+            keeps the archive last.
+        */}
+        <button
+          id="notifications-tab-agents"
+          role="tab"
+          aria-selected={tab === 'agents'}
+          className={tabCls(tab === 'agents')}
+          onClick={() => setTab('agents')}
+        >
+          Agents
+        </button>
         <button
           id="notifications-tab-all"
           role="tab"
@@ -551,6 +587,33 @@ export function NotificationsSheetView() {
       ) : (
         <NotificationsPinnedSections />
       )}
+      {/* WHAT IS RUNNING, on its own tab (#2718 review). These are not
+          notification rows and are deliberately not dressed as them: the same
+          <SessionRow> the Improve panel draws, so a session reads the same
+          wherever you meet it and its busy / awaiting-input state cannot say
+          two different things in two places. `showApp` because the bell is
+          the platform's, not one app's — which is the one thing that differs
+          from the panel's copy. */}
+      {tab === 'agents' ? (
+        <>
+          {!improve.sessionsLoaded ? (
+            <p className="px-4 py-8 text-sm text-zinc-500 text-center">Loading…</p>
+          ) : agentRows.length ? (
+            agentRows.map((session) => (
+              <SessionRow
+                key={session.key}
+                session={session}
+                showApp
+                onNavigate={() => { NotificationsSheet.close?.(); }}
+              />
+            ))
+          ) : (
+            <p className="px-4 py-8 text-sm text-zinc-500 text-center">
+              Nothing is running right now.
+            </p>
+          )}
+        </>
+      ) : null}
       {today.length ? (
         <>
           <SectionHead>
@@ -567,7 +630,7 @@ export function NotificationsSheetView() {
           {earlier.map((view) => <ScreenRow key={view.id} view={view} />)}
         </>
       ) : null}
-      {!rows.length ? (
+      {!rows.length && tab !== 'agents' ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
           {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
         </p>

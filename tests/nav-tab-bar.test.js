@@ -267,10 +267,15 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
     'and the band at the foot is the home-indicator inset and nothing else');
   assert.match(block, /width: var\(--platform-rail-full\);/,
     'the bar is DRAWN at the full width, never at the reserved one');
-  assert.match(block, /grid-template-columns: none;/,
+  // A FLEX COLUMN, not the phone's grid (#2718 review). Same arrangement —
+  // rows at their natural height, packed from the top — said the way that
+  // lets Me claim the leftover space at the foot with `margin-top: auto`. In
+  // a grid with `align-content: start` an auto margin moves an item only
+  // inside its own `max-content` row, which is no movement at all.
+  assert.match(block, /display: flex;\s*\n\s*flex-direction: column;/,
     'and stops being five equal columns');
-  assert.match(block, /align-content: start;/,
-    'five rows spread over 800px of rail is the bar\'s own mistake on its side');
+  assert.match(block, /#platform-tab-me \{\s*\n\s*margin-top: auto;/,
+    'Me is the rail\'s foot: the four above are places, this is the reader');
   // A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review). The
   // rail's hairline was the content's left margin, so a card began where the
   // rail ended while the page had air on the right and none on the left — a
@@ -451,4 +456,60 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
     'and it rests ON the bar, so neither reserves the home-indicator twice');
   assert.match(css, /html\.un-kb #platform-tabs \{\s*display: none;/,
     'the keyboard takes the bar with it');
+});
+
+// ── The seam, and the foot (#2718 review) ──────────────────────────────
+
+test('the bar and the rail meet as one surface, squared and ruled', () => {
+  // The header is `rounded-b-2xl`, which is right while it floats over the
+  // page with nothing under its corners. The rail arrives directly beneath
+  // its LEFT one, so that 1rem curve cut a bite out of the top of a surface
+  // made of the same material — one pane with a chip out of it.
+  const at = css.indexOf('WHERE THE BAR MEETS THE RAIL');
+  assert.ok(at > 0, 'the rule states its reason');
+  const block = css.slice(at, css.indexOf('\n  }\n', css.indexOf('.platform-tabs:not(.platform-tabs-folded)', at)));
+  assert.match(block, /#platform-header \{\s*\n\s*border-bottom-left-radius: 0;/,
+    'square on the left');
+  assert.doesNotMatch(block, /border-bottom-right-radius/,
+    'and only on the left: the right corner still has page under it');
+  assert.match(block, /\.platform-tabs:not\(\.platform-tabs-folded\) \{\s*\n\s*border-top: 1px solid var\(--app-sheet-line\);/,
+    'a hairline across the seam, on the RAIL — a border under the header '
+    + 'would run the window\'s whole width and divide the bar from the page too');
+  // Keyed off the rail OCCUPYING its column. A folded rail is not there, so
+  // the corner keeps its curve; a folded rail peeking is an overlay with the
+  // page still underneath, where the curve is right for the same reason it
+  // is right over an app.
+  assert.match(block, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-folded\)\)/);
+});
+
+test('the desktop band tokens are not outranked by the phone\'s', () => {
+  // `:has()` takes the specificity of its most specific ARGUMENT, so the
+  // phone rule — whose argument carries one class more — outranked the
+  // desktop block and `--platform-bar-h` / `--platform-tabs-h` never once
+  // applied. Measured at 1280: `calc(56px + 0px)` and `calc(52px + 56px +
+  // 0px)`. The parked strip is placed at `bottom: var(--platform-bar-h)`, so
+  // the app you left floated 56px above the bottom-left corner instead of
+  // resting in it, and every desktop screen reserved 108px of band at its
+  // foot for a bar that is a rail down the side.
+  const at = css.indexOf('THE BAND TOKENS NEED THE OTHER RULE\'S SELECTOR, EXACTLY');
+  assert.ok(at > 0, 'the rule states its reason');
+  const block = css.slice(at, css.indexOf('\n  }\n', css.indexOf(':has(#platform-parked', at)));
+  // Character for character with the rule it has to beat, which is also the
+  // right selector on its own terms: a PEEKING rail reserves nothing.
+  assert.match(block, /html:not\(\.un-kb\) body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\) \{\s*\n\s*--platform-bar-h: 0px;\s*\n\s*--platform-tabs-h: var\(--platform-safe-bottom\);/);
+  assert.match(block, /:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\)/);
+  // And the parked strip rests ON the Me row rather than over it, through
+  // one token so the two cannot drift.
+  assert.match(css, /--platform-rail-foot-h: 52px;/);
+  assert.match(css, /\.platform-parked \{\s*\n\s*bottom: calc\(var\(--platform-rail-foot-h\) \+ var\(--platform-safe-bottom, 0px\)\);/);
+});
+
+test('a tab label has room for its descenders', () => {
+  // `.platform-tab` sets `line-height: 13px` as an absolute — right for the
+  // 11px caption under a phone glyph, two pixels short for the rail's 15px
+  // row. With `overflow: hidden` on the label the tail of a `g` or a `p` was
+  // sliced off flat. Measured at 1280: an 18px ink box in a 13px line box.
+  const label = css.slice(css.indexOf('\n.platform-tab-label {'));
+  assert.match(label.slice(0, label.indexOf('\n}')), /line-height: 1\.35;/,
+    'a unitless multiplier is the one value correct at both sizes');
 });

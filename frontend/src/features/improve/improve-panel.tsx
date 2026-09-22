@@ -456,23 +456,38 @@ export function ImprovePanel() {
               calling one method was the duplication the merge removed.
           */}
           {/*
-              ONE ACTION LEFT (#2718). "Give feedback" moved to the mark's
-              menu, where it leads: it is the row somebody who is NOT a
-              developer of this app wants, and this panel assumes you are.
-              `#improve-row-feedback` went with its id, because that id is
-              what the outbox dot's writer selects.
+              TWO ACTIONS AGAIN (#2718 review). #2718 moved "Give feedback"
+              out to the mark's menu on the reading that it is the thing
+              somebody who is NOT a developer of this app wants, and this
+              panel assumes you are. True of the READER, and it cost the
+              action its shape: a filled button that says what it does became
+              the first of eight rows in a menu, which is where you go to
+              NAVIGATE. "Make give feedback a button, like it was before."
 
-              The well keeps its shape and its id rather than collapsing into
-              the row below it: dapp.json's band-order check selects
-              `#improve-body > #improve-quick-actions + #improve-views +
-              #improve-sessions + #improve-footer` on DIRECT children, so the
-              band is structural. One button in a `flex-1 basis-0` well simply
-              spans it, which is what a single primary action should do.
+              It leads, as it did: it is the one action that needs nothing of
+              the viewer — no collaborator bit, no session, no repo — so it is
+              also the only thing in this well for a read-only viewer, where
+              "New change" has nothing to offer.
+
+              `#improve-row-feedback` comes back with it. That id is what the
+              outbox dot's writer selects, and it has survived every move this
+              control has made; the menu's copy is retired rather than left to
+              claim the same id twice.
+
+              The well's shape and id are structural either way: dapp.json's
+              band-order check selects `#improve-body > #improve-quick-actions
+              + #improve-views + #improve-sessions + #improve-footer` on
+              DIRECT children.
           */}
           <div
             id="improve-quick-actions"
             className="shrink-0 flex items-stretch gap-2 px-4 pt-1 pb-2"
           >
+            <QuickAction
+              id="improve-row-feedback"
+              label="Give feedback"
+              onClick={() => Improve.giveFeedback()}
+            />
             {state.readOnly ? null : (
               <QuickAction
                 id="improve-row-new-session"

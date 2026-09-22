@@ -120,7 +120,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import {
   BoardIcon,
-  ChatBubbleTailIcon,
   ChatIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -442,25 +441,20 @@ export function AppsSwitcherSheet(): ReactNode {
               nests a mini-app's menu.
           */}
           {/*
-              GIVE FEEDBACK FIRST, because it is the row somebody who is not a
-              developer of this app will want, and every other row on this list
-              assumes you are. It keeps `#improve-row-feedback`: that id is
-              what the outbox dot's writer selects, and moving the row must not
-              move the dot's target.
+              GIVE FEEDBACK IS NOT A ROW HERE ANY MORE (#2718 review). It led
+              this list, on the reading that it is the thing somebody who is
+              not a developer of this app wants while every other row assumes
+              you are. That reading was about the READER and it cost the
+              action its shape: a filled button that says what it DOES became
+              the first of eight rows in a menu, which is where you go to
+              navigate. It is a button again, in the Improve panel's own well
+              beside "New change" (../improve/improve-panel.tsx), which is
+              where it was before this issue moved it.
+
+              `#improve-row-feedback` goes back with it, because that id is
+              what the outbox dot's writer selects and two elements cannot
+              both claim it.
           */}
-          <MenuRow
-            id="improve-row-feedback"
-            href={slug ? `#app/${encodeURIComponent(slug)}/dev` : '#'}
-            icon={<ChatBubbleTailIcon />}
-            label="Give feedback"
-            onClick={(e) => {
-              if ((window as any).NavLink?.isNativeClick?.(e)) return;
-              e.preventDefault();
-              void AppContext.dismissForNav().then(() => {
-                (window as any).Improve?.giveFeedback?.();
-              });
-            }}
-          />
           {/*
               IMPROVE — the header pill, as a row (#2718).
 

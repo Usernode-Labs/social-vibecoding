@@ -518,13 +518,21 @@ test('the Improve panel leads with its action, shaped like the pill that used to
   assert.match(panel, /id="improve-quick-actions"/, 'the band exists');
   assert.ok(!/divide-x divide-zinc-950\/5/.test(panel),
     'and is no longer one divided well');
-  // ONE ACTION, since #2718. "Give feedback" is the app menu's lead row now:
-  // it is what somebody who is NOT a developer of this app wants, and this
-  // panel assumes you are. Its id and its handler went with it, so the dot
-  // that writes to that id has one target and one method still answers.
-  assert.doesNotMatch(panel, /id="improve-row-feedback"/,
-    'feedback is not in two places');
-  assert.doesNotMatch(panel, /Improve\.giveFeedback\(\)/, 'nor its handler');
+  // TWO AGAIN (#2718 review). #2718 made "Give feedback" the app menu's lead
+  // ROW, on the reading that it is what somebody who is NOT a developer of
+  // this app wants while this panel assumes you are. True of the reader, and
+  // it cost the action its shape: a filled button that says what it does
+  // became the first of eight rows in a place you go to navigate.
+  //
+  // It is still in exactly ONE place, with ONE handler — which is what this
+  // pair of assertions has always been about.
+  assert.match(panel, /id="improve-row-feedback"/, 'feedback is here');
+  assert.match(panel, /Improve\.giveFeedback\(\)/, 'with its handler');
+  // The ID, not the word: the menu's note still NAMES the id it handed back,
+  // which is the explanation a reader of that file needs and not a second
+  // element claiming it.
+  assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
+    .includes('id="improve-row-feedback"'), 'and not in two places');
   assert.match(panel, /id="improve-row-new-session"/, 'New change survives');
   assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
   // The BAND stays, and that is structural rather than cosmetic: dapp.json's

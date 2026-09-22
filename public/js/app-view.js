@@ -3017,7 +3017,14 @@ const AppView = {
     // persisted `devViewMode: 'kanban'` through `_setViewMode`, so what the
     // chip said depended on what had been navigated to earlier in the run.
     // It says Workshop on the Dev screen, always.
-    App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Workshop');
+    // JUST "WORKSHOP" (#2718 review). This published the app's NAME with
+    // "Workshop" as a subtitle beside it, which was the right shape while
+    // the bar was the only thing on the screen saying which app you were in.
+    // The scope chip at the head of the column says that now — with the
+    // app's own artwork, and a menu of the others — so the bar spending its
+    // width on the same name made the two read as a breadcrumb with a
+    // repeated segment. The bar names the SECTION, the chip names the scope.
+    App.setHeaderTitle?.('Workshop');
     // NO BACK ARROW HERE ANY MORE (#2718 review). This used to publish a ← to
     // the Workshop screen whenever `App._appBackHref` said that is where the
     // app was opened from — the one thing standing between a reader and the

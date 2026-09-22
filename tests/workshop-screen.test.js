@@ -439,7 +439,10 @@ test('the screen is built from the grouped-list primitives, not a copy of them',
   // language draws any more.
   const src = read('frontend/src/features/workshop/index.tsx');
   assert.match(src, /from '@\/components\/ui\/grouped-list'/);
-  for (const name of ['GroupedList', 'ListRow', 'SectionHeader']) {
+  // SectionHeader left this list with the screen's own <h1> (#2718 review):
+  // the bar above already says Workshop, and the one group on this screen is
+  // the whole of it, so there is no group WITHIN a screen left to label.
+  for (const name of ['GroupedList', 'ListRow']) {
     assert.match(src, new RegExp(`\\b${name}\\b`), `${name} is used`);
   }
   for (const wrong of [/\bdivide-y\b/, /\bbackdrop-blur/, /\bring-1\b/, /rounded-\[22px\]/]) {

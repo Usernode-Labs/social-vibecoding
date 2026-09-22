@@ -308,7 +308,12 @@ export function syncChrome(): void {
   const app = typeof window !== 'undefined' ? window.App : undefined;
   if (!app) return;
   const thread = isMobile() && !!state.route.conversationId;
-  app.setBackIcon?.(thread ? 'arrow' : 'home', thread ? '#messages' : undefined);
+  // 'none' ON THE INBOX (#2718 review). This is a second writer over the
+  // slot App._BACK_SLOT already set for #messages-screen, and it was
+  // publishing the house — so Messages was the one tab root still offering
+  // a jump to a screen its own bar already reaches. A THREAD is a level
+  // inside this screen and keeps its chevron up to the list.
+  app.setBackIcon?.(thread ? 'arrow' : 'none', thread ? '#messages' : undefined);
   app.setHeaderTitle?.(thread ? state.active?.title || 'Messages' : 'Messages');
 }
 

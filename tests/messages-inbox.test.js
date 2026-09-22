@@ -106,17 +106,31 @@ test('the discussions read fails quietly', () => {
   assert.doesNotMatch(body, /publish\(\{ error/, 'it never blanks the conversations');
 });
 
-test('the plus moved to the filter row and kept its dialog', () => {
-  // A title row is where a screen says what it IS; a filter row is where it
-  // says what it is SHOWING, and the control that adds belongs with the one
-  // that narrows.
-  const toolbar = SCREEN.slice(SCREEN.indexOf('messages-list-toolbar'), SCREEN.indexOf('<InboxFilters'));
-  assert.doesNotMatch(toolbar, /messages-new-button/, 'the title row carries no disc');
+test('what starts something sits under the strip, and says which kind', () => {
+  // It was a disc beside the title, then a disc at the far end of the filter
+  // row. Both were ONE control for an inbox that holds THREE kinds: it
+  // opened the people dialog on the Agents tab as readily as on People.
+  //
+  // Under the strip, per tab, it can name what it does (#2718 review).
+  assert.ok(!SCREEN.includes('messages-new-button'), 'the disc is retired');
   const filters = SCREEN.slice(SCREEN.indexOf('function InboxFilters'));
-  assert.match(filters.slice(0, filters.indexOf('\n}\n')), /id="messages-new"[\s\S]{0,200}messagesCreate/,
-    'the filter row does, opening the same dialog');
-  assert.match(read('public/css/app.css'), /\.messages-filters \.messages-new-button \{[\s\S]{0,120}margin-left: auto;/,
-    'and it takes the corner however many filters there are');
+  assert.doesNotMatch(filters.slice(0, filters.indexOf('\n}\n')), /id="messages-new"/,
+    'the filter row narrows and does nothing else');
+
+  const compose = SCREEN.slice(SCREEN.indexOf('function InboxCompose'));
+  const body = compose.slice(0, compose.indexOf('\n}\n'));
+  assert.match(body, /const people = filter === 'all' \|\| filter === 'people';/);
+  assert.match(body, /const agent = agentsOn && \(filter === 'all' \|\| filter === 'agents'\);/);
+  // APPS OFFERS NOTHING, which is the honest answer: an app's discussion is
+  // the app's and exists already, so there is nothing here to start.
+  assert.match(body, /if \(!people && !agent\) return null;/);
+  assert.match(body, /id="messages-new"[\s\S]{0,300}messagesCreate/,
+    'the people half opens the same dialog it always did');
+  assert.match(body, /id="messages-new-agent"[\s\S]{0,300}startNewGlobalChat\(\)/,
+    'and the agent half starts a durable chat, the way Improve\'s own New chat does');
+  // BOTH ARE `flex: 1`, so All splits the row evenly by construction rather
+  // than by a width either of them carries.
+  assert.match(read('public/css/app.css'), /\.messages-compose-btn \{[\s\S]{0,200}flex: 1 1 0;/);
 });
 
 test('the endpoint is members-only, newest first, one row per app', () => {

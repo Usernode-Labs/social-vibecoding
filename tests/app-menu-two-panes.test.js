@@ -139,23 +139,33 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
     'a figure read from data is not in a cold document');
 });
 
-test('a platform screen says its own name at one size', () => {
-  // Messages named itself at 28px and the Workshop named itself with the
-  // grouped list's SECTION LABEL — 15px, regular, muted — so two screens one
-  // tab apart disagreed about what a screen title is. A section label is for
-  // a group WITHIN a screen.
+test('a platform screen is named by the bar, and says it once', () => {
+  // The two screens spent a round disagreeing about what a title is —
+  // Messages at 28px, the Workshop wearing the grouped list's 15px muted
+  // SECTION LABEL — and were made to agree at 28px. They agree on something
+  // simpler now (#2718 review): they do not say it at all. The bar above was
+  // already reading "Messages" over an <h2> reading Messages, and Workshop
+  // over an <h1> reading Workshop — the same word twice, an inch apart, on
+  // every visit. The bar is the title, which is what it is for on every
+  // other screen in the shell.
+  //
+  // HOME REACHED THIS FIRST and for the same reason, which is why it was
+  // never a caller: the bar carries the Homeroom wordmark, and a screen
+  // called Home under a wordmark is the same word twice.
   const workshop = read('frontend/src/features/workshop/index.tsx');
-  assert.match(workshop, /<h1 className="platform-screen-title">Workshop<\/h1>/);
-  assert.ok(!workshop.includes('<SectionHeader>Workshop</SectionHeader>'),
-    'the muted section label is not a screen title');
-  const css = read('public/css/app.css');
-  assert.match(css, /\.messages-list-title h2,\n\.platform-screen-title \{/,
-    'one rule, two spellings — the sizes cannot drift apart');
-  // HOME IS NOT A CALLER, on purpose: the bar above it carries the Homeroom
-  // wordmark, and a screen called Home under a wordmark is the same word
-  // twice.
+  const messages = read('frontend/src/features/messages/index.tsx');
   const home = read('frontend/src/features/home/home.js');
-  assert.ok(!home.includes('platform-screen-title'), 'the wordmark is Home\'s title');
+  for (const [name, src] of [['Workshop', workshop], ['Messages', messages], ['Home', home]]) {
+    assert.ok(!src.includes('platform-screen-title'), `${name} does not title itself`);
+  }
+  assert.ok(!workshop.includes('<SectionHeader>Workshop</SectionHeader>'),
+    'and certainly not with a muted section label');
+  assert.ok(!messages.includes('messages-list-title'),
+    'Messages\' own title row went with it — a search took the space');
+  // What each screen DOES say is the thing the bar cannot: which workshop,
+  // and which of three kinds of message.
+  assert.match(workshop, /<WorkshopScope /);
+  assert.match(messages, /<InboxFilters /);
 });
 
 test('the desktop rail un-centres the header title', () => {
@@ -170,8 +180,15 @@ test('the desktop rail un-centres the header title', () => {
   assert.ok(at > 0, 'the rule states its reason');
   const block = css.slice(at, css.indexOf('}', css.indexOf('text-align: left;', at)));
   assert.match(block, /@media \(min-width: 768px\)/);
-  assert.match(block, /body:has\(#platform-tabs:not\(\.hidden\)\) #header-title\.is-centered/,
-    'keyed off the bar\'s own hidden class, like every other rail-aware rule');
+  // IT IS NOT KEYED OFF THE RAIL ANY MORE (#2718 review). That left exactly
+  // one live case for centring — a desktop window with no rail, which is a
+  // running app — so an app's name floated mid-bar while every platform
+  // screen's sat left: the two states of one bar disagreeing about where a
+  // title goes, on the one navigation where they alternate.
+  assert.match(block, /\n  #header-title\.is-centered \{/,
+    'every desktop title is in flow, whatever is beside it');
+  assert.doesNotMatch(block, /body:has\(#platform-tabs/,
+    'the rail is no longer what decides it');
   assert.match(block, /position: static;/);
   assert.match(block, /text-align: left;/);
   // Expressed in CSS rather than in the hook: "is there room" is a

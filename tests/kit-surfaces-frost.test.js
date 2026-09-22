@@ -147,9 +147,17 @@ test('the platform header wears the same glass as the tab bar', () => {
   const at = APP_CSS.indexOf('THE BAR IS THE SAME MATERIAL AS THE BAR AT THE FOOT');
   assert.ok(at > 0, 'the rule states its reason');
   const block = APP_CSS.slice(at, APP_CSS.indexOf('\n}', APP_CSS.indexOf('#platform-header {', at)));
-  assert.match(block, /background-color: var\(--dc-sheet-fill\);/);
-  assert.match(block, /backdrop-filter: var\(--dc-frost\);/);
-  assert.match(block, /-webkit-backdrop-filter: var\(--dc-frost\);/);
+  // THROUGH TOKENS, so the one place that has to override them can (#2718
+  // review): `html[data-un-vt]` flips both to the opaque fallback while a
+  // view transition runs. A named view-transition group composites ABOVE
+  // ::view-transition-group(root), so a translucent bar over a blur showed
+  // the sliding root snapshot straight through itself and smeared it. The
+  // fallbacks are the frosted values, which is what every other route gets.
+  assert.match(block, /background-color: var\(--platform-bar-fill, var\(--dc-sheet-fill\)\);/);
+  assert.match(block, /backdrop-filter: var\(--platform-bar-frost, var\(--dc-frost\)\);/);
+  assert.match(block, /-webkit-backdrop-filter: var\(--platform-bar-frost, var\(--dc-frost\)\);/);
+  assert.match(APP_CSS, /html\[data-un-vt\] \{\s*\n\s*--platform-bar-fill: var\(--dc-sheet\);\s*\n\s*--platform-bar-frost: none;/,
+    'and both bars go opaque for the length of a transition');
   const selector = block.slice(block.indexOf('body:has('), block.indexOf('{', block.indexOf('body:has(')));
   // NOT INSIDE AN APP. The strip takes the APP's tone there (#1945) and a
   // frost over somebody else's page colour is a smear, not a surface — and
@@ -182,4 +190,27 @@ test('a sticky header over a scrolling document keeps that glass too', () => {
   assert.match(landing, /background: color-mix\(in srgb, var\(--home-ground\) 92%, transparent\);/);
   assert.ok(!/color-mix\(in srgb, var\(--home-ground\) 92%, transparent\) !important/.test(APP_CSS),
     'and nothing forces that wash onto the platform header any more');
+});
+
+test('persistent chrome does not cross-fade through a screen swap', () => {
+  // `animation: none` on a named GROUP stops it sliding. It does not stop the
+  // two IMAGES inside it cross-fading, which is the default — so the bar
+  // stayed put and spent 130ms showing "Homeroom" and "Workshop"
+  // superimposed, both at half opacity, over a rail whose five labels were
+  // ghosting through the root snapshot at the same time. Caught by
+  // screenshotting 40ms into a Home → Workshop push.
+  assert.match(APP_CSS, /#platform-tabs \{\s*\n\s*view-transition-name: platform-tabs;/,
+    'the rail gets its own group: unnamed it is part of the root snapshot '
+    + 'and slides with the page it is navigation for');
+  assert.match(APP_CSS,
+    /html\[data-un-vt\]::view-transition-old\(platform-header\),\s*\n\s*html\[data-un-vt\]::view-transition-old\(platform-tabs\) \{\s*\n\s*animation: none;\s*\n\s*opacity: 0;/,
+    'the old image goes');
+  assert.match(APP_CSS,
+    /html\[data-un-vt\]::view-transition-new\(platform-header\),\s*\n\s*html\[data-un-vt\]::view-transition-new\(platform-tabs\) \{\s*\n\s*animation: none;\s*\n\s*opacity: 1;/,
+    'and the new one is simply there — a cross-fade animates a thing '
+    + 'CHANGING, and these relabel rather than change');
+  for (const name of ['platform-header', 'platform-tabs']) {
+    assert.match(APP_CSS, new RegExp(`::view-transition-group\\(${name}\\) \\{\\s*\\n\\s*animation: none;`),
+      `${name}'s group is pinned too, so it does not slide`);
+  }
 });

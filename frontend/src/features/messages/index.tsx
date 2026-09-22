@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { ChatIcon, EllipsisHorizontalIcon, PlusIcon, SparklesIcon, UserGroupIcon } from '@/components/ui/icons';
+import {
+  ChatIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon,
+} from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -26,7 +28,7 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { useGlobalChatState } from '../global-chat/store';
+import { startNewGlobalChat, useGlobalChatState } from '../global-chat/store';
 import {
   INBOX_FILTERS, buildInbox,
   type AgentChat, type AppDiscussion, type InboxFilter,
@@ -214,42 +216,111 @@ function AgentChatRow({ chat }: { chat: AgentChat }) {
 }
 
 /**
- * The filter row, with the control that starts something at its far end.
+ * The filter row — a SEGMENTED STRIP, the same one the app Workshop wears.
  *
- * THE PLUS MOVED HERE from beside the title (#2718). A title row is where a
- * screen says what it is; a filter row is where it says what it is showing,
- * and the thing that ADDS to what is being shown belongs on the same line as
- * the thing that narrows it. It is also the arrangement the Workshop's tab
- * strip now wears, which is what makes the two screens read as one product.
+ * THE PLUS IS NOT ON IT ANY MORE (#2718 review). It sat at the far end on
+ * the reading that a row which narrows what is shown is where the thing that
+ * adds to it belongs. That put one control saying "new" beside four saying
+ * "show", and it could only ever mean ONE of the three things this inbox now
+ * holds — it opened the people dialog, on the Agents tab as readily as on
+ * People. What starts something is below, per tab, where it can say which.
+ *
+ * STYLED AS THE WORKSHOP'S STRIP IS: a track with the segments inside it and
+ * the selected one tinted with a hairline ring, which is the shell's one
+ * segmented control rather than this screen's own. The Workshop's slides a
+ * measured marker between segments; this does not, because that measurement
+ * is against a DOM that screen owns. At rest they are the same object.
  */
 function InboxFilters({ filter }: { filter: InboxFilter }) {
   return (
-    <div id="messages-filters" className="messages-filters" role="group" aria-label="Show">
-      {INBOX_FILTERS.map(([key, label]) => (
-        <button
-          key={key}
-          id={`messages-filter-${key}`}
-          type="button"
-          data-messages-filter={key}
-          aria-current={filter === key ? 'page' : 'false'}
-          className="messages-filter"
-          onClick={() => setFilter(key)}
-        >
-          {label}
-        </button>
-      ))}
-      <button
-        type="button"
-        id="messages-new"
-        onClick={() => openDialog('messagesCreate')}
-        className="messages-new-button"
-        aria-label="New conversation"
-        title="New conversation"
-      >
-        <PlusIcon aria-hidden="true" />
-      </button>
+    <div id="messages-filters" className="messages-filters">
+      <div className="messages-filter-track" role="group" aria-label="Show">
+        {INBOX_FILTERS.map(([key, label]) => (
+          <button
+            key={key}
+            id={`messages-filter-${key}`}
+            type="button"
+            data-messages-filter={key}
+            aria-current={filter === key ? 'page' : 'false'}
+            className="messages-filter"
+            onClick={() => setFilter(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
     </div>
   );
+}
+
+/**
+ * What starts something, under the strip and answering to it.
+ *
+ * ── One control, or two, or none ──────────────────────────────────────
+ *
+ * The inbox holds three kinds and only two of them can be STARTED: a
+ * conversation with people, and a chat with the agent. An app's discussion
+ * is the app's, and exists already — so the Apps tab offers nothing, which
+ * is the honest answer rather than a button that would have to invent one.
+ *
+ * Under ALL it is both, side by side, because All is the tab with no answer
+ * to "which" — the split says the two are peers rather than making one the
+ * default and the other a menu item behind it.
+ *
+ * ── The agent half only when there IS an agent ────────────────────────
+ *
+ * Agent chats are gated on the same two flags their rows are (see the list
+ * below): a shell with the feature off shows no Agents rows, no Agents tab
+ * doing anything, and no way to start one. `agentsOn` is passed in rather
+ * than read again here, so one answer drives all three.
+ */
+function InboxCompose({ filter, agentsOn }: { filter: InboxFilter; agentsOn: boolean }) {
+  const people = filter === 'all' || filter === 'people';
+  const agent = agentsOn && (filter === 'all' || filter === 'agents');
+  if (!people && !agent) return null;
+  return (
+    <div id="messages-compose" className="messages-compose">
+      {people ? (
+        <button
+          type="button"
+          id="messages-new"
+          className="messages-compose-btn"
+          onClick={() => openDialog('messagesCreate')}
+        >
+          <PlusIcon className="w-4 h-4" aria-hidden="true" />
+          <span>New message</span>
+        </button>
+      ) : null}
+      {agent ? (
+        <button
+          type="button"
+          id="messages-new-agent"
+          className="messages-compose-btn"
+          onClick={() => { void startNewGlobalChat(); }}
+        >
+          <SparklesIcon className="w-4 h-4" aria-hidden="true" />
+          <span>New agent chat</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Narrow the inbox by what a row SAYS, not by what it is.
+ *
+ * A CLIENT-SIDE MATCH over the three lists already in memory, so it answers
+ * on every keystroke and adds no endpoint. What it matches is the text each
+ * row draws — a person's name or a group's title, an app's name, a chat's
+ * title — because a search that found rows by a field the reader cannot see
+ * would return results they cannot explain.
+ *
+ * It composes with the filter rather than replacing it: the strip says which
+ * kinds, this says which of them, and an empty query is every row.
+ */
+function inboxMatches(text: string | null | undefined, query: string): boolean {
+  if (!query) return true;
+  return String(text || '').toLowerCase().includes(query);
 }
 
 /**
@@ -300,6 +371,12 @@ function ConversationList() {
   // and a second copy in this store is a copy that drifts. Gated on the same
   // two flags the Improve panel's list is, so a shell where the feature is
   // off sees no Agents rows and no Agents filter doing nothing.
+  // EPHEMERAL, AND DELIBERATELY NOT IN THE STORE. Nothing else reads what
+  // was typed here, and a query that survived leaving the screen would greet
+  // the next visit with a list that is missing rows for a reason no longer on
+  // screen. The filter IS in the store, because the thread pane and the
+  // deep-link router both read it.
+  const [query, setQuery] = useState('');
   const chat = useGlobalChatState();
   const agentsOn = !!chat.bootstrap?.parityReady
     && chat.bootstrap.profiles.globalChat.enabled === true;
@@ -314,15 +391,49 @@ function ConversationList() {
   const byApp = new Map(snap.discussions.map((item) => [item.slug, item]));
   const byAgent = new Map(agents.map((item) => [item.id, item]));
 
+  const q = query.trim().toLowerCase();
+  const matches = (entry: { kind: string; key: string }) => {
+    if (!q) return true;
+    if (entry.kind === 'person') {
+      const c = byConversation.get(entry.key.slice('person:'.length));
+      if (!c) return false;
+      const peer = conversationPeer(c);
+      return inboxMatches(c.title, q)
+        || inboxMatches(peer?.username, q)
+        || inboxMatches(peer?.displayName, q);
+    }
+    if (entry.kind === 'app') {
+      const a = byApp.get(entry.key.slice('app:'.length));
+      return !!a && (inboxMatches(a.name, q) || inboxMatches(a.slug, q));
+    }
+    const g = byAgent.get(entry.key.slice('agent:'.length));
+    return !!g && inboxMatches(g.title, q);
+  };
+  const shown = inbox.filter(matches);
+
   return (
     <section className={`messages-list-pane ${snap.route.conversationId ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
-      {/* The screen's title, the way Home carries "Your apps". The header
-          bar's mark already names the platform, so this carries no subtitle,
-          and the New control is on the filter row below it now (#2718). */}
-      <div className="messages-list-toolbar">
-        <div className="messages-list-title"><h2>Messages</h2></div>
+      {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
+          "Messages" sat here, under a bar already reading Messages — two
+          titles, one word, an inch apart. The bar is the title now, which is
+          what it is for on every other screen in the shell.
+
+          A SEARCH TAKES ITS PLACE, because a list that can run to hundreds of
+          rows and holds three kinds of thing needs a way to name one. */}
+      <div className="messages-search">
+        <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+        <input
+          id="messages-search"
+          type="search"
+          className="messages-search-input"
+          placeholder="Search messages…"
+          aria-label="Search messages"
+          value={query}
+          onChange={(e) => setQuery(e.currentTarget.value)}
+        />
       </div>
       <InboxFilters filter={snap.filter} />
+      <InboxCompose filter={snap.filter} agentsOn={agentsOn} />
       {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
       {/* #1953: a click on the list's own blank space — below the last row,
           not on a row or a button — closes the open conversation, as it
@@ -348,12 +459,18 @@ function ConversationList() {
         {!snap.loadingList && !snap.error && snap.listLoaded && !inbox.length && snap.filter !== 'all'
           ? <div id="messages-filter-empty" className="messages-state"><p>Nothing here under this filter.</p></div>
           : null}
+        {/* A QUERY THAT MATCHED NOTHING is not an empty inbox, and must not
+            borrow the empty inbox's offer to start a conversation: the rows
+            are there, this one word is what hid them. */}
+        {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !shown.length
+          ? <div id="messages-search-empty" className="messages-state"><p>No messages match “{query.trim()}”.</p></div>
+          : null}
         {/* ONE LIST, THREE KINDS. ./inbox.ts orders them on one clock and
             returns DESCRIPTORS rather than rows, so each kind is still drawn
             by the component that knows how — which is what keeps a
             conversation row byte-identical to the one this screen has always
             drawn while the list it sits in grew two more kinds. */}
-        {inbox.map((entry) => {
+        {shown.map((entry) => {
           if (entry.kind === 'person') {
             const conversation = byConversation.get(entry.key.slice('person:'.length));
             return conversation

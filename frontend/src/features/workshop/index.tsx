@@ -295,12 +295,12 @@ export function WorkshopScreen() {
           floats on. `max-w-2xl mx-auto` is the only thing here that is this
           screen's own — GroupedList owns its own `mx-4` gutter and radius. */}
       <div className="max-w-2xl mx-auto pb-8">
-        {/* THE SCREEN'S NAME, at the size Messages already says its own
-            (`.platform-screen-title`, app.css). It was <SectionHeader> — the
-            grouped list's 15px muted label — which is the treatment for a
-            group INSIDE a screen, not for the screen. Two tabs apart, the two
-            screens disagreed about what a title is. */}
-        <h1 className="platform-screen-title">Workshop</h1>
+        {/* NO TITLE HERE (#2718 review). This screen and Messages both drew
+            their own name under a bar that was already saying it — the same
+            word twice, an inch apart, on the two screens that had been made
+            to agree about what a title IS. The bar is the title, which is
+            what it is for on every other screen in the shell; the chip below
+            says which workshop, which is the thing the bar cannot. */}
         {/* THE CHIP, THE TABS AND THE PLUS — see ./workshop-chrome.tsx for
             what each is for. They render whether or not the list has
             answered: a screen whose controls appear after its data does is a

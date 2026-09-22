@@ -69,7 +69,6 @@ import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { devWorkshopStore } from '../card/cards-store';
-import { CardIcon, Chevron, metaLineNodes } from '../card/dev-card';
 import { DevKanban } from '../card/dev-kanban';
 import { DevActionsRow } from '../actions-row';
 import { useDevActions } from '../actions-store';
@@ -558,52 +557,6 @@ function pace(d: Dash): string {
  * the number is then a floor and not a total. That is the same fact `pace()`
  * refuses to compare on, said in one character.
  */
-/**
- * The general discussion, as one row at the foot of the dashboard pane.
- *
- * It replaces a whole section — eyebrow, frosted surface, and a `DevCard`
- * inside it — whose only job was to navigate to the chat. The card's own
- * model is still what supplies it, node for node (the same glyph, the same
- * meta line naming who spoke last and when), so the row and the screen it
- * opens cannot drift apart; what it drops is the three surfaces that were
- * wrapped around that one line.
- *
- * `data-discussion-row` is load-bearing and not decoration: the delegated
- * handler on `#dev-body` (app-view.js) selects on it to switch to the chat
- * sub-view. A `<button>` carries it rather than the card's `div`, because
- * with the card gone this row IS the control.
- *
- * The chevron is the one the card wore (`DEV_CARD_CHEVRON` / `Chevron`),
- * kept deliberately. Every other rounded surface on this tab is something
- * you read, so without a mark the only thing saying this one is a door was
- * the cursor — which a phone does not have.
- */
-function DiscussionRow({ card }: { card: DevCardModel }): ReactNode {
-  return (
-    <button
-      type="button"
-      className="dev-ws-chat-row"
-      data-ws-chat-row=""
-      data-discussion-row="1"
-      title={card.title.title}
-    >
-      {card.icon ? <CardIcon spec={{ ...card.icon, small: true }} /> : null}
-      {/* TWO LINES: what this is, then the last thing said in it. The row
-          drew only the meta line, which meant the one block on the pane
-          that opens a different screen was identified by somebody else's
-          sentence — and on a quiet app by the placeholder "Talk with
-          everyone building this app", which reads as a caption rather than
-          a name. The title is the card's own (app-view.js
-          `_discussionCardModel`), so the row and the screen it opens
-          cannot drift apart on what they are called. */}
-      <span className="dev-ws-chat-text">
-        <span className="dev-ws-chat-title">{card.title.text}</span>
-        <span className="dev-ws-chat-said">{metaLineNodes(card)}</span>
-      </span>
-      <Chevron />
-    </button>
-  );
-}
 
 /**
  * The four figures.
@@ -2999,9 +2952,18 @@ export function DevWorkshop(): ReactNode {
               pane is a shape inside a shape, and this pane already has an
               internal rhythm — hairline, block, hairline — that the weeks
               above it use. The row joins that rhythm. */}
-          {v.discussion && v.discussion.t === 'card' ? (
-            <DiscussionRow card={v.discussion.card} />
-          ) : null}
+          {/* …AND IT IS NOT HERE ANY MORE (#2718 review). "General discussion
+              for <app>" sat at the foot of this pane, which is the pane about
+              WHERE THE APP IS — and a door out to a chat screen is not a fact
+              about where the app is. It had a second home from the moment
+              Messages became the platform's one inbox: the app's discussion
+              is a row there, in the list somebody looking for "what was said"
+              actually opens, beside the people and the agent chats. One
+              destination, one place that offers it.
+
+              The card MODEL stays published (app-view.js
+              `_discussionCardModel`) because the board's own surfaces draw
+              from it; what goes is this screen's copy of the door. */}
         </section>
       ) : null}
 
@@ -3062,9 +3024,9 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* The general discussion had its own section here. It is a row at the
-          foot of the dashboard pane now (DiscussionRow) — same subject as
-          that pane, and one row does not earn a section. */}
+      {/* The general discussion had its own section here, then a row at the
+          foot of the dashboard pane, and now neither (#2718 review): it is a
+          row in Messages, which is the platform's one inbox. */}
       {/* ── What moved while you were away ──
           SHOWN, not offered. It was one collapsed line — the label, the count
           and a caret — on the reasoning that most visits do not need the

@@ -2402,6 +2402,58 @@ html[data-un-vt]::view-transition-group(platform-header) {
   animation: none;
 }
 
+/* ── THE REST OF WHAT PINNING A GROUP DOES NOT DO (#2718 review) ────
+
+   `animation: none` on the GROUP stops it sliding. It does not stop the two
+   IMAGES inside it cross-fading, which is the default for every named group
+   — so the bar stayed put and spent 130ms showing "Homeroom" and "Workshop"
+   superimposed, both at half opacity, over a rail whose five labels were
+   ghosting through the root snapshot at the same time. Caught by
+   screenshotting 40ms into a Home -> Workshop push.
+
+   The old image goes and the new one is simply there. A cross-fade is how
+   you animate a thing CHANGING; this bar does not change, it relabels, and
+   two labels at once reads as a fault rather than as motion.
+
+   THE RAIL GETS ITS OWN GROUP for the same reason it needed one: unnamed, it
+   is part of the root snapshot and slides with the page it is navigation
+   for. Which tab is lit does change — and pops rather than fading, which is
+   the same trade the bar makes and the right one for chrome.
+
+   Unique per capture, like the header's: both are single elements in the
+   shell. A group present in only one state (the rail going away as an app
+   opens) has nothing to cross-fade with and pops, which is what the zoom
+   transitions already do to it. */
+#platform-tabs {
+  view-transition-name: platform-tabs;
+}
+html[data-un-vt]::view-transition-group(platform-tabs) {
+  animation: none;
+}
+html[data-un-vt]::view-transition-old(platform-header),
+html[data-un-vt]::view-transition-old(platform-tabs) {
+  animation: none;
+  opacity: 0;
+}
+html[data-un-vt]::view-transition-new(platform-header),
+html[data-un-vt]::view-transition-new(platform-tabs) {
+  animation: none;
+  opacity: 1;
+}
+
+/* AND BOTH GO OPAQUE WHILE A TRANSITION RUNS. A named group composites
+   ABOVE ::view-transition-group(root) — the note above says so, and says the
+   bar has to be opaque for it — and this review made both bars translucent
+   over a backdrop-filter. The sliding root snapshot then showed straight
+   through them AND was smeared by the blur, which is the other half of the
+   flash. Tokens rather than a second copy of each surface rule: they are
+   declared on the root, inherit to both bars, and fall back to the frosted
+   values everywhere else. */
+html[data-un-vt] {
+  --platform-bar-fill: var(--dc-sheet);
+  --platform-bar-frost: none;
+}
+
 /* Infinite decorative effects keep compositing even when the user is idle.
    Their state must remain legible without motion: lifecycle colors stay in
    place and busy session dots gain a static ring.  Functional progress
@@ -2868,9 +2920,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
              #global-chat-screen):not(.hidden)) #platform-header {
-  background-color: var(--dc-sheet-fill);
-  backdrop-filter: var(--dc-frost);
-  -webkit-backdrop-filter: var(--dc-frost);
+  background-color: var(--platform-bar-fill, var(--dc-sheet-fill));
+  backdrop-filter: var(--platform-bar-frost, var(--dc-frost));
+  -webkit-backdrop-filter: var(--platform-bar-frost, var(--dc-frost));
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -9993,10 +10045,26 @@ html.web-browser-chrome {
    Expressed here rather than in use-header-layout.ts on purpose. The hook's
    job is "is there room", which is a measurement; "is there a rail" is a
    layout fact the stylesheet already knows, and a media query cannot get out
-   of step with the one that draws the rail. `:has()` on the bar's own hidden
-   class is the same test every other rail-aware rule in this file makes. */
+   of step with the one that draws the rail.
+
+   AND NOT INSIDE AN APP EITHER (#2718 review). The rule above was keyed on
+   the rail being up, which left exactly one live case for centring: a
+   desktop window with no rail, which is a running app. So an app's name
+   floated in the middle of the bar while every platform screen's sat left —
+   the two states of one bar disagreeing about where a title goes, on the one
+   navigation where they alternate. "Keep App titles left justified in the
+   header, like the platform" is the whole of it, and dropping the `:has()`
+   is the whole of the fix.
+
+   WHICH LEAVES `.is-centered` INERT AT DESKTOP, and dead below it — the hook
+   never sets it under CENTER_MIN_WIDTH_PX. The hook and its class stay for
+   now rather than being ripped out mid-review: they are pinned by
+   tests/header-title-centering.test.js and by the measurement contract
+   use-header-layout.ts documents, and retiring a measured seam is its own
+   change with its own evidence. Worth doing, and named here so it is not
+   forgotten. */
 @media (min-width: 768px) {
-  body:has(#platform-tabs:not(.hidden)) #header-title.is-centered {
+  #header-title.is-centered {
     position: static;
     transform: none;
     flex: 1 1 auto;
@@ -16151,6 +16219,11 @@ body {
      one number for both was 17px of padding and a border, because the
      reserved figure was 0. A constant, never overridden. */
   --platform-rail-full: 224px;
+  /* HOW MUCH ROOM THE RAIL'S FOOT TAKES — the Me row, plus the rail's own
+     8px of bottom padding. Read by the parked strip, which is fixed to the
+     same corner and has to rest ON that row rather than over it. One number,
+     because two would drift the first time the row's height changes. */
+  --platform-rail-foot-h: 52px;
   /* WHAT IT RESERVES. 0 on a phone, where the five tabs are a bar at the foot
      and cost width nothing; 0 again on a desktop while the rail is folded or
      peeking, where the content takes the width back. */
@@ -16245,9 +16318,9 @@ html.un-kb #platform-tabs {
      the edge is also what lets it spend the home-indicator inset itself,
      which is what keeps the arithmetic above to one number. */
   border-top: 1px solid var(--app-sheet-line);
-  background-color: var(--dc-sheet-fill);
-  backdrop-filter: var(--dc-frost);
-  -webkit-backdrop-filter: var(--dc-frost);
+  background-color: var(--platform-bar-fill, var(--dc-sheet-fill));
+  backdrop-filter: var(--platform-bar-frost, var(--dc-frost));
+  -webkit-backdrop-filter: var(--platform-bar-frost, var(--dc-frost));
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .platform-tabs { background-color: var(--dc-sheet); }
@@ -16310,6 +16383,13 @@ html.un-kb #platform-tabs {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* A LINE BOX THAT TRACKS THE FONT. `.platform-tab` sets `line-height: 13px`
+     as an absolute, which is right for the 11px caption under a phone glyph
+     and two pixels too short for the rail's 15px row — so with `overflow:
+     hidden` on this element the tail of a `g` or a `p` was sliced off flat.
+     Measured at 1280: an 18px ink box in a 13px line box, 2px over the edge.
+     A unitless multiplier is the one value that is correct at both sizes. */
+  line-height: 1.35;
 }
 
 /* The same red disc as #notifications-badge in the header, at the same size:
@@ -16555,10 +16635,32 @@ html.un-kb #platform-tabs {
        (`px-4` is 1rem and every pane steps out to 1.5rem at `sm`), so this
        is the page's existing rhythm rather than a number for this one edge. */
     --platform-gutter: 1.5rem;
+  }
+
+  /* THE BAND TOKENS NEED THE OTHER RULE'S SELECTOR, EXACTLY (#2718 review).
+     `--platform-bar-h` and `--platform-tabs-h` were declared in the block
+     above and never once applied. `:has()` takes the specificity of its most
+     specific argument, so the phone rule near the head of this section —
+     `body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek))`, whose
+     argument carries one class more — outranks it and kept winning at every
+     width. Measured at 1280: `--platform-bar-h` read `calc(56px + 0px)` and
+     `--platform-tabs-h` read `calc(52px + 56px + 0px)`.
+
+     Two things were wrong because of it. The parked strip is placed at
+     `bottom: var(--platform-bar-h)`, so the app you left floated 56px above
+     the bottom-left corner instead of resting in it. And every desktop
+     screen reserved 108px of band at its foot for a bar that is a rail down
+     the side.
+
+     Matching the selector character for character is the fix, and it is the
+     right selector on its own terms: a PEEKING rail reserves nothing, which
+     is what that `:not()` has always meant. Source order decides between two
+     rules of equal specificity, and this one is thousands of lines later. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) {
     --platform-bar-h: 0px;
     --platform-tabs-h: var(--platform-safe-bottom);
   }
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)):has(#platform-parked:not(.hidden)) {
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {
     --platform-tabs-h: var(--platform-safe-bottom);
   }
 
@@ -16576,6 +16678,32 @@ html.un-kb #platform-tabs {
      on the element after a resize, and this is what keeps it inert there. */
   html:not(.un-kb) body:has(#platform-tabs.platform-tabs-folded) {
     --platform-rail-w: 0px;
+  }
+
+  /* ── WHERE THE BAR MEETS THE RAIL (#2718 review) ──────────────────
+     The header is `rounded-b-2xl`, which is right while it floats over the
+     page with nothing under its corners. The rail arrives directly beneath
+     its left one, so that 1rem curve cut a bite out of the top of the rail
+     and the two surfaces — the same material since this review — read as one
+     pane with a chip out of it. Square on the left only: the right corner
+     still has page under it and keeps its curve.
+
+     AND A HAIRLINE ACROSS THE SEAM, which is the same line the rail already
+     draws down its right edge, so the rail is outlined on the two sides that
+     touch something rather than on one. It is on the RAIL rather than the
+     header because the rail is what it bounds: a border under the header
+     would run the whole width of the window and divide the bar from the page
+     as well, which is a different statement and not the one asked for.
+
+     Both are keyed off the rail actually occupying its column. A FOLDED rail
+     is not there, so the corner keeps its curve; a folded rail PEEKING is an
+     overlay with the page still underneath, and the curve is right there for
+     the same reason it is right over an app. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-folded)) #platform-header {
+    border-bottom-left-radius: 0;
+  }
+  .platform-tabs:not(.platform-tabs-folded) {
+    border-top: 1px solid var(--app-sheet-line);
   }
 
   /* THE SCREENS MOVE OVER, and they move over by PADDING rather than by a
@@ -16632,16 +16760,52 @@ html.un-kb #platform-tabs {
 
     /* A COLUMN THAT DOES NOT STRETCH. `grid-template-rows: repeat(5, 1fr)`
        would spread five rows over 800px of rail, which is the bottom bar's
-       mistake turned on its side. */
-    grid-template-columns: none;
-    grid-auto-rows: max-content;
-    align-content: start;
+       mistake turned on its side.
+
+       FLEX RATHER THAN GRID since #2718's review, for one reason: Me sits at
+       the FOOT of this rail now, and `margin-top: auto` is how an item claims
+       the leftover space in a flex column. In a grid with `align-content:
+       start` the rows are packed at the top and an item's auto margin only
+       moves it inside its own `max-content` row, which is no movement at all.
+       Everything else is the same arrangement said the other way: a column of
+       rows at their natural height, packed from the top. */
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
     gap: 2px;
     padding: 8px;
+    /* WHAT THE PARKED STRIP RESTS ON. That strip is `position: fixed` to the
+       foot of this column and overlays it, so the rail owes it a floor's
+       worth of room or the last row reads through it. `--platform-bar-h` is
+       0 here (the band at the foot of a phone is a rail at the side of a
+       desktop), which is why this is spelled out rather than borrowed. */
     padding-bottom: calc(8px + var(--platform-safe-bottom, 0px));
 
     border-top: 0;
     border-right: 1px solid var(--app-sheet-line);
+  }
+
+  /* ── ME SITS AT THE FOOT (#2718 review) ──────────────────────────────
+     "Move Me to the bottom left of the sidebar, like on the prototype." It
+     is the one tab that is not a place in the product — it is the reader —
+     and every rail in the study puts the account at the bottom for exactly
+     that reason: Slack, Discord, Linear, Notion, VS Code. The other four are
+     a list of sections; this is who is looking at them.
+
+     `margin-top: auto` and nothing else: no reordering in the markup, no
+     second element, no id moved. The DOM order is still the reading order a
+     screen reader announces and the order the phone's bar lays out, and this
+     rule lives inside the desktop media query because on a phone the five
+     are a row across the foot and an auto margin there would drop Me out of
+     line with its four neighbours.
+
+     THE PARKED STRIP SITS ABOVE IT, which is the prototype's order: the
+     sections, then the app you left, then you. */
+  #platform-tab-me {
+    margin-top: auto;
+  }
+  .platform-parked {
+    bottom: calc(var(--platform-rail-foot-h) + var(--platform-safe-bottom, 0px));
   }
 
   /* A ROW, not a stack: the glyph leads and the label sits beside it at
@@ -16725,44 +16889,126 @@ html.un-kb #platform-tabs {
    thing that adds to what is shown belongs on the line with the thing that
    narrows it. The Workshop's tab strip now wears the same arrangement, which
    is what makes the two screens read as one product. */
-.messages-filters {
+/* ── THE INBOX'S OWN CHROME (#2718 review) ────────────────────────────
+   A search, a segmented strip, and what starts something — in that order,
+   which is the order the questions come in: what am I looking for, which
+   kinds am I looking through, and what if it is not here yet. */
+
+/* THE SEARCH, at the head of the pane where the screen's own <h2> used to
+   sit. The bar above already says Messages; a list that runs to hundreds of
+   rows and holds three kinds of thing needed the space for this instead. */
+.messages-search {
+  position: relative;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
+  margin: 12px 16px 10px;
+}
+.messages-search-glyph {
+  position: absolute;
+  left: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.messages-search-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px 0 40px;
+  border: 1px solid var(--app-sheet-line);
+  border-radius: 999px;
+  background: var(--dc-sheet-raise);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 15px;
+}
+.messages-search-input::placeholder { color: var(--text-muted); }
+.messages-search-input:focus {
+  outline: none;
+  border-color: var(--brand-line);
+  box-shadow: 0 0 0 3px var(--brand-tint);
+}
+/* The UA's own clear affordance, which draws a second glyph of its own in a
+   size and colour this shell does not choose. */
+.messages-search-input::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+/* THE STRIP, which is the app Workshop's (`.dev-ws-tabtrack` at 700px+) with
+   the same track, the same radius and the same segment metrics. It is a
+   TRACK holding the segments rather than four loose pills, which is what
+   makes a segmented control read as one control with a state. */
+.messages-filters {
+  display: flex;
   flex: 0 0 auto;
   padding: 0 16px 8px;
+}
+.messages-filter-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9999px;
+  background-color: var(--dc-sheet-raise);
 }
 .messages-filter {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  height: 30px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 16px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 9999px;
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 /* `aria-current` is the only marker the component renders, so it is the only
    one this reads — the same convention @/components/ui/tabs sets for every
-   strip in the shell. */
+   strip in the shell. The tint and the hairline ring together are what the
+   Workshop's sliding marker paints; drawn on the segment here, because the
+   marker's geometry is measured against a DOM that screen owns. */
 .messages-filter[aria-current="page"] {
   background: var(--brand-tint);
   color: var(--brand-ink);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
 }
-/* THE PLUS TAKES THE CORNER. `margin-left: auto` rather than a spacer, so
-   the filters keep the width they need and this keeps the edge however many
-   of them there are. It is the same disc it was beside the title; only its
-   line changed. */
-.messages-filters .messages-new-button {
-  margin-left: auto;
-  width: 34px;
-  height: 34px;
+
+/* WHAT STARTS SOMETHING, under the strip and answering to it. Two buttons
+   share the row under All and one takes it alone elsewhere, so both are
+   `flex: 1` — the split is even by construction rather than by a width
+   either of them carries. */
+.messages-compose {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+.messages-compose-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--brand-line);
+  border-radius: 999px;
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.messages-compose-btn > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* THE KIND MARK. People get none — they are the overwhelming majority of an
