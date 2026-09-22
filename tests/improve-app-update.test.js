@@ -31,9 +31,8 @@ const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP_JS = read('public/js/app.js');
-const GLYPH = read('frontend/src/features/improve/improve-glyph.tsx');
 const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
-const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+const PANEL = read('frontend/src/features/improve/actions.tsx');
 const STORE = read('frontend/src/features/improve/improve-store.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const MANIFEST = JSON.parse(read('dapp.json'));

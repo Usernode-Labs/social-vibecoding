@@ -131,7 +131,8 @@ import {
 
 import { AboutPane } from './about-pane';
 import { useStoreState } from '../../lib/use-store-state';
-import { ImproveGlyph } from '../improve/improve-glyph';
+import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { AppViewTabs, IMPROVE_VIEW_IDS } from '../improve/view-tabs';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
@@ -406,13 +407,35 @@ export function AppsSwitcherSheet(): ReactNode {
             already in — so opening it to switch apps meant reading past a
             control about the app you were leaving.
 
-            The strip is not gone, it is single-homed. The Improve panel
-            renders it (`#improve-views`, ../improve/view-tabs.tsx), which is
-            where the rest of "what can I do to this app" lives, and the
-            header's own back arrow is the fast path out of a Board or an
-            Activity feed now — see ../header/platform-header.tsx. Two copies
-            of one control was the thing view-tabs.tsx's own header called
-            "two owners of one decision"; this leaves one. */}
+            The strip is not gone, it is single-homed — HERE now (#2718
+            review). It lived in the Improve panel, and the panel is retired:
+            the drawer held two buttons, a list of sessions the Workshop took
+            earlier in this issue, and a notice. What was left did not need a
+            drawer, so the buttons, the strip and the notice moved up into
+            this menu and the drawer went. */}
+
+        {/* ── WHAT THE DRAWER USED TO HOLD ───────────────────────────
+            In its order: what is happening to the build, the two things you
+            can do about it, and — inside an app — which part of it you are
+            looking at.
+
+            THE STRIP AND THE `Open in Workshop` ROW BOTH NAME THE WORKSHOP,
+            which is the "two owners of one decision" view-tabs.tsx's own
+            header warns about, and it is kept on purpose for now: the strip
+            is the only control that gets you back to the RUNNING app from its
+            Workshop, and the row is the only thing that carries the vote
+            count. Collapsing them means moving `#app-menu-workshop-owed` onto
+            the strip's Workshop segment; worth doing, and not worth doing
+            silently inside a change that was asked to remove a drawer. */}
+        <UpdateStatus />
+        <ImproveQuickActions />
+        {slug ? (
+          <AppViewTabs
+            ids={IMPROVE_VIEW_IDS}
+            onNavigate={() => void AppContext.dismissForNav()}
+          />
+        ) : null}
+
         {/* THE ONLY VERTICAL SCROLLER. Everything above is `shrink-0`. */}
         <nav
           id="switcher-nav"
@@ -481,39 +504,12 @@ export function AppsSwitcherSheet(): ReactNode {
               and Homeroom-as-an-app is reached by opening it like any other,
               where its own menu says the same thing about it.
 
-              RENDERED ALWAYS, `hidden` without an app — the pill's exact
-              lifecycle, and the reason is the prerender: a row that only
-              exists sometimes is a row whose id is not in the shell's declared
-              inventory, and `#improve-btn-glyph` inside it is what a declared
-              check selects on to prove a landed build offers its reload.
-
               A BUTTON, not an anchor, for the About row's reason: there is no
               address to open in a new tab, because what it opens is a panel.
               It dismisses this sheet FIRST and waits — the kit cannot present
               a surface while it is still tearing one down, the same ordering
               the terminal row below uses.
           */}
-          <button
-            id="app-menu-row-improve"
-            type="button"
-            className={target === 'app' ? `${ROW} w-full text-left` : `hidden ${ROW} w-full text-left`}
-            onClick={() => {
-              void AppContext.dismissForNav().then(() => {
-                (window as any).Improve?.open?.();
-              });
-            }}
-          >
-            <RowBody
-              icon={(
-                <ImproveGlyph
-                  versionState={versionState}
-                  appDeploying={deploying}
-                  appUpdateReady={appUpdateReady}
-                />
-              )}
-              label={`Improve ${appLabel}`}
-            />
-          </button>
           {/*
               OPEN IN WORKSHOP and GO TO APP DISCUSSION are the two rows the
               study predicted: a mini-app's deeper options LINK OUT to the

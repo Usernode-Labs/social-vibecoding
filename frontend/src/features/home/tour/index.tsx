@@ -17,9 +17,9 @@
  * (`Home.publishImproveTarget`, #1367). So steps 3 to 6 are one interaction
  * rather than four descriptions:
  *
- *   * step 3 presents that menu (`opensSheet`) and spotlights the Improve row
+ *   * step 3 spotlights the MARK that opens that menu
  *     inside it, asking the viewer to press it. It has no Next. The click is
- *     NOT intercepted: the tour subscribes to `improveStore` and advances when
+ *     NOT intercepted: the tour subscribes to `appContextStore` and advances when
  *     `open` goes true, so what opens the panel is the product's own handler
  *     and the tour is only watching;
  *   * steps 4 and 5 spotlight `#improve-row-feedback` and
@@ -181,7 +181,7 @@ const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tab
  * Kit surfaces. Anything presented in one of these that is not one of the
  * tour's OWN two means the viewer is in a flow the tour must get out of the
  * way of. app.css already keys off this vocabulary
- * (`.un-sheet:has(#improve-panel)`), so it is the kit's published seam rather
+ * (`.un-sheet:has(#apps-switcher-sheet)`), so it is the kit's published seam rather
  * than a guess.
  */
 const KIT_SURFACES = '.un-modal, .un-sheet, .un-alert';
@@ -192,12 +192,12 @@ const KIT_SURFACES = '.un-modal, .un-sheet, .un-alert';
  * The Improve panel has always been one. #2718 added the app's own menu,
  * and it is not a refinement — it is required: on TOUCH that sheet is adopted
  * into a `.un-sheet`, so a tour that paused for it would open the menu on the
- * Improve step (`opensSheet`) and hide itself in the same frame, leaving the
+ * menu step and hide itself in the same frame, leaving the
  * viewer a presented sheet and no card. The web presentation is not a kit
  * surface at all, which is why this is only ever wrong on a phone — the
  * surface the tour is most often run on.
  */
-const TOUR_OWNED_SURFACES = ['#improve-panel', '#apps-switcher-sheet'];
+const TOUR_OWNED_SURFACES = ['#apps-switcher-sheet'];
 
 // ── Class strings ──────────────────────────────────────────────────────
 //
@@ -281,8 +281,15 @@ function otherSurfacePresented(): boolean {
   return false;
 }
 
+/**
+ * THE SURFACE THESE STEPS ARE ON (#2718 review). It was the Improve panel and
+ * it is the mark's menu: the panel retired, and its two actions are rows of
+ * the menu now. Everything below that says "panel" means this one surface,
+ * and `Improve.open()` / `Improve.close()` still name it — the controller
+ * forwards both to AppContext.
+ */
 function panelOpenNow(): boolean {
-  return !!improveStore.get().open;
+  return !!appContextStore.get().open;
 }
 
 export function OnboardingTour() {
@@ -403,21 +410,21 @@ export function OnboardingTour() {
     return () => { cancelled = true; };
   }, [request, start]);
 
-  // ── The Improve panel ────────────────────────────────────────────────
+  // ── The mark's menu ──────────────────────────────────────────────────
   //
   // Watched, never driven. The advance fires on the EDGE into open, so the
-  // viewer's own click on the real button is what moves the tour on and a
-  // step cannot skip itself just because the panel happens to be up.
+  // viewer's own press on the real control is what moves the tour on and a
+  // step cannot skip itself just because the menu happens to be up.
   useEffect(() => {
     if (!open) return;
     let was = panelOpenNow();
     setPanelOpen(was);
-    return improveStore.subscribe(() => {
+    return appContextStore.subscribe(() => {
       const now = panelOpenNow();
       if (now === was) return;
       was = now;
       setPanelOpen(now);
-      if (now && stepAt(indexRef.current).advanceOn === 'improve-open') {
+      if (now && stepAt(indexRef.current).advanceOn === 'menu-open') {
         setIndex((i) => clampIndex(i + 1));
       }
     });
@@ -458,21 +465,21 @@ export function OnboardingTour() {
   // (AppContext.open's own `_closeSiblings` dismisses the panel too, but it
   // does not await it — that is the race, not the fix for it.)
   //
-  // ONCE, ON ARRIVAL, which is what the deps say and what the row needs: its
-  // own handler dismisses the sheet before opening the panel, and an effect
-  // that also watched either surface's state would put the menu straight back
-  // and swallow the press this step is waiting for. The tour presents the
-  // surface; the viewer works it.
+  // THE MENU STEP ARRIVES WITH THE MENU SHUT (#2718 review).
+  //
+  // `opensSheet` retired with the Improve panel. It existed because the step's
+  // target was a ROW INSIDE the menu, which has no box for ./spotlight.ts to
+  // find while the menu is closed — so the tour had to present the surface
+  // first. The target is the MARK now, which is on screen on every route, so
+  // there is nothing to present and the viewer's own press is the whole step.
+  //
+  // What is left is the other half: arriving here with the menu already up
+  // would mean the edge into `open` never fires and the step could not
+  // advance. So it shuts it, once, on arrival — which is what the deps say.
   useEffect(() => {
     if (!live) return;
-    const step = stepAt(index);
-    if (step.advanceOn !== 'improve-open' && !step.opensSheet) return;
-    let cancelled = false;
-    const shut = panelOpenNow() ? Improve.close() : Promise.resolve();
-    void shut.then(() => {
-      if (!cancelled && step.opensSheet) AppContext.open();
-    });
-    return () => { cancelled = true; };
+    if (stepAt(index).advanceOn !== 'menu-open') return;
+    if (panelOpenNow()) void Improve.close();
   }, [live, index]);
 
   // Step 7 ends the arc by shutting the panel itself — and the app's menu with
@@ -580,7 +587,7 @@ export function OnboardingTour() {
     if (!live || confirming) return;
     const target = findTarget(stepAt(index).targets);
     if (!target) return;
-    if (document.getElementById('improve-panel')?.contains(target)) return;
+    if (document.getElementById('apps-switcher-sheet')?.contains(target)) return;
     const reduced = !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
     try {
       target.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });

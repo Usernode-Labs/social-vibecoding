@@ -44,7 +44,7 @@ const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
 // The app's rows merged into the Improve panel — one surface for the app's
 // navigation and its work. This file used to read app-context-rows.tsx.
-const SHEET_TSX = read('frontend/src/features/improve/improve-panel.tsx');
+const SHEET_TSX = read('frontend/src/features/improve/actions.tsx');
 const SERVICE = read('src/services/external-agent-tasks.js');
 
 function loadImproveController(fetch) {

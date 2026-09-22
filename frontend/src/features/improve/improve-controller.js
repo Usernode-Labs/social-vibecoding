@@ -574,64 +574,20 @@ const Improve = {
     else Improve.open();
   },
 
+  /**
+   * THE CONTROLS MOVED; THIS IS WHERE THEY MOVED TO (#2718 review).
+   *
+   * There is no Improve panel any more. It was a drawer you opened from a row
+   * in the mark's menu to reach two buttons, a session list the Workshop took
+   * earlier in this issue, and a build notice — one tap to open, one to press.
+   * The buttons and the notice are in the menu now (../app-context/), so
+   * "open Improve" and "open the menu" name the same act, and this is kept as
+   * the name every caller already says.
+   */
   open() {
-    const state = improveStore.get();
-    if (!state.slug) return;
-    const panel = document.getElementById('improve-panel');
-    if (!panel) return;
-    // ONE SURFACE AT A TIME, and this end of it had gone missing. The line
-    // here used to close the hamburger and retired with it, leaving the
-    // comment and a gap: every sheet built on lib/sheet-controller.js closes
-    // this panel when it opens (its `_closeSiblings` names window.Improve
-    // directly), and this panel closed none of them back.
-    //
-    // Nothing could see that while the backdrop covered the header — with a
-    // panel already open there was no way to press the chip or the bell, so
-    // two surfaces could not both be up. The backdrop starts below the bar
-    // now, so the bar is live and the gap is one click wide: open the app
-    // menu, press Improve, and both panels are on screen.
-    dismissRegisteredSheets();
-
-    if (!Improve._sheet) {
-      // Publish `open` BEFORE presenting: the kit sheet measures the content's
-      // height once at present time to seed its slide-up spring, so the panel
-      // has to be rendered at full height by then. The store write is flushed
-      // synchronously (lib/plain-store.js's injected flushSync), so React has
-      // painted the rows by the time adoptKitSurface reads the element.
-      improveStore.set({ open: true });
-      const sheet = adoptKitSurface({
-        kind: 'sheet',
-        contentEl: panel,
-        home: 'body',
-        gate: 'touch',
-        onDismiss: () => {
-          Improve._sheet = null;
-          improveStore.set({ open: false, adopted: false });
-          // The kit's exit spring has run: anything chained on close() (the
-          // Share dialog) may present now.
-          Improve._resolveDismissWaiters();
-        },
-      });
-      if (sheet) {
-        Improve._sheet = sheet;
-        // Adopted: the kit's own backdrop dims the scene and fades with the
-        // exit spring, so the web overlay stays down (see the same publish in
-        // lib/sheet-controller.js). Left up, it held the dim at full strength
-        // through the whole exit and only faded after the teardown, which
-        // read as the background snapping clear. Published AFTER the present:
-        // the store flush is synchronous, so the overlay's `data-open` never
-        // reaches a paint.
-        improveStore.set({ adopted: true });
-        Improve.loadSessions();
-        return;
-      }
-      // The kit refused (desktop, or no kit): adoptKitSurface has already
-      // rolled its own bookkeeping back and the slide-over below is the
-      // presentation. `open` is already published, so nothing more to do
-      // than fall through.
-    }
-    improveStore.set({ open: true });
-    Improve.loadSessions();
+    return (typeof window !== 'undefined' && window.AppContext)
+      ? window.AppContext.open()
+      : undefined;
   },
 
   // The panel's own slide-out, matching #improve-panel's transition in
@@ -657,20 +613,15 @@ const Improve = {
    * moved the drawer's reference footer into this panel, so the rule had to
    * travel with it — every other caller can keep ignoring the return value.
    */
+  /**
+   * …and the same the other way. Every action below opens something OVER the
+   * surface these controls sit on — a dialog, a screen — so each one dismisses
+   * it first, and what it dismisses is the menu.
+   */
   close() {
-    if (Improve._sheet) {
-      // The kit runs its exit spring and calls onDismiss, which is what
-      // publishes `open: false` — publishing it here as well would empty the
-      // sheet a frame before it started animating out.
-      const done = Improve._afterDismiss();
-      Improve._sheet.dismiss();
-      return done;
-    }
-    if (!improveStore.get().open) return Promise.resolve();
-    improveStore.set({ open: false });
-    const done = Improve._afterDismiss();
-    setTimeout(() => Improve._resolveDismissWaiters(), Improve.LEGACY_CLOSE_MS);
-    return done;
+    return (typeof window !== 'undefined' && window.AppContext)
+      ? window.AppContext.close()
+      : Promise.resolve();
   },
 
   _afterDismiss() {

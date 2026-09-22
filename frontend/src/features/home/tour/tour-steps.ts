@@ -1,5 +1,5 @@
 /**
- * The nine steps of the welcome tour, as data.
+ * The eight steps of the welcome tour, as data.
  *
  * Kept as a plain table with no React in it so the order, the wording, the
  * anchoring and the interaction rules can be asserted without rendering
@@ -11,75 +11,58 @@
  * Nothing here is a drawing of the product. The Improve steps used to be the
  * hard case, because Improve, Feedback, New change and Workshop all read as
  * things that live inside an app while the tour stays on Home. They are not:
- * the Improve row is in the mark's menu on Home too, where the target is the
- * platform's own self-hosted row (`Home.publishImproveTarget`, #1367), and
- * pressing it opens the real panel with the real rows in it. So the tour
- * spotlights the row, waits for the viewer to press it themselves, and
- * then walks the rows of the panel they just opened.
+ * on Home the target is the platform's own self-hosted row
+ * (`Home.publishImproveTarget`, #1367), so the real controls are there to be
+ * pressed and the tour spotlights them where they are.
  *
- * ── #2718 put a menu in front of that arc ──────────────────────────────
+ * ── #2718 put a menu in front of that arc, then folded it in ───────────
  *
- * The step pointed at `#improve-btn`, a control in the header that was always
- * on screen. That button is retired: Improve is a row of the app's own menu
- * now, behind the Homeroom mark. A row inside a closed sheet has no box, so
- * ./spotlight.ts would find nothing and the step would dim the screen whole.
+ * The step pointed at `#improve-btn`, a header pill that is retired. It became
+ * a ROW of the app's own menu, opening a panel that held two buttons, a list
+ * of sessions and a build notice. Its review retired that panel too: the
+ * Workshop had taken the sessions, which left a drawer you opened in order to
+ * press one of two buttons. Both buttons and the notice are in the menu now
+ * (../../app-context/app-context-sheet.tsx), so the step that taught "press
+ * Improve, a panel opens" and the step that taught "the mark opens the menu"
+ * were teaching one press. They are one step.
  *
- * The tour OPENS the sheet for it (`opensSheet`), the same way step 7 shuts
- * the panel — through the controller, never by writing to a React-owned
- * subtree. What it does NOT do is press the row: the arc's whole shape is
- * that the viewer performs each step themselves and the tour watches. So the
- * sheet is presented, the cut-out lands on the row inside it, and
- * `advanceOn: 'improve-open'` still waits for the panel.
- *
- * That is what `interactive`, `advanceOn` and the two surface flags are for:
+ * That is what `interactive`, `advanceOn` and the two flags below are for:
  *
  *   * `interactive` lets the cut-out pass clicks through to the control it is
  *     drawn around, while the dimmed area keeps blocking them. Exactly ONE
- *     step has it: the Improve step, which the viewer completes by pressing
- *     the real button. The three rows INSIDE the panel are described, not
- *     driven — see "The panel rows are shown, not pressed" below.
- *   * `advanceOn: 'improve-open'` is a step with NO Next. It ends when the
- *     panel opens, which the overlay learns by subscribing to improveStore.
- *     The click is never intercepted; the tour only watches.
- *   * `needsPanel` marks the steps whose target is inside the panel: Give
- *     feedback and New change, two of the three there were, since #2718 made
- *     Workshop a tab. If the panel is not open they cannot be shown, and
- *     ./index.tsx falls back to the Improve step rather than spotlighting
- *     nothing.
- *   * `opensSheet` presents the app's menu on the way IN, because the step's
- *     target is a row of it. It fires once on arrival and never again, so the
- *     row's own handler — which dismisses the sheet before opening the panel
- *     — is not fought by a tour that keeps putting the sheet back.
- *   * `closesPanel` is how the arc leaves the panel, through the
- *     controller's own `Improve.close()`. TWO steps carry it since #2718: the
- *     menu step, which comes straight after the two panel rows, and
- *     Challenges after it. Both spotlight something the panel would cover —
- *     the mark is in the header, the Challenges section is behind the well —
- *     and it shuts the app's menu for the same reason. Never by writing to
- *     either subtree, both of which are React-owned.
+ *     step has it: the menu step, which the viewer completes by pressing the
+ *     real mark. Everything else is described, not driven — see "shown, not
+ *     pressed" below.
+ *   * `advanceOn: 'menu-open'` is a step with NO Next. It ends when the menu
+ *     opens, which the overlay learns by subscribing to appContextStore. The
+ *     press is never intercepted; the tour only watches.
+ *   * `needsPanel` marks the steps whose target is inside that menu: Give
+ *     feedback and New change. If it is not open they cannot be shown, and
+ *     ./index.tsx falls back to the menu step rather than spotlighting
+ *     nothing. The name is the one every reader of this file already knows;
+ *     what it names is the surface, and the surface moved.
+ *   * `closesPanel` shuts the menu through the controller's own
+ *     `Improve.close()` — which forwards to AppContext now — before pointing
+ *     at something the menu would cover. Never by writing to either subtree,
+ *     both of which are React-owned.
  *
- * ── Everything but Improve is shown, not pressed ──────────────────────
+ * ── Everything but the menu press is shown, not pressed ────────────────
  *
  * Feedback, New change and Workshop spent a round `interactive`, on the
  * argument that pressing a control is a thing a viewer may do while the tour
  * is pointing at it. In use it is the other way round: every one of them
  * LEAVES the tour. Feedback presents a kit dialog, New change starts a
- * session, and Workshop navigates off Home — so a viewer four steps into a
- * nine step tour, following a spotlight that reads as an instruction, lands
+ * session, and Workshop navigates off Home — so a viewer four steps into an
+ * eight step tour, following a spotlight that reads as an instruction, lands
  * somewhere else with the tour paused behind them. ./index.tsx's pause and
  * fallback rules recover from that, which is not the same as it being a good
  * thing to invite.
  *
- * #2718's two new targets are the same case and arrived carrying the flag
- * anyway: the mark OPENS a menu over the card, and the Workshop tab is a tab
- * — it navigates. Neither was ever reachable from a keyboard mid-step, for
- * the reason below. They lost it with the rest.
- *
  * The keyboard already said as much. The focus move and the Tab handler in
  * ./index.tsx both open up only for a step with `advanceOn`, so no target but
- * Improve's has ever been reachable from a keyboard while its step was up; the
- * cut-out passing a POINTER through was the odd one out. Both halves agree
- * now: the spotlight describes the row, Next moves on, and the row is
+ * the menu's has ever been reachable from a keyboard while its step was up;
+ * the cut-out passing a POINTER through was the odd one out. Both halves
+ * agree now: the spotlight describes the control, Next moves on, and it is
  * pressable again the moment the tour is done with it.
  *
  * ── `targets`: a LIST, first visible one wins ──────────────────────────
@@ -103,11 +86,9 @@ export interface TourStep {
   /** The cut-out passes clicks through to the control it is drawn around. */
   interactive?: boolean;
   /** No Next: the step ends when the Improve panel opens. */
-  advanceOn?: 'improve-open';
+  advanceOn?: 'menu-open';
   /** The target is inside the Improve panel, so the panel has to be open. */
   needsPanel?: boolean;
-  /** Present the app's own menu on the way in, through the controller. */
-  opensSheet?: boolean;
   /** Shut the Improve panel and the app's menu on the way in. */
   closesPanel?: boolean;
 }
@@ -126,16 +107,21 @@ export const TOUR_STEPS: readonly TourStep[] = [
     targets: ['#home-create-section'],
   },
   {
-    // `#improve-btn` until #2718 retired the header pill. The row it became
-    // is in the menu behind the mark, which this step opens for itself — see
-    // `opensSheet` in the header above.
-    id: 'improve',
-    title: 'Improve',
-    body: 'Inside any app, Improve is where you change it. Press Improve to open it.',
-    targets: ['#app-menu-row-improve'],
+    // ONE STEP, WHERE THERE WERE TWO (#2718 review). The arc was "press the
+    // Improve row, the panel opens, here are its rows" and separately "the
+    // mark opens the app's menu". The panel is retired and its two actions
+    // are rows of that menu, so both steps were teaching the same press.
+    //
+    // It still does not press it: the whole shape of this arc is that the
+    // viewer performs each step themselves and the tour watches, so
+    // `advanceOn: 'menu-open'` waits for the menu and there is no Next to
+    // skip it with.
+    id: 'app-menu',
+    title: "The app's own menu",
+    body: 'The mark opens the menu for the app you are in. Press it.',
+    targets: ['#platform-mark-btn'],
     interactive: true,
-    opensSheet: true,
-    advanceOn: 'improve-open',
+    advanceOn: 'menu-open',
   },
   {
     // BACK FROM THE MERGE, and correct again. #2718 deleted this step because
@@ -158,24 +144,6 @@ export const TOUR_STEPS: readonly TourStep[] = [
     needsPanel: true,
   },
   {
-    // #2718 added this step, on the reading that the mark is the control on
-    // screen on every route and the rows behind it are then self-evident.
-    // That holds, and what it says had to change twice: it called itself
-    // 'feedback' and led with "give feedback", both of which were true only
-    // while that row lived in this menu. The review put feedback back in the
-    // Improve panel — where the step above now points — so this one is about
-    // the menu itself and is named for it.
-    //
-    // It CLOSES the panel on the way in, which the Challenges step used to do
-    // one later: the mark is in the header, and a panel drawn over the header
-    // would put the cut-out around something the viewer cannot see.
-    id: 'app-menu',
-    title: "The app's own menu",
-    body: 'The mark opens the menu for the app you are in: its Workshop, its discussion, its developer terminal.',
-    targets: ['#platform-mark-btn'],
-    closesPanel: true,
-  },
-  {
     // `#app-context-row-workshop` until #2718, which is an id nothing has
     // rendered for some time — the step fell through to no target and drew
     // its card with no cut-out. Workshop is a TAB now, and the tab is on
@@ -184,6 +152,11 @@ export const TOUR_STEPS: readonly TourStep[] = [
     title: 'Workshop',
     body: 'Workshop shows what is in progress across your apps, and what needs you.',
     targets: ['#platform-tab-workshop'],
+    // THE STEP THAT LEAVES THE MENU, and it is this one now rather than
+    // Challenges: the two steps before it point at rows INSIDE the menu, and
+    // the tab this one points at is behind it. Challenges keeps the flag too,
+    // for the arc that never opened the menu at all.
+    closesPanel: true,
   },
   {
     id: 'challenges',
@@ -207,15 +180,18 @@ export const TOUR_STEPS: readonly TourStep[] = [
 export const TOUR_LENGTH = TOUR_STEPS.length;
 
 /**
- * The step the Improve arc falls back to.
+ * The step the menu arc falls back to.
  *
- * It is THE step on Home in that arc: the one that presents its own surface
- * rather than needing a panel somebody else left open. A viewer who closes
- * the panel, or who comes back from a feedback draft or a new change, lands
- * here, the app's menu opens again, and they are asked to press Improve.
+ * It is THE step on Home in that arc: the one whose target is on screen
+ * whatever else is or is not open. A viewer who closes the menu, or who comes
+ * back from a feedback draft or a new change, lands here and is asked to
+ * press the mark again.
+ *
+ * Derived rather than written down, so the table stays the one source of the
+ * order: it is the step with `advanceOn`.
  */
 export const IMPROVE_STEP_INDEX = TOUR_STEPS.findIndex(
-  (step) => step.advanceOn === 'improve-open',
+  (step) => step.advanceOn === 'menu-open',
 );
 
 /** Clamp an index onto the table, so no caller can walk off either end. */

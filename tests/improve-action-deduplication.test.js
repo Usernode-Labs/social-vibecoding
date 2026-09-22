@@ -21,7 +21,7 @@ const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const VIEW = read('public/js/app-view.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
-const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+const PANEL = read('frontend/src/features/improve/actions.tsx');
 // The "+" menu moved out of the frame into its own row component, which the
 // Board and the Workshop render one-at-a-time — so the menu's rows are
 // rendered from there now. Same markup, same props, one level less chrome.
