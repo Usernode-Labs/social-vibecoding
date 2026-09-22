@@ -357,6 +357,22 @@ function applyClaudeResultUsage(usage, state) {
   for (const [key, value] of Object.entries(values)) {
     if (value != null) state[key] = value;
   }
+  // #2737: the one place a caller can watch usage WHILE the turn runs.
+  // Everything else about usage is terminal — the ledger row is written
+  // when the turn ends — so a caller that needs to stop a turn on its token
+  // spend has no other seam. Optional and best-effort by construction: a
+  // throwing hook must never take down the parse of a provider event.
+  if (typeof state.onUsage === 'function') {
+    try {
+      state.onUsage({
+        inputTokens: state.inputTokens,
+        cachedInputTokens: state.cachedInputTokens,
+        outputTokens: state.outputTokens,
+      });
+    } catch (err) {
+      log.warn('worker', 'onUsage hook threw (ignored)', { err: err.message });
+    }
+  }
   if (typeof usage.service_tier === 'string') state.serviceTier = usage.service_tier;
   if (typeof usage.inference_geo === 'string') state.inferenceRegion = usage.inference_geo;
 }
@@ -2211,6 +2227,11 @@ async function ensureWorker(sessionId, {
 // touching the post-processing logic (PR creation, staging build, etc.).
 async function execInWorker(sessionId, {
   mode = 'build',
+  // #2737: called with { inputTokens, cachedInputTokens, outputTokens }
+  // each time the provider reports usage, so a caller can end a turn on its
+  // token spend rather than only on the clock. Optional; see the call in
+  // applyClaudeResultUsage for the best-effort contract.
+  onUsage = null,
   prompt,
   // Complete task prompt for the one fresh retry run-cc.sh performs when a
   // hosted Claude --resume id is stale. Null for ordinary builds and every
@@ -2672,6 +2693,10 @@ async function execInWorker(sessionId, {
 
     const state = newWatchState();
     state.turnId = durableTurnId;
+    // #2737: forwarded to applyClaudeResultUsage, which calls it on every
+    // usage event the provider reports. Undefined for every caller but the
+    // Homeroom bot's budget guard.
+    state.onUsage = typeof onUsage === 'function' ? onUsage : null;
     state.liveSpendEnabled = isClaude && mode !== 'sync';
     workerProgress.setSpend(sessionId, null);
     state.hostSessionId = sessionId;

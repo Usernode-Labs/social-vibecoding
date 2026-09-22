@@ -2798,9 +2798,48 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    inherit, so setting them on the two elements reaches every control and
    edge inside them and nothing outside. The chip's subtitle is the one
    control drawn with a `dark:` utility rather than a brand token, so it is
-   re-inked here by hand. */
+   re-inked here by hand.
+
+   THE INK AND THE SURFACES MOVE WITH THE GROUND TOO (#2704) — and that is
+   what these blocks were missing. The ground is repainted PAGE-WIDE (the
+   wallpaper rules above put --home-ground at #0b0d1b for a dark app under
+   the light shell), but the tokens were scoped here and carried only the
+   brand controls and the sheet edge. So everything inside the bar and the
+   sheet that inks itself from the platform's text ramp, or paints itself
+   from its surface tokens, kept the LIGHT values on a ground that had
+   already gone dark. That is the hybrid: a dark page with light-theme parts
+   on it, which is exactly as readable as it sounds.
+
+   THE LAUNCH COVER IS WHERE IT WAS WORST, and it is on screen every time an
+   app opens. .app-launch-cover takes --home-ground (the rule above) and
+   .app-launch-cover-name takes --text-primary, so the app's own name was
+   painted #0a0a0a on #0b0d1b: 1.03:1, which is not dim, it is gone. The
+   mirror case is identical — a light app under the dark shell put #f5f5f7
+   on cream, also 1.03:1. Carrying the ramp takes both to 17.6:1, which is
+   the contrast the same cover already had in the untoned theme.
+
+   THE VALUES ARE THE THEME'S OWN, dark tone from `.dark` and light tone from
+   `:root`, so a toned surface stays byte-identical to a themed one — the
+   invariant tests/app-tone.test.js already pins for the brand tokens.
+   --text-faint and --text-muted are one value in both themes today and are
+   carried anyway, so the ramp is complete and a later divergence cannot
+   quietly reopen the split.
+
+   STILL SCOPED TO THE BAR AND THE SHEET, and still never to <html>. A sheet
+   or dialog opened from the bar is drawn in the viewer's own mode exactly as
+   before, because the tone is the STRIP's and not the page's. This widens
+   what the strip repaints; it does not widen what the strip is. */
 [data-app-tone="dark"]:not(.dark) #platform-header,
 [data-app-tone="dark"]:not(.dark) #app-frame-host {
+  color: #eaeaea; /* zinc-100, the body's dark ink */
+  --text-primary: #f5f5f7;
+  --text-secondary: #e3e3e6;
+  --text-muted: #8e8e93;
+  --text-faint: #8e8e93;
+  --bg-primary: #0b0b0c;
+  --bg-secondary: #1c1c1e;
+  --border: #2c2c2e;
+  --border-light: #3a3a3c;
   --brand-ink: #c7d0f5;
   --brand-tint: #262b45;
   --brand-line: #3a4270;
@@ -2810,12 +2849,41 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 }
 .dark[data-app-tone="light"] #platform-header,
 .dark[data-app-tone="light"] #app-frame-host {
+  color: #1c1c1e; /* zinc-900, the body's light ink */
+  --text-primary: #0a0a0a;
+  --text-secondary: #3a3a3c;
+  --text-muted: #6c6c70;
+  --text-faint: #8e8e93;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f7;
+  --border: #d1d1d6;
+  --border-light: #e3e3e6;
   --brand-ink: #37477b;
   --brand-tint: #e4e9f7;
   --brand-line: #c9d2f2;
   --app-sheet-line: rgba(0, 0, 0, 0.1);
   --app-sheet-shadow-near: rgba(24, 39, 75, 0.12);
   --app-sheet-shadow-far: rgba(24, 39, 75, 0.08);
+}
+/* THE ICON TILE IS THE ONE SURFACE THE CARRIED TOKENS CANNOT REACH ON THEIR
+   OWN. .app-icon-tile draws its face from --bg-primary and its ring from
+   --border-light, and dark mode does not simply hand those tokens dark
+   values for it: `.dark .app-icon-tile` steps the face UP to --bg-secondary
+   and the ring DOWN to --border, because --bg-primary is near-black and a
+   tile painted in it reads as a hole in the page rather than a surface on
+   it (that rule carries the whole argument). The step is keyed to the
+   CLASS, so under a tone it never happened — the app's own icon stayed a
+   white square on the near-black launch cover, beside the name that had
+   gone invisible. These are that rule's twins, scoped to the sheet the tone
+   owns and reading the tokens carried above. Same reason the chip's
+   subtitle is re-inked by hand below. */
+[data-app-tone="dark"]:not(.dark) #app-frame-host .app-icon-tile {
+  background-color: var(--bg-secondary);
+  border-color: var(--border);
+}
+.dark[data-app-tone="light"] #app-frame-host .app-icon-tile {
+  background-color: var(--bg-primary);
+  border-color: var(--border-light);
 }
 [data-app-tone="dark"]:not(.dark) #platform-header #app-switcher-subtitle {
   color: #8e8e93; /* zinc-400 */
@@ -5421,9 +5489,22 @@ body:has(#platform-header.hidden) #app-frame-host {
   line-height: 1.4;
 }
 .dc-flow-step-note a,
-.dc-flow-card-hint a {
+.dc-flow-card-hint a,
+/* #2706: the hint's "show the steps" is a BUTTON — it opens the inline
+   connector card rather than navigating — but it is a link in the middle of
+   a sentence and has to read as one. `inherit` for font and size, because a
+   <button> takes neither from its parent. */
+.dc-flow-hint-link {
   color: var(--accent);
   text-decoration: underline;
+}
+
+.dc-flow-hint-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
 }
 
 .dc-flow-step-done .dc-flow-step-mark {

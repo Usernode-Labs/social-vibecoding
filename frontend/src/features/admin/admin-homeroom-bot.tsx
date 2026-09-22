@@ -14,17 +14,21 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // notifying anybody. This screen is the only place those verdicts show,
 // and the two one-tap ratings per row are the calibration signal the later
 // slices (posting, building) are gated on. services/homeroom-bot.js has the
-// full reasoning; routes/admin.js the four endpoints.
+// full reasoning; routes/admin.js the five endpoints.
 //
-// PERMISSIONS: visible to any admin; the controls, the "run now" box and
-// the ratings are gated on AdminConsole.canWrite(), and the server enforces
-// the same with requireAdminWrite on the three writes.
+// PERMISSIONS: visible to any admin; the controls, the "run now" box, the
+// ratings and the CSV export are gated on AdminConsole.canWrite(), and the
+// server enforces the same with requireAdminWrite on the four of them that
+// are not the page read. The export is a write-gated READ — routes/admin.js
+// says why a bulk download sits with the mutations rather than the screen.
 
 interface Settings {
   mode: 'off' | 'shadow' | 'live';
   concurrency: number;
   batchSize: number;
   pausedApps: string[];
+  turnSeconds: number;
+  turnInputTokens: number;
 }
 
 interface Bot {
@@ -43,6 +47,7 @@ interface Totals {
   ready: number;
   person: number;
   failed: number;
+  budgetStopped: number;
   rated: number;
   agreed: number;
   suppressed: number;
@@ -64,7 +69,7 @@ interface Run {
   id: number;
   issue_number: number;
   mode: string;
-  verdict: 'question' | 'ready' | 'person' | 'failed';
+  verdict: 'question' | 'ready' | 'person' | 'empty' | 'failed';
   determined: boolean | null;
   missing_fact: string | null;
   question: string | null;
@@ -72,6 +77,7 @@ interface Run {
   build_note: string | null;
   reason: string | null;
   cap_suppressed: string | null;
+  budget_stop: string | null;
   rating: 'yes' | 'no' | null;
   rating_note: string | null;
   rated_at: string | null;
@@ -86,6 +92,12 @@ interface Run {
   issueUrl: string | null;
 }
 
+interface Refusal {
+  app: string;
+  error: string;
+  retryInMs?: number;
+}
+
 interface LastPass {
   at: string;
   mode: string | null;
@@ -94,6 +106,7 @@ interface LastPass {
   processed: number;
   paused: string | null;
   detail?: string | null;
+  refusals?: Refusal[];
 }
 
 interface Payload {
@@ -132,6 +145,7 @@ const VERDICT_LABEL: Record<Run['verdict'], string> = {
   question: 'Needs a question',
   ready: 'Ready to build',
   person: 'Needs a person',
+  empty: 'Nothing to build',
   failed: 'Failed',
 };
 
@@ -139,6 +153,7 @@ const VERDICT_BADGE: Record<Run['verdict'], string> = {
   question: AdminUI.badge.warn,
   ready: AdminUI.badge.success,
   person: AdminUI.badge.secondary,
+  empty: AdminUI.badge.outline,
   failed: AdminUI.badge.destructive,
 };
 
@@ -164,6 +179,18 @@ function VerdictBody({ run }: { run: Run }) {
   }
   if (run.verdict === 'person') {
     return <p className="text-sm">{run.reason || '(no reason given)'}</p>;
+  }
+  if (run.budget_stop) {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm">
+          {`The bot stopped this turn itself: it ran past the ${run.budget_stop} limit before reaching a verdict.`}
+        </p>
+        <p className={AdminUI.muted}>
+          It goes back to the end of the queue once. A second stop lets the issue go, rather than retrying it forever.
+        </p>
+      </div>
+    );
   }
   return <p className="text-sm text-red-400 break-words">{run.error || 'The run failed before it produced a verdict.'}</p>;
 }
@@ -240,6 +267,16 @@ function HomeroomBotSection() {
     if (data) load();
   };
 
+  // A plain link, not a fetch: the endpoint streams the file and the browser
+  // is better at receiving one than a Blob assembled in page memory. It
+  // carries whatever filters the table is showing, so "all verdicts" is the
+  // export with both filters cleared.
+  const exportParams = new URLSearchParams();
+  if (appFilter) exportParams.set('app', appFilter);
+  if (verdictFilter) exportParams.set('verdict', verdictFilter);
+  const exportQs = exportParams.toString();
+  const exportHref = `/api/admin/homeroom-bot/export.csv${exportQs ? `?${exportQs}` : ''}`;
+
   const runNow = async () => {
     const n = Number(runIssue);
     if (!runSlug || !Number.isInteger(n) || n <= 0) {
@@ -294,6 +331,7 @@ function HomeroomBotSection() {
           {tile('Ask / ready / person', totals ? `${totals.questions} / ${totals.ready} / ${totals.person}` : '–', 'admin-homeroom-bot-tile-mix')}
           {tile('Agreed with', agreement == null ? (totals && totals.rated ? '–' : 'unrated') : `${agreement}% of ${totals?.rated}`, 'admin-homeroom-bot-tile-agreement')}
           {tile('Spent this week', bot ? `${dollarsFromCents(bot.weeklySpentCents)} of ${dollarsFromCents(bot.weeklyLimitCents)}` : '–', 'admin-homeroom-bot-tile-spend')}
+          {tile('Stopped on budget', String(totals?.budgetStopped ?? 0), 'admin-homeroom-bot-tile-budget')}
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
@@ -361,6 +399,54 @@ function HomeroomBotSection() {
               />
             </div>
           </div>
+
+          <div>
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-turn-minutes">Minutes one issue may take</label>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                id="admin-homeroom-bot-turn-minutes"
+                type="number" min="1" max="180" step="1"
+                className={AdminUI.input}
+                defaultValue={Math.round((settings?.turnSeconds ?? 1200) / 60)}
+                key={`turn-${settings?.turnSeconds ?? 1200}`}
+                disabled={!canWrite}
+                onBlur={(e) => {
+                  const mins = Number(e.target.value);
+                  const n = Math.round(mins * 60);
+                  if (n === settings?.turnSeconds) return;
+                  if (!Number.isInteger(mins) || mins < 1 || mins > 180) {
+                    setStatus({ text: 'Minutes per issue must be a whole number from 1 to 180.', tone: 'err' });
+                    return;
+                  }
+                  saveSettings({ turnSeconds: n }, `The bot now gives up on an issue after ${mins} minutes.`);
+                }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-turn-tokens">Million tokens one issue may read</label>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                id="admin-homeroom-bot-turn-tokens"
+                type="number" min="1" max="5000" step="1"
+                className={AdminUI.input}
+                defaultValue={Math.round((settings?.turnInputTokens ?? 10_000_000) / 1_000_000)}
+                key={`tok-${settings?.turnInputTokens ?? 10_000_000}`}
+                disabled={!canWrite}
+                onBlur={(e) => {
+                  const millions = Number(e.target.value);
+                  const n = Math.round(millions * 1_000_000);
+                  if (n === settings?.turnInputTokens) return;
+                  if (!Number.isInteger(millions) || millions < 1 || millions > 5000) {
+                    setStatus({ text: 'Millions of tokens must be a whole number from 1 to 5000.', tone: 'err' });
+                    return;
+                  }
+                  saveSettings({ turnInputTokens: n }, `The bot now stops an issue after ${millions} million tokens.`);
+                }}
+              />
+            </div>
+          </div>
         </div>
 
         <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-identity">
@@ -377,6 +463,11 @@ function HomeroomBotSection() {
                   : payload.loop.paused === 'mode_off' ? '; stopped because the mode was switched off'
                     : payload.loop.busy ? '; another instance held the loop' : ''}.`
             : 'No pass has run since the platform started.'}
+        </p>
+        <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-refusals">
+          {payload?.loop?.refusals?.length
+            ? `Backing off: ${payload.loop.refusals.map((r) => `${r.app} (${r.error}, retrying in ${Math.round((r.retryInMs || 0) / 60000)} min)`).join('; ')}.`
+            : 'No app is backed off. A session that refuses a turn is retried after 2 minutes, then at doubling intervals up to an hour.'}
         </p>
         <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-cadence">
           The loop wakes the moment a request is filed, edited or discussed here, drains the queue, then sleeps until the next one. A sweep of GitHub every five minutes catches what happens there directly.
@@ -465,9 +556,19 @@ function HomeroomBotSection() {
               <option value="">All verdicts</option>
               <option value="question">Needs a question</option>
               <option value="ready">Ready to build</option>
+              <option value="empty">Nothing to build</option>
               <option value="person">Needs a person</option>
               <option value="failed">Failed</option>
+              <option value="budget">Stopped on budget</option>
             </select>
+            {canWrite ? (
+              <a
+                id="admin-homeroom-bot-export"
+                className={AdminUI.btn.outlineSm}
+                href={exportHref}
+                download
+              >Download CSV</a>
+            ) : null}
           </div>
         </div>
         <div className={AdminUI.tableWrap}>
@@ -512,7 +613,9 @@ function HomeroomBotSection() {
                         aria-expanded={isOpen}
                         onClick={() => setOpen((o) => ({ ...o, [run.id]: !isOpen }))}
                       >
-                        <span className={VERDICT_BADGE[run.verdict]}>{VERDICT_LABEL[run.verdict]}</span>
+                        <span className={run.budget_stop ? AdminUI.badge.warn : VERDICT_BADGE[run.verdict]}>
+                          {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
+                        </span>
                         {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
                         <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
                       </button>

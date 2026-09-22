@@ -291,6 +291,12 @@ function replayProgressEvent(event, pass) {
     type: /^[a-z_]{1,40}$/.test(type) ? type : 'unknown',
     ...(/^[a-z0-9][a-z0-9_-]{0,95}$/.test(storyId) ? { storyId } : {}),
     ...(/^[a-z0-9][a-z0-9_-]{0,31}$/.test(viewport) ? { viewport } : {}),
+    ...(type === 'result' && event?.passed === false ? {
+      passed: false,
+      code: /^[a-z0-9_]{1,80}$/.test(String(event.code || '')) ? String(event.code) : 'replay_failed',
+      message: safeDiagnosticValue(String(event.message || 'Evidence replay failed.')),
+      ...(event.detail != null ? { detail: boundedReplayDetail({ detail: event.detail }) } : {}),
+    } : {}),
   };
 }
 
@@ -529,7 +535,9 @@ async function executeRun(config, options, injected = {}) {
             session.id,
             replayInput({ run, plan, deployment: firstDeployment, authTokens, provenance: expectedProvenance, pass: 1 }),
             { onEvent: (event) => {
-              if (event?.type !== 'result') metrics.lastReplayEvent = replayProgressEvent(event, 1);
+              if (event?.type !== 'result' || event?.passed === false) {
+                metrics.lastReplayEvent = replayProgressEvent(event, 1);
+              }
               progress(`Evidence pass 1: ${event.type}`);
             }, previewRunId: run.id }
           );
@@ -550,7 +558,9 @@ async function executeRun(config, options, injected = {}) {
             session.id,
             replayInput({ run, plan, deployment: secondDeployment, authTokens, provenance: expectedProvenance, pass: 2 }),
             { onEvent: (event) => {
-              if (event?.type !== 'result') metrics.lastReplayEvent = replayProgressEvent(event, 2);
+              if (event?.type !== 'result' || event?.passed === false) {
+                metrics.lastReplayEvent = replayProgressEvent(event, 2);
+              }
               progress(`Evidence pass 2: ${event.type}`);
             }, previewRunId: run.id }
           );
@@ -681,7 +691,8 @@ async function executeRun(config, options, injected = {}) {
         agentOutcome = await dispatchOnce('claude_code');
       }
       if (agentOutcome.error && !latestHardVerdict) {
-        throw registration.control.lastToolFailure?.error || agentOutcome.error;
+        throw registration.control.lastReplayFailure?.error
+          || registration.control.lastToolFailure?.error || agentOutcome.error;
       }
     }
 
@@ -689,6 +700,7 @@ async function executeRun(config, options, injected = {}) {
       // The run-plan tool can fail while the model turn itself exits normally.
       // Preserve that platform replay error instead of replacing it with the
       // unhelpful "missing replay" fallback.
+      if (registration.control.lastReplayFailure) throw registration.control.lastReplayFailure.error;
       if (registration.control.lastToolFailure) throw registration.control.lastToolFailure.error;
       if (registration.control.finished?.status === 'failed') {
         throw new VisualEvidenceOrchestrationError('evidence_agent_reported_failure', registration.control.finished.reason);
@@ -730,7 +742,7 @@ async function executeRun(config, options, injected = {}) {
     return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
   } catch (error) {
     const control = registration?.control;
-    const toolFailure = control?.lastToolFailure;
+    const toolFailure = control?.lastReplayFailure || control?.lastToolFailure;
     const diagnosticError = toolFailure?.error || error;
     const replayDetail = boundedReplayDetail(diagnosticError);
     const failureTrace = traceSummary(metrics, {

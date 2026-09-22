@@ -46,6 +46,10 @@ class RunControl {
     // rejected plan never reaches the replay callback, but is just as useful
     // when diagnosing a turn that submitted no passing replay.
     this.lastToolFailure = null;
+    // A model may call run-plan again after a failed replay. The second call
+    // only reports the attempt limit; it must not replace the browser failure
+    // from the replay that actually ran.
+    this.lastReplayFailure = null;
     this.finished = null;
     this.repairReason = null;
     this.waiters = new Set();
@@ -108,10 +112,16 @@ class RunControl {
       try {
         const result = await this.runPlanCallback(plan, { attempt: this.planCalls });
         this.lastToolFailure = null;
+        this.lastReplayFailure = null;
         this.latestHard = result?.hardVerdict?.passed === true
           ? { passed: true, planHash: result.planHash, attempt: this.planCalls }
           : null;
         return result;
+      } catch (error) {
+        // A corrected replay may supersede an earlier failed replay. Keep the
+        // latest execution failure, separate from validation/quota errors.
+        this.lastReplayFailure = { operation: 'run-plan', error };
+        throw error;
       } finally {
         // Each deterministic replay pass has its own container deadline. Do
         // not expire the agent's control window while that bounded platform
