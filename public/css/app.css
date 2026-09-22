@@ -112,6 +112,12 @@
      — kit `.un-safe-*` classes included — as if it were on a notched
      phone. */
   --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+  /* HOW MUCH OF THAT INSET THE PHONE TAB BAR SPENDS (#2766). Everywhere but
+     iOS, all of it — see `html.un-ios` further down for the one exception
+     and `.platform-tabs` for where it is spent. Declared here, beside the
+     inset it reads, so the Android standalone override of the inset (#2755)
+     flows through it on the same element. */
+  --platform-tabs-inset: var(--platform-safe-bottom);
   /* THE AIR UNDER THE WORKSHOP'S BAR, and it lives at the ROOT because the bar
      does not live in the Workshop any more. It is portalled to
      #dev-ws-rail-host so it can be `position: fixed` to the real viewport,
@@ -16247,8 +16253,8 @@ body {
    under it is full width, and a rail that claimed 224px on the way in would
    reflow the app under the pointer that revealed it. */
 html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) {
-  --platform-bar-h: calc(56px + var(--platform-safe-bottom, 0px));
-  --platform-tabs-h: calc(56px + var(--platform-safe-bottom, 0px));
+  --platform-bar-h: calc(56px + var(--platform-tabs-inset, 0px));
+  --platform-tabs-h: calc(56px + var(--platform-tabs-inset, 0px));
 }
 /* THE PARKED STRIP ADDS ITS OWN BAND, and only while the bar is there to sit
    on: the strip is offered on the platform's screens and never inside a
@@ -16259,7 +16265,7 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) 
    section — so `calc(52px + var(--platform-bar-h))` here would read the 0px
    from the plain `body` rule rather than the value the selector above sets. */
 html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {
-  --platform-tabs-h: calc(52px + 56px + var(--platform-safe-bottom, 0px));
+  --platform-tabs-h: calc(52px + 56px + var(--platform-tabs-inset, 0px));
 }
 
 /* THE APP WORKSHOP'S PILL RESTS ON THE PLATFORM'S BAR (#2718 review).
@@ -16319,8 +16325,16 @@ html.un-kb #platform-tabs {
   align-items: stretch;
   padding: 0 4px;
   /* THE INSET, SPENT EXACTLY ONCE, here. `--platform-tabs-h` above counts on
-     this and the screens count on that. */
-  padding-bottom: var(--platform-safe-bottom);
+     this and the screens count on that. `--platform-tabs-inset` is the inset
+     itself everywhere but iOS, where the bar sits lower — see below. */
+  padding-bottom: var(--platform-tabs-inset);
+  /* A DRAG THAT STARTS ON THE BAR MOVES NOTHING (#2771). Every tab is a tap;
+     nothing here scrolls. In an installed iOS app a vertical drag that begins
+     on a surface with no scroller under it rubber-bands the whole document,
+     and the bar — fixed to that document's viewport — rides up with it,
+     showing the page's foot beneath it. Taps still land: `none` only
+     withholds panning and zooming. */
+  touch-action: none;
 
   /* EDGE TO EDGE AND FROSTED, not the Workshop's floating pill. The two bars
      are different kinds of thing and the shapes should say so: the Workshop's
@@ -16336,6 +16350,52 @@ html.un-kb #platform-tabs {
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .platform-tabs { background-color: var(--dc-sheet); }
+}
+
+/* THE BAR SITS LOWER ON iOS (#2766). The inset under it there is the
+   home-indicator strip, 34px on a Face ID iPhone, and the indicator is a 5px
+   line drawn in the bottom 13px of it: nothing is under the upper part but
+   more of the page. Spending all 34 as padding floated the five tabs a full
+   strip above the edge, well above where the system's own tab bars put
+   theirs. This spends all but 14px of it, which keeps the glyph and label
+   15px clear of the indicator and drops the bar by that much. `max()` so a
+   thin or absent inset (Safari with its toolbar up, a landscape phone) is
+   never driven negative.
+
+   iOS ONLY, and not by accident. On Android the same token measures the
+   system navigation bar — three real buttons, or a gesture handle the
+   system keeps clear of content — so borrowing from it would put the tabs
+   under the system's own controls, which is the #2755 report in reverse.
+
+   Declared on <html> (the kit's `un-ios` class is on it by the first paint)
+   so it resolves beside `:root`'s inset; the bar's padding and both band
+   tokens above read it, so the screens clear exactly the bar that is drawn. */
+html.un-ios {
+  --platform-tabs-inset: max(0px, calc(var(--platform-safe-bottom, 0px) - 14px));
+}
+
+/* THE WHOLE BAR ON AN INSTALLED ANDROID APP (#2755). An installed Android
+   web app can be drawn edge to edge, under the system navigation bar, where
+   Chrome's `safe-area-inset-bottom` can read 0 or arrive late while its
+   `safe-area-max-inset-bottom` (Chrome 135+) carries the bar's full height. With
+   an inset of 0 the bar's padding is 0 and the navigation bar paints over its
+   lower half: the truncated bar in the report. Taking the larger of the two
+   is exact where the inset is right (they agree, there is no browser chin in
+   an installed app) and whole where it is not. A browser without the second
+   variable falls back to 0px, which leaves the first untouched.
+
+   STANDALONE ONLY. In a browser tab the max variable is the height the inset
+   grows to when Chrome's bottom chin collapses, and reserving it while the
+   chin is still up would stack the bar on top of a strip the browser already
+   keeps clear. Both declarations restate the kit form so `?shot=safe-bottom`
+   still drives them; the second is the platform surface's own restatement
+   (see `#app-view[data-app-surface="platform"]`), which would otherwise win
+   inside it. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html.un-android,
+  html.un-android #app-view[data-app-surface="platform"] {
+    --platform-safe-bottom: max(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)), env(safe-area-max-inset-bottom, 0px));
+  }
 }
 
 /* A GLYPH OVER ITS LABEL, 56px tall: 8 of padding, 24 of glyph, 3 of gap, a
