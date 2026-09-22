@@ -73,10 +73,16 @@ test('two panes of ONE sheet, not two sheets', () => {
   assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
-  assert.match(SHEET, /view === 'about' \? null : \(\s*<button\s+id="apps-switcher-create"/,
-    'Create New is the menu pane\'s');
-  assert.match(SHEET, /id="apps-switcher-list"[\s\S]{0,400}view === 'about' \? ' hidden' : ''/,
-    'and so is the app strip: About is about ONE app');
+  // The label row's own text is the pane switch's other half: the menu names
+  // the app, About's back arrow names it again beside a chevron.
+  assert.match(SHEET, /\{view === 'about' \? \(/, 'one row, two states');
+  // What used to be tested here — that Create New and the app strip belonged
+  // to the MENU pane rather than to About — is gone with both of them
+  // (#2718 review). About was never the reason: a rail of other apps at the
+  // top of a sheet about ONE app was an invitation to leave it, and that is
+  // just as true of the menu pane.
+  assert.ok(!SHEET.includes('id="apps-switcher-create"'), 'no Create entry');
+  assert.ok(!SHEET.includes('id="apps-switcher-list"'), 'no app strip');
 });
 
 test('closing resets the pane, by any route', () => {

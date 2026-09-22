@@ -116,7 +116,7 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
   BoardIcon,
@@ -131,18 +131,12 @@ import {
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveGlyph } from '../improve/improve-glyph';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
-import { recordAppUse, sortByRecency } from './app-recency';
-
-type SwitcherApp = {
-  slug: string; name?: string; icon_url?: string | null; icon_emoji?: string | null;
-};
+import { recordAppUse } from './app-recency';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
@@ -229,57 +223,6 @@ function MenuRow({
   );
 }
 
-/**
- * One app in the rail.
- *
- * THE APP'S OWN ARTWORK, never its initial if it has any. ../apps/app-card-view's
- * AppIconContent is the three-way `icon_url → icon_emoji → letter` walk Home
- * and the browse list already share; a letter is the LAST resort.
- *
- * `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
- * background or text colour of its own — app.css says tile call sites must not
- * repaint the one tile face.
- */
-function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
-  const label = app.name || app.slug;
-  return (
-    <a
-      href={`/app/${encodeURIComponent(app.slug)}`}
-      data-switcher-app={app.slug}
-      aria-current={current ? 'page' : undefined}
-      className="shrink-0 w-16 flex flex-col items-center gap-1.5"
-      onClick={(event) => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey
-            || event.shiftKey || event.altKey) return;
-        event.preventDefault();
-        void AppContext.dismissForNav();
-        if (!current) window.App?.navigateToApp?.(app.slug, 'app');
-      }}
-    >
-      {/* The ring sits OUTSIDE the tile's own hairline, offset in the sheet's
-          ground, so a selected tile reads as one edge rather than two. */}
-      <span
-        data-icon={appIconKind(app)}
-        className={'app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center text-xl font-bold'
-          + (current
-            ? ' ring-2 ring-violet-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900'
-            : '')}
-      >
-        <AppIconContent app={app} />
-      </span>
-      {/* Colour only, never weight — navigation.md forbids a weight change
-          between nav item states. */}
-      <span
-        className={'w-full text-center text-[0.8125rem] truncate '
-          + (current
-            ? 'text-violet-600 dark:text-violet-400'
-            : 'text-zinc-900 dark:text-zinc-100')}
-      >
-        {label}
-      </span>
-    </a>
-  );
-}
 
 export function AppsSwitcherSheet(): ReactNode {
   const { open, adopted, view } = useStoreState(appContextStore);
@@ -291,7 +234,6 @@ export function AppsSwitcherSheet(): ReactNode {
   const {
     slug, name, showTerminal, target, versionState, deploying, appUpdateReady,
   } = useStoreState(improveStore);
-  const [apps, setApps] = useState<SwitcherApp[] | null>(null);
   // Votes this viewer owes on the app in context — the trailing figure on the
   // Workshop row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
@@ -305,40 +247,17 @@ export function AppsSwitcherSheet(): ReactNode {
 
   const close = useCallback(() => AppContext.close(), []);
 
-  // The viewer's apps, in the home grid's own "Your apps" order — the one
-  // answer to "which apps are mine" the platform already has. Revalidated on
-  // EVERY open: create/import reloads Home and Discover's add/remove action
-  // updates Home's app cache, but this island keeps its own state for the
-  // lifetime of the shell. Treating the first response as permanent left that
-  // copy stale until a page reload.
-  // Keep the previous rows while this fetch runs, so reopening never flashes an
-  // empty strip. Nothing loads during the first render: the prerender ships an
-  // empty strip and a fetch there would be a hydration mismatch.
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    (async () => {
-      try {
-        const demo = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
-        const res = await fetch(`/api/apps${demo}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        const home = (window as any).Home;
-        const mine = home?.partitionApps
-          ? home.partitionApps(data.apps || []).yours
-          : (data.apps || []);
-        if (live) setApps(mine);
-      } catch {
-        // Offline is a state, not a failure: no strip, the rows still work.
-      }
-    })();
-    return () => { live = false; };
-  }, [open]);
 
   // Every way into an app funnels through improveStore.slug, so recording
-  // recency here rather than in AppTile's click handler counts a home tile, an
-  // /app/<slug> deep link and a notification tap as uses too — not just the
-  // two entries that happen to go through this menu.
+  // recency here counts a home tile, an /app/<slug> deep link and a
+  // notification tap as uses too.
+  //
+  // THE ONE READER OF THAT HISTORY WAS THE STRIP, and the strip is retired
+  // (see the note in the markup). The write stays because the history is a
+  // fact about this device rather than a fact about this sheet —
+  // ../nav/parked-store.js's header already points at it as the thing that
+  // knows which apps this device opens, and it is three lines and a
+  // localStorage key either way.
   useEffect(() => {
     if (slug) recordAppUse(slug);
   }, [slug]);
@@ -391,11 +310,6 @@ export function AppsSwitcherSheet(): ReactNode {
     return () => { live = false; };
   }, [open, slug]);
 
-  // Most-recently-used first, which on a horizontal strip is left-to-right.
-  // Safe to read storage during render here and nowhere else in this island:
-  // `apps` is null until the sheet's first open, so this only ever runs on a
-  // client render, never in the prerender that would mismatch on hydration.
-  const rows = useMemo(() => sortByRecency(apps || []), [apps]);
 
   return (
     <>
@@ -441,41 +355,16 @@ export function AppsSwitcherSheet(): ReactNode {
               <span className="min-w-0 truncate">{appLabel}</span>
             </button>
           ) : (
-            <span className={'flex-1 min-w-0 block ' + SECTION_TYPE}>
-              Apps
+            /*
+                IT SAID "Apps" while a strip of every app sat under it. With
+                the strip gone this row names what the sheet is about, which
+                is the app in context — so the label that was duplicated
+                inside the list below (`<div className={SECTION}>`) is this
+                one now, and the list opens on its first row.
+            */
+            <span className={'flex-1 min-w-0 block truncate ' + SECTION_TYPE}>
+              {appLabel}
             </span>
-          )}
-          {view === 'about' ? null : (
-          <button
-            id="apps-switcher-create"
-            type="button"
-            className="inline-flex items-center gap-1 text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline un-touch-target"
-            // `Home.openCreateApp` never existed — the optional call swallowed
-            // it, so this button closed the sheet and did nothing else. The
-            // create dialog is reached through App.showCreateModal(), which
-            // forwards to the `create` entry of the UsernodeReact.dialogs
-            // bridge (../dialogs/create-app.tsx).
-            //
-            // The await is load-bearing on touch: dismissForNav() resolves
-            // when the kit sheet has actually torn down (up to
-            // DISMISS_SAFETY_MS in lib/sheet-controller.js), and presenting a
-            // modal into a kit that is still dismissing a sheet loses the
-            // modal. Same ordering AppTile uses for navigation.
-            //
-            // At-limit viewers still open the dialog: its quota row explains
-            // the state and its submit button is disabled. Keeping a toast
-            // gate here would make this entry disagree with the home Create
-            // button and hide the exact usage the viewer came to inspect.
-            onClick={() => {
-              const win = window as any;
-              void AppContext.dismissForNav().then(() => {
-                win.App?.showCreateModal?.();
-              });
-            }}
-          >
-            <PlusWideIcon className="w-3.5 h-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />
-            Create New
-          </button>
           )}
           <button
             id="apps-switcher-close"
@@ -487,43 +376,28 @@ export function AppsSwitcherSheet(): ReactNode {
             <XIcon className="w-5 h-5" />
           </button>
         </div>
-        {/* The apps, as a horizontal strip — vertically BOUNDED, which is what
-            keeps every row below reachable at any app count. See the header.
+        {/* THE APPS STRIP IS GONE (#2718 review).
 
-            THE PADDING IS NOT SYMMETRIC AND IT LOOKS IT. Equal air above and
-            below the tiles takes 16px above and none below, for two reasons
-            that pull the same way:
+            A horizontal rail of every app you have, with "Create New" beside
+            the label above it, sat here — #1431's answer to a vertical list
+            that clipped Home and Settings off the fold on a 39-app account.
+            The clipping argument was sound and is now moot: this menu holds
+            one app's options, so its length no longer depends on how many
+            apps you have.
 
-            4px OF THE TOP PADDING PAINTS NOTHING. `overflow-x-auto` makes this
-            a scroll container on BOTH axes (overflow-y computes to `auto`), so
-            anything drawn above the content box is clipped — and the current
-            app's tile carries `ring-2 ring-offset-2`, which paints 4px outside
-            its border box. That 4px is clearance, not gap: with `pt-1`, which
-            is exactly the outset and was all this used to carry, the ring was
-            saved from being sliced flat and the tiles sat hard against the
-            label. `pt-4` is that same clearance plus 12px that the eye reads.
+            What the strip was FOR does not survive the split either. #1443's
+            rule was "one control names where you are and its menu lists
+            everywhere you can go", and switching apps was the biggest thing
+            on that list. Since #2718 the platform's places are a permanent
+            bar and this menu is the mini-app's own — so a rail of OTHER apps
+            at the top of it is an invitation to leave the thing you opened,
+            which is the same objection that kept it out of the About pane.
+            Switching apps is Home's job, one tab away.
 
-            AND THE LABEL BELOW BRINGS ITS OWN. Whatever follows the strip
-            opens with SECTION's `pt-4`, so 16px under the tiles is already
-            there — `pb-5` on top of it made the gap below more than three
-            times the gap above. It reads as balanced at `pb-0`. */}
-        {/* THE STRIP IS THE MENU'S. About is one level inside this sheet and
-            is about ONE app, so a row of every other app at the top of it
-            would be an invitation to leave the thing you opened. */}
-        <div
-          id="apps-switcher-list"
-          className={'shrink-0 flex gap-4 px-5 pt-4 pb-0 overflow-x-auto overscroll-contain platform-no-scrollbar'
-            + (view === 'about' ? ' hidden' : '')}
-        >
-          {rows.map((app) => (
-            <AppTile key={app.slug} app={app} current={app.slug === slug} />
-          ))}
-          {apps && rows.length === 0 ? (
-            <span className="py-4 text-sm text-zinc-500 dark:text-zinc-400">
-              {NO_APPS_YET}
-            </span>
-          ) : null}
-        </div>
+            Gone with it: the `/api/apps` fetch this sheet ran on every open,
+            ./app-recency's read during render, and #apps-switcher-create —
+            whose dialog is still reached from Home's own Create tile and from
+            App.showCreateModal(). */}
         {/* THE APP'S THREE VIEWS ARE NOT HERE ANY MORE.
 
             An "In this app" caption over an App | Board | Activity strip sat
@@ -567,7 +441,6 @@ export function AppsSwitcherSheet(): ReactNode {
               Tabs, Safari's view controller, Discord, Slack, Teams. Nobody
               nests a mini-app's menu.
           */}
-          <div className={SECTION}>{appLabel}</div>
           {/*
               GIVE FEEDBACK FIRST, because it is the row somebody who is not a
               developer of this app will want, and every other row on this list
@@ -606,8 +479,16 @@ export function AppsSwitcherSheet(): ReactNode {
               improves, and on Home that is the platform's own self-hosted row
               rather than an app (#1367, Home.publishImproveTarget).
 
-              RENDERED ALWAYS, `hidden` when there is no target — the pill's
-              exact lifecycle, and the reason is the prerender: a row that only
+              AN APP'S ROW, NEVER THE PLATFORM'S (#2718 review). The pill
+              appeared wherever there was a target, and on the platform screens
+              that target is Homeroom's own self-hosted row (#1367), so the
+              menu offered "Improve the platform" from Home. That is the split
+              this issue made, read backwards: this menu is the MINI-APP's,
+              and Homeroom-as-an-app is reached by opening it like any other,
+              where its own menu says the same thing about it.
+
+              RENDERED ALWAYS, `hidden` without an app — the pill's exact
+              lifecycle, and the reason is the prerender: a row that only
               exists sometimes is a row whose id is not in the shell's declared
               inventory, and `#improve-btn-glyph` inside it is what a declared
               check selects on to prove a landed build offers its reload.
@@ -621,7 +502,7 @@ export function AppsSwitcherSheet(): ReactNode {
           <button
             id="app-menu-row-improve"
             type="button"
-            className={target ? `${ROW} w-full text-left` : `hidden ${ROW} w-full text-left`}
+            className={target === 'app' ? `${ROW} w-full text-left` : `hidden ${ROW} w-full text-left`}
             onClick={() => {
               void AppContext.dismissForNav().then(() => {
                 (window as any).Improve?.open?.();
@@ -636,7 +517,7 @@ export function AppsSwitcherSheet(): ReactNode {
                   appUpdateReady={appUpdateReady}
                 />
               )}
-              label={target === 'platform' ? 'Improve the platform' : `Improve ${appLabel}`}
+              label={`Improve ${appLabel}`}
             />
           </button>
           {/*

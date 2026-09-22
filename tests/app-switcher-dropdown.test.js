@@ -294,22 +294,6 @@ test('the sheet markup is one panel — the presentation is entirely CSS', () =>
 
 // ── The panel's contents ───────────────────────────────────────────────
 
-test('the app strip revalidates on every open without clearing cached rows', () => {
-  const start = SHEET.indexOf('// The viewer\'s apps, in the home grid');
-  const end = SHEET.indexOf('// Every way into an app funnels through', start);
-  assert.ok(start >= 0 && end > start, 'located the app-list loading effect');
-  const effect = SHEET.slice(start, end);
-
-  assert.match(effect, /if \(!open\) return;/,
-    'a closed sheet does not fetch during prerender or while hidden');
-  assert.doesNotMatch(effect, /if \(!open\s*\|\||\|\|\s*apps\)/,
-    'a previous response must not suppress the next open-time refresh');
-  assert.match(effect, /\}, \[open\]\);/,
-    'each closed-to-open transition reruns the request');
-  assert.doesNotMatch(effect, /setApps\(null\)/,
-    'the last successful strip stays visible while it revalidates');
-});
-
 test('the panel is deliberately wider than the rails, and still fits', () => {
   const block = switcherDesktopBlock();
   const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
@@ -355,17 +339,21 @@ test('the panel meets the header rather than floating under it', () => {
     'the hairline is the brand one the chip itself wears');
 });
 
-test('the Apps label is the same label as In this app, not a heading', () => {
-  // The row it sits in cannot use SECTION — it holds Create New and the close
-  // button too — so the type half is shared as a constant and the row states
-  // SECTION's own padding. Both halves have to hold for "the same as In this
-  // app" to be true.
+test('the label row is a label, not a heading', () => {
+  // The row it sits in cannot use SECTION — it holds the close button too —
+  // so the type half is shared as a constant and the row states SECTION's own
+  // padding. Both halves have to hold for it to read as a label.
+  //
+  // IT SAYS THE APP'S NAME NOW. "Apps" was right while a strip of every app
+  // sat under it; with the strip retired (#2718 review) this row names what
+  // the sheet is about, and the duplicate label that used to open the list
+  // below went with it.
   assert.match(SHEET, /const SECTION_TYPE = 'text-\[0\.7rem\] font-semibold uppercase tracking-wide '/,
     'the type half is a constant of its own');
   assert.match(SHEET, /const SECTION = 'px-5 pt-4 pb-1 ' \+ SECTION_TYPE;/,
     'and SECTION is that constant plus the row it owns');
-  assert.match(SHEET, /className=\{'flex-1 min-w-0 block ' \+ SECTION_TYPE\}/,
-    'the Apps label reads as a label…');
+  assert.match(SHEET, /className=\{'flex-1 min-w-0 block truncate ' \+ SECTION_TYPE\}/,
+    'the label reads as a label…');
   assert.match(SHEET, /className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0"/,
     '…in a row carrying SECTION\'s own padding');
   assert.doesNotMatch(SHEET, /text-lg font-semibold text-zinc-900/,
@@ -373,23 +361,21 @@ test('the Apps label is the same label as In this app, not a heading', () => {
 });
 
 test('every group in the menu announces itself', () => {
-  // TWO GROUPS NOW (#2718): the apps, and the app's own options. "Platform"
-  // and "You" were the platform's destinations and the viewer's, and both
-  // left — the tab bar carries the first and the Profile screen the second.
-  // What is left is named after the APP, which is what the rows are about.
+  // ONE GROUP NOW. "Platform" and "You" were the platform's destinations and
+  // the viewer's, and both left with #2718 — the tab bar carries the first
+  // and the Profile screen the second. The apps strip was the third and left
+  // on the owner's review, so what remains is named after the APP, which is
+  // what every row in it is about.
   //
   // "In this app" is not in this list either, and its absence is older: the
   // App | Board | Activity strip it captioned left when the menu was still
   // picking WHICH APP, because a control about the app you are already inside
   // sat between you and the list you opened it for.
-  assert.ok(SHEET.includes('\n              Apps\n'), 'the Apps group is labelled');
-  assert.match(SHEET, /<div className=\{SECTION\}>\{appLabel\}<\/div>/,
-    "and the app's own group is labelled with the app's name");
-  // The label goes INSIDE #switcher-nav, above the first row it names.
+  assert.match(SHEET, /\{appLabel\}\n\s+<\/span>/,
+    "the one group is labelled with the app's name");
   const nav = SHEET.slice(SHEET.indexOf('id="switcher-nav"'));
-  const label = nav.indexOf('{appLabel}</div>');
-  const first = nav.indexOf('id="improve-row-feedback"');
-  assert.ok(label > 0 && label < first, 'the label precedes the rows it names');
+  assert.ok(!nav.includes('{appLabel}</div>'),
+    'and not a second time inside the list — the header row is the label now');
   assert.doesNotMatch(nav, /id="switcher-row-/,
     'and no platform destination is left in this menu at all — they are tabs '
     + 'and Profile rows now (#2718)');
@@ -406,44 +392,6 @@ test('the menu is the APP PICKER — the view strip is not in it', () => {
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'and no caption left behind for it — comments explaining the removal '
     + 'are fine, rendered text is not');
-});
-
-test('equal air above and below the app strip, which is not equal padding', () => {
-  // The className is computed now — the strip is the MENU pane's and carries
-  // `hidden` on the About pane — so the constant half is read out of the
-  // template rather than out of a plain attribute.
-  const strip = SHEET.match(/id="apps-switcher-list"[\s\S]{0,300}?className=\{'([^']*)'/);
-  assert.ok(strip, 'the strip states its padding');
-  const pt = strip[1].match(/\bpt-(\d+)\b/);
-  const pb = strip[1].match(/\bpb-(\d+)\b/);
-  assert.ok(pt && pb, 'both paddings are explicit');
-
-  // Every term, read from the source rather than restated, because the whole
-  // point is that the four of them do not cancel out the way they look like
-  // they should.
-  const labelRow = SHEET.match(/className="flex items-center gap-3 px-5 pt-\d+ pb-(\d+) shrink-0"/);
-  assert.ok(labelRow, 'the Apps label row states its bottom padding');
-  const section = SHEET.match(/const SECTION = 'px-5 pt-(\d+) pb-\d+ ' \+ SECTION_TYPE;/);
-  assert.ok(section, 'SECTION states the padding it opens with');
-
-  // The selected tile's ring paints outside its own box: ring-2 ring-offset-2.
-  const tile = SHEET.match(/ring-(\d+) ring-offset-(\d+)/);
-  assert.ok(tile, 'the selected tile states its ring');
-  const RING = Number(tile[1]) + Number(tile[2]);
-
-  // What the EYE measures, on each side of the tiles:
-  //   above — the label row's own bottom padding, plus the strip's top
-  //           padding, LESS the ring that paints up into it
-  //   below — the strip's bottom padding, plus the padding the next label
-  //           opens with
-  const above = step(Number(labelRow[1])) + step(Number(pt[1])) - RING;
-  const below = step(Number(pb[1])) + step(Number(section[1]));
-  assert.equal(above, below,
-    `the tiles read ${above}px above and ${below}px below — the ring outset `
-    + "and the next label's own padding are why symmetric padding is not "
-    + 'symmetric air');
-  assert.ok(step(Number(pt[1])) >= RING,
-    'and the top padding still clears the ring, or its top arc is sliced flat');
 });
 
 // ── The segmented control's pill ───────────────────────────────────────

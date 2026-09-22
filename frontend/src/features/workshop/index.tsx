@@ -58,7 +58,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { workshopStore } from './workshop-store.js';
 import {
-  WorkshopPicker, WorkshopPlus, WorkshopScope, WorkshopTabs, type WorkshopTab,
+  WorkshopPicker, WorkshopScope,
 } from './workshop-chrome';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
@@ -103,24 +103,6 @@ export function orderRows(apps: WorkshopRow[]): WorkshopRow[] {
 }
 
 /** Join a counts map onto the app rows. A slug with no entry is two zeroes. */
-/**
- * The rows one tab shows.
- *
- * THE SAME THREE QUESTIONS THE APP'S OWN WORKSHOP ASKS, asked of apps rather
- * than of items: Current status is where you have something in flight, Needs
- * you is where a decision is owed, All items is every app you have. An app
- * with neither number is in exactly one of the three, which is what keeps
- * "All items" the widening move rather than a fourth answer.
- *
- * Pure and exported for the same reason `orderRows` is: the filter is the
- * argument this screen makes, and a test should be able to drive it without
- * a fetch.
- */
-export function filterRows(rows: WorkshopRow[], tab: WorkshopTab): WorkshopRow[] {
-  if (tab === 'status') return rows.filter((row) => row.working > 0);
-  if (tab === 'needs') return rows.filter((row) => row.needs > 0);
-  return rows;
-}
 
 export function joinCounts(apps: Array<Omit<WorkshopRow, 'working' | 'needs'>>, counts: Counts): WorkshopRow[] {
   return apps.map((app) => {
@@ -266,11 +248,17 @@ export function WorkshopScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
-    tab: WorkshopTab; picker: null | 'scope' | 'change' | 'issue';
+    picker: null | 'scope';
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
-  const all = state.rows ? orderRows(state.rows) : null;
-  const rows = all ? filterRows(all, state.tab) : null;
+  // ONE LIST, EVERY APP. The three tabs — Current status / Needs you / All
+  // items — are gone from this screen (see ./workshop-chrome.tsx): they are
+  // the APP Workshop's tabs, about one app's items, and up here they were
+  // filtering a list of apps by whether a number on it was non-zero. Each row
+  // already carries both numbers, so the filter hid apps to say something the
+  // rows were saying anyway.
+  const rows = state.rows ? orderRows(state.rows) : null;
+  const all = rows;
   // `#workshop-empty` keeps its ONE meaning — you have no apps at all — and
   // that is a contract rather than a nicety: dapp.json selects
   // `#workshop-empty.hidden` to prove the card is gone once the list has
@@ -291,7 +279,6 @@ export function WorkshopScreen() {
     }), { working: 0, needs: 0 })
     : null;
   const empty = !!all && all.length === 0 && !state.error;
-  const filteredEmpty = !!all && all.length > 0 && !!rows && rows.length === 0;
 
   return (
     <main
@@ -320,11 +307,9 @@ export function WorkshopScreen() {
             screen that moves under the thumb reaching for them. */}
         <div className="px-4 pb-2 flex items-center gap-2">
           <WorkshopScope apps={all} open={state.picker === 'scope'} />
-          <WorkshopPlus plusOpen={state.picker !== null && state.picker !== 'scope'} />
         </div>
-        <WorkshopTabs tab={state.tab} plusOpen={state.picker !== null && state.picker !== 'scope'} />
         {state.picker
-          ? <WorkshopPicker picker={state.picker} apps={all} />
+          ? <WorkshopPicker apps={all} />
           : null}
         {/* THE LEGEND IS NOT DECORATION. Two bare numbers on a row cannot be
             read, and the per-pill tooltip is not available to a thumb — so the
@@ -439,18 +424,6 @@ export function WorkshopScreen() {
               subtitleClassName="whitespace-normal"
             />
           </div>
-          {/* A TAB WITH NOTHING IN IT SAYS SO, and says which tab. It is not
-              `#workshop-empty`: that card means you have no apps and offers
-              the directory, which is the wrong answer to "nothing is in
-              flight today". Same placement rule as that card — first, so the
-              row separator's `:not(:last-child)` is unaffected. */}
-          {filteredEmpty ? (
-            <div id="workshop-tab-empty" className="px-4 py-6 text-sm text-zinc-500 dark:text-zinc-400">
-              {state.tab === 'status'
-                ? 'Nothing is in flight across your apps right now.'
-                : 'No app is waiting on a decision from you.'}
-            </div>
-          ) : null}
           {state.error
             ? (
               <AppsLoadError

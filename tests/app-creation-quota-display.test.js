@@ -141,12 +141,14 @@ test('locked create entries still open the dialog so the quota is reachable', ()
   assert.doesNotMatch(click, /PlatformUI\?\.toast/,
     'a generic toast would hide the exact quota at the moment it matters');
 
+  // #apps-switcher-create is RETIRED (#2718 review): the app menu holds one
+  // app's options, so a Create entry at the top of it was the last of the
+  // platform's own destinations still in there. Home's tile above is the
+  // entry point, and App.showCreateModal() is still the one door — which is
+  // what keeps the quota reachable, since the dialog is where it is printed.
   const switcher = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  const start = switcher.indexOf('id="apps-switcher-create"');
-  const end = switcher.indexOf('id="apps-switcher-close"', start);
-  const createEntry = switcher.slice(start, end);
-  assert.match(createEntry, /App\?\.showCreateModal\?\.\(\)/);
-  assert.doesNotMatch(createEntry, /Home\?\.canCreate/);
+  assert.ok(!switcher.includes('id="apps-switcher-create"'),
+    'the menu does not offer Create any more');
 });
 
 test('the finite quota state has a deterministic visual-review path', () => {
