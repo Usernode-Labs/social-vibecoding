@@ -940,7 +940,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // floor. The ceiling itself already moved from 730 to 750 on main's side,
   // once its own total stood on the old ceiling's 20-slot floor; that move
   // carries over unchanged (services/app-manifest.js).
-  assert.equal(DAPP.tests.length, 712);
+  //
+  // 712 -> 713: #2681 renames the dev walkthrough's footer button to "Build
+  // on the Homeroom platform instead", and no declared check asserted the
+  // old string, so the rename adds one rather than editing one. 37 slots
+  // left against MAX_DECLARED_TESTS (750).
+  assert.equal(DAPP.tests.length, 713);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -4464,6 +4464,12 @@
       "expectText": "update to it rather than as a second copy"
     },
     {
+      "name": "#2681: the walkthrough's way back out names the platform in full",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] .dc-flow-actions-footer button[data-flow-action=\"cancel\"]",
+      "expectText": "Build on the Homeroom platform instead"
+    },
+    {
       "name": "#2038: an approved proposal being brought up to date says so on the card",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"integrating\"]",
