@@ -940,7 +940,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // floor. The ceiling itself already moved from 730 to 750 on main's side,
   // once its own total stood on the old ceiling's 20-slot floor; that move
   // carries over unchanged (services/app-manifest.js).
-  assert.equal(DAPP.tests.length, 712);
+  //
+  // 712 → 715: #2707 declares three, all on the Send Feedback dialog — the
+  // unchosen destination row and its dead Submit on ?shot=feedback-choose,
+  // and the one-destination case on ?shot=feedback, which is the half a
+  // later refactor is most likely to lose (there, a destination IS selected
+  // and Submit IS live, because a tap with one possible answer is a tax).
+  // 35 slots left against MAX_DECLARED_TESTS (750).
+  assert.equal(DAPP.tests.length, 715);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

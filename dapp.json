@@ -690,6 +690,28 @@
       "expectText": "Please add a description"
     },
     {
+      "id": "feedback.destination-choice",
+      "name": "With two destinations available, neither is preselected and the row says to choose (#2707)",
+      "path": "/?shot=feedback-choose",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-target:has(#feedback-target-app[aria-checked=\"false\"]):has(#feedback-target-platform[aria-checked=\"false\"]) + #feedback-target-hint:not(.hidden)",
+      "expectText": "Choose where this feedback goes",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/dialogs/feedback.tsx",
+        "frontend/src/features/dialogs/feedback-controller.js"
+      ]
+    },
+    {
+      "name": "Submit stays dead until a destination is picked (#2707)",
+      "path": "/?shot=feedback-choose",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)) #feedback-submit:disabled"
+    },
+    {
+      "name": "With only one destination reachable it stays selected and Submit is live (#2707)",
+      "path": "/?shot=feedback",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-platform[aria-checked=\"true\"]):has(#feedback-target-hint.hidden) #feedback-submit:not(:disabled)"
+    },
+    {
       "name": "Challenges: every Home card draws the shared progress rail (Iteration 03 card)",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
