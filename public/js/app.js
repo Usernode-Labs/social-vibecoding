@@ -5747,12 +5747,31 @@ const App = {
   _backSlotFor(revealId) {
     const slot = App._BACK_SLOT[revealId];
     if (!slot) return ['home'];
-    // The ✕'s DESTINATION is the breadcrumb navigateToApp recorded — the
-    // Workshop, when that is where this app was opened from — and home on
-    // every other route, which is what setBackIcon falls back to. The table
-    // holds the glyph; this holds the one case where the address is not the
-    // glyph's default.
-    if (revealId === 'app-view' && App._appBackHref) return ['close', App._appBackHref];
+    if (revealId === 'app-view') {
+      // THE DISCUSSION IS A LEVEL INSIDE MESSAGES, not a program to step out
+      // of (#2718 review, twice). `/app/<slug>/dev/chat` is a ROW IN THE
+      // INBOX — that is why the Workshop stopped offering it — so its slot is
+      // a chevron up to Messages.
+      //
+      // _repaintDevBody's chat branch already published exactly that, and it
+      // was not enough: navigateToApp reveals #app-view through
+      // PlatformUI.transition, whose `after` callback runs _showOnlyScreen,
+      // which runs this. So two writers RACED for the slot, and the ✕ to the
+      // Workshop won often enough to be reported as "clicking back goes to
+      // the workshop" — "for some reason", because the reason was which
+      // callback the transition happened to run last. (The note in
+      // _showOnlyScreen saying navigateToApp never comes through it is about
+      // the reveal, not about `after`.) The fix is the one this file
+      // already states for setBackIcon's two writers: THE TWO HAVE TO AGREE. Both now say
+      // the same thing, so the order stopped mattering.
+      if (App.currentTab === 'dev' && App.currentSubTab === 'chat') return ['arrow', '#messages'];
+      // The ✕'s DESTINATION is the breadcrumb navigateToApp recorded — the
+      // Workshop, when that is where this app was opened from — and home on
+      // every other route, which is what setBackIcon falls back to. The table
+      // holds the glyph; this holds the cases where the address is not the
+      // glyph's default.
+      if (App._appBackHref) return ['close', App._appBackHref];
+    }
     return slot;
   },
 

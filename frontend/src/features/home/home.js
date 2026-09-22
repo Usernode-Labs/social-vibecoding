@@ -1800,9 +1800,24 @@ const Home = {
   // frame. `onChange` still runs, because the browse screen's own list is
   // outside Home's paint.
   async toggleAdded(slug, desired, onChange) {
-    const app = (Home._apps || []).find((a) => a.slug === slug);
-    // Staging ?demo=1 tiles have no DB row — a POST would 404.
-    if (!app || app.demo) return;
+    // BOTH READERS OF /api/apps, not just this one. `Browse._apps` is the
+    // same payload — Browse._load() assigns to both — but the two DRIFT:
+    // Browse._fetchDetail adds a cold deep link's app to its own list alone,
+    // so a row this list has never heard of can be on screen with an Add
+    // button under it. Looking only in Home._apps made that button a silent
+    // no-op: no flip, no request, no toast, nothing to tell the reader their
+    // press was received. That is "add to your apps does nothing for some
+    // apps", and which apps depended on what had been opened beforehand.
+    const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
+    const app = known(Home._apps)
+      || known(typeof window !== 'undefined' ? window.Browse?._apps : null);
+    // Staging ?demo=1 tiles have no DB row — a POST would 404. An app NEITHER
+    // list holds is not that case: it is a list this tab has not loaded yet,
+    // and the server is the authority on whether the slug exists. Ask it, and
+    // let Home.load() bring back the truth either way, so the press is
+    // answered by a toast rather than by silence.
+    if (app && app.demo) return;
+    if (!app) return Home._favoriteUnknown(slug, desired, onChange);
     const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden };
     // Asked BEFORE the flip, while the answer still describes where the card
     // is: an app currently in a rail stays in it for the rest of the visit.
@@ -1840,6 +1855,31 @@ const Home = {
       await Home.load();
       if (typeof onChange === 'function') onChange();
     }
+  },
+
+  // The slow path for a slug neither app list carries — see toggleAdded.
+  // There is no cached object to flip, so there is nothing to do optimistically
+  // and nothing to revert: post, say what happened, and reload the list, which
+  // is what puts the row in both places for next time.
+  async _favoriteUnknown(slug, desired, onChange) {
+    try {
+      const res = await fetch(`/api/apps/${slug}/favorite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorited: desired }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (desired) Home._revealSlug = slug;
+      PlatformUI.toast(desired ? 'Added to Your apps' : 'Removed from Your apps');
+    } catch (err) {
+      Home._revealSlug = null;
+      PlatformUI.toast(`Update failed: ${err.message}`);
+    }
+    await Home.load();
+    if (typeof onChange === 'function') onChange();
   },
 
   // ===== Per-render card wiring =====

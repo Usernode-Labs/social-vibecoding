@@ -1211,9 +1211,9 @@
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "Browse renders app-store rows with an Add button and a Home button (#2639)",
+      "name": "Browse renders app-store rows with an Add button, under a bar with no back slot (#2639, #2718)",
       "path": "/#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn:not(.hidden)[aria-label=\"Home\"]) #browse-list .browse-row .browse-add-btn",
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list .browse-row .browse-add-btn",
       "expectText": "All apps"
     },
     {
@@ -1329,8 +1329,8 @@
     },
     {
       "name": "Give feedback survives the menu split, in exactly one place (#1490, #2718)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-row-feedback",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-panel[data-open] #improve-quick-actions > #improve-row-feedback",
       "expectText": "Give feedback"
     },
     {
@@ -2090,9 +2090,9 @@
       "expectSelector": "#header-title #header-title-name"
     },
     {
-      "name": "Improve is in the app's menu on the Dev screens too, glyph and all, not a contextual eye",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-menu-row-improve:not(.hidden) #improve-btn-glyph"
+      "name": "The Improve row ships on every route, glyph and all, and hides for the platform's own row (#2718 review)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-row-improve.hidden #improve-btn-glyph"
     },
     {
       "name": "The Dev screen opens straight onto its cards, with no view tab strip above them",
@@ -2115,9 +2115,9 @@
       "expectSelector": "#header-title #header-title-name"
     },
     {
-      "name": "Home offers to improve Homeroom itself, from the same menu an app's Improve is in",
-      "path": "/",
-      "expectSelector": "#app-menu-row-improve:not(.hidden)"
+      "name": "Home's menu does not offer to improve the platform (#2718 review)",
+      "path": "/?shot=app-context",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-row-improve.hidden"
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
@@ -2190,9 +2190,9 @@
       "expectSelector": "#dev-actions #dev-plus-btn"
     },
     {
-      "name": "The Dev screen names itself beside the app it belongs to",
+      "name": "The Dev screen says Workshop once, with no subtitle beside it (#2718 review)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#header-title #header-subtitle",
+      "expectSelector": "#header-title:not(:has(#header-subtitle))",
       "expectText": "Workshop"
     },
     {
@@ -2324,9 +2324,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "The Workshop carries the app's general discussion as a row of its own",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-discussion-row]"
+      "name": "The app's general discussion is a row of the Messages inbox, not of the Workshop (#2718 review)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-pane a[data-inbox-app][href$=\"/dev/chat\"]"
     },
     {
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
@@ -2633,9 +2633,9 @@
       "expectText": "Session finished"
     },
     {
-      "name": "The app menu leads with Give feedback, the row a non-developer wants (#2718)",
-      "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #improve-row-feedback",
+      "name": "The Improve panel leads with Give feedback, ahead of New change (#2718 review)",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-panel[data-open] #improve-quick-actions > #improve-row-feedback:first-child + #improve-row-new-session",
       "expectText": "Give feedback"
     },
     {
@@ -2766,10 +2766,9 @@
       "expectText": "[Mock] Did the notifications change land yet?"
     },
     {
-      "name": "The Messages screen draws its title over the conversation list, on the frosted strip",
+      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review)",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.dc-lift.dc-lift-strip .messages-list-pane .messages-list-toolbar .messages-list-title h2",
-      "expectText": "Messages"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.dc-lift.dc-lift-strip .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
     },
     {
       "name": "...and a styled empty pane where the conversation goes",
@@ -2802,9 +2801,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
     },
     {
-      "name": "The notifications strip reads Unread, Messages, All — and opens on Unread",
+      "name": "The notifications strip reads Unread, Messages, Agents, All — and opens on Unread (#2718 review)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-all"
+      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-agents + #notifications-tab-all"
     },
     {
       "name": "A filtered tab's footer link goes to All rather than paging the filter",
@@ -2864,7 +2863,7 @@
     {
       "name": "The mark opens the menu, and it lists the app's own options (#2718)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #improve-row-feedback + #app-menu-row-improve + #app-menu-row-workshop + #app-menu-row-discussion"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-improve + #app-menu-row-workshop + #app-menu-row-discussion"
     },
     {
       "name": "The app menu links out to the Workshop, scoped to the app (#2718)",
@@ -4182,9 +4181,9 @@
       "expectText": "Recommended"
     },
     {
-      "name": "?sort= orders the touch directory, with a Home button in the bar (#1383, #2639)",
+      "name": "?sort= orders the touch directory, under a bar with no back slot (#1383, #2718)",
       "path": "/?sort=new&un-platform=ios#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn:not(.hidden)[aria-label=\"Home\"]) #browse-list[data-sort=\"new\"] .browse-row"
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list[data-sort=\"new\"] .browse-row"
     },
     {
       "name": "Sorting by activity shows what it sorted on (#1383)",
@@ -4306,7 +4305,7 @@
     {
       "name": "The app chip's menu is that pane too, keeping its own menu shape",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open] #switcher-nav #improve-row-feedback"
+      "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open]:not(:has(#improve-row-feedback)) #switcher-nav #app-menu-row-workshop"
     },
     {
       "name": "Unread notification rows read source, bold subject, muted preview",
@@ -4699,9 +4698,9 @@
       "expectSelector": "#platform-header #back-btn:not(.hidden) #back-icon-close:not(.hidden) ~ *, #platform-header #header-app-tile"
     },
     {
-      "name": "The tab bar is gone inside a running app (#2718)",
-      "path": "/?demo=1#app/usernode-2d5619/app",
-      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden) #platform-header"
+      "name": "An app's Workshop keeps the rail, which only a running app covers (#2718 review)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden)) #platform-header"
     }
   ],
   "governance": {
