@@ -167,7 +167,14 @@ for (const improveAvailable of [true, false]) {
     // it — but the slots are asserted EQUAL rather than opposite.
     assert.equal(maskChip(maskBackSlot(browse)), maskChip(maskBackSlot(home)),
       'apart from the back slot, only what the title says changes');
-    const EMPTY_SLOT = /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/;
+    // THE GROUP IS NOT `hidden` ON A ROOT ANY MORE — it holds the desktop
+    // sidebar toggle, which is the one control in the bar that belongs to the
+    // ROOTS (#2718 review). `.platform-header-left-desktop` is how it goes
+    // away on a phone, where the toggle has no rail to fold: app.css owns
+    // that, because whether the control exists is a question about the
+    // viewport and React does not know the viewport. The back ANCHOR inside
+    // is still `hidden`, which is the fact these two screens are compared on.
+    const EMPTY_SLOT = /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 platform-header-left-desktop">[\s\S]{0,1200}id="back-btn"[^>]*un-touch-target hidden"/;
     assert.match(home, EMPTY_SLOT, 'Home is a root: its slot is hidden');
     assert.match(browse, EMPTY_SLOT, 'and so is Discover');
     assert.match(label(home), /<svg[^>]*\bfill="currentColor"/,
@@ -314,9 +321,11 @@ test('a detail opened directly from a Home card has no list to go up to', () => 
   h.flush();
   assert.equal(ui.backButtonStore.get().mode, 'none');
   // The anchor keeps its default aria-label while hidden — 'none' hides the
-  // slot rather than renaming it — so the observable is the class, on the
-  // wrapper and on the anchor both.
-  assert.match(h.header(), /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/);
+  // slot rather than renaming it — so the observable is the class on the
+  // anchor. Its WRAPPER stays rendered on a root: it carries the desktop
+  // sidebar toggle, and `.platform-header-left-desktop` is what takes the
+  // group away on a phone (see the note beside EMPTY_SLOT above).
+  assert.match(h.header(), /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 platform-header-left-desktop">/);
   assert.match(h.header(), /id="back-btn"[^>]*un-touch-target hidden"/);
 });
 

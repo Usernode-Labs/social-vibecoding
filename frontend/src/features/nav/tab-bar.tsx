@@ -218,24 +218,46 @@ export function PlatformTabs() {
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  const { tab, messages, screen, peek } = useStoreState(navStore);
+  const { tab, messages, screen, peek, railOpen } = useStoreState(navStore);
+  // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
+  // say there is none (an app, chromeless, signed out) and the VIEWER can
+  // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
+  // brings it back over either.
+  const collapsed = !visible || !railOpen;
   // A peek un-hides the bar without the router having changed its mind, so
   // the class it renders is the OR of the two and the overlay treatment is a
   // second class app.css keys the peeking case off.
   useHiddenClass(barRef, !visible && !peek);
-  useClassToggle(barRef, 'platform-tabs-peek', !visible && peek);
+  useClassToggle(barRef, 'platform-tabs-peek', collapsed && peek);
+  // FOLDED IS A CLASS, NOT A `hidden`, and that is the whole safety of it: a
+  // phone's bar is at the FOOT of the screen and is the only navigation there
+  // is, so folding must never reach it. app.css acts on this class inside
+  // `@media (min-width: 768px)` and nowhere else, which means a desktop
+  // window narrowed to a phone gets its bar back without this store having to
+  // watch the viewport.
+  useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
 
   return (
     <>
       {/*
           THE HOT ZONE. A strip at the window's left edge, and the only thing
-          that can start a peek. It renders only inside an app — everywhere
-          else the rail is already there — and app.css hides it below the
-          desktop breakpoint, because a phone has no pointer to hover with and
-          a hidden touch target at the screen edge would eat swipes.
+          that can start a peek. It renders wherever there is no rail to point
+          at — inside an app, or with the rail folded by hand — and app.css
+          hides it below the desktop breakpoint, because a phone has no
+          pointer to hover with and a hidden touch target at the screen edge
+          would eat swipes.
+
+          `!railOpen` rather than `collapsed`, deliberately: `collapsed` is
+          also true on the chromeless and signed-out shells, where there is no
+          rail behind the edge to bring back and a strip that peeks one in
+          would be conjuring navigation out of nothing. A FOLDED rail, by
+          contrast, is the app view's arrangement reached another way, and the
+          way back has to be the same one or the toggle is a door that only
+          opens. `!railOpen` implies a rail existed: the toggle renders only
+          where one does.
       */}
-      {screen === 'app-view' ? (
+      {screen === 'app-view' || !railOpen ? (
         <div
           id="platform-rail-peek"
           className="platform-rail-peek"

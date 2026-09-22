@@ -43,14 +43,24 @@ if (typeof window !== 'undefined') {
      */
     setScreen(screenId: string | null) {
       const screen = screenId || null;
-      // `peek: false` on every screen change, because that is what a peek is
+      // `peek: false` on every screen CHANGE, because that is what a peek is
       // FOR: you reveal the rail over an app to leave it, and the thing you
       // tapped has now happened. Leaving it set would hand the next screen an
       // overlay rail on top of its own.
+      //
+      // ON A CHANGE, and not on every call. Re-asserting the screen you are
+      // already on is not navigation, and clearing the peek there makes any
+      // such call yank the rail out from under the pointer that summoned it.
+      // Found with a harness that re-asserted the current screen on a 100ms
+      // timer: the rail flickered at exactly that rate, on and off, because
+      // each tick cleared a peek the pointer immediately re-established.
+      // Nothing in the shipped router does that today, which is the whole
+      // reason to fix it here rather than trust that nothing ever will.
+      const changed = navStore.get().screen !== screen;
       navStore.set({
         screen,
         tab: screen ? tabForScreen(screen) : null,
-        peek: false,
+        ...(changed ? { peek: false } : null),
       });
     },
     /**

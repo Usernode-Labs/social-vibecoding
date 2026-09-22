@@ -251,35 +251,45 @@ test('every screen entry refreshes the href through the one choke point', () => 
   const at = appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   assert.ok(at !== -1, '_showOnlyScreen went missing');
   const fn = appJs.slice(at, appJs.indexOf('\n  },', at));
-  assert.match(fn, /revealId === 'home-screen' \? 'none'\n\s+: revealId === 'app-view' \? 'close'\n\s+: 'home',/,
+  // A TABLE, READ THROUGH ONE HELPER (#2718 review). The ternary here had
+  // grown three answers and still disagreed with the screens that write
+  // their own slot a moment later, so the corner depended on which writer
+  // ran last. What matters for THIS test is unchanged: every screen change
+  // passes through this line, so the href cannot go stale.
+  assert.match(fn, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
     'this is what keeps the href from ever going stale — every screen change '
     + 'passes through here');
+  assert.match(appJs, /_backSlotFor\(revealId\) \{[\s\S]{0,400}App\._BACK_SLOT\[revealId\]/,
+    'and the answer comes from the table rather than a chain of conditions');
 });
 
 test('the three up-one-level screens pass their own target', () => {
   // Browse's detail view is a level INSIDE that screen and draws the arrow.
-  // Settings and Admin draw one at level 2 only — the mobile drill-in, which
-  // is likewise a level inside the screen and would strand a phone viewer
-  // without it.
+  // Settings and Admin draw one at level 2 as well — the mobile drill-in,
+  // which is likewise a level inside the screen and would strand a phone
+  // viewer without it.
   //
-  // Settings and Admin roots draw the house, and since #2639 so does the
-  // Browse LIST: it is somewhere you go from Home, not a root you arrive at,
-  // and an empty bar left the chip menu as the only way out. A Browse detail
-  // opened from Home still draws the house, while a detail opened from the
-  // list (or directly) links back to that list.
+  // THE HOUSE IS GONE FROM ALL THREE (#2718 review). It was the answer while
+  // these screens hung off Home's account row; the five-tab bar answers "how
+  // do I get out of here" now, so a house is either a duplicate of the Home
+  // tab or — worse, on Settings and Admin — a jump PAST the Me tab the viewer
+  // came through and which is still lit. What is left is the honest pair: an
+  // arrow when there is a level above, nothing when there is not.
   assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
     'browse names the one state with a list above it…');
-  assert.match(browseJs, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,
-    '…and that state alone gets the chevron; every other level gets the house');
+  assert.match(browseJs, /const backMode = upToList \? 'arrow' : 'none';/,
+    '…and that state alone gets the chevron; the list and a detail opened '
+    + 'from a Home card are roots of this screen and show nothing');
   assert.match(browseJs, /setBackIcon\(backMode, upToList \? '#apps' : undefined\)/,
     'the list-bound chevron keeps its explicit parent target');
-  assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the admin section chevron pops to the console menu; its root gets home');
+  assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
+    'the admin section chevron pops to the console menu; its root goes up to '
+    + 'the Me tab it was opened from');
   // Settings resolves its section target through _upHref (#1565): the menu
   // when the menu is what sits below the entry, and the address the viewer
-  // came from when they arrived from elsewhere in the app. Its root still
-  // gets the house.
-  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/,
+  // came from when they arrived from elsewhere in the app. Its root goes to
+  // the same place Admin's does.
+  assert.match(settingsJs, /setBackIcon\('arrow', inSection \? Settings\._upHref\(\) : '#profile'\)/,
     'the settings section chevron points where its back press goes');
   assert.match(settingsJs, /_upHref\(\) \{[\s\S]{0,400}return '#settings';/,
     '…which is still the menu unless something else of ours is below');

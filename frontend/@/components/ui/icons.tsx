@@ -427,6 +427,26 @@ export const UserGroupIcon = stroked(
 export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
 
 /**
+ * A PANEL WITH A RAIL DOWN ITS LEFT — the desktop sidebar's own toggle.
+ *
+ * The one glyph the whole industry agrees on for this control: VS Code,
+ * Slack, Linear, Notion and the design study's own prototype all draw a
+ * rounded rectangle with a line a third of the way in. It is a PICTURE OF THE
+ * LAYOUT rather than a metaphor, which is why nothing else reads as clearly —
+ * a hamburger says "a menu is behind this" and the rail is not behind
+ * anything, it is beside you.
+ *
+ * Deliberately NOT mirrored when the rail is collapsed. The button is a
+ * toggle and says which state it is in through `aria-pressed`; an icon that
+ * flips as well makes the reader work out whether it is showing the current
+ * state or the one they would get.
+ */
+export const SidebarIcon = stroked(
+  'SidebarIcon',
+  'M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zM9 4v16',
+);
+
+/**
  * A NEWSPAPER — the Activity row and screen.
  *
  * The Figma board names this slot `lucide/newspaper`, and the glyph is right:

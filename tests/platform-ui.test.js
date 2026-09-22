@@ -660,8 +660,18 @@ test("the Board owns the view control; the header's label is the chip", () => {
   // the app's own menu, rendered from the target alone.
   const headerSrc = read('frontend/src/features/header/platform-header.tsx');
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /className=\{target \? `\$\{ROW\} w-full text-left` : `hidden \$\{ROW\} w-full text-left`\}/,
-    'the row renders wherever there is something to improve');
+  // #2718 REVIEW NARROWED THE CONDITION from `target` to `target === 'app'`.
+  // It read "wherever there is something to improve", and the platform is
+  // something to improve — so the Homeroom menu carried "Improve Homeroom"
+  // beside Settings and Admin. That is a different offer from the one this
+  // row makes inside an app: it is a proposal against the platform itself,
+  // made from the button every reader presses to find Settings. The Workshop
+  // tab is where platform work now starts. Still not read from the ROUTE,
+  // which is the part that mattered: one target, one row.
+  assert.match(sheet, /className=\{target === 'app' \? `\$\{ROW\} w-full text-left` : `hidden \$\{ROW\} w-full text-left`\}/,
+    'the row renders inside an APP, and names it');
+  assert.match(sheet, /label=\{`Improve \$\{appLabel\}`\}/,
+    'so its label is the app, never the bare platform');
   assert.doesNotMatch(sheet, /tab === 'dev'/, 'and not from the route');
   for (const gone of ['app-eye-btn', 'session-build-btn', 'EyeIcon', 'PencilSparklesIcon']) {
     assert.ok(!headerSrc.includes(gone), `the ${gone} half of the swap left the header`);

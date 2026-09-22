@@ -219,6 +219,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
     'M12 3v8.25m0 0l-3-3m3 3l3-3',
+    // THE PLUS, added by #2718's review. Two surfaces drew it in a cold
+    // document and both are gone: the Workshop screen's own + button, and
+    // Create New in the app chip's menu. The Workshop's plus went because
+    // the top-level screen is a REPORT of what your apps want from you, not
+    // a place to start something; the menu's went with the app strip above
+    // it. Every plus left in the shell renders behind state.
+    'M12 4v16m8-8H4',
     'M12 4.5v15m7.5-7.5h-15',
     'M12 5.5v13',
     'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',

@@ -98,6 +98,9 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   same fact as `platform-tabs` visibility and must not be folded into it:
  *   the bar is HIDDEN here — the router says so, and the screens reserve no
  *   band for it — and this is a temporary overlay on top of that answer.
+ * @property {boolean} railOpen  The viewer has the desktop rail expanded.
+ *   True is the prerender; see the note on INITIAL for why this is separate
+ *   from the visibility store and why it is not remembered across loads.
  */
 
 /** @type {NavState & PeekState} */
@@ -106,6 +109,29 @@ const INITIAL = {
   tab: null,
   messages: 0,
   peek: false,
+  /*
+      IS THE DESKTOP RAIL EXPANDED — the sidebar toggle's own state (#2718
+      review).
+
+      TRUE IS THE PRERENDER, which is what makes it safe to hold here at all:
+      the shipped document has the bar visible, so the first client render
+      agrees with it and hydration is silent. A collapsed rail is always
+      something the viewer did.
+
+      IT IS NOT THE VISIBILITY STORE, deliberately. `platform-tabs` there
+      answers "does this ROUTE have a rail" and the router publishes it — an
+      app says no, the signed-out shell says no. This answers "does the viewer
+      want it", and the two compose: the bar is hidden when either says so,
+      which is one line in the island and no coordination between the two
+      publishers. Folding this into the visibility store instead would mean
+      the next screen swap silently re-expanded a rail somebody had collapsed.
+
+      SESSION-ONLY, not remembered across loads. A rail that came back
+      collapsed on a fresh document would leave a first-time reader hunting
+      for navigation that is one hover away but invisible — and the peek makes
+      collapsing cheap enough that re-doing it costs nothing.
+  */
+  railOpen: true,
 };
 
 export const navStore = createStore(INITIAL);

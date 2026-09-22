@@ -44,6 +44,7 @@ import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
+import { SidebarToggle } from '../nav/sidebar-toggle';
 import { boardHref, improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
@@ -239,6 +240,12 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  // THE SECOND READER of the rail's own visibility flag (../nav/tab-bar.tsx
+  // is the first). The left group holds the sidebar toggle, and the toggle
+  // renders nothing on a route with no rail — so whether this group has
+  // content on a tab root is exactly this question, asked here rather than
+  // guessed from `mode`.
+  const hasRail = useVisibility('platform-tabs', true);
   useNativeBackNavigation(nativeBackEnabled({
     visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
   }));
@@ -395,12 +402,39 @@ export function PlatformHeader() {
 
             Derived from the same two flags the children use, so there is no
             third source of truth about whether this group has content.
+
+            THREE STATES NOW, not two (#2718 review), because the sidebar
+            toggle joined the group and is desktop-only:
+
+              back slot filled        → the group has content at every width
+              empty, but there IS a   → content on a desktop, nothing on a
+                rail to fold            phone, so the WIDTH decides and the
+                                        decision belongs in CSS
+              empty, and no rail      → `hidden`, as before
+
+            The middle case cannot be a rendered class toggle: React does not
+            know the viewport, and reading it would put a measurement in the
+            render path and make the prerender disagree with the first client
+            render. `.platform-header-left-desktop` in app.css is the same
+            `display:none` keyed off a media query — which matters because an
+            empty-but-present group still reserves the header's own `gap-4`,
+            the exact 16px bug this element's `hidden` was added for.
         */}
         <div
           ref={leftGroupRef}
           className={'h-7 shrink-0 flex items-center gap-1.5 min-w-0'
-            + (mode === 'none' ? ' hidden' : '')}
+            + (mode !== 'none' ? '' : hasRail ? ' platform-header-left-desktop' : ' hidden')}
         >
+          {/*
+                FIRST IN THE GROUP, so it sits in the window's top-left
+                corner — where VS Code, Slack, Linear, Notion and the design
+                study's own prototype all put this control. It is inside the
+                measured group rather than beside it so use-header-layout.ts
+                counts it without being told: that hook decides whether the
+                title can centre from the group's INNER EDGE, and a control
+                outside the group is 28px of room it would hand to the title.
+            */}
+          <SidebarToggle />
           {/*
                 #1036: a real anchor, not a button, so cmd/ctrl-click,
                 middle-click and right-click → "Open in new tab" work on it.

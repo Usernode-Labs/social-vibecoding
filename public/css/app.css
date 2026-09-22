@@ -2517,11 +2517,31 @@ html[data-browser-scroller^="auth-"] :is(
 ) {
   display: none;
 }
+/* IN BROWSER-SCROLLER MODE the document is the scroller and this bar is
+   sticky over it, so it has to hide the content sliding under it rather than
+   letting it read through — which is why it takes a near-opaque wash of the
+   page ground instead of the frosted fill below.
+
+   #platform-header is the exception now (#2718 review): the tab bar at the
+   foot is `position: fixed` over the very same scrolling document and has
+   always been `--dc-sheet-fill` under `--dc-frost`, so "frost over moving
+   content" is a thing this shell already does at one edge of the screen. The
+   two bars are the same kind of object and the owner asked for them to look
+   it, on phone and desktop alike. The landing header keeps the wash: it has
+   no tab bar to match and nothing frosted anywhere near it.
+
+   The `!important` goes with the exception. It was here to beat the Tailwind
+   `bg-zinc-200` utility on the element, and the surface rule further down
+   beats that on specificity alone (`body:has(...) #platform-header`), so
+   dropping it costs nothing and stops this rule silently outranking a
+   later one. */
 html[data-browser-scroller] :is(#platform-header, #landing-header) {
   position: sticky;
   top: var(--browser-banner-h);
   z-index: 30;
-  background: color-mix(in srgb, var(--home-ground) 92%, transparent) !important;
+}
+html[data-browser-scroller] #landing-header {
+  background: color-mix(in srgb, var(--home-ground) 92%, transparent);
   backdrop-filter: blur(12px);
 }
 html[data-browser-scroller="browse-screen"] #browse-search-bar {
@@ -2819,6 +2839,38 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    identical on both sides of the transition and only the page moves. */
 body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #global-chat-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
+}
+
+/* ── THE BAR IS THE SAME MATERIAL AS THE BAR AT THE FOOT (#2718 review) ──
+
+   The rule above clears the header on every screen that paints the
+   wallpaper, so the ground runs straight through it. That was right while
+   the bar floated alone on a page; it is wrong now that a second bar is on
+   screen with it, because the two are the same KIND of thing — the platform's
+   own chrome around somebody's content — and they were drawn as two
+   different ones: `.platform-tabs` a frosted wall with a hairline, the header
+   nothing at all.
+
+   So the header takes the tab bar's surface exactly: `--dc-sheet-fill` under
+   `--dc-frost`, the pane material every floating surface in the shell wears.
+   On a desktop the rail and the header meet at the corner and read as one
+   continuous edge around the page, which is what the design draws.
+
+   NOT INSIDE AN APP, and not signed out. `#app-view` keeps the clear bar
+   because there is no tab bar there to match and the strip takes the APP's
+   tone instead (`data-app-tone`, #1945) — a frost over somebody else's page
+   colour is a smear, not a surface. The auth screens have no bar either.
+
+   NO BORDER-BOTTOM. The tab bar's hairline is its top edge meeting the page;
+   this bar's bottom edge is `rounded-b-2xl -mb-2`, a notch every platform
+   surface below tucks 8px up into, so a line drawn across it would cut the
+   notch in half. The frost IS the edge here. */
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+             #settings-screen, #messages-screen, #workshop-screen,
+             #global-chat-screen):not(.hidden)) #platform-header {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -3740,6 +3792,34 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   padding-block: 0.125rem;
 }
 .home-discover-rail::-webkit-scrollbar { display: none; }
+
+/* ── THE RAIL STOPS AT THE CONTENT'S EDGE, AND FADES THERE (#2718 review) ──
+
+   On a phone the rail BLEEDS: `margin-inline: -0.75rem` with the padding
+   added back lets a card scroll flush to the screen edge, which is the whole
+   affordance — the row visibly continues past the frame.
+
+   On a desktop the frame is not the screen. The page has a rail on its left
+   and a gutter mirrored on its right (see --platform-gutter), and a lane that
+   bleeds 12px past that gutter puts its cards 12px closer to the window edge
+   than every other thing on the page — which reads as the lane being
+   misaligned rather than as it continuing.
+
+   So the bleed is cancelled and a MASK says the same thing instead: the last
+   2rem of the scrollport fades to transparent, so a row with more in it
+   trails off rather than being cut. The mask is static rather than driven by
+   scroll position — a lane shorter than the port fades empty space, which is
+   invisible, and the alternative is a scroll-timeline this shell cannot rely
+   on in every browser it ships to. */
+@media (min-width: 768px) {
+  .home-discover-rail {
+    margin-inline: 0;
+    padding-inline: 0;
+    scroll-padding-inline: 0;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+  }
+}
 
 /* 9.5rem is the reference's card at a 390pt phone (150/390 of the frame),
    and it is a fixed width on purpose: cards that flex would resize as the
@@ -16041,9 +16121,18 @@ body {
   /* Everything at the foot of the screen, stacked — what a surface above has
      to clear. With no strip it is the bar; with one it is both. */
   --platform-tabs-h: 0px;
-  /* The RAIL's width at desktop, where the same five tabs stand on their
-     side. 0 on a phone, where they are a bar and cost width nothing. */
+  /* HOW WIDE THE RAIL IS, which is not the same question as how much width
+     it RESERVES — and keeping the two apart is what lets it float. A PEEKED
+     rail (over an app, or over a screen whose rail is folded) is drawn at its
+     full width while the content under it reserves nothing; a rail that had
+     one number for both was 17px of padding and a border, because the
+     reserved figure was 0. A constant, never overridden. */
+  --platform-rail-full: 224px;
+  /* WHAT IT RESERVES. 0 on a phone, where the five tabs are a bar at the foot
+     and cost width nothing; 0 again on a desktop while the rail is folded or
+     peeking, where the content takes the width back. */
   --platform-rail-w: 0px;
+  --platform-gutter: 0px;
 }
 /* `:not(.platform-tabs-peek)` because a PEEKING bar reserves nothing: the
    router still says the bar is hidden (see features/nav/tab-bar.tsx), the app
@@ -16353,18 +16442,98 @@ html.un-kb #platform-tabs {
    768px because that is `md`, which is where every other two-level layout in
    this file switches (the Settings sidebar, the Admin console's nav, the
    Messages list-and-thread split). One breakpoint, not a fourth opinion. */
+
+/* ── THE RAIL'S OWN SWITCH (#2718 review) ───────────────────────────
+   #sidebar-toggle, in the header's left group. The component carries the
+   argument; what lives here is the one fact React must not decide, because
+   it does not know the viewport and asking would put a measurement in the
+   render path: the control exists only where there is a rail to fold.
+
+   A phone's bar is at the FOOT of the screen and is the only navigation
+   there is. Folding it would leave a reader with nothing and no hover to
+   bring it back, so below the breakpoint the button is not there — and
+   because it is not there, `railOpen` can never leave `true` on a phone. */
+.platform-sidebar-toggle {
+  display: none;
+}
+
+/* THE GROUP THAT HOLDS IT, when that is ALL it holds. On a tab root the back
+   slot is empty (App._BACK_SLOT), so the toggle is the group's only content
+   and the group has to go with it — an empty-but-present flex item still
+   reserves the header's own `gap-4`, which put the wordmark 16px in from the
+   edge of every root screen the first time this was tried. */
+@media (max-width: 767px) {
+  /* SCOPED TO THE HEADER for its specificity, not for its reach. The group
+     carries Tailwind's `flex`, app.css is loaded BEFORE tailwind.css so the
+     utilities win every equal-specificity conflict in this file (#938), and a
+     bare `.platform-header-left-desktop` lost to `.flex` — measured: the
+     wordmark sat at x=32 on a 390px phone instead of x=16. The id puts this
+     rule a class ahead and settles it. */
+  #platform-header .platform-header-left-desktop {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) {
+  /* THE PRESSED STATE IS THE DEFAULT ONE, so the button wears the bar's own
+     periwinkle disc while the rail is up and goes quiet when it is down —
+     the rail being there is what the control is asserting. Colour only: the
+     disc does not move, because it is the fixed thing the layout pivots
+     around when the whole content column slides. */
+  .platform-sidebar-toggle {
+    display: inline-flex;
+    transition: background-color 140ms ease, color 140ms ease,
+                border-color 140ms ease;
+  }
+  .platform-sidebar-toggle[aria-pressed='false'] {
+    background: transparent;
+    color: var(--text-muted);
+    border-color: transparent;
+  }
+  .platform-sidebar-toggle[aria-pressed='false']:hover {
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+    border-color: var(--brand-line);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-sidebar-toggle { transition: none; }
+}
+
 @media (min-width: 768px) {
   /* THE BAND AT THE FOOT GOES AWAY ENTIRELY. What a screen has to clear
      below it is the home-indicator inset and nothing else — on a desktop
      that is 0, and the expression keeps it correct on a tablet that has one.
      The rail's width takes its place, as padding rather than as a band. */
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
-    --platform-rail-w: 224px;
+    --platform-rail-w: var(--platform-rail-full);
+    /* The air between the rail and the content, spent again on the right —
+       see the padding rule below. 1.5rem is the shell's own outer gutter
+       (`px-4` is 1rem and every pane steps out to 1.5rem at `sm`), so this
+       is the page's existing rhythm rather than a number for this one edge. */
+    --platform-gutter: 1.5rem;
     --platform-bar-h: 0px;
     --platform-tabs-h: var(--platform-safe-bottom);
   }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden)):has(#platform-parked:not(.hidden)) {
     --platform-tabs-h: var(--platform-safe-bottom);
+  }
+
+  /* A FOLDED RAIL SPENDS NO WIDTH (#2718 review, #sidebar-toggle).
+     Same specificity as the rule above and immediately after it, so source
+     order decides — which is the whole of the arrangement: the rail's other
+     tokens (`--platform-bar-h: 0px`, the tabs band) stay exactly as they are,
+     because folding changes where the navigation IS and not whether this is
+     the desktop layout. The gutter deliberately survives: content that ran to
+     the window's edge the moment the rail went away would make folding it a
+     bigger change than the reader asked for.
+
+     INSIDE THE MEDIA QUERY AND NOWHERE ELSE. Below 768px the bar is the
+     phone's bottom bar and the only navigation there is; the class is still
+     on the element after a resize, and this is what keeps it inert there. */
+  html:not(.un-kb) body:has(#platform-tabs.platform-tabs-folded) {
+    --platform-rail-w: 0px;
   }
 
   /* THE SCREENS MOVE OVER, and they move over by PADDING rather than by a
@@ -16379,7 +16548,14 @@ html.un-kb #platform-tabs {
   :is(#home-screen, #browse-screen, #workshop-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
       #global-chat-screen) {
-    padding-left: var(--platform-rail-w, 0px);
+    /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
+       The rail's hairline was the content's left margin, so a card began
+       where the rail ended and the page had air on the right and none on the
+       left. Spending the same figure on both sides is what makes a centred
+       column inside actually centre in the window rather than sit a gutter's
+       width to the left of centre. */
+    padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
+    padding-right: var(--platform-gutter);
   }
 
   .platform-tabs {
@@ -16391,7 +16567,9 @@ html.un-kb #platform-tabs {
       + var(--platform-safe-top, 0px));
     right: auto;
     bottom: 0;
-    width: var(--platform-rail-w);
+    /* THE FULL WIDTH, not the reserved one: this is the element being drawn,
+       and while it peeks the reserved figure is deliberately 0. */
+    width: var(--platform-rail-full);
 
     /* A COLUMN THAT DOES NOT STRETCH. `grid-template-rows: repeat(5, 1fr)`
        would spread five rows over 800px of rail, which is the bottom bar's
@@ -16433,7 +16611,7 @@ html.un-kb #platform-tabs {
      with it. Same element, same store, same ✕. */
   .platform-parked {
     right: auto;
-    width: var(--platform-rail-w);
+    width: var(--platform-rail-full);
     padding-bottom: var(--platform-safe-bottom, 0px);
     height: auto;
     min-height: 52px;
@@ -16607,6 +16785,15 @@ html.un-kb #platform-tabs {
 }
 
 @media (min-width: 768px) {
+  /* FOLDED BY HAND: gone, but coming back on hover. Not `hidden` — that is
+     the ROUTER's answer about whether this route has a rail, and the two have
+     to stay tellable apart (frontend/src/features/nav/tab-bar.tsx). A peeking
+     bar keeps both classes and this rule stands aside for it, which is what
+     makes the hot zone at the window's edge the way back. */
+  .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) {
+    display: none;
+  }
+
   /* THE PEEKED RAIL: the same element, over the app instead of beside it.
      Everything about its inside — the rows, the labels, the lit tab — is the
      rail's own, because it IS the rail; what changes is that it floats. */

@@ -135,3 +135,51 @@ test('an adopted pane still lets the kit own the surface, so the frost is not do
   assert.match(adopted, /background: transparent !important/);
   assert.match(adopted, /box-shadow: none !important/);
 });
+
+// ── The two bars are one material (#2718 review) ───────────────────────
+
+test('the platform header wears the same glass as the tab bar', () => {
+  // The bar at the foot (or, on a desktop, the rail at the side) has always
+  // been `--dc-sheet-fill` under `--dc-frost`. The header was CLEARED on
+  // every wallpapered screen, which was right while it floated alone on a
+  // page and wrong the moment a second bar shared the screen with it: two
+  // pieces of the same chrome, drawn as two different materials.
+  const at = APP_CSS.indexOf('THE BAR IS THE SAME MATERIAL AS THE BAR AT THE FOOT');
+  assert.ok(at > 0, 'the rule states its reason');
+  const block = APP_CSS.slice(at, APP_CSS.indexOf('\n}', APP_CSS.indexOf('#platform-header {', at)));
+  assert.match(block, /background-color: var\(--dc-sheet-fill\);/);
+  assert.match(block, /backdrop-filter: var\(--dc-frost\);/);
+  assert.match(block, /-webkit-backdrop-filter: var\(--dc-frost\);/);
+  const selector = block.slice(block.indexOf('body:has('), block.indexOf('{', block.indexOf('body:has(')));
+  // NOT INSIDE AN APP. The strip takes the APP's tone there (#1945) and a
+  // frost over somebody else's page colour is a smear, not a surface — and
+  // there is no tab bar on that route to match in the first place.
+  assert.doesNotMatch(selector, /#app-view/, 'an app keeps its own tone');
+  for (const screen of ['#home-screen', '#workshop-screen', '#messages-screen', '#profile-screen']) {
+    assert.ok(selector.includes(screen), `${screen} is a platform screen and takes the glass`);
+  }
+  // It must come AFTER the rule that clears the bar, or it never applies:
+  // both are `body:has(…) #platform-header` and carry the same specificity.
+  assert.ok(APP_CSS.indexOf('background-color: transparent;', APP_CSS.indexOf(':not(.hidden)) #platform-header'))
+    < at, 'the glass is declared after the rule it overrides');
+});
+
+test('a sticky header over a scrolling document keeps that glass too', () => {
+  // `html[data-browser-scroller]` is the routes where the DOCUMENT scrolls so
+  // the browser's own toolbars can follow it (#1518). The header is sticky
+  // there, and it used to force a near-opaque wash of the page ground with
+  // `!important` — which beat the glass above and left the two bars looking
+  // different again on exactly the routes a phone browser uses.
+  //
+  // The wash stays where it belongs: #landing-header, which has no tab bar to
+  // match and nothing frosted near it. A frost over moving content is not a
+  // new risk here — the tab bar is `position: fixed` over the same scrolling
+  // document and has always been frosted.
+  const sticky = rule('html[data-browser-scroller] :is(#platform-header, #landing-header)');
+  assert.match(sticky, /position: sticky;/);
+  assert.ok(!sticky.includes('background'), 'the shared rule sets position only');
+  const landing = rule('html[data-browser-scroller] #landing-header');
+  assert.match(landing, /background: color-mix\(in srgb, var\(--home-ground\) 92%, transparent\);/);
+  assert.ok(!/color-mix\(in srgb, var\(--home-ground\) 92%, transparent\) !important/.test(APP_CSS),
+    'and nothing forces that wash onto the platform header any more');
+});

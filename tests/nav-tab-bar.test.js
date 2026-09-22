@@ -255,16 +255,33 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.ok(at > 0, 'the desktop block must exist, at the shell\'s own md breakpoint');
   const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
 
-  assert.match(block, /--platform-rail-w: 224px;/, 'the rail has a width');
+  // TWO TOKENS, NOT ONE (#2718 review). `--platform-rail-full` is how wide
+  // the rail IS and never changes; `--platform-rail-w` is how much width it
+  // RESERVES, and goes to 0 while it is folded or peeking. One number for
+  // both drew a 17px sliver — padding and a border around a zero-width
+  // column — the first time the rail was peeked over a folded desktop.
+  assert.match(css, /--platform-rail-full: 224px;/, 'the rail has a width');
+  assert.match(block, /--platform-rail-w: var\(--platform-rail-full\);/,
+    'and reserves it while it is up');
   assert.match(block, /--platform-tabs-h: var\(--platform-safe-bottom\);/,
     'and the band at the foot is the home-indicator inset and nothing else');
-  assert.match(block, /width: var\(--platform-rail-w\);/, 'the bar takes that width');
+  assert.match(block, /width: var\(--platform-rail-full\);/,
+    'the bar is DRAWN at the full width, never at the reserved one');
   assert.match(block, /grid-template-columns: none;/,
     'and stops being five equal columns');
   assert.match(block, /align-content: start;/,
     'five rows spread over 800px of rail is the bar\'s own mistake on its side');
-  assert.match(block, /padding-left: var\(--platform-rail-w, 0px\);/,
+  // A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review). The
+  // rail's hairline was the content's left margin, so a card began where the
+  // rail ended while the page had air on the right and none on the left — a
+  // centred column inside then centred a gutter's width left of the window's
+  // middle. Spending the same figure on both sides is what fixes that, and
+  // 1.5rem is the shell's own outer gutter rather than a number for this edge.
+  assert.match(block, /padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/,
     'the screens move over by PADDING, so nothing about the flex chain moves');
+  assert.match(block, /padding-right: var\(--platform-gutter\);/,
+    'and the same figure is spent on the far edge');
+  assert.match(block, /--platform-gutter: 1\.5rem;/);
   // …and the app view is NOT one of the roots that move over: an app covers
   // the rail, which is what "the app is the whole window" means. The prose
   // above the rule says so, so the check is on the selector itself.
@@ -273,7 +290,7 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(roots, /#messages-screen/, 'every platform root does move over');
   // The parked strip is the rail's footer, and its pill becomes a caption
   // because four things do not fit across 224px.
-  assert.match(block, /\.platform-parked \{[\s\S]{0,300}width: var\(--platform-rail-w\);/);
+  assert.match(block, /\.platform-parked \{[\s\S]{0,300}width: var\(--platform-rail-full\);/);
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
 
@@ -284,13 +301,20 @@ test('the rail peeks back over an open app, and reserves nothing while it does',
   // spending width while you work.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
-  assert.match(bar, /screen === 'app-view' \? \(/,
-    'and it exists only inside an app — everywhere else the rail is there');
+  // TWO WAYS TO HAVE NO RAIL, and the zone answers both (#2718 review): the
+  // ROUTE can say there is none (an app) and the VIEWER can fold the one
+  // there is (#sidebar-toggle). `!railOpen` rather than the `collapsed` the
+  // class toggle below uses, deliberately — `collapsed` is also true on the
+  // chromeless and signed-out shells, where a strip that peeked a rail in
+  // would be conjuring navigation out of nothing.
+  assert.match(bar, /screen === 'app-view' \|\| !railOpen \? \(/,
+    'and it exists where the rail is out of the way, by either route');
   // THE PEEK IS NOT THE BAR'S VISIBILITY. The router still says hidden, the
   // screens reserve no band, and the app is full width; this is an overlay
   // on top of that answer.
   assert.match(bar, /useHiddenClass\(barRef, !visible && !peek\);/);
-  assert.match(bar, /useClassToggle\(barRef, 'platform-tabs-peek', !visible && peek\);/);
+  assert.match(bar, /const collapsed = !visible \|\| !railOpen;/);
+  assert.match(bar, /useClassToggle\(barRef, 'platform-tabs-peek', collapsed && peek\);/);
   assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\)/,
     'a peeking bar reserves nothing — reflowing the app under the pointer '
     + 'that revealed it is the bug this excludes');
@@ -303,12 +327,83 @@ test('the rail peeks back over an open app, and reserves nothing while it does',
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}animation: none;/);
 });
 
-test('every screen change clears the peek', () => {
+test('every screen change clears the peek, and nothing else does', () => {
   // That is what a peek is FOR: you reveal the rail over an app to leave it,
   // and the thing you tapped has now happened. Leaving it set would hand the
   // next screen an overlay rail on top of its own.
   const mount = read('frontend/src/features/nav/mount.ts');
-  assert.match(mount, /setScreen\(screenId: string \| null\) \{[\s\S]{0,600}peek: false,/);
+  assert.match(mount, /setScreen\(screenId: string \| null\) \{[\s\S]{0,1400}peek: false/);
+  // ON A CHANGE, not on every call. Re-asserting the screen you are already
+  // on is not navigation, and clearing there yanks the rail out from under
+  // the pointer that summoned it — measured with a harness that re-asserted
+  // the current screen on a 100ms timer, which made the rail strobe at
+  // exactly that rate. Nothing in the shipped router does that today; the
+  // guard is here so that nothing ever can.
+  assert.match(mount, /const changed = navStore\.get\(\)\.screen !== screen;/);
+  assert.match(mount, /\.\.\.\(changed \? \{ peek: false \} : null\),/);
+});
+
+test('the desktop rail folds by hand, and a phone can never lose its bar', () => {
+  // #2718 review: "the sidebar toggle button is missing on desktop". Every
+  // host in the study that draws a persistent rail also draws a way to fold
+  // it, in the window's top-left corner.
+  const toggle = read('frontend/src/features/nav/sidebar-toggle.tsx');
+  const navStoreSrc = read('frontend/src/features/nav/nav-store.js');
+  const header = read('frontend/src/features/header/platform-header.tsx');
+
+  // THE STATE SHIPS OPEN, which is what makes it safe to hold in the nav
+  // store at all: the prerendered document carries a visible bar, so the
+  // first client render agrees with it and hydration is silent.
+  assert.match(navStoreSrc, /railOpen: true,/);
+  assert.match(toggle, /aria-pressed=\{railOpen \? 'true' : 'false'\}/,
+    'the state is on the control, so the label can stay the ACTION');
+  assert.match(toggle, /aria-label=\{railOpen \? 'Hide sidebar' : 'Show sidebar'\}/);
+  assert.match(toggle, /aria-controls="platform-tabs"/);
+
+  // IT RENDERS NOTHING WHERE THE ROUTE HAS NO RAIL — inside an app,
+  // chromeless, signed out. A toggle for a thing that is not there is a dead
+  // control, and an app's rail comes back by pointing at the window's edge.
+  assert.match(toggle, /const hasRail = useVisibility\('platform-tabs', true\);/);
+  assert.match(toggle, /if \(!hasRail\) return null;/);
+
+  // IT LIVES IN THE MEASURED LEFT GROUP, so use-header-layout.ts counts it
+  // without being told: that hook decides whether the title can centre from
+  // the group's inner edge, and a control outside the group is 28px of room
+  // it would hand to the title.
+  assert.match(header, /<SidebarToggle \/>/);
+  assert.match(header, /const hasRail = useVisibility\('platform-tabs', true\);/);
+  assert.match(header,
+    /\+ \(mode !== 'none' \? '' : hasRail \? ' platform-header-left-desktop' : ' hidden'\)/,
+    'three states: content at every width, desktop-only, or gone');
+
+  // A PHONE'S BAR IS AT THE FOOT OF THE SCREEN and is the only navigation
+  // there is. Folding must never reach it — so the fold is a CLASS that
+  // app.css acts on inside the desktop media query and nowhere else, rather
+  // than the `hidden` the router uses. A desktop window narrowed to a phone
+  // gets its bar back with no store watching the viewport.
+  assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
+    /useClassToggle\(barRef, 'platform-tabs-folded', !railOpen\);/);
+  const folded = css.indexOf('.platform-tabs.platform-tabs-folded:not(.platform-tabs-peek)');
+  assert.ok(folded > 0, 'a folded rail is not drawn');
+  assert.ok(css.lastIndexOf('@media (min-width: 768px) {', folded) > 0);
+  // …and it is not drawn only while it is not peeking, which is what makes
+  // the hot zone at the window's edge the way back from folded.
+  assert.match(css.slice(folded, folded + 120), /:not\(\.platform-tabs-peek\) \{\s*display: none;/);
+  // The toggle itself is desktop-only by the same mechanism, and the group
+  // that holds it goes with it when the back slot is empty — an
+  // empty-but-present flex item still reserves the header's own `gap-4`,
+  // which put the wordmark 16px in from the edge of every root screen the
+  // first time this was tried. The id beats Tailwind's own `.flex`, which
+  // wins equal-specificity conflicts because app.css loads first.
+  assert.match(css, /\.platform-sidebar-toggle \{\n  display: none;\n\}/);
+  assert.match(css,
+    /@media \(max-width: 767px\) \{[\s\S]{0,600}#platform-header \.platform-header-left-desktop \{\s*display: none;/);
+  // FOLDED RESERVES NOTHING, and only on the desktop layout.
+  const zero = css.indexOf('body:has(#platform-tabs.platform-tabs-folded)');
+  assert.ok(zero > 0);
+  assert.ok(css.lastIndexOf('@media (min-width: 768px) {', zero) > 0,
+    'the zeroing rule is inside the desktop block, so a phone never sees it');
+  assert.match(css.slice(zero, zero + 120), /\{\s*--platform-rail-w: 0px;/);
 });
 
 test('the reservation is keyed off the bar\'s own hidden class', () => {
@@ -322,8 +417,8 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
   // to `--platform-bar-h`.
   assert.match(css, /\nbody \{\n(?:  \/\*[^]*?\*\/\n)?  --platform-bar-h: 0px;/);
   assert.match(css, /--platform-tabs-h: 0px;/);
-  assert.match(css, /--platform-rail-w: 0px;\n\}/,
-    'and the rail costs a phone no width at all');
+  assert.match(css, /--platform-rail-w: 0px;\n  --platform-gutter: 0px;\n\}/,
+    'and the rail costs a phone no width at all, nor the gutter beside it');
   assert.match(css,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-safe-bottom, 0px\)\);/,
     'the strip adds its own band, and only while the bar is there to sit on '

@@ -4204,19 +4204,25 @@ const App = {
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     //
-    // #2639: HOME is the only root. #1569 grouped Browse with it, on the
-    // reading that both are top-level lists — but Browse is not somewhere you
-    // arrive, it is somewhere you go, from Home's "Find more apps". Arriving
-    // there and finding the bar empty left the chip menu's Home row as the
-    // only way back, which is an inch away and behind a menu. Every other
-    // screen you navigate INTO offers the house; Browse now does too.
-    // #2718: THREE answers now, not two. Home is a root and offers nothing;
-    // an APP offers a close button, because leaving an app is not going up a
-    // level — you are stepping out of somebody's program back to the platform,
-    // and every mini-app host in the study draws that as an ✕ rather than a
-    // chevron. Everything else keeps the house. `_appBackHref` still decides
-    // WHERE the ✕ lands (the Workshop, when that is where you came from),
-    // which is what setBackIcon resolves a line later.
+    // WHAT IT PUBLISHES IS A TABLE now, not a ternary — App._BACK_SLOT, one
+    // row per screen, read through App._backSlotFor. The ternary it replaced
+    // had accumulated three answers over #1569, #2639 and #2718 and still
+    // disagreed with the screens that wrote their own slot a moment later
+    // (Browse, Settings, Admin, the Challenges pane), so the bar's corner
+    // depended on which writer ran last. A table can be read against
+    // features/nav/nav-store.js's TAB_FOR_SCREEN, and
+    // tests/header-back-home.test.js derives each from the other.
+    //
+    // The rule it encodes, from #2718's review: A TAB ROOT SHOWS NOTHING,
+    // because the bar beneath it already answers "how do I get out of here",
+    // and a house on a root is either the Home tab twice or a jump past the
+    // tab that is still lit. A sub-page shows an ARROW to the root it hangs
+    // off. An APP shows a close button, because leaving an app is not going
+    // up a level — you are stepping out of somebody's program back to the
+    // platform, and every mini-app host in the study draws that as an ✕
+    // rather than a chevron. `_appBackHref` still decides WHERE the ✕ lands
+    // (the Workshop, when that is where you came from), which is what
+    // _backSlotFor resolves.
     App.setBackIcon(...App._backSlotFor(revealId));
     // ...and the tab bar, in the same callback and for the same reason the
     // comment above gives for the title and the back slot: they are all part
