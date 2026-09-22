@@ -1326,6 +1326,40 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    component. All it does is let the host fill the pane, because the sheet
    inside is `h-full` and a host that collapsed would give it nothing to be
    the height of. */
+/* The agent row's delete, and the confirm that replaces the row (#2718
+   review). Both came from the Improve panel's own list of these chats, which
+   was the only surface that offered the delete — so it moved here with them
+   rather than retiring with the panel. */
+.messages-row-delete {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+.messages-conversation-row:hover .messages-row-delete,
+.messages-row-delete:focus-visible { opacity: 1; }
+.messages-row-delete:hover { background: var(--messages-surface-2); color: var(--text-primary); }
+/* Touch has no hover to reveal it with, so it is simply there. */
+@media (hover: none) { .messages-row-delete { opacity: 1; } }
+.messages-row-confirm { gap: 8px; font-size: 14px; color: var(--text-primary); }
+.messages-row-confirm-cancel,
+.messages-row-confirm-delete {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.messages-row-confirm-cancel { color: var(--text-muted); }
+.messages-row-confirm-delete { color: #dc2626; }
+.dark .messages-row-confirm-delete { color: #f87171; }
+
 .messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
 

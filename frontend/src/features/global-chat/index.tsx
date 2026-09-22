@@ -422,5 +422,4 @@ export function GlobalChatScreen() {
 }
 
 export { GlobalChatNewChatButton } from './new-chat-button';
-export { GlobalChatImproveSection } from './improve-section';
 export { useGlobalChatState } from './store';

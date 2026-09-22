@@ -14,7 +14,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const screen = read('frontend', 'src', 'features', 'global-chat', 'index.tsx');
 const newChatButton = read('frontend', 'src', 'features', 'global-chat', 'new-chat-button.tsx');
-const improveSection = read('frontend', 'src', 'features', 'global-chat', 'improve-section.tsx');
+const inbox = read('frontend', 'src', 'features', 'messages', 'index.tsx');
 const store = read('frontend', 'src', 'features', 'global-chat', 'store.ts');
 const renderers = read('frontend', 'src', 'features', 'global-chat', 'renderers.tsx');
 const api = read('frontend', 'src', 'features', 'global-chat', 'api.ts');
@@ -25,7 +25,6 @@ const settings = read('frontend', 'src', 'features', 'settings', 'sections', 'gl
 const css = read('public', 'css', 'app.css');
 const shell = read('frontend', 'src', 'Shell.tsx');
 const header = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
-const improvePanel = read('frontend', 'src', 'features', 'improve', 'improve-panel.tsx');
 const viewTabs = read('frontend', 'src', 'features', 'improve', 'view-tabs.tsx');
 const appJs = read('public', 'js', 'app.js');
 
@@ -52,31 +51,24 @@ test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   assert.match(newChatButton, /New chat \(experimental\)/);
 });
 
-test('Improve separates resumable chats from coding changes and starts durable sessions', () => {
+test('the inbox lists resumable chats, and is where one is deleted', () => {
   assert.doesNotMatch(header, /GlobalChatNewChatButton|GlobalChatModeSwitch/);
-  assert.match(improvePanel, /<GlobalChatImproveSection/);
-
-  const sessions = improvePanel.slice(improvePanel.indexOf('id="improve-sessions"'));
-  assert.ok(
-    sessions.indexOf('<GlobalChatImproveSection') >= 0
-      && sessions.indexOf('<GlobalChatImproveSection') < sessions.lastIndexOf('Changes in progress'),
-    'the Chats group must render before the coding-change group',
-  );
-
-  assert.match(improveSection, /<span>Chats<\/span>/);
-  assert.match(improveSection, /snapshot\.threads\.map/);
-  assert.match(improveSection, /href=\{`#chat\/\$\{encodeURIComponent\(thread\.id\)\}`\}/);
-  assert.match(improveSection, /data-improve-row="chat"/);
-  assert.match(improveSection, /Working/);
-  assert.match(improveSection, /Current/);
-  assert.match(improveSection, /DraftTrashIcon/);
-  assert.match(improveSection, /Delete this chat\?/);
-  assert.match(improveSection, /removeGlobalChatThread\(thread\.id\)/);
+  // THE PANEL'S LIST RETIRED WITH THE PANEL (#2718 review). These chats are
+  // rows of the Messages inbox under its Agents filter — one list, loaded and
+  // invalidated in one place — so what the panel's copy is asserted for is
+  // asserted of that row now.
+  assert.match(inbox, /function AgentChatRow/);
+  assert.match(inbox, /href=\{`#chat\/\$\{encodeURIComponent\(chat\.id\)\}`\}/);
+  assert.match(inbox, /data-inbox-agent=\{chat\.id\}/);
+  assert.match(inbox, /chat\.busy \? 'Working…'/);
+  // The DELETE is the one thing that lived nowhere else, so it moved rather
+  // than going away with the surface that carried it.
+  assert.match(inbox, /removeGlobalChatThread\(chat\.id\)/);
+  assert.match(inbox, /Delete this chat\?/);
+  assert.match(inbox, /\{removing \? 'Deleting…' : 'Delete'\}/);
+  assert.match(inbox, /DraftTrashIcon/);
   assert.match(newChatButton, /void startNewGlobalChat\(\)/);
-  assert.match(store, /`#chat\/\$\{encodeURIComponent\(created\.thread\.id\)\}`/);
-  assert.match(viewTabs, /active === 'chat' \? 'Chat' : 'Change'/);
 });
-
 test('chat navigation uses the shared screen router instead of a body-wide mode', () => {
   assert.match(store, /open:\s*false/);
   assert.doesNotMatch(store, /setDocumentMode|CLASSIC_SCREEN_IDS|\.inert\s*=/);

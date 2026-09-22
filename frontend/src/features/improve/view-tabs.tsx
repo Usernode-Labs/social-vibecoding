@@ -184,12 +184,23 @@ export function activeAppView(
   return null;
 }
 
-export function AppViewTabs({ ids, onNavigate, className, activeChat = false }: {
+export function AppViewTabs({ ids, onNavigate, className, activeChat = false, owed = null }: {
   /** Element ids for the track and its two segments. */
   ids: { root: string; app: string; workshop: string };
   onNavigate: () => void;
   className?: string;
   activeChat?: boolean;
+  /**
+   * Votes this viewer owes on the app in context, or null.
+   *
+   * It rode the menu's `Open in Workshop` ROW until that row retired
+   * (#2718 review): the row and this segment named one destination, which is
+   * the two-owners problem this file's own header warns about, and the row
+   * was the only one of the two carrying a figure. So the row went and the
+   * figure came here, which is what "single-homed" has to mean if it is to
+   * mean anything.
+   */
+  owed?: number | null;
 }): ReactNode {
   const { name, slug, selfHosted, tab, subTab } = useStoreState(improveStore);
   const active = activeChat ? 'chat' : activeAppView(tab, subTab);
@@ -227,6 +238,14 @@ export function AppViewTabs({ ids, onNavigate, className, activeChat = false }: 
         onClick={onNavigate}
       >
         <span className="min-w-0 truncate">Workshop</span>
+        {owed ? (
+          <span
+            id="app-menu-workshop-owed"
+            className="ml-1.5 shrink-0 rounded-full bg-violet-600 px-1.5 text-[0.6875rem] font-semibold leading-5 text-white"
+          >
+            {owed}
+          </span>
+        ) : null}
       </a>
       {/*
           #1598: where you actually are, when that is a change rather than one

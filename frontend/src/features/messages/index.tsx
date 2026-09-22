@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
-  ChatIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon,
+  ChatIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
@@ -28,7 +28,7 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { initializeGlobalChat, startNewGlobalChat, useGlobalChatState } from '../global-chat/store';
+import { initializeGlobalChat, removeGlobalChatThread, startNewGlobalChat, useGlobalChatState } from '../global-chat/store';
 import {
   INBOX_FILTERS, buildInbox,
   type AgentChat, type AppDiscussion, type InboxFilter,
@@ -186,9 +186,63 @@ function AppDiscussionRow({ discussion }: { discussion: AppDiscussion }) {
  * drifts. The row's address is the same `#chat/<id>` the Improve panel's own
  * list uses.
  */
+/**
+ * An agent chat, as a row of this inbox.
+ *
+ * ── It can be DELETED here (#2718 review) ─────────────────────────────
+ *
+ * The Improve panel's own list of these could, and the panel is retired: it
+ * had become a drawer you opened to press one of two buttons, so the buttons
+ * moved into the mark's menu and the drawer went. Everything else in it was
+ * already somewhere better — the sessions in the Workshop, GitHub and Share
+ * in About, these chats in this list — except the delete, which existed
+ * nowhere else. So it comes here rather than going away, because retiring a
+ * surface is not a reason to retire what only that surface offered.
+ *
+ * The confirm is a row rather than a dialog, which is what it was: a chat is
+ * cheap to lose and a modal over a list to delete one row from it is the
+ * heavier gesture.
+ */
 function AgentChatRow({ chat }: { chat: AgentChat }) {
   const at = chat.updatedAt || chat.createdAt || null;
   const activity = at ? agoStamp(at) : null;
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  async function remove() {
+    if (removing) return;
+    setRemoving(true);
+    try {
+      await removeGlobalChatThread(chat.id);
+    } catch {
+      setRemoving(false);
+      window.PlatformUI?.toast?.('Could not delete this chat.');
+    }
+  }
+
+  if (confirming) {
+    return (
+      <div className="messages-conversation-row messages-row-confirm" data-inbox-agent={chat.id}>
+        <span className="min-w-0 flex-1">Delete this chat?</span>
+        <button
+          type="button"
+          className="messages-row-confirm-cancel"
+          disabled={removing}
+          onClick={() => setConfirming(false)}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="messages-row-confirm-delete"
+          disabled={removing}
+          onClick={() => void remove()}
+        >
+          {removing ? 'Deleting…' : 'Delete'}
+        </button>
+      </div>
+    );
+  }
   return (
     <a
       href={`#chat/${encodeURIComponent(chat.id)}`}
@@ -211,6 +265,16 @@ function AgentChatRow({ chat }: { chat: AgentChat }) {
           </span>
         </div>
       </div>
+      {/* Inside the anchor, so it rides the row's own layout — and it stops
+          the navigation itself, the way the Discover row's Add button does. */}
+      <button
+        type="button"
+        className="messages-row-delete"
+        aria-label={`Delete ${chat.title || 'this chat'}`}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirming(true); }}
+      >
+        <DraftTrashIcon className="w-4 h-4" aria-hidden="true" />
+      </button>
     </a>
   );
 }

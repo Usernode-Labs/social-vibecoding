@@ -186,7 +186,10 @@ test('the inbox initialises the global-chat bootstrap it reads', () => {
   // opened Improve saw `bootstrap: null` — which reads as "the feature is
   // off" — and drew no agent rows and no way to start one under the Agents
   // tab, which is what "there is no new agent button under agents" was.
-  assert.match(SCREEN, /import \{ initializeGlobalChat, startNewGlobalChat, useGlobalChatState \}/);
+  // `removeGlobalChatThread` joined them when the Improve panel retired: its
+  // list of these chats was the only surface that offered the delete, so the
+  // delete came to this one rather than going away (#2718 review).
+  assert.match(SCREEN, /import \{ initializeGlobalChat, removeGlobalChatThread, startNewGlobalChat, useGlobalChatState \}/);
   const screen = SCREEN.slice(SCREEN.indexOf('export function MessagesScreen'));
   assert.match(screen, /void initializeGlobalChat\(\);/);
   // The same shape the button uses: a boot-time 401 is expected before

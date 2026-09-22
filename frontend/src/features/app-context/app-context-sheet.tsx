@@ -433,6 +433,7 @@ export function AppsSwitcherSheet(): ReactNode {
           <AppViewTabs
             ids={IMPROVE_VIEW_IDS}
             onNavigate={() => void AppContext.dismissForNav()}
+            owed={owed}
           />
         ) : null}
 
@@ -519,20 +520,6 @@ export function AppsSwitcherSheet(): ReactNode {
               These are the same move — the Workshop tab and the Messages
               tab, arriving scoped rather than at the top of a list.
           */}
-          <MenuRow
-            id="app-menu-row-workshop"
-            href={slug ? `#app/${encodeURIComponent(slug)}/dev` : '#workshop'}
-            icon={<BoardIcon />}
-            label="Open in Workshop"
-            trailing={owed ? (
-              <span
-                id="app-menu-workshop-owed"
-                className="shrink-0 text-sm text-zinc-500 dark:text-zinc-400"
-              >
-                {`${owed} to vote`}
-              </span>
-            ) : undefined}
-          />
           <MenuRow
             id="app-menu-row-discussion"
             href={slug ? `#app/${encodeURIComponent(slug)}/dev/chat` : '#messages'}

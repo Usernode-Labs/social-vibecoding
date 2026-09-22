@@ -224,10 +224,13 @@ test('the panel follows the chip when the title is not centred', () => {
 
 // ── The backdrop ───────────────────────────────────────────────────────
 
-test('the backdrop dims exactly as the Improve panel\'s does', () => {
-  // These two panels open from the same bar and dismiss the same way, so one
-  // dimming the page and the other not made them read as two different KINDS
-  // of surface. The desktop transparency override that did that is gone.
+test('the backdrop dims at every width, and catches the dismissing click', () => {
+  // This guarded SAMENESS with the Improve panel's backdrop, because the two
+  // opened from the same bar and dismissed the same way — one dimming the
+  // page and the other not made them read as two different KINDS of surface.
+  // The panel is retired (#2718 review), so there is no second backdrop to be
+  // the same as, and what is left is the rule that mattered: the dim is not a
+  // width choice.
   // Narrowed from "no desktop rule may touch the backdrop at all". That was
   // the right guard when the only reason to reach for one was to turn the dim
   // off, and too broad the moment a desktop rule moved where the dim STARTS
@@ -243,13 +246,8 @@ test('the backdrop dims exactly as the Improve panel\'s does', () => {
       'nor fade it out: opacity is the open/closed switch, not a width choice');
   }
 
-  // Sameness by construction rather than by two copies of a value: both
-  // overlays ship one class string and share one pair of opacity rules.
-  const IMPROVE = read('frontend/src/features/improve/improve-panel.tsx');
-  const cls = /id="improve-overlay"[\s\S]{0,200}?className="([^"]*)"/.exec(IMPROVE);
-  assert.ok(cls, 'the Improve panel states its backdrop classes');
-  assert.ok(SHEET.includes(`className="${cls[1]}"`),
-    `the switcher's backdrop must carry the same run: ${cls[1]}`);
+  // It covers the page and nothing else decides that.
+  assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,300}?className="fixed inset-0/);
 
   // And it is still the thing that catches the dismissing click.
   assert.match(rule('#apps-switcher-overlay[data-open]'), /pointer-events:\s*auto/);
@@ -381,17 +379,24 @@ test('every group in the menu announces itself', () => {
     + 'and Profile rows now (#2718)');
 });
 
-test('the menu is the APP PICKER — the view strip is not in it', () => {
-  // The regression this guards: the strip is one module rendered from a
-  // caller-supplied id map, so a second surface is one import away, and a
-  // duplicated navigation control is the kind of thing that reads as
-  // harmless in a diff. Two owners of one decision is what view-tabs.tsx's
-  // own header warned about; the chip's copy was it.
-  assert.ok(!/AppViewTabs/.test(SHEET),
-    'no view strip in the chip menu');
+test('the view strip is single-homed — in the menu, and nowhere twice', () => {
+  // THE RULE IS THE SAME; THE HOME MOVED (#2718 review). The strip is one
+  // module rendered from a caller-supplied id map, so a second surface is one
+  // import away and a duplicated navigation control is the kind of thing that
+  // reads as harmless in a diff. It used to live in the Improve panel and the
+  // menu was forbidden it; the panel is retired, so the menu is where it
+  // lives and the duplicate to guard against is the `Open in Workshop` ROW
+  // that named the same destination one row below it.
+  assert.match(SHEET, /<AppViewTabs/, 'the strip is here now');
+  assert.ok(!/id="app-menu-row-workshop"/.test(SHEET),
+    'and the row that named the same destination is gone');
+  // The row was the only one of the two carrying the vote count, so the count
+  // came with it rather than going away.
+  assert.match(TABS, /id="app-menu-workshop-owed"/);
+  assert.match(SHEET, /owed=\{owed\}/);
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
-    'and no caption left behind for it — comments explaining the removal '
-    + 'are fine, rendered text is not');
+    'and no caption left behind — comments explaining a move are fine, '
+    + 'rendered text is not');
 });
 
 // ── The segmented control's pill ───────────────────────────────────────
