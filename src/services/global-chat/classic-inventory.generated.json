@@ -292,12 +292,12 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js",
         "public/js/app.js"
       ]
@@ -328,12 +328,12 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -1982,7 +1982,6 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/create-app.tsx",
@@ -1990,6 +1989,7 @@
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -2091,7 +2091,6 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/create-app.tsx",
@@ -2099,6 +2098,7 @@
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -3354,12 +3354,12 @@
       "clientReferences": [
         "frontend/src/features/admin/admin-campaigns.tsx",
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -3499,13 +3499,13 @@
       "classicPath": "#messages",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js",
         "public/js/app-view.js"
       ]
@@ -3527,13 +3527,13 @@
       "classicPath": "#messages",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -4120,13 +4120,13 @@
       "classicPath": "#messages",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -4147,13 +4147,13 @@
       "classicPath": "#messages",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -5388,13 +5388,13 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/feedback-controller.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js",
         "public/js/feedback-queue.js"
       ]
@@ -5637,13 +5637,13 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -5664,13 +5664,13 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -5691,12 +5691,12 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -6869,13 +6869,13 @@
       "classicPath": "#notifications",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/notifications/notifications.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -8499,13 +8499,13 @@
       "classicPath": "#workshop",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
@@ -8903,12 +8903,12 @@
       "clientReferences": [
         "frontend/src/features/admin/admin-status.tsx",
         "frontend/src/features/admin/topochain/api-tester.tsx",
-        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
       ]
     },
