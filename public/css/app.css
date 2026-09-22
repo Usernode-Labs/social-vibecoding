@@ -15996,10 +15996,26 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
    `html:not(.un-kb)` because the keyboard takes the bar with it — see the
    display rule below. */
 body {
+  /* The BAR's own outer height, which the parked strip rests on. */
+  --platform-bar-h: 0px;
+  /* Everything at the foot of the screen, stacked — what a surface above has
+     to clear. With no strip it is the bar; with one it is both. */
   --platform-tabs-h: 0px;
 }
 html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
+  --platform-bar-h: calc(56px + var(--platform-safe-bottom, 0px));
   --platform-tabs-h: calc(56px + var(--platform-safe-bottom, 0px));
+}
+/* THE PARKED STRIP ADDS ITS OWN BAND, and only while the bar is there to sit
+   on: the strip is offered on the platform's screens and never inside a
+   running app, which is the one route where resuming that app would be a
+   shortcut to where you already are. Both terms are spelled out rather than
+   summed from the token above, because a custom property's var()s resolve on
+   the element the property is DECLARED on — see the note at the head of this
+   section — so `calc(52px + var(--platform-bar-h))` here would read the 0px
+   from the plain `body` rule rather than the value the selector above sets. */
+html:not(.un-kb) body:has(#platform-tabs:not(.hidden)):has(#platform-parked:not(.hidden)) {
+  --platform-tabs-h: calc(52px + 56px + var(--platform-safe-bottom, 0px));
 }
 
 /* KEYBOARD UP, BAR GONE. The same reasoning `html.un-kb .platform-safe-scroll`
@@ -16157,4 +16173,109 @@ html.un-kb #platform-tabs {
   /* The file is 261px square drawn at 26: tell the decoder so, rather than
      letting it pick. */
   object-fit: cover;
+}
+
+
+/* ── #platform-parked — the app you left ─────────────────────────────
+   frontend/src/features/nav/parked-store.js carries the argument. What lives
+   here is the geometry: a 52px strip resting ON the tab bar, out of flow like
+   it, with its band reserved by the same token the bar's is. */
+.platform-parked {
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* ON the bar, not above the screen's edge: the bar already spends the
+     home-indicator inset, so the strip's floor is the bar's ceiling and
+     neither reserves the strip twice. */
+  bottom: var(--platform-bar-h, 0px);
+  /* UNDER the bar's z-index by one. They never overlap, so this only decides
+     what a shadow falls across — and a temporary offer casting over permanent
+     furniture is the wrong way round. */
+  z-index: 29;
+
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 52px;
+  padding: 0 8px 0 4px;
+  border-top: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .platform-parked { background-color: var(--dc-sheet); }
+}
+
+/* THE WHOLE STRIP IS THE TARGET. A shortcut whose tappable area is a 60px
+   pill inside a full-width bar is a shortcut you miss; the pill is a LABEL
+   inside this anchor rather than a button beside it, which is also the only
+   valid markup (a button inside an anchor is not). */
+.platform-parked-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 4px 0 8px;
+  border-radius: 12px;
+  color: var(--text-primary);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.platform-parked-tile {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 9px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+}
+/* THE APP'S NAME IN FULL, not a description of it. It read "A chat is
+   working" for a round, which is a sentence about a session rather than the
+   thing you are going back to — and the answer to "what is this" here is the
+   app's own name, which is what you were looking at a moment ago. */
+.platform-parked-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+}
+.platform-parked-pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-line);
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+/* FORGET, not hide. A strip that comes back on the next screen swap is a
+   strip you cannot get rid of, and the handle's promise is that it is there
+   until you are done with it. */
+.platform-parked-x {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }

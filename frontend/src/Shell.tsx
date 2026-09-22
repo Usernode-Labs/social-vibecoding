@@ -82,7 +82,7 @@ import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
-import { PlatformTabs } from './features/nav';
+import { ParkedStrip, PlatformTabs } from './features/nav';
 import { GlobalChatScreen } from './features/global-chat';
 import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
@@ -405,6 +405,20 @@ export function Shell() {
           screen would be re-created on every swap, and the one thing a tab
           bar must never do is flicker when you use it.
       */}
+      {/*
+          #platform-parked — the app you left, offered above the bar until it
+          is resumed or dismissed. The bar makes the platform's five places
+          one tap each and in doing so makes the app you were IN the one thing
+          that is not: no tab, no header strip once you leave, and Home's grid
+          is every app rather than the one you were halfway through. Every
+          host that runs other people's programs keeps a handle to the thing
+          you stepped out of; this is that handle.
+
+          BEFORE the bar in this file and ABOVE it on screen: it is a
+          temporary offer sitting on top of permanent furniture, which is what
+          both orders say.
+      */}
+      <Island name="ParkedStrip"><ParkedStrip /></Island>
       <Island name="PlatformTabs"><PlatformTabs /></Island>
       {/*
           #notifications-panel (the bell dropdown) and #work-drawer-panel (the

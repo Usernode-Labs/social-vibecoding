@@ -8,4 +8,6 @@
 import './mount';
 
 export { PlatformTabs } from './tab-bar';
+export { ParkedStrip } from './parked-strip';
 export { navStore, tabForScreen, TAB_FOR_SCREEN } from './nav-store.js';
+export { parkedStore, readParked, setParked, PARKED_KEY } from './parked-store.js';

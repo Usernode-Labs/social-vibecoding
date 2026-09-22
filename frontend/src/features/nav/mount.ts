@@ -13,10 +13,15 @@
 import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
+import { parkedStore, setParked } from './parked-store.js';
 
 navStore.setFlush(flushSync);
+// Same reason as the tab's: App.navigateToApp clears the strip inside
+// PlatformUI.transition's reveal callback, and the kit captures the incoming
+// page from what that callback did before it returned.
+parkedStore.setFlush(flushSync);
 
-export { navStore };
+export { navStore, parkedStore };
 
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
@@ -47,6 +52,29 @@ if (typeof window !== 'undefined') {
     setMessages(count: number) {
       const n = Number(count);
       navStore.set({ messages: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0 });
+    },
+    /**
+     * Offer `app` above the tab bar until it is resumed or dismissed, or
+     * clear the offer with null.
+     *
+     * It takes the app's DISPLAY DATA and not just its slug, because the
+     * strip's whole promise is to be instant: a handle that has to fetch a
+     * name and an icon before it can draw is a handle that appears after you
+     * have given up looking for it. The caller has all four to hand — app.js
+     * parks from AppView.appData, the record it already loaded to draw the
+     * app's own header.
+     *
+     * @param app `{ slug, name, iconUrl, iconEmoji }`, or null to clear.
+     */
+    park(app: {
+      slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null;
+    } | null) {
+      setParked(app && app.slug ? {
+        slug: app.slug,
+        name: app.name || app.slug,
+        iconUrl: app.iconUrl || null,
+        iconEmoji: app.iconEmoji || null,
+      } : null);
     },
   };
 }

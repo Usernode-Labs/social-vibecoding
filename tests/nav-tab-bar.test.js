@@ -252,8 +252,16 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
   assert.match(css, /html:not\(\.un-kb\) body:has\(#platform-tabs:not\(\.hidden\)\)/);
   // Declared on `body` in BOTH branches. A custom property's var()s are
   // substituted on the element it is declared on, so a `:root` declaration
-  // would bake in `:root`'s value and never see the override.
-  assert.match(css, /\nbody \{\n  --platform-tabs-h: 0px;\n\}/);
+  // would bake in `:root`'s value and never see the override — which is also
+  // why the parked strip's rule spells both terms out rather than adding 52px
+  // to `--platform-bar-h`.
+  assert.match(css, /\nbody \{\n(?:  \/\*[^]*?\*\/\n)?  --platform-bar-h: 0px;/);
+  assert.match(css, /--platform-tabs-h: 0px;\n\}/);
+  assert.match(css,
+    /body:has\(#platform-tabs:not\(\.hidden\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-safe-bottom, 0px\)\);/,
+    'the strip adds its own band, and only while the bar is there to sit on');
+  assert.match(css, /\.platform-parked \{[^}]*bottom: var\(--platform-bar-h, 0px\);/,
+    'and it rests ON the bar, so neither reserves the home-indicator twice');
   assert.match(css, /html\.un-kb #platform-tabs \{\s*display: none;/,
     'the keyboard takes the bar with it');
 });

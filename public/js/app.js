@@ -4227,6 +4227,51 @@ const App = {
     // of the swap, and the kit captures the outgoing page from whatever this
     // callback did before it returned.
     App._syncPlatformTabs(revealId);
+    App._syncParkedApp(revealId);
+  },
+
+  // ── #platform-parked — the app you left ─────────────────────────────
+  //
+  // The bar makes the platform's five places one tap each, and in doing so it
+  // makes the app you were IN the one thing that is not: it has no tab, the
+  // header's app strip goes with it, and Home's grid is every app rather than
+  // the one you were halfway through. So leaving an app leaves a handle to
+  // it, above the bar, until it is resumed or dismissed.
+  //
+  // HERE, in the one place every screen swap passes through, rather than at
+  // the eight `leavingApp` call sites that each run AppView.close(): they all
+  // reveal a screen through this function on their next line, and a rule
+  // spelled once cannot be half-applied. It runs AFTER the reveal for the
+  // same reason the rest of this callback does — the kit snapshots what the
+  // callback did.
+  //
+  // THE DISPLAY DATA IS CAPTURED, not looked up later. The strip's promise is
+  // to be instant, and a handle that has to fetch a name and an icon before
+  // it can draw is a handle that appears after you have stopped looking for
+  // it. `launchRecordFor` is the launcher's own cached row — the same one
+  // navigateToApp reads to decide an app's default tab — and AppView.appData
+  // is the record the app view itself loaded; either answers, and a slug on
+  // its own is enough to offer the app by name-as-slug if neither does.
+  _syncParkedApp(revealId) {
+    const bridge = window.UsernodeReact?.nav;
+    if (!bridge || typeof bridge.park !== 'function') return;
+    // Entering the app clears its own handle: resuming the app you are in is
+    // a shortcut to where you already are.
+    if (revealId === 'app-view') { bridge.park(null); return; }
+    const slug = App.currentApp;
+    if (!slug) return;
+    let rec = null;
+    try {
+      rec = (typeof AppView !== 'undefined'
+        && (AppView.launchRecordFor?.(slug)
+          || (AppView.appData?.slug === slug ? AppView.appData : null))) || null;
+    } catch (_) { /* a record we cannot read is a name we do without */ }
+    bridge.park({
+      slug,
+      name: rec?.name || slug,
+      iconUrl: rec?.icon_url || null,
+      iconEmoji: rec?.icon_emoji || null,
+    });
   },
 
   // ── #platform-tabs — one place decides ──────────────────────────────
@@ -5353,8 +5398,10 @@ const App = {
       // The bar leaves WITH the app arriving, not after it. `after` below
       // runs _showOnlyScreen, which would sync it a transition later — and
       // the kit captures the incoming page from what this callback did, so
-      // a bar still painted here rides the zoom in and then vanishes.
+      // a bar still painted here rides the zoom in and then vanishes. The
+      // parked handle goes with it, for the same reason and the same frame.
       App._syncPlatformTabs('app-view');
+      App._syncParkedApp('app-view');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
