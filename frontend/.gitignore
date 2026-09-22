@@ -1,4 +1,6 @@
-node_modules/
+# No trailing slash — see the root .gitignore: the directory-only form
+# let a symlink of this name get committed.
+node_modules
 .ssr/
 
 # Scratch output from the one-time html-to-jsx converter (frontend/scripts/).

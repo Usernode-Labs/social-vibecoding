@@ -261,6 +261,21 @@ test('the untracked shell keeps its fixed-name, no-CSS build contract', () => {
     'no ignored local chunk may enter the Docker build context');
   assert.ok(dockerignore.includes('**/node_modules'),
     'the local frontend install used by tests must not enter the Docker build context');
+
+  // `node_modules/` matches a directory and nothing else, so a SYMLINK of
+  // that name is not ignored. One was committed that way (#2694) pointing
+  // at an absolute path on the machine that made it: every checkout after
+  // it materialized a dangling link where the install belongs, and the
+  // shell build failed on it until the link was deleted by hand. Both
+  // files carry the slashless form now, which covers either shape.
+  assert.ok(gitignore.includes('node_modules'),
+    'the dependency tree must be ignored whether it is a directory or a link');
+  assert.ok(!gitignore.includes('node_modules/'),
+    'the directory-only form is what let a symlink through');
+  const frontendIgnore = fs.readFileSync(path.join(ROOT, 'frontend', '.gitignore'), 'utf8').split(/\r?\n/);
+  assert.ok(frontendIgnore.includes('node_modules'),
+    'and the frontend tree ignores its own install the same way');
+  assert.ok(!frontendIgnore.includes('node_modules/'));
 });
 
 test('test and native-local entrypoints materialize ignored shell artifacts', () => {
