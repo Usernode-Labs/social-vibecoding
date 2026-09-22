@@ -2,8 +2,8 @@
 
 // #2380 — durable lifecycle for agent-authored visual evidence. All state
 // changes pass through this module so a new head invalidates old media before
-// any serializer can return it, and terminal states cannot be manufactured
-// without their required verdict/audit fields.
+// any serializer can return it. A verified run attests to reproducible,
+// complete captures; people decide whether those captures prove the claim.
 
 const crypto = require('crypto');
 const planContract = require('./visual-evidence-plan');
@@ -36,7 +36,6 @@ const PATCH_COLUMNS = Object.freeze({
   planHash: 'plan_hash',
   traceSummary: 'trace_summary',
   hardVerdict: 'hard_verdict',
-  semanticVerdict: 'semantic_verdict',
   failureCode: 'failure_code',
   failureReason: 'failure_reason',
   fixtureFingerprint: 'fixture_fingerprint',
@@ -323,8 +322,6 @@ async function requireIntentForUiChange(pool, sessionId, options = {}) {
 function runSummary(row, artifactSummary = []) {
   if (!row) return null;
   const intent = row.intent && typeof row.intent === 'object' ? row.intent : null;
-  const semantic = row.semantic_verdict && typeof row.semantic_verdict === 'object'
-    ? row.semantic_verdict : null;
   const trace = row.trace_summary && typeof row.trace_summary === 'object'
     ? row.trace_summary : null;
   return {
@@ -344,7 +341,7 @@ function runSummary(row, artifactSummary = []) {
     repairCount: Number.isInteger(Number(row.repair_attempt))
       ? Math.max(0, Math.min(1, Number(row.repair_attempt))) : 0,
     relativePointer: trace?.relativePointer === true,
-    verifiedReason: row.state === 'verified' ? clip(semantic?.reason, 1000) : null,
+    verifiedReason: null,
     overriddenBy: row.override_user_id || null,
     overriddenAt: row.overridden_at || null,
     overrideReason: row.override_reason || null,
@@ -427,7 +424,6 @@ async function createRun(pool, {
 
 function assertTransitionPayload(row, next, patch) {
   const hard = patch.hardVerdict ?? row.hard_verdict;
-  const semantic = patch.semanticVerdict ?? row.semantic_verdict;
   const planHash = patch.planHash ?? row.plan_hash;
   const replayPlan = patch.replayPlan ?? row.replay_plan;
 
@@ -442,11 +438,11 @@ function assertTransitionPayload(row, next, patch) {
     patch.planHash = expectedHash;
   }
   if (next === 'reviewing' && hard?.passed !== true) {
-    throw new VisualEvidenceStateError('evidence_hard_verdict_required', 'Semantic review requires a passing hard replay verdict.');
+    throw new VisualEvidenceStateError('evidence_hard_verdict_required', 'Captured media requires a passing hard replay verdict.');
   }
   if (next === 'verified') {
-    if (!planHash || hard?.passed !== true || semantic?.relevant !== true || semantic?.focusAccurate !== true) {
-      throw new VisualEvidenceStateError('evidence_verdict_required', 'Verified evidence requires matching plan, hard, relevance, and focus verdicts.');
+    if (!planHash || hard?.passed !== true) {
+      throw new VisualEvidenceStateError('evidence_verdict_required', 'Verified captures require a matching plan and passing hard replay verdict.');
     }
     patch.completedAt = patch.completedAt || new Date();
   }
@@ -488,7 +484,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     for (const [key, column] of Object.entries(PATCH_COLUMNS)) {
       if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
       let value = patch[key];
-      if (['replayPlan', 'traceSummary', 'hardVerdict', 'semanticVerdict'].includes(key)) {
+      if (['replayPlan', 'traceSummary', 'hardVerdict'].includes(key)) {
         value = value == null ? null : JSON.stringify(value);
         values.push(value);
         sets.push(`${column} = $${values.length}::jsonb`);

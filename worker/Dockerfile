@@ -82,8 +82,8 @@ RUN echo "claude-code ${CLAUDE_CODE_VERSION} cache bust: ${CLAUDE_CODE_CACHE_BUS
 
 # ── Codex CLI (codex_openrouter backend; plan.md PR5) ─────────────────
 # PINNED (not day-bumped) — bump deliberately. Codex runs non-interactively
-# (codex exec --json), DIRECTLY against the user's OpenRouter key, which is
-# injected per-turn as OPENROUTER_API_KEY into the specific
+# (codex exec --json), through a worker-local request adapter to OpenRouter.
+# The user's key is injected per-turn as OPENROUTER_API_KEY into the process
 # that needs it. The key is NOT placed in the warm-container bootstrap
 # environment (see worker.js buildTurnSecretEnv). There is NO OpenRouter
 # platform relay. Codex holds only narrow worker capabilities. Keep the pin
@@ -140,6 +140,7 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
 COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
+COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
 COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
 COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js

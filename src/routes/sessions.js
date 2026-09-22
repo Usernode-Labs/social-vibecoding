@@ -26,6 +26,8 @@ const agentTurn = require('../services/agent-turn');
 const registry = require('../agents/registry');
 const agentPreferences = require('../services/agent-preferences');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
+const codexOpenRouter = require('../agents/codex-openrouter');
+const { MIN_MAX_OUTPUT_TOKENS } = require('../../worker/build-codex-model-catalog');
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
@@ -12285,6 +12287,9 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         if (headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r?.lastResultText || '').trim())) {
           return 'The coding step failed unexpectedly, retrying once…';
         }
+        if (codexMaxTokensRetry(r, stopHandle)) {
+          return 'Your OpenRouter credit only covers a shorter reply. Retrying once with a smaller reply limit…';
+        }
         if (shouldRetryApiErrorTurn(r, stopHandle)) {
           return 'The coding agent lost its connection to the API, retrying once…';
         }
@@ -12471,8 +12476,12 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // `ccText || 'unknown'` below dead: it could only ever print
       // "unknown".
       isError = true;
-      const msg = `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, turnFailure(executionAgentMeta));
+      const providerMsg = await codexProviderFailureText(pool, req.user.id, result);
+      const msg = providerMsg || `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
+      await sendStatus(msg, turnFailure({
+        ...executionAgentMeta,
+        providerFailure: codexOpenRouter.providerFailureDiagnostics(result),
+      }));
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
@@ -12702,6 +12711,7 @@ async function runCodexAttemptLoop({
   // model stays unknown, never a false zero.
   let estimatedCostUsd = null;
   const completeAttempt = async (attempt, result, status, err) => {
+    const providerFailure = codexOpenRouter.providerFailureDiagnostics(result);
     const completion = await agentTurn.completeCodexAttempt({
       pool,
       turnUuid: attempt.turnUuid,
@@ -12715,8 +12725,14 @@ async function runCodexAttemptLoop({
       telemetryMetrics: result || null,
       errorCode: err
         ? agentTurn.classifyErrorCode(err)
-        : result?.agentRetryFresh ? 'resume_thread_missing' : null,
-      errorDetail: err ? agentTurn.sanitizeError(err) : null,
+        : result?.agentRetryFresh ? 'resume_thread_missing'
+          // #2676: a classified OpenRouter refusal is a real ledger code.
+          // Without this the row's error_code stayed NULL on every provider
+          // failure, so errorClassByCode had nothing to read and the turn's
+          // telemetry error_class fell back to a shapeless 'provider'.
+          : codexLedgerErrorCode(result),
+      errorDetail: providerFailure ? JSON.stringify(providerFailure)
+        : err ? agentTurn.sanitizeError(err) : null,
     });
     const attemptUsd = completion?.estimatedCost?.estimatedCostUsd;
     if (typeof attemptUsd === 'number' && Number.isFinite(attemptUsd)) {
@@ -12733,6 +12749,10 @@ async function runCodexAttemptLoop({
   let attemptNumber = 0;
   let attemptResumeThreadId = resumeThreadId ?? runtimeContext.resumeThreadId ?? null;
   let allowRetryPendingForAttempt = false;
+  // #2676: null means "use the runtime's own ceiling". A max_tokens refusal
+  // sets it for attempt two so the retry asks for a reply the account can
+  // actually pay for.
+  let attemptModelMetadata = null;
   const statusFor = ({ result = null, error = null, failed = false } = {}) => {
     const fallback = failed || error ? 'failed' : 'completed';
     if (typeof classifyAttemptStatus !== 'function') return fallback;
@@ -12773,6 +12793,9 @@ async function runCodexAttemptLoop({
     try {
       dispatchResult = await dispatchOnce({
         ...runtimeContext,
+        // After the spread on purpose: a clamped retry overrides the ceiling
+        // the runtime resolved for attempt one (#2676).
+        ...(attemptModelMetadata ? { agentModelMetadata: attemptModelMetadata } : {}),
         // execInWorker consumes resumeSessionId; resumeThreadId is also
         // overridden so custom dispatchers never observe the stale value.
         resumeThreadId: attemptResumeThreadId,
@@ -12811,7 +12834,10 @@ async function runCodexAttemptLoop({
     // turn. Markerless headless retries remain caller-controlled. Attempt
     // 1 is ALREADY terminal before attempt 2 starts.
     const retryFresh = lastResult?.agentRetryFresh === true;
-    const retryRequested = retryFresh
+    // OpenRouter reports how many output tokens this key can cover. Retry
+    // once below that allowance; the refusal does not prove account balance.
+    const clampRetry = retryFresh || !failed ? null : codexMaxTokensRetry(lastResult);
+    const retryRequested = retryFresh || !!clampRetry
       || (typeof retryPredicate === 'function' && retryPredicate(lastResult));
     if (!retryRequested) break;
     // Guard against spinning: exactly one retry.
@@ -12819,7 +12845,9 @@ async function runCodexAttemptLoop({
     if (typeof sendStatus === 'function') {
       const status = retryFresh
         ? 'The saved OpenRouter model context is unavailable, retrying fresh once…'
-        : 'The coding step failed unexpectedly, retrying once…';
+        : clampRetry
+          ? 'OpenRouter rejected the reply limit. Retrying once with a smaller reply limit…'
+          : 'The coding step failed unexpectedly, retrying once…';
       try { await sendStatus(status); } catch {}
     }
     if (!retryFresh && typeof waitForStopped === 'function') {
@@ -12840,6 +12868,12 @@ async function runCodexAttemptLoop({
       if (prepared === false) break;
     }
     if (retryFresh) attemptResumeThreadId = null;
+    if (clampRetry) {
+      attemptModelMetadata = {
+        ...(runtimeContext.agentModelMetadata || {}),
+        maxOutputTokens: clampRetry.clamped,
+      };
+    }
     allowRetryPendingForAttempt = retryFresh;
   }
   return { result: lastResult, error: lastError, logicalTurnId, estimatedCostUsd };
@@ -12863,6 +12897,56 @@ function shouldRetryApiErrorTurn(result, stopHandle) {
   if (!result) return false;
   if (stopHandle && stopHandle.stopped) return false;
   return !!agentApiFailure(result.lastResultText);
+}
+
+// Retry once at 80% of the reported allowance, leaving room for a changed
+// prompt or balance. Respect the catalog floor and never increase the cap
+// actually sent: a contradictory refusal needs diagnosis, not a larger bill.
+function codexMaxTokensRetry(result, stopHandle) {
+  if (!result) return null;
+  if (stopHandle && stopHandle.stopped) return null;
+  if (result.agentErrorCode !== 'insufficient_credits_max_tokens') return null;
+  if (result.providerRequest?.limitSource === 'openrouter_in_flight_budget') return null;
+  const affordable = Number(result.affordableOutputTokens);
+  if (!Number.isFinite(affordable) || affordable < MIN_MAX_OUTPUT_TOKENS) return null;
+  const clamped = Math.max(MIN_MAX_OUTPUT_TOKENS, Math.floor(affordable * 0.8));
+  const sent = result.providerRequest?.maxOutputTokens;
+  if (Number.isSafeInteger(sent) && clamped >= sent) return null;
+  return { clamped };
+}
+
+// #2676: both credit codes land on the ledger's own `insufficient_credits`,
+// which is the code errorClassByCode bills as 'billing'.
+const CODEX_LEDGER_ERROR_CODES = {
+  insufficient_credits: 'insufficient_credits',
+  insufficient_credits_max_tokens: 'insufficient_credits',
+  rate_limited: 'rate_limited',
+  credential_failure: 'credential_failure',
+};
+function codexLedgerErrorCode(result) {
+  return CODEX_LEDGER_ERROR_CODES[result?.agentErrorCode] || null;
+}
+
+// #2676: the terminal sentence for a Codex turn that died on a provider
+// refusal. The raw provider text is a paragraph of JSON the user cannot act
+// on, and the branches below otherwise printed the bare word "unknown".
+// Which account is paying decides the remedy, so ask; a lookup failure
+// defaults to the personal-key wording, which tells the user to check their
+// own key rather than blaming the platform's.
+async function codexProviderFailureText(pool, userId, result) {
+  if (!result?.agentErrorCode) return null;
+  let includedKey = false;
+  try {
+    includedKey = await managedOpenRouter.usesIncludedKey(pool, userId);
+  } catch { includedKey = false; }
+  return codexOpenRouter.describeProviderError({
+    code: result.agentErrorCode,
+    requestedTokens: result.requestedOutputTokens ?? null,
+    affordableTokens: result.affordableOutputTokens ?? null,
+    requestDiagnostic: result.providerRequest,
+    raw: result.agentError || '',
+    includedKey,
+  });
 }
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -14363,7 +14447,8 @@ ${buildGuidance.testingGuidance}`;
           resumeThreadId, config,
         }),
         dispatchOnce: (ctx) => doBuild(ctx),
-        retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, r.ahead > 0),
+        retryPredicate: (r) => !!codexMaxTokensRetry(r, stopHandle)
+          || (headless && shouldRetryHeadlessTurn(r, stopHandle, r.ahead > 0)),
         sendStatus: async (msg) => { await sendStatus(msg, executionAgentMeta); },
         waitForStopped: waitForTurnStopped,
         prepareRetry: async (retry) => {
@@ -14598,8 +14683,12 @@ ${buildGuidance.testingGuidance}`;
       summaryParts.push(msg);
     } else if (result.ccIsError && !hasChanges) {
       isError = true;
-      const msg = `${executionAgentName} error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, turnFailure(executionAgentMeta));
+      const providerMsg = await codexProviderFailureText(pool, req.user.id, result);
+      const msg = providerMsg || `${executionAgentName} error: ${(ccText || 'unknown').substring(0, 200)}`;
+      await sendStatus(msg, turnFailure({
+        ...executionAgentMeta,
+        providerFailure: codexOpenRouter.providerFailureDiagnostics(result),
+      }));
       summaryParts.push(msg);
     } else if (!hasChanges) {
       const directReply = directSessionTurn && result.exitCode === 0 && !!ccText.trim();
@@ -15638,4 +15727,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

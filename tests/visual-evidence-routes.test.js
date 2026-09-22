@@ -4,7 +4,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const express = require('express');
 const routes = require('../src/routes/visual-evidence');
+const fixtures = require('./fixtures/visual-evidence');
+const db = require('../src/db/pool');
+const appAccess = require('../src/services/app-access');
+const orchestrator = require('../src/services/visual-evidence-orchestrator');
+const state = require('../src/services/visual-evidence-state');
+const planContract = require('../src/services/visual-evidence-plan');
 
 test('artifact range parsing supports full, open, and suffix ranges and fails closed', () => {
   assert.equal(routes.parseRange(undefined, 100), null);
@@ -24,6 +31,82 @@ test('artifact ids and proposal ids are canonical and traversal-proof', () => {
   assert.equal(routes.sessionId(String(2 ** 40)), null);
 });
 
+test('failed-run diagnostics expose the stored plan only to the proposal owner, including after a retry', async (t) => {
+  const base = 'a'.repeat(40);
+  const head = 'b'.repeat(40);
+  const runId = '1'.repeat(32);
+  const session = {
+    id: 42, app_id: 9, user_id: 7, source: 'imported',
+    imported_pr_head_sha: head, visual_evidence_state: 'failed',
+    visual_evidence_run_id: runId,
+  };
+  const run = {
+    id: runId, base_sha: base, head_sha: head, state: 'failed',
+    replay_plan: fixtures.plan(), plan_hash: planContract.planHash(fixtures.plan()),
+    failure_code: 'assertion_failed', failure_reason: 'Sort was not visible.',
+    trace_summary: {
+      replayPasses: [{ pass: 1, durationMs: 20 }], agentAttempts: 1,
+      agentDispatches: [{ requestedBackend: 'claude_code', backend: 'claude_code', outcome: 'completed' }],
+      lastReplayEvent: { pass: 2, type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' },
+      failure: { phase: 'pass_2', code: 'assertion_failed', detail: { side: 'head', phase: 'assertion' } },
+      control: { planCalls: 1, finishStatus: 'failed', finishReason: 'The checkpoint did not render.' },
+    },
+  };
+  const pool = { query: async (sql, params) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    if (String(sql).includes('FROM visual_evidence_runs')) {
+      assert.match(String(sql), /state IN \('failed', 'stale'\) AND failure_code IS NOT NULL/);
+      return { rows: params[0] === runId && params[1] === session.id ? [run] : [] };
+    }
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  } };
+  const savedPool = db.getPool;
+  const savedAccess = appAccess.getAppForUser;
+  db.getPool = () => pool;
+  appAccess.getAppForUser = async () => ({ id: 9, slug: 'demo' });
+  const routePath = require.resolve('../src/routes/visual-evidence');
+  delete require.cache[routePath];
+  const isolatedRoutes = require('../src/routes/visual-evidence');
+  let userId = 7;
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: userId }; next(); });
+  app.use(isolatedRoutes.visualEvidenceRoutes({ visualEvidence: { present: true } }));
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(() => {
+    server.close();
+    db.getPool = savedPool;
+    appAccess.getAppForUser = savedAccess;
+    delete require.cache[routePath];
+  });
+  const url = `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence/diagnostics`;
+  const ownerResponse = await fetch(url);
+  assert.equal(ownerResponse.status, 200);
+  assert.match(ownerResponse.headers.get('cache-control'), /no-store/);
+  const { diagnostics } = await ownerResponse.json();
+  assert.equal(diagnostics.runId, runId);
+  assert.equal(diagnostics.replayPlan.stories[0].id, fixtures.plan().stories[0].id);
+  assert.deepEqual(diagnostics.trace.replayPasses, [{ pass: 1, durationMs: 20 }]);
+  assert.equal(diagnostics.trace.agentDispatches[0].backend, 'claude_code');
+  assert.equal(diagnostics.trace.lastReplayEvent.pass, 2);
+  assert.equal(diagnostics.trace.failure.detail.side, 'head');
+  assert.equal(diagnostics.trace.control.planCalls, 1);
+
+  userId = 8;
+  assert.equal((await fetch(url)).status, 404);
+  userId = 7;
+  session.imported_pr_head_sha = 'd'.repeat(40);
+  session.visual_evidence_run_id = '2'.repeat(32);
+  run.state = 'stale';
+  assert.equal((await fetch(url)).status, 404);
+  const historical = await fetch(`${url}?runId=${runId}`);
+  assert.equal(historical.status, 200);
+  const historicalDiagnostics = (await historical.json()).diagnostics;
+  assert.equal(historicalDiagnostics.headSha, head);
+  assert.equal(historicalDiagnostics.state, 'stale');
+  assert.equal((await fetch(`${url}?runId=${'3'.repeat(32)}`)).status, 404);
+});
+
 test('the binary route is authenticated, current-run fenced, exact-head fenced, and private', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/visual-evidence.js'), 'utf8');
   assert.match(src, /loadContext\(pool, req\.params\.slug, id, req\.user, 'view'\)/);
@@ -36,4 +119,76 @@ test('the binary route is authenticated, current-run fenced, exact-head fenced, 
   assert.match(src, /res\.status\(206\)/);
   assert.match(src, /res\.status\(416\)/);
   assert.doesNotMatch(src, /\/visuals\//, 'evidence never uses the public legacy media route');
+});
+
+test('the change author can submit only a matching plan for the current proposal revision', async (t) => {
+  const head = 'b'.repeat(40);
+  const session = {
+    id: 42, user_id: 7, app_id: 9, status: 'promoted', source: 'imported',
+    imported_pr_head_sha: head, visual_evidence_state: 'planned',
+    visual_evidence_run_id: null, visual_evidence_detail: { intent: fixtures.intent() },
+  };
+  const pool = { query: async () => ({ rows: [{ ...session }] }) };
+  const savedPool = db.getPool;
+  const savedAccess = appAccess.getAppForUser;
+  const savedSchedule = orchestrator.scheduleForSession;
+  const savedRerun = state.rerunSameHead;
+  db.getPool = () => pool;
+  appAccess.getAppForUser = async () => ({ id: 9, slug: 'demo' });
+  const scheduled = [];
+  orchestrator.scheduleForSession = async (_config, options) => {
+    scheduled.push(options);
+    return { scheduled: true, runId: '1'.repeat(32) };
+  };
+  const routePath = require.resolve('../src/routes/visual-evidence');
+  delete require.cache[routePath];
+  const isolatedRoutes = require('../src/routes/visual-evidence');
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: 7 }; next(); });
+  app.use(isolatedRoutes.visualEvidenceRoutes({ visualEvidence: { execute: true } }));
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(() => {
+    server.close();
+    db.getPool = savedPool;
+    appAccess.getAppForUser = savedAccess;
+    orchestrator.scheduleForSession = savedSchedule;
+    state.rerunSameHead = savedRerun;
+    delete require.cache[routePath];
+  });
+  const submit = async (body) => {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence/plan`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const stale = await submit({ headSha: 'c'.repeat(40), plan: fixtures.plan() });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error, 'evidence_head_moved');
+  const changed = fixtures.plan({ rationale: 'A different claim' });
+  const mismatch = await submit({ headSha: head, plan: changed });
+  assert.equal(mismatch.status, 409);
+  assert.equal(mismatch.body.error, 'evidence_intent_mismatch');
+  const accepted = await submit({ headSha: head, plan: fixtures.plan() });
+  assert.equal(accepted.status, 202);
+  assert.equal(accepted.body.runId, '1'.repeat(32));
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].headSha, head);
+  assert.equal(scheduled[0].authorPlan.version, 1);
+  session.user_id = 8;
+  const otherUser = await submit({ headSha: head, plan: fixtures.plan() });
+  assert.equal(otherUser.status, 404);
+  assert.equal(scheduled.length, 1);
+  session.user_id = 7;
+  session.visual_evidence_state = 'failed';
+  session.visual_evidence_run_id = '2'.repeat(32);
+  const retries = [];
+  state.rerunSameHead = async (_pool, runId, options) => {
+    retries.push({ runId, options });
+    return { id: '3'.repeat(32), head_sha: head, state: 'planned' };
+  };
+  const retry = await submit({ headSha: head, plan: fixtures.plan() });
+  assert.equal(retry.status, 202);
+  assert.deepEqual(retries, [{ runId: '2'.repeat(32), options: { trigger: 'author-plan' } }]);
+  assert.equal(scheduled.length, 2);
 });
