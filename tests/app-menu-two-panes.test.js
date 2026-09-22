@@ -115,16 +115,15 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   // a property of the destination, like a folder saying how many files are in
   // it. A row that sends you to a queue and will not say whether the queue is
   // empty makes you go and look.
-  // IT RIDES THE STRIP NOW (#2718 review). The row that printed it named the
-  // same destination as the strip's Workshop segment one row below, which is
-  // two owners of one decision, so the row retired and the figure moved onto
-  // the segment. A segment is too narrow for "2 to vote", so the number is a
-  // count badge and the words are its accessible name.
+  // IT RIDES THE "Go to workshop" ROW (#2761). It spent a round on the App |
+  // Workshop strip's Workshop segment; the strip retired to a plain row, and
+  // the figure came with it. The number is a count badge and the words are
+  // its accessible name.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  const tabs = read('frontend/src/features/improve/view-tabs.tsx');
-  assert.match(tabs, /id="app-menu-workshop-owed"/);
-  assert.match(tabs, /aria-label=\{`\$\{owed\} to vote`\}/);
-  assert.match(sheet, /owed=\{owed\}/, 'the sheet still fetches it and hands it over');
+  assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
+    'the badge is the Workshop row\'s trailing figure');
+  assert.match(sheet, /id="app-menu-workshop-owed"/);
+  assert.match(sheet, /aria-label=\{`\$\{owed\} to vote`\}/);
 
   // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
   // endpoint, so this is the same figure that screen shows on the same app's
