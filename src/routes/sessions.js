@@ -4107,12 +4107,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
-                cs.user_id, u.username, cs.shared_at, cs.transcript_shared_at,
+                cs.user_id, COALESCE(u.username, 'Deleted user') AS username, cs.shared_at, cs.transcript_shared_at,
                 cs.created_at,
                 (SELECT COUNT(*)::int FROM chat_session_messages m
                   WHERE m.session_id = cs.id) AS message_count
            FROM chat_sessions cs
-           JOIN users u ON u.id = cs.user_id
+           LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.id = $1
             AND cs.is_headless = FALSE
             AND (cs.user_id = $2
