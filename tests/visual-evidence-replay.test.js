@@ -137,9 +137,11 @@ test('failure diagnostics describe browser state without exposing tokens or cook
   assert.doesNotMatch(JSON.stringify(state), /secret\.jwt|never-emit-this/);
 });
 
-test('browser failures name the failing story and side without exposing fixture tokens', async () => {
+test('browser contexts forward the app-scoped token and failures never expose it', async () => {
   let contexts = 0;
-  const browser = { newContext: async () => {
+  const options = [];
+  const browser = { newContext: async (value) => {
+    options.push(value);
     contexts += 1;
     if (contexts === 1) return { newPage: async () => ({}), close: async () => {} };
     throw new Error('newContext failed at http://base-evidence:3000/?token=secret.jwt');
@@ -153,6 +155,7 @@ test('browser failures name the failing story and side without exposing fixture 
     assert.doesNotMatch(error.message, /secret\.jwt/);
     return true;
   });
+  assert.deepEqual(options[1].extraHTTPHeaders, { 'x-usernode-token': 'member.jwt' });
 });
 
 test('a failed browser action identifies its plan action and stage', async () => {
