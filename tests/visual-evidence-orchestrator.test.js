@@ -127,6 +127,61 @@ test('a successful agent plan publishes captured media without a model verdict',
   assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
 });
 
+test('a replay tool failure survives a successful planner exit with its original code and phase', async () => {
+  const replayError = Object.assign(new Error('open-browse matched 0 elements; exactly one is required.'), {
+    code: 'ambiguous_locator', detail: { actionId: 'open-browse', count: 0 },
+  });
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await assert.rejects(control.runPlan(fixtures.plan()), { code: 'ambiguous_locator' });
+      // The planner can finish its turn normally after receiving the tool
+      // error. That must not replace the platform's actual replay failure.
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  fixture.dependencies.replay.runPass = async (_config, _sessionId, _input, options) => {
+    options.onEvent({ type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' });
+    throw replayError;
+  };
+  await assert.rejects(execute(fixture), { code: 'ambiguous_locator' });
+  const failure = fixture.transitions.at(-1);
+  assert.equal(failure.next, 'failed');
+  assert.equal(failure.patch.failureCode, 'ambiguous_locator');
+  assert.match(failure.patch.failureReason, /open-browse matched 0/);
+  assert.deepEqual(failure.patch.traceSummary.failure, {
+    phase: 'pass_1', code: 'ambiguous_locator',
+    message: replayError.message,
+    tool: 'run-plan',
+    detail: replayError.detail,
+  });
+  assert.deepEqual(failure.patch.traceSummary.control, {
+    planCalls: 1, finishStatus: null, finishReason: null,
+  });
+  assert.deepEqual(failure.patch.traceSummary.lastReplayEvent, {
+    pass: 1, type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop',
+  });
+});
+
+test('a rejected plan remains diagnosable when the planner exits without replaying', async () => {
+  const invalidPlan = fixtures.plan();
+  invalidPlan.stories[0].replay.before.actions[0].type = 'invalid';
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await assert.rejects(control.runPlan(invalidPlan), { code: 'invalid_visual_evidence' });
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'invalid_visual_evidence' });
+  const failure = fixture.transitions.at(-1);
+  assert.equal(failure.patch.failureCode, 'invalid_visual_evidence');
+  assert.equal(failure.patch.traceSummary.failure.phase, 'plan_validation');
+  assert.equal(failure.patch.traceSummary.failure.tool, 'run-plan');
+  assert.equal(failure.patch.traceSummary.control.planCalls, 0);
+  assert.deepEqual(fixture.calls.passes, []);
+});
+
 test('an author plan uses the same two clean replays without a second model call', async () => {
   const fixture = setup();
   const result = await execute(fixture, { authorPlan: fixtures.plan() });

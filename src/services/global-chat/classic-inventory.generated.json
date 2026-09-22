@@ -3,9 +3,9 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 648,
+    "totalRoutes": 649,
     "mappedRoutes": 511,
-    "exemptRoutes": 137,
+    "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
     "clientApiReferences": 360,
     "unmatchedClientApiReferences": 0,
@@ -11625,7 +11625,16 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 86,
+      "line": 90,
+      "method": "GET",
+      "path": "/api/apps/:slug/proposals/:sessionId/evidence/diagnostics",
+      "expression": null,
+      "status": "exempt",
+      "reason": "proposal-owner troubleshooting export for local replay, not a Classic user control"
+    },
+    {
+      "source": "src/routes/visual-evidence.js",
+      "line": 150,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/:artifactId",
       "expression": null,
@@ -11644,7 +11653,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 148,
+      "line": 212,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/plan",
       "expression": null,
@@ -11662,7 +11671,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 221,
+      "line": 285,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/rerun",
       "expression": null,
@@ -11681,7 +11690,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 261,
+      "line": 325,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/override",
       "expression": null,

@@ -78,6 +78,7 @@ test('the allowlist permits exactly the routes the tools need', () => {
     // proposal.
     ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork'],
     ['POST', '/api/apps/recipe-box/proposals/412/evidence/plan'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence/diagnostics'],
     ['POST', '/api/apps/recipe-box/issues/12/headless-session'],
     ['POST', '/api/sessions/412/clone-headless'],
     ['POST', '/api/sessions/412/promote'],
@@ -154,7 +155,11 @@ test('fail-closed: anything not listed is refused', () => {
     ['POST', '/api/apps/recipe-box/proposals//update-from-fork'],
     ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork/extra'],
     ['GET', '/api/apps/recipe-box/proposals/412/evidence/plan'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
     ['POST', '/api/apps/recipe-box/proposals/412/evidence/plan/extra'],
+    ['POST', '/api/apps/recipe-box/proposals/412/evidence/diagnostics'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence/diagnostics/extra'],
   ];
   for (const [method, target] of refused) {
     assert.equal(

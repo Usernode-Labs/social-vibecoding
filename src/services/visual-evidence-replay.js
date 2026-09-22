@@ -135,6 +135,54 @@ function parseReplayOutput(stdout, expected = {}) {
   return { result, events, artifacts };
 }
 
+function executionDetail(execution) {
+  const detail = {};
+  if (execution?.partial === true) detail.partial = true;
+  if (execution?.partialReason) detail.partialReason = String(execution.partialReason).slice(0, 300);
+  if (Number.isInteger(execution?.exitCode)) detail.exitCode = execution.exitCode;
+  const stdout = String(execution?.stdout || '');
+  let cursor = stdout.length;
+  for (let inspected = 0; inspected < 12 && cursor > 0; inspected += 1) {
+    const start = stdout.lastIndexOf(EVENT_PREFIX, cursor - 1);
+    if (start < 0) break;
+    const end = stdout.indexOf('\n', start);
+    try {
+      const event = JSON.parse(stdout.slice(start + EVENT_PREFIX.length, end < 0 ? undefined : end));
+      if (['started', 'viewport_started', 'viewport_finished'].includes(event?.type)) {
+        detail.lastEvent = {
+          type: event.type,
+          ...(typeof event.storyId === 'string' ? { storyId: event.storyId.slice(0, 96) } : {}),
+          ...(typeof event.viewport === 'string' ? { viewport: event.viewport.slice(0, 32) } : {}),
+        };
+        break;
+      }
+    } catch { /* a malformed line is reported by the protocol parser */ }
+    cursor = start;
+  }
+  return detail;
+}
+
+function runtimeReason(error) {
+  return String(error?.message || '').replace(/\s+/g, ' ').slice(0, 300)
+    .replace(/([?&]token=)[^&\s"'<>)]*/gi, '$1[redacted]')
+    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[redacted]');
+}
+
+function withRuntimeDetail(error) {
+  if (error && typeof error === 'object') {
+    error.detail = {
+      ...(error.detail && typeof error.detail === 'object' ? error.detail : {}),
+      runtime: {
+        code: String(error.code || 'unknown').slice(0, 80),
+        reason: runtimeReason(error),
+        killed: error.killed === true,
+      },
+    };
+  }
+  return error;
+}
+
 function comparableStories(value) {
   return (value || []).map((story) => ({
     id: story?.id,
@@ -290,13 +338,17 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
   } : null;
   let execution;
   if (runtimeMode(config) === 'kubernetes') {
-    execution = await kubernetes.runEvidenceJob(config, {
-      sessionId, stdinPayload: payload,
-      timeoutMs: config.visualEvidence?.maxRunMs || 720_000,
-      maxBuffer: MAX_OUTPUT_BYTES,
-      salvagePartial: true,
-      onStdoutLine, signal, previewRunId,
-    });
+    try {
+      execution = await kubernetes.runEvidenceJob(config, {
+        sessionId, stdinPayload: payload,
+        timeoutMs: config.visualEvidence?.maxRunMs || 720_000,
+        maxBuffer: MAX_OUTPUT_BYTES,
+        salvagePartial: true,
+        onStdoutLine, signal, previewRunId,
+      });
+    } catch (error) {
+      throw withRuntimeDetail(error);
+    }
   } else {
     await require('./visuals').ensureCaptureImage();
     try {
@@ -308,17 +360,30 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
         maxBuffer: MAX_OUTPUT_BYTES, onStdoutLine,
       });
     } catch (err) {
-      if (!err.stdout) throw err;
+      if (!err.stdout) {
+        throw withRuntimeDetail(err);
+      }
       execution = { stdout: err.stdout, stderr: err.stderr || '', exitCode: err.code };
     }
   }
-  const parsed = parseReplayOutput(execution.stdout, {
-    runId: input.runId,
-    pass: input.pass,
-    planHash: planContract.planHash(input.plan),
-  });
+  let parsed;
+  try {
+    parsed = parseReplayOutput(execution.stdout, {
+      runId: input.runId,
+      pass: input.pass,
+      planHash: planContract.planHash(input.plan),
+    });
+  } catch (error) {
+    throw new EvidenceReplayError(error?.code || 'invalid_replay_output', error?.message || 'Evidence replay output is invalid.', {
+      ...(error?.detail && typeof error.detail === 'object' ? error.detail : {}),
+      execution: executionDetail(execution),
+    });
+  }
   if (parsed.result.passed !== true) {
-    throw new EvidenceReplayError(parsed.result.code || 'replay_failed', parsed.result.message || 'Evidence replay failed.', parsed.result.detail || null);
+    throw new EvidenceReplayError(parsed.result.code || 'replay_failed', parsed.result.message || 'Evidence replay failed.', {
+      ...(parsed.result.detail && typeof parsed.result.detail === 'object' ? parsed.result.detail : {}),
+      execution: executionDetail(execution),
+    });
   }
   return parsed;
 }
