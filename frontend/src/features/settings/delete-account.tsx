@@ -2,7 +2,8 @@ import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
-import { ensureSettings } from '../settings/facade.js';
+import { WarningTriangleIcon } from '@/components/ui/icons';
+import { ensureSettings } from './facade.js';
 
 export function DeleteAccount() {
   const [open, setOpen] = useState(false);
@@ -48,7 +49,7 @@ export function DeleteAccount() {
     finally { pending.current = false; setBusy(false); }
   }
 
-  if (!open) return <Button type="button" variant="pillDanger" layout="full" className="mt-2" onClick={() => void show()}>Delete account…</Button>;
+  if (!open) return <Button type="button" variant="pillDanger" ink="dangerTint" layout="full" className="mt-2 flex items-center justify-center gap-2" onClick={() => void show()}><WarningTriangleIcon className="h-4 w-4 shrink-0" aria-hidden="true" /><span>Delete account…</span></Button>;
   return <form onSubmit={remove} className="mt-4 rounded-xl border border-red-200 dark:border-red-900 p-4 space-y-3" aria-label="Delete account">
     <p className="font-semibold">{deleted ? 'Account deleted' : 'Permanently delete your account?'}</p>
     {!deleted && <>
@@ -60,7 +61,7 @@ export function DeleteAccount() {
         <p className="text-sm">For security, sign out and sign in again if you signed in more than 10 minutes ago.</p>}
       <label className="block text-sm">Type DELETE to confirm<Input value={confirmation} onChange={e => setConfirmation(e.target.value)} autoComplete="off" spellCheck={false} disabled={busy} /></label>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" variant="pillDanger" disabled={busy || confirmation !== 'DELETE' || passwordRequired === null || (passwordRequired && !password)}>{busy ? 'Deleting…' : 'Delete my account permanently'}</Button>
+        <Button type="submit" variant="pillDanger" ink="dangerTint" disabled={busy || confirmation !== 'DELETE' || passwordRequired === null || (passwordRequired && !password)}>{busy ? 'Deleting…' : 'Delete my account permanently'}</Button>
         <Button type="button" disabled={busy} onClick={() => { setOpen(false); setConfirmation(''); setPassword(''); }}>Cancel</Button>
       </div>
     </>}

@@ -1,9 +1,10 @@
 # Account deletion with retained shared history (#2716)
 
 ## User outcome
-Users can permanently delete their Homeroom account from Profile → Account. Administrators can delete an account through either Users surface using the same policy. Personal account data and access credentials are removed. Shared messages, replies, and sent attachments remain readable by their existing participants and show **Deleted user**, without a profile/avatar link. A remaining participant can read a direct conversation with a deleted account but cannot send new messages to it.
+Users can permanently delete their Homeroom account from Settings → Account → Delete account. Administrators can delete an account through either Users surface using the same policy. Personal account data and access credentials are removed. Shared messages, replies, and sent attachments remain readable by their existing participants and show **Deleted user**, without a profile/avatar link. A remaining participant can read a direct conversation with a deleted account but cannot send new messages to it.
 
 ## Confirmed requirements
+- Put Delete account directly below Password in Settings → Account, with a red label and an exclamation warning icon on desktop and mobile.
 - Implement the recommended explicit deletion workflow, combining deletion of personal records with removal of identifying attribution from necessary shared records.
 - Retain shared messages and attachments; the user explicitly chose the name “Deleted user.”
 - Include a correction to repository agent guidance so native proposals do not unnecessarily call prepare_work or require a linked personal GitHub identity.
@@ -38,7 +39,7 @@ Account deletion affects Homeroom-controlled account data. Shared content is del
 Test populated accounts with browser/mobile/CLI/MCP credentials, waitlist/mail records, votes, usage, messages and attachments; verify personal data removal and retained message bytes/Deleted user attribution. Exercise both admin endpoints and self-service, wrong-password/confirmation refusal, view-only admin refusal, last-admin concurrency, idempotent retries, transient provider failures, stale tokens, and deleted direct-message read/send behavior. Run SQL validation, frontend typecheck/build, and the repository’s affected test suites. Submit the exact tested tree to Homeroom, wait for staging/checks, and supply reviewer interactions before promotion.
 
 ## How to test / observe
-- Profile → Account → Delete account: inspect the retained-content explanation; cancel safely; use a disposable staging account to confirm deletion and verify sign-out and rejected old credentials.
+- Settings → Account → Delete account: inspect the retained-content explanation; cancel safely; use a disposable staging account to confirm deletion and verify sign-out and rejected old credentials.
 - Messages: after deleting a disposable participant, the remaining participant sees the existing transcript and attachments under Deleted user; the composer is disabled for the direct conversation.
 - Admin → Users (and Programme → Users): inspect the consistent confirmation; delete a disposable account and inspect cleanup status/retries.
 

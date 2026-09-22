@@ -9,7 +9,7 @@
     "reviewRequiredRoutes": 0,
     "clientApiReferences": 366,
     "unmatchedClientApiReferences": 0,
-    "settingsSections": 21,
+    "settingsSections": 22,
     "navigationSurfaces": 10
   },
   "navigation": [
@@ -136,6 +136,15 @@
       "gate": null,
       "capabilityId": "settings.open.password",
       "classicPath": "#settings/password",
+      "mobileSupported": true
+    },
+    {
+      "key": "delete-account",
+      "label": "Delete account",
+      "group": "Account",
+      "gate": null,
+      "capabilityId": "settings.open.delete_account",
+      "classicPath": "#settings/delete-account",
       "mobileSupported": true
     },
     {
@@ -442,9 +451,9 @@
       "renderer": "profile",
       "transport": "client_action",
       "mobileSupported": true,
-      "classicPath": "#profile",
+      "classicPath": "#settings/delete-account",
       "clientReferences": [
-        "frontend/src/features/profile/delete-account.tsx",
+        "frontend/src/features/settings/delete-account.tsx",
         "frontend/src/features/settings/facade.js",
         "frontend/src/features/settings/settings.js"
       ]
@@ -463,9 +472,9 @@
       "renderer": "profile",
       "transport": "client_action",
       "mobileSupported": true,
-      "classicPath": "#profile",
+      "classicPath": "#settings/delete-account",
       "clientReferences": [
-        "frontend/src/features/profile/delete-account.tsx",
+        "frontend/src/features/settings/delete-account.tsx",
         "frontend/src/features/settings/facade.js",
         "frontend/src/features/settings/settings.js"
       ]

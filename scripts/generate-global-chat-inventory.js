@@ -451,6 +451,7 @@ function classicPathFor(domain, routePath) {
     return conversation ? '#messages/:' + conversation[1] : '#messages';
   }
   if (domain === 'leaderboards') return '#leaderboard/challenges';
+  if (value === '/api/auth/account' || value === '/api/auth/account-deletion') return '#settings/delete-account';
   if (domain === 'profile') return '#profile';
   if (domain === 'development') {
     const session = value.match(/\/sessions\/:(id|sessionId)(?:\/|$)/);
@@ -478,7 +479,7 @@ function classicPathFor(domain, routePath) {
 function transportFor(route) {
   const routePath = route.path || '';
   // Self-deletion requires a browser session and private reauthentication in
-  // Profile. Discovery may open that form, never collect a password in chat.
+  // Settings. Discovery may open that form, never collect a password in chat.
   if (routePath === '/api/auth/account' || routePath === '/api/auth/account-deletion') {
     return 'client_action';
   }

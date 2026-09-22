@@ -49,6 +49,7 @@ import { GlobalChatSettingsSection } from './global-chat';
 import { LanguageSection } from './language';
 import { OpenRouterSection } from './openrouter';
 import { PasswordSection } from './password';
+import { DeleteAccountSection } from './delete-account';
 import { ThemeSection } from './theme';
 import { TourSection } from './tour';
 import { UsernameSection } from './username';
@@ -83,6 +84,7 @@ export function SettingsSections() {
       <UsernameSection />
       <EmailSection />
       <PasswordSection />
+      <DeleteAccountSection />
       <WalletSection />
       <LanguageSection />
       <AlertsSection />

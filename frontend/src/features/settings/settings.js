@@ -262,6 +262,7 @@
       { key: 'username', label: 'Username', group: 'Account' },
       { key: 'email', label: 'Email & recovery', group: 'Account' },
       { key: 'password', label: 'Password', group: 'Account' },
+      { key: 'delete-account', label: 'Delete account', group: 'Account' },
       { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
 
       { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & agents' },
@@ -1165,7 +1166,11 @@
         label: Settings.str(s.label),
         active: s.key === active,
         className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
-          + (s.key === active
+          + (s.key === 'delete-account'
+            ? (s.key === active
+              ? 'bg-red-500/10 text-red-700 dark:text-red-400'
+              : 'text-red-700 dark:text-red-400 hover:bg-red-500/10')
+            : s.key === active
             ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
             : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
       });

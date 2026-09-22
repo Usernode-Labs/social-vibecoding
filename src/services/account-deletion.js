@@ -26,7 +26,7 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
   if (!Number.isSafeInteger(userId) || userId <= 0) reject(400, 'invalid_user', 'Invalid user.');
   if (mode !== 'self' && mode !== 'admin') reject(400, 'invalid_mode', 'Invalid deletion mode.');
   if (mode === 'self' && actorId !== userId) reject(403, 'forbidden', 'You can only delete your own account.');
-  if (mode === 'admin' && actorId === userId) reject(400, 'self_delete', 'Use Profile → Account to delete your own account.');
+  if (mode === 'admin' && actorId === userId) reject(400, 'self_delete', 'Use Settings → Account → Delete account to delete your own account.');
   const db = await pool.connect();
   let result;
   try {

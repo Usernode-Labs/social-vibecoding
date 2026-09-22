@@ -1,6 +1,6 @@
 # Account deletion operations
 
-Self-service is under Profile → Account. Both admin Users delete actions call
+Self-service is under Settings → Account → Delete account. Both admin Users delete actions call
 the same transaction. Shared messages, shared transcripts/specs, published
 screenshots and sent attachments remain with anonymous attribution. Their
 contents and filenames are intentionally retained, including any personal
