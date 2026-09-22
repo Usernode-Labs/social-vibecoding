@@ -712,6 +712,15 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     colorScheme: input.browser.colorScheme,
     reducedMotion: motion ? 'no-preference' : 'reduce',
     serviceWorkers: 'block',
+    // Evidence environments are deliberately reachable only over their
+    // private in-cluster HTTP origins. A production-mode self-app answers
+    // the initial token-bearing request with a Secure session cookie, which
+    // Chromium must reject on HTTP. Forward the same app-scoped credential
+    // through the standard app request header as well, so later API requests
+    // stay authenticated even when that cookie cannot be stored. The origin
+    // fence installed below prevents this context from sending any request
+    // outside the one evidence side.
+    extraHTTPHeaders: { 'x-usernode-token': authToken },
   });
   // A side may never fetch from or navigate to its counterpart. Keeping the
   // origins in one input is an orchestration convenience, not a permission
