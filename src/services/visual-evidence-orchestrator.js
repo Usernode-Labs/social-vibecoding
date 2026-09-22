@@ -431,6 +431,65 @@ function replayProgressEvent(event, pass) {
   };
 }
 
+const AGENT_DIAGNOSTIC_KINDS = new Set([
+  'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
+  'turn_start', 'turn_end', 'provider_dispatched', 'provider_init',
+  'first_stream', 'first_output', 'provider_result', 'provider_notice', 'provider_usage',
+  'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
+  'tool_start', 'tool_end', 'agent_deadline',
+  'worker_stop_requested', 'worker_stop_returned',
+]);
+const AGENT_DIAGNOSTIC_PHASES = new Set([
+  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
+  'evidence_mcp_ready', 'claude', 'agent', 'done',
+]);
+const AGENT_DIAGNOSTIC_TOOLS = new Set([
+  'evidence_get_context', 'evidence_reset_side', 'evidence_run_plan',
+  'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
+  'browser_take_screenshot', 'browser_click', 'browser_type',
+  'browser_fill_form', 'browser_press_key', 'browser_select_option',
+  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_console_messages', 'browser_network_requests', 'browser_tabs',
+  'browser_close', 'other',
+]);
+
+function recordAgentDiagnostic(metrics, raw) {
+  const kind = String(raw?.kind || '');
+  if (!AGENT_DIAGNOSTIC_KINDS.has(kind)) return;
+  const activity = metrics.agentActivity;
+  const event = { atMs: Math.max(0, Date.now() - metrics.startedAtMs), kind };
+  if (raw.backend === 'claude_code' || raw.backend === 'codex_openrouter') {
+    event.backend = raw.backend;
+  }
+  if (raw.requestMode === 'agent_new' || raw.requestMode === 'agent_resume') {
+    event.requestMode = raw.requestMode;
+  }
+  if (AGENT_DIAGNOSTIC_PHASES.has(raw.phase)) event.phase = raw.phase;
+  if (raw.outcome === 'ok' || raw.outcome === 'error') event.outcome = raw.outcome;
+  for (const key of ['mcpServerCount', 'toolDefinitionCount']) {
+    if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 1000) {
+      event[key] = raw[key];
+    }
+  }
+  if (kind === 'tool_start' || kind === 'tool_end') {
+    event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
+    if (raw.persona === 'member' || raw.persona === 'admin') event.persona = raw.persona;
+    if (Number.isSafeInteger(raw.sequence) && raw.sequence > 0 && raw.sequence <= 100000) {
+      event.sequence = raw.sequence;
+    }
+    if (kind === 'tool_start') {
+      activity.toolCounts[event.tool] = (activity.toolCounts[event.tool] || 0) + 1;
+    }
+    if (event.sequence) {
+      if (kind === 'tool_start') activity.pending.set(event.sequence, event);
+      else activity.pending.delete(event.sequence);
+    }
+  }
+  activity.counts[kind] = (activity.counts[kind] || 0) + 1;
+  activity.events.push(event);
+  if (activity.events.length > 64) activity.events.shift();
+}
+
 function newRunMetrics() {
   return {
     startedAtMs: Date.now(),
@@ -448,6 +507,7 @@ function newRunMetrics() {
     replayEvents: [],
     agentAttempts: 0,
     agentDispatches: [],
+    agentActivity: { events: [], counts: {}, toolCounts: {}, pending: new Map(), budgetMs: null },
     repairCount: 0,
     repairTrigger: null,
     artifactBytes: 0,
@@ -488,6 +548,14 @@ function traceSummary(metrics, extra = {}) {
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
+    agentActivity: {
+      version: 1,
+      budgetMs: metrics.agentActivity.budgetMs,
+      counts: { ...metrics.agentActivity.counts },
+      toolCounts: { ...metrics.agentActivity.toolCounts },
+      events: metrics.agentActivity.events.slice(-64),
+      pendingTools: [...metrics.agentActivity.pending.values()].slice(-8),
+    },
     repairCount: metrics.repairCount,
     ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
     artifactBytes: metrics.artifactBytes,
@@ -558,6 +626,7 @@ async function executeRun(config, options, injected = {}) {
   const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
   const repairAgentBudgetMs = config.visualEvidence?.maxRepairAgentMs || 120_000;
   const agentWindows = new Map();
+  metrics.agentActivity.budgetMs = agentBudgetMs;
   let replayBudgetStartedAt = null;
   let replaySuspendedMs = 0;
   const suspendedMs = () => replaySuspendedMs
@@ -822,6 +891,7 @@ async function executeRun(config, options, injected = {}) {
           origins: exploration.origins,
           authTokens,
           onProgress: (line) => progress(`Evidence agent: ${line}`),
+          onEvidenceDiagnostic: (event) => recordAgentDiagnostic(metrics, event),
           resumeThreadId: agentThreadId,
           forceBackend,
           repairAttempt,

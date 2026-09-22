@@ -321,6 +321,7 @@ cleanup_evidence() {
   if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
 }
 if [ "$MODE" = "evidence" ]; then
+  echo "__USERNODE_PHASE__ evidence_proxy"
   EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
     || die "could not create evidence browser state"
   chmod 700 "$EVIDENCE_TMP"
@@ -335,12 +336,14 @@ if [ "$MODE" = "evidence" ]; then
   i=0
   while [ ! -f "$EVIDENCE_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
   [ -f "$EVIDENCE_PROXY_READY" ] || die "evidence origin proxy failed to start"
+  echo "__USERNODE_PHASE__ evidence_browser_bootstrap"
   node /usr/local/bin/evidence-browser-bootstrap.js \
     || die "evidence browser authentication failed"
   unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN
   BROWSER_MCP_CONFIG="$EVIDENCE_TMP/mcp.json"
   node /usr/local/bin/write-evidence-mcp-config.js "$BROWSER_MCP_CONFIG" \
     || die "could not create evidence MCP config"
+  echo "__USERNODE_PHASE__ evidence_mcp_ready"
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 

@@ -356,6 +356,28 @@ test('a rejected plan remains diagnosable when the planner exits without replayi
   assert.deepEqual(fixture.calls.passes, []);
 });
 
+test('a planner timeout keeps a bounded, content-free record of its last active tool', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onEvidenceDiagnostic({ kind: 'worker_prepare_start' });
+      options.onEvidenceDiagnostic({ kind: 'worker_prepare_end' });
+      options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
+      options.onEvidenceDiagnostic({ kind: 'tool_start', sequence: 1,
+        tool: 'browser_navigate', persona: 'member', url: 'https://private.invalid/?token=secret' });
+      options.onEvidenceDiagnostic({ kind: 'agent_deadline' });
+      throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.equal(trace.agentActivity.budgetMs, 10_000);
+  assert.equal(trace.agentActivity.counts.tool_start, 1);
+  assert.equal(trace.agentActivity.toolCounts.browser_navigate, 1);
+  assert.equal(trace.agentActivity.pendingTools[0].tool, 'browser_navigate');
+  assert.equal(trace.agentActivity.events.at(-1).kind, 'agent_deadline');
+  assert.doesNotMatch(JSON.stringify(trace.agentActivity), /private|token|secret|url/i);
+});
+
 test('an author plan uses the same two clean replays without a second model call', async () => {
   const fixture = setup();
   const result = await execute(fixture, { authorPlan: fixtures.plan() });
