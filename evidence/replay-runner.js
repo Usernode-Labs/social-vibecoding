@@ -664,6 +664,66 @@ async function addCookies(context, origin, values) {
   if (cookies.length) await context.addCookies(cookies);
 }
 
+function sessionCookieValue(headers) {
+  for (const header of headers || []) {
+    if (String(header?.name || '').toLowerCase() !== 'set-cookie') continue;
+    const first = String(header.value || '').split(';', 1)[0];
+    const separator = first.indexOf('=');
+    if (separator < 0 || first.slice(0, separator).trim() !== 'session') continue;
+    const value = first.slice(separator + 1).trim();
+    // RFC 6265 cookie-octet, bounded before the value ever reaches
+    // Playwright. Never include the rejected value in an error.
+    if (!value || value.length > 4096
+        || !/^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value)) {
+      throw new ReplayFailure('invalid_session_cookie', 'The evidence origin returned an invalid session cookie.');
+    }
+    return value;
+  }
+  return null;
+}
+
+async function bootstrapInternalSession(context, origin, startPath, authToken) {
+  if (!origin.startsWith('http:')) return false;
+  const existing = await context.cookies(origin);
+  if (existing.some((cookie) => cookie.name === 'session')) return false;
+
+  let response;
+  try {
+    // The request cannot follow a redirect to another origin. Its only job
+    // is to let a staging self-app exchange the short-lived, app-scoped JWT
+    // for a local session row before page JavaScript starts cookie-only API
+    // calls. Ordinary apps that do not set a session cookie remain on the
+    // x-usernode-token path below.
+    response = await context.request.get(authorizedUrl(origin, startPath, authToken), {
+      headers: { 'x-usernode-token': authToken },
+      failOnStatusCode: false,
+      maxRedirects: 0,
+      timeout: planContract.MAX_WAIT_MS,
+    });
+    const value = sessionCookieValue(await Promise.resolve(response.headersArray()));
+    if (!value) return false;
+    try {
+      // The app deliberately emitted Secure because it runs in production
+      // mode. Evidence reaches the same private service directly over HTTP,
+      // so install the already-authenticated clone-local session with the
+      // transport bit adjusted only for this isolated browser context.
+      await context.addCookies([{
+        name: 'session', value, url: origin, httpOnly: true,
+        secure: false, sameSite: 'Lax',
+      }]);
+    } catch (_) {
+      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser could not install its private session cookie.');
+    }
+    const installed = await context.cookies(origin);
+    if (!installed.some((cookie) => cookie.name === 'session')) {
+      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser did not retain its private session cookie.');
+    }
+    return true;
+  } finally {
+    await response?.dispose?.().catch(() => {});
+  }
+}
+
 async function startMotionCapture(page) {
   const client = await page.context().newCDPSession(page);
   const frames = [];
@@ -700,6 +760,7 @@ function screenshotFingerprint(result) {
 async function runSide(browser, scratchPage, input, story, viewport, side) {
   const origin = input.origins[side];
   const authToken = input.authTokens[story.persona] || '';
+  const sidePlan = story.replay[side === 'head' ? 'after' : 'before'];
   const animation = story.replay.checkpoint.animation;
   const motion = animation === 'motion';
   const recordInteraction = animation === 'steps';
@@ -728,6 +789,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const allowedOrigins = new Set([origin]);
   await installOriginFence(context, allowedOrigins, diagnostics);
   await addCookies(context, origin, input.cookies[side]);
+  await bootstrapInternalSession(context, origin, sidePlan.startPath, authToken);
   if (!motion) {
     await context.addInitScript(() => {
       const style = document.createElement('style');
@@ -755,7 +817,6 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     }
   });
 
-  const sidePlan = story.replay[side === 'head' ? 'after' : 'before'];
   const stages = [];
   let motionCapture = null;
   let navigation = null;
@@ -1052,6 +1113,8 @@ module.exports = {
   authorizedUrl,
   publicRelativePath,
   redactedUrl,
+  sessionCookieValue,
+  bootstrapInternalSession,
   failurePageState,
   expectedFinalPath,
   paddedRect,
