@@ -323,39 +323,66 @@ test('neither the bottom tab bar nor the header switch ships', () => {
   assert.ok(!/class="[^"]*app-mode-seg/.test(INDEX), 'an orphan segment still ships');
 });
 
-test('#improve-btn lives inside the header, alone in the right group', () => {
+test('the right group is the bell and the mark, in that order, after the title', () => {
   const header = INDEX.slice(
     INDEX.indexOf('id="platform-header"'),
     INDEX.indexOf('</header>')
   );
-  // Same requirement the switch had, and for the same reason: the header
-  // layout code measures the title's right side group through a ref on that
-  // div, so a control moved out of it stops counting towards the clearance
-  // the centering measurement needs.
-  assert.ok(header.includes('id="improve-btn"'), 'Improve is outside the header');
+  // Same requirement the switch had, then #improve-btn, and for the same
+  // reason: the header layout code measures the title's right side group
+  // through a ref on that div, so a control moved out of it stops counting
+  // towards the clearance the centering measurement needs.
+  assert.ok(header.includes('id="platform-mark-btn"'), 'the mark is outside the header');
   assert.ok(
-    header.indexOf('id="improve-btn"') > header.indexOf('id="header-title"'),
-    'Improve must sit after the title, in the right group'
+    header.indexOf('id="platform-mark-btn"') > header.indexOf('id="header-title"'),
+    'the mark must sit after the title, in the right group'
+  );
+  // #2718 RETIRED #improve-btn. The bar inside an app is that app's — its
+  // close button, its tile, its name — plus the platform's signature in the
+  // corner and one alert; a third control that is neither made the right
+  // group read as a toolbar. The pill's panel is a row of the mark's menu now
+  // (#app-menu-row-improve), so nothing it did was dropped.
+  assert.ok(!header.includes('id="improve-btn"'), 'the Improve pill is retired');
+  assert.ok(
+    header.indexOf('id="notifications-btn"') < header.indexOf('id="platform-mark-btn"'),
+    'the alert reads inward from the edge; the corner goes to the control '
+    + 'that never moves'
   );
   // Streamlined Concept: the hamburger moved to the LEFT group, mirroring
-  // the drawer it opens, so it now PRECEDES the title — and Improve (or the
-  // eye that swaps in on the Dev screens) is the right group's one control.
+  // the drawer it opens, so it now PRECEDES the title.
   assert.ok(
     header.indexOf('id="header-menu-btn"') < header.indexOf('id="header-title"'),
     'the hamburger leads the bar, before the title'
   );
 });
 
-test('the Improve button ships hidden and opens the panel', () => {
-  const m = INDEX.match(/<button id="improve-btn"[\s\S]*?<\/button>/);
-  assert.ok(m, 'missing #improve-btn');
-  const el = m[0];
-  // Ships hidden for the same reason the switch did: there is nothing to
-  // improve until a target is published. The one publisher is
-  // App.DrawerStatus.setAppOpen — an open app, and nowhere else.
-  assert.ok(el.includes('hidden'), 'ships hidden — a published target reveals it');
-  assert.ok(el.includes('aria-haspopup="dialog"'), 'it opens a dialog surface');
-  assert.ok(el.includes('aria-expanded="false"'), 'closed state reaches the a11y tree');
+test('the Improve row is retired; the two actions it led to are in the menu', () => {
+  // THE ROW WAS A TAP TO REACH A TAP. It shipped hidden, revealed itself when
+  // a target was published, and opened a drawer whose whole remaining content
+  // was two buttons — the sessions under them had already moved to the
+  // Workshop earlier in this issue. #2718's review removed the drawer, which
+  // leaves the row leading nowhere: the buttons are in the menu itself.
+  assert.ok(!INDEX.includes('id="app-menu-row-improve"'),
+    'the row that opened the drawer is retired');
+  assert.ok(!INDEX.includes('id="improve-btn-glyph"'),
+    'and the three-state glyph it carried went with it — the states it drew '
+    + 'are the mark\'s dots below, which are on screen without a tap');
+
+  // What is there instead, and NOT hidden: the menu is already behind a tap,
+  // so a row inside it was never the place a cue could be read from.
+  const band = INDEX.match(/<div id="improve-quick-actions"[\s\S]*?<\/div>/);
+  assert.ok(band, 'missing #improve-quick-actions');
+  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Give feedback leads');
+  assert.ok(band[0].includes('id="improve-row-new-session"'), 'New change follows it');
+  assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),
+    'the band itself ships visible');
+
+  // The two dots the pill wore are on the mark, which is on screen on every
+  // route — a live cue inside a closed menu is not a cue. They have now
+  // outlived both the pill that wore them and the row that inherited them.
+  const mark = INDEX.match(/<button id="platform-mark-btn"[\s\S]*?<\/button>/)[0];
+  assert.ok(mark.includes('id="feedback-queue-dot"'), 'the outbox dot is on the mark');
+  assert.ok(mark.includes('id="improve-working-dot"'), 'and so is the working pulse');
 });
 
 test('setAppOpen publishes the Improve target instead of toggling a switch', () => {
@@ -488,9 +515,14 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
 // ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
 
-test('the Improve panel leads with its two actions, shaped like the button that opens it', () => {
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
-  const button = read('frontend/src/features/improve/improve-button.tsx');
+test('the two actions lead the menu, shaped like the pill that used to open them', () => {
+  // ../improve/actions.tsx is where these live since the panel retired
+  // (#2718 review). They stayed in the Improve feature rather than moving
+  // into the menu's own file, because they are the Improve feature's
+  // controls and read its store whatever surface draws them — so everything
+  // this test has ever asserted about them reads the same source, one
+  // directory along.
+  const panel = read('frontend/src/features/improve/actions.tsx');
 
   // Feedback and New change, as TWO BUTTONS. They shipped as three equal
   // thirds of one recessed well with hairline dividers — Share was the third
@@ -503,32 +535,44 @@ test('the Improve panel leads with its two actions, shaped like the button that 
   assert.match(panel, /id="improve-quick-actions"/, 'the band exists');
   assert.ok(!/divide-x divide-zinc-950\/5/.test(panel),
     'and is no longer one divided well');
-  // "Give feedback", not "Feedback": both segments are things you DO, and a
-  // bare noun beside the verb phrase "New change" read as a category label
-  // sitting next to an action.
-  assert.match(panel, /id="improve-row-feedback"\n\s+label="Give feedback"/,
-    'Feedback survives, verbized');
-  assert.match(panel, /Improve\.giveFeedback\(\)/, 'with the same handler');
+  // TWO AGAIN (#2718 review). #2718 made "Give feedback" the app menu's lead
+  // ROW, on the reading that it is what somebody who is NOT a developer of
+  // this app wants while this panel assumes you are. True of the reader, and
+  // it cost the action its shape: a filled button that says what it does
+  // became the first of eight rows in a place you go to navigate.
+  //
+  // It is still in exactly ONE place, with ONE handler — which is what this
+  // pair of assertions has always been about.
+  assert.match(panel, /id="improve-row-feedback"/, 'feedback is here');
+  assert.match(panel, /Improve\.giveFeedback\(\)/, 'with its handler');
+  // The ID, not the word: the menu's note still NAMES the id it handed back,
+  // which is the explanation a reader of that file needs and not a second
+  // element claiming it.
+  assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
+    .includes('id="improve-row-feedback"'), 'and not in two places');
   assert.match(panel, /id="improve-row-new-session"/, 'New change survives');
   assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
+  // The BAND stays, and it is the same element: `#improve-quick-actions`
+  // was a direct child of `#improve-body` and is a direct child of the
+  // menu's sheet now. dapp.json's band-order check used to select the four
+  // bands of the panel; with three of the four retired it selects this one
+  // where it now sits. One button in a `flex-1 basis-0` well simply spans
+  // it, which is what a lone action should do — that is what a viewer who
+  // may not write sees, since New change is hidden for them.
 
-  // They are shaped like #improve-btn, the control that opens this panel: a
-  // rounded-full pill.
+  // The shape is #improve-btn's, the pill that used to open this panel.
+  // #2718 retired that button and the shape stays: it is the platform's
+  // ordinary primary control, and this was never copying the button so much
+  // as agreeing with it.
   //
-  // BOTH TAKE THE SAME FILL, and it is the SOLID one. That they match is the
-  // settled part: describing a problem and starting a change are two ways
-  // into the same work, so neither is the primary.
-  //
-  // Which shared state they match in moved. They spent a round at
-  // `bg-violet-500/10` — a tenth opacity, chosen so a solid pill would not
-  // sit under #improve-btn's own and compete with the button that opened the
-  // panel. At that opacity they became the palest things in a panel of real
-  // surfaces: the two controls the panel EXISTS for read closer to disabled
-  // than to actionable. #improve-btn is in the header, outside the panel and
-  // behind its backdrop once it is up, so the competition is rarely seen —
-  // and these two are seen every time.
-  assert.match(button, /rounded-full[\s\S]{0,80}bg-violet-600 hover:bg-violet-500/,
-    'the header button is a filled violet pill');
+  // THE FILL IS THE SOLID ONE. It spent a round at `bg-violet-500/10` — a
+  // tenth opacity, chosen so a solid pill would not sit under #improve-btn's
+  // own and compete with the button that opened the panel. At that opacity it
+  // became the palest thing in a panel of real surfaces: the control the
+  // panel EXISTS for read closer to disabled than to actionable. That worry
+  // was always the smaller cost — the button was in the header, outside the
+  // panel and behind its backdrop once it was up — and since #2718 there is
+  // no second filled pill to compete with at all.
   assert.match(panel, /rounded-full text-sm font-semibold/,
     'and the two actions are the same pill shape');
   assert.match(panel, /const ACTION_FILL =\n\s+'bg-violet-600 hover:bg-violet-500 text-white';/,
@@ -538,13 +582,18 @@ test('the Improve panel leads with its two actions, shaped like the button that 
   assert.ok(!/\bprimary\b/.test(panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
     'and no call site marks one of them as the primary');
 
-  // Share moved to the footer beside the repository link, keeping its id, its
-  // canShare gate and its dialog.
-  assert.match(panel, /id="improve-row-share"/, 'Share survives');
-  assert.match(panel, /Improve\.share\(\)/, 'with the same handler');
-  assert.ok(panel.indexOf('id="improve-row-github"') < panel.indexOf('id="improve-row-share"'),
-    'and sits next to View on GitHub in the reference footer');
-  assert.match(panel, /\{state\.canShare \? \(/, 'still gated on canShare');
+  // Share moved to the footer beside the repository link (#1443), and both
+  // moved on to the menu's About pane (#2718) — which is the same argument
+  // one level further: they are the app as something you POINT OTHER PEOPLE
+  // AT, and About is the surface named for facts about it. Same ids, same
+  // canShare gate, same dialog.
+  const aboutPane = read('frontend/src/features/app-context/about-pane.tsx');
+  assert.match(aboutPane, /id="improve-row-share"/, 'Share survives');
+  assert.match(aboutPane, /Improve\?\.share\?\.\(\)/, 'with the same handler');
+  assert.ok(aboutPane.indexOf('id="improve-row-github"') < aboutPane.indexOf('id="improve-row-share"'),
+    'and sits next to View on GitHub, in that order');
+  assert.match(aboutPane, /\{canShare \? \(/, 'still gated on canShare');
+  assert.doesNotMatch(panel, /id="improve-row-share"/, 'and not in two places');
 
   // Everything else left: the view toggle is the view STRIP now.
   assert.ok(!/id="improve-row-kanban"/.test(panel), 'the Kanban ROW is retired');
@@ -562,8 +611,13 @@ test("the Board owns the view control; the header's label is the chip", () => {
   // under the Improve panel's Board row and the frame draws no view control.
   assert.ok(!/ImproveViewToggle/.test(header),
     'the header renders no view-toggle copy');
-  assert.match(header, /<AppSwitcherChip titleRef=\{titleRef\} \/>/,
-    "the header's label is the chip");
+  // #2718 took the chip back apart. The label is a NAME again — the menu it
+  // used to open listed every platform destination, and the tab bar carries
+  // those now — and the menu got its own button at the other end of the bar.
+  assert.match(header, /<HeaderTitle titleRef=\{titleRef\} \/>/,
+    "the header's label is a name, not a control");
+  assert.match(header, /<PlatformMark \/>/,
+    'the menu has its own button');
   assert.ok(!/id="dev-view-toggle"/.test(frame),
     'the Board draws no view tab strip above its cards');
   const frameCode = frame
@@ -577,23 +631,23 @@ test("the Board owns the view control; the header's label is the chip", () => {
   // the middle one became three equal segments, because Kanban and Feed WERE
   // Board and Activity: the same cards, one by column and one newest-first.
   //
-  // THE IMPROVE PANEL IS THE ONLY SURFACE THAT DRAWS IT. The chip's menu
-  // carried a second copy for two rounds of #1443 on the reasoning that
-  // either surface is a fair place to ask "which part of this app". It is
-  // not: that menu is the APP PICKER, so a strip about the app you are
-  // already in sat between you and the list you opened it for. The way OUT
-  // of a Board is the header's back arrow now, not a second copy of the way
-  // in — which is why this asserts the menu renders no strip at all.
+  // EXACTLY ONE SURFACE DRAWS IT, and since #2718's review that surface is
+  // the menu. The chip's menu carried a SECOND copy for two rounds of #1443
+  // on the reasoning that either surface is a fair place to ask "which part
+  // of this app". With two, it was not: that menu is the APP PICKER, so a
+  // strip about the app you are already in sat between you and the list you
+  // opened it for. Retiring the Improve panel left one copy and one
+  // question, so the strip went where the rest of that drawer's contents
+  // went — which is why the assertion is now that the menu draws it, and
+  // draws it once.
   const viewTabs = read('frontend/src/features/improve/view-tabs.tsx');
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(panel, /<AppViewTabs\n\s+ids=\{IMPROVE_VIEW_IDS\}/,
-    'the panel renders the strip under the panel ids');
-  assert.ok(!/<AppViewTabs/.test(menu),
-    'the chip menu renders no view strip — it answers WHICH APP only');
+  assert.match(menu, /<AppViewTabs\n\s+ids=\{IMPROVE_VIEW_IDS\}/,
+    'the menu renders the strip, under the ids the panel used to');
+  assert.equal((menu.match(/<AppViewTabs/g) || []).length, 1, 'once');
   assert.ok(!/SWITCHER_VIEW_IDS/.test(viewTabs),
-    'and the id map its copy needed is retired with it, so a second surface '
-    + 'cannot reappear by importing a map that is still lying around');
+    'and the id map the second copy needed is retired with it, so another '
+    + 'surface cannot reappear by importing a map that is still lying around');
   // The first segment still names where it GOES: the platform's reads "Home",
   // an app's reads "App". (It read the app's NAME as a row; a segment one
   // third of a 320pt panel wide cannot, and the name is already on the chip
@@ -625,16 +679,33 @@ test("the Board owns the view control; the header's label is the chip", () => {
     'switchTab must publish the active tab AND sub-tab — the header status '
     + 'pill is gated on being on a session');
 
-  // THE RIGHT SLOT IS NOT CONTEXTUAL. Improve used to swap into an eye on the
-  // Dev screens and into an eye/pencil pair on a session with a preview,
-  // which meant the action people reach for most both moved and, on a session
-  // with no preview yet, disappeared. It renders from the target alone now.
-  const improveBtn = read('frontend/src/features/improve/improve-button.tsx');
-  assert.match(improveBtn, /const pill = !!target;/,
-    'the word renders wherever there is something to improve');
-  assert.doesNotMatch(improveBtn, /tab === 'dev'/, 'and not from the route');
+  // THE RIGHT SLOT IS NOT CONTEXTUAL — and since #2718 it is not a slot at
+  // all. Improve used to swap into an eye on the Dev screens and into an
+  // eye/pencil pair on a session with a preview, which meant the action
+  // people reach for most both moved and, on a session with no preview yet,
+  // disappeared. It stopped swapping, then it left the bar: it is a row of
+  // the app's own menu, rendered from the target alone.
+  const headerSrc = read('frontend/src/features/header/platform-header.tsx');
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  // #2718's review then removed the row altogether. It had been narrowed
+  // from `target` to `target === 'app'` — "Improve Homeroom" beside Settings
+  // and Admin is a different offer from the one it makes inside an app — but
+  // what it opened was the drawer, and the drawer is gone. The two things
+  // the drawer held are the menu's own controls now, and they are NOT
+  // narrowed to an app: on Home they act on Homeroom, which is what the
+  // request asked for in as many words. The part that always mattered holds
+  // either way — the target, never the route.
+  assert.ok(!sheet.includes('id="app-menu-row-improve"'),
+    'the row that opened the drawer is retired');
+  assert.match(sheet, /<ImproveQuickActions \/>/,
+    'and the menu carries the two actions directly');
+  const quick = read('frontend/src/features/improve/actions.tsx');
+  assert.ok(!/target ===/.test(quick) && !/selfHosted/.test(quick),
+    'unconditionally — they act on the platform as readily as on an app');
+  assert.doesNotMatch(sheet, /tab === 'dev'/, 'and not from the route');
   for (const gone of ['app-eye-btn', 'session-build-btn', 'EyeIcon', 'PencilSparklesIcon']) {
-    assert.ok(!improveBtn.includes(gone), `the ${gone} half of the swap left the header`);
+    assert.ok(!headerSrc.includes(gone), `the ${gone} half of the swap left the header`);
+    assert.ok(!sheet.includes(gone), `and did not follow Improve into the menu`);
   }
   // It went to the session strip, beside the name of the change it acts on.
   const strip = read('frontend/src/features/dev-chat/session-header.tsx');
@@ -650,91 +721,103 @@ test("the Board owns the view control; the header's label is the chip", () => {
     'and "nothing to preview" counts a preview that could be built');
 });
 
-test('the Improve panel is navigation, work and reference — one scroller', () => {
-  // Four bands: the quick actions, the app's three views, the work in flight,
-  // and the reference footer that says what this app IS. The views spent one
-  // round of #1443 in the chip's menu and came back; the footer came back from
-  // three separate screens #1431 had scattered it across.
-  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+test('the menu is actions, navigation and the app\'s options — one scroller', () => {
+  // FOUR BANDS BECAME THREE AND A LIST. The Improve panel's were the quick
+  // actions, the app's views, the work in flight and a reference footer; the
+  // work moved to the Workshop earlier in this issue and the footer's facts
+  // moved to About, which left a drawer holding two buttons. #2718's review
+  // retired it, so what is left sits above the menu's own list: the update
+  // notice, the two actions, the view strip, then `#switcher-nav`.
+  const panel = read('frontend/src/features/improve/actions.tsx');
   const html = read('public/index.html');
 
-  // THE ONE SCROLLER. The quick actions and the view rows are `shrink-0`, so
-  // they stay on screen at any height; the sessions list flexes and scrolls
-  // inside itself. One rule, no measurement.
-  const bodyAt = html.indexOf('id="improve-body"');
-  const bodyTag = html.slice(bodyAt, html.indexOf('>', bodyAt));
-  assert.match(bodyTag, /flex flex-col/, '#improve-body is the column flex');
+  // THE ONE SCROLLER, unchanged as a RULE and only moved: everything above
+  // `#switcher-nav` is `shrink-0`, so it stays on screen at any height and
+  // the list flexes and scrolls inside itself. One rule, no measurement.
+  const sheetAt = html.indexOf('id="apps-switcher-sheet"');
+  assert.match(html.slice(sheetAt, html.indexOf('>', sheetAt)), /flex flex-col/,
+    'the sheet is the column flex');
 
-  const scrollAt = html.indexOf('id="improve-sessions"');
+  const scrollAt = html.indexOf('id="switcher-nav"');
   const scrollTag = html.slice(scrollAt, html.indexOf('>', scrollAt));
-  assert.match(scrollTag, /overflow-y-auto/, 'the sessions list is the scroller');
+  assert.match(scrollTag, /overflow-y-auto/, 'the options list is the scroller');
   assert.match(scrollTag, /flex-1/, 'and takes the free space');
   assert.match(scrollTag, /min-h-0/, 'and may shrink below its content');
 
-  // The bands above and below are held at their natural height. The
-  // quick-action WELL is wrapped by the band that carries it, so look just
-  // upstream of the id for the class.
-  // The quick-action band IS the well now (the wrapper it used to sit inside
-  // went with the divided-well treatment), so `shrink-0` is on the element
-  // itself — which in the rendered markup comes after the id, not before it.
   const actionsAt = html.indexOf('id="improve-quick-actions"');
   assert.match(html.slice(actionsAt, html.indexOf('>', actionsAt)), /\bshrink-0\b/,
     'the quick-action band keeps its height');
   const viewsAt = html.indexOf('id="improve-views"');
   assert.match(html.slice(viewsAt, html.indexOf('>', viewsAt)), /\bshrink-0\b/,
     '#improve-views keeps its height');
-  const footerAt = html.indexOf('id="improve-footer"');
-  assert.match(html.slice(footerAt, html.indexOf('>', footerAt)), /\bshrink-0\b/,
-    'the reference footer keeps its height');
-  assert.ok(actionsAt < viewsAt && viewsAt < scrollAt && scrollAt < footerAt,
-    'actions, views, the scroller, then the reference footer');
+  assert.ok(actionsAt < viewsAt && viewsAt < scrollAt,
+    'the actions, then the views, then the scroller');
+  // THE STRIP IS IN THE PRERENDER, which is the hydration rule and not a
+  // layout one: it renders whether or not a target has been published, so
+  // the child count cannot change when the classic writers publish one. A
+  // `slug ? … : null` here is React #418 — see the note at its call site.
+  assert.ok(viewsAt > 0, 'the strip ships rendered, not gated on a slug');
 
-  // The footer came back (#1443). #1431 dissolved it and rehomed each fact
-  // separately; every move was defensible alone and the sum meant leaving the
-  // app to read facts about the app you were standing in.
-  assert.match(panel, /id="improve-row-github"/, 'the GitHub link is back');
-  // THE VERSION ROWS ARE NOT IN IT. They were, and the question they were
-  // being read for was never "which SHA" — it was "is something happening,
-  // and is there a new version yet". Three static rows answered that only by
-  // implication, and you had to notice one of them had become a spinner.
-  //
-  // The footer states it instead: a note while a build is in flight, a reload
-  // button once one is ready. The revisions themselves went back to Settings'
-  // About pane, which is the screen you consult rather than act from
-  // (tests/header-status-pane.test.js pins where they landed).
-  assert.match(panel, /id="improve-update-note"/, 'the footer says when a build is in flight');
-  assert.match(panel, /id="improve-update-ready"/, 'and offers the reload when one is ready');
+  // THE UPDATE NOTICE IS THE FOOTER'S ONE SURVIVOR, and it moved to the TOP
+  // of the band: it is the only one of the footer's facts that is news. It
+  // is conditional — three states and nothing at all when idle — so it is
+  // asserted in the source rather than the prerender.
+  assert.match(panel, /id="improve-update-note"/, 'a note while a build is in flight');
+  assert.match(panel, /id="improve-update-ready"/, 'and the reload once one is ready');
+  assert.match(panel, /versionState === 'downloading'/,
+    'the note distinguishes the download from the build that preceded it');
+
+  // WHAT DID NOT COME WITH IT. #1431 dissolved the footer and rehomed each
+  // fact separately; #1443 brought it back, because the sum of those moves
+  // meant leaving the app to read facts about the app you were standing in.
+  // #2718 gives those facts a NAME instead — the menu's About pane — which
+  // is the home #1443 was reaching for without one.
+  assert.doesNotMatch(panel, /id="improve-row-github"|id="improve-row-share"/,
+    'the outward-facing facts are About\'s');
+  const about = read('frontend/src/features/app-context/about-pane.tsx');
+  assert.match(about, /id="improve-row-github"/, 'and About is where they went');
+  assert.match(about, /id="improve-row-share"/);
+  // The revisions went back to Settings' About pane, which is the screen you
+  // consult rather than act from (tests/header-status-pane.test.js pins
+  // where they landed). The question people were reading them for was never
+  // "which SHA" — it was "is something happening, and is there a new version
+  // yet", which is what the notice above answers directly.
   assert.ok(!panel.includes('id="improve-row-version"'),
     "the app's version row is Settings' now");
   assert.ok(!panel.includes('id="drawer-row-platform-version"'),
     'and so is the platform build');
   assert.ok(!panel.includes('<NativeAppVersionRow />'),
     'and the native app version');
-  // The state behind all three is NAMED, not read back out of a rendered row,
-  // which is what let them move at all — see improve-status.js.
-  assert.match(panel, /versionState === 'downloading'/,
-    'the note distinguishes the download from the build that preceded it');
   // Fork lineage did NOT come back: #browse-detail-fork on the app's own page
   // is the better home, because lineage is a fact about an app.
   assert.ok(!panel.includes('id="drawer-row-app-fork"'),
     'fork lineage stays on the app detail page');
-  assert.match(panel, /id="improve-row-share"/,
-    "Share app survived as the panel's third action");
 });
 
-test('app.css drops the tab-bar rules and draws the Improve panel', () => {
+test('app.css drops the tab-bar rules, and the surface it draws is the menu', () => {
   const css = read('public/css/app.css');
   assert.ok(!/^\.app-tab\b/m.test(css), '.app-tab rules still present');
   // The .app-mode-seg rules went with the switch itself.
   assert.ok(!css.includes('.app-mode-seg'), 'orphan App/Dev segment rules survive');
-  // Desktop side panel, mobile bottom sheet — one element, two idioms, and
-  // the requirement holds in a mobile browser with no native kit loaded.
-  assert.ok(css.includes('#improve-panel'), 'the Improve panel has no chrome');
-  assert.ok(css.includes('#improve-panel[data-open]'), 'nothing slides the panel in');
-  assert.ok(/@media \(max-width: 639px\)[\s\S]{0,900}#improve-panel[\s\S]{0,400}translateY/
-    .test(css), 'below sm the panel must come up from the bottom, not in from the side');
-  assert.ok(/#improve-panel \{[\s\S]{0,300}translateX/.test(css),
-    'at sm and up the panel must slide in from the side');
+
+  // THE IMPROVE PANEL WAS THE SUBJECT HERE: desktop side panel, mobile bottom
+  // sheet, one element and two idioms, working in a mobile browser with no
+  // native kit loaded. It retired (#2718 review) and every rule that drew it
+  // left this stylesheet — which is the half worth pinning, because a
+  // retirement that leaves its CSS behind is the residue nobody finds.
+  assert.ok(!css.includes('#improve-panel'), 'no rule still draws the retired panel');
+  assert.ok(!css.includes('#improve-overlay'), 'nor its backdrop');
+  assert.ok(!css.includes('.improve-panel-transition'), 'nor its slide');
+
+  // The requirement it existed for did not retire with it: the surface those
+  // controls are on is a dropdown at `sm` and up and a bottom sheet below,
+  // and it has to work with no kit too.
+  assert.ok(css.includes('#apps-switcher-sheet'), 'the menu has chrome');
+  assert.ok(css.includes('#apps-switcher-sheet[data-open]'), 'and something presents it');
+  const phone = css.indexOf('@media (max-width: 639px) {\n  #apps-switcher-sheet {');
+  assert.ok(phone > 0, 'below sm it must state its own geometry');
+  assert.match(css.slice(phone, css.indexOf('\n}\n', phone)), /transform: translateY\(100%\)/,
+    'and come up from the bottom rather than in from the side');
 });
 
 for (const kind of ['sheet', 'panel', 'modal']) {

@@ -700,7 +700,18 @@ const AdminConsole = {
     // chevron pops to the console's own menu, so that is its href. LEVEL 2
     // ONLY, exactly as in features/settings/settings.js: see the note there
     // and beside App.navigateToProfile.
-    if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#admin' : undefined);
+    //
+    // ALWAYS AN ARROW SINCE #2718's REVIEW, and the target is the level.
+    // The root used to draw the house, which was the right answer while
+    // Admin was reached from Home's account row; it is reached from the Me
+    // tab now, and a house there sent you past the screen you came from to
+    // one the bar's own Home tab already reaches. The two targets are the
+    // two levels above: the console menu from inside a section, the Me tab
+    // from the root. This must agree with App._BACK_SLOT['admin-screen'],
+    // which the screen reveal writes a moment earlier — this is the second
+    // writer and the later one wins (tests/header-back-home.test.js derives
+    // the two from each other).
+    if (App.setBackIcon) App.setBackIcon('arrow', inSection ? '#admin' : '#profile');
     if (!App.setHeaderTitle) return;
     if (inSection) {
       const s = AdminConsole._visibleSections().find((x) => x.key === AdminConsole._section);

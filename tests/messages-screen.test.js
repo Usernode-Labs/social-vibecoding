@@ -25,23 +25,25 @@ const dapp = JSON.parse(read('dapp.json'));
 
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
   assert.match(html, /<main id="messages-screen" class="hidden /);
-  assert.match(html, /id="switcher-row-messages" href="#messages"/);
-  // The row is a DESTINATION and carries no count. #1431 put an unread number
-  // on a header chat bubble and #1443 moved it onto this row; both made one
-  // incoming message light two badges in two colours, and the one it lit here
-  // sat two taps down inside the menu you open to choose where to go. Message
-  // notifications are counted on the bell and listed in the notifications
-  // sheet with the rest of them, so nothing paints #drawer-messages-badge and
-  // the element is gone rather than shipped hidden.
+  // A TAB since #2718, not a menu row. The destination and its address are
+  // unchanged; what changed is that it is on screen instead of two taps down
+  // inside a sheet you open to choose where to go.
+  assert.match(html, /id="platform-tab-messages"[^>]*href="#messages"/);
+  // #drawer-messages-badge stays retired, and the count that replaced it is
+  // the TAB's. #1431 put an unread number on a header chat bubble and #1443
+  // moved it onto the menu row; both made one incoming message light two
+  // badges in two colours, and the one it lit sat inside a closed sheet. A
+  // tab is visible without opening anything, which is the difference the
+  // argument turned on.
   assert.doesNotMatch(html, /drawer-messages-badge/,
-    'the Messages row carries no unread tag');
-  // The nav order check. The menu reads platform-then-you: Home, Discover,
-  // Messages, then Profile, Settings, Admin. `~` rather than `+` because the
-  // section labels sit between the groups.
+    'the retired row tag stays retired');
+  assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
+  // The bar's order, pinned as a declared check. `+` rather than `~`: the
+  // five tabs are adjacent siblings with nothing between them.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#switcher-nav #switcher-row-home ~ #switcher-row-discover ~ #switcher-row-messages'
-      + ' ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin'),
-  'a declared check pins the menu order');
+    === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
+      + ' + #platform-tab-workshop + #platform-tab-me'),
+  'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,
   // /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/, matched the id anywhere
@@ -55,7 +57,32 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.ok(reactOwned, 'REACT_SCREEN_IDS is an array literal');
   assert.match(reactOwned[1], /'messages-screen'/,
     'the island owns #messages-screen\'s hidden class, so app.js must publish, not toggle');
-  assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);
+  assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,1400}navigateToMessages/);
+});
+
+test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
+  // #2718 review. The row was listed in this inbox and addressed as
+  // `#app/<slug>/dev/chat` — a different SCREEN ROOT — so a row in this list
+  // opened a full-window takeover with the app view's own back slot instead
+  // of a pane beside the list. Both complaints it drew ("still one pane for
+  // apps", "back goes to the workshop") were that one mismatch.
+  const routeStart = app.indexOf("if (parts[0] === 'messages')");
+  const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
+  assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox owns the address');
+  assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\]\)/);
+  assert.match(app, /navigateToMessages\(conversationId, appSlug\)/);
+  // The ROW points here, not at the app view.
+  assert.match(screen, /href=\{`#messages\/app\/\$\{encodeURIComponent\(discussion\.slug\)\}`\}/);
+  // ONE THREAD IS OPEN: naming an app clears the conversation and the other
+  // way round, so the pane never holds half of each.
+  assert.match(store, /const nextSlug = nextId \? null : validSlug\(appSlug\);/);
+  // The pane is a HOST for features/group-chat, not a second transcript.
+  assert.match(screen, /function AppDiscussionThread/);
+  assert.match(screen, /renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly \}\)/);
+  // …and it drops BOTH portals on the way out, the transcript's first.
+  assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
+  // The list collapses for a discussion exactly as it does for a thread.
+  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \? 'hidden md:flex' : 'flex'/);
 });
 
 test('deep links validate ids and route list/thread without a client events socket send', () => {

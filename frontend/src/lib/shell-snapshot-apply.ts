@@ -31,13 +31,14 @@ export function applyShellSnapshot(): void {
     }
   }
 
-  // `target` is the whole of what decides whether #improve-btn is drawn, so
-  // this is the field that makes the button appear at hydration rather than
-  // after the app fetch.
+  // `target` is the whole of what decides whether the Improve row is drawn
+  // (`#app-menu-row-improve`, and `#improve-btn` in the header before #2718
+  // retired it), so this is the field that makes it appear at hydration
+  // rather than after the app fetch.
   //
   // ONLY the target, and nothing else the panel renders from. The remembered
   // slug, name, icon and version would furnish a panel describing an app this
-  // document has not loaded and may not be able to — and unlike the button's
+  // document has not loaded and may not be able to — and unlike the row's
   // presence, none of that is visible until someone opens the panel, by which
   // time the real target has long since landed. Restoring what is on screen is
   // the whole job here; restoring a data model is somebody else's bug.

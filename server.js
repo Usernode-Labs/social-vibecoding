@@ -63,6 +63,7 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
+const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
@@ -248,8 +249,12 @@ app.use((req, res, next) => {
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
   if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
-  // A bounded executable evidence plan can exceed the global 100kb parser;
-  // its route validates the strict plan shape after its own 512kb parse.
+  // A bounded executable evidence plan can exceed the global 100kb parser.
+  // PR import parses here; the dedicated plan route mounts its own parser.
+  if (req.method === 'POST'
+      && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
+    return express.json({ limit: '512kb' })(req, res, next);
+  }
   if (req.method === 'POST'
       && /^\/api\/apps\/[^/]+\/proposals\/[^/]+\/evidence\/plan$/.test(req.path)) return next();
   express.json()(req, res, next);
@@ -590,6 +595,7 @@ app.use(workshopThemesRoutes(config));
 // every app the viewer can see. Me-scoped like the ordering routes, so it
 // sits behind authMiddleware and refuses an anonymous caller outright.
 app.use(workshopOverviewRoutes(config));
+app.use(messagesOverviewRoutes(config));
 // The Workshop's placement stage runs when a card arrives on or leaves a
 // board — which every route and service announces through ws.pushSessionUpdate
 // / pushIssueUpdate — on whichever instance handled the change (the row's

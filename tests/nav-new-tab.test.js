@@ -191,14 +191,20 @@ test('the header back/home control is a real anchor', () => {
   const inner = html.slice(html.indexOf('<a id="back-btn"'), html.indexOf('</a>', html.indexOf('<a id="back-btn"')));
   assert.match(inner, /id="back-icon-home"/, 'the house');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
-  // …and the document ships showing exactly one of them. Which one does not
-  // matter here (the router publishes the real state on the first screen
-  // swap); that BOTH or NEITHER is visible is the broken state.
-  const shownHome = !/id="back-icon-home"[^>]*class="[^"]*\bhidden\b/.test(inner);
-  const shownArrow = !/id="back-icon-arrow"[^>]*class="[^"]*\bhidden\b/.test(inner);
-  assert.notEqual(shownHome, shownArrow,
-    'one glyph is hidden and the other is not — two glyphs in one 28px disc '
-    + 'is what a wrong `hidden` looks like');
+  assert.match(inner, /id="back-icon-close"/, 'and the ✕ that steps out of an app (#2718)');
+  // …and AT MOST ONE of them is showing. Two glyphs in one 28px disc is what
+  // a wrong `hidden` looks like, and it is the only broken state here: the
+  // cold document publishes mode 'none', which hides the anchor itself, so
+  // none of the three being visible inside it is correct rather than empty.
+  // It used to be "exactly one", on a render where the house was drawn for
+  // every mode that was not the arrow — which is precisely the bug a third
+  // glyph introduces, so each one names its own mode now.
+  const shown = ['home', 'arrow', 'close'].filter((name) =>
+    !new RegExp(`id="back-icon-${name}"[^>]*class="[^"]*\\bhidden\\b`).test(inner));
+  assert.ok(shown.length <= 1,
+    `at most one glyph may be visible at a time, and these were: ${shown.join(', ')}`);
+  assert.match(html, /<a id="back-btn"[^>]*class="[^"]*\bhidden\b/,
+    "…and in the cold document the anchor is hidden outright, which is mode 'none'");
   // 28x28 now, not 20x28: the slot holds the app glyph as well as the arrow
   // (features/header/header-app-icon.tsx), and they never draw together. What
   // matters to the header-layout hook is that the width is FIXED, and it is.
@@ -245,35 +251,45 @@ test('every screen entry refreshes the href through the one choke point', () => 
   const at = appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   assert.ok(at !== -1, '_showOnlyScreen went missing');
   const fn = appJs.slice(at, appJs.indexOf('\n  },', at));
-  assert.match(fn, /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
+  // A TABLE, READ THROUGH ONE HELPER (#2718 review). The ternary here had
+  // grown three answers and still disagreed with the screens that write
+  // their own slot a moment later, so the corner depended on which writer
+  // ran last. What matters for THIS test is unchanged: every screen change
+  // passes through this line, so the href cannot go stale.
+  assert.match(fn, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
     'this is what keeps the href from ever going stale — every screen change '
     + 'passes through here');
+  assert.match(appJs, /_backSlotFor\(revealId\) \{[\s\S]{0,400}App\._BACK_SLOT\[revealId\]/,
+    'and the answer comes from the table rather than a chain of conditions');
 });
 
 test('the three up-one-level screens pass their own target', () => {
   // Browse's detail view is a level INSIDE that screen and draws the arrow.
-  // Settings and Admin draw one at level 2 only — the mobile drill-in, which
-  // is likewise a level inside the screen and would strand a phone viewer
-  // without it.
+  // Settings and Admin draw one at level 2 as well — the mobile drill-in,
+  // which is likewise a level inside the screen and would strand a phone
+  // viewer without it.
   //
-  // Settings and Admin roots draw the house, and since #2639 so does the
-  // Browse LIST: it is somewhere you go from Home, not a root you arrive at,
-  // and an empty bar left the chip menu as the only way out. A Browse detail
-  // opened from Home still draws the house, while a detail opened from the
-  // list (or directly) links back to that list.
+  // THE HOUSE IS GONE FROM ALL THREE (#2718 review). It was the answer while
+  // these screens hung off Home's account row; the five-tab bar answers "how
+  // do I get out of here" now, so a house is either a duplicate of the Home
+  // tab or — worse, on Settings and Admin — a jump PAST the Me tab the viewer
+  // came through and which is still lit. What is left is the honest pair: an
+  // arrow when there is a level above, nothing when there is not.
   assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
     'browse names the one state with a list above it…');
-  assert.match(browseJs, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,
-    '…and that state alone gets the chevron; every other level gets the house');
+  assert.match(browseJs, /const backMode = upToList \? 'arrow' : 'none';/,
+    '…and that state alone gets the chevron; the list and a detail opened '
+    + 'from a Home card are roots of this screen and show nothing');
   assert.match(browseJs, /setBackIcon\(backMode, upToList \? '#apps' : undefined\)/,
     'the list-bound chevron keeps its explicit parent target');
-  assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the admin section chevron pops to the console menu; its root gets home');
+  assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
+    'the admin section chevron pops to the console menu; its root goes up to '
+    + 'the Me tab it was opened from');
   // Settings resolves its section target through _upHref (#1565): the menu
   // when the menu is what sits below the entry, and the address the viewer
-  // came from when they arrived from elsewhere in the app. Its root still
-  // gets the house.
-  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/,
+  // came from when they arrived from elsewhere in the app. Its root goes to
+  // the same place Admin's does.
+  assert.match(settingsJs, /setBackIcon\('arrow', inSection \? Settings\._upHref\(\) : '#profile'\)/,
     'the settings section chevron points where its back press goes');
   assert.match(settingsJs, /_upHref\(\) \{[\s\S]{0,400}return '#settings';/,
     '…which is still the menu unless something else of ours is below');
@@ -494,10 +510,13 @@ test('#browse-detail-back keeps its own layout as an anchor', () => {
 // retired the switch, so the exception is gone with it — every navigating
 // control in the shell is an anchor or goes through App's router now.
 //
-// #improve-btn is deliberately NOT a new exception. It opens a panel rather
-// than navigating, so there is no destination for a cmd-click to open; the
-// panel's own rows are where navigation happens, and those ARE anchors
-// (see features/improve/improve-panel.tsx's SessionRow and ImproveRow).
+// #app-menu-row-improve is deliberately NOT a new exception — nor was
+// #improve-btn, the header pill it replaced when #2718 retired that. It opens
+// a panel rather than navigating, so there is no destination for a cmd-click
+// to open; the panel's own rows are where navigation happens, and those ARE
+// anchors (see features/improve/session-row.tsx). Same for
+// #app-menu-row-about, a button for the same reason: the pane it opens is the
+// sheet in another state, not an address.
 test('the retired App/Dev switch left no interception behind', () => {
   assert.equal(appJs.indexOf(".querySelectorAll('.app-mode-seg')"), -1,
     'the switch wiring is gone from app.js');

@@ -147,8 +147,14 @@ export function createSheetController({
     },
 
     _closeSiblings() {
-      // The Improve panel predates the registry and is not built here.
-      window.Improve?.dismissForNav?.();
+      // ONE SWEEP, and it covers everything now. The Improve panel predated
+      // the registry and was not built here, so this used to call
+      // `window.Improve?.dismissForNav?.()` first, by name. The panel retired
+      // (#2718 review) and `Improve.dismissForNav` forwards to the app-context
+      // sheet — which IS in the registry — so the named call became either a
+      // no-op or, when the app-context sheet is the one opening, an instruction
+      // to close it. `except` already spares the opener; nothing else needs
+      // naming.
       dismissRegisteredSheets(controller);
     },
 

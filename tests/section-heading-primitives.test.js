@@ -154,7 +154,7 @@ test('the profile’s public-profile card is a form section, and says so', () =>
     'the old hand-written heading class is gone');
 });
 
-test('two sites keep their own treatment, deliberately', () => {
+test('one site keeps its own treatment, deliberately', () => {
   // NEITHER of these is "a label over a group", and forcing one of the two
   // primitives onto them would look wrong on its own screen.
   //
@@ -168,14 +168,16 @@ test('two sites keep their own treatment, deliberately', () => {
   const home = read('frontend/src/features/home/panels/ui.tsx');
   assert.match(home, /className="home-area-label[^"]*text-base font-\[550\]/,
     'the home area title is unchanged — see the note in this test');
-  // 2. The Improve panel's `<h2>Improve</h2>` is the PANEL'S TITLE, on one
-  //    baseline with the target app's name and the close control. A dialog
-  //    title bar is not a section label. The panel's own section labels
-  //    ("Changes in progress") are denser than either primitive on purpose:
-  //    it is a light surface in its own right, which is why it draws a
-  //    bordered group instead of grouped-list's floating card.
-  const improve = read('frontend/src/features/improve/improve-panel.tsx');
-  assert.match(improve, /<h2 className="shrink-0 text-sm font-semibold text-zinc-800/);
+  // 2. THE SECOND SITE RETIRED (#2718 review). It was the Improve panel's
+  //    `<h2>Improve</h2>` — the PANEL'S TITLE, on one baseline with the
+  //    target app's name and the close control, which is a dialog title bar
+  //    and not a section label. The panel is gone, its own denser section
+  //    labels with it, so the exception has nothing left to except. Recorded
+  //    rather than deleted silently: "two sites" was the count this file
+  //    argued for, and a reader who finds one needs to know the other did
+  //    not simply get converted.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/improve/improve-panel.tsx')),
+    'the second exception retired with its panel, rather than being converted');
 });
 
 // ── Half A: one spelling per primitive, product-wide ───────────────────

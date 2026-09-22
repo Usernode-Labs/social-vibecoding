@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from 'react';
 
 import * as api from './api';
+import type { AppDiscussion, InboxFilter } from './inbox';
 import type {
   ConversationDetail,
+  DiscussionContext,
   ConversationEvent,
   ConversationMessage,
   ConversationSummary,
@@ -28,7 +30,7 @@ type Listener = () => void;
 
 const listeners = new Set<Listener>();
 let state: InternalState = {
-  route: { open: false, conversationId: null },
+  route: { open: false, conversationId: null, appSlug: null },
   conversations: [],
   active: null,
   messages: [],
@@ -43,6 +45,11 @@ let state: InternalState = {
   demo: false,
   revision: 0,
   typing: {},
+  discussions: [],
+  discussionsLoaded: false,
+  discussionContext: null,
+  discussionError: null,
+  filter: 'all',
 };
 
 const drafts = new Map<number, string>();
@@ -109,6 +116,39 @@ function errorMessage(error: unknown, fallback: string): string {
     return error.message || fallback;
   }
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/**
+ * Which of the four kinds the list is showing (#2718).
+ *
+ * Presentation, so it is not persisted and not in the route: a filter that
+ * survives a reload is a filter somebody has to remember turning on, and the
+ * one thing this screen must always be able to say is "here is everything".
+ */
+export function setFilter(next: InboxFilter): void {
+  if (state.filter === next) return;
+  publish({ filter: next });
+}
+
+/**
+ * The app discussions beside the conversations.
+ *
+ * FAILS QUIETLY. The conversations are this screen's reason to exist and the
+ * discussions are an addition to it; a list that refuses to draw because a
+ * second request failed is worse than one that draws what it has. The Apps
+ * filter then shows nothing, which is the honest report of what arrived.
+ */
+export async function loadAppDiscussions(): Promise<void> {
+  try {
+    const query = browserDemo() ? '?demo=1' : '';
+    const response = await fetch(`/api/messages/app-discussions${query}`);
+    if (!response.ok) return;
+    const data = await response.json().catch(() => null);
+    if (!data || !Array.isArray(data.discussions)) return;
+    publish({ discussions: data.discussions as AppDiscussion[], discussionsLoaded: true });
+  } catch {
+    // Offline is a state, not a crash.
+  }
 }
 
 export async function loadConversations(force = false): Promise<void> {
@@ -220,17 +260,85 @@ function notifyConversationRead(conversationId: number): void {
   window.Notifications?.markConversationRead?.(conversationId);
 }
 
-export function route(conversationId?: number | null): void {
+export function route(conversationId?: number | null, appSlug?: string | null): void {
   const nextId = validId(conversationId) ? conversationId : null;
-  if (state.route.open && state.route.conversationId === nextId) {
+  // ONE THREAD IS OPEN (#2718 review). An app's discussion and a conversation
+  // are both threads of this inbox, addressed differently because one is an
+  // app and the other a row in this database — so naming one clears the
+  // other rather than leaving two panes' worth of state half-set.
+  const nextSlug = nextId ? null : validSlug(appSlug);
+  if (state.route.open && state.route.conversationId === nextId
+      && state.route.appSlug === nextSlug) {
     if (!state.listLoaded) void loadConversations();
+    if (!state.discussionsLoaded) void loadAppDiscussions();
     if (nextId && (!state.active || state.active.id !== nextId)) void loadThread(nextId);
+    if (nextSlug && state.discussionContext?.slug !== nextSlug) void loadDiscussion(nextSlug);
     return;
   }
-  publish({ route: { open: true, conversationId: nextId }, threadError: null });
+  publish({
+    route: { open: true, conversationId: nextId, appSlug: nextSlug },
+    threadError: null,
+    discussionError: null,
+    // The previous thread's app, if there was one. Held until the next one
+    // lands and cleared outright when the next thread is a conversation, so
+    // the pane never draws one app's name over another's transcript.
+    discussionContext: nextSlug && state.discussionContext?.slug === nextSlug
+      ? state.discussionContext : null,
+  });
   void loadConversations();
+  // #2718: beside the conversations, never instead of them. It is a separate
+  // request with its own failure, so a slow or broken discussions read costs
+  // the Apps filter and nothing else — see loadAppDiscussions.
+  void loadAppDiscussions();
   if (nextId) void loadThread(nextId);
   else publish({ active: null, messages: [], nextBefore: null, loadingThread: false });
+  if (nextSlug) void loadDiscussion(nextSlug);
+}
+
+/**
+ * A slug out of the address bar. Same shape the platform mints (#2718) —
+ * `<name>-<hex>` — and nothing here builds a URL from it without encoding,
+ * but a route segment is viewer input and the pane renders its name.
+ */
+function validSlug(slug?: string | null): string | null {
+  if (typeof slug !== 'string') return null;
+  const trimmed = slug.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(trimmed) ? trimmed : null;
+}
+
+/**
+ * The open discussion's app.
+ *
+ * The inbox row already carries the name, but not whether this viewer may
+ * WRITE: that is `can_collaborate`, a fact about the app rather than about
+ * its last message, so it comes from the app itself. Getting it wrong either
+ * way is worse than waiting — a composer that cannot send, or no composer
+ * where there should be one — so the pane holds until this lands.
+ */
+export async function loadDiscussion(slug: string): Promise<void> {
+  const want = validSlug(slug);
+  if (!want) return;
+  try {
+    const response = await fetch(`/api/apps/${encodeURIComponent(want)}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json().catch(() => null);
+    const app = (data && (data.app || data)) || null;
+    if (!app || !app.slug) throw new Error('No such app');
+    // A slower request for a thread the reader has already left must not
+    // paint over the one they are looking at.
+    if (state.route.appSlug !== want) return;
+    publish({
+      discussionContext: {
+        slug: app.slug,
+        name: app.name || app.slug,
+        readOnly: app.can_collaborate === false,
+      },
+      discussionError: null,
+    });
+  } catch {
+    if (state.route.appSlug !== want) return;
+    publish({ discussionContext: null, discussionError: 'This discussion could not be opened.' });
+  }
 }
 
 export function close(): void {
@@ -239,7 +347,11 @@ export function close(): void {
   // durable draft. Leaving Messages cancels it instead of surprising the user
   // in an unrelated conversation later.
   pendingShare = undefined;
-  publish({ route: { open: false, conversationId: null }, active: null, messages: [], loadingThread: false, threadError: null });
+  publish({
+    route: { open: false, conversationId: null, appSlug: null },
+    active: null, messages: [], loadingThread: false, threadError: null,
+    discussionContext: null, discussionError: null,
+  });
 }
 
 export function isOpen(): boolean {
@@ -247,7 +359,8 @@ export function isOpen(): boolean {
 }
 
 export function handleBack(): boolean {
-  if (!state.route.open || !state.route.conversationId || !isMobile()) return false;
+  const onThread = !!state.route.conversationId || !!state.route.appSlug;
+  if (!state.route.open || !onThread || !isMobile()) return false;
   const current = typeof location !== 'undefined' ? location.hash : '';
   if (current.startsWith('#messages/') && typeof history !== 'undefined') {
     try { history.replaceState(null, '', '#messages'); } catch { /* non-fatal */ }
@@ -265,15 +378,39 @@ export function isMobile(): boolean {
 export function syncChrome(): void {
   const app = typeof window !== 'undefined' ? window.App : undefined;
   if (!app) return;
-  const thread = isMobile() && !!state.route.conversationId;
-  app.setBackIcon?.(thread ? 'arrow' : 'home', thread ? '#messages' : undefined);
-  app.setHeaderTitle?.(thread ? state.active?.title || 'Messages' : 'Messages');
+  // A DISCUSSION IS A THREAD OF THIS SCREEN (#2718 review), so it answers the
+  // chrome the same way: the list's chevron on a phone, nothing on a desktop
+  // where the list is still beside it. It used to be a route into #app-view,
+  // which is why backing out of one landed wherever that screen's slot
+  // pointed — the Workshop, when that is where the app had been opened from.
+  const thread = isMobile() && !!(state.route.conversationId || state.route.appSlug);
+  // 'none' ON THE INBOX (#2718 review). This is a second writer over the
+  // slot App._BACK_SLOT already set for #messages-screen, and it was
+  // publishing the house — so Messages was the one tab root still offering
+  // a jump to a screen its own bar already reaches. A THREAD is a level
+  // inside this screen and keeps its chevron up to the list.
+  app.setBackIcon?.(thread ? 'arrow' : 'none', thread ? '#messages' : undefined);
+  app.setHeaderTitle?.(thread
+    ? (state.route.appSlug
+      ? state.discussionContext?.name || 'Discussion'
+      : state.active?.title || 'Messages')
+    : 'Messages');
 }
 
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
   if (window.location.hash === target) route(conversationId || null);
+  else window.location.hash = target;
+}
+
+/** The same, for the app-discussion half of the inbox (#2718 review). */
+export function openDiscussion(slug: string): void {
+  if (typeof window === 'undefined') return;
+  const safe = validSlug(slug);
+  if (!safe) return;
+  const target = `#messages/app/${encodeURIComponent(safe)}`;
+  if (window.location.hash === target) route(null, safe);
   else window.location.hash = target;
 }
 
@@ -653,6 +790,7 @@ function paintSaved(messageId: number, saved: boolean): void {
 
 export const messagesController = {
   open,
+  openDiscussion,
   route,
   close,
   isOpen,
@@ -661,7 +799,10 @@ export const messagesController = {
   handleEvent,
   share,
   paintSaved,
-  refresh: () => loadConversations(true),
+  refresh: () => {
+    void loadAppDiscussions();
+    return loadConversations(true);
+  },
 };
 
 export function initializeMessagesStore(): () => void {

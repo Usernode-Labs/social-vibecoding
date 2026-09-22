@@ -37,6 +37,7 @@ async function recoverInterrupted(config, pool, { maxAgeMs = null, limit = 20 } 
        JOIN chat_sessions s ON s.id = r.session_id
        JOIN apps a ON a.id = s.app_id
       WHERE r.state IN ('planned','provisioning','exploring','replaying','reviewing')
+        AND NOT (r.state = 'planned' AND r.author_plan IS NOT NULL)
         AND r.updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
       ORDER BY r.updated_at ASC LIMIT $2`,
     [ageMs, Math.max(1, Math.min(100, Number(limit) || 20))]
@@ -72,9 +73,8 @@ async function recoverInterrupted(config, pool, { maxAgeMs = null, limit = 20 } 
 
 // Intent is written before checks finish. The ordinary checks completion
 // event starts evidence, but a process can die between those two writes.
-// Unlike an interrupted run, that leaves no visual_evidence_runs row for
-// recoverInterrupted to find. Reconcile open, settled, exact-head proposals
-// so a one-time hand-off cannot leave "planned" on the card forever.
+// A submitted author plan already has a durable planned run at import;
+// both that case and an intent-only proposal need the same recovery handoff.
 async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, schedule = null } = {}) {
   if (!config.visualEvidence?.execute) return { examined: 0, scheduled: 0 };
   const retryAfterMs = 10 * 60_000;
@@ -82,8 +82,10 @@ async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, s
     `SELECT cs.id, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
             cs.checks_commit_sha, cs.handoff_head_sha
        FROM chat_sessions cs
+       LEFT JOIN visual_evidence_runs r ON r.id = cs.visual_evidence_run_id
       WHERE cs.visual_evidence_state = 'planned'
-        AND cs.visual_evidence_run_id IS NULL
+        AND (cs.visual_evidence_run_id IS NULL
+             OR (r.state = 'planned' AND r.author_plan IS NOT NULL))
         AND cs.status IN ('active', 'promoted')
         AND cs.visual_evidence_detail->>'required' = 'true'
         AND jsonb_typeof(cs.visual_evidence_detail->'intent') = 'object'
@@ -101,8 +103,7 @@ async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, s
       `UPDATE chat_sessions
           SET visual_evidence_detail = visual_evidence_detail
                 || jsonb_build_object('recoveryAttemptAt', $2::bigint)
-        WHERE id = $1 AND visual_evidence_state = 'planned'
-          AND visual_evidence_run_id IS NULL`,
+        WHERE id = $1 AND visual_evidence_state = 'planned'`,
       [id, Date.now()]
     );
   };

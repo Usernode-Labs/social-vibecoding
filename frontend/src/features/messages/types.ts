@@ -123,7 +123,32 @@ export interface ConversationEvent {
 export interface MessagesRoute {
   open: boolean;
   conversationId: number | null;
+  /**
+   * #2718 review: an app's general discussion, open as a thread of THIS
+   * inbox rather than as the app view's own screen.
+   *
+   * It is listed here beside the people and the agent chats, so it opens
+   * here too — beside the list, at `#messages/app/<slug>`. Addressing it as
+   * `#app/<slug>/dev/chat` made a row in this list navigate to a different
+   * SCREEN ROOT: no conversation list beside it, and the app view's back
+   * slot instead of this screen's. A row in a list opens beside that list.
+   *
+   * Mutually exclusive with `conversationId` — one thread is open, and the
+   * two kinds are addressed differently because one is a conversation row
+   * in this database and the other is an app.
+   */
+  appSlug: string | null;
 }
+
+/** The app whose discussion is open, once its metadata has landed. */
+export interface DiscussionContext {
+  slug: string;
+  name: string;
+  /** `can_collaborate === false` — the composer does not render. */
+  readOnly: boolean;
+}
+
+import type { AppDiscussion, InboxFilter } from './inbox';
 
 export interface MessagesSnapshot {
   route: MessagesRoute;
@@ -140,4 +165,24 @@ export interface MessagesSnapshot {
   online: boolean;
   demo: boolean;
   revision: number;
+  /**
+   * #2718: the other two kinds of thread this screen lists.
+   *
+   * `discussions` is GET /api/messages/app-discussions — the general thread
+   * on each app the viewer is a member of, one row per app. `filter` is which
+   * of the four the list is showing. Agent chats are NOT here: they are
+   * already in features/global-chat's own store, and a second copy of a list
+   * that is loaded, merged and invalidated elsewhere is a copy that drifts.
+   */
+  discussions: AppDiscussion[];
+  discussionsLoaded: boolean;
+  /**
+   * The open discussion's app, or null while it loads or when the open
+   * thread is a conversation. The row carries the name, but not whether the
+   * viewer may write — that is `can_collaborate` on the app itself, so it
+   * comes from GET /api/apps/<slug> when the thread opens.
+   */
+  discussionContext: DiscussionContext | null;
+  discussionError: string | null;
+  filter: InboxFilter;
 }

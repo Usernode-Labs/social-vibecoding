@@ -1,9 +1,10 @@
-// The header's Improve button survives the walk back home from an app.
+// The Improve control survives the walk back home from an app.
 //
 // ── The bug ────────────────────────────────────────────────────────────
 //
-// Improve is the header's STANDING action — it renders on every screen that
-// carries a target (frontend/src/features/improve/improve-button.tsx), and on
+// Improve is the platform's STANDING action — it renders on every screen that
+// carries a target (the header pill #improve-btn when this was reported,
+// #app-menu-row-improve in the app's own menu since #2718), and on
 // the platform screens that target is Homeroom's own self-hosted row,
 // published by Home.publishImproveTarget (#1367/#1406). Backing out of an app
 // dropped it: the button was there on the app, gone on home, and stayed gone

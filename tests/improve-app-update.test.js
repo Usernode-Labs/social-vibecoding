@@ -31,8 +31,8 @@ const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP_JS = read('public/js/app.js');
-const BUTTON = read('frontend/src/features/improve/improve-button.tsx');
-const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const PANEL = read('frontend/src/features/improve/actions.tsx');
 const STORE = read('frontend/src/features/improve/improve-store.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const MANIFEST = JSON.parse(read('dapp.json'));
@@ -121,11 +121,22 @@ function controllerHarness(opts) {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
+  // The one surface still listing these sessions. Flip `sheet.open` in a
+  // test that needs the reload gate open; it is the notifications sheet's
+  // flag, not the Improve panel's — that panel retired (#2718 review).
+  const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor() {} },
-      '../../lib/kit-surface': { adoptKitSurface: () => null },
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
+      // Improve panel's root through lib/kit-surface and swept the other
+      // sheets through lib/sheet-controller; the panel retired, `open()`
+      // forwards to the app-context sheet, and both stubs went with it. What
+      // it does import is the notifications sheet's own open flag — the one
+      // surface still listing these sessions, and the gate on reloading them.
+      '../notifications/notifications-sheet-store.js': {
+        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
+      },
       './improve-store.js': { improveStore: store },
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
@@ -255,12 +266,17 @@ test('with no frame on screen there is nothing to reload', () => {
 
 // ── The rendered halves, pinned by source ─────────────────────────────
 
-test('the button shows the arrow for a landed app build, and the spinner still wins while one is building', () => {
-  assert.match(BUTTON, /const \{ target, open, versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
-  assert.match(BUTTON, /appUpdateReady=\{appUpdateReady\}/);
-  const busyAt = BUTTON.indexOf('if (appDeploying || BUSY_STATES.includes(versionState))');
-  const readyAt = BUTTON.indexOf('if (appUpdateReady || READY_STATES.includes(versionState))');
-  assert.ok(busyAt > 0 && readyAt > busyAt, 'busy is decided first, so a new build starting takes the arrow back');
+test('a landed app build offers a reload of the frame, not of the tab', () => {
+  // THE GLYPH RETIRED WITH THE ROW IT LED (#2718 review). It was the leading
+  // icon of #app-menu-row-improve, which opened the Improve panel; the panel
+  // is gone and so is the row. What survives is the OFFER, which is the half
+  // that ever did anything: the frame is still showing the build before this
+  // one, so the row reloads the frame rather than the tab.
+  assert.match(PANEL, /const \{ versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
+  assert.match(PANEL, /id="improve-app-update-ready"/);
+  assert.match(PANEL, /Improve\.reloadApp/);
+  // …and the menu is what renders it, now that the panel does not exist.
+  assert.match(SHEET, /<UpdateStatus \/>/);
 });
 
 test('the panel offers the reload of the app on its own row, through Improve.reloadApp', () => {
@@ -280,7 +296,15 @@ test('the panel offers the reload of the app on its own row, through Improve.rel
 test('the landed state has a declared check on the staging fork fixture', () => {
   const landed = MANIFEST.tests.find((t) => t.expectSelector && t.expectSelector.includes('button#improve-app-update-ready'));
   assert.ok(landed && /shot=app-update-ready#app\/staging-demo-forkable/.test(landed.path));
-  assert.match(landed.expectSelector, /#improve-btn-glyph\[data-state=ready\]/);
+  // IT SELECTED THE GLYPH'S READY STATE TOO — `body:has(#improve-btn-glyph
+  // [data-state=ready])`, so one check photographed the row and the cue that
+  // sends you to it. Both retired with the Improve panel (#2718 review): the
+  // glyph was the drawer row's, the drawer row opened a drawer that no longer
+  // exists, and the two dots the glyph's states became are the mark's
+  // (#feedback-queue-dot, #improve-working-dot) — neither of which has a
+  // "ready" state, because the offer itself is now one tap away rather than
+  // two. What is left to assert is the row, on the surface that carries it.
+  assert.match(landed.expectSelector, /^#apps-switcher-sheet\[data-open\] /);
   // One check, not two: the building state is the note and spinner the
   // platform-updating check already photographs, and the manifest keeps 20
   // of its 710 slots clear (tests/improve-session-spinner.test.js). The shot

@@ -21,7 +21,7 @@ const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const VIEW = read('public/js/app-view.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
-const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+const PANEL = read('frontend/src/features/improve/actions.tsx');
 // The "+" menu moved out of the frame into its own row component, which the
 // Board and the Workshop render one-at-a-time — so the menu's rows are
 // rendered from there now. Same markup, same props, one level less chrome.
@@ -199,14 +199,29 @@ for (const touch of [false, true]) {
   });
 }
 
-test('Improve retains one wired quick action per feature and the New change read-only gate', () => {
-  for (const [id, label, handler] of [
-    ['feedback', 'Give feedback', 'giveFeedback'],
-    ['new-session', 'New change', 'startSession'],
-  ]) {
-    assert.equal(PANEL.split(`id="improve-row-${id}"`).length - 1, 1);
-    assert.match(PANEL, new RegExp(`id="improve-row-${id}"\\s+label="${label}"\\s+onClick=\\{\\(\\) => Improve\\.${handler}\\(\\)\\}`));
-  }
+test('Improve retains its two wired quick actions, and the New change read-only gate', () => {
+  // TWO AGAIN (#2718 review). #2718 moved "Give feedback" to the mark's
+  // menu, where it led — the row somebody who is NOT a developer of this app
+  // wants, in a panel that assumes you are. True of the reader, and it cost
+  // the action its shape: a filled button that says what it DOES became the
+  // first of eight rows in a place you go to navigate. It is a button again.
+  //
+  // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
+  // ONE method, whichever surface it is on.
+  assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 1);
+  assert.match(PANEL, /id="improve-row-new-session"\s+label="New change"\s+onClick=\{\(\) => Improve\.startSession\(\)\}/);
+  assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 1,
+    'feedback is here');
+  assert.match(PANEL, /id="improve-row-feedback"\s+label="Give feedback"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  const MENU = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.equal(MENU.split('id="improve-row-feedback"').length - 1, 0,
+    'and not in two places — that id is what the outbox dot\'s writer selects');
+  assert.ok(!MENU.includes('giveFeedback'),
+    'the menu does not keep a second caller of the same method');
+  // IT LEADS, and it is the only thing in the well for a read-only viewer:
+  // it needs nothing of them — no collaborator bit, no session, no repo —
+  // while "New change" has nothing to offer.
+  assert.ok(PANEL.indexOf('id="improve-row-feedback"') < PANEL.indexOf('id="improve-row-new-session"'));
   assert.match(PANEL, /state\.readOnly \? null : \(\s*<QuickAction\s+id="improve-row-new-session"/);
   assert.doesNotMatch(VIEW, /querySelector\('\[data-plus="proposal"\]'\)/);
 });
@@ -274,11 +289,22 @@ function improveHarness(currentApp = 'demo') {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
+  // The one surface still listing these sessions. Flip `sheet.open` in a
+  // test that needs the reload gate open; it is the notifications sheet's
+  // flag, not the Improve panel's — that panel retired (#2718 review).
+  const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor() {} },
-      '../../lib/kit-surface': { adoptKitSurface: () => null },
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
+      // Improve panel's root through lib/kit-surface and swept the other
+      // sheets through lib/sheet-controller; the panel retired, `open()`
+      // forwards to the app-context sheet, and both stubs went with it. What
+      // it does import is the notifications sheet's own open flag — the one
+      // surface still listing these sessions, and the gate on reloading them.
+      '../notifications/notifications-sheet-store.js': {
+        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
+      },
       './improve-store.js': { improveStore: store },
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },

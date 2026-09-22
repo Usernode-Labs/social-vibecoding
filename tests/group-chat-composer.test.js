@@ -240,7 +240,7 @@ test('removing an upload goes back through the module, by index', () => {
 
 test('the general chat pane is mounted, not assigned', () => {
   const code = stripped(appView);
-  const fn = code.match(/renderGroupChatTab\(\) \{([\s\S]*?)\n {2}\},/);
+  const fn = code.match(/renderGroupChatTab\(ctx\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, 'renderGroupChatTab() found');
   assert.doesNotMatch(fn[1], /innerHTML/, 'the tab builds no markup');
   assert.match(fn[1], /mountGeneralChat\(content, \{/);

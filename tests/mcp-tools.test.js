@@ -1425,6 +1425,14 @@ test('submit_work documents direct v1 evidence input when the helper tool is abs
   assert.match(block, /validates both paths identically/);
 });
 
+test('submit_work validates and forwards a local plan with the first import', () => {
+  const block = registration('submit_work');
+  assert.match(block, /parseAuthorPlanSubmission\(/);
+  assert.match(block, /visualEvidencePlan: acceptedVisualEvidencePlan/);
+  assert.match(block, /extra\.visualEvidencePlan \? \{ visualEvidencePlan: extra\.visualEvidencePlan \}/);
+  assert.match(block, /atomic author-plan handoff currently applies to a new PR import/);
+});
+
 test('submit_visual_evidence_plan forwards the exact typed flow to the owner-scoped platform route', async () => {
   const c = connector((method, pathname) => {
     assert.equal(method, 'POST');

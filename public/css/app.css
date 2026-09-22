@@ -286,11 +286,25 @@
    lose its 8px gap) and has no keyboard-up suppression. These wrap the
    kit's token rather than forking its CSS. */
 .platform-safe-scroll {
-  padding-bottom: var(--platform-safe-bottom) !important;
+  /* `max()` because the two things this clears are stacked, not added: when
+     #platform-tabs is up, `--platform-tabs-h` is the bar's FULL outer height
+     and the bar's own lower padding already covers the home-indicator strip,
+     so taking the larger of the two reserves each exactly once. When the bar
+     is down the token is 0px and this is the bare inset it has always been.
+     See the #platform-tabs section at the end of this file. */
+  padding-bottom: max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)) !important;
 }
 
 .platform-safe-bar {
-  padding-bottom: calc(0.5rem + var(--platform-safe-bottom)) !important;
+  /* Same `max()` as the scroller above, inside this rule's own base gap: a
+     composer row is the bottom of a column that reaches the viewport, so
+     what it has to clear is whichever of the tab bar and the home-indicator
+     strip is taller — never both stacked. Every surface that wears this
+     class sits on a screen where the bar is EITHER up (#messages-screen,
+     #global-chat-screen) or hidden (everything inside #app-view), and in the
+     hidden case `--platform-tabs-h` is 0px and this is exactly the
+     declaration it has always been. */
+  padding-bottom: calc(0.5rem + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom))) !important;
 }
 
 /* .platform-safe-sheet — a sheet's own FOOTER row (the Apps sheet's
@@ -464,13 +478,29 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-list-title { min-width: 0; flex: 1 1 auto; }
 /* Preflight resets headings to inherit, so the size is this rule's to give. */
-.messages-list-title h2 {
+.messages-list-title h2,
+.platform-screen-title {
   color: var(--text-primary);
   font-size: 28px;
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.01em;
 }
+/* ONE SIZE FOR A PLATFORM SCREEN'S NAME (#2718).
+   Messages named itself at 28px and the Workshop named itself with the
+   grouped list's SECTION LABEL — 15px, regular weight, muted — so two screens
+   one tab apart disagreed about what a screen title is. The section label is
+   for a group WITHIN a screen; a screen's own name is the biggest thing on
+   it.
+   The selector above is a second spelling of the Messages rule rather than a
+   replacement of it: that one is reached as `.messages-list-title h2` from a
+   flex toolbar that also held the New disc, and rewriting its markup to take
+   a class is a change to a screen this issue is not otherwise touching.
+   Home is deliberately NOT a caller. The bar above it carries the Homeroom
+   wordmark, and a screen called Home under a wordmark is the same word twice;
+   the wordmark IS Home's title. Every other platform screen is named by the
+   tab that opened it, so it says its own name. */
+.platform-screen-title { padding: 18px 16px 8px; }
 
 /* THE DISCS: New, the thread's actions, and the per-message tray's buttons.
    The language's floating circular control — a white disc on the plane,
@@ -512,6 +542,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* THE LIST, AND NOT THE THREAD. Both scrollers reach the bottom of the
+   screen, but the thread has the composer below it and the composer clears
+   the tab bar itself (`.platform-safe-bar`), so padding here as well would
+   reserve the band twice. The list has nothing under it — on a phone it IS
+   the screen, and from 768px up it is the left column beside the sheet —
+   so its last conversation row would otherwise sit behind the bar.
+
+   The bare token rather than the `max()` the others take: this scroller
+   reserves NOTHING today, so the inset is not part of what it is correcting
+   and pulling it in here would be a second change riding along. 0px with no
+   bar keeps that exactly as it was. */
+.messages-list-scroll {
+  padding-bottom: var(--platform-tabs-h, 0px);
 }
 
 /* A conversation row, drawn straight on the strip: the square swatch
@@ -1276,6 +1320,49 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .messages-thread-pane.messages-no-selection { margin: 0; }
 }
 
+/* ── An app's discussion, as a thread of this inbox (#2718 review) ──────
+   The section is the BOX and features/group-chat draws the sheet inside it,
+   so this adds no fill, no frost and no radius — see the note in the
+   component. All it does is let the host fill the pane, because the sheet
+   inside is `h-full` and a host that collapsed would give it nothing to be
+   the height of. */
+/* The agent row's delete, and the confirm that replaces the row (#2718
+   review). Both came from the Improve panel's own list of these chats, which
+   was the only surface that offered the delete — so it moved here with them
+   rather than retiring with the panel. */
+.messages-row-delete {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+.messages-conversation-row:hover .messages-row-delete,
+.messages-row-delete:focus-visible { opacity: 1; }
+.messages-row-delete:hover { background: var(--messages-surface-2); color: var(--text-primary); }
+/* Touch has no hover to reveal it with, so it is simply there. */
+@media (hover: none) { .messages-row-delete { opacity: 1; } }
+.messages-row-confirm { gap: 8px; font-size: 14px; color: var(--text-primary); }
+.messages-row-confirm-cancel,
+.messages-row-confirm-delete {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.messages-row-confirm-cancel { color: var(--text-muted); }
+.messages-row-confirm-delete { color: #dc2626; }
+.dark .messages-row-confirm-delete { color: #f87171; }
+
+.messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
+.messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
+
 /* Phone-width only. Each of these exists because a narrow column cannot lay
    the row out sideways; the thread pane on a desktop is up to ~59rem and can. */
 @media (max-width: 767px) {
@@ -1305,44 +1392,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   width: 100%;
   overflow: hidden;
 }
-/*
- * The experimental chat entry, at the head of Improve's dedicated Chats
- * section (frontend/src/features/global-chat/new-chat-button.tsx).
- *
- * It wore `.global-chat-mode-switch` and a header bar's 28px while it was a
- * toggle up there. The `.is-chat` fill went with the toggle rather than being
- * renamed: it marked "you are in chat mode", and the chat screen covers this
- * button the moment it opens, so there is no longer a moment at which that
- * state could be seen.
- *
- * MARGINS, not padding on a wrapper — this is a direct child of the
- * #improve-sessions scroller, and 16px is the `px-4` every label and row in
- * that panel is set to, so the pill's left edge lines up with the heading
- * below it.
+/* THE EXPERIMENTAL CHAT ENTRY IS THE INBOX'S NOW (#2718 review).
+ * `.global-chat-new-chat-btn` styled a pill at the head of the Improve
+ * panel's Chats section — first a header toggle flipping `Chat` / `Classic`,
+ * then an entry point in the panel. The panel retired, and the control had
+ * already been superseded: `#messages-new-agent` under the Messages inbox's
+ * Agents filter starts a chat, gated on the same two flags, beside the rows
+ * that resume one. One list, one way in.
  */
-.global-chat-new-chat-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-height: 30px;
-  margin: 10px 16px 2px;
-  padding: 0 12px;
-  border: 1px solid var(--brand-line);
-  border-radius: 9999px;
-  color: var(--brand-ink);
-  background: var(--brand-tint);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  white-space: nowrap;
-}
-/* "(experimental)" as the qualifier it is, in the weight and colour the chat
-   screen's own `h2 span` gives the same word. */
-.global-chat-new-chat-btn span span {
-  color: var(--text-muted);
-  font-weight: 500;
-}
 .global-chat-toolbar {
   display: flex;
   align-items: center;
@@ -1882,7 +1939,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   background: currentColor;
 }
 @media (max-width: 639px) {
-  .global-chat-new-chat-btn { min-height: 44px; }
   .global-chat-toolbar { padding-right: 12px; padding-left: 12px; }
   .global-chat-toolbar p { display: none; }
   .global-chat-budget { display: none; }
@@ -2130,7 +2186,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    notched phone is 54pt — so at the cap the sheet's head slid UNDER the clock
    and the signal bars, which is the one place the gap exists to prevent. The
    fallback keeps desktop and any browser without the env() unchanged. */
-.platform-sheet-adopted#improve-panel,
 .platform-sheet-adopted#messages-sheet {
   max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem) !important;
 }
@@ -2190,7 +2245,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    takes a `pointercancel` (native.js handles it with v=0 and springs back);
    a drag starting anywhere else in the sheet still dismisses it, and so
    does the grabber. */
-.un-sheet:has(#improve-panel),
 .un-sheet:has(#notifications-sheet),
 .un-sheet:has(#messages-sheet) {
   touch-action: pan-y;
@@ -2358,6 +2412,83 @@ html[data-un-vt]::view-transition-group(platform-header) {
   animation: none;
 }
 
+/* ── THE REST OF WHAT PINNING A GROUP DOES NOT DO (#2718 review) ────
+
+   `animation: none` on the GROUP stops it sliding. It does not stop the two
+   IMAGES inside it cross-fading, which is the default for every named group
+   — so the bar stayed put and spent 130ms showing "Homeroom" and "Workshop"
+   superimposed, both at half opacity, over a rail whose five labels were
+   ghosting through the root snapshot at the same time. Caught by
+   screenshotting 40ms into a Home -> Workshop push.
+
+   The old image goes and the new one is simply there. A cross-fade is how
+   you animate a thing CHANGING; this bar does not change, it relabels, and
+   two labels at once reads as a fault rather than as motion.
+
+   THE RAIL GETS ITS OWN GROUP for the same reason it needed one: unnamed, it
+   is part of the root snapshot and slides with the page it is navigation
+   for. Which tab is lit does change — and pops rather than fading, which is
+   the same trade the bar makes and the right one for chrome.
+
+   Unique per capture, like the header's: both are single elements in the
+   shell. A group present in only one state (the rail going away as an app
+   opens) has nothing to cross-fade with and pops, which is what the zoom
+   transitions already do to it. */
+#platform-tabs {
+  view-transition-name: platform-tabs;
+}
+html[data-un-vt]::view-transition-group(platform-tabs) {
+  animation: none;
+}
+html[data-un-vt]::view-transition-old(platform-header),
+html[data-un-vt]::view-transition-old(platform-tabs) {
+  animation: none;
+  opacity: 0;
+}
+html[data-un-vt]::view-transition-new(platform-header),
+html[data-un-vt]::view-transition-new(platform-tabs) {
+  animation: none;
+  opacity: 1;
+}
+
+/* EXCEPT WHEN THE RAIL IS THE THING GOING AWAY (#2718 review). Opening an
+   app hides it, so its group has an OLD image and no new one — and the rule
+   above then reads as "remove it on frame 0", which opened a 224px hole down
+   the left of the window and held it there while the page behind it was
+   still fading. The sidebar vanished, and only then did the app arrive.
+
+   Held at full opacity instead, the bar simply stays where it is for the
+   length of the transition and the app rises over it, which is what "an app
+   covers the rail" should look like. It leaves when the transition does,
+   under a screen that is by then covering that column.
+
+   `:has()` against the LIVE DOM is what tells the two cases apart: during a
+   transition the document is already in its new state, so `#platform-tabs`
+   carrying `hidden` means this bar is gone on the other side. A tab-to-tab
+   change has the rail in both states and keeps the rule above, where the old
+   image must go — two translucent rails stacked would double the fill and
+   light two rows at once. */
+html[data-un-vt]:has(#platform-tabs.hidden)::view-transition-old(platform-tabs) {
+  opacity: 1;
+}
+
+/* THEY DO NOT GO OPAQUE, and that was tried. The note above says a named
+   group has to paint an opaque background because it composites ABOVE
+   ::view-transition-group(root) — true of an element being COMPOSITED, and
+   these are not: pinning the two images means the group renders the NEW
+   snapshot at full opacity, and a snapshot is a picture, not a live surface
+   sampling a backdrop that is moving underneath it.
+
+   Forcing `--dc-sheet` here instead made both bars `#ffffff` for the length
+   of every navigation — over a cream wallpaper they normally read as a pale
+   wash of it, so the cure was a white flash on every tab press, which is
+   worse than what it was aimed at. Measured: `rgba(255,255,255,0.5)` with a
+   blur at rest, `rgb(255,255,255)` opaque mid-push.
+
+   Left as prose rather than as a disabled rule: the next person to read the
+   note above will reach for this, and the answer is that the images are
+   already doing the work. */
+
 /* Infinite decorative effects keep compositing even when the user is idle.
    Their state must remain legible without motion: lifecycle colors stay in
    place and busy session dots gain a static ring.  Functional progress
@@ -2473,11 +2604,31 @@ html[data-browser-scroller^="auth-"] :is(
 ) {
   display: none;
 }
+/* IN BROWSER-SCROLLER MODE the document is the scroller and this bar is
+   sticky over it, so it has to hide the content sliding under it rather than
+   letting it read through — which is why it takes a near-opaque wash of the
+   page ground instead of the frosted fill below.
+
+   #platform-header is the exception now (#2718 review): the tab bar at the
+   foot is `position: fixed` over the very same scrolling document and has
+   always been `--dc-sheet-fill` under `--dc-frost`, so "frost over moving
+   content" is a thing this shell already does at one edge of the screen. The
+   two bars are the same kind of object and the owner asked for them to look
+   it, on phone and desktop alike. The landing header keeps the wash: it has
+   no tab bar to match and nothing frosted anywhere near it.
+
+   The `!important` goes with the exception. It was here to beat the Tailwind
+   `bg-zinc-200` utility on the element, and the surface rule further down
+   beats that on specificity alone (`body:has(...) #platform-header`), so
+   dropping it costs nothing and stops this rule silently outranking a
+   later one. */
 html[data-browser-scroller] :is(#platform-header, #landing-header) {
   position: sticky;
   top: var(--browser-banner-h);
   z-index: 30;
-  background: color-mix(in srgb, var(--home-ground) 92%, transparent) !important;
+}
+html[data-browser-scroller] #landing-header {
+  background: color-mix(in srgb, var(--home-ground) 92%, transparent);
   backdrop-filter: blur(12px);
 }
 html[data-browser-scroller="browse-screen"] #browse-search-bar {
@@ -2775,6 +2926,38 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    identical on both sides of the transition and only the page moves. */
 body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #global-chat-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
+}
+
+/* ── THE BAR IS THE SAME MATERIAL AS THE BAR AT THE FOOT (#2718 review) ──
+
+   The rule above clears the header on every screen that paints the
+   wallpaper, so the ground runs straight through it. That was right while
+   the bar floated alone on a page; it is wrong now that a second bar is on
+   screen with it, because the two are the same KIND of thing — the platform's
+   own chrome around somebody's content — and they were drawn as two
+   different ones: `.platform-tabs` a frosted wall with a hairline, the header
+   nothing at all.
+
+   So the header takes the tab bar's surface exactly: `--dc-sheet-fill` under
+   `--dc-frost`, the pane material every floating surface in the shell wears.
+   On a desktop the rail and the header meet at the corner and read as one
+   continuous edge around the page, which is what the design draws.
+
+   NOT INSIDE AN APP, and not signed out. `#app-view` keeps the clear bar
+   because there is no tab bar there to match and the strip takes the APP's
+   tone instead (`data-app-tone`, #1945) — a frost over somebody else's page
+   colour is a smear, not a surface. The auth screens have no bar either.
+
+   NO BORDER-BOTTOM. The tab bar's hairline is its top edge meeting the page;
+   this bar's bottom edge is `rounded-b-2xl -mb-2`, a notch every platform
+   surface below tucks 8px up into, so a line drawn across it would cut the
+   notch in half. The frost IS the edge here. */
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+             #settings-screen, #messages-screen, #workshop-screen,
+             #global-chat-screen):not(.hidden)) #platform-header {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -3724,7 +3907,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    rails of ~13rem cards bleeding to both screen edges is most of the
    Discover block, so on a phone that was a band you could not scroll the
    page from at all — put a finger on a card, drag up, and nothing moved, not
-   even the rubber band. (`.un-sheet:has(#improve-panel)` a thousand lines up
+   even the rubber band. (`.un-sheet:has(#notifications-sheet)` a thousand lines up
    has to opt vertical panning back IN for its scroller for exactly this
    reason, and states the rule correctly.)
 
@@ -3764,6 +3947,34 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   padding-block: 0.125rem;
 }
 .home-discover-rail::-webkit-scrollbar { display: none; }
+
+/* ── THE RAIL STOPS AT THE CONTENT'S EDGE, AND FADES THERE (#2718 review) ──
+
+   On a phone the rail BLEEDS: `margin-inline: -0.75rem` with the padding
+   added back lets a card scroll flush to the screen edge, which is the whole
+   affordance — the row visibly continues past the frame.
+
+   On a desktop the frame is not the screen. The page has a rail on its left
+   and a gutter mirrored on its right (see --platform-gutter), and a lane that
+   bleeds 12px past that gutter puts its cards 12px closer to the window edge
+   than every other thing on the page — which reads as the lane being
+   misaligned rather than as it continuing.
+
+   So the bleed is cancelled and a MASK says the same thing instead: the last
+   2rem of the scrollport fades to transparent, so a row with more in it
+   trails off rather than being cut. The mask is static rather than driven by
+   scroll position — a lane shorter than the port fades empty space, which is
+   invisible, and the alternative is a scroll-timeline this shell cannot rely
+   on in every browser it ships to. */
+@media (min-width: 768px) {
+  .home-discover-rail {
+    margin-inline: 0;
+    padding-inline: 0;
+    scroll-padding-inline: 0;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+  }
+}
 
 /* 9.5rem is the reference's card at a 390pt phone (150/390 of the frame),
    and it is a fixed width on purpose: cards that flex would resize as the
@@ -3934,7 +4145,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding-bottom: var(--platform-safe-bottom);
+  /* #home-screen is the one screen root with no `.platform-safe-scroll`, so
+     it reserves the tab bar's band here instead — same `max()`, same reason
+     (see that utility near the top of this file). It matters more here than
+     anywhere else: the trailing sections are BOTTOM-ANCHORED to this box, so
+     under-reserving does not merely crop the last card, it parks Create and
+     Challenges permanently behind the bar. */
+  padding-bottom: max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom));
 }
 html[data-browser-scroller="home-screen"] .home-body-fill {
   /* The header overlaps its content by .5rem (its rounded lower edge). */
@@ -9859,7 +10076,8 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
      it as the title's left side group.
    - CEILING: no direct child of either header may exceed 28px, and the
      children that could grow past it state their height OUTRIGHT rather
-     than adding up to it — the Improve pill is `h-7`, the landing CTAs
+     than adding up to it — the Homeroom mark is `h-7` around a 26px
+     tile (as the Improve pill it replaced was, #2718), the landing CTAs
      are `h-7 inline-flex items-center`. Padding arithmetic is what
      broke this twice back when the row was 28px: the old App/Dev
      switch's `py-1` segments + `p-0.5` track came to 28px only if you
@@ -9929,6 +10147,45 @@ html.web-browser-chrome {
   transform: translate(-50%, -50%);
   flex: none;
   text-align: center;
+}
+
+/* ── NOT WHILE THE DESKTOP RAIL IS UP (#2718) ──────────────────────────
+   The hook above centres on the room it measures, and on a 1280px desktop
+   with an empty left group there is room for anything — so the Homeroom
+   wordmark landed in the middle of the window, floating over the content
+   column with the rail's 224px to its left. It read as a mistake, because it
+   is one: what the hook is centring against is the WINDOW, and the window
+   stopped being the content area the moment a rail took a fifth of it.
+   Left-aligned, the wordmark sits over the rail it belongs to and the bar
+   reads the way the design draws it: mark left, alert and menu right.
+   Expressed here rather than in use-header-layout.ts on purpose. The hook's
+   job is "is there room", which is a measurement; "is there a rail" is a
+   layout fact the stylesheet already knows, and a media query cannot get out
+   of step with the one that draws the rail.
+
+   AND NOT INSIDE AN APP EITHER (#2718 review). The rule above was keyed on
+   the rail being up, which left exactly one live case for centring: a
+   desktop window with no rail, which is a running app. So an app's name
+   floated in the middle of the bar while every platform screen's sat left —
+   the two states of one bar disagreeing about where a title goes, on the one
+   navigation where they alternate. "Keep App titles left justified in the
+   header, like the platform" is the whole of it, and dropping the `:has()`
+   is the whole of the fix.
+
+   WHICH LEAVES `.is-centered` INERT AT DESKTOP, and dead below it — the hook
+   never sets it under CENTER_MIN_WIDTH_PX. The hook and its class stay for
+   now rather than being ripped out mid-review: they are pinned by
+   tests/header-title-centering.test.js and by the measurement contract
+   use-header-layout.ts documents, and retiring a measured seam is its own
+   change with its own evidence. Worth doing, and named here so it is not
+   forgotten. */
+@media (min-width: 768px) {
+  #header-title.is-centered {
+    position: static;
+    transform: none;
+    flex: 1 1 auto;
+    text-align: left;
+  }
 }
 
 /* THE IN-PAGE TITLE IS SHOWN IN THE NATIVE WEBVIEW TOO.
@@ -10192,163 +10449,52 @@ a.drawer-ver--fork:hover {
   transition: transform 200ms ease-out;
 }
 
-/* ── Improve panel: side panel on desktop, bottom sheet on mobile ──
-   ONE element, two idioms, because that is the product requirement and
-   not a fallback: "the improve button, on desktop opens a panel from the
-   side, on mobile, from the bottom".
+/* ── The Improve panel is RETIRED (#2718 review) ───────────────────────
+   Every rule that drew it stood here: a right-edge rail over the header on
+   desktop, a bottom sheet below `sm`, its overlay's fade, and the corner and
+   hairline the rail shared with the bell's. It was one element, two idioms,
+   and its whole remaining content was two buttons — the session list the
+   Workshop took earlier in this issue, and a build notice. A drawer you open
+   to press a button is a tap to reach a tap, so the buttons, the notice and
+   the view strip went up into the mark's menu and the drawer went with its
+   CSS. `#apps-switcher-sheet` below is where they draw now.
 
-   Like #header-menu-panel above, the panel is ALWAYS in the document and
-   translated off-screen rather than `hidden` — that is what gives the
-   slide a transition to run, with no display:none reflow dance for the
-   controller to get right. `data-open` is the switch, and React renders
-   it: the native kit writes CLASSES to this node when it adopts it
-   (.platform-sheet-adopted), never attributes, so this one is safe to
-   reconcile where `className` is not.
+   Two things it left behind on purpose. `.platform-sheet-adopted` still
+   neutralises the fixed chrome by CLASS rather than by id, which is what
+   made this block removable without touching the kit path at all; and the
+   dim's geometry, which was never this panel's:
 
-   The kit path overrides all of this anyway — on touch, where the kit is
-   loaded, features/improve/improve-controller.js hands the element to
-   PlatformUI.sheet() and .platform-sheet-adopted (above) neutralises the
-   fixed chrome. These rules are what a mobile WEB browser with no kit
-   gets, and they have to be a bottom sheet there too.
-
-   The overlay never uses `hidden`: opacity carries the fade and
-   pointer-events is what stops a transparent backdrop from eating clicks
-   while the panel is closed. */
-/* IT COVERS THE HEADER. A full-height rail over the whole right edge,
-   the bar included — which is what it was before it was made to hang from
-   the bar's underside, and what it is again.
-
-   The intervening arrangement was argued from one interaction: with the
-   backdrop stopping at the bar you could press the bell while Improve was
-   open and move straight between the two panels. That is real, and it is
-   what this gives up. What it bought was worse — a rail and a dim that
-   stopped short of the top of the screen, so an open panel left a lit strip
-   of chrome above it that belonged to neither the panel nor the page. A
-   modal surface that covers everything is the ordinary reading of a modal
-   surface, and moving between panels is two clicks, which is what it is
-   everywhere else in the product.
-
-   `bottom: 0` still takes it to the floor; only where it STARTS moved back.
-   Below `sm` the block further down resets `top` for the bottom sheet, and
-   `.platform-sheet-adopted` neutralises inset entirely on the kit path. */
-/* THE RAIL'S OWN CORNER AND HAIRLINE, which is the whole of what this panel
-   took from the bell's when both went onto `.dc-lift dc-lift-panel`. The two
-   are the same object at two names — a right-edge rail, floor to ceiling,
-   over a scrim — so the shape statement is the one #notifications-sheet
-   already makes further up ("The bell's sheet on the ladder"): ONE corner is
-   rounded, the top-left, because it is the only corner of this panel that is
-   a corner of anything. The top-right, bottom-right and bottom-left all sit
-   on an edge of the display.
-
-   `.dc-lift` ships `1.75rem 1.75rem 0 0`, which is right for a sheet docked
-   to the FLOOR and wrong for one docked to the right, so the desktop shape is
-   restated here rather than inherited; the `max-width: 639px` block below
-   puts the pair of top corners back for the bottom sheet.
-
-   The hairline is `--app-sheet-line` for all four sides, not the zinc pair
-   this wore before. Only the left edge is drawn (`border-left-width`, and
-   `.dc-lift`'s own `border-top`), but naming the colour once keeps the two
-   drawn edges from having to agree by coincidence. */
-#improve-panel {
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 20rem;
-  max-width: 85vw;
-  border-left-width: 1px;
-  border-color: var(--app-sheet-line);
-  border-radius: 1.75rem 0 0 0;
-  transform: translateX(100%);
-}
-#improve-panel[data-open] {
-  transform: translateX(0);
-}
-/* `box-shadow` rides along with the slide because the modal dim is one of this
-   element's shadow layers now (see `.dc-lift-panel`). Without it here the dim
-   would snap on at the start of the open and off at the start of the close,
-   which is the exact complaint the kit-adopted backdrop note records. */
-.improve-panel-transition {
-  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
-}
-#improve-overlay {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 200ms ease-out;
-}
-#improve-overlay[data-open] {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* ── THE HEADER IS INSIDE THE DIM ──────────────────────────────────────
+   ── THE HEADER IS INSIDE THE DIM ──────────────────────────────────────
    Every backdrop ships `inset-0`, so the bar is dimmed along with the page
-   and a click on it dismisses the panel like a click anywhere else. There
-   is no rule here any more, and that is the point: `inset-0` is what the
-   markup already says, and a desktop override that lifted the dim off the
-   bar was the whole of the previous arrangement.
+   and a click on it dismisses the surface like a click anywhere else. There
+   is no rule here, and that is the point: `inset-0` is what the markup
+   already says, and a desktop override that lifted the dim off the bar was
+   the whole of an arrangement this reverted.
 
-   WHAT THIS COSTS, because it is not nothing. The backdrop is `z-40` over
-   the header's `z-10`, so with a panel open a press on the bell lands on
-   the backdrop: the panel closes and nothing else happens. Moving from
-   Improve to notifications is two clicks, and the first one looks like it
-   did nothing. That was the reported problem the offset fixed, and it comes
-   back with it.
+   WHAT THAT COSTS, because it is not nothing. The backdrop is `z-40` over
+   the header's `z-10`, so with a sheet open a press on the bell lands on
+   the backdrop: the sheet closes and nothing else happens. Moving between
+   two of them is two clicks, and the first one looks like it did nothing.
+   That was the reported problem the offset fixed, and it comes back with it.
 
    It is the right trade anyway. A dim that stops 60px short of the top of
-   the screen leaves a lit band of chrome above an open panel, and a bar
+   the screen leaves a lit band of chrome above an open sheet, and a bar
    that is live while a modal surface is up is a claim the rest of the
    product does not make. One click to dismiss, one to open the next, is
-   what a scrim means.
+   what a scrim means. */
 
-   The behaviour the offset made reachable — Improve.open() dismissing the
-   other registered sheets — STAYS. It is unreachable from the header again,
-   but it is still the correct thing for a panel to do when something else
-   opens it, and removing it would be undoing a fix rather than a geometry
-   change. tests/header-stays-live.test.js pins both halves. */
-
-/* Below `sm` (640px — the same boundary HomeLayout.BREAKPOINT_PX and the
-   kanban media queries use, so the shell has ONE phone/desktop line) the
-   panel comes up from the bottom instead. `max-height` matches the kit
-   sheet's own 70vh cap so the two presentations agree on how much of the
-   screen a sheet may take. */
-@media (max-width: 639px) {
-  #improve-panel {
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: auto;
-    max-width: none;
-    /* GROWS WITH ITS CONTENT, up to nearly the whole screen. A short sheet is
-       short; a long one climbs to this cap and then its own scroller takes
-       over (see .nav-sheet-scroll below). 3rem of ground stays visible so the
-       thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
-       a mobile browser's collapsing toolbar must not push the foot of the
-       sheet under itself. */
-    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
-    border-left-width: 0;
-    border-top-width: 1px;
-    border-top-left-radius: 1.75rem;
-    border-top-right-radius: 1.75rem;
-    transform: translateY(100%);
-  }
-  #improve-panel[data-open] {
-    transform: translateY(0);
-  }
-}
 /* ── App-context sheet (Streamlined Concept) ──────────────────────
    The surface behind the header's "app name ⌄" tab. THREE presentations,
    one always-mounted element with the same `data-open` mechanics: a real kit
    sheet on touch, a bottom sheet below `sm`, and — at `sm`+ for a mouse — a
-   DROPDOWN under the chip that opened it. Only the last of those differs from
-   #improve-panel above; read that block's comment for the mechanics, which
-   transfer wholesale. */
+   DROPDOWN under the chip that opened it. Only the last of those differs
+   from the notifications/messages rails below; read that block's comment for
+   the mechanics, which transfer wholesale. */
 /* IT DROPS FROM THE CHIP; IT IS NOT A RAIL.
    It was a right-edge slide-over reaching floor to ceiling, the same idiom as
-   #improve-panel and the notifications/messages sheets. Those three earn it:
-   an inbox and a workbench are surfaces you DWELL in, they hold as many rows
-   as there are, and a full-height column is the right shape for a list with
-   no natural end.
+   the notifications and messages sheets. Those earn it: an inbox is a surface
+   you DWELL in, it holds as many rows as there are, and a full-height column
+   is the right shape for a list with no natural end.
    This one is a MENU — a strip of apps and six destinations — opened from a
    control that sits in the middle of the top bar. Answering from the opposite
    edge of the screen made the eye travel the width of a 27" display away from
@@ -10484,10 +10630,10 @@ a.drawer-ver--fork:hover {
    dimming the page and the other not made them read as two different KINDS of
    surface, which is a distinction the shell does not otherwise draw. Sameness
    beat the popover precedent.
-   There is nothing to write here to achieve it — #improve-overlay and
-   #apps-switcher-overlay ship the same `fixed inset-0 z-40 bg-black/40` and
-   share the opacity rules above, so deleting the override is the whole change
-   and the two cannot drift apart by construction. */
+   There is nothing to write here to achieve it — #notifications-sheet-overlay
+   and #apps-switcher-overlay ship the same `fixed inset-0 z-40 bg-black/40`
+   and share the opacity rules above, so deleting the override is the whole
+   change and the two cannot drift apart by construction. */
 /* Below `sm` it is a bottom sheet, and these are its own geometry rather than
    overrides of the block above: the two media queries are disjoint now that
    the dropdown states its own, so nothing here is undoing anything. */
@@ -10518,9 +10664,9 @@ a.drawer-ver--fork:hover {
 }
 
 /* ── Notifications and Messages sheets ────────────────────────────────
-   The bell and the speech bubble present as #improve-panel does — right-edge
-   slide-over at `sm`+ for a mouse, a bottom sheet below it, a real kit sheet
-   on touch — because they stopped being screens. A screen reachable from
+   The bell and the speech bubble present the way the retired Improve panel
+   did — right-edge slide-over at `sm`+ for a mouse, a bottom sheet below it,
+   a real kit sheet on touch — because they stopped being screens. A screen reachable from
    every route has to answer "back to where?", and both of these answered
    "home", which was wrong every time they were opened from somewhere else.
 
@@ -10544,7 +10690,14 @@ a.drawer-ver--fork:hover {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 24rem;
+  /* 26rem, NOT 24 (#2718 review). The filter strip grew a fourth tab —
+     Agents, for what is running — and four of them plus the unread count's
+     own parenthesis ran the last one, All, flush against the panel's edge.
+     The strip scrolls (its scrollbar is hidden), so nothing was unreachable;
+     it just read as cut off, which is the same thing to a reader. 2rem is
+     what puts air back after the last tab at a two-digit count, and `max-width`
+     still keeps the panel off a narrow window's far edge. */
+  width: 26rem;
   max-width: 90vw;
   border-left-width: 1px;
   transform: translateX(100%);
@@ -13641,6 +13794,29 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-muted);
 }
+/* WHICH WORKSHOP YOU ARE IN (#2718 review) — the scope chip, and the panel
+   it opens. The chip itself is the shared component's, styled there; what
+   this owns is where the pair SITS on this screen, which the all-apps screen
+   answers with its own page padding.
+
+   The panel's own `mx-4` is cancelled: it was written for a screen whose
+   column runs to the window's edge, and this column is already inset. A
+   second inch of margin inside an already-inset card reads as a panel that
+   missed its anchor. */
+.dev-ws-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+.dev-ws-scope > button {
+  align-self: flex-start;
+  max-width: 100%;
+}
+.dev-ws-scope > [role='menu'] {
+  margin-inline: 0;
+  margin-bottom: 0;
+}
 .dev-ws-strip {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -15997,3 +16173,991 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
 .home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta) { color: #8e8e93; }
 .home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="false"] { background: white; color: #0062cc; border-color: #e3e3e6; }
 .home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="false"] { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   #platform-tabs — the shell's five sections, as a permanent bar
+   ═══════════════════════════════════════════════════════════════════
+
+   The markup is frontend/src/features/nav/tab-bar.tsx, and its header
+   carries the product argument: every host this shell is modelled on keeps
+   a flat per-mini-app menu AND a permanent bar of its own sections, and
+   this shell had only the menu, so the platform's places were sitting in
+   the app's list for want of anywhere else to put them.
+
+   What lives HERE rather than in the component is everything that has to
+   agree with a second rule somewhere else: the bar is out of flow, so
+   nothing reserves its space automatically, and the space it covers is
+   held open by the screens above it. Two rules, one number. */
+
+/* THE BAND THE BAR COVERS, read by the screens above it.
+
+   Declared on `body` in both branches, NOT on `:root`, and that is not a
+   style choice. A custom property's `var()`s are substituted at
+   computed-value time on the element the property is DECLARED on, and the
+   result is what inherits — so a token declared on `:root` that reads
+   `--platform-tabs-h` would bake in `:root`'s value and never see the
+   override below. Both declarations sit on the same element so the cascade
+   picks between them the ordinary way.
+
+   `body:has(#platform-tabs:not(.hidden))` is the route test, and it is the
+   same shape as the wallpaper's a few thousand lines up: the bar's own
+   `hidden` class IS the fact, published once by the visibility store and
+   applied by the island (features/nav/tab-bar.tsx), so no second flag has
+   to be kept in step with it. A `:has()` that watches one id for one class
+   is as cheap as that selector gets.
+
+   IT INCLUDES THE INSET, unlike `--ws-bar` above, and for the opposite
+   reason. The Workshop's pill floats clear of the bottom edge, so the strip
+   beneath it is held open by the scroller and counting it twice was the
+   #4149 bug. This bar is fused to the edge — it spends the inset itself, as
+   its own lower padding — so the clearance a screen needs above it is the
+   bar's FULL outer height. Every consumer therefore takes
+   `max(--platform-tabs-h, --platform-safe-bottom)`: the bar's box when the
+   bar is there (its padding already covers the strip), the bare strip when
+   it is not. One expression, both states, no double count either way.
+
+   `html:not(.un-kb)` because the keyboard takes the bar with it — see the
+   display rule below. */
+body {
+  /* The BAR's own outer height, which the parked strip rests on. */
+  --platform-bar-h: 0px;
+  /* Everything at the foot of the screen, stacked — what a surface above has
+     to clear. With no strip it is the bar; with one it is both. */
+  --platform-tabs-h: 0px;
+  /* HOW WIDE THE RAIL IS, which is not the same question as how much width
+     it RESERVES — and keeping the two apart is what lets it float. A PEEKED
+     rail (over an app, or over a screen whose rail is folded) is drawn at its
+     full width while the content under it reserves nothing; a rail that had
+     one number for both was 17px of padding and a border, because the
+     reserved figure was 0. A constant, never overridden. */
+  --platform-rail-full: 224px;
+  /* HOW MUCH ROOM THE RAIL'S FOOT TAKES — the Me row, plus the rail's own
+     8px of bottom padding. Read by the parked strip, which is fixed to the
+     same corner and has to rest ON that row rather than over it. One number,
+     because two would drift the first time the row's height changes. */
+  --platform-rail-foot-h: 52px;
+  /* WHAT IT RESERVES. 0 on a phone, where the five tabs are a bar at the foot
+     and cost width nothing; 0 again on a desktop while the rail is folded or
+     peeking, where the content takes the width back. */
+  --platform-rail-w: 0px;
+  --platform-gutter: 0px;
+}
+/* `:not(.platform-tabs-peek)` because a PEEKING bar reserves nothing: the
+   router still says the bar is hidden (see features/nav/tab-bar.tsx), the app
+   under it is full width, and a rail that claimed 224px on the way in would
+   reflow the app under the pointer that revealed it. */
+html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) {
+  --platform-bar-h: calc(56px + var(--platform-safe-bottom, 0px));
+  --platform-tabs-h: calc(56px + var(--platform-safe-bottom, 0px));
+}
+/* THE PARKED STRIP ADDS ITS OWN BAND, and only while the bar is there to sit
+   on: the strip is offered on the platform's screens and never inside a
+   running app, which is the one route where resuming that app would be a
+   shortcut to where you already are. Both terms are spelled out rather than
+   summed from the token above, because a custom property's var()s resolve on
+   the element the property is DECLARED on — see the note at the head of this
+   section — so `calc(52px + var(--platform-bar-h))` here would read the 0px
+   from the plain `body` rule rather than the value the selector above sets. */
+html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {
+  --platform-tabs-h: calc(52px + 56px + var(--platform-safe-bottom, 0px));
+}
+
+/* THE APP WORKSHOP'S PILL RESTS ON THE PLATFORM'S BAR (#2718 review).
+   `.dev-ws-tabs` is a floating oval fixed to the foot of the window, and
+   `--ws-lift` is the air under it — until this change it was alone down
+   there, because an app hid the platform's bar. The app's WORKSHOP keeps
+   that bar now (App._syncPlatformTabs), so on a phone the two share the
+   bottom edge and the pill rides above rather than through.
+
+   DECLARED ON `body`, not on :root beside the token's default: a custom
+   property's var()s resolve on the element it is declared on, and
+   `--platform-tabs-h` is a body-level answer. The pill inherits this through
+   its portal host, which is a descendant of body like everything else.
+
+   The inset is still spent exactly once. `--platform-tabs-h` already carries
+   it (`56px + --platform-safe-bottom`), which is why this adds air and not
+   the inset again — the double-count the default value's own note is about. */
+html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) {
+  --ws-lift: calc(var(--platform-tabs-h, 0px) + 8px);
+}
+
+/* KEYBOARD UP, BAR GONE. The same reasoning `html.un-kb .platform-safe-scroll`
+   states for the home-indicator strip: a bar pinned to the bottom of the
+   viewport with a keyboard over it is either behind the keyboard or riding
+   on top of it, and neither is navigation. `display: none` rather than the
+   `hidden` class because the class has an owner (the island) and this is a
+   presentation rule, not a route fact — the bar comes back with no state to
+   restore the moment the keyboard drops. The reservation above is already
+   off, because its selector excludes this state. */
+html.un-kb #platform-tabs {
+  display: none;
+}
+
+.platform-tabs {
+  /* FIXED TO THE REAL VIEWPORT. `.dev-ws-tabs` above documents the three
+     rounds this saves: `sticky` puts a bar's resting place at the mercy of
+     whatever container it sits in, and every one of those inputs behaves
+     differently in a real iOS PWA than in a headless Chromium. This one has
+     a second reason on top — on `html[data-browser-scroller]` routes the
+     DOCUMENT is the scroller and `body` is `height: auto`, so a flex child
+     at the end of the column scrolls away with the page.
+
+     No portal, unlike the Workshop's bar: this is a direct child of <body>
+     and nothing between here and the viewport carries a `backdrop-filter`,
+     a `transform` or a `filter`, so `fixed` already means the screen. */
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* UNDER the panels, sheets and dialogs (which sit at 40 and above) and
+     OVER the screens. A tab bar that a sheet does not cover reads as part
+     of the sheet; one the screens paint over is not a bar at all. */
+  z-index: 30;
+
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: stretch;
+  padding: 0 4px;
+  /* THE INSET, SPENT EXACTLY ONCE, here. `--platform-tabs-h` above counts on
+     this and the screens count on that. */
+  padding-bottom: var(--platform-safe-bottom);
+
+  /* EDGE TO EDGE AND FROSTED, not the Workshop's floating pill. The two bars
+     are different kinds of thing and the shapes should say so: the Workshop's
+     switches between three views OF one screen, so it floats over that
+     screen's content; this one switches between screens, so it is a wall at
+     the bottom of the app with the content ending against it. Fusing it to
+     the edge is also what lets it spend the home-indicator inset itself,
+     which is what keeps the arithmetic above to one number. */
+  border-top: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .platform-tabs { background-color: var(--dc-sheet); }
+}
+
+/* A GLYPH OVER ITS LABEL, 56px tall: 8 of padding, 24 of glyph, 3 of gap, a
+   13px line, 8 again. Above the 44px minimum the shell holds every phone
+   target to, which this has to clear by a margin — it is the platform's
+   primary navigation and it is the control nearest the bottom edge, where a
+   thumb is least precise.
+
+   THE LABEL STAYS. A five-icon bar with no words asks the viewer to learn
+   five glyphs, and two of these five (Workshop, Discover) name things that
+   have no conventional icon at all. The same argument `.dev-ws-tab` makes
+   one screen down: at 11px under a glyph the glyph carries the scanning and
+   the word settles what the glyph cannot. */
+.platform-tab {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  height: 56px;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  line-height: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* THE HEADER'S PERIWINKLE, not black — the same choice and the same tokens
+   as `.dev-ws-tab[aria-selected="true"]`, because these are the same kind of
+   thing: where you are, among the places you could be. `aria-current` is the
+   only marker the component renders, so it is the only one this reads. */
+.platform-tab[aria-current="page"] {
+  color: var(--brand-ink);
+}
+
+/* The badge's anchor. `position: relative` on the glyph's wrapper rather
+   than on the whole tab, so the count sits on the ICON's corner and not on
+   the tab's — the tab is 56px tall and a badge pinned to its top-right
+   would float in the air above the glyph, away from the thing it is about. */
+.platform-tab-mark {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.platform-tab-glyph {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+.platform-tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* A LINE BOX THAT TRACKS THE FONT. `.platform-tab` sets `line-height: 13px`
+     as an absolute, which is right for the 11px caption under a phone glyph
+     and two pixels too short for the rail's 15px row — so with `overflow:
+     hidden` on this element the tail of a `g` or a `p` was sliced off flat.
+     Measured at 1280: an 18px ink box in a 13px line box, 2px over the edge.
+     A unitless multiplier is the one value that is correct at both sizes. */
+  line-height: 1.35;
+}
+
+/* The same red disc as #notifications-badge in the header, at the same size:
+   two counts on one screen that disagreed about what a count looks like
+   would read as two different kinds of thing. The fill is Tailwind's
+   `red-500`, which is what that badge's utility classes compile to; it is
+   spelled out because this bar's appearance lives here rather than in the
+   component, and `--danger` elsewhere in this file already falls back to the
+   same value. */
+.platform-tab-badge {
+  position: absolute;
+  top: -3px;
+  left: calc(100% - 7px);
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--danger, #ef4444);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* THE MARK'S TILE (#2718). The artwork is a near-black squircle, which is a
+   shade the dark bar behind it is also wearing — `bg-zinc-900` on
+   #platform-header — so at 26px the tile's own edge disappears and the figure
+   floats. The inset hairline is what draws it back, and it is the same
+   hairline `.app-icon-tile` puts under an app's artwork one screen down, for
+   exactly this reason. Light mode does not need it and gets it anyway: at 6%
+   white over a near-black tile it is invisible on a light ground, so one rule
+   is correct in both rather than two rules being correct in one each. */
+.platform-mark-tile {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  /* The file is 261px square drawn at 26: tell the decoder so, rather than
+     letting it pick. */
+  object-fit: cover;
+}
+
+
+/* ── #platform-parked — the app you left ─────────────────────────────
+   frontend/src/features/nav/parked-store.js carries the argument. What lives
+   here is the geometry: a 52px strip resting ON the tab bar, out of flow like
+   it, with its band reserved by the same token the bar's is. */
+.platform-parked {
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* ON the bar, not above the screen's edge: the bar already spends the
+     home-indicator inset, so the strip's floor is the bar's ceiling and
+     neither reserves the strip twice. */
+  bottom: var(--platform-bar-h, 0px);
+  /* UNDER the bar's z-index by one. They never overlap, so this only decides
+     what a shadow falls across — and a temporary offer casting over permanent
+     furniture is the wrong way round. */
+  z-index: 29;
+
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 52px;
+  padding: 0 8px 0 4px;
+  border-top: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .platform-parked { background-color: var(--dc-sheet); }
+}
+
+/* THE WHOLE STRIP IS THE TARGET. A shortcut whose tappable area is a 60px
+   pill inside a full-width bar is a shortcut you miss; the pill is a LABEL
+   inside this anchor rather than a button beside it, which is also the only
+   valid markup (a button inside an anchor is not). */
+.platform-parked-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 4px 0 8px;
+  border-radius: 12px;
+  color: var(--text-primary);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.platform-parked-tile {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 9px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+}
+/* THE APP'S NAME IN FULL, not a description of it. It read "A chat is
+   working" for a round, which is a sentence about a session rather than the
+   thing you are going back to — and the answer to "what is this" here is the
+   app's own name, which is what you were looking at a moment ago. */
+.platform-parked-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+}
+.platform-parked-pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-line);
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+/* FORGET, not hide. A strip that comes back on the next screen swap is a
+   strip you cannot get rid of, and the handle's promise is that it is there
+   until you are done with it. */
+.platform-parked-x {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   THE SAME FIVE TABS, STANDING UP — desktop from 768px (#2718)
+   ═══════════════════════════════════════════════════════════════════
+
+   A bottom bar is a PHONE shape, and it does not survive the trip: at
+   1280px the five tabs sit 250px apart along the foot of the screen, which
+   is a row of unrelated buttons rather than a set of places, and it spends
+   the one dimension a desktop has plenty of to save the one it does not.
+
+   Every host in the study does the same thing here, and it is not a
+   compromise — it is what their desktop apps have always been. Slack,
+   Discord, Teams and Telegram Desktop all turn their phone tab bar into a
+   LEFT RAIL: the sections stand up, get their labels beside their glyphs
+   instead of under them, and the content takes the width back.
+
+   UNDER THE HEADER, not beside it. That is this shell's own arrangement
+   rather than a borrowed one, and it is the half of the design the product
+   owner chose: the bar names where you are and carries the platform's own
+   controls, so it spans the window and the rail hangs below it. It also
+   means the header is the SAME OBJECT on both sides of every navigation,
+   so nothing about it animates when a screen swaps.
+
+   768px because that is `md`, which is where every other two-level layout in
+   this file switches (the Settings sidebar, the Admin console's nav, the
+   Messages list-and-thread split). One breakpoint, not a fourth opinion. */
+
+/* ── THE RAIL'S OWN SWITCH (#2718 review) ───────────────────────────
+   #sidebar-toggle, in the header's left group. The component carries the
+   argument; what lives here is the one fact React must not decide, because
+   it does not know the viewport and asking would put a measurement in the
+   render path: the control exists only where there is a rail to fold.
+
+   A phone's bar is at the FOOT of the screen and is the only navigation
+   there is. Folding it would leave a reader with nothing and no hover to
+   bring it back, so below the breakpoint the button is not there — and
+   because it is not there, `railOpen` can never leave `true` on a phone. */
+.platform-sidebar-toggle {
+  display: none;
+}
+
+/* ── WHAT REACT STOPPED DECIDING (#2718 review) ──────────────────────
+   The toggle's markup is constant and so is its group's class string. Both
+   used to be computed from `useVisibility('platform-tabs')` during render,
+   and that store is published by public/js/app.js — a classic script, which
+   runs BEFORE the deferred island bundle hydrates. The prerender used the
+   default and the first client render used the router's real answer, so the
+   two disagreed and React threw #418 on every route. A console error on any
+   route fails every declared check; 291 of them, which is all of them.
+
+   All three questions are CSS's now, and none of them is part of hydration:
+
+     does the rail exist   → `#platform-tabs.hidden`, which the island
+                             publishes through useHiddenClass
+     is there room for it  → the media query
+     has the group anything→ `:has(> #back-btn.hidden)` plus the two above
+
+   THE GROUP GOES WHEN IT IS EMPTY, and that is not cosmetic: an
+   empty-but-present flex item still reserves the header's own `gap-4`, which
+   put the wordmark 16px in from the edge of every root screen the first time
+   this was tried. Scoped through `#platform-header` for specificity, not for
+   reach — the group carries Tailwind's `flex`, app.css loads BEFORE
+   tailwind.css, and the utilities win every equal-specificity conflict in
+   this file (#938). */
+#platform-header .platform-header-left:has(> #back-btn.hidden) {
+  display: none;
+}
+@media (min-width: 768px) {
+  /* …unless the toggle is in it, which needs both a rail and the width. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) #platform-header
+    .platform-header-left:has(> #back-btn.hidden) {
+    display: flex;
+  }
+}
+
+@media (min-width: 768px) {
+  /* THE PRESSED STATE IS THE DEFAULT ONE, so the button wears the bar's own
+     periwinkle disc while the rail is up and goes quiet when it is down —
+     the rail being there is what the control is asserting. Colour only: the
+     disc does not move, because it is the fixed thing the layout pivots
+     around when the whole content column slides.
+
+     `body:has(...)` is what replaces the `return null` this component used
+     to do for itself: a route with no rail has no fold to offer, and a dead
+     control is worse than none. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) .platform-sidebar-toggle {
+    display: inline-flex;
+    transition: background-color 140ms ease, color 140ms ease,
+                border-color 140ms ease;
+  }
+  .platform-sidebar-toggle[aria-pressed='false'] {
+    background: transparent;
+    color: var(--text-muted);
+    border-color: transparent;
+  }
+  .platform-sidebar-toggle[aria-pressed='false']:hover {
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+    border-color: var(--brand-line);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-sidebar-toggle { transition: none; }
+}
+
+@media (min-width: 768px) {
+  /* THE BAND AT THE FOOT GOES AWAY ENTIRELY. What a screen has to clear
+     below it is the home-indicator inset and nothing else — on a desktop
+     that is 0, and the expression keeps it correct on a tablet that has one.
+     The rail's width takes its place, as padding rather than as a band. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
+    --platform-rail-w: var(--platform-rail-full);
+    /* The air between the rail and the content, spent again on the right —
+       see the padding rule below. 1.5rem is the shell's own outer gutter
+       (`px-4` is 1rem and every pane steps out to 1.5rem at `sm`), so this
+       is the page's existing rhythm rather than a number for this one edge. */
+    --platform-gutter: 1.5rem;
+  }
+
+  /* THE BAND TOKENS NEED THE OTHER RULE'S SELECTOR, EXACTLY (#2718 review).
+     `--platform-bar-h` and `--platform-tabs-h` were declared in the block
+     above and never once applied. `:has()` takes the specificity of its most
+     specific argument, so the phone rule near the head of this section —
+     `body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek))`, whose
+     argument carries one class more — outranks it and kept winning at every
+     width. Measured at 1280: `--platform-bar-h` read `calc(56px + 0px)` and
+     `--platform-tabs-h` read `calc(52px + 56px + 0px)`.
+
+     Two things were wrong because of it. The parked strip is placed at
+     `bottom: var(--platform-bar-h)`, so the app you left floated 56px above
+     the bottom-left corner instead of resting in it. And every desktop
+     screen reserved 108px of band at its foot for a bar that is a rail down
+     the side.
+
+     Matching the selector character for character is the fix, and it is the
+     right selector on its own terms: a PEEKING rail reserves nothing, which
+     is what that `:not()` has always meant. Source order decides between two
+     rules of equal specificity, and this one is thousands of lines later. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) {
+    --platform-bar-h: 0px;
+    --platform-tabs-h: var(--platform-safe-bottom);
+  }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {
+    --platform-tabs-h: var(--platform-safe-bottom);
+  }
+
+  /* A FOLDED RAIL SPENDS NO WIDTH (#2718 review, #sidebar-toggle).
+     Same specificity as the rule above and immediately after it, so source
+     order decides — which is the whole of the arrangement: the rail's other
+     tokens (`--platform-bar-h: 0px`, the tabs band) stay exactly as they are,
+     because folding changes where the navigation IS and not whether this is
+     the desktop layout. The gutter deliberately survives: content that ran to
+     the window's edge the moment the rail went away would make folding it a
+     bigger change than the reader asked for.
+
+     INSIDE THE MEDIA QUERY AND NOWHERE ELSE. Below 768px the bar is the
+     phone's bottom bar and the only navigation there is; the class is still
+     on the element after a resize, and this is what keeps it inert there. */
+  html:not(.un-kb) body:has(#platform-tabs.platform-tabs-folded) {
+    --platform-rail-w: 0px;
+  }
+
+  /* ── WHERE THE BAR MEETS THE RAIL (#2718 review) ──────────────────
+     The header is `rounded-b-2xl`, which is right while it floats over the
+     page with nothing under its corners. The rail arrives directly beneath
+     its left one, so that 1rem curve cut a bite out of the top of the rail
+     and the two surfaces — the same material since this review — read as one
+     pane with a chip out of it. Square on the left only: the right corner
+     still has page under it and keeps its curve.
+
+     AND A HAIRLINE ACROSS THE SEAM, which is the same line the rail already
+     draws down its right edge, so the rail is outlined on the two sides that
+     touch something rather than on one. It is on the RAIL rather than the
+     header because the rail is what it bounds: a border under the header
+     would run the whole width of the window and divide the bar from the page
+     as well, which is a different statement and not the one asked for.
+
+     Both are keyed off the rail actually occupying its column. A FOLDED rail
+     is not there, so the corner keeps its curve; a folded rail PEEKING is an
+     overlay with the page still underneath, and the curve is right there for
+     the same reason it is right over an app. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-folded)) #platform-header {
+    border-bottom-left-radius: 0;
+  }
+  .platform-tabs:not(.platform-tabs-folded) {
+    border-top: 1px solid var(--app-sheet-line);
+  }
+
+  /* THE SCREENS MOVE OVER, and they move over by PADDING rather than by a
+     layout change: every root is a `flex-1` child of the body column and
+     stays one, so nothing about the flex chain, the scroll containers or the
+     view transitions is touched. A root's own centred column then centres in
+     what is left, which is what it should do.
+
+     #app-view is deliberately absent: an app covers the rail, which is what
+     "the app is the whole window" means, and the rail is hidden there anyway
+     so the token would be 0 even if it were listed. */
+  :is(#home-screen, #browse-screen, #workshop-screen, #leaderboard-screen,
+      #profile-screen, #admin-screen, #settings-screen, #messages-screen,
+      #global-chat-screen) {
+    /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
+       The rail's hairline was the content's left margin, so a card began
+       where the rail ended and the page had air on the right and none on the
+       left. Spending the same figure on both sides is what makes a centred
+       column inside actually centre in the window rather than sit a gutter's
+       width to the left of centre. */
+    padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
+    padding-right: var(--platform-gutter);
+  }
+
+  /* …AND #app-view JOINS THEM WHILE ITS RAIL IS UP (#2718 review). It is
+     absent from the list above because that list is keyed on the screen id
+     and this screen is TWO screens behind one id: the running app on the
+     `app` tab, which takes the whole window, and on `dev` the platform's own
+     Workshop for it, which is a platform screen like the others.
+
+     Keyed off the RAIL rather than off the tab, because the rail is already
+     the answer to that question — App._syncPlatformTabs publishes it — and a
+     second flag saying the same thing is a second flag to keep in step. The
+     peeking and folded cases are excluded for the reason they always are: a
+     rail that claimed 224px on the way in would reflow the page under the
+     pointer that revealed it. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
+    padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
+    padding-right: var(--platform-gutter);
+  }
+
+  .platform-tabs {
+    /* FROM UNDER THE HEADER TO THE FLOOR. The header is `position: relative`
+       in normal flow, so its height is a token rather than something to
+       measure — `--platform-header-h`, which the bar's own py-3 arithmetic
+       keeps true, plus whatever strips are above it. */
+    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
+      + var(--platform-safe-top, 0px));
+    right: auto;
+    bottom: 0;
+    /* THE FULL WIDTH, not the reserved one: this is the element being drawn,
+       and while it peeks the reserved figure is deliberately 0. */
+    width: var(--platform-rail-full);
+
+    /* A COLUMN THAT DOES NOT STRETCH. `grid-template-rows: repeat(5, 1fr)`
+       would spread five rows over 800px of rail, which is the bottom bar's
+       mistake turned on its side.
+
+       FLEX RATHER THAN GRID since #2718's review, for one reason: Me sits at
+       the FOOT of this rail now, and `margin-top: auto` is how an item claims
+       the leftover space in a flex column. In a grid with `align-content:
+       start` the rows are packed at the top and an item's auto margin only
+       moves it inside its own `max-content` row, which is no movement at all.
+       Everything else is the same arrangement said the other way: a column of
+       rows at their natural height, packed from the top. */
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 8px;
+    /* WHAT THE PARKED STRIP RESTS ON. That strip is `position: fixed` to the
+       foot of this column and overlays it, so the rail owes it a floor's
+       worth of room or the last row reads through it. `--platform-bar-h` is
+       0 here (the band at the foot of a phone is a rail at the side of a
+       desktop), which is why this is spelled out rather than borrowed. */
+    padding-bottom: calc(8px + var(--platform-safe-bottom, 0px));
+
+    border-top: 0;
+    border-right: 1px solid var(--app-sheet-line);
+  }
+
+  /* ── ME SITS AT THE FOOT (#2718 review) ──────────────────────────────
+     "Move Me to the bottom left of the sidebar, like on the prototype." It
+     is the one tab that is not a place in the product — it is the reader —
+     and every rail in the study puts the account at the bottom for exactly
+     that reason: Slack, Discord, Linear, Notion, VS Code. The other four are
+     a list of sections; this is who is looking at them.
+
+     `margin-top: auto` and nothing else: no reordering in the markup, no
+     second element, no id moved. The DOM order is still the reading order a
+     screen reader announces and the order the phone's bar lays out, and this
+     rule lives inside the desktop media query because on a phone the five
+     are a row across the foot and an auto margin there would drop Me out of
+     line with its four neighbours.
+
+     THE PARKED STRIP SITS ABOVE IT, which is the prototype's order: the
+     sections, then the app you left, then you. */
+  #platform-tab-me {
+    margin-top: auto;
+  }
+  .platform-parked {
+    bottom: calc(var(--platform-rail-foot-h) + var(--platform-safe-bottom, 0px));
+  }
+
+  /* A ROW, not a stack: the glyph leads and the label sits beside it at
+     reading size. Under a glyph at 11px the word is a caption on a target;
+     beside it at 15px it is the name of a place, which is what a rail's
+     rows are. */
+  .platform-tab {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: 12px;
+    font-size: 15px;
+  }
+  .platform-tab[aria-current="page"] {
+    background: var(--brand-tint);
+  }
+  .platform-tab-label {
+    max-width: none;
+  }
+
+  /* THE PARKED STRIP IS THE RAIL'S FOOTER. It is the app you left, and the
+     rail is the list of places you can go — so it belongs at the bottom of
+     that list rather than across a window whose content has nothing to do
+     with it. Same element, same store, same ✕. */
+  .platform-parked {
+    right: auto;
+    width: var(--platform-rail-full);
+    padding-bottom: var(--platform-safe-bottom, 0px);
+    height: auto;
+    min-height: 52px;
+    border-top: 1px solid var(--app-sheet-line);
+    border-right: 1px solid var(--app-sheet-line);
+  }
+  /* ABOVE the rail, so its hairline reads as the footer's edge rather than
+     as a line the rail draws through it. */
+  .platform-parked { z-index: 31; }
+
+  /* TWO LINES IN A 224px RAIL. On a phone the strip runs the width of the
+     screen and "Resume" fits beside the name as a pill; here the same four
+     things — tile, name, pill, ✕ — leave the name about 60px, which is two
+     characters and an ellipsis. So the pill goes ABOVE as a caption, which
+     is what a rail's own section labels look like, and the name gets the
+     whole row.
+
+     `order: -1` rather than moving the element: the pill is inside the
+     anchor because the whole strip is one target (a button inside an anchor
+     is invalid markup), and that has to stay true in both layouts. */
+  .platform-parked-open {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 6px 8px;
+    row-gap: 1px;
+  }
+  .platform-parked-pill {
+    order: -1;
+    width: 100%;
+    height: auto;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+}
+
+/* ── Messages is one inbox, and says which kind each row is (#2718) ──
+   frontend/src/features/messages/inbox.ts carries the argument: people, app
+   discussions and agent chats in one list, ordered on one clock, told apart
+   by a mark rather than by three sidebars — which is what Slack and Teams do
+   with a channel, a DM and a bot thread. What lives here is the filter row
+   and the two shapes the list grew. */
+
+/* THE FILTER ROW, with the control that starts something at its far end.
+   The plus moved here from beside the title: a title row is where a screen
+   says what it IS, a filter row is where it says what it is SHOWING, and the
+   thing that adds to what is shown belongs on the line with the thing that
+   narrows it. The Workshop's tab strip now wears the same arrangement, which
+   is what makes the two screens read as one product. */
+/* ── THE INBOX'S OWN CHROME (#2718 review) ────────────────────────────
+   A search, a segmented strip, and what starts something — in that order,
+   which is the order the questions come in: what am I looking for, which
+   kinds am I looking through, and what if it is not here yet. */
+
+/* THE SEARCH, at the head of the pane where the screen's own <h2> used to
+   sit. The bar above already says Messages; a list that runs to hundreds of
+   rows and holds three kinds of thing needed the space for this instead. */
+.messages-search {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  /* 20px AT THE TOP, NOT 12: the header is `rounded-b-2xl -mb-2`, so this
+     pane starts 8px under its bottom edge and 12 of those were spent getting
+     back to level — 4px of air under the bar, which reads as none. The 8 the
+     notch owes plus 12 of air, matching the step the Workshop's chip takes
+     for the same reason. */
+  margin: 20px 16px 10px;
+}
+.messages-search-glyph {
+  position: absolute;
+  left: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.messages-search-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px 0 40px;
+  border: 1px solid var(--app-sheet-line);
+  border-radius: 999px;
+  background: var(--dc-sheet-raise);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 15px;
+}
+.messages-search-input::placeholder { color: var(--text-muted); }
+.messages-search-input:focus {
+  outline: none;
+  border-color: var(--brand-line);
+  box-shadow: 0 0 0 3px var(--brand-tint);
+}
+/* The UA's own clear affordance, which draws a second glyph of its own in a
+   size and colour this shell does not choose. */
+.messages-search-input::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+/* THE STRIP, which is the app Workshop's (`.dev-ws-tabtrack` at 700px+) with
+   the same track, the same radius and the same segment metrics. It is a
+   TRACK holding the segments rather than four loose pills, which is what
+   makes a segmented control read as one control with a state. */
+.messages-filters {
+  display: flex;
+  flex: 0 0 auto;
+  padding: 0 16px 8px;
+}
+.messages-filter-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9999px;
+  background-color: var(--dc-sheet-raise);
+}
+.messages-filter {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* `aria-current` is the only marker the component renders, so it is the only
+   one this reads — the same convention @/components/ui/tabs sets for every
+   strip in the shell. The tint and the hairline ring together are what the
+   Workshop's sliding marker paints; drawn on the segment here, because the
+   marker's geometry is measured against a DOM that screen owns. */
+.messages-filter[aria-current="page"] {
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+}
+
+/* WHAT STARTS SOMETHING, under the strip and answering to it. Two buttons
+   share the row under All and one takes it alone elsewhere, so both are
+   `flex: 1` — the split is even by construction rather than by a width
+   either of them carries. */
+.messages-compose {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+.messages-compose-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--brand-line);
+  border-radius: 999px;
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.messages-compose-btn > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* THE KIND MARK. People get none — they are the overwhelming majority of an
+   inbox, and a pill on every row is a pill that says nothing. It rides
+   INSIDE the name line rather than on the trailing edge, because the
+   trailing edge is the time-and-count column and a third thing in it turns
+   two readable columns into three cramped ones. */
+.messages-kind-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  vertical-align: 1px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  border: 1px solid var(--brand-line);
+}
+
+/* The two new rows' leading tiles, at the `lg` square UserAvatar's 44px box
+   so all three kinds line up down the left edge. `.app-icon-tile` draws the
+   app face; this call site adds only the geometry, which is the rule app.css
+   states for every tile call site. */
+.messages-inbox-tile {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+}
+/* An agent chat has no artwork of its own — it is a thread with the thing
+   that builds, not with an app — so it wears the accent tint and the same
+   sparkle the Improve panel's own chat rows use. */
+.messages-inbox-agent-tile {
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  border: 1px solid var(--brand-line);
+}
+
+
+/* ── The rail, peeked back over an open app (#2718) ──────────────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
+   the rail, which is what makes it feel like a program rather than a page,
+   and on a laptop the pointer is already at the left edge half the time. The
+   navigation comes back on hover and stops spending width while you work —
+   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
+   rail are all this move. */
+
+/* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
+   it never intercepts a pointer heading for the app's own left edge, wide
+   enough to be findable without aiming. */
+.platform-rail-peek {
+  position: fixed;
+  left: 0;
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
+    + var(--platform-safe-top, 0px));
+  bottom: 0;
+  width: 18px;
+  /* UNDER the peeked rail and OVER the app, so the pointer can cross from one
+     to the other without passing through the app's own hover targets. */
+  z-index: 39;
+}
+/* A PHONE HAS NO POINTER TO HOVER WITH, and an invisible strip down the left
+   edge of a touch screen eats the swipe that goes back. Below the desktop
+   breakpoint the zone is not there at all — which is also why the peek can
+   only ever happen on the layout that has a rail to peek. */
+@media (max-width: 767px) {
+  .platform-rail-peek { display: none; }
+}
+
+@media (min-width: 768px) {
+  /* FOLDED BY HAND: gone, but coming back on hover. Not `hidden` — that is
+     the ROUTER's answer about whether this route has a rail, and the two have
+     to stay tellable apart (frontend/src/features/nav/tab-bar.tsx). A peeking
+     bar keeps both classes and this rule stands aside for it, which is what
+     makes the hot zone at the window's edge the way back. */
+  .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) {
+    display: none;
+  }
+
+  /* THE PEEKED RAIL: the same element, over the app instead of beside it.
+     Everything about its inside — the rows, the labels, the lit tab — is the
+     rail's own, because it IS the rail; what changes is that it floats. */
+  .platform-tabs.platform-tabs-peek {
+    z-index: 40;
+    background-color: var(--dc-sheet);
+    border-right: 1px solid var(--app-sheet-line);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    /* A FADE, NOT A SLIDE. A rail that slides in from the edge races the
+       pointer that summoned it and arrives under it; one that fades is
+       already where it is going to be. It was tried both ways in the design
+       study and this is the one that stopped feeling like a mistake. */
+    animation: platform-rail-peek-in 140ms ease-out;
+  }
+}
+
+@keyframes platform-rail-peek-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-tabs.platform-tabs-peek { animation: none; }
+}

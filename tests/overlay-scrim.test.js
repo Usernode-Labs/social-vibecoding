@@ -13,7 +13,9 @@ function harness() {
     borderBottomLeftRadius: '0px', borderBottomRightRadius: '0px', outlineStyle: 'none',
   };
   const surface = {
-    id: 'improve-panel', isConnected: true, offsetWidth: 320, offsetHeight: 800,
+    // Any lifted right-edge rail; #improve-panel was the example until its
+    // panel retired (#2718 review). The id is a label here, nothing reads it.
+    id: 'notifications-sheet', isConnected: true, offsetWidth: 320, offsetHeight: 800,
     classList: { contains: () => false }, dataset: {},
     getBoundingClientRect() { reads++; return { left: 80, top: 0, right: 400, bottom: 800, width: 320, height: 800 }; },
     getAnimations: () => [],

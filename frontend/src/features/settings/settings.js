@@ -1389,16 +1389,19 @@
       // unless the viewer arrived from elsewhere in the app (#1565, see
       // _upHref), so that is its href.
       //
-      // LEVEL 2 ONLY. The mobile drill-in keeps its chevron because that is
-      // not a way BACK to another screen, it is the only way up a level
-      // INSIDE this one — without it a phone viewer is stranded in a section.
-      // Level 1 no longer draws one: Settings is one of the three account
-      // screens the owner asked to lose the arrow (see the note beside
-      // App.navigateToProfile), reached from the Home account row and left
-      // through it, with the header's own title saying where you are. A
-      // second affordance pointing at the row you just came from was chrome.
-      // `'home'` means "hidden" to setBackIcon.
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? Settings._upHref() : undefined);
+      // TWO LEVELS, ONE GLYPH. The mobile drill-in's chevron is the only way
+      // up a level INSIDE this screen — without it a phone viewer is stranded
+      // in a section — and since #2718's review the ROOT draws one too.
+      //
+      // Level 1 spent two rounds hiding it. That was right while Settings was
+      // reached from Home's account row: the row you came from was one tap
+      // behind you and a second affordance pointing at it was chrome. The Me
+      // tab replaced that row, and `'home'` sends you to a screen the bar's
+      // own Home tab already reaches while the tab still lit is Me — so the
+      // root's arrow points at #profile, the level it is genuinely under.
+      // App._BACK_SLOT['settings-screen'] says the same thing on the screen
+      // reveal; this is the second writer, and the later one wins.
+      if (App.setBackIcon) App.setBackIcon('arrow', inSection ? Settings._upHref() : '#profile');
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);

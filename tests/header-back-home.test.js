@@ -77,11 +77,15 @@ test('the bridge narrows to all THREE, not to two', () => {
   assert.match(body, /mode === 'arrow' \? 'arrow'/, "…and 'arrow' still wins first");
 });
 
-test('setBackIcon maps the three modes and toggles both glyphs', () => {
+test('setBackIcon maps the four modes and toggles all three glyphs', () => {
   const at = APP_JS.indexOf('  setBackIcon(mode, href) {');
   assert.ok(at > 0, 'setBackIcon must exist');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(body, /const slot = arrow \? 'arrow' : \(mode === 'none' \? 'none' : 'home'\)/,
+  // #2718 added 'close' — the ✕ inside a running app. One expression still
+  // owns the mapping and the fallback is unchanged: anything unrecognised
+  // falls to 'home' rather than 'none', because an unknown mode should leave
+  // a way OFF the screen, not remove one.
+  assert.match(body, /const slot = arrow \? 'arrow'\n\s+: mode === 'close' \? 'close'\n\s+: \(mode === 'none' \? 'none' : 'home'\);/,
     'one expression owns the mapping, and anything unrecognised falls to '
     + "'home' rather than 'none' — an unknown mode should leave a way OFF "
     + 'the screen, not remove one');
@@ -89,8 +93,12 @@ test('setBackIcon maps the three modes and toggles both glyphs', () => {
     'and the SAME value is what gets published');
   // The pre-hydration fallback has three nodes to keep in step again.
   assert.match(body, /toggle\('hidden', slot === 'none'\)/, 'the anchor hides on none');
-  assert.match(body, /back-icon-arrow'\)\?\.classList\.toggle\('hidden', !arrow\)/);
-  assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', arrow\)/);
+  // EACH GLYPH NAMES ITS OWN MODE. It was `!arrow` / `arrow` — correct while
+  // there were two of them and exactly the bug a third introduces, because
+  // "not the arrow" silently drew the house for 'close' too.
+  assert.match(body, /back-icon-arrow'\)\?\.classList\.toggle\('hidden', slot !== 'arrow'\)/);
+  assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', slot !== 'home'\)/);
+  assert.match(body, /back-icon-close'\)\?\.classList\.toggle\('hidden', slot !== 'close'\)/);
 });
 
 // ── 2. Home and Browse share one root-header rule ──────────────────────
@@ -106,10 +114,16 @@ test('Home is the only root, and it gets that from the shared screen reveal', ()
   // arrive at, it is one you go to from Home's "Find more apps", and landing
   // there with an empty bar left the chip menu's Home row as the only way
   // back. One rule still owns the answer, and now only Home is exempt.
-  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
+  // #2718: the answer stopped being a two-way question when the tab bar
+  // landed, so it is a TABLE (App._BACK_SLOT) that this one rule reads. A tab
+  // ROOT shows nothing — its tab is on screen beside it, so a corner control
+  // that goes home is a second way to press a button already in view — a
+  // SUB-PAGE shows an arrow to its tab's root, and an APP shows the ✕ that
+  // steps out of it.
+  assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
     'one rule, including cold boots and history navigation');
-  assert.doesNotMatch(body, /browse-screen/,
-    'Browse takes the default like every other screen you navigate into');
+  assert.doesNotMatch(body, /'home-screen' \? 'none'/,
+    'the answers live in the table, not in a chain of ternaries here');
   assert.doesNotMatch(APP_JS, /App\.setBackIcon\('none'\)/,
     'no per-entry override briefly shows the house before hiding it');
 
@@ -134,16 +148,20 @@ test('Home is the only root, and it gets that from the shared screen reveal', ()
 test('the anchor renders both glyphs and hides exactly one', () => {
   assert.match(HEADER, /id="back-icon-arrow"\n\s+className=\{backArrow \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
     'the chevron shows on arrow');
-  assert.match(HEADER, /id="back-icon-home"\n\s+className=\{backArrow \? 'hidden w-5 h-5' : 'w-5 h-5'\}/,
-    'the house shows otherwise — the two are complements of one flag, so '
-    + 'they cannot both be on');
+  // NOT `!backArrow`. With three glyphs, "not the arrow" is two of them, so
+  // each names its own mode — the same change public/js/app.js's
+  // pre-hydration fallback made for the same reason.
+  assert.match(HEADER, /id="back-icon-home"\n\s+className=\{mode === 'home' \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+    'the house shows on home, and on nothing else');
+  assert.match(HEADER, /id="back-icon-close"\n\s+className=\{backClose \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+    'and the ✕ inside a running app');
   // Both in the COLD DOCUMENT. Rendering only the active one would take an
   // id out of the shipped inventory whenever the initial mode is the other,
   // and that inventory is a contract (tests/shell-id-inventory.test.js).
   assert.match(HEADER, /className=\{BACK_BTN_CLASS \+ \(mode === 'none' \? ' hidden' : ''\)\}/,
     "the anchor itself hides only on 'none'");
-  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : 'Home'\}/,
-    'and the accessible name follows the glyph — two meanings, two names');
+  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : backClose \? 'Close app' : 'Home'\}/,
+    'and the accessible name follows the glyph — three meanings, three names');
 });
 
 // ── 4. The ladder inside an app ────────────────────────────────────────
@@ -177,9 +195,15 @@ test('the route decides where UP is, inside an app', () => {
 });
 
 test('the derived answer outranks the imperative one, and only inside an app', () => {
-  assert.match(HEADER, /const mode = routeUp \? 'arrow' : backMode;/,
-    'an app route with a level above it wins; everything else keeps what '
-    + 'setBackIcon published');
+  // #2718 put ONE thing above the route: the app view's own 'close'. Inside
+  // an app the ✕ is the whole way out — the Workshop and the app's other
+  // views are rows of the mark's menu now, not a chevron's destination — so
+  // a sub-route that used to earn an arrow gets the ✕ instead. The
+  // DESTINATION is untouched: resolvedBackHref still prefers the route's
+  // up-level href, so ✕ from a session lands on that app's Workshop as ← did.
+  assert.match(HEADER, /const mode = backMode === 'close' \? 'close' : \(routeUp \? 'arrow' : backMode\);/,
+    'an app view wins outright; an app route with a level above it wins over '
+    + 'the imperative call; everything else keeps what setBackIcon published'); 
   assert.match(HEADER, /const resolvedBackHref = routeUp\n\s+\|\| \(mode === 'home' \? homeHref\(\) : backHref\);/,
     "and 'home' resolves its own href rather than relying on a caller to "
     + 'pass one');
@@ -209,11 +233,22 @@ function loadImprove(initial) {
     imports: { '../../lib/plain-store.js': { createStore: () => store } },
     tail: 'window.__improveStore = { improveStore, boardHref };',
   });
+  // The one surface still listing these sessions. Flip `sheet.open` in a
+  // test that needs the reload gate open; it is the notifications sheet's
+  // flag, not the Improve panel's — that panel retired (#2718 review).
+  const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', IMPROVE_CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor: () => ({}) },
-      '../../lib/kit-surface': { adoptKitSurface: () => null },
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
+      // Improve panel's root through lib/kit-surface and swept the other
+      // sheets through lib/sheet-controller; the panel retired, `open()`
+      // forwards to the app-context sheet, and both stubs went with it. What
+      // it does import is the notifications sheet's own open flag — the one
+      // surface still listing these sessions, and the gate on reloading them.
+      '../notifications/notifications-sheet-store.js': {
+        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
+      },
       './improve-store.js': sandbox.__improveStore,
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
@@ -382,20 +417,27 @@ test('the accessor the click path reads is published on the controller', () => {
 
 // ── 7. The order of the right group ────────────────────────────────────
 
-test('the bell renders BEFORE Improve, to its left', () => {
+test('the bell renders BEFORE the mark, to its left', () => {
   // The bell was moved to the far right for a round, on the argument that a
-  // standing alert wants a fixed address and Improve's width (which clears
-  // entirely on a screen with no target) moves it. The arrangement was
+  // standing alert wants a fixed address and Improve's width (which cleared
+  // entirely on a screen with no target) moved it. The arrangement was
   // preferred as it had always been: the alert reads inward from the edge and
-  // the ACTION owns the corner. Both are defensible, which is exactly why the
-  // one we ship is pinned — an order nobody asserts is an order that drifts.
+  // the corner goes to the control that never moves. Both are defensible,
+  // which is exactly why the one we ship is pinned — an order nobody asserts
+  // is an order that drifts.
+  //
+  // #2718 retired #improve-btn, so the group is two controls: the bell, then
+  // the Homeroom mark. The argument only got stronger — the mark is a fixed
+  // 26px tile, so the bell's address is fixed too.
   const group = HEADER.slice(HEADER.indexOf('<div ref={rightGroupRef}'));
   const body = group.slice(0, group.indexOf('</div>\n      </header>'));
   const bell = body.indexOf('id="notifications-btn"');
-  const improve = body.indexOf('<ImproveButton />');
-  assert.ok(bell > 0 && improve > 0, 'both controls are in the right group');
-  assert.ok(bell < improve,
-    'the bell first, then Improve — DOM order is visual order in this flex row');
+  const mark = body.indexOf('<PlatformMark />');
+  assert.ok(bell > 0 && mark > 0, 'both controls are in the right group');
+  assert.ok(bell < mark,
+    'the bell first, then the mark — DOM order is visual order in this flex row');
+  assert.equal(body.indexOf('<ImproveButton />'), -1,
+    'and the Improve pill is not back between them');
 
   // The bell must stay INSIDE this group. rightGroupRef is what
   // use-header-layout.ts measures as the title's right-hand clearance, so a
@@ -417,21 +459,28 @@ test('the bell renders BEFORE Improve, to its left', () => {
 //
 // So this asserts BOTH writers agree, not just the one that reads first.
 
-test('both writers of the bar agree that the Browse list gets the house', () => {
+test('both writers of the bar agree that the Browse list is a tab root', () => {
   const browse = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
   );
 
-  // Writer 1: the screen reveal.
+  // #2718 review: Discover is a TAB now, so the list level shows nothing —
+  // the bar is on screen beside it and a corner control that goes home is a
+  // second way to press a button already in view. The empty bar #2639 fixed
+  // is not back: what fixed it was giving the viewer a way out, and the tab
+  // bar is a better one than the house.
+  //
+  // Writer 1: the screen reveal, through the table.
   const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(body, /revealId === 'home-screen' \? 'none' : 'home'/);
+  assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/);
+  assert.match(APP_JS, /'browse-screen': \['none'\],/, 'and the table calls it a root');
 
-  // Writer 2: Browse's own chrome sync, which runs after it.
-  assert.match(browse, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,
-    'the list level must not publish none over the reveal');
-  assert.doesNotMatch(browse, /: 'none';/,
-    'no remaining none in the chrome sync');
+  // Writer 2: Browse's own chrome sync, which runs after it and so decides.
+  assert.match(browse, /const backMode = upToList \? 'arrow' : 'none';/,
+    'the list level agrees with the table');
+  assert.doesNotMatch(browse, /: 'home';/,
+    'no remaining house in the chrome sync');
 
   // And the order that makes the second one decisive is still the order.
   const nav = APP_JS.slice(APP_JS.indexOf('navigateToBrowse'));
@@ -449,4 +498,55 @@ test('the detail level keeps its own two answers', () => {
   // opened from a Home card and there is no list behind it.
   assert.match(browse, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/);
   assert.match(browse, /App\.setBackIcon\(backMode, upToList \? '#apps' : undefined\)/);
+});
+
+test('the back-slot table and the tab map agree about what is a root', () => {
+  // TWO TABLES SAYING ONE THING, which is the shape that rots. App._BACK_SLOT
+  // decides what the header's left slot shows for a screen; TAB_FOR_SCREEN
+  // decides which tab lights up for the same screen. The rule that binds them
+  // is short: a screen that IS its tab's root shows nothing, and a screen that
+  // belongs to a tab it is not the root of shows an arrow to that tab's
+  // address. So the two are derived from each other here rather than trusted
+  // to stay in step by hand.
+  const nav = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/nav/nav-store.js'), 'utf8'
+  );
+  const tabFor = {};
+  const mapBody = nav.match(/TAB_FOR_SCREEN = Object\.freeze\(\{([\s\S]*?)\}\)/)[1];
+  for (const line of mapBody.split('\n')) {
+    const m = line.match(/'([a-z-]+)': '([a-z]+)'/);
+    if (m) tabFor[m[1]] = m[2];
+  }
+  assert.ok(Object.keys(tabFor).length >= 9, 'the tab map was read');
+
+  const slots = {};
+  const slotBody = APP_JS.match(/_BACK_SLOT: \{([\s\S]*?)\n  \},/)[1];
+  for (const line of slotBody.split('\n')) {
+    const m = line.match(/'([a-z-]+)': \[([^\]]*)\]/);
+    if (m) slots[m[1]] = m[2].split(',').map((p) => p.trim().replace(/'/g, ''));
+  }
+
+  // The tab bar's own hrefs, so the arrow lands where the tab does rather than
+  // at an address this test made up.
+  const HREF = { home: '/', discover: '#apps', messages: '#messages', workshop: '#workshop', me: '#profile' };
+  // The root of each tab: the screen its tab navigates to.
+  const ROOT = {
+    home: 'home-screen', discover: 'browse-screen', messages: 'messages-screen',
+    workshop: 'workshop-screen', me: 'profile-screen',
+  };
+
+  for (const [screen, tab] of Object.entries(tabFor)) {
+    assert.ok(slots[screen], `${screen} is in the tab map, so it needs a slot`);
+    if (ROOT[tab] === screen) {
+      assert.deepEqual(slots[screen], ['none'],
+        `${screen} is ${tab}'s root, so its corner is empty`);
+    } else {
+      assert.deepEqual(slots[screen], ['arrow', HREF[tab]],
+        `${screen} belongs to ${tab}, so it goes up to ${HREF[tab]}`);
+    }
+  }
+  // An app is neither: leaving somebody else's program is stepping out, not
+  // going up, and #app-view is deliberately absent from the tab map.
+  assert.deepEqual(slots['app-view'], ['close']);
+  assert.ok(!tabFor['app-view'], 'and no tab claims it');
 });

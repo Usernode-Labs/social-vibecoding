@@ -15,6 +15,16 @@ card, the home header's app chip at 20px — with no dark variant, no second
 file and no second request. Its own header explains the split. This note is
 here so someone looking for the logo in the obvious place finds it.
 
+`homeroom-mark.png` is the THIRD mark and the one this table's second
+paragraph did not anticipate: the square brand tile — the cream figure on the
+near-black squircle — as opposed to the logotype. #2718 put it in the header
+as the button that opens the platform's menu, on every route. It is a file
+rather than inlined source for the reason the logotype is the opposite: a
+two-colour lockup does not re-colour per theme any more than an app's own icon
+does, so there is nothing for `currentColor` to buy and a raster is the honest
+shape for it. `public/sw.js` precaches it, because a missing header logo is a
+hole at the top of every screen.
+
 `homeroom-logo-black.png` (below) is the one exception to "no image tooling
 at all": email HTML has no `currentColor` and no inline SVG support worth
 relying on across mail clients, so the mail frame in
@@ -26,6 +36,7 @@ fixed color, not the scalable source the app UI uses.
 | File | Figma file key | Node id | Export | Dimensions | Size |
 |---|---|---|---|---|---|
 | `people.png` | `4kAYqXh9NhpoCU44QwWvYo` | `1246:166` | the node's raw image fill, downsampled and quantised (below) | 816 × 612, 8-bit palette PNG with `tRNS`, sRGB | 87.9 KB |
+| `homeroom-mark.png` | n/a — no Figma export | n/a | supplied by the product owner as a finished raster during the navigation design study (#2718) and committed verbatim; no re-encoding, no quantisation, no tooling involved | 261 × 261, 8-bit RGBA PNG | 7.8 KB |
 | `homeroom-logo-black.png` | n/a — no Figma export | n/a | hand-encoded: a 5×7 bitmap "HOMEROOM" wordmark rasterized to `zinc-900` (`#1c1c1e`) on a transparent RGBA background, then wrapped in a minimal PNG (`IHDR`/`IDAT`/`IEND`) using only Node's built-in `zlib.deflateSync` — see the one-off generator note in the git history for #2673, since the repo has no `sharp`/`canvas`/ImageMagick to export from | 294 × 54, 8-bit RGBA PNG | 451 B |
 
 There is no `sha384` column, and the omission is deliberate rather than an

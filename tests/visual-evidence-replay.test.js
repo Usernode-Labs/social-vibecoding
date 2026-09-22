@@ -51,9 +51,97 @@ test('runner refuses undeclared home, auth, error, and cross-origin fallbacks', 
   assert.throws(() => replay.expectedFinalPath('/settings', 'http://outside:3000/settings', origin, 'base'), { code: 'cross_origin_navigation' });
 });
 
-test('browser failures name the failing story and side without exposing fixture tokens', async () => {
+test('element resolution waits for a late accessible target before counting matches', async () => {
+  let ready = false;
+  const calls = [];
+  const visibleLocator = {
+    first: () => ({
+      waitFor: async (options) => {
+        calls.push(['wait', options.state, options.timeout]);
+        ready = true;
+      },
+    }),
+    count: async () => {
+      calls.push(['visible-count']);
+      return ready ? 1 : 0;
+    },
+    nth: () => ({ isVisible: async () => ready }),
+  };
+  const includingHiddenLocator = {
+    count: async () => 1,
+    nth: () => ({ isVisible: async () => ready }),
+  };
+  const page = {
+    getByRole: (_role, options) => options.includeHidden
+      ? includingHiddenLocator
+      : visibleLocator,
+  };
+
+  const resolved = await replay.resolveOne(page, {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  }, 'wait-browse-button', { state: 'visible', timeoutMs: 5000 });
+
+  assert.equal(resolved, visibleLocator);
+  assert.deepEqual(calls[0], ['wait', 'visible', 5000]);
+  assert.equal(calls.some(([name]) => name === 'visible-count'), true);
+});
+
+test('element resolution distinguishes a hidden role target from a missing target', async () => {
+  const visibleLocator = {
+    first: () => ({ waitFor: async () => { throw new Error('timeout'); } }),
+    count: async () => 0,
+    nth: () => ({ isVisible: async () => false }),
+  };
+  const includingHiddenLocator = {
+    count: async () => 1,
+    nth: () => ({ isVisible: async () => false }),
+  };
+  const page = {
+    getByRole: (_role, options) => options.includeHidden
+      ? includingHiddenLocator
+      : visibleLocator,
+  };
+
+  await assert.rejects(replay.resolveOne(page, {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  }, 'wait-browse-button', { state: 'visible', timeoutMs: 5000 }), (error) => {
+    assert.equal(error.code, 'locator_not_visible');
+    assert.deepEqual(error.detail, {
+      kind: 'role', role: 'button', matchedCount: 0, attachedCount: 1,
+      visibleCount: 0, waitState: 'visible', timeoutMs: 5000,
+    });
+    return true;
+  });
+});
+
+test('failure diagnostics describe browser state without exposing tokens or cookie values', async () => {
+  const page = {
+    url: () => 'http://base-evidence:3000/?token=secret.jwt&shot=test#waiting',
+    evaluate: async () => ({
+      readyState: 'complete', bodyChildCount: 4,
+      visibleLandmarkIds: ['auth-waitlist-screen'],
+      visibleMainCount: 1, visibleDialogCount: 0,
+      visibleButtonCount: 2, visibleLinkCount: 3,
+    }),
+  };
+  const context = {
+    cookies: async () => [{ name: 'session', value: 'never-emit-this' }],
+  };
+  const state = await replay.failurePageState(
+    page, context, 'http://base-evidence:3000', { status: 200 }
+  );
+  assert.equal(state.navigationStatus, 200);
+  assert.equal(state.sessionCookiePresent, true);
+  assert.deepEqual(state.queryKeys, ['shot']);
+  assert.deepEqual(state.visibleLandmarkIds, ['auth-waitlist-screen']);
+  assert.doesNotMatch(JSON.stringify(state), /secret\.jwt|never-emit-this/);
+});
+
+test('browser contexts forward the app-scoped token and failures never expose it', async () => {
   let contexts = 0;
-  const browser = { newContext: async () => {
+  const options = [];
+  const browser = { newContext: async (value) => {
+    options.push(value);
     contexts += 1;
     if (contexts === 1) return { newPage: async () => ({}), close: async () => {} };
     throw new Error('newContext failed at http://base-evidence:3000/?token=secret.jwt');
@@ -67,6 +155,61 @@ test('browser failures name the failing story and side without exposing fixture 
     assert.doesNotMatch(error.message, /secret\.jwt/);
     return true;
   });
+  assert.deepEqual(options[1].extraHTTPHeaders, { 'x-usernode-token': 'member.jwt' });
+});
+
+test('internal HTTP replay bootstraps the clone-local platform session cookie', async () => {
+  const calls = [];
+  let cookies = [];
+  const response = {
+    headersArray: () => [
+      { name: 'set-cookie', value: 'other=ignored; Path=/' },
+      { name: 'Set-Cookie', value: 'session=clone-session-token; Path=/; HttpOnly; Secure; SameSite=Lax' },
+    ],
+    dispose: async () => { calls.push(['dispose']); },
+  };
+  const context = {
+    cookies: async (origin) => {
+      calls.push(['cookies', origin]);
+      return cookies;
+    },
+    request: {
+      get: async (url, options) => {
+        calls.push(['get', url, options]);
+        return response;
+      },
+    },
+    addCookies: async (values) => {
+      calls.push(['addCookies', values]);
+      cookies = values;
+    },
+  };
+
+  assert.equal(await replay.bootstrapInternalSession(
+    context, 'http://base-evidence:3000', '/?fixture=1#apps', 'member.jwt'
+  ), true);
+  const get = calls.find(([name]) => name === 'get');
+  assert.equal(new URL(get[1]).searchParams.get('token'), 'member.jwt');
+  assert.deepEqual(get[2].headers, { 'x-usernode-token': 'member.jwt' });
+  assert.equal(get[2].maxRedirects, 0);
+  assert.deepEqual(cookies, [{
+    name: 'session', value: 'clone-session-token', url: 'http://base-evidence:3000',
+    httpOnly: true, secure: false, sameSite: 'Lax',
+  }]);
+  assert.equal(calls.some(([name]) => name === 'dispose'), true);
+});
+
+test('session bootstrap accepts only a bounded session cookie value', () => {
+  assert.equal(replay.sessionCookieValue([
+    { name: 'set-cookie', value: 'theme=light; Path=/' },
+    { name: 'set-cookie', value: 'session=abc.def_123==; Secure; HttpOnly' },
+  ]), 'abc.def_123==');
+  assert.equal(replay.sessionCookieValue([
+    { name: 'set-cookie', value: 'theme=light; Path=/' },
+  ]), null);
+  assert.throws(() => replay.sessionCookieValue([
+    { name: 'set-cookie', value: 'session=bad,value; Secure' },
+  ]), { code: 'invalid_session_cookie' });
 });
 
 test('a failed browser action identifies its plan action and stage', async () => {
@@ -77,22 +220,33 @@ test('a failed browser action identifies its plan action and stage', async () =>
   const page = {
     on: () => {}, off: () => {}, goto: async () => {}, evaluate: async () => {},
     waitForTimeout: async () => {}, screenshot: async () => Buffer.from('png'),
-    getByRole: () => ({ count: async () => 0 }),
+    url: () => 'http://base-evidence:3000/?token=member.jwt',
+    getByRole: () => ({
+      first: () => ({ waitFor: async () => { throw new Error('timeout'); } }),
+      count: async () => 0,
+      nth: () => ({ isVisible: async () => false }),
+    }),
   };
   const browser = { newContext: async () => {
     contexts += 1;
     if (contexts === 1) return { newPage: async () => ({}), close: async () => {} };
     return {
       route: async () => {}, addInitScript: async () => {},
+      cookies: async () => [{ name: 'session' }],
       newPage: async () => page, close: async () => {},
     };
   } };
   await assert.rejects(replay.runReplay(browser, replay.validateInput(input({ plan: replayPlan }))), (error) => {
-    assert.equal(error.code, 'ambiguous_locator');
+    assert.equal(error.code, 'locator_not_found');
     assert.deepEqual(Object.fromEntries(['storyId', 'viewport', 'side', 'phase', 'actionId', 'actionStage', 'actionType']
       .map((key) => [key, error.detail[key]])), {
       storyId: 'invite-suggestions', viewport: 'desktop', side: 'base',
       phase: 'action', actionId: 'open-members', actionStage: 'members', actionType: 'click',
+    });
+    assert.equal(error.detail.pageState.sameOrigin, true);
+    assert.equal(error.detail.pageState.queryKeys.includes('token'), false);
+    assert.deepEqual(error.detail.targetStates[0], {
+      kind: 'role', role: 'button', matchedCount: 0, attachedCount: 0, visibleCount: 0,
     });
     return true;
   });

@@ -8,7 +8,8 @@ const proposalUpdate = require('../src/services/proposal-update');
 const evidenceState = require('../src/services/visual-evidence-state');
 const handoff = require('../src/routes/proposal-handoff');
 const votes = require('../src/routes/votes');
-const { intent } = require('./fixtures/visual-evidence');
+const contract = require('../src/services/visual-evidence-plan');
+const { intent, plan } = require('./fixtures/visual-evidence');
 
 const HEAD = 'a'.repeat(40);
 
@@ -107,6 +108,23 @@ test('PR import records the declaration on its existing transaction client', () 
     'the uncommitted session row and its evidence are written atomically');
   assert.doesNotMatch(transaction, /recordIntent\(\s*importClient/,
     'the pool-owning helper must not receive an already checked-out PoolClient');
+  assert.match(transaction, /createRunInTransaction\(importClient/,
+    'the submitted plan is durable before the import transaction commits');
+});
+
+test('PR import validates an author plan against the actual pull request revisions', () => {
+  const baseSha = 'b'.repeat(40);
+  const headSha = 'a'.repeat(40);
+  const visualEvidence = intent();
+  const visualEvidencePlan = { baseSha, headSha, planHash: contract.planHash(plan()), plan: plan() };
+  assert.deepEqual(votes.parseImportVisualEvidencePlan({ visualEvidencePlan }, visualEvidence,
+    { baseSha, headSha }), {
+    ...visualEvidencePlan, plan: contract.parseReplayPlan(visualEvidencePlan.plan),
+  });
+  assert.throws(() => votes.parseImportVisualEvidencePlan({ visualEvidencePlan }, visualEvidence,
+    { baseSha, headSha: 'c'.repeat(40) }), /imported pull request headSha/);
+  assert.throws(() => votes.parseImportVisualEvidencePlan({ visualEvidencePlan }, undefined,
+    { baseSha, headSha }), /matching visualEvidence intent/);
 });
 
 test('PR import evidence failures expose a safe stage and field without leaking the database error', () => {
@@ -123,5 +141,11 @@ test('PR import evidence failures expose a safe stage and field without leaking 
   assert.doesNotMatch(JSON.stringify(body), /password/);
   assert.deepEqual(votes.prImportFailureBody(new Error('private')), {
     error: 'Internal server error',
+  });
+  const planError = new Error('password=not-for-callers');
+  planError.prImportStage = 'visual_evidence_plan';
+  assert.deepEqual(votes.prImportFailureBody(planError), {
+    error: 'PR import failed while recording visualEvidencePlan.',
+    stage: 'visual_evidence_plan', field: 'visualEvidencePlan', retryable: true,
   });
 });

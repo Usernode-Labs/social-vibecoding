@@ -182,11 +182,50 @@ const GroupChat = {
     return GroupChat.threads.get(key);
   },
 
+  /**
+   * The app the CURRENT mount is about, when the caller named one — see
+   * mount(). Null means "ask AppView", which is what the app view's own
+   * mount wants and what every path did before this existed.
+   */
+  _app: null,
+
+  /**
+   * The open app's slug and name, and whether this viewer may write.
+   *
+   * THE MOUNTING CALLER FIRST, AppView second. Every read below used to go
+   * straight to AppView.appData, which is the app view's own state: correct
+   * while that screen was the only one that mounted this module, and wrong
+   * the moment the Messages screen mounts a discussion for an app the app
+   * view has not opened. `_app` is what mount() was told; the AppView
+   * fallback keeps the app view's own path byte-identical.
+   */
+  _appSlug() {
+    if (GroupChat._app && GroupChat._app.slug) return GroupChat._app.slug;
+    return (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) || null;
+  },
+  _appName() {
+    if (GroupChat._app && GroupChat._app.name) return GroupChat._app.name;
+    return (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.name) || null;
+  },
+
   // Called by AppView.renderGroupChatTab on every tab (re-)entry. On first
   // entry for an app we open the WS and lazy-load history; on subsequent
   // re-entries we reuse the existing connection + cached messages and just
   // restore scroll.
-  mount(appSlug) {
+  /**
+   * @param {string} appSlug
+   * @param {{slug: string, name?: string, readOnly?: boolean}} [app]
+   *
+   * `app` is the SECOND caller's answer (#2718 review). This module reads
+   * AppView.appData in a handful of places for the app's name and whether
+   * the viewer may write — fine while the app view was the only surface that
+   * mounted it. The Messages screen mounts it too now, for the discussion
+   * thread of an app the app view has not opened, where AppView.appData is
+   * null or somebody else's. So the mounting caller may state the app, and
+   * `GroupChat._app` below is what the reads prefer.
+   */
+  mount(appSlug, app) {
+    GroupChat._app = (app && app.slug === appSlug) ? app : null;
     // Side-panel hooks: bind the draggable divider on every mount
     // (the handle DOM element is recreated on each tab render, so
     // there's no stale binding to worry about) and restore any
@@ -525,6 +564,7 @@ const GroupChat = {
   // viewer (non-collaborator on an invite-only-build app). Writes are
   // suppressed client-side here; the WS server drops them regardless.
   _readOnly() {
+    if (GroupChat._app) return !!GroupChat._app.readOnly;
     return typeof AppView !== 'undefined' && !!AppView.readOnly;
   },
 
@@ -698,7 +738,7 @@ const GroupChat = {
       event: event ? {
         ...event,
         sender: event.actor
-          || (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.name)
+          || GroupChat._appName()
           || 'System',
         // Yours when you are the actor — the row then sits on the right, as
         // your messages do. A merge the vote decided is nobody's.
@@ -745,7 +785,7 @@ const GroupChat = {
         quiet: {
           exhausted: !GroupChat.hasMore,
           canPost: !GroupChat._readOnly(),
-          appName: (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.name)
+          appName: GroupChat._appName()
             || 'this app',
         },
       },
@@ -768,7 +808,7 @@ const GroupChat = {
   mountThread(opts) {
     const { type, ref, container } = opts || {};
     if (!type || !ref || !container) return;
-    const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+    const slug = GroupChat._appSlug()
       || GroupChat.appSlug;
     if (!slug) return;
 
@@ -1007,7 +1047,7 @@ const GroupChat = {
             variant: 'change',
             exhausted: !st.hasMore,
             canPost: !GroupChat._readOnly(),
-            appName: (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.name)
+            appName: GroupChat._appName()
               || 'this app',
           },
         } : {}),
@@ -1864,7 +1904,7 @@ const GroupChat = {
   },
 
   _attachSlug() {
-    return (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+    return GroupChat._appSlug()
       || GroupChat.appSlug || null;
   },
 
@@ -2511,7 +2551,7 @@ const GroupChat = {
   // the row's metadata tag, else from the live PR the snapshot resolved —
   // and null until one is known, in which case the row is not a link.
   _eventHref(sessionId, pr) {
-    const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+    const slug = GroupChat._appSlug()
       || GroupChat.appSlug;
     const id = sessionId || (pr && pr.id != null ? String(pr.id) : '');
     if (!slug || !id) return null;

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { EllipsisHorizontalIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import {
+  ChatIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon,
+} from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -21,9 +23,16 @@ import {
   respond,
   selectConversation,
   syncChrome,
+  setFilter,
   typingUsers,
   useMessagesSnapshot,
 } from './store';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { initializeGlobalChat, removeGlobalChatThread, startNewGlobalChat, useGlobalChatState } from '../global-chat/store';
+import {
+  INBOX_FILTERS, buildInbox,
+  type AgentChat, type AppDiscussion, type InboxFilter,
+} from './inbox';
 import type { ConversationMessage, ConversationSummary } from './types';
 
 /*
@@ -103,6 +112,282 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
 }
 
 /**
+ * The mark that says what KIND of thread a row is (#2718).
+ *
+ * People get none, and that is the whole design of it: they are the
+ * overwhelming majority of an inbox and a pill on every row is a pill that
+ * says nothing. The two that are NOT a person say so — which is the
+ * arrangement Slack and Teams land on with a channel, a DM and a bot thread
+ * in one sidebar, and the one thing that makes a single list readable.
+ */
+function KindPill({ kind }: { kind: 'app' | 'agent' }) {
+  return (
+    <span className="messages-kind-pill" data-kind={kind}>
+      {kind === 'app' ? 'App' : 'Agent'}
+    </span>
+  );
+}
+
+/**
+ * An app's own discussion — the general thread on its board.
+ *
+ * It carries NO unread count, and its absence is honest rather than an
+ * omission: `chat_messages` has no per-viewer read cursor, so a number here
+ * would be invented. What the row says instead is when the last thing was
+ * said and who said it, which is what makes it worth a tap.
+ *
+ * An anchor at the app's own discussion address, so a modified click opens
+ * it in a tab the way every other row on this screen does.
+ */
+function AppDiscussionRow({ discussion }: { discussion: AppDiscussion }) {
+  const activity = discussion.lastAt ? agoStamp(discussion.lastAt) : null;
+  const record = {
+    icon_url: discussion.iconUrl,
+    icon_emoji: discussion.iconEmoji,
+    name: discussion.name,
+  };
+  return (
+    <a
+      href={`#messages/app/${encodeURIComponent(discussion.slug)}`}
+      data-inbox-app={discussion.slug}
+      className="messages-conversation-row"
+    >
+      <span
+        data-icon={appIconKind(record as never)}
+        className="app-icon-tile messages-inbox-tile"
+      >
+        <AppIconContent app={record as never} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="messages-row-line">
+          <span className="messages-row-name">{discussion.name}<KindPill kind="app" /></span>
+          {activity
+            ? <time className="messages-row-time" dateTime={discussion.lastAt || undefined} title={activity.title}>{activity.text}</time>
+            : null}
+        </div>
+        <div className="messages-row-line">
+          <span className="messages-row-preview">
+            {discussion.lastMessage
+              ? (discussion.lastBy ? `@${discussion.lastBy}: ${discussion.lastMessage}` : discussion.lastMessage)
+              : 'No messages yet'}
+          </span>
+        </div>
+      </div>
+    </a>
+  );
+}
+
+/**
+ * An agent chat — a thread with the AI that builds.
+ *
+ * Read from features/global-chat's own store rather than copied into this
+ * one: that list is already loaded, merged on every thread event and
+ * invalidated by the chat itself, and a second copy of it is a copy that
+ * drifts. The row's address is the same `#chat/<id>` the Improve panel's own
+ * list uses.
+ */
+/**
+ * An agent chat, as a row of this inbox.
+ *
+ * ── It can be DELETED here (#2718 review) ─────────────────────────────
+ *
+ * The Improve panel's own list of these could, and the panel is retired: it
+ * had become a drawer you opened to press one of two buttons, so the buttons
+ * moved into the mark's menu and the drawer went. Everything else in it was
+ * already somewhere better — the sessions in the Workshop, GitHub and Share
+ * in About, these chats in this list — except the delete, which existed
+ * nowhere else. So it comes here rather than going away, because retiring a
+ * surface is not a reason to retire what only that surface offered.
+ *
+ * The confirm is a row rather than a dialog, which is what it was: a chat is
+ * cheap to lose and a modal over a list to delete one row from it is the
+ * heavier gesture.
+ */
+function AgentChatRow({ chat }: { chat: AgentChat }) {
+  const at = chat.updatedAt || chat.createdAt || null;
+  const activity = at ? agoStamp(at) : null;
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  async function remove() {
+    if (removing) return;
+    setRemoving(true);
+    try {
+      await removeGlobalChatThread(chat.id);
+    } catch {
+      setRemoving(false);
+      window.PlatformUI?.toast?.('Could not delete this chat.');
+    }
+  }
+
+  if (confirming) {
+    return (
+      <div className="messages-conversation-row messages-row-confirm" data-inbox-agent={chat.id}>
+        <span className="min-w-0 flex-1">Delete this chat?</span>
+        <button
+          type="button"
+          className="messages-row-confirm-cancel"
+          disabled={removing}
+          onClick={() => setConfirming(false)}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="messages-row-confirm-delete"
+          disabled={removing}
+          onClick={() => void remove()}
+        >
+          {removing ? 'Deleting…' : 'Delete'}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <a
+      href={`#chat/${encodeURIComponent(chat.id)}`}
+      data-inbox-agent={chat.id}
+      className="messages-conversation-row"
+    >
+      <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
+        <SparklesIcon className="w-5 h-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="messages-row-line">
+          <span className="messages-row-name">{chat.title || 'Untitled chat'}<KindPill kind="agent" /></span>
+          {activity
+            ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
+            : null}
+        </div>
+        <div className="messages-row-line">
+          <span className="messages-row-preview">
+            {chat.busy ? 'Working…' : (chat.summary || 'No messages yet')}
+          </span>
+        </div>
+      </div>
+      {/* Inside the anchor, so it rides the row's own layout — and it stops
+          the navigation itself, the way the Discover row's Add button does. */}
+      <button
+        type="button"
+        className="messages-row-delete"
+        aria-label={`Delete ${chat.title || 'this chat'}`}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirming(true); }}
+      >
+        <DraftTrashIcon className="w-4 h-4" aria-hidden="true" />
+      </button>
+    </a>
+  );
+}
+
+/**
+ * The filter row — a SEGMENTED STRIP, the same one the app Workshop wears.
+ *
+ * THE PLUS IS NOT ON IT ANY MORE (#2718 review). It sat at the far end on
+ * the reading that a row which narrows what is shown is where the thing that
+ * adds to it belongs. That put one control saying "new" beside four saying
+ * "show", and it could only ever mean ONE of the three things this inbox now
+ * holds — it opened the people dialog, on the Agents tab as readily as on
+ * People. What starts something is below, per tab, where it can say which.
+ *
+ * STYLED AS THE WORKSHOP'S STRIP IS: a track with the segments inside it and
+ * the selected one tinted with a hairline ring, which is the shell's one
+ * segmented control rather than this screen's own. The Workshop's slides a
+ * measured marker between segments; this does not, because that measurement
+ * is against a DOM that screen owns. At rest they are the same object.
+ */
+function InboxFilters({ filter }: { filter: InboxFilter }) {
+  return (
+    <div id="messages-filters" className="messages-filters">
+      <div className="messages-filter-track" role="group" aria-label="Show">
+        {INBOX_FILTERS.map(([key, label]) => (
+          <button
+            key={key}
+            id={`messages-filter-${key}`}
+            type="button"
+            data-messages-filter={key}
+            aria-current={filter === key ? 'page' : 'false'}
+            className="messages-filter"
+            onClick={() => setFilter(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What starts something, under the strip and answering to it.
+ *
+ * ── One control, or two, or none ──────────────────────────────────────
+ *
+ * The inbox holds three kinds and only two of them can be STARTED: a
+ * conversation with people, and a chat with the agent. An app's discussion
+ * is the app's, and exists already — so the Apps tab offers nothing, which
+ * is the honest answer rather than a button that would have to invent one.
+ *
+ * Under ALL it is both, side by side, because All is the tab with no answer
+ * to "which" — the split says the two are peers rather than making one the
+ * default and the other a menu item behind it.
+ *
+ * ── The agent half only when there IS an agent ────────────────────────
+ *
+ * Agent chats are gated on the same two flags their rows are (see the list
+ * below): a shell with the feature off shows no Agents rows, no Agents tab
+ * doing anything, and no way to start one. `agentsOn` is passed in rather
+ * than read again here, so one answer drives all three.
+ */
+function InboxCompose({ filter, agentsOn }: { filter: InboxFilter; agentsOn: boolean }) {
+  const people = filter === 'all' || filter === 'people';
+  const agent = agentsOn && (filter === 'all' || filter === 'agents');
+  if (!people && !agent) return null;
+  return (
+    <div id="messages-compose" className="messages-compose">
+      {people ? (
+        <button
+          type="button"
+          id="messages-new"
+          className="messages-compose-btn"
+          onClick={() => openDialog('messagesCreate')}
+        >
+          <PlusIcon className="w-4 h-4" aria-hidden="true" />
+          <span>New message</span>
+        </button>
+      ) : null}
+      {agent ? (
+        <button
+          type="button"
+          id="messages-new-agent"
+          className="messages-compose-btn"
+          onClick={() => { void startNewGlobalChat(); }}
+        >
+          <SparklesIcon className="w-4 h-4" aria-hidden="true" />
+          <span>New agent chat</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Narrow the inbox by what a row SAYS, not by what it is.
+ *
+ * A CLIENT-SIDE MATCH over the three lists already in memory, so it answers
+ * on every keystroke and adds no endpoint. What it matches is the text each
+ * row draws — a person's name or a group's title, an app's name, a chat's
+ * title — because a search that found rows by a field the reader cannot see
+ * would return results they cannot explain.
+ *
+ * It composes with the filter rather than replacing it: the strip says which
+ * kinds, this says which of them, and an empty query is every row.
+ */
+function inboxMatches(text: string | null | undefined, query: string): boolean {
+  if (!query) return true;
+  return String(text || '').toLowerCase().includes(query);
+}
+
+/**
  * The conversation list's loading state, at the ROW's own geometry.
  *
  * It was a spinner beside the words "Loading conversations…" — a fixed mark
@@ -145,15 +430,74 @@ function ConversationRowSkeleton() {
 
 function ConversationList() {
   const snap = useMessagesSnapshot();
+  // Agent chats come from the chat's OWN store (#2718): that list is already
+  // loaded, merged on every thread event and invalidated by the chat itself,
+  // and a second copy in this store is a copy that drifts. Gated on the same
+  // two flags the Improve panel's list is, so a shell where the feature is
+  // off sees no Agents rows and no Agents filter doing nothing.
+  // EPHEMERAL, AND DELIBERATELY NOT IN THE STORE. Nothing else reads what
+  // was typed here, and a query that survived leaving the screen would greet
+  // the next visit with a list that is missing rows for a reason no longer on
+  // screen. The filter IS in the store, because the thread pane and the
+  // deep-link router both read it.
+  const [query, setQuery] = useState('');
+  const chat = useGlobalChatState();
+  const agentsOn = !!chat.bootstrap?.parityReady
+    && chat.bootstrap.profiles.globalChat.enabled === true;
+  const agents: AgentChat[] = agentsOn ? (chat.threads as AgentChat[]) : [];
+  const inbox = buildInbox({
+    conversations: snap.conversations,
+    discussions: snap.discussions,
+    agents,
+    filter: snap.filter,
+  });
+  const byConversation = new Map(snap.conversations.map((item) => [String(item.id), item]));
+  const byApp = new Map(snap.discussions.map((item) => [item.slug, item]));
+  const byAgent = new Map(agents.map((item) => [item.id, item]));
+
+  const q = query.trim().toLowerCase();
+  const matches = (entry: { kind: string; key: string }) => {
+    if (!q) return true;
+    if (entry.kind === 'person') {
+      const c = byConversation.get(entry.key.slice('person:'.length));
+      if (!c) return false;
+      const peer = conversationPeer(c);
+      return inboxMatches(c.title, q)
+        || inboxMatches(peer?.username, q)
+        || inboxMatches(peer?.displayName, q);
+    }
+    if (entry.kind === 'app') {
+      const a = byApp.get(entry.key.slice('app:'.length));
+      return !!a && (inboxMatches(a.name, q) || inboxMatches(a.slug, q));
+    }
+    const g = byAgent.get(entry.key.slice('agent:'.length));
+    return !!g && inboxMatches(g.title, q);
+  };
+  const shown = inbox.filter(matches);
+
   return (
-    <section className={`messages-list-pane ${snap.route.conversationId ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
-      {/* The screen's title, the way Home carries "Your apps", and the New
-          disc floating beside it. The header bar's chip already names the
-          screen, so this carries no subtitle. */}
-      <div className="messages-list-toolbar">
-        <div className="messages-list-title"><h2>Messages</h2></div>
-        <button type="button" onClick={() => openDialog('messagesCreate')} className="messages-new-button" aria-label="New conversation" title="New conversation"><PlusIcon aria-hidden="true" /></button>
+    <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+      {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
+          "Messages" sat here, under a bar already reading Messages — two
+          titles, one word, an inch apart. The bar is the title now, which is
+          what it is for on every other screen in the shell.
+
+          A SEARCH TAKES ITS PLACE, because a list that can run to hundreds of
+          rows and holds three kinds of thing needs a way to name one. */}
+      <div className="messages-search">
+        <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+        <input
+          id="messages-search"
+          type="search"
+          className="messages-search-input"
+          placeholder="Search messages…"
+          aria-label="Search messages"
+          value={query}
+          onChange={(e) => setQuery(e.currentTarget.value)}
+        />
       </div>
+      <InboxFilters filter={snap.filter} />
+      <InboxCompose filter={snap.filter} agentsOn={agentsOn} />
       {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
       {/* #1953: a click on the list's own blank space — below the last row,
           not on a row or a button — closes the open conversation, as it
@@ -169,8 +513,41 @@ function ConversationList() {
       >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>Try again</button></div> : null}
-        {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length ? <div className="messages-empty"><h3>No messages yet</h3><p>Start a direct conversation or bring a group together.</p><button type="button" onClick={() => openDialog('messagesCreate')}>New conversation</button></div> : null}
-        {snap.conversations.map((conversation) => <ConversationRow key={conversation.id} conversation={conversation} active={snap.route.conversationId === conversation.id} />)}
+        {/* THE EMPTY STATE IS STILL THE CONVERSATIONS', and that is the
+            correct reading: "no messages yet" offers to start one, which is
+            an answer about people. An inbox that is empty only because a
+            FILTER is narrow says something else, below. */}
+        {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length && !inbox.length
+          ? <div className="messages-empty"><h3>No messages yet</h3><p>Start a direct conversation or bring a group together.</p><button type="button" onClick={() => openDialog('messagesCreate')}>New conversation</button></div>
+          : null}
+        {!snap.loadingList && !snap.error && snap.listLoaded && !inbox.length && snap.filter !== 'all'
+          ? <div id="messages-filter-empty" className="messages-state"><p>Nothing here under this filter.</p></div>
+          : null}
+        {/* A QUERY THAT MATCHED NOTHING is not an empty inbox, and must not
+            borrow the empty inbox's offer to start a conversation: the rows
+            are there, this one word is what hid them. */}
+        {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !shown.length
+          ? <div id="messages-search-empty" className="messages-state"><p>No messages match “{query.trim()}”.</p></div>
+          : null}
+        {/* ONE LIST, THREE KINDS. ./inbox.ts orders them on one clock and
+            returns DESCRIPTORS rather than rows, so each kind is still drawn
+            by the component that knows how — which is what keeps a
+            conversation row byte-identical to the one this screen has always
+            drawn while the list it sits in grew two more kinds. */}
+        {shown.map((entry) => {
+          if (entry.kind === 'person') {
+            const conversation = byConversation.get(entry.key.slice('person:'.length));
+            return conversation
+              ? <ConversationRow key={entry.key} conversation={conversation} active={snap.route.conversationId === conversation.id} />
+              : null;
+          }
+          if (entry.kind === 'app') {
+            const discussion = byApp.get(entry.key.slice('app:'.length));
+            return discussion ? <AppDiscussionRow key={entry.key} discussion={discussion} /> : null;
+          }
+          const agent = byAgent.get(entry.key.slice('agent:'.length));
+          return agent ? <AgentChatRow key={entry.key} chat={agent} /> : null;
+        })}
       </div>
     </section>
   );
@@ -274,6 +651,107 @@ function dayLabel(message: ConversationMessage): string {
     : { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/**
+ * An app's general discussion, as a thread of this inbox (#2718 review).
+ *
+ * ── Why it is mounted rather than rendered ────────────────────────────
+ *
+ * The transcript, its composer, the @mention and #ref autocompletes, the
+ * spec side panel, the drafts and the attachment wiring are all
+ * public/js/group-chat.js and features/group-chat/. That is one surface
+ * with one owner, and re-implementing it here would be a second copy of a
+ * thing that is loaded, merged and invalidated elsewhere — the same reason
+ * the agent chats are read from their own store rather than copied into
+ * this one. So this renders a HOST and asks the owner to fill it.
+ *
+ * ── The app travels with the mount ────────────────────────────────────
+ *
+ * `AppView.renderGroupChatTab` used to read the app out of AppView.appData,
+ * which is the app view's state. This screen is not the app view and does
+ * not open one, so it passes the app in instead — see that function's note
+ * and GroupChat._app. Nothing here writes AppView's state.
+ *
+ * ── It waits for `readOnly` ───────────────────────────────────────────
+ *
+ * The row carries the app's name but not whether this viewer may write; the
+ * store fetches that (`discussionContext`). Mounting before it lands would
+ * draw a composer and then take it away, or the reverse — so the pane holds
+ * on a skeleton until the answer is here.
+ */
+function AppDiscussionThread({ slug }: { slug: string }) {
+  const snap = useMessagesSnapshot();
+  const host = useRef<HTMLDivElement | null>(null);
+  const context = snap.discussionContext;
+  const ready = !!context && context.slug === slug;
+  const name = ready ? context.name : slug;
+  const readOnly = ready ? context.readOnly : false;
+
+  useEffect(() => {
+    const el = host.current;
+    if (!el || !ready) return undefined;
+    const view = (window as any).AppView;
+    const chat = (window as any).UsernodeReact?.groupChat;
+    view?.renderGroupChatTab?.({ host: el, slug, name, readOnly });
+    return () => {
+      // BOTH PORTALS, and the transcript's first: it points INTO #gc-messages
+      // inside the pane, and a portal left pointing at a detached node keeps
+      // its subtree and its store subscription alive (rule 1 in
+      // lib/legacy-portals.tsx, and the same order renderGroupChatTab
+      // observes when it re-renders).
+      const list = el.querySelector('#gc-messages');
+      if (list) chat?.unmountTranscript?.(list);
+      chat?.unmountGeneralChat?.(el);
+    };
+  }, [slug, ready, name, readOnly]);
+
+  if (snap.discussionError) {
+    return (
+      <section className="flex messages-thread-pane messages-no-selection" aria-label={name}>
+        <h2>This discussion could not be opened.</h2>
+        <p>It may have been removed, or you may not be a member of that app.</p>
+      </section>
+    );
+  }
+  return (
+    <section
+      className="flex messages-thread-pane messages-thread-discussion"
+      aria-label={name}
+      data-discussion-app={slug}
+    >
+      {/* THE PANE SAYS WHOSE DISCUSSION IT IS. On the app view this screen
+          did not need one — the bar above it named the app — but here the
+          bar says "Messages", and the group chat's own intro banner shows
+          once per browser and then never again. The conversation pane beside
+          it carries the same row (ThreadHeader). */}
+      <header className="messages-thread-header">
+        <span
+          data-icon={appIconKind({ name } as never)}
+          className="app-icon-tile messages-inbox-tile"
+          aria-hidden="true"
+        >
+          <AppIconContent app={{ name } as never} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="messages-thread-name block">{name}</span>
+          <span className="messages-thread-sub block">Everyone building this app</span>
+        </span>
+      </header>
+      {/* NO `dc-lift dc-lift-session` HERE, unlike the conversation pane
+          beside it: features/group-chat/general-chat.tsx opens with exactly
+          that pair, so the sheet is drawn once, inside. What this section
+          contributes is the BOX — `.messages-thread-pane`'s margins put the
+          sheet on the strip with the shoulder showing, the same geometry a
+          conversation gets. `platform-kb-column` is inside too, on the chat
+          pane, for the same reason.
+
+          The host's class string is constant and its subtree is entirely
+          group-chat's: the one-owner rule satisfied at this boundary rather
+          than at a node within it. */}
+      <div ref={host} className="messages-discussion-host flex-1 min-h-0" />
+    </section>
+  );
+}
+
 function ConversationThread() {
   const snap = useMessagesSnapshot();
   const scroller = useRef<HTMLDivElement>(null);
@@ -307,6 +785,7 @@ function ConversationThread() {
     });
   }
 
+  if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
   if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your direct and group messages stay here.</p></section>;
   // The shape follows the conversation's kind, and it is on the SECTION so
   // the scroller's class string below stays the one the safe-area test pins.
@@ -347,7 +826,33 @@ export function MessagesScreen() {
   const snap = useMessagesSnapshot();
   useVisibilityHiddenClass(screenRef, 'messages-screen', false);
   useEffect(() => initializeMessagesStore(), []);
-  useEffect(() => { if (snap.route.open) syncChrome(); }, [snap.active?.title, snap.route.open, snap.route.conversationId]);
+  // THE AGENT HALF OF THIS INBOX HAS TO ASK FOR ITSELF (#2718 review).
+  //
+  // `useGlobalChatState()` below reads a store that nothing on this screen
+  // was filling: the ONLY caller of initializeGlobalChat outside Settings
+  // was the Improve panel's own New chat button. So an inbox opened without
+  // ever having opened Improve saw `bootstrap: null`, which reads as "the
+  // feature is off" — no agent rows in the list, and no way to start one
+  // under the Agents tab. The tab was there and did nothing, which is what
+  // "there is no new agent button under agents" is.
+  //
+  // The same shape that button uses, and for the same reason: a boot-time
+  // 401 is expected before app.js has established the session, so `sv:authed`
+  // asks again. The call is idempotent — it returns the bootstrap it already
+  // has unless forced — so two surfaces asking costs one request.
+  useEffect(() => {
+    void initializeGlobalChat();
+    const retry = () => { void initializeGlobalChat({ force: true }); };
+    window.addEventListener('sv:authed', retry);
+    return () => window.removeEventListener('sv:authed', retry);
+  }, []);
+  useEffect(() => { if (snap.route.open) syncChrome(); },
+    // The DISCUSSION's two facts belong here for the same reason the
+    // conversation's title does: on a phone this is what names the thread in
+    // the bar and puts the chevron back to the list. Without them, opening a
+    // discussion kept the previous thread's name.
+    [snap.active?.title, snap.route.open, snap.route.conversationId,
+      snap.route.appSlug, snap.discussionContext?.name]);
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.

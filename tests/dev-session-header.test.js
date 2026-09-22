@@ -308,12 +308,17 @@ test('the strip hosts no lifecycle pill — the header chip does', () => {
   const html = headerHtml(view({ ...SESSION, check_state: 'passing' }));
   assert.doesNotMatch(html, /dc-status-pill/);
   assert.doesNotMatch(html, /ms-pill/);
-  // The pill's seat moved from the bar's left slot INTO the chip, as its
+  // The pill's seat moved from the bar's left slot INTO the title, as its
   // subtitle. On a new change the old arrangement drew the lifecycle alone —
-  // the chip was empty on this route — so the top of the screen said "Draft"
+  // the label was empty on this route — so the top of the screen said "Draft"
   // and never said which app was being changed. Same store, same component,
   // same id, one control.
-  const chipTsx = read('frontend', 'src', 'features', 'header', 'app-switcher-chip.tsx');
+  //
+  // The FILE moved in #2718, and nothing else about this did: the chip that
+  // held the subtitle stopped being a button when the tab bar took the
+  // platform destinations out of its menu, and what is left is the heading.
+  // See features/header/header-title.tsx.
+  const chipTsx = read('frontend', 'src', 'features', 'header', 'header-title.tsx');
   assert.match(chipTsx, /id="header-status-pill"/);
   assert.match(chipTsx, /sessionHeaderStore/);
   assert.match(chipTsx, /MergeStatusPill/);
