@@ -386,7 +386,7 @@ test('every screen change clears the peek, and nothing else does', () => {
   // back control" from being in it, which the app view's ✕ contradicts.
   assert.match(mount, /tab: tabOverride \|\| \(screen \? tabForScreen\(screen\) : null\),/);
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/,
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/,
     'and app.js is the one place that decides which of the two it is');
   // ON A CHANGE, not on every call. Re-asserting the screen you are already
   // on is not navigation, and clearing there yanks the rail out from under
@@ -588,10 +588,23 @@ test('an app\'s discussion belongs to Messages, and says so', () => {
   // in, and the way out it offered led to the Workshop rather than to the
   // list they opened the thread from.
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/);
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/);
+  const appJs = read('public/js/app.js');
+  const pred = appJs.slice(appJs.indexOf('  _isMessagesThread() {'));
+  assert.match(pred.slice(0, pred.indexOf('\n  },')),
+    /App\.currentTab === 'dev'\s*&& \(App\.currentSubTab === 'chat' \|\| App\.currentSubTab === 'sessions'\)/,
+    'the discussion and a dev session (#2770) are both threads of Messages');
+  assert.match(appJs, /if \(App\._isMessagesThread\(\)\) return \['arrow', '#messages'\];/,
+    'and the back slot agrees with the tab that lights');
   const appView = read('public/js/app-view.js');
   const branch = appView.slice(appView.indexOf("if (subTab === 'chat') {"));
   assert.match(branch.slice(0, branch.indexOf('\n    }')),
     /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
     'a level inside Messages shows the way up to it');
+  // A CHANGE IS AN AGENT CONVERSATION (#2770): its screen hangs off Messages
+  // the same way, rather than off the board it used to point at.
+  const session = appView.slice(appView.indexOf("if (subTab === 'sessions' && ref) {"));
+  assert.match(session.slice(0, session.indexOf('\n    }')),
+    /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
+    'a dev session shows the way up to Messages');
 });

@@ -203,7 +203,7 @@ test('the session lists are fetched before the panel is opened', () => {
   // driven by SessionState's tick and gated on that surface being up.
   const changed = CONTROLLER.slice(CONTROLLER.indexOf('  onSessionStateChanged() {'));
   assert.match(changed.slice(0, changed.indexOf('\n  },')),
-    /notificationsSheetStore\.get\(\)\.open\) Improve\.loadSessions\(\)/,
+    /notificationsSheetStore\.get\(\)\.open \|\| Improve\._messagesOnScreen\(\)\) \{\s*Improve\.loadSessions\(\);/,
     'and it refreshes a list that is already on screen rather than drawing one');
   // …and `loadSessions` only raises the placeholder when nothing has ever
   // loaded, which is what makes the refresh invisible.

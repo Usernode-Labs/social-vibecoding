@@ -358,9 +358,11 @@ test('the app-wide dev chat carries no back control any more', () => {
 test('"back out of a dev session" rides the header back anchor, with a real target', () => {
   assert.ok(!/dc-back/.test(sessionHeaderTsx),
     'session-header.tsx: the in-strip back control stays retired');
+  // #2770: a change is an agent conversation, so the anchor hangs off
+  // Messages rather than off the Board.
   assert.match(appViewJs,
-    /setBackIcon\?\.\('arrow', App\._appUrl\([\s\S]{0,140}boardView: 'kanban'/,
-    'app-view.js points the header anchor at the Board on the way into a session');
+    /if \(subTab === 'sessions' && ref\) \{[\s\S]{0,900}?setBackIcon\?\.\('arrow', '#messages'\)/,
+    'app-view.js points the header anchor at Messages on the way into a session');
   // The header listener's guard runs before preventDefault (pinned in
   // app.js for every screen the anchor serves), and the plain click walks
   // the handleBack chain into dev-chat.js's.
@@ -369,7 +371,7 @@ test('"back out of a dev session" rides the header back anchor, with a real targ
   assert.match(devChatJs, /handleBack\(\) \{[\s\S]{0,300}?leaveSession\(\)/,
     'a session claims the click');
   // And the work the plain click does is still dev-chat.js's.
-  assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,900}?App\.switchTab\('dev'\)/);
+  assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,2400}?location\.hash = '#messages'/);
 });
 
 // The topic page's back bar is retired too, and it was the LAST one. It was a
@@ -626,12 +628,12 @@ test('dapp.json pins the anchors that a capture can actually see', () => {
   );
 
   // The session's back control is the header's own anchor now (Streamlined
-  // Concept — #dc-back retired), so its check pins a#back-btn at the card
-  // area. That address is the WORKSHOP: the Board view retired, its columns
-  // are the Workshop's stage pane, and `boardHref` has one answer left.
+  // Concept — #dc-back retired), so its check pins a#back-btn. #2770 moved
+  // its address: a change is an agent conversation, a thread of Messages, so
+  // a cold session link goes up to #messages rather than to the Workshop.
   const session = (dapp.tests || []).find(
     (t) => typeof t.expectSelector === 'string'
-      && /a#back-btn[^"]*\[href="#app\/[^"]+\/workshop"\]/.test(t.expectSelector)
+      && /a#back-btn[^"]*\[href="#messages"\]/.test(t.expectSelector)
   );
   assert.ok(session, 'the session back anchor needs its own check');
   assert.match(session.path, /dev\/sessions\/\d+/, 'it must land on a session');

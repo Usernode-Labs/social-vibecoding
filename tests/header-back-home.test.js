@@ -177,8 +177,11 @@ test('the route decides where UP is, inside an app', () => {
     '"the board" is TWO screens — Workshop and Board are one screen in two '
     + 'layouts and the layout IS the route — so the destination is resolved '
     + 'from the layout that was on screen, never spelled as a literal');
-  assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| board;/,
-    'a session goes where it was opened from, falling back to that board');
+  // #2770 REVERSED THE FALLBACK: a change is an agent conversation, a thread
+  // of Messages, so a session with no captured origin goes up to that inbox
+  // rather than to the board it used to fall back to.
+  assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| '#messages';/,
+    'a session goes where it was opened from, falling back to Messages');
   assert.match(body, /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
     'the general chat and a topic card are reached FROM the board');
   // THE REGRESSION. `#app/${slug}/board` sent a viewer who had opened an
@@ -269,7 +272,24 @@ test('the first routing pass of a page load captures no origin', () => {
   const { Improve, store } = loadImprove({ slug: 'demo-app' });
   Improve.setTab('dev', 'sessions');
   assert.equal(store.state.sessionOrigin, null,
-    'nothing to go back to, so the header falls back to the Board');
+    'nothing to go back to, so the header falls back to Messages');
+});
+
+test('a door that names its origin wins, once (#2770)', () => {
+  // New change and the Messages inbox's session rows record where the
+  // session hangs off BEFORE they navigate: the Improve store's `prev` is the
+  // last APP route, and Messages is not one.
+  const { Improve, store } = loadImprove({ slug: 'demo-app' });
+  Improve.setTab('dev', 'forum');
+  Improve.enterSessionFrom('#messages');
+  Improve.setTab('dev', 'sessions');
+  assert.equal(store.state.sessionOrigin, '#messages', 'the named origin is recorded');
+  Improve.setTab('dev', 'forum');
+  Improve.setTab('dev', 'sessions');
+  assert.equal(store.state.sessionOrigin, '#app/demo-app/workshop',
+    'and it is taken once, so it cannot outlive the entry it was set for');
+  Improve.enterSessionFrom('https://elsewhere.example/');
+  assert.equal(Improve._nextSessionOrigin, null, 'only a hash is accepted');
 });
 
 test('entering a session serialises the route being left', () => {
@@ -318,7 +338,7 @@ test("the platform's own app can never be an origin's app tab", () => {
   Improve.setTab('app');
   Improve.setTab('dev', 'sessions');
   assert.equal(store.state.sessionOrigin, null,
-    'it has no app tab to go back to, so the Board fallback is the answer');
+    'it has no app tab to go back to, so the Messages fallback is the answer');
 });
 
 // ── 6. The click path agrees with the href ─────────────────────────────
@@ -336,14 +356,15 @@ test('leaving a session follows the same origin the arrow shows', () => {
     + 'is a syntax error');
   assert.match(body, /if \(origin[\s\S]{0,80}?location\.hash = origin;/,
     'and goes there');
-  assert.match(body, /App\.switchTab\('dev'\)/,
-    'with the Board still the fallback when there is no origin');
-  // Compared on the CODE, not the prose: the comment above this branch names
-  // `App.switchTab('dev')` as what it replaced, and an indexOf over the raw
-  // body finds that first.
+  // #2770: the fallback is Messages now — a change is an agent conversation
+  // and that is its inbox — matching the header's own fallback.
+  assert.match(body, /location\.hash = '#messages';/,
+    'with Messages the fallback when there is no origin');
   const code = body.replace(/\/\/.*$/gm, '');
-  assert.ok(code.indexOf('location.hash = origin') < code.indexOf("App.switchTab('dev')"),
+  assert.ok(code.indexOf('location.hash = origin') < code.indexOf("location.hash = '#messages'"),
     'the origin is preferred over the fallback, not the other way round');
+  assert.doesNotMatch(code, /App\.switchTab\('dev'\)/,
+    'and the Board is no longer where a session with no origin goes back to');
 });
 
 // ── 5b. Which board "back to the board" means ──────────────────────────

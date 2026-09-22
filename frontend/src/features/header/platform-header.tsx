@@ -144,8 +144,9 @@ function homeHref(): string {
  *   shared session)       opened full-screen is still the board's content.
  *   A dev session      →  wherever it was opened from — see `sessionOrigin`
  *                         in ../improve/improve-store.js — falling back to
- *                         the board on a cold deep link, which is where the
- *                         session's own card lives.
+ *                         Messages on a cold deep link, because a change is
+ *                         an agent conversation and that is its inbox
+ *                         (#2770; it was the board before).
  *
  * ── "The board" is TWO screens, and the arrow has to pick ──────────────
  *
@@ -177,7 +178,10 @@ function appRouteUpHref(
 ): string | null {
   if (!slug || tab !== 'dev') return null;
   const board = boardHref(slug, boardView);
-  if (subTab === 'sessions') return sessionOrigin || board;
+  // #2770: a session with no captured origin is a thread of Messages — a
+  // change is an agent conversation, listed under Messages → Agents — so its
+  // level up is that inbox rather than the board it used to fall back to.
+  if (subTab === 'sessions') return sessionOrigin || '#messages';
   if (subTab === 'chat' || subTab === 'topic') return board;
   // The Board and the Activity feed themselves: up is the app.
   if (subTab === 'forum') return selfHosted ? null : `#app/${slug}/app`;

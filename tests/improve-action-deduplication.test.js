@@ -316,7 +316,7 @@ function improveHarness(currentApp = 'demo') {
   let navigation;
   const withApp = sandbox.Improve._withApp;
   sandbox.Improve._withApp = (...args) => (navigation = withApp(...args));
-  return { Improve: sandbox.Improve, App: sandbox.App, calls, get navigation() { return navigation; } };
+  return { Improve: sandbox.Improve, App: sandbox.App, sandbox, calls, get navigation() { return navigation; } };
 }
 
 test('Give feedback still opens the shared dialog for the current app', () => {
@@ -325,29 +325,24 @@ test('Give feedback still opens the shared dialog for the current app', () => {
   assert.deepEqual(calls, [['close'], ['feedback', true]]);
 });
 
+// #2770 REVERSED THE ROUTE: New change used to open the app's Workshop and
+// then hop to the unsent-change screen through AppView.createProposal, so a
+// phone showed the Workshop tab first and back led to the board. A change is
+// an agent conversation now, so it goes STRAIGHT to /dev/sessions/new (which
+// lights Messages) with Messages recorded as where it hangs off.
 for (const currentApp of ['demo', 'other']) {
-  test(`New change starts one session on the target app from ${currentApp}`, async () => {
+  test(`New change goes straight to the unsent change on the target app from ${currentApp}, off Messages`, async () => {
     const h = improveHarness(currentApp);
     const { Improve, calls } = h;
     Improve.startSession();
     await h.navigation;
     assert.deepEqual(calls, [
       ['close'],
-      currentApp === 'demo' ? ['switch', 'dev', null, 'forum'] : ['navigate', 'demo', 'dev', null, 'forum'],
-      ['new-change', 'demo'],
-    ]);
+      currentApp === 'demo' ? ['switch', 'dev', 'new', 'sessions'] : ['navigate', 'demo', 'dev', 'new', 'sessions'],
+    ], 'no board on the way, and nothing is created by the click (#2241)');
+    assert.equal(Improve._nextSessionOrigin, '#messages',
+      'back from the new change goes up to Messages');
+    assert.equal(h.sandbox.AppView._proposalHint, true,
+      'the one-shot hint createProposal set on this same path still shows');
   });
 }
-
-test('New change does not create a session if the viewer navigates away first', async () => {
-  const h = improveHarness();
-  const { Improve, App, calls } = h;
-  let finishRoute;
-  App.switchTab = () => new Promise((resolve) => { finishRoute = resolve; });
-  Improve.startSession();
-  assert.deepEqual(calls, [['close']]);
-  App.currentApp = 'other';
-  finishRoute();
-  await h.navigation;
-  assert.deepEqual(calls, [['close']]);
-});

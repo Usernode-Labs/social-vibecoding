@@ -431,6 +431,15 @@ const Improve = {
     const first = !Improve._routed;
     Improve._routed = true;
     if (!entering) return null;
+    // A DOOR THAT NAMED ITS OWN ORIGIN (#2770). A change is an agent
+    // conversation, and Messages is where those live: New change and the
+    // inbox's own session rows say so before they navigate, because the
+    // store's `prev` cannot — it describes the last APP route, and Messages
+    // is not one. Taken once, on the way in, so it cannot outlive the entry
+    // it was set for.
+    const named = Improve._nextSessionOrigin;
+    Improve._nextSessionOrigin = null;
+    if (named) return named;
     const wasSession = prev.tab === 'dev' && prev.subTab === 'sessions';
     if (wasSession) return prev.sessionOrigin;
     // A COLD DEEP LINK HAS NO PREVIOUS SCREEN, and the store cannot say so by
@@ -446,6 +455,17 @@ const Improve = {
 
   /** Whether setTab has run at all in this page load. See above. */
   _routed: false,
+
+  /**
+   * The origin the NEXT session entry should record, set by a door that
+   * knows it (see `_sessionOriginFor`). Null when the door said nothing.
+   */
+  _nextSessionOrigin: null,
+
+  /** Called by a session row in Messages just before its anchor navigates. */
+  enterSessionFrom(href) {
+    Improve._nextSessionOrigin = typeof href === 'string' && href.startsWith('#') ? href : null;
+  },
 
   /**
    * An app route as an href, or null when it does not name one.
@@ -811,7 +831,24 @@ const Improve = {
     // is the notifications sheet's Agents tab, so this asks that sheet.
     // Without the change the gate read a field nobody writes, and the
     // reload below simply stopped happening.
-    if (notificationsSheetStore.get().open) Improve.loadSessions();
+    //
+    // …AND WHILE MESSAGES IS (#2770). A change is an agent conversation now,
+    // and Messages → Agents lists these same rows; without this their titles
+    // and status lines would freeze at whatever the last load said for as
+    // long as the inbox stayed open. Asked through the island's window seam
+    // rather than an import, so this module keeps its three dependencies.
+    if (notificationsSheetStore.get().open || Improve._messagesOnScreen()) {
+      Improve.loadSessions();
+    }
+  },
+
+  /** Whether the Messages screen is the one on screen. Safe before it exists. */
+  _messagesOnScreen() {
+    try {
+      return !!window.UsernodeReact?.messages?.isOpen?.();
+    } catch {
+      return false;
+    }
   },
 
   /** `SessionState.anyActive()`, as store state. Safe before it exists. */
@@ -872,10 +909,11 @@ const Improve = {
     const { slug } = improveStore.get();
     if (!slug || !window.App) return;
     const subTab = opts?.subTab || 'forum';
+    const ref = opts?.ref ?? null;
     if (window.App.currentApp === slug) {
-      await window.App.switchTab('dev', null, subTab);
+      await window.App.switchTab('dev', ref, subTab);
     } else {
-      await window.App.navigateToApp(slug, 'dev', null, subTab);
+      await window.App.navigateToApp(slug, 'dev', ref, subTab);
     }
     // The viewer can navigate away while the fetch above is in flight; the
     // router guards its own tail on exactly this condition, so this does too.
@@ -906,10 +944,33 @@ const Improve = {
     window.App.openFeedbackModal();
   },
 
-  /** New change: the entry point for starting a session on desktop and touch. */
+  /**
+   * New change: the entry point for starting a session on desktop and touch.
+   *
+   * ── A NEW CHANGE IS AN AGENT CONVERSATION (#2770, #2772) ──────────────
+   *
+   * It went through the app's Workshop — `_withApp` opened the board, then
+   * `AppView.createProposal()` hopped to the unsent-change screen — so the
+   * first thing a phone showed after New change was the Workshop tab, and
+   * back from the change led to the board. A change is a conversation with
+   * the agent that builds, and Messages is where those are listed now, so:
+   *
+   *   - it goes STRAIGHT to /dev/sessions/new, the screen createProposal's
+   *     plain path always ended on, with no board painted on the way;
+   *   - that screen lights the Messages tab (App._syncPlatformTabs), and
+   *   - its back arrow goes up to Messages, recorded here as the origin.
+   *
+   * Nothing is created by the click (#2241): the row appears on the first
+   * send, when DevChat.createSession publishes it through
+   * `onSessionCreated` — which is what puts it in Messages → Agents at once.
+   * The one-shot hint is the one createProposal set on the same path.
+   */
   startSession() {
     Improve.close();
-    Improve._withApp(() => window.AppView?.createProposal?.());
+    Improve._nextSessionOrigin = '#messages';
+    if (window.AppView) window.AppView._proposalHint = true;
+    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
+    Improve._withApp(null, { subTab: 'sessions', ref });
   },
 
   /**

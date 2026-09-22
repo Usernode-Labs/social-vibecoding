@@ -27,7 +27,7 @@
  * chat that has never been opened would otherwise lead the inbox.
  */
 
-export type InboxKind = 'person' | 'app' | 'agent';
+export type InboxKind = 'person' | 'app' | 'agent' | 'session';
 
 export interface InboxEntry {
   /** Unique within the merged list; the kind is part of it because a
@@ -57,6 +57,21 @@ export interface AgentChat {
   createdAt?: string | null;
 }
 
+/**
+ * A change in flight — a dev session, or a work order handed to an agent
+ * elsewhere (#2770).
+ *
+ * A CHANGE IS AN AGENT CONVERSATION: the viewer talks to the agent that
+ * builds, the same as in an agent chat, so it is listed under Agents beside
+ * them. The row is ../improve/session-row.tsx's, drawn from the Improve
+ * store's own list, so this shape is only the part the merge needs — the
+ * view carries the rest through untouched.
+ */
+export interface AgentSession {
+  key: string;
+  lastActivityAt?: string | null;
+}
+
 export type InboxFilter = 'all' | 'people' | 'apps' | 'agents';
 
 /** The filter row, in order. Exported so the view and its test share one list. */
@@ -72,7 +87,8 @@ export function admits(filter: InboxFilter, kind: InboxKind): boolean {
   if (filter === 'all') return true;
   if (filter === 'people') return kind === 'person';
   if (filter === 'apps') return kind === 'app';
-  return kind === 'agent';
+  // A session is an agent conversation (#2770), so Agents admits both.
+  return kind === 'agent' || kind === 'session';
 }
 
 function stamp(value: string | null | undefined): number {
@@ -93,6 +109,8 @@ export function buildInbox(input: {
   conversations: Array<{ id: number; lastActivityAt: string }>;
   discussions: AppDiscussion[];
   agents: AgentChat[];
+  /** Optional so a caller with no Improve store still merges three kinds. */
+  sessions?: AgentSession[];
   filter: InboxFilter;
 }): InboxEntry[] {
   const entries: InboxEntry[] = [];
@@ -113,6 +131,11 @@ export function buildInbox(input: {
         kind: 'agent',
         at: item.updatedAt || item.createdAt || null,
       });
+    }
+  }
+  if (admits(input.filter, 'session')) {
+    for (const item of input.sessions || []) {
+      entries.push({ key: `session:${item.key}`, kind: 'session', at: item.lastActivityAt || null });
     }
   }
   // Stable within a timestamp: `sort` is stable in every engine this ships

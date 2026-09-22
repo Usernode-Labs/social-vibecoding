@@ -5,6 +5,7 @@ import {
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { MessageComposer } from './composer';
@@ -29,6 +30,9 @@ import {
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { initializeGlobalChat, removeGlobalChatThread, startNewGlobalChat, useGlobalChatState } from '../global-chat/store';
+import { Improve } from '../improve/improve-controller.js';
+import { improveStore } from '../improve/improve-store.js';
+import { SessionRow, type SessionRowView } from '../improve/session-row';
 import {
   INBOX_FILTERS, buildInbox,
   type AgentChat, type AppDiscussion, type InboxFilter,
@@ -280,6 +284,61 @@ function AgentChatRow({ chat }: { chat: AgentChat }) {
 }
 
 /**
+ * A change in flight, as a row of this inbox (#2770, #2772).
+ *
+ * ── A change IS an agent conversation ─────────────────────────────────
+ *
+ * A dev session is the viewer talking to the agent that builds, which is
+ * what an agent chat is too — so it is listed under Agents beside them, and
+ * New change lands on one. Until now Messages → Agents held only the global
+ * chats, and a change somebody had just started was findable from the
+ * Workshop and the bell's Agents tab but not from here.
+ *
+ * ── The same row, from the same list ──────────────────────────────────
+ *
+ * The bell's Agents tab already draws these, with ../improve/session-row.tsx
+ * from the Improve store's own list (`sessions` + `otherSessions`, one
+ * fetch of /api/me/active-sessions). So this reads that store and draws that
+ * row: a second copy of the list would drift, and a second row would let a
+ * change's Working / Ready state say two things in two places. The store is
+ * also what `Improve.onSessionCreated` publishes into, which is what makes a
+ * change started a moment ago appear here at once.
+ *
+ * NOT GATED ON THE GLOBAL-CHAT FLAGS. Those decide whether the experimental
+ * chat exists; a change is not that chat, and every collaborator has one.
+ *
+ * ── Where the row goes ────────────────────────────────────────────────
+ *
+ * The session itself — `#app/<slug>/dev/sessions/<id>`, the conversation —
+ * rather than the change's card page the bell links. That screen lights the
+ * Messages tab and hangs its chevron off this inbox, and the row records
+ * that before it navigates (`Improve.enterSessionFrom`), because the route
+ * being left is not an app route and the Improve store cannot tell. A work
+ * order has no conversation here, so it keeps its own destination.
+ */
+function inboxSessionView(session: SessionRowView): SessionRowView {
+  if (session.kind !== 'session' || !session.appSlug) return session;
+  return {
+    ...session,
+    href: `#app/${encodeURIComponent(session.appSlug)}/dev/sessions/${session.id}`,
+  };
+}
+
+function AgentSessionRow({ session }: { session: SessionRowView }) {
+  return (
+    <div className="messages-inbox-session" data-inbox-session={session.key}>
+      <SessionRow
+        session={session}
+        showApp
+        onNavigate={() => {
+          if (session.kind === 'session') Improve.enterSessionFrom('#messages');
+        }}
+      />
+    </div>
+  );
+}
+
+/**
  * The filter row — a SEGMENTED STRIP, the same one the app Workshop wears.
  *
  * THE PLUS IS NOT ON IT ANY MORE (#2718 review). It sat at the far end on
@@ -445,15 +504,31 @@ function ConversationList() {
   const agentsOn = !!chat.bootstrap?.parityReady
     && chat.bootstrap.profiles.globalChat.enabled === true;
   const agents: AgentChat[] = agentsOn ? (chat.threads as AgentChat[]) : [];
+  // The viewer's changes in flight (#2770) — see AgentSessionRow. AFTER
+  // MOUNT ONLY: app.js can have filled the Improve store before this island
+  // hydrates, and rows the prerendered document did not have are a hydration
+  // mismatch on every route. The first client render therefore matches the
+  // prerender, and the rows arrive one commit later.
+  const improve = useStoreState(improveStore) as {
+    sessions?: SessionRowView[];
+    otherSessions?: SessionRowView[];
+  };
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const sessions: SessionRowView[] = mounted
+    ? [...(improve.sessions || []), ...(improve.otherSessions || [])].map(inboxSessionView)
+    : [];
   const inbox = buildInbox({
     conversations: snap.conversations,
     discussions: snap.discussions,
     agents,
+    sessions,
     filter: snap.filter,
   });
   const byConversation = new Map(snap.conversations.map((item) => [String(item.id), item]));
   const byApp = new Map(snap.discussions.map((item) => [item.slug, item]));
   const byAgent = new Map(agents.map((item) => [item.id, item]));
+  const bySession = new Map(sessions.map((item) => [item.key, item]));
 
   const q = query.trim().toLowerCase();
   const matches = (entry: { kind: string; key: string }) => {
@@ -469,6 +544,10 @@ function ConversationList() {
     if (entry.kind === 'app') {
       const a = byApp.get(entry.key.slice('app:'.length));
       return !!a && (inboxMatches(a.name, q) || inboxMatches(a.slug, q));
+    }
+    if (entry.kind === 'session') {
+      const c = bySession.get(entry.key.slice('session:'.length));
+      return !!c && (inboxMatches(c.title, q) || inboxMatches(c.appName, q));
     }
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
@@ -544,6 +623,10 @@ function ConversationList() {
           if (entry.kind === 'app') {
             const discussion = byApp.get(entry.key.slice('app:'.length));
             return discussion ? <AppDiscussionRow key={entry.key} discussion={discussion} /> : null;
+          }
+          if (entry.kind === 'session') {
+            const session = bySession.get(entry.key.slice('session:'.length));
+            return session ? <AgentSessionRow key={entry.key} session={session} /> : null;
           }
           const agent = byAgent.get(entry.key.slice('agent:'.length));
           return agent ? <AgentChatRow key={entry.key} chat={agent} /> : null;
@@ -846,6 +929,18 @@ export function MessagesScreen() {
     window.addEventListener('sv:authed', retry);
     return () => window.removeEventListener('sv:authed', retry);
   }, []);
+  // THE CHANGES HALF ASKS FOR ITSELF TOO (#2770). The Improve store's list
+  // is prefetched once per page when an app target is published, which a
+  // viewer who lands on Messages first may not have had — and a list read
+  // once at boot is stale by the time the inbox is opened. So opening
+  // Messages reads it again; while it stays open, Improve's own
+  // onSessionStateChanged keeps it fresh (it asks whether Messages is on
+  // screen). Signed-in only: the endpoint is per-user, and a 401 in the
+  // network log is a console error on the route.
+  useEffect(() => {
+    if (!snap.route.open || !window.App?.user) return;
+    void Promise.resolve(Improve.loadSessions()).catch(() => {});
+  }, [snap.route.open]);
   useEffect(() => { if (snap.route.open) syncChrome(); },
     // The DISCUSSION's two facts belong here for the same reason the
     // conversation's title does: on a phone this is what names the thread in
