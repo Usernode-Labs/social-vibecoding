@@ -940,7 +940,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // floor. The ceiling itself already moved from 730 to 750 on main's side,
   // once its own total stood on the old ceiling's 20-slot floor; that move
   // carries over unchanged (services/app-manifest.js).
-  assert.equal(DAPP.tests.length, 712);
+  //
+  // 712 → 714: the #2704 pair, one per tone. They select the launch cover
+  // inside #app-frame-host on the two tone shots — the surface whose ink the
+  // tone decides, and which those shots did not mount until that change —
+  // so each tone has a check that fails if the cover is inked for the
+  // shell's theme rather than for the ground it sits on. 712 + 2 = 714,
+  // leaving 36 slots against MAX_DECLARED_TESTS (750).
+  assert.equal(DAPP.tests.length, 714);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
