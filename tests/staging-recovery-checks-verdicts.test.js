@@ -364,7 +364,7 @@ test("setChecksPending returns a 'skipped' row to 'pending' for the next commit 
       'a delayed retry cannot resurrect checks on archived or merged rows');
     // $3 is check_phase and $4 is check_trigger — both NULL when the caller
     // names neither a stage nor a reason.
-    assert.deepEqual(q.params, [42, 'feed0042', null, null]);
+    assert.deepEqual(q.params, [42, 'feed0042', null, null, false]);
   } finally { restore(); }
 });
 
@@ -500,12 +500,20 @@ test('the heal compares and pins the IMPORTED head sha, never the fork branch na
     'and the build is pinned to it, not to the compare tip');
 });
 
-test('the heal claims the resolved commit before staging can fail', () => {
+test('the heal claims a new commit before staging can fail without voiding an unchanged passing verdict', () => {
   assert.match(
     RECOVERY_SRC,
-    /const commitHash = [\s\S]*?await visuals\.setChecksPending\(pool, session\.id, commitHash,[\s\S]*?buildAndDeployStaging\(config, session, app, commitHash\)/,
-    'a boot failure must be stored against the same commit the rebuild attempted'
+    /const commitHash = [\s\S]*?await visuals\.setChecksPending\(pool, session\.id, commitHash,[\s\S]*?preservePassing: !forced[\s\S]*?buildAndDeployStaging\(config, session, app, commitHash\)/,
+    'a boot failure must be stored against the built commit, while a same-head pass survives a routine rebuild'
   );
+  assert.match(RECOVERY_SRC, /if \(pending\) visuals\.notifyChecksPending/,
+    'a preserved passing verdict is not announced as pending');
+  assert.match(RECOVERY_SRC, /force: forced,/, 'an explicit manual recheck still takes a fresh verdict');
+  const visualsSource = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8'
+  );
+  assert.doesNotMatch(visualsSource, /force: opts\.force \|\| !!stagingResult/,
+    'a new staging container alone must not turn routine recovery into a forced check run');
 });
 
 test('an imported row with no recorded head sha records a terminal skip', () => {

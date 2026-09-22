@@ -54,7 +54,11 @@ test('setChecksPending: every $2 occurrence is explicitly cast (uniform type for
   assert.deepEqual(p4.filter((o) => o === '$4'), [],
     'every $4 must carry an explicit cast, for the same reason as $2');
 
-  assert.deepEqual(params, [42, 'abc123', null, null]);
+  const p5 = sql.match(/\$5(::\w+)?/g) || [];
+  assert.deepEqual(p5, ['$5::boolean'],
+    'the same-head passing guard must be a typed boolean');
+
+  assert.deepEqual(params, [42, 'abc123', null, null, false]);
   assert.match(sql, /check_state = 'pending'/);
 });
 
@@ -63,7 +67,30 @@ test('setChecksPending: null commit sha still passes a typed parameter', async (
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
 
   await visuals.setChecksPending(pool, 42, null);
-  assert.deepEqual(queries[0].params, [42, null, null, null]);
+  assert.deepEqual(queries[0].params, [42, null, null, null, false]);
+});
+
+test('routine preview recovery leaves a same-commit passing verdict untouched', async () => {
+  const queries = [];
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rowCount: 0 }; // the guarded UPDATE matched no row
+    },
+  };
+  const stamped = await visuals.setChecksPending(pool, 42, 'abc123', null,
+    'boot-reconcile', { preservePassing: true });
+  assert.equal(stamped, false);
+  assert.deepEqual(queries[0].params, [42, 'abc123', null, 'boot-reconcile', true]);
+  assert.match(queries[0].sql,
+    /\$5::boolean IS NOT TRUE OR check_state IS DISTINCT FROM 'passing'\s+OR checks_commit_sha IS DISTINCT FROM \$2::text/,
+    'only an exact same-head pass blocks the pending stamp; a new head or non-passing state still runs');
+
+  const manual = await visuals.setChecksPending(pool, 42, 'abc123', null,
+    'manual-recheck');
+  assert.equal(manual, false);
+  assert.equal(queries[1].params[4], false,
+    'manual and ordinary callers can still replace an old passing verdict');
 });
 
 // ── check_phase: which half of the run the card should name ─────────────
@@ -73,10 +100,10 @@ test('setChecksPending records the run phase, and the streak CASE arms are untou
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
 
   await visuals.setChecksPending(pool, 42, 'abc123', 'building');
-  assert.deepEqual(queries[0].params, [42, 'abc123', 'building', null]);
+  assert.deepEqual(queries[0].params, [42, 'abc123', 'building', null, false]);
 
   await visuals.setChecksPending(pool, 42, 'abc123', 'testing');
-  assert.deepEqual(queries[1].params, [42, 'abc123', 'testing', null]);
+  assert.deepEqual(queries[1].params, [42, 'abc123', 'testing', null, false]);
 
   // The phase is a PLAIN assignment, not another commit-conditional CASE
   // arm: it describes the run happening right now, so a backoff retry of the
@@ -148,7 +175,7 @@ test("'deferred' is a known phase, so the pending stamp can name it", async () =
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
   await visuals.setChecksPending(pool, 42, 'abc123', 'deferred', 'proposal-open');
-  assert.deepEqual(queries[0].params, [42, 'abc123', 'deferred', 'proposal-open']);
+  assert.deepEqual(queries[0].params, [42, 'abc123', 'deferred', 'proposal-open', false]);
 });
 
 test('the deferral stamp keeps the verdict pending, names the phase, and is pinned to the head it judged', async () => {

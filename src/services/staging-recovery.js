@@ -370,16 +370,21 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
   const visuals = require('./visuals');
 
-  // Recovery can discover a newer native branch tip than the verdict stored
-  // on the row. Claim that exact commit before the build so a boot failure is
-  // allowed through storeChecks' latest-head CAS instead of being discarded
-  // as stale and leaving the old commit permanently pending. Imported rows
-  // remain pinned to importedHead above.
-  await visuals.setChecksPending(pool, session.id, commitHash, null, checkTriggerForReason(reason)).catch((err) =>
+  // Claim a newly discovered head before building so a boot failure can be
+  // stored against it. A rebuild of the SAME passing head must keep its
+  // verdict: resetting it here made every boot recovery re-run the entire
+  // browser and unit suites. The conditional write is atomic with a capture
+  // that may finish while this rebuild starts. An explicit recheck still
+  // clears the prior verdict and takes a fresh one.
+  const forced = FORCED_RECHECK_REASONS.has(reason);
+  const pending = await visuals.setChecksPending(pool, session.id, commitHash, null,
+    checkTriggerForReason(reason), { preservePassing: !forced }).catch((err) => {
     log.warn('staging-recovery', 'rebuild setChecksPending failed (non-fatal)', {
       sessionId: session.id, err: err.message,
-    }));
-  visuals.notifyChecksPending(session.id, commitHash, null, checkTriggerForReason(reason));
+    });
+    return false;
+  });
+  if (pending) visuals.notifyChecksPending(session.id, commitHash, null, checkTriggerForReason(reason));
 
   // Create PR if missing (active-session recovery only). Route through
   // applyPrMetadata — NOT a bare createPR — so the PR gets a real
@@ -543,9 +548,9 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   visuals.captureForSession(config, session, app, commitHash, stagingResult, {
     send: () => {},
     trigger: checkTriggerForReason(reason),
-    // Deliberately NOT forced: a rebuild whose head already has a passing
-    // verdict has nothing new to learn, and this path fires on every heal
-    // sweep and every preview click.
+    // An explicit recheck must run even after a passing verdict; a routine
+    // rebuild of the same head is skipped by captureForSession.
+    force: forced,
   })
     .catch((err) => log.warn('staging-recovery', 'Post-rebuild checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,

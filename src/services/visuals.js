@@ -1265,7 +1265,8 @@ async function storeChecksSkipped(
 // existing caller gets it for free, which matters because there are a dozen
 // of them across six modules. COALESCE keeps the previous value when the app
 // row has no main_sha yet rather than blanking a good one.
-async function setChecksPending(pool, sessionId, commitSha, phase = null, trigger = null) {
+async function setChecksPending(pool, sessionId, commitSha, phase = null, trigger = null,
+  { preservePassing = false } = {}) {
   // $2 is spliced into both an assignment to checks_commit_sha (varchar) and
   // IS DISTINCT FROM comparisons (inferred text). Without the explicit ::text
   // casts postgres refuses to prepare the statement — "inconsistent types
@@ -1294,8 +1295,10 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
            check_error_notified_at = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                           THEN NULL ELSE check_error_notified_at END
      WHERE id = $1
-       AND status IN ('active', 'paused', 'promoted', 'merging')`,
-    [sessionId, commitSha || null, normalizeCheckPhase(phase), normalizeCheckTrigger(trigger)]
+       AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND ($5::boolean IS NOT TRUE OR check_state IS DISTINCT FROM 'passing'
+            OR checks_commit_sha IS DISTINCT FROM $2::text)`,
+    [sessionId, commitSha || null, normalizeCheckPhase(phase), normalizeCheckTrigger(trigger), preservePassing]
   );
   return write.rowCount !== 0;
 }
@@ -1920,8 +1923,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           throw new Error('Preview edge is not ready for capture');
         }
         await operation.check();
-        return captureForSession(config, fresh, app, operation.revision, stagingResult,
-          { ...opts, force: opts.force || !!stagingResult });
+        return captureForSession(config, fresh, app, operation.revision, stagingResult, opts);
       }, { force: opts.force, onError: (err, pool, operation) =>
         publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
       if (completed?.state) maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
