@@ -13,6 +13,8 @@
 // always-200 endpoint fail) and logs it.
 'use strict';
 
+const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
+
 // Minimal HTML escaping — these bodies interpolate an email address, a
 // six-digit code and platform-built URLs, never free user text, but
 // escaping is cheap and keeps that true if a payload field ever grows.
@@ -25,23 +27,26 @@ function esc(s) {
 }
 
 /**
- * The ONE branded frame every send goes through (#1555).
+ * The ONE branded frame every send goes through (#1555, restyled for #2673).
  *
  * The report was that the mails do not look like one another. They did not:
  * the shell was a bare `<body>` with a font stack, three templates wrapped
  * themselves in it, one was wrapped by `buildMessage`, and the result had no
  * sender identity anywhere except inside the sentences.
  *
- * ── Why a wordmark and not a logo image ────────────────────────────────
+ * ── Why a logo image now, reversing the #1555 call ─────────────────────
  *
- * A remote `<img>` in an email is a tracking pixel as far as every mail
- * client is concerned: Gmail and Outlook block it until the reader asks,
- * Apple Mail proxies it, and the mail's identity would be the one thing that
- * arrives broken. An inline data: URI is worse — several clients strip them,
- * and the ones that do not count the bytes against the clipping threshold.
- * Type always renders. The wordmark is the product's own name in the
- * platform's accent, which is what the header, the landing page and the
- * manifest already put there.
+ * #1555 argued for a text wordmark instead of an `<img>`: Gmail/Outlook block
+ * remote images until the reader asks, Apple Mail proxies them, and a data:
+ * URI is stripped by some clients and counted against others' clipping
+ * threshold. All of that is still true. #2673 asks for the logo anyway, so
+ * the tradeoff is accepted deliberately rather than papered over: the `alt`
+ * text below IS the wordmark fallback for a client that blocks the image, so
+ * the identity still renders as type when the picture does not. The asset is
+ * hosted on the platform's OWN origin (public/brand/, the same public,
+ * unauthenticated tier /icons/ and /illustrations/ already use — see
+ * src/middleware/auth.js), not a third party, so there is nothing here for a
+ * mail client's remote-content warning to be right to warn about.
  *
  * ── Table-free, and deliberately ───────────────────────────────────────
  *
@@ -49,6 +54,13 @@ function esc(s) {
  * together, so the usual `<table>` scaffolding buys nothing here and costs
  * every future editor a nested-markup puzzle. Inline styles only: `<style>`
  * blocks and classes are stripped by Gmail's clipper and by Outlook.
+ *
+ * ── Colors are the platform's own tokens, not generic defaults ─────────
+ *
+ * Every hex below is read off tailwind.config.js's `violet`/`zinc` scales and
+ * public/css/app.css's `--accent*` custom properties — the same accent and
+ * neutral ramp the app UI itself renders with, not a default blue or a
+ * mail-template grey invented for this file.
  *
  * ── The footer says what this IS and why it arrived ────────────────────
  *
@@ -59,24 +71,32 @@ function esc(s) {
  * I getting this".
  */
 const BRAND_NAME = 'Homeroom';
-const BRAND_ACCENT = '#1f86ff';
+// tailwind.config.js `violet` ramp / public/css/app.css `--accent*`.
+const BRAND_ACCENT = '#0a6ee0'; // violet-600, --accent — the CTA fill and link color.
+// tailwind.config.js `zinc` ramp — the app's neutral ink and surfaces.
+const NEUTRAL_PAGE_BG = '#f5f5f7'; // zinc-50
+const NEUTRAL_HAIRLINE = '#e3e3e6'; // zinc-200
+const NEUTRAL_INK = '#1c1c1e'; // zinc-900
+const NEUTRAL_SECONDARY_INK = '#68686c'; // zinc-500
+const LOGO_URL = `${PRODUCTION_ORIGIN}/brand/homeroom-logo-black.png`;
+const LOGO_ALT = 'Homeroom in black';
 const BODY_STYLE =
-  'margin:0;padding:24px 12px;background:#f4f4f5;font-family:-apple-system,'
+  `margin:0;padding:24px 12px;background:${NEUTRAL_PAGE_BG};font-family:-apple-system,`
   + 'Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;'
-  + 'line-height:1.55;color:#111';
+  + `line-height:1.55;color:${NEUTRAL_INK}`;
 const CARD_STYLE =
   'max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;'
   + 'padding:28px 24px';
-const WORDMARK_STYLE =
-  `margin:0 0 20px;font-size:18px;font-weight:700;letter-spacing:-0.2px;color:${BRAND_ACCENT}`;
+const LOGO_STYLE = 'display:block;margin:0 0 20px;border:0;outline:none;text-decoration:none';
 const FOOTER_STYLE =
-  'margin:24px 0 0;padding-top:16px;border-top:1px solid #e4e4e7;'
-  + 'font-size:12px;line-height:1.5;color:#71717a';
+  `margin:24px 0 0;padding-top:16px;border-top:1px solid ${NEUTRAL_HAIRLINE};`
+  + `font-size:12px;line-height:1.5;color:${NEUTRAL_SECONDARY_INK}`;
 
 const HTML_SHELL = (body) =>
   '<!doctype html><html><body style="' + BODY_STYLE + '">'
   + '<div style="' + CARD_STYLE + '">'
-  + '<div style="' + WORDMARK_STYLE + '">' + BRAND_NAME + '</div>'
+  + `<img src="${LOGO_URL}" width="147" height="27" alt="${esc(LOGO_ALT)}" `
+  + `style="${LOGO_STYLE}">`
   + body
   + '<div style="' + FOOTER_STYLE + '">'
   + BRAND_NAME
@@ -87,7 +107,7 @@ const HTML_SHELL = (body) =>
   + '</body></html>';
 
 const p = (s) => `<p>${s}</p>`;
-const link = (url) => `<a href="${esc(url)}">${esc(url)}</a>`;
+const link = (url) => `<a href="${esc(url)}" style="color:${BRAND_ACCENT}">${esc(url)}</a>`;
 
 /**
  * The mail's ONE action, as a button (#1540).
@@ -108,7 +128,7 @@ const link = (url) => `<a href="${esc(url)}">${esc(url)}</a>`;
  * see HTML needs it.
  */
 const BUTTON_STYLE =
-  'display:inline-block;padding:11px 20px;border-radius:8px;background:#1f86ff;'
+  `display:inline-block;padding:11px 20px;border-radius:8px;background:${BRAND_ACCENT};`
   + 'color:#ffffff;font-size:15px;font-weight:600;text-decoration:none';
 const button = (url, label) =>
   `<p><a href="${esc(url)}" style="${BUTTON_STYLE}">${esc(label)}</a></p>`;

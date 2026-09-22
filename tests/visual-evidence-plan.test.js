@@ -114,6 +114,18 @@ test('waits, action counts, pointer ratios and scroll distances are bounded', ()
   assert.equal(evidence.safeParseReplayPlan(tooMany).ok, false);
 });
 
+test('wait-only checkpoints cannot request a steps video', () => {
+  const staticPlan = plan();
+  const wait = { id: 'wait-ready', stage: 'ready', type: 'waitFor',
+    target: { by: 'testId', value: 'evidence-focus' } };
+  staticPlan.stories[0].replay.before.actions = [wait];
+  staticPlan.stories[0].replay.after.actions = [wait];
+  assert.throws(() => evidence.parseReplayPlan(staticPlan), /wait-only flows use screenshots/);
+  staticPlan.stories[0].intent.animation = 'none';
+  staticPlan.stories[0].replay.checkpoint.animation = 'none';
+  assert.equal(evidence.parseReplayPlan(staticPlan).stories[0].intent.animation, 'none');
+});
+
 test('the canonical plan hash is stable across object key order and changes with behavior', () => {
   const first = plan();
   const parsed = evidence.parseReplayPlan(first);

@@ -14,6 +14,7 @@ const platformJwt = require('./platform-jwt');
 const credentialStore = require('./credential-store');
 const registry = require('../agents/registry');
 const agentModels = require('./agent-models');
+const managedOpenRouter = require('./openrouter-managed-keys');
 const log = require('./logger');
 const turnLifecycle = require('./turn-lifecycle');
 const llmTelemetry = require('./llm-telemetry');
@@ -123,6 +124,23 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
   });
   if (!meta || meta.status !== 'valid') {
     return { error: 'credential_required' };
+  }
+
+  // A continuing session need not visit Settings. Apply changed included
+  // allowances here too, so a stale child-key limit is not left in force
+  // simply because the user kept the same chat open. Personal keys are
+  // outside this management path. Sync failures remain best-effort and are
+  // retried after the managed-key service's short backoff.
+  if (meta.metadata?.source === managedOpenRouter.MANAGED_SOURCE
+      && config.openrouterManagementApiKey) {
+    try {
+      await managedOpenRouter.syncAllowance({
+        pool, userId, config,
+        state: await managedOpenRouter.stateForUser(pool, userId),
+      });
+    } catch (err) {
+      log.warn('agent-turn', 'included OpenRouter allowance sync unavailable', { sessionId: session.id, err: err.message });
+    }
   }
 
   const resolvedModel = session.agent_model || config.openrouterDefaultCodexModel || null;

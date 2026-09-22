@@ -1,6 +1,7 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const net = require('node:net');
 const log = require('./logger');
 const platformJwt = require('./platform-jwt');
 const docker = require('./docker');
@@ -68,6 +69,22 @@ async function execWorkerCommand(runtimeName, command, stdinText = null, { timeo
 // hostname / port.
 const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usernode:3000';
 
+// Evidence controls are intentionally process-local: the run's paired
+// environments and callbacks live in the Pod that scheduled it. During a
+// rolling update the shared Service also points at the other color, so an
+// evidence worker must call this Pod directly or half its tools see an empty
+// control registry. Ordinary worker traffic remains on the shared Service.
+function evidenceControlUrl({ podIp = process.env.POD_IP, port = process.env.PORT,
+  fallback = PLATFORM_INTERNAL_URL } = {}) {
+  const family = net.isIP(String(podIp || ''));
+  const selectedPort = Number(port || 3000);
+  if (!family || !Number.isInteger(selectedPort) || selectedPort < 1 || selectedPort > 65535) {
+    return fallback;
+  }
+  const host = family === 6 ? `[${podIp}]` : podIp;
+  return `http://${host}:${selectedPort}`;
+}
+
 // Worker JWTs are short-lived but cover the entire chat session; 24h is
 // the cap any single session is allowed to run before re-auth becomes
 // the chat handler's problem. Re-minted on every warm bootstrap and on
@@ -96,7 +113,12 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // v10 publishes bootstrap readiness and fences turns after container restarts.
 // v11 refreshes warm workers so synthetic OpenRouter models use a
 // provider-neutral identity instead of claiming to be GPT (#2120).
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v12';
+// v12 is the bootstrap generation before the Codex provider retry budget.
+// v13 refreshes warm workers so the generated Codex config bounds the CLI's
+// own reconnect budget instead of retrying a refused request five times
+// (#2676).
+// v14 installs the OpenRouter request adapter so output limits reach the wire.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v14';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -746,6 +768,16 @@ function parseLine(line, onProgress, state) {
         if (ev.kind === 'error' && ev.errorMessage != null) {
           state.ccIsError = true;
           state.agentError = ev.errorMessage;
+          // The normalizer already decided what kind of provider failure
+          // this is. Carrying its verdict beats re-deriving one from the
+          // message text further downstream, where less is known.
+          if (ev.errorCode) state.agentErrorCode = ev.errorCode;
+          if (ev.requestedOutputTokens != null) {
+            state.requestedOutputTokens = ev.requestedOutputTokens;
+          }
+          if (ev.affordableOutputTokens != null) {
+            state.affordableOutputTokens = ev.affordableOutputTokens;
+          }
         }
         // Progress line: use the short display form (or any event text).
         if (ev.text) onProgress(ev.text);
@@ -794,6 +826,17 @@ function newWatchState() {
     hostContainerName: null,
     ccIsError: false,
     agentError: null,
+    // Set from the Codex normalizer's classification of a provider failure
+    // (see src/agents/codex-openrouter.js). Null for every other backend and
+    // for a turn that never failed.
+    agentErrorCode: null,
+    requestedOutputTokens: null,
+    // Last HTTP request observed by the worker-local OpenRouter adapter.
+    // Only content-free fields are accepted by the Codex normalizer.
+    providerRequest: null,
+    // The output-token budget OpenRouter said the key could afford, when it
+    // said so. Drives the one clamped retry in the sessions attempt loop.
+    affordableOutputTokens: null,
     usageSeen: false,
     resultSubtype: null,
     providerStopReason: null,
@@ -950,10 +993,24 @@ function codingRunOutcome(state) {
   return { outcome: 'error', stopReason: 'agent_error' };
 }
 
+// A provider failure the Codex normalizer already classified reports that
+// classification. The substring table below is the fallback for backends and
+// failures that carry no code, and it guesses: an OpenRouter credit refusal
+// mentioning "connection" used to land on 'network' rather than 'billing'.
+const CODEX_ERROR_CLASSES = {
+  insufficient_credits: 'billing',
+  insufficient_credits_max_tokens: 'billing',
+  rate_limited: 'rate_limited',
+  credential_failure: 'authentication',
+  stream_disconnected: 'network',
+};
+
 function codingErrorClass(state, outcome) {
   if (outcome === 'cancelled') return 'cancelled';
   if (outcome !== 'error') return null;
   if (state && state.markerlessCause) return 'worker';
+  const classified = state && CODEX_ERROR_CLASSES[state.agentErrorCode];
+  if (classified) return classified;
   const text = String([
     state && state.resultSubtype,
     state && state.agentError,
@@ -2407,7 +2464,7 @@ async function execInWorker(sessionId, {
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
-    PLATFORM_URL: PLATFORM_INTERNAL_URL,
+    PLATFORM_URL: mode === 'evidence' ? evidenceControlUrl() : PLATFORM_INTERNAL_URL,
     ...(mode === 'evidence' ? {
       EVIDENCE_RUN_ID: evidenceRunId,
       EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
@@ -3415,10 +3472,10 @@ async function listOrphanWorkers() {
 // pgrep/pkill exit 127 in there. The old `pgrep ... && busy || idle`
 // one-liner silently reported "idle" for every container, busy or not.
 // Match a turn process for EITHER backend (review F4): the Claude runner
-// (run-cc.sh + claude) or the Codex runner (run-codex-agent.sh + codex).
+// (run-cc.sh + claude) or the Codex runner, its request adapter, and codex.
 // Without the codex terms, long Codex turns look idle (watchdog abandons)
 // and Stop appends a fake marker without killing the process.
-const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh)( |$)';
+const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh|codex-openrouter-request\\.js)( |$)';
 const TURN_PROC_PROBE_SCRIPT =
   'busy=0; for d in /proc/[0-9]*; do '
   + '[ "$d" = "/proc/$$" ] && continue; '
@@ -3811,6 +3868,7 @@ module.exports = {
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
   mintProdDebugJwt,
   mintEvidenceJwt,
+  evidenceControlUrl,
   buildTurnSecretEnv,
   // file-based dispatch-prompt transport (E2BIG fix; exported for tests)
   TURN_PROMPT_PATH,

@@ -10,7 +10,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
+const http = require('node:http');
+const { execFileSync, spawnSync, spawn } = require('child_process');
 const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
 const {
   DEFAULT_BASE_INSTRUCTIONS,
@@ -19,6 +20,8 @@ const {
   buildCodexModelCatalog,
   nameSelectedModel,
   neutralizeBundledBaseInstructions,
+  MIN_MAX_OUTPUT_TOKENS,
+  SAFE_MAX_OUTPUT_TOKENS,
 } = require('../worker/build-codex-model-catalog');
 
 const RUNNER = path.join(__dirname, '..', 'worker', 'run-codex-agent.sh');
@@ -30,6 +33,7 @@ test('worker runtime contract invalidates warm images from before the new runner
   const workerHost = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
   assert.match(dockerfile, /COPY classify-codex-resume\.js \/usr\/local\/bin\/classify-codex-resume\.js/);
   assert.match(dockerfile, /COPY build-codex-model-catalog\.js \/usr\/local\/bin\/build-codex-model-catalog\.js/);
+  assert.match(dockerfile, /COPY codex-openrouter-request\.js \/usr\/local\/bin\/codex-openrouter-request\.js/);
   assert.match(dockerfile,
     /codex debug models --bundled > \/usr\/local\/share\/usernode-codex-bundled-models\.json/,
     'the image extracts only the pinned CLI catalog and never performs a build-time refresh');
@@ -42,8 +46,8 @@ test('worker runtime contract invalidates warm images from before the new runner
 
   const match = workerHost.match(/const WORKER_BOOTSTRAP_ENV_VERSION = '(v\d+)'/);
   assert.ok(match, 'warm-worker contract version is declared');
-  assert.ok(Number(match[1].slice(1)) >= 11,
-    'pre-v11 containers retain the misleading GPT identity and must be evicted');
+  assert.ok(Number(match[1].slice(1)) >= 14,
+    'pre-v14 containers omit output limits from OpenRouter requests and must be evicted');
   assert.match(workerHost,
     /labels\['usernode\.proxy'\] !== WORKER_BOOTSTRAP_ENV_VERSION/,
     'the warm path compares the persisted container contract label');
@@ -89,6 +93,110 @@ function makeEnv(run) {
   };
   return { dir, env };
 }
+
+test('runner: fresh and resumed GLM invocations put catalog limits into actual HTTP requests', async t => {
+  const requests = [];
+  const provider = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requests.push({ url: req.url, body: JSON.parse(Buffer.concat(chunks).toString()), key: req.headers.authorization });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"id":"mock-response"}');
+  });
+  await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { provider.closeAllConnections(); provider.close(resolve); }));
+  // Reproduce the pinned CLI's missing field at the HTTP boundary. This is
+  // a fake executable, never a second agent or a request to a paid provider.
+  const fakeCodex = `#!/usr/bin/env node
+(async () => {
+  for await (const chunk of process.stdin) { /* consume the prompt */ }
+  const override = process.argv.find(a => a.startsWith('model_providers.usernode_openrouter.base_url='));
+  if (!override) throw new Error('request adapter override missing');
+  const base = JSON.parse(override.slice(override.indexOf('=') + 1));
+  const response = await fetch(base + '/responses', {
+    method: 'POST', headers: { authorization: 'Bearer ' + process.env.OPENROUTER_API_KEY },
+    body: JSON.stringify({ model: process.env.AGENT_MODEL, input: [{ role: 'user', content: 'hello' }] }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  await response.text();
+  console.log(JSON.stringify({ type: 'thread.started', thread_id: 'mock-glm-thread' }));
+  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 12, output_tokens: 3 } }));
+})().catch(err => { console.error(err.message); process.exitCode = 1; });
+`;
+  for (const [cap, thread] of [['128000', ''], ['12800', 'mock-glm-thread']]) {
+    const { dir, env } = makeEnv(fakeCodex);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    env.OPENROUTER_API_BASE = `http://127.0.0.1:${provider.address().port}/api/v1`;
+    env.AGENT_MODEL = 'z-ai/glm-5.3-flash';
+    env.AGENT_MODEL_MAX_OUTPUT_TOKENS = cap;
+    env.AGENT_THREAD_ID = thread;
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn('sh', [RUNNER], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', data => { stdout += data; });
+      child.stderr.on('data', data => { stderr += data; });
+      child.once('error', reject);
+      child.once('close', code => resolve({ code, stdout, stderr }));
+      t.after(() => { if (child.exitCode == null) child.kill(); });
+    });
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /agent_thread_id=mock-glm-thread/);
+    assert.match(result.stdout, /"type":"usernode.openrouter.request"/);
+    assert.doesNotMatch(result.stdout + result.stderr, /sk-or-v1-test/);
+    const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
+    assert.ok(config.includes(env.OPENROUTER_API_BASE), 'the persistent config keeps the upstream URL');
+    assert.ok(!config.includes(env.OPENROUTER_API_KEY), 'the key is never written to config');
+  }
+  assert.deepEqual(requests.map(r => r.body.max_output_tokens), [32000, 12800]);
+  assert.ok(requests.every(r => r.body.model === 'z-ai/glm-5.3-flash'));
+  assert.ok(requests.every(r => r.url === '/api/v1/responses'));
+  assert.ok(requests.every(r => r.key === 'Bearer sk-or-v1-test'));
+});
+
+test('request wrapper forwards Stop to Codex and releases its listener', async t => {
+  const fakeCodex = `#!/usr/bin/env node
+const override = process.argv.find(a => a.startsWith('model_providers.usernode_openrouter.base_url='));
+const base = JSON.parse(override.slice(override.indexOf('=') + 1));
+console.log(JSON.stringify({ type: 'test.ready', base }));
+setInterval(() => {}, 1000);
+`;
+  const { dir, env } = makeEnv(fakeCodex);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(env.CODEX_HOME);
+  fs.writeFileSync(path.join(env.CODEX_HOME, 'openrouter-model-catalog.json'), JSON.stringify(buildCatalogFromEnvironment(env)));
+  const wrapper = path.join(__dirname, '..', 'worker', 'codex-openrouter-request.js');
+  const child = spawn(process.execPath, [wrapper, 'exec', '--json'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode == null) child.kill('SIGKILL'); });
+  const exited = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  const base = await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', () => reject(new Error('wrapper exited before the fake Codex started')));
+    require('node:readline').createInterface({ input: child.stdout }).on('line', line => {
+      const event = JSON.parse(line);
+      if (event.type === 'test.ready') resolve(event.base);
+    });
+  });
+  child.kill('SIGTERM');
+  assert.deepEqual(await exited, { code: 143, signal: null });
+  await new Promise((resolve, reject) => {
+    const req = http.get(`${base}/responses`, () => reject(new Error('adapter listener survived Stop')));
+    req.on('error', err => err.code === 'ECONNREFUSED' ? resolve() : reject(err));
+  });
+});
+
+test('request wrapper preserves a killed Codex exit instead of reporting a user Stop', t => {
+  const { dir, env } = makeEnv('#!/usr/bin/env node\nprocess.kill(process.pid, "SIGKILL");\n');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(env.CODEX_HOME);
+  fs.writeFileSync(path.join(env.CODEX_HOME, 'openrouter-model-catalog.json'), JSON.stringify(buildCatalogFromEnvironment(env)));
+  const wrapper = path.join(__dirname, '..', 'worker', 'codex-openrouter-request.js');
+  const result = spawnSync(process.execPath, [wrapper, 'exec', '--json'], { env, encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 137, result.stdout + result.stderr);
+});
 
 test('resume classifier accepts only an isolated structural missing-thread error', () => {
   assert.deepEqual(
@@ -150,9 +258,9 @@ exit 0
   assert.match(r.stdout, /"thread_id":"smoke-123"/, 'streams codex JSONL');
   assert.match(r.stdout, /agent_thread_id=smoke-123/, 'persists extracted thread id in result');
   assert.match(r.stdout, /mode=scout agent_backend=codex_openrouter/, 'terminal scout result');
-  assert.equal(
+  assert.match(
     fs.readFileSync(env.INVOKE_LOG, 'utf8').trim(),
-    'exec --dangerously-bypass-approvals-and-sandbox - --json',
+    /^-c model_providers\.usernode_openrouter\.base_url="http:\/\/127\.0\.0\.1:\d+" exec --dangerously-bypass-approvals-and-sandbox - --json$/,
     'the externally-sandboxed worker bypasses Codex bwrap explicitly',
   );
 });
@@ -171,9 +279,9 @@ exit 1
   assert.match(r.stdout, /codex \(resume existing-thread/, 'invokes codex resume');
   assert.match(r.stdout, /NOT retrying fresh/, 'does NOT retry fresh on non-thread-missing failure');
   assert.match(r.stdout, /mode=scout agent_backend=codex_openrouter .* agent_thread_id=/, 'terminal result emitted');
-  assert.equal(
+  assert.match(
     fs.readFileSync(env.INVOKE_LOG, 'utf8').trim(),
-    'exec resume --dangerously-bypass-approvals-and-sandbox existing-thread - --json',
+    /^-c model_providers\.usernode_openrouter\.base_url="http:\/\/127\.0\.0\.1:\d+" exec resume --dangerously-bypass-approvals-and-sandbox existing-thread - --json$/,
   );
 });
 
@@ -276,6 +384,10 @@ exit 1
     'base_url = "https://openrouter.ai/api/v1"',
     'wire_api = "responses"',
     'env_key = "OPENROUTER_API_KEY"',
+    // #2676: five silent stream retries turned one hard refusal into a
+    // minute of identical "Reconnecting..." lines.
+    'stream_max_retries = 3',
+    'request_max_retries = 3',
     '',
     '[mcp_servers.playwright]',
     'command = "npx"',
@@ -490,4 +602,55 @@ exit 0
   });
   assert.notEqual(build.status, 0);
   assert.match(build.stdout, /WORKER_JWT required for build mode/);
+});
+
+// ── Reply-size ceiling (#2676) ────────────────────────────────────────
+test('model catalog bounds the reply ceiling instead of inheriting the context window', () => {
+  // The provider refused a whole request because the ceiling it inferred
+  // (131,072) cost more than the account's remaining credit, and no reply
+  // this session has ever needed is anywhere near that.
+  const base = {
+    modelId: 'z-ai/glm-5.3-flash',
+    displayName: 'Z.AI: GLM 5.3 Flash',
+    contextWindow: 200_000,
+    baseInstructions: 'Test coding instructions',
+  };
+  assert.equal(SAFE_MAX_OUTPUT_TOKENS, 32_000);
+  assert.equal(MIN_MAX_OUTPUT_TOKENS, 4_096);
+
+  assert.equal(
+    buildCodexModelCatalog(base).models[0].max_output_tokens,
+    SAFE_MAX_OUTPUT_TOKENS,
+  );
+  assert.equal(
+    buildCodexModelCatalog({ ...base, maxOutputTokens: 8_000 }).models[0].max_output_tokens,
+    8_000,
+  );
+  // An oversized request is clamped down, a tiny one up, and the ceiling can
+  // never exceed the window the reply has to fit inside.
+  assert.equal(
+    buildCodexModelCatalog({ ...base, maxOutputTokens: 900_000 }).models[0].max_output_tokens,
+    SAFE_MAX_OUTPUT_TOKENS,
+  );
+  assert.equal(
+    buildCodexModelCatalog({ ...base, maxOutputTokens: 10 }).models[0].max_output_tokens,
+    MIN_MAX_OUTPUT_TOKENS,
+  );
+  assert.equal(
+    buildCodexModelCatalog({ ...base, contextWindow: 9_000 }).models[0].max_output_tokens,
+    9_000,
+  );
+});
+
+test('the reply ceiling is taken from the environment the host already sets', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-catalog-2676-'));
+  const bundledCatalogPath = path.join(dir, 'bundled-models.json');
+  fs.writeFileSync(bundledCatalogPath, JSON.stringify({ models: [] }));
+  const catalog = buildCatalogFromEnvironment({
+    CODEX_BUNDLED_MODELS_PATH: bundledCatalogPath,
+    AGENT_MODEL: 'z-ai/glm-5.3-flash',
+    AGENT_MODEL_NAME: 'Z.AI: GLM 5.3 Flash',
+    AGENT_MODEL_MAX_OUTPUT_TOKENS: '12000',
+  });
+  assert.equal(catalog.models[0].max_output_tokens, 12_000);
 });

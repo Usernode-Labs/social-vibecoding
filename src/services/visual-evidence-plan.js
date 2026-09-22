@@ -299,6 +299,15 @@ const replayPlanSchema = z.object({
     if (plan.impact === 'ui' && story.replay.checkpoint.animation === 'motion') {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories', index, 'replay', 'checkpoint', 'animation'], message: 'The motion profile requires impact "motion"' });
     }
+    if (story.replay.checkpoint.animation === 'steps'
+        && [story.replay.before, story.replay.after].some((side) =>
+          side.actions.every((action) => action.type === 'waitFor'))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['stories', index, 'replay', 'checkpoint', 'animation'],
+        message: 'Steps video requires a visible interaction on both revisions; wait-only flows use screenshots',
+      });
+    }
   });
 });
 

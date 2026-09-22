@@ -89,10 +89,14 @@ function poolOf({ sessions = [], claims = [], threads = [] } = {}) {
   };
 }
 
-test('both halves land in one set', async () => {
+test('both halves land in one set', async (t) => {
+  // `inProgressIssueNumbers` judges claims against the PROCESS clock, unlike
+  // `claimIsLive` above which takes `now` — so freeze it to the pinned `NOW`,
+  // or this claim ages past the TTL a week after the pinned date.
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const pool = poolOf({
     sessions: [{ n: 11 }, { n: 12 }],
-    claims: [{ n: 20, claimed_at: iso(NOW - DAY) }],
+    claims: [{ n: 20, claimed_at: iso(Date.now() - DAY) }],
   });
   const out = await inProgressIssueNumbers(pool, 7);
   assert.deepEqual([...out].sort((a, b) => a - b), [11, 12, 20]);

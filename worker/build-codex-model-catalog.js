@@ -13,6 +13,16 @@ const fs = require('node:fs');
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const MAX_CONTEXT_WINDOW = 10_000_000;
+// A single reply never needs the whole context window, and asking for one
+// that large is how an OpenRouter key with real credit still gets refused:
+// the provider prices the request against the ceiling it is given, not
+// against what the reply turns out to cost. Across observed Codex turns the
+// median reply is under 7,000 output tokens, so 32,000 leaves wide headroom
+// while keeping the quoted ceiling affordable (#2676).
+const SAFE_MAX_OUTPUT_TOKENS = 32_000;
+// The floor a clamped retry may not go below. A ceiling under this is not
+// worth spending an attempt on.
+const MIN_MAX_OUTPUT_TOKENS = 4_096;
 const NEUTRAL_IDENTITY_INSTRUCTION = "You are Homeroom's repository coding agent.";
 const DEFAULT_BASE_INSTRUCTIONS = [
   NEUTRAL_IDENTITY_INSTRUCTION,
@@ -138,6 +148,7 @@ function buildCodexModelCatalog({
   reasoningEfforts,
   selectedReasoningEffort,
   baseInstructions,
+  maxOutputTokens,
 }) {
   const slug = String(modelId || '').trim();
   if (!slug) throw new Error('modelId is required');
@@ -161,6 +172,14 @@ function buildCodexModelCatalog({
 
   const resolvedContextWindow = optionalPositiveInteger(contextWindow)
     || DEFAULT_CONTEXT_WINDOW;
+  // Clamped from both ends: never above the safe ceiling or the model's own
+  // context window, never below the floor a retry could still use.
+  const requestedMaxOutputTokens = optionalPositiveInteger(maxOutputTokens)
+    ?? SAFE_MAX_OUTPUT_TOKENS;
+  const resolvedMaxOutputTokens = Math.max(
+    MIN_MAX_OUTPUT_TOKENS,
+    Math.min(requestedMaxOutputTokens, SAFE_MAX_OUTPUT_TOKENS, resolvedContextWindow),
+  );
   const resolvedName = String(displayName || slug).trim().slice(0, 300) || slug;
   const instructions = nameSelectedModel(
     neutralizeBundledBaseInstructions(baseInstructions),
@@ -203,6 +222,10 @@ function buildCodexModelCatalog({
       supports_image_detail_original: false,
       context_window: resolvedContextWindow,
       max_context_window: resolvedContextWindow,
+      // Codex 0.146.0 ignores this catalog field. The worker-local request
+      // adapter reads it and enforces it in the actual /responses body on
+      // every call, including compaction and the host's smaller retry.
+      max_output_tokens: resolvedMaxOutputTokens,
       auto_compact_token_limit: null,
       comp_hash: null,
       effective_context_window_percent: 95,
@@ -228,6 +251,7 @@ function buildCatalogFromEnvironment(env = process.env) {
     reasoningEfforts: env.AGENT_MODEL_REASONING_EFFORTS,
     selectedReasoningEffort: env.AGENT_REASONING_EFFORT,
     baseInstructions: loadBundledBaseInstructions(bundledCatalogPath),
+    maxOutputTokens: env.AGENT_MODEL_MAX_OUTPUT_TOKENS,
   });
 }
 
@@ -243,7 +267,9 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_BASE_INSTRUCTIONS,
   DEFAULT_CONTEXT_WINDOW,
+  MIN_MAX_OUTPUT_TOKENS,
   NEUTRAL_IDENTITY_INSTRUCTION,
+  SAFE_MAX_OUTPUT_TOKENS,
   buildCodexModelCatalog,
   buildCatalogFromEnvironment,
   loadBundledBaseInstructions,

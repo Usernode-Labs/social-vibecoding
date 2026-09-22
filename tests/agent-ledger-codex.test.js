@@ -208,6 +208,48 @@ test('resolveCodexRuntimeContext carries the selected OpenRouter model metadata 
   assert.equal(ctx.pricingSnapshot.available, true);
 });
 
+test('runtime refreshes an included key allowance before dispatch and never manages personal keys', async (t) => {
+  const credentialStore = require('../src/services/credential-store');
+  const agentModels = require('../src/services/agent-models');
+  const managed = require('../src/services/openrouter-managed-keys');
+  let source = managed.MANAGED_SOURCE;
+  let syncFails = false;
+  const calls = [];
+  t.mock.method(credentialStore, 'readMetadata', async () => ({
+    id: 9, status: 'valid', revision: 3, metadata: { source },
+  }));
+  t.mock.method(credentialStore, 'readSecret', async () => { calls.push('key'); return 'sk-or-test'; });
+  t.mock.method(agentModels, 'resolveModelPricing', async () => null);
+  t.mock.method(managed, 'stateForUser', async (_pool, userId) => {
+    assert.equal(userId, 7);
+    calls.push('state');
+    return { managed_key_id: 9 };
+  });
+  t.mock.method(managed, 'syncAllowance', async ({ userId, state }) => {
+    assert.equal(userId, 7);
+    assert.equal(state.managed_key_id, 9);
+    calls.push('sync');
+    if (syncFails) throw new Error('temporary outage');
+    return state;
+  });
+  const resolve = () => resolveCodexRuntimeContext({
+    pool: {}, userId: 7,
+    session: { id: 81, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' },
+    config: { codexOpenrouterEnabled: true, openrouterManagementApiKey: 'management-test' },
+  });
+  assert.equal((await resolve()).agentModel, 'z-ai/glm-5.3-flash');
+  assert.deepEqual(calls, ['state', 'sync', 'key']);
+  calls.length = 0;
+  source = 'personal';
+  assert.equal((await resolve()).openrouterApiKey, 'sk-or-test');
+  assert.deepEqual(calls, ['key']);
+  calls.length = 0;
+  source = managed.MANAGED_SOURCE;
+  syncFails = true;
+  assert.equal((await resolve()).openrouterApiKey, 'sk-or-test', 'temporary management failures do not discard a usable key');
+  assert.deepEqual(calls, ['state', 'sync', 'key']);
+});
+
 // ── Cumulative usage normalization (plan 5.6) ──────────────────────────
 test('normalizeCumulativeUsage: missing totals stay null, not zero', () => {
   assert.deepEqual(normalizeCumulativeUsage({ inputTokens: 5, outputTokens: null }), {
@@ -576,6 +618,8 @@ test('completeCodexAttempt preserves each baseline across an intervening partial
 const {
   runCodexAttemptLoop,
   resumeRecoveredCodexFreshRetry,
+  codexMaxTokensRetry,
+  codexProviderFailureText,
 } = require('../src/routes/sessions');
 const { settleRecoveredAgentAttempt } = require('../src/services/agent-turn');
 
@@ -609,6 +653,8 @@ function makeLoopPool() {
       if (r && r.status === 'running') {
         r.status = params[1];
         r.updated = true;
+        r.error_code = params[2];
+        r.error_detail = params[3];
         r.input_tokens = params[5];
         r.output_tokens = params[8];
         r.provider_input_tokens_total = params[10];
@@ -1207,4 +1253,228 @@ test('attempt loop: refuses to dispatch when the backend changed', async () => {
   });
   assert.equal(out.error, 'agent_context_changed');
   assert.equal(dispatchCalls, 0);
+});
+
+// ── #2676: the clamped single retry on a provider refusal ─────────────
+const MAX_TOKENS_REFUSAL = 'stream disconnected before completion: This request '
+  + 'requires more credits, or fewer max_tokens. You requested up to 131072 tokens, '
+  + 'but can only afford 21605.';
+
+function refusalRuntime() {
+  return {
+    agentBackend: 'codex_openrouter', agentModel: 'z-ai/glm-5.3-flash',
+    agentReasoningEffort: null, credentialId: 1, credentialRevision: 1,
+    agentConfigVersion: 1,
+    agentModelMetadata: {
+      name: 'Z.AI: GLM 5.3 Flash', contextWindow: 200_000, maxOutputTokens: 32_000,
+    },
+    pricingSnapshot: { available: false },
+  };
+}
+
+test('attempt loop: successful CLI recovery is completed once without a host retry or billing error', async () => {
+  const worker = require('../src/services/worker');
+  for (const notice of [
+    { type: 'error', message: `Reconnecting... 1/3 (${MAX_TOKENS_REFUSAL})` },
+    { type: 'error', message: MAX_TOKENS_REFUSAL },
+    { type: 'item.completed', item: { type: 'error', message: MAX_TOKENS_REFUSAL } },
+  ]) {
+    const { pool, attempts } = makeLoopPool();
+    let dispatches = 0;
+    const result = await runCodexAttemptLoop({
+      pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+      resolveRuntime: async () => refusalRuntime(),
+      dispatchOnce: async () => {
+        dispatches += 1;
+        const state = worker.newWatchState();
+        state.agentBackend = 'codex_openrouter';
+        for (const event of [
+          { type: 'turn.started' }, notice,
+          { type: 'item.completed', item: { type: 'agent_message', text: 'Completed the change.' } },
+          { type: 'turn.completed', usage: { input_tokens: 123, output_tokens: 45 } },
+        ]) worker.parseLine(JSON.stringify(event), () => {}, state);
+        worker.parseLine('__USERNODE_RESULT__ cc_exit=0 agent_exit=0', () => {}, state);
+        worker.parseLine('__USERNODE_EXIT__ 0', () => {}, state);
+        return state;
+      },
+      retryPredicate: () => false,
+      prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+    });
+    assert.equal(dispatches, 1);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0].status, 'completed');
+    assert.equal(attempts[0].error_code, null);
+    assert.equal(result.result.lastResultText, 'Completed the change.');
+    assert.equal(result.result.inputTokens, 123);
+  }
+});
+
+test('attempt loop: a max_tokens refusal retries once under a ceiling the account can pay for', async () => {
+  const { pool, attempts } = makeLoopPool();
+  const ceilings = [];
+  let dispatchCalls = 0;
+  const statuses = [];
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => refusalRuntime(),
+    dispatchOnce: async (ctx) => {
+      dispatchCalls += 1;
+      ceilings.push(ctx.agentModelMetadata?.maxOutputTokens);
+      if (dispatchCalls === 1) {
+        return {
+          exitCode: 1, ccIsError: true, resultSeen: true,
+          agentError: MAX_TOKENS_REFUSAL,
+          agentErrorCode: 'insufficient_credits_max_tokens',
+          requestedOutputTokens: 131072,
+          affordableOutputTokens: 21605,
+          providerRequest: {
+            model: 'z-ai/glm-5.3-flash', maxOutputTokens: 32000, httpStatus: 402,
+            requestId: 'req-123', inputBytes: 2000, inputItems: 4,
+            authorization: 'must-not-persist',
+          },
+        };
+      }
+      return { exitCode: 0, resultSeen: true };
+    },
+    // Deliberately false: the clamp rule must stand on its own, because the
+    // build path's predicate only retries headless turns.
+    retryPredicate: () => false,
+    sendStatus: async (msg) => { statuses.push(msg); },
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+
+  assert.equal(dispatchCalls, 2, 'retried exactly once');
+  assert.equal(ceilings[0], 32_000, 'attempt one asks for the runtime ceiling');
+  assert.equal(ceilings[1], Math.floor(21605 * 0.8), 'attempt two asks for what is affordable');
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0].error_code, 'insufficient_credits',
+    'the refusal is billed, not left NULL for the telemetry to guess at');
+  assert.equal(attempts[1].status, 'completed');
+  assert.equal(attempts[1].error_code, null);
+  const detail = JSON.parse(attempts[0].error_detail);
+  assert.equal(detail.requestedOutputTokens, 131072);
+  assert.equal(detail.affordableOutputTokens, 21605);
+  assert.equal(detail.request.maxOutputTokens, 32000);
+  assert.equal(detail.request.requestId, 'req-123');
+  assert.doesNotMatch(attempts[0].error_detail, /must-not-persist/);
+  assert.equal(attempts[1].error_detail, null, 'a successful retry does not inherit the earlier refusal');
+  assert.match(statuses[0], /smaller reply limit/);
+  assert.doesNotMatch(statuses[0], /\u2014/);
+});
+
+test('attempt loop: the clamped retry keeps the rest of the model metadata', async () => {
+  const { pool } = makeLoopPool();
+  const seen = [];
+  let dispatchCalls = 0;
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => refusalRuntime(),
+    dispatchOnce: async (ctx) => {
+      dispatchCalls += 1;
+      seen.push(ctx.agentModelMetadata);
+      return dispatchCalls === 1
+        ? {
+          exitCode: 1, ccIsError: true, resultSeen: true,
+          agentErrorCode: 'insufficient_credits_max_tokens',
+          affordableOutputTokens: 21605,
+        }
+        : { exitCode: 0, resultSeen: true };
+    },
+    retryPredicate: () => false,
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+  assert.equal(seen[1].name, 'Z.AI: GLM 5.3 Flash');
+  assert.equal(seen[1].contextWindow, 200_000);
+});
+
+test('attempt loop: a refusal the account cannot retry under does not buy a second request', async () => {
+  const { pool, attempts } = makeLoopPool();
+  let dispatchCalls = 0;
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => refusalRuntime(),
+    dispatchOnce: async () => {
+      dispatchCalls += 1;
+      return {
+        exitCode: 1, ccIsError: true, resultSeen: true,
+        agentErrorCode: 'insufficient_credits_max_tokens',
+        // Below the catalog's floor: no reply worth paying for fits.
+        affordableOutputTokens: 900,
+      };
+    },
+    retryPredicate: () => false,
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+  assert.equal(dispatchCalls, 1);
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].error_code, 'insufficient_credits');
+});
+
+test('attempt loop: an out-of-credit refusal is terminal, never retried', async () => {
+  const { pool, attempts } = makeLoopPool();
+  let dispatchCalls = 0;
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => refusalRuntime(),
+    dispatchOnce: async () => {
+      dispatchCalls += 1;
+      return {
+        exitCode: 1, ccIsError: true, resultSeen: true,
+        agentErrorCode: 'insufficient_credits',
+      };
+    },
+    retryPredicate: () => false,
+    prepareRetry: async () => { pool._clearActiveTurn(); return true; },
+  });
+  assert.equal(dispatchCalls, 1, 'a second request would be refused identically');
+  assert.equal(attempts[0].error_code, 'insufficient_credits');
+});
+
+test('codexMaxTokensRetry: only the max_tokens refusal, and never after a stop', () => {
+  const refusal = {
+    agentErrorCode: 'insufficient_credits_max_tokens', affordableOutputTokens: 21605,
+  };
+  assert.deepEqual(codexMaxTokensRetry(refusal), { clamped: 17284 });
+  assert.equal(codexMaxTokensRetry(refusal, { stopped: true }), null);
+  assert.equal(codexMaxTokensRetry(null), null);
+  assert.equal(codexMaxTokensRetry({ agentErrorCode: 'insufficient_credits' }), null);
+  assert.equal(codexMaxTokensRetry({ agentErrorCode: 'stream_disconnected' }), null);
+  assert.equal(codexMaxTokensRetry({ ...refusal, affordableOutputTokens: null }), null);
+  assert.equal(codexMaxTokensRetry({ ...refusal, affordableOutputTokens: 900 }), null);
+  assert.equal(codexMaxTokensRetry({
+    ...refusal, providerRequest: { maxOutputTokens: 12800 },
+  }), null, 'a contradictory refusal must not raise the actual cap');
+  assert.equal(codexMaxTokensRetry({
+    ...refusal, providerRequest: { maxOutputTokens: 17284 },
+  }), null, 'an unchanged cap cannot repair the refusal');
+  assert.equal(codexMaxTokensRetry({
+    ...refusal, providerRequest: { maxOutputTokens: 32000, limitSource: 'openrouter_in_flight_budget' },
+  }), null, 'a temporary shared budget refusal needs settlement time, not an immediate smaller request');
+});
+
+test('codexProviderFailureText: the remedy follows whose key is paying', async () => {
+  const result = {
+    agentErrorCode: 'insufficient_credits_max_tokens',
+    requestedOutputTokens: 131072,
+    affordableOutputTokens: 21605,
+    agentError: MAX_TOKENS_REFUSAL,
+  };
+  const personalPool = { query: async () => ({ rows: [] }) };
+  assert.match(
+    await codexProviderFailureText(personalPool, 1, result),
+    /OpenRouter checked a limit of 131,072 tokens/,
+  );
+  const includedPool = { query: async () => ({ rows: [{ source: 'usernode_managed' }] }) };
+  assert.match(
+    await codexProviderFailureText(includedPool, 1, result),
+    /credit included with Homeroom/,
+  );
+  // A failed lookup must not tell the user the platform's key is at fault.
+  const brokenPool = { query: async () => { throw new Error('db down'); } };
+  assert.match(
+    await codexProviderFailureText(brokenPool, 1, result),
+    /your OpenRouter account balance/,
+  );
+  // An unclassified turn keeps whatever copy the caller already had.
+  assert.equal(await codexProviderFailureText(personalPool, 1, { exitCode: 1 }), null);
 });

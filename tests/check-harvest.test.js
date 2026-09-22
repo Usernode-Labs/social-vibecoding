@@ -161,6 +161,7 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   quietBroadcast(t);
   const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
   const collected = [];
+  const evidence = [];
   let settledWith = null;
   stub(t, kubernetes, {
     findCheckJobs: async (_cfg, { sessionId, previewRunId }) => {
@@ -179,6 +180,7 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   });
   stub(t, visuals, {
     settleCaptureRun: async (_cfg, _pool, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; },
+    scheduleVisualEvidence: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
   });
 
   const summary = await harvest.sweep(config, { reason: 'boot', pool });
@@ -207,6 +209,8 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   assert.equal(settledWith.send, null);
   assert.equal(settledWith.operation, null, 'lifecycle off: settled with the plain pool');
   assert.deepEqual(pool.deleted, ['run-1'], 'the manifest is cleared once the verdict is stored');
+  assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }],
+    'recovering checks must also hand the visual claim to the evidence runner');
   assert.equal(visuals.hasInFlightCapture(42), false, 'the seat is handed back');
   assert.equal(harvest.isHarvesting(42), false);
 });
@@ -421,6 +425,7 @@ test('a capture Job that failed with nothing to salvage records an error verdict
   quietBroadcast(t);
   const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
   const stores = [];
+  const evidence = [];
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'failed' }, unitSuite: null }),
     collectCheckJob: async () => ({ state: 'failed', stdout: '   \n', stderr: 'BackoffLimitExceeded', exitCode: 1, timedOut: false, partial: true, partialReason: 'job BackoffLimitExceeded' }),
@@ -429,6 +434,7 @@ test('a capture Job that failed with nothing to salvage records an error verdict
     settleCaptureRun: async () => assert.fail('nothing to settle from'),
     storeChecks: async (_pool, sessionId, commitSha, result, detail) => { stores.push({ sessionId, commitSha, result, detail }); return true; },
     storeCaptureOutcome: async () => true,
+    scheduleVisualEvidence: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
   });
   const summary = await harvest.sweep(config, { reason: 'tick', pool });
   const [result] = await summary.done;
@@ -439,6 +445,7 @@ test('a capture Job that failed with nothing to salvage records an error verdict
   assert.equal(stores[0].commitSha, 'abc123');
   assert.equal(stores[0].result.state, 'error');
   assert.match(stores[0].detail, /BackoffLimitExceeded/);
+  assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }]);
   assert.deepEqual(pool.deleted, ['run-1']);
 });
 

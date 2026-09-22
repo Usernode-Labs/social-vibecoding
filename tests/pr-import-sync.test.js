@@ -524,6 +524,36 @@ test('syncImportedProposal: a mechanical sync over a run still in flight rebuild
   });
 });
 
+test('syncImportedProposal: a mechanical sync over a settled FAILURE rebuilds instead of carrying (#2693)', async () => {
+  // Proposal 4654's shape: red on a red base, main repaired, the sync merged
+  // the repair in — and carried the old failure onto a commit that contained
+  // its fix, with nothing building. Main moving is exactly what can change a
+  // failing verdict, so only a green one rides along.
+  const NEW = 'b'.repeat(40);
+  const sysMessages = [];
+  let buildSha = null;
+  scriptedMove = { kind: 'mechanical' };
+
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async (_pool, _appId, content, msgType, meta) => { sysMessages.push({ content, meta }); }],
+    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
+  ], async () => {
+    const pool = recordingPool({ epoch: 4 });
+    const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'failing' };
+    await prImportSync.syncImportedProposal({ config: {}, pool, session });
+
+    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+    assert.equal(headUpdate.params[2], false, 'no epoch bump — the tree is unchanged, the votes still stand');
+    assert.equal(headUpdate.params[3], false, 'but a failing verdict is not carried');
+    assert.equal(buildSha, NEW, 'the checks re-run against the merged commit');
+    assert.equal(sysMessages.length, 1);
+    assert.match(sysMessages[0].content, /votes still stand/i);
+    assert.match(sysMessages[0].content, /checks are re-running against the merged commit/i,
+      'and the note says so, rather than claiming the old verdict');
+  });
+});
+
 test('syncImportedProposal: a resolved sync keeps the votes but re-tests the merged tree', async () => {
   const NEW = 'b'.repeat(40);
   const sysMessages = [];

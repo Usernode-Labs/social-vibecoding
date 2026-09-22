@@ -308,8 +308,12 @@ function devFlowRoutes(config) {
         // `demo` already selected to an ORDINARY work order — one that
         // continues nothing, which both of the others do carry and which is
         // the only shape "Start over" is offered on.
+        // `?order=link` (#2679, #2680) is the walkthrough at its FIRST step:
+        // nothing linked yet, so the "Link GitHub" anchor is on screen for
+        // the declared check to see.
         const order = req.query.order === 'connect' ? 'connect'
-          : (req.query.order === 'continue' ? 'continue' : null);
+          : (req.query.order === 'link' ? 'link'
+            : (req.query.order === 'continue' ? 'continue' : null));
         return res.json(req.query.demo === '1' || req.query.demo === 'session'
           ? demoStatus(app, parsed, order)
           : {
@@ -848,26 +852,34 @@ function devFlowRoutes(config) {
 // shooting: the hand-off step becomes "Connect Homeroom", because without one
 // the agent cannot call prepare_work and there is nothing useful to hand it.
 // `?order=continue` makes it a continuation, where the instructions name the
-// proposal being updated. Any value here must also be in DevChat's
-// DEV_FLOW_ORDERS or the client drops it before it arrives; a test holds the
-// two lists to each other.
+// proposal being updated. `?order=link` (#2679, #2680) is the walkthrough at
+// its first step, GitHub not linked, so the "Link GitHub" anchor is on screen.
+// Any value here must also be in DevChat's DEV_FLOW_ORDERS or the client
+// drops it before it arrives; a test holds the two lists to each other.
 function demoStatus(app, parsed, order) {
   const owner = (parsed && parsed.owner) || 'usernode-apps';
   const repo = (parsed && parsed.repo) || app.slug;
   const login = 'octo-contributor';
   const continuing = order === 'continue';
+  const unlinked = order === 'link';
   return {
     available: true,
     reason: null,
     demo: true,
     repo: { owner, repo },
-    github: { linked: true, login, available: true },
+    // Unlinked, the card opens on "Link your GitHub account" with its anchor,
+    // which is the one thing the check for that step needs to see. No fork
+    // either: the fork read is keyed on the linked login, so a real unlinked
+    // user has none yet.
+    github: unlinked
+      ? { linked: false, login: null, available: true }
+      : { linked: true, login, available: true },
     // Connected, unless the fixture is deliberately showing the other state.
     // It used to be zero on purpose, to show an advisory note under the
     // hand-off step; that note is gone, because the connector is a
     // requirement now rather than a suggestion.
     connectors: { count: order === 'connect' ? 0 : 2 },
-    fork: {
+    fork: unlinked ? null : {
       state: 'ready',
       owner: login,
       repo,
@@ -875,7 +887,9 @@ function demoStatus(app, parsed, order) {
       pageUrl: `https://github.com/${owner}/${repo}/fork`,
     },
     targetKind: continuing ? 'proposal' : null,
-    instructions: prompts.getLaunchpadInstructions({
+    // The live route answers an unlinked user before it writes instructions
+    // (`if (!linked) return res.json(payload)` above), so the fixture does too.
+    instructions: unlinked ? null : prompts.getLaunchpadInstructions({
       appName: app.name,
       slug: app.slug,
       targetProposalId: continuing ? 990601 : null,
@@ -885,4 +899,4 @@ function demoStatus(app, parsed, order) {
   };
 }
 
-module.exports = { devFlowRoutes, PICKABLE_AGENTS, STATUS_BY_CODE, shapeBranch };
+module.exports = { devFlowRoutes, PICKABLE_AGENTS, STATUS_BY_CODE, shapeBranch, demoStatus };

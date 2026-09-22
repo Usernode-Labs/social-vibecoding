@@ -101,12 +101,23 @@ function bareHandle(v) {
 // (answers.verified) first, and otherwise the identity connected on its
 // linked ACCOUNT — `x_handle_source` says which, since only the first is
 // the waitlist row's own claim.
+//
+// Every stage-1/stage-2 survey field the signup could have answered gets its
+// own column (see services/waitlist-questions.js for the full shape): the
+// "group" section covers what they're building and with whom
+// (group_name/size/role/tools/need), and "loss" covers the platform-loss
+// story (had_loss/loss_product/loss_kind/loss_story). Enum answers (group
+// size/role/tools, loss had/kind) are exported as the raw stored code, same
+// as `found_us` above, so the file matches what the row actually holds
+// rather than a label that can be reworded later.
 const EXPORT_HEADER = [
   'signup_id', 'email', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
   'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
   'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
   'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
-  'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+  'country', 'city', 'found_us', 'found_us_detail', 'made_url', 'made_note',
+  'group_name', 'group_size', 'group_role', 'group_tools', 'group_need',
+  'had_loss', 'loss_product', 'loss_kind', 'loss_story', 'followed_claim',
 ];
 
 function exportRow(r) {
@@ -114,6 +125,8 @@ function exportRow(r) {
   const verified = plainObject(a.verified);
   const handles = plainObject(a.handles);
   const discovery = plainObject(a.discovery);
+  const group = plainObject(a.group);
+  const loss = plainObject(a.loss);
   const signupX = bareHandle(verified.x);
   const accountX = bareHandle(r.account_x_handle);
   return [
@@ -141,6 +154,17 @@ function exportRow(r) {
     discovery.source || '',
     discovery.detail || '',
     a.made_url || '',
+    a.made_note || '',
+    group.name || '',
+    group.size || '',
+    group.role || '',
+    Array.isArray(group.tools) ? group.tools.join('; ') : '',
+    group.need || '',
+    loss.had || '',
+    loss.product || '',
+    Array.isArray(loss.kind) ? loss.kind.join('; ') : '',
+    loss.story || '',
+    a.followed_claim ? 'true' : '',
   ];
 }
 
@@ -315,6 +339,52 @@ function waitlistAdminRoutes(config) {
       });
     } catch (err) {
       log.error('topochain-admin', 'POST /admin/waitlist/:id/release failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── DELETE /api/v4/admin/waitlist/:id ─────────────────────────────────
+  // Removes one signup outright. `invited_by` is self-referential with
+  // ON DELETE SET NULL, so deleting a row that referred others clears
+  // their invited_by rather than failing or cascading further.
+  router.delete('/api/v4/admin/waitlist/:id', adminWriteGate, async (req, res) => {
+    try {
+      const id = toIntId(req.params.id);
+      if (!id) return fail(res, 404, 'Waitlist entry not found.');
+      const { rows } = await pool.query(
+        'DELETE FROM waitlist_signups WHERE id = $1 RETURNING id, email',
+        [id]
+      );
+      if (!rows.length) return fail(res, 404, 'Waitlist entry not found.');
+      log.info('topochain-admin', 'Waitlist entry deleted', {
+        signupId: id, email: rows[0].email, adminId: req.user?.id,
+      });
+      return ok(res, { data: { id: Number(rows[0].id) } });
+    } catch (err) {
+      log.error('topochain-admin', 'DELETE /admin/waitlist/:id failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── POST /api/v4/admin/waitlist/bulk-delete ───────────────────────────
+  // Deletes several signups at once, for the queue's multi-select. Ids
+  // that don't parse or don't exist are silently skipped; the response
+  // says how many rows were actually removed.
+  router.post('/api/v4/admin/waitlist/bulk-delete', adminWriteGate, async (req, res) => {
+    try {
+      const raw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const ids = [...new Set(raw.map(toIntId).filter((n) => n != null))];
+      if (!ids.length) return fail(res, 422, 'No valid waitlist entry ids given.');
+      const { rows } = await pool.query(
+        'DELETE FROM waitlist_signups WHERE id = ANY($1::bigint[]) RETURNING id',
+        [ids]
+      );
+      log.info('topochain-admin', 'Waitlist entries bulk-deleted', {
+        signupIds: rows.map((r) => Number(r.id)), adminId: req.user?.id,
+      });
+      return ok(res, { data: { deleted: rows.length } });
+    } catch (err) {
+      log.error('topochain-admin', 'POST /admin/waitlist/bulk-delete failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

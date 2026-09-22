@@ -244,6 +244,16 @@ function handleQuery(rawSql, params = []) {
     return { rows };
   }
 
+  // Delete (single, `= $1`, or bulk, `= ANY($1::bigint[])`): the first bound
+  // param is either one id or an array of them either way, so there is
+  // nothing to branch on beyond that shape.
+  if (sql.startsWith('DELETE FROM waitlist_signups')) {
+    const ids = (Array.isArray(params[0]) ? params[0] : [params[0]]).map(Number);
+    const removed = signupRows.filter((r) => ids.includes(r.id));
+    signupRows = signupRows.filter((r) => !ids.includes(r.id));
+    return { rows: removed.map((r) => ({ id: r.id, email: r.email })) };
+  }
+
   throw new Error(`Unhandled mock query: ${sql}`);
 }
 
@@ -287,6 +297,18 @@ async function get(path, role = 'admin') {
   const { server, base } = await listen(buildApp(role));
   try {
     const res = await fetch(`${base}${path}`);
+    return { status: res.status, body: await res.json() };
+  } finally { server.close(); }
+}
+
+async function mutate(method, path, body, role = 'admin') {
+  const { server, base } = await listen(buildApp(role));
+  try {
+    const res = await fetch(`${base}${path}`, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
     return { status: res.status, body: await res.json() };
   } finally { server.close(); }
 }
@@ -512,7 +534,9 @@ test('export-csv downloads every signup, newest first, with a dated filename', a
     'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
     'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
     'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
-    'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+    'country', 'city', 'found_us', 'found_us_detail', 'made_url', 'made_note',
+    'group_name', 'group_size', 'group_role', 'group_tools', 'group_need',
+    'had_loss', 'loss_product', 'loss_kind', 'loss_story', 'followed_claim',
   ].join(','));
 
   const byId = new Map(rows.map((r) => [r.signup_id, r]));
@@ -526,6 +550,36 @@ test('export-csv downloads every signup, newest first, with a dated filename', a
   assert.equal(byId.get('4').has_platform_access, '');
   assert.equal(byId.get('1').country, 'DE');
   assert.equal(byId.get('5').farcaster, 'someone');
+  assert.equal(byId.get('1').group_name, 'Chess club');
+  assert.equal(byId.get('1').had_loss, 'yes');
+  assert.equal(byId.get('5').followed_claim, 'true');
+  assert.equal(byId.get('3').followed_claim, '');
+});
+
+// The "what they want to build with who" half of the issue: the group
+// section's size/role/tools/need and the loss-story section, both entirely
+// absent from the export before this test was added.
+test('export-csv carries the group and loss survey sections', async () => {
+  signupRows[0].answers.group = {
+    name: 'Chess club', size: '10-50', role: 'organizer', tools: ['discord', 'telegram'], need: 'A shared roster',
+  };
+  signupRows[0].answers.loss = {
+    had: 'yes', product: 'Old Forum', kind: ['shutdown', 'acquired'], story: 'It just vanished one day.',
+  };
+  signupRows[0].answers.made_note = 'A little side project';
+
+  const rows = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv')).text);
+  const row = rows.find((r) => r.signup_id === '1');
+  assert.equal(row.made_note, 'A little side project');
+  assert.equal(row.group_name, 'Chess club');
+  assert.equal(row.group_size, '10-50');
+  assert.equal(row.group_role, 'organizer');
+  assert.equal(row.group_tools, 'discord; telegram');
+  assert.equal(row.group_need, 'A shared roster');
+  assert.equal(row.had_loss, 'yes');
+  assert.equal(row.loss_product, 'Old Forum');
+  assert.equal(row.loss_kind, 'shutdown; acquired');
+  assert.equal(row.loss_story, 'It just vanished one day.');
 });
 
 test('export-csv honours the status and only filters the screen has set', async () => {
@@ -583,4 +637,86 @@ test('export-csv neutralises formula injection and quotes awkward cells', async 
   assert.equal(row.city, 'Paris, France');
   assert.equal(row.made_url, 'line one\nline two');
   assert.equal(parseCsv(text).length, 5);
+});
+
+// ─── DELETE /api/v4/admin/waitlist/:id (#2674) ──────────────────────────
+
+test('deleting a signup sits behind the write gate: view-only admins and non-admins are refused', async () => {
+  const ro = await mutate('DELETE', '/api/v4/admin/waitlist/1', undefined, 'readonly');
+  assert.equal(ro.status, 403);
+  assert.deepEqual(ro.body, { success: false, error: 'Full admin access required.' });
+
+  const user = await mutate('DELETE', '/api/v4/admin/waitlist/1', undefined, 'user');
+  assert.equal(user.status, 403);
+
+  // A refused request must never reach the query.
+  assert.equal(signupRows.length, 5);
+});
+
+test('a full admin can delete one signup, and it disappears from the list', async () => {
+  const { status, body } = await mutate('DELETE', '/api/v4/admin/waitlist/2');
+  assert.equal(status, 200);
+  assert.deepEqual(body, { success: true, data: { id: 2 } });
+  assert.equal(signupRows.some((r) => r.id === 2), false);
+
+  const { body: list } = await get('/api/v4/admin/waitlist');
+  assert.ok(!list.data.some((r) => r.id === 2));
+});
+
+test('deleting an id that does not exist 404s and touches nothing', async () => {
+  const { status, body } = await mutate('DELETE', '/api/v4/admin/waitlist/999');
+  assert.equal(status, 404);
+  assert.deepEqual(body, { success: false, error: 'Waitlist entry not found.' });
+  assert.equal(signupRows.length, 5);
+});
+
+test('a malformed id (non-numeric, zero, negative) 404s the same way, rather than reaching the query', async () => {
+  for (const bad of ['not-a-number', '0', '-1', '1.5']) {
+    const { status, body } = await mutate('DELETE', `/api/v4/admin/waitlist/${bad}`);
+    assert.equal(status, 404, `id=${bad}`);
+    assert.deepEqual(body, { success: false, error: 'Waitlist entry not found.' }, `id=${bad}`);
+  }
+  assert.equal(signupRows.length, 5);
+});
+
+// ─── POST /api/v4/admin/waitlist/bulk-delete (#2674) ────────────────────
+
+test('bulk-delete sits behind the write gate too', async () => {
+  const ro = await mutate('POST', '/api/v4/admin/waitlist/bulk-delete', { ids: [1, 2] }, 'readonly');
+  assert.equal(ro.status, 403);
+  assert.deepEqual(ro.body, { success: false, error: 'Full admin access required.' });
+
+  const user = await mutate('POST', '/api/v4/admin/waitlist/bulk-delete', { ids: [1, 2] }, 'user');
+  assert.equal(user.status, 403);
+
+  assert.equal(signupRows.length, 5);
+});
+
+test('a full admin can delete several signups in one request', async () => {
+  const { status, body } = await mutate('POST', '/api/v4/admin/waitlist/bulk-delete', { ids: [1, 3, 5] });
+  assert.equal(status, 200);
+  assert.deepEqual(body, { success: true, data: { deleted: 3 } });
+  assert.deepEqual(signupRows.map((r) => r.id).sort(), [2, 4]);
+});
+
+test('duplicate and unknown ids in the same request are tolerated, counting only the real rows removed', async () => {
+  const { status, body } = await mutate('POST', '/api/v4/admin/waitlist/bulk-delete', { ids: [1, 1, 999] });
+  assert.equal(status, 200);
+  assert.deepEqual(body, { success: true, data: { deleted: 1 } });
+  assert.equal(signupRows.some((r) => r.id === 1), false);
+  assert.equal(signupRows.length, 4);
+});
+
+test('an empty, missing, or all-invalid ids array is rejected without querying', async () => {
+  const empty = await mutate('POST', '/api/v4/admin/waitlist/bulk-delete', { ids: [] });
+  assert.equal(empty.status, 422);
+  assert.deepEqual(empty.body, { success: false, error: 'No valid waitlist entry ids given.' });
+
+  const garbage = await mutate('POST', '/api/v4/admin/waitlist/bulk-delete', { ids: ['abc', null, {}] });
+  assert.equal(garbage.status, 422);
+
+  const missing = await mutate('POST', '/api/v4/admin/waitlist/bulk-delete', {});
+  assert.equal(missing.status, 422);
+
+  assert.equal(signupRows.length, 5, 'a rejected bulk-delete must not remove any row');
 });

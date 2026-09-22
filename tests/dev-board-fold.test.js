@@ -912,7 +912,35 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with the #2490 check above; main independently took the same 707 to 708
   // with the #2688 check above. Neither set overlaps the other, so the
   // merged manifest holds every one of them: 707 + 1 + 1 = 709.
-  assert.equal(DAPP.tests.length, 709);
+  //
+  // 707 → 708: on a later side of main, #2679 and #2680 made the hand-off
+  // walkthrough's "Link GitHub" step a real link to GitHub's own
+  // authorization page instead of a hop to Settings, and no declared check
+  // had ever looked at that step: the staging fixture has always been
+  // linked, so the card never opened on it. ONE check, on the new
+  // ?order=link fixture shape, pins the anchor and its destination.
+  //
+  // 707 → 709: independently on that same side of main, #2684 adds the
+  // Homeroom bot's admin dashboard, with two declared checks on its section
+  // (the verdict table renders; the intro says shadow mode posts nothing).
+  //
+  // 708 → 711, 709 → 711: the tallies above were computed on either side of
+  // a DIFFERENT merge on main and cannot be read as one sequence either:
+  // main took 707 → 708 with the #2679/#2680 check and 707 → 709 with the
+  // #2684 pair, landing on 711 once the same native-Android-header check
+  // named above is folded in on that side too (707 + 1 + 2 + 1 = 711).
+  //
+  // 709 → 712: reconciling this branch's 709 with main's 711 would
+  // double-count the native-Android-header check — both sides already carry
+  // it from the same commit, this branch merged in at the 708 → 709 step
+  // above and main counted again inside its own 711. Only main's other two
+  // additions are new against the shared 709: the Link-GitHub check (+1)
+  // and the Homeroom-bot pair (+2). 709 + 1 + 2 = 712, which leaves 38 slots
+  // against MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot
+  // floor. The ceiling itself already moved from 730 to 750 on main's side,
+  // once its own total stood on the old ceiling's 20-slot floor; that move
+  // carries over unchanged (services/app-manifest.js).
+  assert.equal(DAPP.tests.length, 712);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
