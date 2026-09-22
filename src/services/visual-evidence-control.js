@@ -42,6 +42,10 @@ class RunControl {
     this.planCalls = 0;
     this.maxPlanCalls = 1;
     this.latestHard = null;
+    // Tool errors also need to survive a successful model process exit. A
+    // rejected plan never reaches the replay callback, but is just as useful
+    // when diagnosing a turn that submitted no passing replay.
+    this.lastToolFailure = null;
     this.finished = null;
     this.repairReason = null;
     this.waiters = new Set();
@@ -60,51 +64,64 @@ class RunControl {
   }
 
   async resetSide(side) {
-    this.assertLive();
-    if (!['base', 'head'].includes(side)) throw new EvidenceControlError('invalid_evidence_side', 'Side must be base or head.', 400);
-    if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
-    if (typeof this.resetSideCallback !== 'function') {
-      throw new EvidenceControlError('evidence_reset_unavailable', 'Side reset is unavailable for this run.', 503);
+    try {
+      this.assertLive();
+      if (!['base', 'head'].includes(side)) throw new EvidenceControlError('invalid_evidence_side', 'Side must be base or head.', 400);
+      if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
+      if (typeof this.resetSideCallback !== 'function') {
+        throw new EvidenceControlError('evidence_reset_unavailable', 'Side reset is unavailable for this run.', 503);
+      }
+      if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
+      this.busy = 'resetting paired state';
+      try { return await this.resetSideCallback(side); }
+      finally { this.busy = null; }
+    } catch (error) {
+      if (this.lastToolFailure?.operation !== 'run-plan') {
+        this.lastToolFailure = { operation: 'reset-side', error };
+      }
+      throw error;
     }
-    if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
-    this.busy = 'resetting paired state';
-    try { return await this.resetSideCallback(side); }
-    finally { this.busy = null; }
   }
 
   async runPlan(rawPlan) {
-    this.assertLive();
-    if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
-    if (this.planCalls >= this.maxPlanCalls) {
-      throw new EvidenceControlError('evidence_plan_attempt_exhausted', 'No additional replay-plan attempt is available.');
-    }
-    if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
-    const plan = planContract.parseReplayPlan(rawPlan);
-    const projected = planContract.semanticIntentFromPlan(plan);
-    if (planContract.canonicalJson(projected) !== planContract.canonicalJson(this.intent)) {
-      throw new EvidenceControlError(
-        'evidence_intent_mismatch',
-        'The executable plan must preserve the accepted claims, personas, viewports, flow summary, focus, and animation intent.',
-        400
-      );
-    }
-    // Reserve the attempt before awaiting so concurrent calls cannot execute
-    // multiple expensive paired replays.
-    this.planCalls += 1;
-    this.busy = 'replaying the submitted plan';
-    const replayStartedAt = Date.now();
     try {
-      const result = await this.runPlanCallback(plan, { attempt: this.planCalls });
-      this.latestHard = result?.hardVerdict?.passed === true
-        ? { passed: true, planHash: result.planHash, attempt: this.planCalls }
-        : null;
-      return result;
-    } finally {
-      // Each deterministic replay pass has its own container deadline. Do
-      // not expire the agent's control window while that bounded platform
-      // work is running; it still needs to inspect the media and finish.
-      this.expiresAt += Date.now() - replayStartedAt;
-      this.busy = null;
+      this.assertLive();
+      if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
+      if (this.planCalls >= this.maxPlanCalls) {
+        throw new EvidenceControlError('evidence_plan_attempt_exhausted', 'No additional replay-plan attempt is available.');
+      }
+      if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
+      const plan = planContract.parseReplayPlan(rawPlan);
+      const projected = planContract.semanticIntentFromPlan(plan);
+      if (planContract.canonicalJson(projected) !== planContract.canonicalJson(this.intent)) {
+        throw new EvidenceControlError(
+          'evidence_intent_mismatch',
+          'The executable plan must preserve the accepted claims, personas, viewports, flow summary, focus, and animation intent.',
+          400
+        );
+      }
+      // Reserve the attempt before awaiting so concurrent calls cannot execute
+      // multiple expensive paired replays.
+      this.planCalls += 1;
+      this.busy = 'replaying the submitted plan';
+      const replayStartedAt = Date.now();
+      try {
+        const result = await this.runPlanCallback(plan, { attempt: this.planCalls });
+        this.lastToolFailure = null;
+        this.latestHard = result?.hardVerdict?.passed === true
+          ? { passed: true, planHash: result.planHash, attempt: this.planCalls }
+          : null;
+        return result;
+      } finally {
+        // Each deterministic replay pass has its own container deadline. Do
+        // not expire the agent's control window while that bounded platform
+        // work is running; it still needs to inspect the media and finish.
+        this.expiresAt += Date.now() - replayStartedAt;
+        this.busy = null;
+      }
+    } catch (error) {
+      this.lastToolFailure = { operation: 'run-plan', error };
+      throw error;
     }
   }
 

@@ -3,9 +3,9 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 648,
+    "totalRoutes": 649,
     "mappedRoutes": 511,
-    "exemptRoutes": 137,
+    "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
     "clientApiReferences": 360,
     "unmatchedClientApiReferences": 0,
@@ -11625,7 +11625,16 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 86,
+      "line": 90,
+      "method": "GET",
+      "path": "/api/apps/:slug/proposals/:sessionId/evidence/diagnostics",
+      "expression": null,
+      "status": "exempt",
+      "reason": "proposal-owner troubleshooting export for local replay, not a Classic user control"
+    },
+    {
+      "source": "src/routes/visual-evidence.js",
+      "line": 150,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/:artifactId",
       "expression": null,
@@ -11644,7 +11653,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 148,
+      "line": 212,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/plan",
       "expression": null,
@@ -11662,7 +11671,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 221,
+      "line": 285,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/rerun",
       "expression": null,
@@ -11681,7 +11690,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 261,
+      "line": 325,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/override",
       "expression": null,
@@ -11708,7 +11717,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 1947,
+      "line": 2046,
       "method": "POST",
       "path": "/api/sessions/:id/promote",
       "expression": null,
@@ -11729,7 +11738,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2566,
+      "line": 2665,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/candidates",
       "expression": null,
@@ -11748,7 +11757,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2603,
+      "line": 2702,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/preview",
       "expression": null,
@@ -11766,7 +11775,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2666,
+      "line": 2765,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import",
       "expression": null,
@@ -11789,7 +11798,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2926,
+      "line": 3025,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import/_mock/advance",
       "expression": null,
@@ -11798,7 +11807,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2966,
+      "line": 3065,
       "method": "POST",
       "path": "/api/sessions/:id/vote",
       "expression": null,
@@ -11819,7 +11828,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3259,
+      "line": 3358,
       "method": "GET",
       "path": "/api/sessions/:id/votes",
       "expression": null,
@@ -11840,7 +11849,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3325,
+      "line": 3424,
       "method": "GET",
       "path": "/api/me/proposals",
       "expression": null,
@@ -11864,7 +11873,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3522,
+      "line": 3621,
       "method": "GET",
       "path": "/api/apps/:slug/promoted",
       "expression": null,
@@ -11889,7 +11898,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3896,
+      "line": 3995,
       "method": "GET",
       "path": "/api/apps/:slug/merged",
       "expression": null,
@@ -11912,7 +11921,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4211,
+      "line": 4332,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:id",
       "expression": null,
@@ -11932,7 +11941,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4282,
+      "line": 4403,
       "method": "POST",
       "path": "/api/sessions/:id/undo",
       "expression": null,
@@ -11953,7 +11962,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4368,
+      "line": 4489,
       "method": "POST",
       "path": "/api/sessions/:id/admin-merge",
       "expression": null,

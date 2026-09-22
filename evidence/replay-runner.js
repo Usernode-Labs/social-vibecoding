@@ -60,6 +60,34 @@ function clip(value, max = MAX_DIAGNOSTIC_CHARS) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+function safeDiagnosticText(value, max = MAX_DIAGNOSTIC_CHARS) {
+  return clip(value, max)
+    .replace(/([?&]token=)[^&\s"'<>)]*/gi, '$1[redacted]')
+    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[redacted]');
+}
+
+function boundedFailureDetail(value, depth = 0) {
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return safeDiagnosticText(value, 200);
+  if (depth >= 3) return '[nested detail omitted]';
+  if (Array.isArray(value)) return value.slice(0, 3).map((item) => boundedFailureDetail(item, depth + 1));
+  if (typeof value !== 'object') return null;
+  return Object.fromEntries(Object.entries(value).slice(0, 16)
+    .filter(([key]) => !/^(?:token|authorization|cookie|password|secret|payload|data)$/i.test(key))
+    .map(([key, item]) => [key, boundedFailureDetail(item, depth + 1)]));
+}
+
+function contextualFailure(error, context = {}) {
+  const code = /^[A-Za-z0-9_]{1,64}$/.test(String(error?.code || '')) ? error.code : 'replay_failed';
+  const previous = boundedFailureDetail(error?.detail);
+  return new ReplayFailure(code, safeDiagnosticText(error?.message || error), {
+    ...context,
+    ...(previous && typeof previous === 'object' && !Array.isArray(previous)
+      ? previous : previous == null ? {} : { cause: previous }),
+  });
+}
+
 function emitEvent(event) {
   process.stdout.write(`${EVENT_PREFIX}${JSON.stringify(event)}\n`);
 }
@@ -567,15 +595,19 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const sidePlan = story.replay[side === 'head' ? 'after' : 'before'];
   const stages = [];
   let motionCapture = null;
+  let failureStage = { phase: 'navigate_start' };
   try {
     await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
     await settlePage(page, { motion });
+    failureStage = { phase: 'capture_start' };
     stages.push({ stage: '__start__', image: await page.screenshot({ type: 'png' }) });
+    failureStage = { phase: 'start_recording' };
     if (motion || recordInteraction) motionCapture = await startMotionCapture(page);
 
     const actionResults = [];
     const sideDeadline = Date.now() + planContract.MAX_SIDE_MS;
     for (const action of sidePlan.actions) {
+      failureStage = { phase: 'action', actionId: action.id, actionStage: action.stage, actionType: action.type };
       if (Date.now() >= sideDeadline) throw new ReplayFailure('side_timeout', `${side} exceeded its ${planContract.MAX_SIDE_MS} ms budget.`);
       const durationMs = await executeAction(page, action, origin, network, authToken);
       await settlePage(page, { motion });
@@ -584,16 +616,22 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
         stages.push({ stage: action.stage, image: await page.screenshot({ type: 'png' }) });
       }
     }
+    failureStage = { phase: 'stop_recording' };
     if (motionCapture) await motionCapture.stop();
 
     const assertionList = story.replay.checkpoint.assertions[side === 'head' ? 'after' : 'before'];
+    failureStage = { phase: 'final_path' };
     const finalPath = expectedFinalPath(sidePlan.startPath, page.url(), origin, side, {
       allowDeclaredHome: assertionList.some((assertion) => assertion.type === 'url' && assertion.path === '/'),
     });
 
     const assertions = [];
-    for (const assertion of assertionList) assertions.push(await evaluateAssertion(page, assertion, origin));
+    for (const [assertionIndex, assertion] of assertionList.entries()) {
+      failureStage = { phase: 'assertion', assertionIndex, assertionType: assertion.type };
+      assertions.push(await evaluateAssertion(page, assertion, origin));
+    }
 
+    failureStage = { phase: 'focus' };
     const focusSpec = story.replay.checkpoint.focus[side === 'head' ? 'after' : 'before'];
     const focus = await requireOne(locatorFor(page, focusSpec), `${story.id} ${side} focus`);
     if (!await focus.isVisible()) throw new ReplayFailure('focus_not_visible', `${story.id} ${side} focus is not visible.`);
@@ -602,9 +640,11 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       throw new ReplayFailure('focus_too_small', `${story.id} ${side} focus is too small to review.`);
     }
     await settlePage(page, { motion });
+    failureStage = { phase: 'capture_checkpoint' };
     const contextPng = await page.screenshot({ type: 'png' });
     stages.push({ stage: '__checkpoint__', image: contextPng });
 
+    failureStage = { phase: 'browser_diagnostics' };
     if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
         || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
       throw new ReplayFailure(
@@ -630,6 +670,10 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     result.contextHash = perceptualHash(contextPng);
     result.fingerprint = screenshotFingerprint(result);
     return result;
+  } catch (error) {
+    throw contextualFailure(error, {
+      storyId: story.id, viewport: viewport.name, side, ...failureStage,
+    });
   } finally {
     if (motionCapture) await motionCapture.stop().catch(() => {});
     network.close();
@@ -640,7 +684,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
 async function buildStepsAnimation(scratchPage, base, head, viewport, checkpoint) {
   if (base.recordedFrameCount < 2 || head.recordedFrameCount < 2) {
     throw new ReplayFailure('no_visible_interaction',
-      'The interaction did not yield a browser recording on both revisions; use screenshots for a static claim.');
+      'The interaction did not yield a browser recording on both revisions; use screenshots for a static claim.',
+      { baseFrames: base.recordedFrameCount, headFrames: head.recordedFrameCount });
   }
   const fullViewport = { x: 0, y: 0, width: viewport.width, height: viewport.height };
   const maxAt = Math.min(MAX_ANIMATION_SECONDS * 1000,
@@ -663,7 +708,9 @@ async function buildStepsAnimation(scratchPage, base, head, viewport, checkpoint
   }
   if (!changed.base || !changed.head) {
     throw new ReplayFailure('no_visible_interaction',
-      'The browser recording did not show interaction on both revisions; use screenshots for a static claim.');
+      'The browser recording did not show interaction on both revisions; use screenshots for a static claim.',
+      { baseFrames: base.recordedFrameCount, headFrames: head.recordedFrameCount,
+        sampledFrames: frames.length, changed });
   }
   return {
     data: await encodeWebm(frames, { fps: STEPS_FPS, targetBytes: STEPS_TARGET_BYTES, maxBytes: STEPS_MAX_BYTES }),
@@ -716,38 +763,49 @@ async function runReplay(browser, input) {
     for (const story of input.plan.stories) {
       for (const viewport of story.viewports) {
         emitEvent({ type: 'viewport_started', runId: input.runId, pass: input.pass, storyId: story.id, viewport: viewport.name });
-        const base = await runSide(browser, scratchPage, input, story, viewport, 'base');
-        const head = await runSide(browser, scratchPage, input, story, viewport, 'head');
-        const crops = normalizeCropPair(base.focusRect, head.focusRect, viewport);
-        const baseFocus = await cropPng(scratchPage, base.contextPng, crops.base, viewport);
-        const headFocus = await cropPng(scratchPage, head.contextPng, crops.head, viewport);
-        const baseFocusHash = perceptualHash(baseFocus);
-        const headFocusHash = perceptualHash(headFocus);
-        const storyResult = {
-          id: story.id,
-          viewport: viewport.name,
-          base: { fingerprint: base.fingerprint, contextHash: base.contextHash, focusHash: baseFocusHash, path: base.path, actionResults: base.actionResults, assertions: base.assertions, focusRect: base.focusRect, cropRect: crops.base },
-          head: { fingerprint: head.fingerprint, contextHash: head.contextHash, focusHash: headFocusHash, path: head.path, actionResults: head.actionResults, assertions: head.assertions, focusRect: head.focusRect, cropRect: crops.head },
-        };
-        stories.push(storyResult);
-        if (input.publishArtifacts) {
-          artifacts.push(
-            { storyId: story.id, viewport: viewport.name, side: 'base', variant: 'focus', media: 'png', contentType: 'image/png', width: Math.round(crops.base.width * input.browser.deviceScaleFactor), height: Math.round(crops.base.height * input.browser.deviceScaleFactor), focusRect: crops.base, data: baseFocus },
-            { storyId: story.id, viewport: viewport.name, side: 'head', variant: 'focus', media: 'png', contentType: 'image/png', width: Math.round(crops.head.width * input.browser.deviceScaleFactor), height: Math.round(crops.head.height * input.browser.deviceScaleFactor), focusRect: crops.head, data: headFocus },
-            { storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context', media: 'png', contentType: 'image/png', width: viewport.width * input.browser.deviceScaleFactor, height: viewport.height * input.browser.deviceScaleFactor, focusRect: base.focusRect, data: base.contextPng },
-            { storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context', media: 'png', contentType: 'image/png', width: viewport.width * input.browser.deviceScaleFactor, height: viewport.height * input.browser.deviceScaleFactor, focusRect: head.focusRect, data: head.contextPng },
-          );
-          if (story.replay.checkpoint.animation !== 'none') {
-            const animation = story.replay.checkpoint.animation === 'motion'
-              ? await buildMotionAnimation(scratchPage, base, head, crops, viewport, story.replay.checkpoint)
-              : await buildStepsAnimation(scratchPage, base, head, viewport, story.replay.checkpoint);
-            if (animation.data) artifacts.push({
-              storyId: story.id, viewport: viewport.name, side: 'paired', variant: 'animation',
-              media: 'webm', contentType: 'video/webm', width: 960, height: null,
-              focusRect: { base: crops.base, head: crops.head }, stageLabels: animation.labels,
-              data: animation.data,
-            });
+        let phase = 'base';
+        try {
+          const base = await runSide(browser, scratchPage, input, story, viewport, 'base');
+          phase = 'head';
+          const head = await runSide(browser, scratchPage, input, story, viewport, 'head');
+          phase = 'compose_focus';
+          const crops = normalizeCropPair(base.focusRect, head.focusRect, viewport);
+          const baseFocus = await cropPng(scratchPage, base.contextPng, crops.base, viewport);
+          const headFocus = await cropPng(scratchPage, head.contextPng, crops.head, viewport);
+          const baseFocusHash = perceptualHash(baseFocus);
+          const headFocusHash = perceptualHash(headFocus);
+          const storyResult = {
+            id: story.id,
+            viewport: viewport.name,
+            base: { fingerprint: base.fingerprint, contextHash: base.contextHash, focusHash: baseFocusHash, path: base.path, actionResults: base.actionResults, assertions: base.assertions, focusRect: base.focusRect, cropRect: crops.base },
+            head: { fingerprint: head.fingerprint, contextHash: head.contextHash, focusHash: headFocusHash, path: head.path, actionResults: head.actionResults, assertions: head.assertions, focusRect: head.focusRect, cropRect: crops.head },
+          };
+          stories.push(storyResult);
+          if (input.publishArtifacts) {
+            artifacts.push(
+              { storyId: story.id, viewport: viewport.name, side: 'base', variant: 'focus', media: 'png', contentType: 'image/png', width: Math.round(crops.base.width * input.browser.deviceScaleFactor), height: Math.round(crops.base.height * input.browser.deviceScaleFactor), focusRect: crops.base, data: baseFocus },
+              { storyId: story.id, viewport: viewport.name, side: 'head', variant: 'focus', media: 'png', contentType: 'image/png', width: Math.round(crops.head.width * input.browser.deviceScaleFactor), height: Math.round(crops.head.height * input.browser.deviceScaleFactor), focusRect: crops.head, data: headFocus },
+              { storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context', media: 'png', contentType: 'image/png', width: viewport.width * input.browser.deviceScaleFactor, height: viewport.height * input.browser.deviceScaleFactor, focusRect: base.focusRect, data: base.contextPng },
+              { storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context', media: 'png', contentType: 'image/png', width: viewport.width * input.browser.deviceScaleFactor, height: viewport.height * input.browser.deviceScaleFactor, focusRect: head.focusRect, data: head.contextPng },
+            );
+            if (story.replay.checkpoint.animation !== 'none') {
+              phase = 'encode_animation';
+              const animation = story.replay.checkpoint.animation === 'motion'
+                ? await buildMotionAnimation(scratchPage, base, head, crops, viewport, story.replay.checkpoint)
+                : await buildStepsAnimation(scratchPage, base, head, viewport, story.replay.checkpoint);
+              if (animation.data) artifacts.push({
+                storyId: story.id, viewport: viewport.name, side: 'paired', variant: 'animation',
+                media: 'webm', contentType: 'video/webm', width: 960, height: null,
+                focusRect: { base: crops.base, head: crops.head }, stageLabels: animation.labels,
+                data: animation.data,
+              });
+            }
           }
+        } catch (error) {
+          throw contextualFailure(error, {
+            storyId: story.id, viewport: viewport.name, phase,
+            ...(['base', 'head'].includes(phase) ? { side: phase } : {}),
+          });
         }
         emitEvent({ type: 'viewport_finished', runId: input.runId, pass: input.pass, storyId: story.id, viewport: viewport.name });
       }
@@ -818,6 +876,7 @@ module.exports = {
   hammingHex,
   screenshotFingerprint,
   runReplay,
+  contextualFailure,
   main,
   ARTIFACT_PREFIX,
   EVENT_PREFIX,

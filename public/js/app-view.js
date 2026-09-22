@@ -5896,6 +5896,7 @@ const AppView = {
     AppView._mergedHasMore = false;
     AppView._mergedLoadingMore = false;
     AppView._mergedTotal = 0;
+    AppView._mergedCtx = null;
     AppView._doneShowAll = false;
   },
   _mergedPagerFor(slug) {
@@ -6191,7 +6192,12 @@ const AppView = {
           ? promotedData.releaseStall : null,
       };
       AppView._merged = merged;
-      AppView._mergedCtx = { majority, activeUsers };
+      AppView._mergedCtx = {
+        majority,
+        activeUsers,
+        deployment: mergedData.deployment && typeof mergedData.deployment === 'object'
+          ? mergedData.deployment : null,
+      };
       // Refreshes retain the expanded range; the next page continues after
       // its last surviving row, not after the first page of the refresh.
       AppView._mergedHasMore = !!mergedData.hasMore;
@@ -9471,6 +9477,7 @@ const AppView = {
         ? { kind: 'loadMerged', loading: !!AppView._mergedLoadingMore, n: moreCount }
         : { kind: 'moreCompleted', n: moreCount };
     }
+    const doneDeployment = AppView._doneDeploymentStatus();
 
     // `refOf` names the kind and item the row's conversation hangs off
     // (_attachRowConversation). A column that passes none gets a bare row:
@@ -9522,6 +9529,7 @@ const AppView = {
         rows: cardRows(kDone, (m) => AppView._mergedRowModel(m)),
         empty: kDone.length ? null : emptyNote,
         footer: doneFooter,
+        status: doneDeployment,
       },
     ];
     // The In progress column's own empty note has to come after its rows are
@@ -9543,6 +9551,43 @@ const AppView = {
   _doneShowAll: false,
   DONE_RECENT_DAYS: 7,
   DONE_RECENT_MIN: 3,
+  _doneDeploymentStatus() {
+    const d = AppView._mergedCtx && AppView._mergedCtx.deployment;
+    if (!d || typeof d !== 'object') return null;
+    const pending = Number.isFinite(Number(d.pendingCount)) ? Math.max(0, Number(d.pendingCount)) : null;
+    const noun = pending === 1 ? 'change' : 'changes';
+    if (pending > 0) {
+      if (d.state === 'stalled') {
+        return {
+          tone: 'blocked',
+          text: `${pending} merged ${noun} · deployment stalled`,
+          title: 'Production is still running an earlier revision. The release watcher has detected a stalled deployment.',
+        };
+      }
+      return {
+        tone: 'progress',
+        text: `${pending} merged ${noun} waiting to go live`,
+        title: 'Production is still running an earlier revision.',
+      };
+    }
+    const sha = /^[0-9a-f]{7,40}$/i.test(String(d.runningSha || ''))
+      ? String(d.runningSha).slice(0, 7) : null;
+    if (d.state === 'deployed') {
+      const boundary = d.livePrNumber
+        ? `PR #${d.livePrNumber}${sha ? ` · ${sha}` : ''}`
+        : (sha || 'the latest merged change');
+      return {
+        tone: 'ok',
+        text: `Production live through ${boundary}`,
+        title: 'Every merged change through this point is live in production.',
+      };
+    }
+    return {
+      tone: 'neutral',
+      text: 'Production deployment could not be matched to completed history',
+      title: sha ? `Production is running ${sha}, but no completed proposal records that merge commit.` : undefined,
+    };
+  },
   _recentDone(rows) {
     const list = Array.isArray(rows) ? rows : [];
     const cutoff = Date.now() - AppView.DONE_RECENT_DAYS * 86400000;
@@ -15399,6 +15444,9 @@ const AppView = {
         AppView._mergedHasMore = !!data.hasMore;
         AppView._mergedCursor = cursor;
         if (typeof data.total === 'number') AppView._mergedTotal = data.total;
+        if (data.deployment && typeof data.deployment === 'object') {
+          AppView._mergedCtx = { ...(AppView._mergedCtx || {}), deployment: data.deployment };
+        }
         pager.expanded = true;
         // Close-issue rows never enter the PR-keyed vote maps.
         if (AppView.voteState && AppView.voteState.bySession) {
@@ -16667,8 +16715,22 @@ const AppView = {
     const lock = !!(p.requires_explicit_approval && isOpenRow);
     const base = { yes, no, majority: maj, advisory, lock, reasons: [] };
 
-    // 0 — settled.
+    // 0 — settled. `merged` is the stored lifecycle; deployment_state is a
+    // derived answer from /merged. Missing/unknown is deliberately the old
+    // label so legacy history never makes a claim it cannot support.
     if (p.status === 'merged') {
+      if (p.deployment_state === 'deployed') {
+        return { ...base, tier: 0, key: 'deployed', label: '✓ Deployed', tone: 'ok', lock: false, advisory: 0,
+          title: 'This change is live in production.' };
+      }
+      if (p.deployment_state === 'deploying') {
+        return { ...base, tier: 0, key: 'deploying', label: 'Merged · deploying…', tone: 'progress', spinner: true, lock: false, advisory: 0,
+          title: 'This change has merged, but production is still running an earlier revision.' };
+      }
+      if (p.deployment_state === 'stalled') {
+        return { ...base, tier: 0, key: 'deployment_stalled', label: 'Merged · deployment stalled', tone: 'blocked', lock: false, advisory: 0,
+          title: 'This change has merged, but its production deployment is stalled.' };
+      }
       return { ...base, tier: 0, key: 'merged', label: '✓ Merged', tone: 'ok', lock: false, advisory: 0 };
     }
     // 1 — in flight.
@@ -19104,6 +19166,15 @@ const AppView = {
         url = new URL(visit || '/', resolved);
         if (url.origin !== new URL(resolved).origin) url = new URL('/', resolved);
       } catch { return null; }
+      // #2691: the self-app's staging database is deliberately sparse, and
+      // its review fixtures are request-time data gated on `?demo=1`.  The
+      // ordinary Preview action opens the root (rather than the optional
+      // testing deep link), so without this flag a reviewer can see an empty
+      // production-shaped screen and conclude that the submitted UI did not
+      // land.  Keep this self-app-only: apps built on the platform own their
+      // own query-string semantics and must continue to receive an untouched
+      // preview URL. The URL API preserves an existing path/hash/query.
+      if (selfHosted) url.searchParams.set('demo', '1');
       url.searchParams.set('token', token);
       return url.toString();
     };

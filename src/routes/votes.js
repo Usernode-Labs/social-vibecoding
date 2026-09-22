@@ -1252,6 +1252,105 @@ function completedRowCompare(a, b) {
   return b.id - a.id;
 }
 
+function normalizedSha(value) {
+  const sha = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
+}
+
+function deploymentOrder(row) {
+  const at = Date.parse(row?.merged_at || row?.created_at || '');
+  return {
+    at: Number.isFinite(at) ? at : 0,
+    id: Number(row?.id) || 0,
+  };
+}
+
+function isAfterDeploymentBoundary(row, boundary) {
+  const candidate = deploymentOrder(row);
+  const live = deploymentOrder(boundary);
+  return candidate.at > live.at || (candidate.at === live.at && candidate.id > live.id);
+}
+
+// Deployment is deliberately a derived view of a merged proposal, not a
+// second persisted lifecycle. Hosted apps finish their merge only after the
+// production rebuild succeeds, so every merged row there is deployed. The
+// platform app is different: its external release can lag behind the GitHub
+// merge, and apps.main_sha is the build answering this request. Match that SHA
+// to the exact merged session across the WHOLE history (not just this page),
+// then classify rows by their merge order. If old data cannot establish that
+// boundary, leave the honest `unknown` fallback for the client to render as
+// “Merged”.
+async function annotateDeploymentState(pool, app, rows) {
+  const prRows = rows.filter((row) => (row.row_type || 'pr') === 'pr' && row.status === 'merged');
+  const runningSha = normalizedSha(app?.main_sha);
+
+  if (!app?.self_hosted) {
+    for (const row of prRows) row.deployment_state = 'deployed';
+    return {
+      state: 'deployed',
+      runningSha,
+      liveSessionId: null,
+      livePrNumber: app?.main_pr_number || null,
+      pendingCount: 0,
+    };
+  }
+
+  if (!runningSha) {
+    for (const row of prRows) row.deployment_state = 'unknown';
+    return {
+      state: 'unknown', runningSha: null, liveSessionId: null,
+      livePrNumber: null, pendingCount: null,
+    };
+  }
+
+  const { rows: boundaryRows } = await pool.query(
+    `SELECT live.id, live.pr_number, live.pr_title, live.merge_commit_sha,
+            live.merged_at, live.created_at,
+            (SELECT COUNT(*)::int
+               FROM chat_sessions newer
+              WHERE newer.app_id = live.app_id AND newer.status = 'merged'
+                AND (COALESCE(newer.merged_at, newer.created_at), newer.id)
+                    > (COALESCE(live.merged_at, live.created_at), live.id)) AS pending_count
+       FROM chat_sessions live
+      WHERE live.app_id = $1 AND live.status = 'merged'
+        AND LOWER(live.merge_commit_sha) = LOWER($2)
+      ORDER BY COALESCE(live.merged_at, live.created_at) DESC, live.id DESC
+      LIMIT 1`,
+    [app.id, runningSha]
+  );
+  const boundary = boundaryRows[0] || null;
+  if (!boundary) {
+    for (const row of prRows) row.deployment_state = 'unknown';
+    return {
+      state: 'unknown', runningSha, liveSessionId: null,
+      livePrNumber: null, pendingCount: null,
+    };
+  }
+
+  const releaseWatch = require('../services/release-watch');
+  const stall = releaseWatch.describe(app, runningSha);
+  const stalledSha = stall.stalled ? normalizedSha(stall.sha) : null;
+  for (const row of prRows) {
+    if (!isAfterDeploymentBoundary(row, boundary)) {
+      row.deployment_state = 'deployed';
+    } else if (stalledSha && normalizedSha(row.merge_commit_sha) === stalledSha) {
+      row.deployment_state = 'stalled';
+    } else {
+      row.deployment_state = 'deploying';
+    }
+  }
+
+  const pendingCount = Math.max(0, Number(boundary.pending_count) || 0);
+  return {
+    state: pendingCount > 0 ? (stall.stalled ? 'stalled' : 'deploying') : 'deployed',
+    runningSha,
+    liveSessionId: Number(boundary.id) || null,
+    livePrNumber: Number(boundary.pr_number) || null,
+    pendingCount,
+    ...(stall.stalled ? { stall } : {}),
+  };
+}
+
 // Native proposals used to trust a mutable branch name all the way through
 // voting and merge. A branch can move independently of the platform's review
 // state, so every approval must be tied to an immutable PR head just like
@@ -1835,7 +1934,7 @@ async function reconcilePromotedSweepHead({ config, pool, session }) {
 // user id (for the per-viewer my_vote / my_kudos subqueries). Callers
 // append their own WHERE / ORDER / LIMIT.
 function mergedRowSelect() {
-  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, cs.merge_commit_sha, u.username, cs.created_at,
            -- #1264: the exact merge time (and the promotion time beside it)
            -- so the progress report can date completed work by when it
            -- actually landed instead of when it was started. NULL on rows
@@ -3896,7 +3995,8 @@ function voteRoutes(config) {
   router.get('/api/apps/:slug/merged', async (req, res) => {
     try {
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view',
+        `${appAccess.ACCESS_COLUMNS}, main_sha, main_pr_number, release_stall`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
       const appRows = [gatedApp];
@@ -4188,7 +4288,28 @@ function voteRoutes(config) {
         }
       }
 
-      res.json({ merged: rows, hasMore, total, ...(shipped ? { shipped } : {}) });
+      let deployment = await annotateDeploymentState(pool, appRows[0], rows);
+      // A proposal preview runs the platform app from the proposal head, so
+      // its boot-time main_sha intentionally has no merged-session match.
+      // Give ?demo=1 a deterministic live boundary and one pending card so
+      // the new Done-column cue is visually reviewable on staging instead of
+      // showing only the honest unmatched-history fallback.
+      if (IS_STAGING && req.query.demo === '1' && isFirstPage) {
+        const demoRows = rows.filter((row) => row.row_type === 'pr'
+          && Number(row.id) >= 9100000 && Number(row.id) <= 9100034);
+        for (const row of demoRows) row.deployment_state = 'deployed';
+        const pendingDemo = demoRows.find((row) => Number(row.id) === 9100000);
+        if (pendingDemo) pendingDemo.deployment_state = 'deploying';
+        deployment = {
+          state: 'deploying',
+          runningSha: 'dddddddddddddddddddddddddddddddddddddddd',
+          liveSessionId: 9100027,
+          livePrNumber: 910127,
+          pendingCount: 1,
+        };
+      }
+
+      res.json({ merged: rows, hasMore, total, deployment, ...(shipped ? { shipped } : {}) });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
