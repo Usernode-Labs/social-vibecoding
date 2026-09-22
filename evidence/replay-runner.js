@@ -164,10 +164,13 @@ function validateInput(raw) {
   };
 }
 
-function locatorFor(page, spec) {
+function locatorFor(page, spec, { includeHidden = false } = {}) {
   switch (spec.by) {
     case 'testId': return page.getByTestId(spec.value);
-    case 'role': return page.getByRole(spec.role, spec.name == null ? {} : { name: spec.name, exact: spec.exact !== false });
+    case 'role': return page.getByRole(spec.role, {
+      ...(spec.name == null ? {} : { name: spec.name, exact: spec.exact !== false }),
+      ...(includeHidden ? { includeHidden: true } : {}),
+    });
     case 'label': return page.getByLabel(spec.value, { exact: spec.exact !== false });
     case 'placeholder': return page.getByPlaceholder(spec.value, { exact: spec.exact !== false });
     case 'text': return page.getByText(spec.value, { exact: spec.exact !== false });
@@ -178,7 +181,82 @@ function locatorFor(page, spec) {
 
 async function requireOne(locator, description) {
   const count = await locator.count();
-  if (count !== 1) throw new ReplayFailure('ambiguous_locator', `${description} matched ${count} elements; exactly one is required.`);
+  if (count !== 1) {
+    throw new ReplayFailure(
+      'ambiguous_locator',
+      `${description} matched ${count} elements; exactly one is required.`,
+      { matchedCount: count }
+    );
+  }
+  return locator;
+}
+
+async function locatorSnapshot(page, spec) {
+  const locator = locatorFor(page, spec);
+  const attachedLocator = spec.by === 'role'
+    ? locatorFor(page, spec, { includeHidden: true })
+    : locator;
+  const matchedCount = await locator.count().catch(() => null);
+  const attachedCount = attachedLocator === locator
+    ? matchedCount
+    : await attachedLocator.count().catch(() => null);
+  let visibleCount = null;
+  if (Number.isInteger(attachedCount) && attachedCount <= 20) {
+    visibleCount = 0;
+    for (let index = 0; index < attachedCount; index++) {
+      if (await attachedLocator.nth(index).isVisible().catch(() => false)) visibleCount += 1;
+    }
+  }
+  return {
+    kind: spec.by,
+    ...(spec.by === 'role' ? { role: spec.role } : {}),
+    matchedCount,
+    attachedCount,
+    visibleCount,
+  };
+}
+
+async function resolveOne(page, spec, description, {
+  state = 'attached', timeoutMs = planContract.MAX_WAIT_MS,
+} = {}) {
+  const locator = locatorFor(page, spec);
+  try {
+    // Playwright locators are intentionally lazy and auto-wait. Counting
+    // before this wait defeats that contract: a React/auth boot that has not
+    // exposed the element yet is reported as zero matches immediately.
+    await locator.first().waitFor({ state, timeout: timeoutMs });
+  } catch (error) {
+    const snapshot = await locatorSnapshot(page, spec);
+    const count = snapshot.attachedCount;
+    if (!Number.isInteger(count) && !Number.isInteger(snapshot.matchedCount)) throw error;
+    if (Number.isInteger(count) && count > 1) {
+      throw new ReplayFailure(
+        'ambiguous_locator',
+        `${description} matched ${count} elements; exactly one is required.`,
+        { ...snapshot, waitState: state, timeoutMs }
+      );
+    }
+    if (count === 1) {
+      throw new ReplayFailure(
+        'locator_not_visible',
+        `${description} matched one element but it did not become ${state} within ${timeoutMs} ms.`,
+        { ...snapshot, waitState: state, timeoutMs }
+      );
+    }
+    throw new ReplayFailure(
+      'locator_not_found',
+      `${description} did not match an element within ${timeoutMs} ms.`,
+      { ...snapshot, waitState: state, timeoutMs }
+    );
+  }
+  const snapshot = await locatorSnapshot(page, spec);
+  if (snapshot.matchedCount !== 1) {
+    throw new ReplayFailure(
+      'ambiguous_locator',
+      `${description} matched ${snapshot.matchedCount} elements; exactly one is required.`,
+      { ...snapshot, waitState: state, timeoutMs }
+    );
+  }
   return locator;
 }
 
@@ -206,6 +284,77 @@ function redactedUrl(value) {
     if (url.searchParams.has('token')) url.searchParams.set('token', '[redacted]');
     return url.toString();
   } catch { return clip(value, 300); }
+}
+
+function diagnosticLocation(value, origin) {
+  try {
+    const url = new URL(value);
+    if (url.origin !== origin) return { sameOrigin: false };
+    return {
+      sameOrigin: true,
+      pathname: safeDiagnosticText(url.pathname, 160),
+      hash: safeDiagnosticText(url.hash, 160),
+      queryKeys: [...new Set([...url.searchParams.keys()])]
+        .filter((key) => key.toLowerCase() !== 'token')
+        .slice(0, 20)
+        .map((key) => safeDiagnosticText(key, 80)),
+    };
+  } catch { return { sameOrigin: false }; }
+}
+
+async function failurePageState(page, context, origin, navigation = null) {
+  const url = typeof page.url === 'function' ? page.url() : '';
+  const location = diagnosticLocation(url, origin);
+  const dom = await page.evaluate(() => {
+    const visible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden'
+        && Number(style.opacity || 1) !== 0 && rect.width > 0 && rect.height > 0;
+    };
+    const landmarks = [...document.querySelectorAll(
+      'main[id], [role="main"][id], [role="dialog"][id], [id$="-screen"]'
+    )].filter(visible).map((element) => element.id)
+      .filter((id) => /^[A-Za-z0-9_-]{1,80}$/.test(id)).slice(0, 12);
+    return {
+      readyState: document.readyState,
+      bodyChildCount: document.body?.children.length ?? 0,
+      visibleLandmarkIds: landmarks,
+      visibleMainCount: [...document.querySelectorAll('main, [role="main"]')].filter(visible).length,
+      visibleDialogCount: [...document.querySelectorAll('[role="dialog"]')].filter(visible).length,
+      visibleButtonCount: [...document.querySelectorAll('button')].filter(visible).length,
+      visibleLinkCount: [...document.querySelectorAll('a[href]')].filter(visible).length,
+    };
+  }).catch(() => null);
+  const cookies = typeof context.cookies === 'function'
+    ? await context.cookies(origin).catch(() => [])
+    : [];
+  return {
+    ...location,
+    navigationStatus: Number.isInteger(navigation?.status) ? navigation.status : null,
+    readyState: dom?.readyState || null,
+    bodyChildCount: Number.isInteger(dom?.bodyChildCount) ? dom.bodyChildCount : null,
+    visibleLandmarkIds: Array.isArray(dom?.visibleLandmarkIds) ? dom.visibleLandmarkIds : [],
+    visibleMainCount: Number.isInteger(dom?.visibleMainCount) ? dom.visibleMainCount : null,
+    visibleDialogCount: Number.isInteger(dom?.visibleDialogCount) ? dom.visibleDialogCount : null,
+    visibleButtonCount: Number.isInteger(dom?.visibleButtonCount) ? dom.visibleButtonCount : null,
+    visibleLinkCount: Number.isInteger(dom?.visibleLinkCount) ? dom.visibleLinkCount : null,
+    cookieCount: cookies.length,
+    sessionCookiePresent: cookies.some((cookie) => cookie?.name === 'session'),
+  };
+}
+
+function failureBrowserDiagnostics(diagnostics) {
+  return {
+    consoleErrorCount: diagnostics.consoleErrors.length,
+    pageErrorCount: diagnostics.pageErrors.length,
+    failedRequestCount: diagnostics.failedRequests.length,
+    blockedRequestCount: diagnostics.blockedRequests.length,
+    firstConsoleError: diagnostics.consoleErrors[0]?.message || null,
+    firstPageError: diagnostics.pageErrors[0]?.message || null,
+    firstFailedRequest: diagnostics.failedRequests[0]?.url || null,
+    firstBlockedRequest: diagnostics.blockedRequests[0]?.url || null,
+  };
 }
 
 function expectedFinalPath(startPath, pageUrl, origin, side = 'page', { allowDeclaredHome = false } = {}) {
@@ -259,40 +408,40 @@ async function executeAction(page, action, origin, network, authToken = '') {
       await page.goto(authorizedUrl(origin, action.path, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
       break;
     case 'click':
-      await (await requireOne(locatorFor(page, action.target), action.id)).click({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).click({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'fill':
-      await (await requireOne(locatorFor(page, action.target), action.id)).fill(action.value, { timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).fill(action.value, { timeout: planContract.MAX_WAIT_MS });
       break;
     case 'press': {
-      const target = action.target ? await requireOne(locatorFor(page, action.target), action.id) : page.keyboard;
+      const target = action.target ? await resolveOne(page, action.target, action.id) : page.keyboard;
       await target.press(action.key, { timeout: planContract.MAX_WAIT_MS });
       break;
     }
     case 'select':
-      await (await requireOne(locatorFor(page, action.target), action.id)).selectOption(action.value, { timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).selectOption(action.value, { timeout: planContract.MAX_WAIT_MS });
       break;
     case 'check':
-      await (await requireOne(locatorFor(page, action.target), action.id)).check({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).check({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'uncheck':
-      await (await requireOne(locatorFor(page, action.target), action.id)).uncheck({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).uncheck({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'hover':
-      await (await requireOne(locatorFor(page, action.target), action.id)).hover({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).hover({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'drag':
-      await (await requireOne(locatorFor(page, action.from), `${action.id}.from`))
-        .dragTo(await requireOne(locatorFor(page, action.to), `${action.id}.to`), { timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.from, `${action.id}.from`))
+        .dragTo(await resolveOne(page, action.to, `${action.id}.to`), { timeout: planContract.MAX_WAIT_MS });
       break;
     case 'clickPoint': {
-      const box = await (await requireOne(locatorFor(page, action.surface), action.id)).boundingBox();
+      const box = await (await resolveOne(page, action.surface, action.id)).boundingBox();
       if (!box || box.width <= 0 || box.height <= 0) throw new ReplayFailure('surface_not_visible', `${action.id} surface is not visible.`);
       await page.mouse.click(box.x + box.width * action.xRatio, box.y + box.height * action.yRatio);
       break;
     }
     case 'dragPoints': {
-      const box = await (await requireOne(locatorFor(page, action.surface), action.id)).boundingBox();
+      const box = await (await resolveOne(page, action.surface, action.id)).boundingBox();
       if (!box || box.width <= 0 || box.height <= 0) throw new ReplayFailure('surface_not_visible', `${action.id} surface is not visible.`);
       await page.mouse.move(box.x + box.width * action.from.xRatio, box.y + box.height * action.from.yRatio);
       await page.mouse.down();
@@ -301,13 +450,13 @@ async function executeAction(page, action, origin, network, authToken = '') {
       break;
     }
     case 'scrollIntoView':
-      await (await requireOne(locatorFor(page, action.target), action.id)).scrollIntoViewIfNeeded({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).scrollIntoViewIfNeeded({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'scrollBy':
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
     case 'waitFor':
-      if (action.target) await (await requireOne(locatorFor(page, action.target), action.id)).waitFor({ state: 'visible', timeout: action.timeoutMs });
+      if (action.target) await resolveOne(page, action.target, action.id, { state: 'visible', timeoutMs: action.timeoutMs });
       else if (action.text) await page.getByText(action.text, { exact: true }).first().waitFor({ state: 'visible', timeout: action.timeoutMs });
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
@@ -358,6 +507,11 @@ async function evaluateAssertion(page, assertion, origin) {
     throw new ReplayFailure('assertion_failed', `${assertion.type} assertion failed.`, { assertion, count, actual });
   }
   return { type: assertion.type, passed: true, count, ...(actual == null ? {} : { actual }) };
+}
+
+function actionLocatorSpecs(action) {
+  return [action?.target, action?.from, action?.to, action?.surface]
+    .filter((spec) => spec && typeof spec === 'object');
 }
 
 function paddedRect(rect, viewport, padding = FOCUS_PADDING) {
@@ -595,9 +749,16 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const sidePlan = story.replay[side === 'head' ? 'after' : 'before'];
   const stages = [];
   let motionCapture = null;
+  let navigation = null;
+  let failureLocatorSpecs = [];
   let failureStage = { phase: 'navigate_start' };
   try {
-    await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
+    const response = await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), {
+      waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS,
+    });
+    navigation = {
+      status: typeof response?.status === 'function' ? response.status() : null,
+    };
     await settlePage(page, { motion });
     failureStage = { phase: 'capture_start' };
     stages.push({ stage: '__start__', image: await page.screenshot({ type: 'png' }) });
@@ -608,6 +769,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     const sideDeadline = Date.now() + planContract.MAX_SIDE_MS;
     for (const action of sidePlan.actions) {
       failureStage = { phase: 'action', actionId: action.id, actionStage: action.stage, actionType: action.type };
+      failureLocatorSpecs = actionLocatorSpecs(action);
       if (Date.now() >= sideDeadline) throw new ReplayFailure('side_timeout', `${side} exceeded its ${planContract.MAX_SIDE_MS} ms budget.`);
       const durationMs = await executeAction(page, action, origin, network, authToken);
       await settlePage(page, { motion });
@@ -628,11 +790,13 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     const assertions = [];
     for (const [assertionIndex, assertion] of assertionList.entries()) {
       failureStage = { phase: 'assertion', assertionIndex, assertionType: assertion.type };
+      failureLocatorSpecs = assertion.target ? [assertion.target] : [];
       assertions.push(await evaluateAssertion(page, assertion, origin));
     }
 
     failureStage = { phase: 'focus' };
     const focusSpec = story.replay.checkpoint.focus[side === 'head' ? 'after' : 'before'];
+    failureLocatorSpecs = [focusSpec];
     const focus = await requireOne(locatorFor(page, focusSpec), `${story.id} ${side} focus`);
     if (!await focus.isVisible()) throw new ReplayFailure('focus_not_visible', `${story.id} ${side} focus is not visible.`);
     const focusRect = await focus.boundingBox();
@@ -671,8 +835,16 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     result.fingerprint = screenshotFingerprint(result);
     return result;
   } catch (error) {
+    const [pageState, targetStates] = await Promise.all([
+      failurePageState(page, context, origin, navigation),
+      Promise.all(failureLocatorSpecs.slice(0, 4).map((spec) => locatorSnapshot(page, spec)))
+        .catch(() => []),
+    ]);
     throw contextualFailure(error, {
       storyId: story.id, viewport: viewport.name, side, ...failureStage,
+      pageState,
+      targetStates,
+      browserDiagnostics: failureBrowserDiagnostics(diagnostics),
     });
   } finally {
     if (motionCapture) await motionCapture.stop().catch(() => {});
@@ -866,9 +1038,12 @@ module.exports = {
   ReplayFailure,
   validateInput,
   locatorFor,
+  locatorSnapshot,
+  resolveOne,
   authorizedUrl,
   publicRelativePath,
   redactedUrl,
+  failurePageState,
   expectedFinalPath,
   paddedRect,
   centeredRect,
