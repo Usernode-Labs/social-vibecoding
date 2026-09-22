@@ -940,7 +940,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // floor. The ceiling itself already moved from 730 to 750 on main's side,
   // once its own total stood on the old ceiling's 20-slot floor; that move
   // carries over unchanged (services/app-manifest.js).
-  assert.equal(DAPP.tests.length, 712);
+  //
+  // 712 → 716: #2706 puts the connector walkthrough inline on the dev
+  // session page instead of sending the reader to Settings, and that is a
+  // screen state with four things to pin — the steps themselves, the live
+  // MCP server URL beside them, the ChatGPT hand-off getting ChatGPT's
+  // steps rather than Claude's, and Settings still being one tap away. 34
+  // slots left against MAX_DECLARED_TESTS (750), still clear of the
+  // 20-slot floor.
+  assert.equal(DAPP.tests.length, 716);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

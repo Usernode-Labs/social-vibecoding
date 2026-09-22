@@ -23,6 +23,9 @@ const path = require('node:path');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const TSX = read('frontend/src/features/settings/sections/connectors.tsx');
+// #2706: the Claude and ChatGPT walkthroughs moved out of the pane, so one
+// copy serves Settings and the dev session page's hand-off launchpad.
+const STEPS_TSX = read('frontend/src/features/settings/connector-setup-steps.tsx');
 const SETTINGS = read('frontend/src/features/settings/settings.js');
 const OAUTH = read('src/services/mcp-oauth.js');
 const REMOTE = read('src/routes/mcp-remote.js');
@@ -212,9 +215,12 @@ test('#1893: the Claude walkthrough names the connector at the step where the Na
   // segment comes from (#1218). Saying `homeroom` two blocks later, after
   // the reader has already typed something, is how one account ended up
   // with `Uesrnode`. So step 2 says it at the moment it is typed.
-  const step2 = TSX.slice(
-    TSX.indexOf('<SetupStep n={2} title="Start a custom connector."'),
-    TSX.indexOf('<SetupStep n={3} title="Paste your MCP server URL."')
+  // #2706 moved the two product walkthroughs to ../connector-setup-steps,
+  // so both Settings and the dev session page's launchpad render one copy.
+  // The step itself is unchanged; only where it is written moved.
+  const step2 = STEPS_TSX.slice(
+    STEPS_TSX.indexOf('<SetupStep n={2} title="Start a custom connector."'),
+    STEPS_TSX.indexOf('<SetupStep n={3} title="Paste your MCP server URL."')
   );
   assert.ok(step2.length > 0, 'the Claude steps are in order');
   assert.match(step2, new RegExp(`<code[^>]*>${constants.SERVER_NAME}</code>`));

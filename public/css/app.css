@@ -5421,9 +5421,22 @@ body:has(#platform-header.hidden) #app-frame-host {
   line-height: 1.4;
 }
 .dc-flow-step-note a,
-.dc-flow-card-hint a {
+.dc-flow-card-hint a,
+/* #2706: the hint's "show the steps" is a BUTTON — it opens the inline
+   connector card rather than navigating — but it is a link in the middle of
+   a sentence and has to read as one. `inherit` for font and size, because a
+   <button> takes neither from its parent. */
+.dc-flow-hint-link {
   color: var(--accent);
   text-decoration: underline;
+}
+
+.dc-flow-hint-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
 }
 
 .dc-flow-step-done .dc-flow-step-mark {
