@@ -318,6 +318,18 @@ const ADDED_IDS = {
   //
   // `switcher-row-admin` survives as a published FLAG name — app.js still
   // publishes it and Profile reads it — which is a capability, not a row.
+  // ── #2718: Messages is one inbox ─────────────────────────────────
+  //
+  // #messages-filter-empty and the two row kinds' own elements are NOT in
+  // this map: they render only once a filter has narrowed to nothing or once
+  // a discussion or an agent chat has arrived, so none of them is in the
+  // prerendered document, which is what this map is for.
+  'messages-filters': '#2718: the filter row — All, People, Apps, Agents. Messages was the `conversations` domain only; an app\'s own discussion and an agent chat were reachable only from inside the thing they belonged to, which is not findable from the one screen somebody opens looking for "what was said to me". One list, one clock, a mark on the rows that are not a person — the arrangement Slack and Teams land on with a channel, a DM and a bot thread in one sidebar.',
+  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. The filter is presentation, so it is not persisted and not in the route: a filter that survives a reload is one somebody has to remember turning on.',
+  'messages-filter-people': '#2718: conversations only — the `conversations` domain this screen used to be.',
+  'messages-filter-apps': '#2718: the general thread on each app the viewer is a MEMBER of, from GET /api/messages/app-discussions. Membership rather than visibility is the difference between an inbox and a directory: a public app you have never joined is something you can go and read, not something in your messages.',
+  'messages-filter-agents': '#2718: the viewer\'s agent chats, read from features/global-chat\'s own store rather than copied into this one — that list is already loaded, merged on every thread event and invalidated by the chat itself. Gated on the same two flags the Improve panel\'s list is, so a shell with the feature off shows no Agents rows.',
+  'messages-new': '#2718: the New-conversation disc, which MOVED from beside the title onto the filter row\'s trailing edge. A title row is where a screen says what it is; a filter row is where it says what it is showing, and the control that adds to what is shown belongs on the line with the one that narrows it. It gained the id in the move — it had none before — because a control that changes line is one a declared check should be able to find.',
   // ── #2718: the Workshop gets a scope, three tabs and a plus ──────
   //
   // #workshop-picker, #workshop-picker-all, #workshop-plus-change,

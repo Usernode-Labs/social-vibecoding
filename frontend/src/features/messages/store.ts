@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import * as api from './api';
+import type { AppDiscussion, InboxFilter } from './inbox';
 import type {
   ConversationDetail,
   ConversationEvent,
@@ -43,6 +44,9 @@ let state: InternalState = {
   demo: false,
   revision: 0,
   typing: {},
+  discussions: [],
+  discussionsLoaded: false,
+  filter: 'all',
 };
 
 const drafts = new Map<number, string>();
@@ -109,6 +113,39 @@ function errorMessage(error: unknown, fallback: string): string {
     return error.message || fallback;
   }
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/**
+ * Which of the four kinds the list is showing (#2718).
+ *
+ * Presentation, so it is not persisted and not in the route: a filter that
+ * survives a reload is a filter somebody has to remember turning on, and the
+ * one thing this screen must always be able to say is "here is everything".
+ */
+export function setFilter(next: InboxFilter): void {
+  if (state.filter === next) return;
+  publish({ filter: next });
+}
+
+/**
+ * The app discussions beside the conversations.
+ *
+ * FAILS QUIETLY. The conversations are this screen's reason to exist and the
+ * discussions are an addition to it; a list that refuses to draw because a
+ * second request failed is worse than one that draws what it has. The Apps
+ * filter then shows nothing, which is the honest report of what arrived.
+ */
+export async function loadAppDiscussions(): Promise<void> {
+  try {
+    const query = browserDemo() ? '?demo=1' : '';
+    const response = await fetch(`/api/messages/app-discussions${query}`);
+    if (!response.ok) return;
+    const data = await response.json().catch(() => null);
+    if (!data || !Array.isArray(data.discussions)) return;
+    publish({ discussions: data.discussions as AppDiscussion[], discussionsLoaded: true });
+  } catch {
+    // Offline is a state, not a crash.
+  }
 }
 
 export async function loadConversations(force = false): Promise<void> {
@@ -224,11 +261,16 @@ export function route(conversationId?: number | null): void {
   const nextId = validId(conversationId) ? conversationId : null;
   if (state.route.open && state.route.conversationId === nextId) {
     if (!state.listLoaded) void loadConversations();
+    if (!state.discussionsLoaded) void loadAppDiscussions();
     if (nextId && (!state.active || state.active.id !== nextId)) void loadThread(nextId);
     return;
   }
   publish({ route: { open: true, conversationId: nextId }, threadError: null });
   void loadConversations();
+  // #2718: beside the conversations, never instead of them. It is a separate
+  // request with its own failure, so a slow or broken discussions read costs
+  // the Apps filter and nothing else — see loadAppDiscussions.
+  void loadAppDiscussions();
   if (nextId) void loadThread(nextId);
   else publish({ active: null, messages: [], nextBefore: null, loadingThread: false });
 }
@@ -661,7 +703,10 @@ export const messagesController = {
   handleEvent,
   share,
   paintSaved,
-  refresh: () => loadConversations(true),
+  refresh: () => {
+    void loadAppDiscussions();
+    return loadConversations(true);
+  },
 };
 
 export function initializeMessagesStore(): () => void {

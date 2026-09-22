@@ -125,6 +125,8 @@ export interface MessagesRoute {
   conversationId: number | null;
 }
 
+import type { AppDiscussion, InboxFilter } from './inbox';
+
 export interface MessagesSnapshot {
   route: MessagesRoute;
   conversations: ConversationSummary[];
@@ -140,4 +142,16 @@ export interface MessagesSnapshot {
   online: boolean;
   demo: boolean;
   revision: number;
+  /**
+   * #2718: the other two kinds of thread this screen lists.
+   *
+   * `discussions` is GET /api/messages/app-discussions — the general thread
+   * on each app the viewer is a member of, one row per app. `filter` is which
+   * of the four the list is showing. Agent chats are NOT here: they are
+   * already in features/global-chat's own store, and a second copy of a list
+   * that is loaded, merged and invalidated elsewhere is a copy that drifts.
+   */
+  discussions: AppDiscussion[];
+  discussionsLoaded: boolean;
+  filter: InboxFilter;
 }

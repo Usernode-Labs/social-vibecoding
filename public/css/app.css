@@ -16430,3 +16430,103 @@ html.un-kb #platform-tabs {
     letter-spacing: .04em;
   }
 }
+
+/* ── Messages is one inbox, and says which kind each row is (#2718) ──
+   frontend/src/features/messages/inbox.ts carries the argument: people, app
+   discussions and agent chats in one list, ordered on one clock, told apart
+   by a mark rather than by three sidebars — which is what Slack and Teams do
+   with a channel, a DM and a bot thread. What lives here is the filter row
+   and the two shapes the list grew. */
+
+/* THE FILTER ROW, with the control that starts something at its far end.
+   The plus moved here from beside the title: a title row is where a screen
+   says what it IS, a filter row is where it says what it is SHOWING, and the
+   thing that adds to what is shown belongs on the line with the thing that
+   narrows it. The Workshop's tab strip now wears the same arrangement, which
+   is what makes the two screens read as one product. */
+.messages-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 16px 8px;
+}
+.messages-filter {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* `aria-current` is the only marker the component renders, so it is the only
+   one this reads — the same convention @/components/ui/tabs sets for every
+   strip in the shell. */
+.messages-filter[aria-current="page"] {
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+}
+/* THE PLUS TAKES THE CORNER. `margin-left: auto` rather than a spacer, so
+   the filters keep the width they need and this keeps the edge however many
+   of them there are. It is the same disc it was beside the title; only its
+   line changed. */
+.messages-filters .messages-new-button {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+}
+
+/* THE KIND MARK. People get none — they are the overwhelming majority of an
+   inbox, and a pill on every row is a pill that says nothing. It rides
+   INSIDE the name line rather than on the trailing edge, because the
+   trailing edge is the time-and-count column and a third thing in it turns
+   two readable columns into three cramped ones. */
+.messages-kind-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  vertical-align: 1px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  border: 1px solid var(--brand-line);
+}
+
+/* The two new rows' leading tiles, at the `lg` square UserAvatar's 44px box
+   so all three kinds line up down the left edge. `.app-icon-tile` draws the
+   app face; this call site adds only the geometry, which is the rule app.css
+   states for every tile call site. */
+.messages-inbox-tile {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+}
+/* An agent chat has no artwork of its own — it is a thread with the thing
+   that builds, not with an app — so it wears the accent tint and the same
+   sparkle the Improve panel's own chat rows use. */
+.messages-inbox-agent-tile {
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  border: 1px solid var(--brand-line);
+}

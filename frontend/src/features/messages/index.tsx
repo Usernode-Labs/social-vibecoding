@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { EllipsisHorizontalIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import { ChatIcon, EllipsisHorizontalIcon, PlusIcon, SparklesIcon, UserGroupIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -21,9 +21,16 @@ import {
   respond,
   selectConversation,
   syncChrome,
+  setFilter,
   typingUsers,
   useMessagesSnapshot,
 } from './store';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { useGlobalChatState } from '../global-chat/store';
+import {
+  INBOX_FILTERS, buildInbox,
+  type AgentChat, type AppDiscussion, type InboxFilter,
+} from './inbox';
 import type { ConversationMessage, ConversationSummary } from './types';
 
 /*
@@ -103,6 +110,149 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
 }
 
 /**
+ * The mark that says what KIND of thread a row is (#2718).
+ *
+ * People get none, and that is the whole design of it: they are the
+ * overwhelming majority of an inbox and a pill on every row is a pill that
+ * says nothing. The two that are NOT a person say so — which is the
+ * arrangement Slack and Teams land on with a channel, a DM and a bot thread
+ * in one sidebar, and the one thing that makes a single list readable.
+ */
+function KindPill({ kind }: { kind: 'app' | 'agent' }) {
+  return (
+    <span className="messages-kind-pill" data-kind={kind}>
+      {kind === 'app' ? 'App' : 'Agent'}
+    </span>
+  );
+}
+
+/**
+ * An app's own discussion — the general thread on its board.
+ *
+ * It carries NO unread count, and its absence is honest rather than an
+ * omission: `chat_messages` has no per-viewer read cursor, so a number here
+ * would be invented. What the row says instead is when the last thing was
+ * said and who said it, which is what makes it worth a tap.
+ *
+ * An anchor at the app's own discussion address, so a modified click opens
+ * it in a tab the way every other row on this screen does.
+ */
+function AppDiscussionRow({ discussion }: { discussion: AppDiscussion }) {
+  const activity = discussion.lastAt ? agoStamp(discussion.lastAt) : null;
+  const record = {
+    icon_url: discussion.iconUrl,
+    icon_emoji: discussion.iconEmoji,
+    name: discussion.name,
+  };
+  return (
+    <a
+      href={`#app/${encodeURIComponent(discussion.slug)}/dev/chat`}
+      data-inbox-app={discussion.slug}
+      className="messages-conversation-row"
+    >
+      <span
+        data-icon={appIconKind(record as never)}
+        className="app-icon-tile messages-inbox-tile"
+      >
+        <AppIconContent app={record as never} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="messages-row-line">
+          <span className="messages-row-name">{discussion.name}<KindPill kind="app" /></span>
+          {activity
+            ? <time className="messages-row-time" dateTime={discussion.lastAt || undefined} title={activity.title}>{activity.text}</time>
+            : null}
+        </div>
+        <div className="messages-row-line">
+          <span className="messages-row-preview">
+            {discussion.lastMessage
+              ? (discussion.lastBy ? `@${discussion.lastBy}: ${discussion.lastMessage}` : discussion.lastMessage)
+              : 'No messages yet'}
+          </span>
+        </div>
+      </div>
+    </a>
+  );
+}
+
+/**
+ * An agent chat — a thread with the AI that builds.
+ *
+ * Read from features/global-chat's own store rather than copied into this
+ * one: that list is already loaded, merged on every thread event and
+ * invalidated by the chat itself, and a second copy of it is a copy that
+ * drifts. The row's address is the same `#chat/<id>` the Improve panel's own
+ * list uses.
+ */
+function AgentChatRow({ chat }: { chat: AgentChat }) {
+  const at = chat.updatedAt || chat.createdAt || null;
+  const activity = at ? agoStamp(at) : null;
+  return (
+    <a
+      href={`#chat/${encodeURIComponent(chat.id)}`}
+      data-inbox-agent={chat.id}
+      className="messages-conversation-row"
+    >
+      <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
+        <SparklesIcon className="w-5 h-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="messages-row-line">
+          <span className="messages-row-name">{chat.title || 'Untitled chat'}<KindPill kind="agent" /></span>
+          {activity
+            ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
+            : null}
+        </div>
+        <div className="messages-row-line">
+          <span className="messages-row-preview">
+            {chat.busy ? 'Working…' : (chat.summary || 'No messages yet')}
+          </span>
+        </div>
+      </div>
+    </a>
+  );
+}
+
+/**
+ * The filter row, with the control that starts something at its far end.
+ *
+ * THE PLUS MOVED HERE from beside the title (#2718). A title row is where a
+ * screen says what it is; a filter row is where it says what it is showing,
+ * and the thing that ADDS to what is being shown belongs on the same line as
+ * the thing that narrows it. It is also the arrangement the Workshop's tab
+ * strip now wears, which is what makes the two screens read as one product.
+ */
+function InboxFilters({ filter }: { filter: InboxFilter }) {
+  return (
+    <div id="messages-filters" className="messages-filters" role="group" aria-label="Show">
+      {INBOX_FILTERS.map(([key, label]) => (
+        <button
+          key={key}
+          id={`messages-filter-${key}`}
+          type="button"
+          data-messages-filter={key}
+          aria-current={filter === key ? 'page' : 'false'}
+          className="messages-filter"
+          onClick={() => setFilter(key)}
+        >
+          {label}
+        </button>
+      ))}
+      <button
+        type="button"
+        id="messages-new"
+        onClick={() => openDialog('messagesCreate')}
+        className="messages-new-button"
+        aria-label="New conversation"
+        title="New conversation"
+      >
+        <PlusIcon aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+/**
  * The conversation list's loading state, at the ROW's own geometry.
  *
  * It was a spinner beside the words "Loading conversations…" — a fixed mark
@@ -145,15 +295,34 @@ function ConversationRowSkeleton() {
 
 function ConversationList() {
   const snap = useMessagesSnapshot();
+  // Agent chats come from the chat's OWN store (#2718): that list is already
+  // loaded, merged on every thread event and invalidated by the chat itself,
+  // and a second copy in this store is a copy that drifts. Gated on the same
+  // two flags the Improve panel's list is, so a shell where the feature is
+  // off sees no Agents rows and no Agents filter doing nothing.
+  const chat = useGlobalChatState();
+  const agentsOn = !!chat.bootstrap?.parityReady
+    && chat.bootstrap.profiles.globalChat.enabled === true;
+  const agents: AgentChat[] = agentsOn ? (chat.threads as AgentChat[]) : [];
+  const inbox = buildInbox({
+    conversations: snap.conversations,
+    discussions: snap.discussions,
+    agents,
+    filter: snap.filter,
+  });
+  const byConversation = new Map(snap.conversations.map((item) => [String(item.id), item]));
+  const byApp = new Map(snap.discussions.map((item) => [item.slug, item]));
+  const byAgent = new Map(agents.map((item) => [item.id, item]));
+
   return (
     <section className={`messages-list-pane ${snap.route.conversationId ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
-      {/* The screen's title, the way Home carries "Your apps", and the New
-          disc floating beside it. The header bar's chip already names the
-          screen, so this carries no subtitle. */}
+      {/* The screen's title, the way Home carries "Your apps". The header
+          bar's mark already names the platform, so this carries no subtitle,
+          and the New control is on the filter row below it now (#2718). */}
       <div className="messages-list-toolbar">
         <div className="messages-list-title"><h2>Messages</h2></div>
-        <button type="button" onClick={() => openDialog('messagesCreate')} className="messages-new-button" aria-label="New conversation" title="New conversation"><PlusIcon aria-hidden="true" /></button>
       </div>
+      <InboxFilters filter={snap.filter} />
       {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
       {/* #1953: a click on the list's own blank space — below the last row,
           not on a row or a button — closes the open conversation, as it
@@ -169,8 +338,35 @@ function ConversationList() {
       >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>Try again</button></div> : null}
-        {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length ? <div className="messages-empty"><h3>No messages yet</h3><p>Start a direct conversation or bring a group together.</p><button type="button" onClick={() => openDialog('messagesCreate')}>New conversation</button></div> : null}
-        {snap.conversations.map((conversation) => <ConversationRow key={conversation.id} conversation={conversation} active={snap.route.conversationId === conversation.id} />)}
+        {/* THE EMPTY STATE IS STILL THE CONVERSATIONS', and that is the
+            correct reading: "no messages yet" offers to start one, which is
+            an answer about people. An inbox that is empty only because a
+            FILTER is narrow says something else, below. */}
+        {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length && !inbox.length
+          ? <div className="messages-empty"><h3>No messages yet</h3><p>Start a direct conversation or bring a group together.</p><button type="button" onClick={() => openDialog('messagesCreate')}>New conversation</button></div>
+          : null}
+        {!snap.loadingList && !snap.error && snap.listLoaded && !inbox.length && snap.filter !== 'all'
+          ? <div id="messages-filter-empty" className="messages-state"><p>Nothing here under this filter.</p></div>
+          : null}
+        {/* ONE LIST, THREE KINDS. ./inbox.ts orders them on one clock and
+            returns DESCRIPTORS rather than rows, so each kind is still drawn
+            by the component that knows how — which is what keeps a
+            conversation row byte-identical to the one this screen has always
+            drawn while the list it sits in grew two more kinds. */}
+        {inbox.map((entry) => {
+          if (entry.kind === 'person') {
+            const conversation = byConversation.get(entry.key.slice('person:'.length));
+            return conversation
+              ? <ConversationRow key={entry.key} conversation={conversation} active={snap.route.conversationId === conversation.id} />
+              : null;
+          }
+          if (entry.kind === 'app') {
+            const discussion = byApp.get(entry.key.slice('app:'.length));
+            return discussion ? <AppDiscussionRow key={entry.key} discussion={discussion} /> : null;
+          }
+          const agent = byAgent.get(entry.key.slice('agent:'.length));
+          return agent ? <AgentChatRow key={entry.key} chat={agent} /> : null;
+        })}
       </div>
     </section>
   );
