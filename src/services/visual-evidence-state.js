@@ -21,7 +21,7 @@ const TRANSITIONS = Object.freeze({
   planned: new Set(['provisioning', 'failed', 'cancelled']),
   provisioning: new Set(['exploring', 'failed', 'cancelled']),
   exploring: new Set(['replaying', 'failed', 'cancelled']),
-  replaying: new Set(['reviewing', 'failed', 'cancelled']),
+  replaying: new Set(['replaying', 'reviewing', 'failed', 'cancelled']),
   reviewing: new Set(['replaying', 'verified', 'failed', 'cancelled']),
   verified: new Set(['stale']),
   failed: new Set(['stale']),
@@ -478,6 +478,14 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     }
     assertTransition(row.state, nextState);
     assertTransitionPayload(row, nextState, patch);
+    if (row.state === 'replaying' && nextState === 'replaying'
+        && (patch.repairAttempt !== 1 || Number(row.repair_attempt || 0) !== 0
+          || patch.planHash === row.plan_hash)) {
+      throw new VisualEvidenceStateError(
+        'invalid_evidence_repair',
+        'Only one changed replay plan may replace a failed first replay.'
+      );
+    }
 
     const sets = ['state = $2', 'updated_at = NOW()'];
     const values = [runId, nextState];
