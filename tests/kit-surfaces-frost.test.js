@@ -1,32 +1,7 @@
 'use strict';
 
-// THE KIT'S SURFACES TAKE THE PANE GLASS IN THE SHELL (#1839).
-//
-// The shell's three floating panes are frosted (`.dc-lift-panel`, pinned by
-// tests/overlay-panes-lift.test.js) — but only where they present
-// THEMSELVES. On touch the kit adopts the same element into `.un-sheet`, and
-// the nine dialogs ride `.un-modal` on every width, and the header drawer
-// `.un-panel` on touch: all three paint the kit's opaque `--un-sheet-bg`, so
-// a phone never saw the glass and Members & visibility never did anywhere.
-//
-// The frost goes on the kit's surfaces from public/css/app.css, which only
-// the shell document loads (after native.css), so this restyles the kit IN
-// THE SHELL and nowhere else — native.css is untouched and every app keeps
-// the kit exactly as it ships. What this file pins:
-//
-//   - the three surfaces carry the pane recipe: `--dc-sheet-fill` over
-//     `--dc-frost`, the opaque fallback without backdrop-filter;
-//   - the dim is cast FROM the surface as a 100vmax outer shadow and the
-//     kit's backdrop goes transparent — but only a backdrop immediately
-//     followed by one of these surfaces, so the alert keeps its dim;
-//   - the sheet and panel scrim scales by `--un-presence`, which native.js
-//     publishes from the same render() that drives the backdrop's opacity,
-//     so the dim follows the drag and the exit spring instead of holding
-//     full and vanishing at teardown (the "background snaps" bug that
-//     tests/sheet-overlay-kit-adoption.test.js records for the web overlay);
-//   - the create dialog's ground moves to the strip's frosted tint.
-//
-// Run with: node --test tests/kit-surfaces-frost.test.js
+// Shell-only kit material; browser/overlay-scrim.mjs exercises the
+// replacement paint layer against the actual animation and dismissal lifecycle.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -45,9 +20,6 @@ const rule = (sel, css = APP_CSS) => {
 };
 
 const SURFACES = ['.un-modal', '.un-sheet', '.un-panel'];
-const PRESENCE_SCRIM =
-  '0 0 0 100vmax rgb(var(--pane-scrim-ink) / calc(var(--pane-scrim-alpha) * var(--un-presence, 1)))';
-
 // ── The surface ────────────────────────────────────────────────────────
 
 test('the kit modal, sheet and panel wear the pane glass in the shell', () => {
@@ -114,21 +86,12 @@ test('the kit backdrop goes transparent only where a frosted surface follows it'
   assert.match(DAPP, /\.un-backdrop\[style\*=\\"opacity: 1\\"\]/);
 });
 
-test('the modal casts the dim and fades it with the card', () => {
-  // `.un-modal` fades opacity 0 → 1 (`.un-in`) and back; opacity applies to
-  // the element's box-shadow, so the cast scrim rides the fade for free.
-  const body = rule('.un-modal');
-  assert.match(body, /box-shadow: var\(--dc-lift-shadow\), 0 0 0 100vmax var\(--pane-scrim\)/);
-  assert.match(rule('.un-modal', NATIVE_CSS), /opacity: 0;/);
-  assert.match(rule('.un-modal.un-in', NATIVE_CSS), /opacity: 1;/);
-});
-
-test('the sheet and panel scrim rides the slide through --un-presence', () => {
-  assert.match(rule('.un-sheet'), new RegExp(`box-shadow: 0 -8px 32px rgba\\(0, 0, 0, 0\\.22\\),\\s*${PRESENCE_SCRIM.replace(/[()*.+]/g, '\\$&')}`));
-  assert.match(rule('.un-panel[data-un-side="right"]'), new RegExp(`box-shadow: -8px 0 32px rgba\\(0, 0, 0, 0\\.22\\),\\s*${PRESENCE_SCRIM.replace(/[()*.+]/g, '\\$&')}`));
-  assert.match(rule('.un-panel[data-un-side="left"]'), new RegExp(`box-shadow: 8px 0 32px rgba\\(0, 0, 0, 0\\.22\\),\\s*${PRESENCE_SCRIM.replace(/[()*.+]/g, '\\$&')}`));
-  // The base panel rule leaves the shadow to the two side rules, as native.css does.
-  assert.doesNotMatch(rule('.un-panel'), /box-shadow/);
+test('kit surfaces retain their bounded shadows without viewport-sized spread', () => {
+  assert.match(rule('.un-modal'), /box-shadow: var\(--dc-lift-shadow\);/);
+  assert.match(rule('.un-sheet'), /box-shadow: 0 -8px 32px rgba\(0, 0, 0, 0\.22\);/);
+  assert.match(rule('.un-panel[data-un-side="right"]'), /box-shadow: -8px 0 32px rgba\(0, 0, 0, 0\.22\);/);
+  assert.match(rule('.un-panel[data-un-side="left"]'), /box-shadow: 8px 0 32px rgba\(0, 0, 0, 0\.22\);/);
+  assert.doesNotMatch(APP_CSS, /100vmax/);
 });
 
 test('native.js publishes --un-presence from the render that drives the backdrop', () => {

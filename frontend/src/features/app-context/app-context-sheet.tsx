@@ -90,10 +90,9 @@
  * ── Same MATERIAL as the two rails, different SHAPE ────────────────────
  *
  * It wears `.dc-lift dc-lift-panel`, which is the frosted fill, the hairline
- * colour and the shadow list the Improve rail and the notifications rail wear
- * — the lift's two layers plus the modal dim, which these panes cast outward
- * rather than painting behind themselves (see `.dc-lift-panel` in app.css for
- * why: a dim behind the panel lands inside its own backdrop-filter).
+ * colour and bounded lift shadows the Improve and notifications rails wear.
+ * OverlayScrim paints the surrounding dim through a rounded cutout, keeping
+ * the glass over an undimmed page.
  *
  * This is the pane the dim treats least kindly, and it is worth knowing why:
  * the rails dock to a screen edge, where what shows through the frost is page
@@ -116,6 +115,7 @@
  * First render is the prerender: closed, no apps, no app-scoped rows.
  */
 
+import { OverlayScrim } from '../../lib/overlay-scrim-view';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
@@ -612,6 +612,7 @@ export function AppsSwitcherSheet(): ReactNode {
           />
         </nav>
       </div>
+      <OverlayScrim panelId="apps-switcher-sheet" backdropId="apps-switcher-overlay" />
     </>
   );
 }

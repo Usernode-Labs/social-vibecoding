@@ -190,16 +190,22 @@ test('a clean merge over a run still in flight rebuilds instead of carrying', as
   }
 });
 
-test('a settled failure carries too: a merge of main does not change what the author must fix', async () => {
+test('a settled failure does NOT carry: main may be what fixes it, so the merged tree is re-checked (#2693)', async () => {
+  // This used to assert the opposite — "a merge of main does not change what
+  // the author must fix". It does when the failure was main's: proposal 4654
+  // went red on a red base, main was repaired, the sync merged the repair in
+  // and carried the old failure onto the merged commit with nothing building.
   const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
   const { votes, rebuilds, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
-    await votes.reconcileNativeReviewedHead({
+    const out = await votes.reconcileNativeReviewedHead({
       config: {}, pool, session: session(r, { check_state: 'failing' }), notify: false,
     });
-    assert.equal(pool.kickedChecks(), true);
-    assert.deepEqual(rebuilds, []);
+    assert.equal(out.kind, 'mechanical');
+    assert.equal(out.votesKept, true, 'the votes still stand — only the checks policy differs');
+    assert.equal(pool.kickedChecks(), false, 'the failing verdict is not stamped onto the merged commit');
+    assert.deepEqual(rebuilds, [r.featureHead()], 'the checks re-run against the merged commit');
   } finally { restore(); r.cleanup(); }
 });
 

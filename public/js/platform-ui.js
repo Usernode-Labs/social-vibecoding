@@ -25,6 +25,19 @@
     return un && typeof un.toast === 'function' ? un : null;
   }
 
+  function presentFrosted(un, method, opts) {
+    const original = opts || {};
+    const decorate = window.UsernodeReact && window.UsernodeReact.decorateOverlay;
+    if (!decorate) return un[method](original);
+    let cleanup;
+    const handle = un[method]({ ...original, onDismiss() {
+      if (cleanup) cleanup();
+      if (original.onDismiss) original.onDismiss();
+    } });
+    if (handle) cleanup = decorate(handle.el);
+    return handle;
+  }
+
   const PlatformUI = {
     /** True when the kit is present and reports a touch platform
         (un-ios / un-android). Desktop and kit-missing both → false,
@@ -190,7 +203,7 @@
     sheet(opts) {
       const un = kit();
       if (!un || typeof un.presentSheet !== 'function') return null;
-      return un.presentSheet(opts || {});
+      return presentFrosted(un, 'presentSheet', opts);
     },
 
     /** Side drawer / panel sliding in from an edge ({ side, contentEl,
@@ -199,14 +212,14 @@
     panel(opts) {
       const un = kit();
       if (!un || typeof un.presentPanel !== 'function') return null;
-      return un.presentPanel(opts || {});
+      return presentFrosted(un, 'presentPanel', opts);
     },
 
     /** Centered modal card. Returns the kit handle or null. */
     modal(opts) {
       const un = kit();
       if (!un || typeof un.presentModal !== 'function') return null;
-      return un.presentModal(opts || {});
+      return presentFrosted(un, 'presentModal', opts);
     },
 
     /** Swipe-to-act row actions (kit ride-along tray). No-op stub on
