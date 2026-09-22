@@ -173,6 +173,13 @@ async function writeResult(options, runId, plan, intent, provenance, first, seco
     ],
   };
   await fs.writeFile(path.join(outputDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  await fs.writeFile(path.join(outputDir, 'submission.json'), `${JSON.stringify({
+    visualEvidence: intent,
+    visualEvidencePlan: {
+      baseSha: options.baseSha, headSha: options.headSha,
+      planHash: manifest.planHash, plan,
+    },
+  }, null, 2)}\n`);
   return { outputDir, artifacts, reviewExports };
 }
 
@@ -311,4 +318,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, verifyLocalPlan };
+module.exports = { parseArgs, verifyLocalPlan, writeResult };

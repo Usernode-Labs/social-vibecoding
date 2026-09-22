@@ -228,6 +228,15 @@ test('an author plan uses the same two clean replays without a second model call
   assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
 });
 
+test('a persisted author plan survives scheduling without a separate author request', async () => {
+  const fixture = setup();
+  fixture.run.author_plan = fixtures.plan();
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 0);
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+});
+
 test('slow paired environment provisioning does not consume the agent exploration budget', async () => {
   const fixture = setup();
   const preparePair = fixture.dependencies.environment.preparePair;

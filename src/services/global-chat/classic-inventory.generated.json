@@ -268,7 +268,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 259,
+      "line": 263,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -277,7 +277,7 @@
     },
     {
       "source": "server.js",
-      "line": 295,
+      "line": 299,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -304,7 +304,7 @@
     },
     {
       "source": "server.js",
-      "line": 325,
+      "line": 329,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -313,7 +313,7 @@
     },
     {
       "source": "server.js",
-      "line": 365,
+      "line": 369,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -339,7 +339,7 @@
     },
     {
       "source": "server.js",
-      "line": 370,
+      "line": 374,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -358,7 +358,7 @@
     },
     {
       "source": "server.js",
-      "line": 392,
+      "line": 396,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -367,7 +367,7 @@
     },
     {
       "source": "server.js",
-      "line": 674,
+      "line": 678,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +376,7 @@
     },
     {
       "source": "server.js",
-      "line": 856,
+      "line": 860,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +385,7 @@
     },
     {
       "source": "server.js",
-      "line": 860,
+      "line": 864,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +394,7 @@
     },
     {
       "source": "server.js",
-      "line": 864,
+      "line": 868,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +403,7 @@
     },
     {
       "source": "server.js",
-      "line": 868,
+      "line": 872,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +412,7 @@
     },
     {
       "source": "server.js",
-      "line": 872,
+      "line": 876,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,7 +421,7 @@
     },
     {
       "source": "server.js",
-      "line": 876,
+      "line": 880,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -11752,7 +11752,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 285,
+      "line": 286,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/rerun",
       "expression": null,
@@ -11771,7 +11771,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 325,
+      "line": 326,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/override",
       "expression": null,
@@ -11798,7 +11798,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2046,
+      "line": 2064,
       "method": "POST",
       "path": "/api/sessions/:id/promote",
       "expression": null,
@@ -11819,7 +11819,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2665,
+      "line": 2683,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/candidates",
       "expression": null,
@@ -11838,7 +11838,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2702,
+      "line": 2720,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/preview",
       "expression": null,
@@ -11856,7 +11856,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2765,
+      "line": 2783,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import",
       "expression": null,
@@ -11879,7 +11879,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3025,
+      "line": 3080,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import/_mock/advance",
       "expression": null,
@@ -11888,7 +11888,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3065,
+      "line": 3120,
       "method": "POST",
       "path": "/api/sessions/:id/vote",
       "expression": null,
@@ -11909,7 +11909,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3358,
+      "line": 3413,
       "method": "GET",
       "path": "/api/sessions/:id/votes",
       "expression": null,
@@ -11930,7 +11930,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3424,
+      "line": 3479,
       "method": "GET",
       "path": "/api/me/proposals",
       "expression": null,
@@ -11954,7 +11954,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3621,
+      "line": 3676,
       "method": "GET",
       "path": "/api/apps/:slug/promoted",
       "expression": null,
@@ -11979,7 +11979,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3995,
+      "line": 4050,
       "method": "GET",
       "path": "/api/apps/:slug/merged",
       "expression": null,
@@ -12002,7 +12002,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4332,
+      "line": 4387,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:id",
       "expression": null,
@@ -12022,7 +12022,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4403,
+      "line": 4458,
       "method": "POST",
       "path": "/api/sessions/:id/undo",
       "expression": null,
@@ -12043,7 +12043,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4489,
+      "line": 4544,
       "method": "POST",
       "path": "/api/sessions/:id/admin-merge",
       "expression": null,

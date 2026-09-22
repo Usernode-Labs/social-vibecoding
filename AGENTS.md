@@ -120,6 +120,14 @@ generation fails, correct the plan or app and run it again. Any head commit
 change requires another run. If local data cannot represent the claim, report
 that blocker before opening the PR. Do not submit a guessed plan or claim
 local verification from schema validation or the synthetic fixture harness.
+On a successful pass, send the generated `submission.json` fields
+`visualEvidence` and `visualEvidencePlan` together in the first `submit_work`
+that imports the PR. The plan carries exact base/head SHAs and its content
+hash; the import rejects a mismatch and stores the plan before the platform
+starts the evidence run. If the steps need clarification, edit the typed
+actions, locators, and assertions and rerun locally before submitting. The
+platform executes this plan directly rather than asking a hosted agent to
+reinterpret prose.
 
 This local verifier currently supports this platform repository and its
 running local Homeroom stack. Other apps need their own local runtime and

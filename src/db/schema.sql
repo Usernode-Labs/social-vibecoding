@@ -8261,6 +8261,7 @@ CREATE TABLE IF NOT EXISTS visual_evidence_runs (
   plan_hash              VARCHAR(64)
     CHECK (plan_hash IS NULL OR plan_hash ~ '^[0-9a-f]{64}$'),
   intent                 JSONB NOT NULL,
+  author_plan            JSONB,
   replay_plan            JSONB,
   trace_summary          JSONB,
   hard_verdict           JSONB,
@@ -8293,6 +8294,7 @@ CREATE TABLE IF NOT EXISTS visual_evidence_runs (
     AND NULLIF(BTRIM(override_reason), '') IS NOT NULL AND overridden_at IS NOT NULL
     AND completed_at IS NOT NULL))
 );
+ALTER TABLE visual_evidence_runs ADD COLUMN IF NOT EXISTS author_plan JSONB;
 -- Earlier releases required a model's semantic verdict before captures could
 -- be published. Capture integrity is still enforced; judging relevance now
 -- belongs to the people reviewing the proposal.

@@ -247,6 +247,7 @@ function visualEvidenceRoutes(config) {
           if (ctx.session.visual_evidence_state === 'failed') {
             await state.rerunSameHead(pool, ctx.session.visual_evidence_run_id, {
               trigger: 'author-plan',
+              authorPlan: executable,
             });
           } else if (ctx.session.visual_evidence_state !== 'planned') {
             return res.status(409).json({

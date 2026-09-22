@@ -44,9 +44,23 @@ a plan that changes the intent. The plan schema and examples are in
    the claim; replay success alone only proves the steps ran reproducibly and
    produced valid media. Fix the app or plan and rerun until they do.
 5. Open the PR only with a plan whose manifest has `passed: true`, the exact
-   final head SHA, and the plan hash of the plan you will submit. If any code
-   commit changes that head, rerun. The platform must still replay the plan
-   on its own isolated base/head environments after import.
+   final head SHA, and the plan hash of the plan you will submit. Send the
+   generated `submission.json` fields (`visualEvidence` and
+   `visualEvidencePlan`) together in the first `submit_work` that imports this
+   PR. The import compares both SHAs with the actual PR, checks the hash and
+   the claims, and stores the plan in the evidence run in the same transaction
+   as the proposal. If any code commit changes that head, rerun. The platform
+   independently replays the same plan on its isolated base/head environments.
+
+The author can make a plan more explicit while testing it: replace vague
+locator choices with the actual accessible role/name or stable test id; add
+the necessary typed clicks, fills, waits, and before/after assertions; then
+rerun and inspect the media. These are executable instructions for the
+platform runner. A hosted model does not reinterpret them after import. If
+there is no locally verified plan, omit `visualEvidencePlan` and the hosted
+evidence agent will author one. The atomic handoff currently applies to new
+PR imports; updates to an existing proposal still use the separate
+`submit_visual_evidence_plan` action for their new head.
 
 The command reads Git objects and the local development database. It does not
 read production data, call a model, create a PR, or submit a proposal. It does

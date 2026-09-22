@@ -375,6 +375,34 @@ function semanticIntentFromPlan(value) {
   });
 }
 
+// A local pass produces this small handoff, separately from its media and
+// verdict. The hashes bind the submitted flow to the exact two Git revisions;
+// hosted replay still independently decides whether it works there.
+function parseAuthorPlanSubmission(value, intent, revisions = null) {
+  const invalid = (path, message) => {
+    throw new VisualEvidenceValidationError([{ path: ['visualEvidencePlan', path], message }]);
+  };
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== 'baseSha,headSha,plan,planHash') {
+    invalid('', 'Expected exactly baseSha, headSha, planHash, and plan');
+  }
+  for (const side of ['baseSha', 'headSha']) {
+    if (typeof value[side] !== 'string' || !/^[0-9a-f]{40}$/.test(value[side])) {
+      invalid(side, 'Expected an exact 40-character commit SHA');
+    }
+    if (revisions && value[side] !== revisions[side]) {
+      invalid(side, `Does not match the imported pull request ${side}`);
+    }
+  }
+  const plan = parseReplayPlan(value.plan);
+  if (canonicalJson(semanticIntentFromPlan(plan)) !== canonicalJson(parseIntent(intent))) {
+    invalid('plan', 'The plan changes the accepted visual evidence intent');
+  }
+  const hash = planHash(plan);
+  if (value.planHash !== hash) invalid('planHash', 'Does not match the submitted plan');
+  return { baseSha: value.baseSha, headSha: value.headSha, planHash: hash, plan };
+}
+
 function containsRelativePointer(plan) {
   const parsed = parseReplayPlan(plan);
   return parsed.stories.some((story) => ['before', 'after'].some((side) =>
@@ -408,5 +436,6 @@ module.exports = {
   canonicalJson,
   planHash,
   semanticIntentFromPlan,
+  parseAuthorPlanSubmission,
   containsRelativePointer,
 };

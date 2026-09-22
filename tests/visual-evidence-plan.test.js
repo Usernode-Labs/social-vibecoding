@@ -153,3 +153,21 @@ test('relative pointer provenance and semantic projection are derived from valid
   assert.equal(Object.hasOwn(semantic.stories[0], 'replay'), false);
   assert.deepEqual(semantic, evidence.parseIntent(intent()));
 });
+
+test('author plan handoff is bound to the accepted claims, hash, and exact PR revisions', () => {
+  const baseSha = 'a'.repeat(40);
+  const headSha = 'b'.repeat(40);
+  const submitted = { baseSha, headSha, planHash: evidence.planHash(plan()), plan: plan() };
+  const accepted = evidence.parseAuthorPlanSubmission(submitted, intent(), { baseSha, headSha });
+  assert.deepEqual(accepted, { ...submitted, plan: evidence.parseReplayPlan(submitted.plan) });
+  assert.throws(() => evidence.parseAuthorPlanSubmission(submitted, intent(), {
+    baseSha, headSha: 'c'.repeat(40),
+  }), /imported pull request headSha/);
+  assert.throws(() => evidence.parseAuthorPlanSubmission({ ...submitted, planHash: '0'.repeat(64) }, intent()),
+    /Does not match the submitted plan/);
+  const changedIntent = intent();
+  changedIntent.stories[0].claim = 'A different visual claim.';
+  assert.throws(() => evidence.parseAuthorPlanSubmission(submitted, changedIntent), /accepted visual evidence intent/);
+  assert.throws(() => evidence.parseAuthorPlanSubmission({ ...submitted, locallyVerified: true }, intent()),
+    /Expected exactly/);
+});
