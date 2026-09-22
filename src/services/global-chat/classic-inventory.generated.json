@@ -3,8 +3,8 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 652,
-    "mappedRoutes": 514,
+    "totalRoutes": 653,
+    "mappedRoutes": 515,
     "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
     "clientApiReferences": 363,
@@ -268,7 +268,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 250,
+      "line": 259,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -277,7 +277,7 @@
     },
     {
       "source": "server.js",
-      "line": 286,
+      "line": 295,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -304,7 +304,7 @@
     },
     {
       "source": "server.js",
-      "line": 316,
+      "line": 325,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -313,7 +313,7 @@
     },
     {
       "source": "server.js",
-      "line": 356,
+      "line": 365,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -339,7 +339,7 @@
     },
     {
       "source": "server.js",
-      "line": 361,
+      "line": 370,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -358,7 +358,7 @@
     },
     {
       "source": "server.js",
-      "line": 383,
+      "line": 392,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -367,7 +367,7 @@
     },
     {
       "source": "server.js",
-      "line": 665,
+      "line": 674,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +376,7 @@
     },
     {
       "source": "server.js",
-      "line": 847,
+      "line": 856,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +385,7 @@
     },
     {
       "source": "server.js",
-      "line": 851,
+      "line": 860,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +394,7 @@
     },
     {
       "source": "server.js",
-      "line": 855,
+      "line": 864,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +403,7 @@
     },
     {
       "source": "server.js",
-      "line": 859,
+      "line": 868,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +412,7 @@
     },
     {
       "source": "server.js",
-      "line": 863,
+      "line": 872,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,7 +421,7 @@
     },
     {
       "source": "server.js",
-      "line": 867,
+      "line": 876,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -5478,6 +5478,24 @@
         "frontend/src/features/admin/admin-gallery.tsx",
         "frontend/src/features/admin/admin-gallery.tsx"
       ]
+    },
+    {
+      "source": "src/routes/github-webhook.js",
+      "line": 105,
+      "method": "POST",
+      "path": "/api/github/webhook",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "apps.post.github.webhook.b044f08b",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": []
     },
     {
       "source": "src/routes/global-chat.js",

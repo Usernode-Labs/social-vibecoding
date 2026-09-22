@@ -8699,10 +8699,20 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
   error            TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT homeroom_bot_runs_verdict_check
-    CHECK (verdict IN ('question', 'ready', 'person', 'failed')),
+    CHECK (verdict IN ('question', 'ready', 'person', 'empty', 'failed')),
   CONSTRAINT homeroom_bot_runs_rating_check
     CHECK (rating IS NULL OR rating IN ('yes', 'no'))
 );
+-- #2737: 'empty' joins the verdicts on a database that predates it. The
+-- CREATE TABLE above already names it, so this is only for an existing
+-- deployment; widening a CHECK can never reject a row already stored.
+DO $$
+BEGIN
+  ALTER TABLE homeroom_bot_runs DROP CONSTRAINT IF EXISTS homeroom_bot_runs_verdict_check;
+  ALTER TABLE homeroom_bot_runs ADD CONSTRAINT homeroom_bot_runs_verdict_check
+    CHECK (verdict IN ('question', 'ready', 'person', 'empty', 'failed'));
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_issue
   ON homeroom_bot_runs(app_id, issue_number, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_created

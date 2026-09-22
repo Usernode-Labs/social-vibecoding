@@ -57,13 +57,23 @@ const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 
 const BOT_USERNAME = 'homeroom_bot';
 const MODES = Object.freeze(['off', 'shadow', 'live']);
-const VERDICTS = Object.freeze(['question', 'ready', 'person']);
+// `empty` (#2737) is the fourth: a request with nothing in it to build or
+// even to ask about. It exists because the prompt's unclear branch used to
+// force a question, so a placeholder issue got asked "what do you mean?"
+// with a suggested default of "discard" — the model already knew, and had
+// nowhere to say it. Shadow only in this slice: it posts nothing.
+const VERDICTS = Object.freeze(['question', 'ready', 'person', 'empty']);
 
 const KEY_MODE = 'homeroom_bot_mode';
 const KEY_CONCURRENCY = 'homeroom_bot_concurrency';
 const KEY_BATCH_SIZE = 'homeroom_bot_batch_size';
 const KEY_PAUSED_APPS = 'homeroom_bot_paused_apps';
-const SETTING_KEYS = Object.freeze([KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS]);
+const KEY_TURN_SECONDS = 'homeroom_bot_turn_seconds';
+const KEY_TURN_INPUT_TOKENS = 'homeroom_bot_turn_input_tokens';
+const SETTING_KEYS = Object.freeze([
+  KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
+  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
+]);
 
 // batchSize is how many of ONE app's issues a pass takes before the loop
 // looks for the most urgent app again — the fairness knob between apps, not
@@ -74,9 +84,27 @@ const DEFAULTS = Object.freeze({
   concurrency: 1,
   batchSize: 100,
   pausedApps: [],
+  turnSeconds: 20 * 60,
+  turnInputTokens: 10_000_000,
 });
 const MAX_CONCURRENCY = 4;
 const MAX_BATCH_SIZE = 500;
+// The budget a single triage turn may spend (#2737). Measured over the
+// first 213 shadow runs: 7 of the 74 that produced a verdict took $30.04 of
+// the $31.40 spent, one of them running 56 minutes for a single verdict,
+// and 13 more returned nothing at all after 25 to 149 minutes. The 67 that
+// behaved cost $1.36 between them, and 90% finished inside 9 minutes.
+//
+// Both limits are needed. The clock alone misses a turn that burns tokens
+// fast — two of the seven finished inside 20 minutes — and the token limit
+// alone misses a turn that hangs without spending. Note that input_tokens
+// as the worker reports it is the LAST usage event, not a running sum, and
+// excludes cached reads: it tracks cost well across the ledger but is a
+// tripwire here, not accounting.
+const MIN_TURN_SECONDS = 30;
+const MAX_TURN_SECONDS = 3 * 60 * 60;
+const MIN_TURN_INPUT_TOKENS = 100_000;
+const MAX_TURN_INPUT_TOKENS = 5_000_000_000;
 
 // The bot's own weekly allowance, on its users row like anybody else's.
 // $150 to start: at Flash prices a triage is a few cents, so this is a
@@ -109,7 +137,17 @@ const PAUSED_SESSION_WINDOW_DAYS = 7;
 // whether these would have suppressed it, so the dashboard shows the live
 // bot's behaviour and not only the raw model's.
 const PROPOSALS_PER_APP_CAP = 2;
+// Questions and `empty` verdicts share this one allowance, so the bot
+// cannot answer a quiet board with ten questions AND ten close proposals in
+// the same day. Both are a demand on somebody's attention.
 const QUESTION_TRIPWIRE_PER_DAY = 10;
+const TRIPWIRE_VERDICTS = Object.freeze(['question', 'empty']);
+
+// A session that refuses a turn is backed off per app rather than retried
+// on the next wake (#2737). One wedged session produced 121 of 124 refusals
+// in the first day, a median of 31 seconds apart, which is the idle poll.
+const BACKOFF_BASE_MS = 2 * 60 * 1000;
+const BACKOFF_CEILING_MS = 60 * 60 * 1000;
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -124,6 +162,13 @@ let lastRefreshAt = 0;
 let triagePromptCache = null;
 // The config start() was handed, so a wake can schedule a pass itself.
 let loopConfig = null;
+// appId → { until, attempts }. In memory on purpose: the loop is a
+// singleton on the leader, and a restart SHOULD retry immediately — a new
+// process is exactly the event most likely to have cleared the wedge.
+const appBackoff = new Map();
+// What the last pass refused, for the dashboard's loop line. Refusals are
+// counted here instead of being written as verdict rows.
+let lastRefusals = [];
 // Apps whose issues changed since the last pass (wake), and whether a full
 // reconcile was asked for (the mode was switched on, say). Read and cleared
 // at the top of every pass; only meaningful on the Pod running the loop.
@@ -157,7 +202,14 @@ function parseSettings(rows) {
   } catch {
     pausedApps = DEFAULTS.pausedApps;
   }
-  return { mode, concurrency, batchSize, pausedApps };
+  const turnSeconds = clampInt(
+    map.get(KEY_TURN_SECONDS), DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS,
+  );
+  const turnInputTokens = clampInt(
+    map.get(KEY_TURN_INPUT_TOKENS), DEFAULTS.turnInputTokens,
+    MIN_TURN_INPUT_TOKENS, MAX_TURN_INPUT_TOKENS,
+  );
+  return { mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens };
 }
 
 function clampInt(raw, fallback, min, max) {
@@ -203,6 +255,20 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: `concurrency must be an integer from 1 to ${MAX_CONCURRENCY}` };
     }
     updates.push([KEY_CONCURRENCY, String(n)]);
+  }
+  if (body.turnSeconds !== undefined) {
+    const n = Number(body.turnSeconds);
+    if (!Number.isInteger(n) || n < MIN_TURN_SECONDS || n > MAX_TURN_SECONDS) {
+      return { ok: false, error: `turnSeconds must be an integer from ${MIN_TURN_SECONDS} to ${MAX_TURN_SECONDS}` };
+    }
+    updates.push([KEY_TURN_SECONDS, String(n)]);
+  }
+  if (body.turnInputTokens !== undefined) {
+    const n = Number(body.turnInputTokens);
+    if (!Number.isInteger(n) || n < MIN_TURN_INPUT_TOKENS || n > MAX_TURN_INPUT_TOKENS) {
+      return { ok: false, error: `turnInputTokens must be an integer from ${MIN_TURN_INPUT_TOKENS} to ${MAX_TURN_INPUT_TOKENS}` };
+    }
+    updates.push([KEY_TURN_INPUT_TOKENS, String(n)]);
   }
   if (body.batchSize !== undefined) {
     const n = Number(body.batchSize);
@@ -380,7 +446,9 @@ function parseVerdict(text) {
       question: verdict === 'question' ? clip(obj.question, 2000) : null,
       questionDefault: verdict === 'question' ? clip(obj.default, 1000) : null,
       buildNote: verdict === 'ready' ? clip(obj.build_note) : null,
-      reason: verdict === 'person' ? clip(obj.reason, 2000) : null,
+      // `person` says which criterion fails; `empty` says what a person
+      // should do with a request that has nothing in it. Same field.
+      reason: (verdict === 'person' || verdict === 'empty') ? clip(obj.reason, 2000) : null,
     };
   }
   return null;
@@ -709,16 +777,85 @@ async function simulateCaps(pool, bot, appId, verdict) {
     );
     if ((rows[0]?.cnt || 0) >= PROPOSALS_PER_APP_CAP) return 'proposals_per_app';
   }
-  if (verdict === 'question') {
+  if (TRIPWIRE_VERDICTS.includes(verdict)) {
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS cnt FROM homeroom_bot_runs
-        WHERE app_id = $1 AND verdict = 'question'
+        WHERE app_id = $1 AND verdict = ANY($2::text[])
           AND created_at > NOW() - INTERVAL '24 hours'`,
-      [appId],
+      [appId, TRIPWIRE_VERDICTS],
     );
     if ((rows[0]?.cnt || 0) >= QUESTION_TRIPWIRE_PER_DAY) return 'question_tripwire';
   }
   return null;
+}
+
+// Errors that mean "this app cannot be worked right now", as opposed to
+// "this turn failed". They are refusals: no turn ran, nothing was spent,
+// and the queue row is untouched. Writing a verdict row for one is how two
+// thirds of the first day's ledger became noise.
+const REFUSAL_ERRORS = new Set(['session_busy']);
+
+/** Whether this app is inside a backoff window, and how long is left. */
+function backoffFor(appId, now = Date.now()) {
+  const entry = appBackoff.get(Number(appId));
+  if (!entry || entry.until <= now) return null;
+  return { ...entry, remainingMs: entry.until - now };
+}
+
+/** Double this app's backoff, from 2 minutes up to an hour. */
+function noteRefusal(appId, error, now = Date.now()) {
+  const id = Number(appId);
+  const prior = appBackoff.get(id);
+  const attempts = (prior?.attempts || 0) + 1;
+  const delay = Math.min(BACKOFF_BASE_MS * (2 ** (attempts - 1)), BACKOFF_CEILING_MS);
+  appBackoff.set(id, { attempts, until: now + delay, error, at: now });
+  return { attempts, delayMs: delay };
+}
+
+/** A turn got through for this app, so the next refusal starts from 2 min. */
+function clearRefusals(appId) {
+  appBackoff.delete(Number(appId));
+}
+
+/**
+ * Clear a turn record nothing owns any more (#2737).
+ *
+ * `chat_sessions.active_turn` is what makes a session refuse a new turn.
+ * It is cleared when a turn ends, and a turn that dies without ending is
+ * recovered by adopting its worker CONTAINER — so once the container is
+ * gone (idle eviction, a replaced Pod) there is nothing left to do the
+ * clearing, and the session refuses every turn forever. The first day of
+ * shadow triage lost an app to exactly that for over an hour.
+ *
+ * Narrow on purpose: the bot's own synthetic session, a record older than
+ * the turn budget (so a live turn is never touched), and only when no
+ * container claims the session.
+ */
+async function clearStaleTurn(pool, session, { worker, maxAgeMs, now = Date.now() }) {
+  const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [session.id]);
+  const activeTurn = rows[0]?.active_turn || null;
+  if (!activeTurn) return null;
+  const startedAt = toMs(activeTurn.startedAt);
+  if (startedAt && now - startedAt < maxAgeMs) return null;
+
+  let containers = [];
+  try {
+    containers = await worker.listOrphanWorkers();
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not list workers; leaving the turn record alone', { err: err.message });
+    return null;
+  }
+  const owned = containers.some((c) => Number(c.sessionId) === Number(session.id)
+    && String(c.state || '').toLowerCase() === 'running');
+  if (owned) return null;
+
+  const turnLifecycle = require('./turn-lifecycle');
+  await worker.clearActiveTurn(session.id, turnLifecycle.cleanupArgs(activeTurn));
+  const ageMs = startedAt ? now - startedAt : null;
+  log.warn('homeroom-bot', 'Cleared a turn record no container owned', {
+    sessionId: session.id, ageMs,
+  });
+  return { ageMs };
 }
 
 /**
@@ -727,7 +864,7 @@ async function simulateCaps(pool, bot, appId, verdict) {
  * reason the caller stops the whole pass on: the queue is left alone and
  * the loop idles until the week's allowance moves.
  */
-async function runTriage(pool, config, { bot, app, item, mode, deps = {} }) {
+async function runTriage(pool, config, { bot, app, item, mode, settings = null, deps = {} }) {
   const github = deps.github || require('./github');
   const worker = deps.worker || require('./worker');
   const agentTurn = deps.agentTurn || require('./agent-turn');
@@ -742,6 +879,13 @@ async function runTriage(pool, config, { bot, app, item, mode, deps = {} }) {
 
   const issueNumber = Number(item.issue_number);
   const startedMs = Date.now();
+  const turnBudgetMs = 1000 * clampInt(
+    settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS,
+  );
+  const turnInputTokens = clampInt(
+    settings?.turnInputTokens, DEFAULTS.turnInputTokens,
+    MIN_TURN_INPUT_TOKENS, MAX_TURN_INPUT_TOKENS,
+  );
   const repo = parseRepo(app.repo_url);
   const model = config.openrouterDefaultCodexModel || null;
 
@@ -749,7 +893,19 @@ async function runTriage(pool, config, { bot, app, item, mode, deps = {} }) {
   // produced nothing usable) consumes the queue row: retrying costs money
   // and the thread has not changed. A PLATFORM failure keeps the row, hands
   // it back to the queue, and tells the caller to stop the pass.
+  // A REFUSAL is not a failure: no turn ran and nothing was spent, so it
+  // gets no ledger row. The app backs off instead, and the loop line says
+  // what happened.
+  const recordRefusal = (error) => {
+    const { attempts, delayMs } = noteRefusal(app.id, error);
+    log.info('homeroom-bot', 'App refused a turn; backing off', {
+      app: app.slug, issueNumber, error, attempts, delayMs,
+    });
+    return { ran: false, reason: 'refused', detail: error, app: app.slug, retryInMs: delayMs };
+  };
+
   const recordFailure = async (error, extra = {}, { infra = false } = {}) => {
+    if (REFUSAL_ERRORS.has(error)) return recordRefusal(error);
     const id = await insertRun(pool, {
       appId: app.id, issueNumber, mode, verdict: 'failed', error,
       threadSeenAt: item.thread_seen_at || null, model,
@@ -809,11 +965,34 @@ async function runTriage(pool, config, { bot, app, item, mode, deps = {} }) {
     return recordFailure(`worker: ${err.message}`, { sessionId: session.id }, { infra: true });
   }
 
+  // A turn record nothing owns any more would refuse every turn from here
+  // on. Checked after the container is up, so a live turn is never touched.
+  await clearStaleTurn(pool, session, { worker, maxAgeMs: turnBudgetMs })
+    .catch((err) => log.warn('homeroom-bot', 'Stale turn check failed', { err: err.message }));
+
   await pool.query(
     "UPDATE chat_sessions SET status = 'active', last_activity_at = NOW() WHERE id = $1",
     [session.id],
   );
   activeWorkers.add(session.id);
+
+  // The budget (#2737). Both guards end the turn the same way a person's
+  // Stop button does: the in-container kill plus the journal exit marker,
+  // which the attempt loop below resolves on within milliseconds.
+  let budgetHit = null;
+  const spendBudget = (kind) => {
+    if (budgetHit) return;
+    budgetHit = kind;
+    log.warn('homeroom-bot', 'Triage turn stopped on its budget', {
+      app: app.slug, issueNumber, kind, sessionId: session.id,
+    });
+    Promise.resolve(worker.stopTurn(session.id)).catch((err) => {
+      log.warn('homeroom-bot', 'Budget stop failed', { sessionId: session.id, err: err.message });
+    });
+  };
+  const budgetTimer = setTimeout(() => spendBudget('wall clock'), turnBudgetMs);
+  if (typeof budgetTimer.unref === 'function') budgetTimer.unref();
+
   let routed;
   try {
     routed = await sessions.runCodexAttemptLoop({
@@ -825,6 +1004,13 @@ async function runTriage(pool, config, { bot, app, item, mode, deps = {} }) {
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
+        // The token half of the budget. `inputTokens` is the last usage
+        // event rather than a running sum, so this is a tripwire on a
+        // turn that has plainly run away, not an accounting limit.
+        onUsage: (usage) => {
+          const seen = Number(usage?.inputTokens);
+          if (Number.isFinite(seen) && seen > turnInputTokens) spendBudget('input tokens');
+        },
         prompt,
         model,
         commitMsg: '',
@@ -844,11 +1030,44 @@ async function runTriage(pool, config, { bot, app, item, mode, deps = {} }) {
   } catch (err) {
     routed = { error: `dispatch: ${err.message}` };
   } finally {
+    clearTimeout(budgetTimer);
     activeWorkers.delete(session.id);
     await pool.query(
       "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1",
       [session.id],
     ).catch(() => {});
+  }
+
+  // A turn we stopped ourselves. Recorded as a failure so the ledger shows
+  // what it cost, then requeued ONCE at the back — the runaway may have
+  // been the issue rather than the bot, and retrying it forever is the loop
+  // this whole change exists to end.
+  if (budgetHit) {
+    const retried = String(item.reason || '') === 'budget_retry';
+    const result = routed?.result || {};
+    const id = await insertRun(pool, {
+      appId: app.id, issueNumber, sessionId: session.id, mode, verdict: 'failed',
+      error: `budget: ${budgetHit}`,
+      threadSeenAt: item.thread_seen_at || null, model,
+      costUsd: Number.isFinite(routed?.estimatedCostUsd) ? routed.estimatedCostUsd : null,
+      inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : null,
+      outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : null,
+      durationMs: Date.now() - startedMs,
+    });
+    if (retried) {
+      await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    } else {
+      await pool.query(
+        `UPDATE homeroom_bot_queue
+            SET started_at = NULL, reason = 'budget_retry', priority = 9, enqueued_at = NOW()
+          WHERE id = $1`,
+        [item.id],
+      );
+    }
+    log.warn('homeroom-bot', 'Triage stopped on its budget', {
+      app: app.slug, issueNumber, kind: budgetHit, requeued: !retried, runId: id,
+    });
+    return { ran: true, verdict: 'failed', runId: id, budget: budgetHit };
   }
 
   if (!routed) return recordFailure('not_a_codex_session', { sessionId: session.id }, { infra: true });
@@ -899,6 +1118,7 @@ async function runTriage(pool, config, { bot, app, item, mode, deps = {} }) {
     durationMs: Date.now() - startedMs,
   });
   await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  clearRefusals(app.id);
   log.info('homeroom-bot', 'Triaged', {
     app: app.slug, issueNumber, verdict: parsed.verdict, costUsd, runId,
   });
@@ -950,7 +1170,16 @@ async function runOnce(pool, config, deps = {}) {
     }
 
     const bot = await ensureBotUser(pool, config);
-    const taken = [];
+    // An app inside its backoff window is skipped exactly like a paused one
+    // (#2737). Without this, a session that refuses every turn is retried on
+    // every wake, which is how one wedged app wrote 121 rows in a day.
+    const backedOff = [];
+    for (const [appId] of appBackoff) {
+      if (backoffFor(appId, now)) backedOff.push(Number(appId));
+      else appBackoff.delete(appId);
+    }
+    out.backedOffApps = backedOff.length;
+    const taken = [...backedOff];
     const batches = [];
     for (let i = 0; i < settings.concurrency; i += 1) {
       const batch = await nextBatch(pool, {
@@ -962,6 +1191,8 @@ async function runOnce(pool, config, deps = {}) {
     }
     if (!batches.length) return out;
 
+    const refusals = [];
+    const budgets = [];
     const results = await Promise.all(batches.map(async (batch) => {
       let processed = 0;
       for (const item of batch.items) {
@@ -971,18 +1202,30 @@ async function runOnce(pool, config, deps = {}) {
         if (live.mode === 'off') { out.paused = 'mode_off'; break; }
         let r;
         try {
-          r = await runTriage(pool, config, { bot, app: batch.app, item, mode: live.mode, deps });
+          r = await runTriage(pool, config, {
+            bot, app: batch.app, item, mode: live.mode, settings: live, deps,
+          });
         } catch (err) {
           log.error('homeroom-bot', 'Triage threw', { app: batch.app.slug, issueNumber: item.issue_number, err: err.message });
           r = { ran: false, reason: 'threw' };
         }
         if (r.ran) processed += 1;
+        if (r.budget) budgets.push({ app: batch.app.slug, issueNumber: item.issue_number, kind: r.budget });
         if (r.reason === 'budget') { out.paused = 'budget'; break; }
+        // A refusal moves on to the next APP rather than stopping the pass:
+        // the others are not wedged just because this one is.
+        if (r.reason === 'refused') {
+          refusals.push({ app: r.app, error: r.detail, retryInMs: r.retryInMs });
+          break;
+        }
         if (r.reason === 'infra') { out.paused = 'infra'; out.detail = r.detail || null; break; }
       }
       return processed;
     }));
     out.processed = results.reduce((a, b) => a + b, 0);
+    out.refusals = refusals;
+    out.budgets = budgets;
+    lastRefusals = refusals;
     return out;
   } catch (err) {
     log.error('homeroom-bot', 'Pass failed', { err: err.message });
@@ -1266,7 +1509,7 @@ async function adminPayload(pool, config, { app = null, verdict = null, before =
     settings,
     modes: MODES,
     bot,
-    loop: lastPass,
+    loop: lastPass ? { ...lastPass, refusals: lastRefusals } : lastPass,
     totals,
     queue: { depth: depthRows[0]?.depth || 0, items: queueRows },
     runs: runRows.map((r) => ({ ...r, issueUrl: issueUrlFor(r) })),
@@ -1342,6 +1585,21 @@ module.exports = {
   enqueueNow,
   wake,
   wakeAll,
+  backoffFor,
+  noteRefusal,
+  clearRefusals,
+  clearStaleTurn,
+  BACKOFF_BASE_MS,
+  BACKOFF_CEILING_MS,
+  TRIPWIRE_VERDICTS,
+  REFUSAL_ERRORS,
+  MIN_TURN_SECONDS,
+  MAX_TURN_SECONDS,
+  MIN_TURN_INPUT_TOKENS,
+  MAX_TURN_INPUT_TOKENS,
+  KEY_TURN_SECONDS,
+  KEY_TURN_INPUT_TOKENS,
+  DEFAULTS,
   noteIssueActivity,
   onBusMessage,
   refreshApps,
@@ -1366,6 +1624,7 @@ module.exports = {
   QUESTION_TRIPWIRE_PER_DAY,
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;
+    appBackoff.clear(); lastRefusals = [];
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
   },

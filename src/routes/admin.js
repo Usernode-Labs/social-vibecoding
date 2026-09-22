@@ -953,7 +953,7 @@ function adminRoutes(config) {
   // and so is the CSV export — see its own note below.
   const botRunFilters = (q) => ({
     app: typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null,
-    verdict: ['question', 'ready', 'person', 'failed'].includes(q.verdict) ? q.verdict : null,
+    verdict: ['question', 'ready', 'person', 'empty', 'failed'].includes(q.verdict) ? q.verdict : null,
   });
 
   router.get('/api/admin/homeroom-bot', async (req, res) => {

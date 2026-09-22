@@ -177,6 +177,16 @@ test('PUT settings: refused for a view-only admin, refuses live, accepts shadow 
   assert.equal(res.status, 400);
   res = await call('PUT', '/api/admin/homeroom-bot/settings', { batchSize: 100 });
   assert.equal(res.status, 200, 'the default is 100 and the ceiling 500');
+
+  // #2737: the per-turn budget is admin-settable and bounded.
+  res = await call('PUT', '/api/admin/homeroom-bot/settings', { turnSeconds: 5 });
+  assert.equal(res.status, 400, 'a turn budget below the floor is refused');
+  res = await call('PUT', '/api/admin/homeroom-bot/settings', { turnInputTokens: 10 });
+  assert.equal(res.status, 400, 'so is a token budget below the floor');
+  res = await call('PUT', '/api/admin/homeroom-bot/settings', { turnSeconds: 1200, turnInputTokens: 10_000_000 });
+  assert.equal(res.status, 200);
+  assert.ok(writes.some((w) => w[0] === 'setting' && w[1] === 'homeroom_bot_turn_seconds' && w[2] === '1200'));
+  assert.ok(writes.some((w) => w[0] === 'setting' && w[1] === 'homeroom_bot_turn_input_tokens' && w[2] === '10000000'));
   res = await call('PUT', '/api/admin/homeroom-bot/settings', {});
   assert.equal(res.status, 400);
 
@@ -344,6 +354,14 @@ test('the section is registered everywhere the console reads, inside the registr
   assert.match(tsx, /\/api\/admin\/homeroom-bot\/export\.csv/);
   assert.match(tsx, /canWrite \? \(\s*<a/, 'and only a full admin sees it');
   assert.ok(!/new Blob\(/.test(tsx), 'the ledger is never assembled in page memory');
+
+  // #2737. The budget is settable from the screen, the fourth verdict is
+  // filterable, and a backed-off app says so rather than looking idle.
+  assert.match(tsx, /id="admin-homeroom-bot-turn-minutes"/);
+  assert.match(tsx, /id="admin-homeroom-bot-turn-tokens"/);
+  assert.match(tsx, /id="admin-homeroom-bot-refusals"/);
+  assert.match(tsx, /<option value="empty">Nothing to build<\/option>/);
+  assert.match(tsx, /empty: 'Nothing to build'/, 'and the verdict has a label of its own');
 });
 
 test('dapp.json exercises the dashboard on ids the module renders', () => {

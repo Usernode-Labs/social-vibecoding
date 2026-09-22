@@ -399,6 +399,10 @@ function load() {
     // containers still receive a JWT_SECRET env var, but it carries the
     // RSA PUBLIC key — see services/app-identity-env.js.
     githubAppId: process.env.GITHUB_APP_ID || '',
+    // #2737: shared secret for POST /api/github/webhook. Empty means the
+    // route is OFF and answers 503 — deny by default, so a deployment that
+    // never sets it cannot be fed unsigned pull-request events.
+    githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET || '',
     githubPrivateKey: (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     // #555: Anthropic ADMIN API key (`sk-ant-admin…`) — a different
