@@ -249,6 +249,23 @@ test('slow paired environment provisioning does not consume the agent exploratio
   assert.equal(fixture.calls.dispatches, 1);
 });
 
+test('background evidence heartbeat records progress and stops when the run ends', async () => {
+  const seen = [];
+  const heartbeat = orchestrator.startRunHeartbeat({}, RUN_ID, {
+    heartbeatRun: async (_pool, _runId, phase) => { seen.push(phase); },
+  }, null, 10);
+  heartbeat.onProgress({ stage: 'checkout_revisions' });
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.ok(seen.includes('checkout_revisions'));
+  assert.ok(seen.length >= 2, 'the lease renews during a slow provisioning step');
+  heartbeat.stop();
+  const stoppedAt = seen.length;
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(seen.length, stoppedAt, 'finished runs stop renewing their lease');
+  assert.equal(orchestrator.progressPhase({ phase: 'build', detail: 'private output' }), 'build_build');
+  assert.equal(orchestrator.progressPhase({ detail: 'private output' }), null);
+});
+
 test('competing schedulers claim a planned run only once before launching paired replay', async (t) => {
   const fixture = setup();
   fixture.session.handoff_base_sha = BASE;
