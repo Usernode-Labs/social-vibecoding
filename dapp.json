@@ -2760,6 +2760,11 @@
       "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] #platform-tabs-badge"
     },
     {
+      "name": "On an iPhone with a home indicator the tab bar still loads whole, sitting lower in the strip (#2766)",
+      "path": "/?un-platform=ios&safe-bottom=1&demo=1",
+      "expectSelector": "html.un-ios #platform-tabs:not(.hidden) #platform-tab-home + #platform-tab-discover"
+    },
+    {
       "name": "A message notification is listed in the notifications sheet",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"]",
