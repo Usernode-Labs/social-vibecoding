@@ -43,6 +43,9 @@ const runLedger = [
   },
 ];
 const exportPages = [];
+// Every parameter list the runs query is called with, so a filter can be
+// checked where it is applied rather than by reading the rows back.
+const runsParams = [];
 let runRow = { id: 41, rating: null, rating_note: null, rated_at: null };
 // Whether the bot's users row exists yet: the dashboard creates it on load
 // when it does not, so the cap box is never blank (#2684 follow-up).
@@ -66,6 +69,7 @@ poolMod.getPool = () => ({
     if (/FROM homeroom_bot_queue q JOIN apps/.test(s)) return { rows: [] };
     if (/COUNT\(\*\)::int AS depth/.test(s)) return { rows: [{ depth: 4 }] };
     if (/FROM homeroom_bot_runs r/.test(s)) {
+      runsParams.push(params);
       // [app, verdict, cursor, limit] — the export walks the cursor, so the
       // mock answers from a fixture ledger the way Postgres would.
       const [app, verdict, cursor, limit] = params;
@@ -247,6 +251,32 @@ test('POST run: validates the target, 404s an unknown app, and queues at the hea
 
 // ── Surface pins ─────────────────────────────────────────────────────────
 
+test('GET: verdict=budget selects the runs the bot stopped itself', async () => {
+  who = FULL_ADMIN;
+  runsParams.length = 0;
+  let res = await call('GET', '/api/admin/homeroom-bot?verdict=budget');
+  assert.equal(res.status, 200);
+  assert.equal(runsParams.at(-1)[4], true, 'the budget-only flag is set');
+  assert.equal(runsParams.at(-1)[1], null, 'and it is not passed off as a verdict');
+
+  res = await call('GET', '/api/admin/homeroom-bot?verdict=failed');
+  assert.equal(runsParams.at(-1)[4], false, 'an ordinary verdict leaves it off');
+  assert.equal(runsParams.at(-1)[1], 'failed');
+
+  res = await call('GET', '/api/admin/homeroom-bot?verdict=nonsense');
+  assert.equal(runsParams.at(-1)[1], null, 'and an unknown one still selects everything');
+  assert.equal(runsParams.at(-1)[4], false);
+});
+
+test('the CSV filename says when it holds only budget stops', async () => {
+  who = FULL_ADMIN;
+  const res = await call('GET', '/api/admin/homeroom-bot/export.csv?verdict=budget');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-disposition'), /homeroom-bot-verdicts-all-apps-budget-stops-/);
+  assert.ok((await res.text()).split('\n')[0].split(',').includes('budget_stop'),
+    'and the column is in the file');
+});
+
 test('the write gates are on the three mutations and off the read', () => {
   const admin = read('src/routes/admin.js');
   assert.match(admin, /router\.get\('\/api\/admin\/homeroom-bot', async/);
@@ -360,6 +390,13 @@ test('the section is registered everywhere the console reads, inside the registr
   assert.match(tsx, /id="admin-homeroom-bot-turn-minutes"/);
   assert.match(tsx, /id="admin-homeroom-bot-turn-tokens"/);
   assert.match(tsx, /id="admin-homeroom-bot-refusals"/);
+
+  // #2742: a budget stop is findable without expanding rows or exporting.
+  // The tiles take their id as an argument rather than writing it inline.
+  assert.match(tsx, /'admin-homeroom-bot-tile-budget'/, 'a tile counts them');
+  assert.match(tsx, /totals\?\.budgetStopped/, 'from its own total, not the failure count');
+  assert.match(tsx, /<option value="budget">Stopped on budget<\/option>/, 'the filter finds them');
+  assert.match(tsx, /run\.budget_stop \? `Stopped: \$\{run\.budget_stop\}`/, 'and the row says so unexpanded');
   assert.match(tsx, /<option value="empty">Nothing to build<\/option>/);
   assert.match(tsx, /empty: 'Nothing to build'/, 'and the verdict has a label of its own');
 });

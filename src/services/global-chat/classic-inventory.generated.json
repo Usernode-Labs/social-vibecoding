@@ -930,7 +930,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 959,
+      "line": 964,
       "method": "GET",
       "path": "/api/admin/homeroom-bot",
       "expression": null,
@@ -951,7 +951,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 987,
+      "line": 992,
       "method": "GET",
       "path": "/api/admin/homeroom-bot/export.csv",
       "expression": null,
@@ -970,7 +970,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1015,
+      "line": 1023,
       "method": "PUT",
       "path": "/api/admin/homeroom-bot/settings",
       "expression": null,
@@ -990,7 +990,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1029,
+      "line": 1037,
       "method": "POST",
       "path": "/api/admin/homeroom-bot/runs/:id/rating",
       "expression": null,
@@ -1009,7 +1009,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1043,
+      "line": 1051,
       "method": "POST",
       "path": "/api/admin/homeroom-bot/run",
       "expression": null,
@@ -1029,7 +1029,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1074,
+      "line": 1082,
       "method": "GET",
       "path": "/api/admin/storage",
       "expression": null,
@@ -1051,7 +1051,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1090,
+      "line": 1098,
       "method": "PUT",
       "path": "/api/admin/storage/:slug",
       "expression": null,
@@ -1071,7 +1071,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1132,
+      "line": 1140,
       "method": "POST",
       "path": "/api/admin/storage/sweep",
       "expression": null,
@@ -1091,7 +1091,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1164,
+      "line": 1172,
       "method": "GET",
       "path": "/api/admin/featured-apps",
       "expression": null,
@@ -1113,7 +1113,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1208,
+      "line": 1216,
       "method": "PUT",
       "path": "/api/admin/apps/:slug/directory-review",
       "expression": null,
@@ -1132,7 +1132,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1262,
+      "line": 1270,
       "method": "PUT",
       "path": "/api/admin/featured-apps",
       "expression": null,
@@ -1154,7 +1154,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1343,
+      "line": 1351,
       "method": "GET",
       "path": "/api/admin/anthropic-credits",
       "expression": null,
@@ -1176,7 +1176,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1371,
+      "line": 1379,
       "method": "PUT",
       "path": "/api/admin/anthropic-credits",
       "expression": null,
@@ -1198,7 +1198,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1433,
+      "line": 1441,
       "method": "PUT",
       "path": "/api/admin/users/:id/daily-limit",
       "expression": null,
@@ -1218,7 +1218,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1474,
+      "line": 1482,
       "method": "PUT",
       "path": "/api/admin/users/:id/weekly-limit",
       "expression": null,
@@ -1238,7 +1238,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1542,
+      "line": 1550,
       "method": "PUT",
       "path": "/api/admin/users/:id/wallet",
       "expression": null,
@@ -1258,7 +1258,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1688,
+      "line": 1696,
       "method": "GET",
       "path": "/api/admin/submitted-features",
       "expression": null,
@@ -1280,7 +1280,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1824,
+      "line": 1832,
       "method": "GET",
       "path": "/api/admin/db-export/status",
       "expression": null,
@@ -1299,7 +1299,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1877,
+      "line": 1885,
       "method": "GET",
       "path": "/api/admin/db-export/history",
       "expression": null,
@@ -1318,7 +1318,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1919,
+      "line": 1927,
       "method": "POST",
       "path": "/api/admin/db-export/ticket",
       "expression": null,
@@ -1337,7 +1337,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2004,
+      "line": 2012,
       "method": "GET",
       "path": "/api/admin/db-export",
       "expression": null,
@@ -1358,7 +1358,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2138,
+      "line": 2146,
       "method": "GET",
       "path": "/api/admin/mail/status",
       "expression": null,
@@ -1377,7 +1377,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2165,
+      "line": 2173,
       "method": "GET",
       "path": "/api/admin/mail/activity",
       "expression": null,
@@ -1396,7 +1396,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2213,
+      "line": 2221,
       "method": "POST",
       "path": "/api/admin/mail/test",
       "expression": null,

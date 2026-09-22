@@ -8703,6 +8703,15 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
   CONSTRAINT homeroom_bot_runs_rating_check
     CHECK (rating IS NULL OR rating IN ('yes', 'no'))
 );
+-- #2742: which limit stopped the turn, when one did — 'wall clock' or
+-- 'input tokens'. A budget stop is not a failure in the same sense (the turn
+-- was working and we ended it), so it needs to be findable on its own rather
+-- than by grepping the error text, which would break the first time the
+-- message is reworded. Deliberately NOT a CHECK: the set is expected to grow
+-- (a per-run cost ceiling is the obvious third) and #2737 already had to
+-- widen one constraint on this table.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS budget_stop TEXT;
+
 -- #2737: 'empty' joins the verdicts on a database that predates it. The
 -- CREATE TABLE above already names it, so this is only for an existing
 -- deployment; widening a CHECK can never reject a row already stored.
