@@ -959,6 +959,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with the #2707 trio above. One +1 and one +3 against a shared 712 is
   // 716, which leaves 34 slots against MAX_DECLARED_TESTS (750).
   //
+  // 716 → 720: #2706 puts the connector walkthrough inline on the dev
+  // session page instead of sending the reader to Settings, and that is a
+  // screen state with four things to pin — the steps themselves, the live
+  // MCP server URL beside them, the ChatGPT hand-off getting ChatGPT's
+  // steps rather than Claude's, and Settings still being one tap away. 30
+  // slots left against MAX_DECLARED_TESTS (750), still clear of the
+  // 20-slot floor. Both sides of this merge happened to land on 716 from
+  // different additions, which is a coincidence and not a sequence: main
+  // reached it with #2681 and #2707, and these four are new against it.
+  //
   // 712 → 714: the share-view Homeroom mark (#2705) adds two, and both are
   // assertions of an ABSENCE — that the platform's own document does not
   // draw the mark the bridge draws on an app's subdomain. One rides the
@@ -967,7 +977,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Neither is a new screen, so neither is tagged visual: the surface the
   // change is actually visible on is an app's own hostname, which no
   // declared check can navigate to. That is where this branch stood alone,
-  // against the same shared 712 the two notes above start from.
+  // against the shared 712.
   //
   // 716 → 718: the tallies above were computed on either side of THIS
   // merge and cannot be read as one sequence. Both stand on the shared
@@ -975,7 +985,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // trio), and this branch took it to 714 with the two #2705 absence
   // checks. +4 and +2 against that shared 712 is 718, which leaves 32
   // slots against MAX_DECLARED_TESTS (750).
-  assert.equal(DAPP.tests.length, 718);
+  //
+  // 720 → 722: the tallies above were computed on either side of THIS
+  // merge too, and are again not one sequence. Both stand on the shared
+  // 716: main took it to 720 with the #2706 connector-walkthrough four,
+  // and this branch took it to 718 with the two #2705 absence checks. +4
+  // and +2 against that shared 716 is 722, which leaves 28 slots against
+  // MAX_DECLARED_TESTS (750).
+  assert.equal(DAPP.tests.length, 722);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
