@@ -228,6 +228,7 @@ test('rows interleave by created_at DESC with row_type discriminators', async ()
   assert.equal(close.created_by_username, 'casey');
   assert.equal(close.up_count, 2);
   assert.equal(close.chat_count, 4);
+  assert.equal(close.deployment_state, undefined, 'issue-closure cards are not deployment records');
 });
 
 test('on a created_at tie, PR rows rank before close-issue rows', async () => {
