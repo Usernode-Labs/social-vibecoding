@@ -249,8 +249,22 @@ export type Column<T> = {
   tdClass?: string;
 };
 
+// Per-row selection, for a list that offers a bulk action (e.g. delete
+// several rows at once). `itemLabel` names the row for the checkbox's
+// accessible label, since the checkbox itself carries no visible text.
+export type Selection<T> = {
+  isSelected: (item: T) => boolean;
+  onToggle: (item: T, checked: boolean) => void;
+  allSelected: boolean;
+  onToggleAll: (checked: boolean) => void;
+  itemLabel: (item: T) => string;
+};
+
+const SELECT_CHECKBOX_CLS = 'h-5 w-5 shrink-0 rounded border-zinc-300 dark:border-zinc-600 '
+  + 'text-violet-700 focus:ring-2 focus:ring-violet-500 dark:text-violet-400';
+
 export function List<T>({
-  items, columns, rowKey, actions, extra, rowClass,
+  items, columns, rowKey, actions, extra, rowClass, selection,
 }: {
   items: T[];
   columns: Column<T>[];
@@ -259,12 +273,15 @@ export function List<T>({
   actions?: (item: T) => ReactNode;
   extra?: (item: T) => ReactNode;
   rowClass?: (item: T) => string;
+  /** Adds a checkbox column (desktop) / row control (mobile) plus a
+   * select-all header checkbox, for a caller that offers a bulk action. */
+  selection?: Selection<T>;
 }) {
   const act = actions || (() => null);
   const ex = extra || (() => null);
   const cls = rowClass || (() => '');
   const anyActions = items.some((it) => !!act(it));
-  const span = columns.length + (anyActions ? 1 : 0);
+  const span = columns.length + (anyActions ? 1 : 0) + (selection ? 1 : 0);
   const primary = columns.find((c) => c.primary) || columns[0];
 
   return (
@@ -273,6 +290,17 @@ export function List<T>({
         <table className="w-full text-sm">
           <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             <tr>
+              {selection ? (
+                <th className="w-10 px-3 py-2 text-left font-medium">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all rows on this page"
+                    className={SELECT_CHECKBOX_CLS}
+                    checked={selection.allSelected}
+                    onChange={(e) => selection.onToggleAll(e.target.checked)}
+                  />
+                </th>
+              ) : null}
               {columns.map((c) => (
                 <th key={c.label} className={`px-3 py-2 text-left font-medium ${c.thClass || ''}`}>
                   {c.label}
@@ -288,6 +316,17 @@ export function List<T>({
               return (
                 <Fragment key={key}>
                   <tr className={`border-t border-zinc-100 dark:border-zinc-800 ${cls(it)}`}>
+                    {selection ? (
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          aria-label={selection.itemLabel(it)}
+                          className={SELECT_CHECKBOX_CLS}
+                          checked={selection.isSelected(it)}
+                          onChange={(e) => selection.onToggle(it, e.target.checked)}
+                        />
+                      </td>
+                    ) : null}
                     {columns.map((c) => (
                       <td key={c.label} className={`px-3 py-2 ${c.tdClass || ''}`}>{c.cell(it)}</td>
                     ))}
@@ -314,7 +353,20 @@ export function List<T>({
           const below = ex(it);
           return (
             <div key={rowKey(it, i)} className={`${PANEL_CLS} px-4 py-3 ${cls(it)}`}>
-              <p className="text-sm font-medium break-words">{primary ? primary.cell(it) : null}</p>
+              <div className="flex items-start gap-2.5">
+                {selection ? (
+                  <input
+                    type="checkbox"
+                    aria-label={selection.itemLabel(it)}
+                    className={`mt-0.5 ${SELECT_CHECKBOX_CLS}`}
+                    checked={selection.isSelected(it)}
+                    onChange={(e) => selection.onToggle(it, e.target.checked)}
+                  />
+                ) : null}
+                <p className="min-w-0 flex-1 text-sm font-medium break-words">
+                  {primary ? primary.cell(it) : null}
+                </p>
+              </div>
               <dl className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">
                 {columns.filter((c) => c !== primary && !c.hideOnCard).map((c) => (
                   <div key={c.label} className="flex items-start justify-between gap-3 py-1">

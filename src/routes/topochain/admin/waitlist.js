@@ -319,6 +319,52 @@ function waitlistAdminRoutes(config) {
     }
   });
 
+  // ── DELETE /api/v4/admin/waitlist/:id ─────────────────────────────────
+  // Removes one signup outright. `invited_by` is self-referential with
+  // ON DELETE SET NULL, so deleting a row that referred others clears
+  // their invited_by rather than failing or cascading further.
+  router.delete('/api/v4/admin/waitlist/:id', adminWriteGate, async (req, res) => {
+    try {
+      const id = toIntId(req.params.id);
+      if (!id) return fail(res, 404, 'Waitlist entry not found.');
+      const { rows } = await pool.query(
+        'DELETE FROM waitlist_signups WHERE id = $1 RETURNING id, email',
+        [id]
+      );
+      if (!rows.length) return fail(res, 404, 'Waitlist entry not found.');
+      log.info('topochain-admin', 'Waitlist entry deleted', {
+        signupId: id, email: rows[0].email, adminId: req.user?.id,
+      });
+      return ok(res, { data: { id: Number(rows[0].id) } });
+    } catch (err) {
+      log.error('topochain-admin', 'DELETE /admin/waitlist/:id failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── POST /api/v4/admin/waitlist/bulk-delete ───────────────────────────
+  // Deletes several signups at once, for the queue's multi-select. Ids
+  // that don't parse or don't exist are silently skipped; the response
+  // says how many rows were actually removed.
+  router.post('/api/v4/admin/waitlist/bulk-delete', adminWriteGate, async (req, res) => {
+    try {
+      const raw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const ids = [...new Set(raw.map(toIntId).filter((n) => n != null))];
+      if (!ids.length) return fail(res, 422, 'No valid waitlist entry ids given.');
+      const { rows } = await pool.query(
+        'DELETE FROM waitlist_signups WHERE id = ANY($1::bigint[]) RETURNING id',
+        [ids]
+      );
+      log.info('topochain-admin', 'Waitlist entries bulk-deleted', {
+        signupIds: rows.map((r) => Number(r.id)), adminId: req.user?.id,
+      });
+      return ok(res, { data: { deleted: rows.length } });
+    } catch (err) {
+      log.error('topochain-admin', 'POST /admin/waitlist/bulk-delete failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
   // ── POST /api/v4/admin/users/:id/grant-access ────────────────────────
   // Direct platform-access grant for an account that never joined the
   // waitlist. Idempotent.
