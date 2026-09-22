@@ -750,6 +750,8 @@ const ADDED_IDS = {
   // ── #2377: Global Chat (experimental) ───────────────────────────
   'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',
   'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
+  // ── #2707: the feedback destination is chosen, never assumed ────
+  'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

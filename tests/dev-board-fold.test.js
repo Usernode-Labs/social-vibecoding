@@ -947,7 +947,32 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // so each tone has a check that fails if the cover is inked for the
   // shell's theme rather than for the ground it sits on. 712 + 2 = 714,
   // leaving 36 slots against MAX_DECLARED_TESTS (750).
-  assert.equal(DAPP.tests.length, 714);
+  //
+  // 712 -> 713: independently on main, #2681 renames the dev walkthrough's
+  // footer button to "Build on the Homeroom platform instead", and no
+  // declared check asserted the old string, so the rename adds one rather
+  // than editing one.
+  //
+  // 712 → 715: also independently on main, #2707 declares three, all on the
+  // Send Feedback dialog — the unchosen destination row and its dead Submit
+  // on ?shot=feedback-choose, and the one-destination case on ?shot=feedback,
+  // which is the half a later refactor is most likely to lose (there, a
+  // destination IS selected and Submit IS live, because a tap with one
+  // possible answer is a tax).
+  //
+  // 713 → 716: the tallies above were computed on either side of that same
+  // merge on main and cannot be read as one sequence. Main took 712 → 713
+  // alone, with the #2681 check above, then independently 712 → 715 with the
+  // #2707 trio above. One +1 and one +3 against a shared 712 is 716.
+  //
+  // 714 → 718, 716 → 718: the tallies above were computed on either side of
+  // THIS merge and cannot be read as one sequence either. This branch took
+  // 712 → 714 alone, with the #2704 pair above; main independently took the
+  // same 712 to 716, with the #2681 and #2707 checks above. Neither set
+  // overlaps the other, so the merged manifest holds every one of them:
+  // 712 + 2 + 1 + 3 = 718, which leaves 32 slots against
+  // MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 718);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -59,7 +59,16 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
   return {
     sandbox, el, timers, calls, fixes, nav, toasts,
     failedReads: () => failedReads,
-    async submit() { el('feedback-text').value = 'The board jumps.'; el('feedback-submit').click(); await settle(); },
+    // #2707: this harness opens with an app on screen, so BOTH destinations
+    // are real and none is preselected — Submit is dead until one is tapped.
+    // Every test below is about what happens AFTER a submit, so the tap is
+    // part of getting there, the way typing the description is.
+    async submit() {
+      el('feedback-text').value = 'The board jumps.';
+      el('feedback-target-platform').click();
+      el('feedback-submit').click();
+      await settle();
+    },
     async fireTimers(ms) { for (const [key, timer] of [...timers]) if (timer.ms === ms) { timers.delete(key); timer.fn(); } await settle(); },
     flush(result = moment) { queueHooks.onFlushed({ sent: 1, filed: [{ target: 'platform', firstFeedback: result }] }); },
     shown: () => !el('feedback-first-success').classList.contains('hidden'),
@@ -121,6 +130,12 @@ test('Done dismisses the moment and reopening restores the form', async () => {
   }
   h.sandbox.App.openFeedbackModal();
   assert.equal(h.shown(), false);
+  // #2707: a reopen asks for the destination again, so Submit starts dead
+  // and a tap — not the reopen — brings it back. What this assertion is
+  // about is that the confirmation did not leave the button locked, and
+  // that still holds.
+  assert.equal(h.el('feedback-submit').disabled, true);
+  h.el('feedback-target-platform').click();
   assert.equal(h.el('feedback-submit').disabled, false);
   assert.equal(h.el('feedback-form').classList.contains('hidden'), false);
   for (const id of ['feedback-text', 'feedback-title']) {
@@ -155,7 +170,9 @@ test('opening queued success does not consume failed outbox drafts', async () =>
 test('an account change during submit cannot show another user’s first feedback', async () => {
   let finish;
   const h = harness({ response: () => new Promise(resolve => { finish = resolve; }) });
-  h.el('feedback-text').value = 'Report'; h.el('feedback-submit').click(); await settle();
+  h.el('feedback-text').value = 'Report';
+  h.el('feedback-target-platform').click();
+  h.el('feedback-submit').click(); await settle();
   h.sandbox.App.user = { id: 8 }; finish({ firstFeedback: moment }); await settle();
   assert.equal(h.shown(), false);
   h.flush(); assert.equal(h.shown(), false);
@@ -163,7 +180,9 @@ test('an account change during submit cannot show another user’s first feedbac
 test('a stale submission does not overwrite a reopened draft', async () => {
   let finish;
   const h = harness({ response: () => new Promise(resolve => { finish = resolve; }) });
-  h.el('feedback-text').value = 'Old report'; h.el('feedback-submit').click(); await settle();
+  h.el('feedback-text').value = 'Old report';
+  h.el('feedback-target-platform').click();
+  h.el('feedback-submit').click(); await settle();
   h.el('feedback-cancel').click(); h.sandbox.App.openFeedbackModal(); h.el('feedback-text').value = 'New draft';
   finish({ firstFeedback: moment }); await settle();
   assert.equal(h.shown(), false); assert.equal(h.el('feedback-text').value, 'New draft');
