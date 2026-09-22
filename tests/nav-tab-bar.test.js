@@ -282,12 +282,19 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(block, /padding-right: var\(--platform-gutter\);/,
     'and the same figure is spent on the far edge');
   assert.match(block, /--platform-gutter: 1\.5rem;/);
-  // …and the app view is NOT one of the roots that move over: an app covers
-  // the rail, which is what "the app is the whole window" means. The prose
-  // above the rule says so, so the check is on the selector itself.
-  const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-left: var('));
+  // …and the app view is NOT one of the roots in that list: an app covers the
+  // rail, which is what "the app is the whole window" means. The prose above
+  // the rule says so, so the check is on the selector itself.
+  const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-left: calc('));
   assert.doesNotMatch(roots, /#app-view/, 'an app covers the rail');
   assert.match(roots, /#messages-screen/, 'every platform root does move over');
+  // IT MOVES OVER ANYWAY WHILE ITS RAIL IS UP (#2718 review), through a rule
+  // of its own keyed off the bar rather than off the screen id — because
+  // `#app-view` is two screens behind one id, and only one of them covers the
+  // rail. Keyed off the bar and not off the tab, because the bar is already
+  // the answer to that question.
+  assert.match(block,
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #app-view \{\s*padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
   // The parked strip is the rail's footer, and its pill becomes a caption
   // because four things do not fit across 224px.
   assert.match(block, /\.platform-parked \{[\s\S]{0,300}width: var\(--platform-rail-full\);/);
@@ -332,7 +339,17 @@ test('every screen change clears the peek, and nothing else does', () => {
   // and the thing you tapped has now happened. Leaving it set would hand the
   // next screen an overlay rail on top of its own.
   const mount = read('frontend/src/features/nav/mount.ts');
-  assert.match(mount, /setScreen\(screenId: string \| null\) \{[\s\S]{0,1400}peek: false/);
+  assert.match(mount,
+    /setScreen\(screenId: string \| null, tabOverride\?: string \| null\) \{[\s\S]{0,1400}peek: false/);
+  // THE OVERRIDE IS FOR ONE SCREEN (#2718 review): `#app-view` is the running
+  // app, which lights nothing, AND the platform's Workshop for that app,
+  // which lights Workshop. TAB_FOR_SCREEN cannot say so — a screen in that
+  // map is a tab ROOT, and tests/header-back-home.test.js derives "shows no
+  // back control" from being in it, which the app view's ✕ contradicts.
+  assert.match(mount, /tab: tabOverride \|\| \(screen \? tabForScreen\(screen\) : null\),/);
+  assert.match(read('public/js/app.js'),
+    /screen === 'app-view' && !inApp \? 'workshop' : null,/,
+    'and app.js is the one place that decides which of the two it is');
   // ON A CHANGE, not on every call. Re-asserting the screen you are already
   // on is not navigation, and clearing there yanks the rail out from under
   // the pointer that summoned it — measured with a harness that re-asserted

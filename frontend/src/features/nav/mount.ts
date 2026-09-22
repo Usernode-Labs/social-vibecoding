@@ -40,8 +40,16 @@ if (typeof window !== 'undefined') {
      * before the first swap) lights nothing, which is also the prerender.
      *
      * @param screenId A root from App.SCREEN_IDS, or null/'' for none.
+     * @param tabOverride Which tab to light, for the one screen the map
+     *   cannot answer for. `#app-view` is TWO screens behind one id — the
+     *   running app, which lights nothing, and the platform's Workshop for
+     *   that app, which is the Workshop section seen through one app and
+     *   lights it. TAB_FOR_SCREEN cannot express that: it is a map from
+     *   screen to tab, and tests/header-back-home.test.js derives the back
+     *   slot from it on the rule that a screen in that map is a tab ROOT and
+     *   shows no back control — which the app view, with its ✕, is not.
      */
-    setScreen(screenId: string | null) {
+    setScreen(screenId: string | null, tabOverride?: string | null) {
       const screen = screenId || null;
       // `peek: false` on every screen CHANGE, because that is what a peek is
       // FOR: you reveal the rail over an app to leave it, and the thing you
@@ -59,7 +67,7 @@ if (typeof window !== 'undefined') {
       const changed = navStore.get().screen !== screen;
       navStore.set({
         screen,
-        tab: screen ? tabForScreen(screen) : null,
+        tab: tabOverride || (screen ? tabForScreen(screen) : null),
         ...(changed ? { peek: false } : null),
       });
     },

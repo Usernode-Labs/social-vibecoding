@@ -2916,7 +2916,14 @@ const AppView = {
     // sub-view hides it. Down here rather than per-branch because sub-view
     // hops never pass App._showOnlyScreen, the usual single owner of that
     // reset — without this, the session's arrow would linger on the Board.
-    App.setBackIcon?.('home');
+    //
+    // 'none' RATHER THAN 'home' SINCE #2718's REVIEW. The rail is up on this
+    // surface now (App._syncPlatformTabs), so the app's Workshop is a screen
+    // with navigation beside it like every other platform screen, and a house
+    // in the corner is the rail's own Home tab a second time. The reset is
+    // still the same reset: what a sub-view has to override is what it always
+    // had to override.
+    App.setBackIcon?.('none');
 
     // Session view — a single DevChat session, full-screen, reached
     // from the Your-sessions strip, proposal cards, or the "+" flow.
@@ -3011,16 +3018,15 @@ const AppView = {
     // chip said depended on what had been navigated to earlier in the run.
     // It says Workshop on the Dev screen, always.
     App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Workshop');
-    // BACK TO THE WORKSHOP SCREEN, when that is where this app was opened
-    // from. `App._appBackHref` is the breadcrumb navigateToApp records (see
-    // its note in app.js) and it is null on every other route, which leaves
-    // the house `setBackIcon('home')` above already published — so this is an
-    // override for one origin rather than a new default. It sits on the
-    // LANDER alone: the app's own Workshop is the page the row linked to, and
-    // a chevron on the chat or a topic would promise a level this breadcrumb
-    // says nothing about. Publishing an arrow with an href is also what turns
-    // the phone's back gesture on (features/header/native-back-navigation.ts).
-    if (App._appBackHref) App.setBackIcon?.('arrow', App._appBackHref);
+    // NO BACK ARROW HERE ANY MORE (#2718 review). This used to publish a ← to
+    // the Workshop screen whenever `App._appBackHref` said that is where the
+    // app was opened from — the one thing standing between a reader and the
+    // rest of the platform, on a surface that had no rail.
+    //
+    // It has one now. The Workshop tab in the rail IS the way back, on the
+    // exact screen the arrow pointed at, and it is there whether or not this
+    // app was reached from it. `_appBackHref` still earns its keep on the app
+    // tab, where the ✕ leaves to wherever the visit began.
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.

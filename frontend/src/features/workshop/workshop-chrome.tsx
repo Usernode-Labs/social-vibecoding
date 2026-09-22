@@ -62,7 +62,7 @@
  * in each — answered by the scope chip, the legend's totals and the rows.
  */
 
-import { type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import {
   CheckIcon, ChevronDownIcon, Squares2X2Icon,
@@ -103,6 +103,20 @@ async function goToApp(slug: string): Promise<void> {
   }
 }
 
+/**
+ * Up to the all-apps Workshop screen.
+ *
+ * A HASH ASSIGNMENT, not a call into App: this is the same address the rail's
+ * Workshop tab carries, so the two ways of getting there are one route and
+ * the browser's own history records it. On the all-apps screen it is a no-op
+ * the picker never offers, because that screen's own All apps row is a tick
+ * rather than a destination.
+ */
+function goToAllApps(): void {
+  workshopStore.set({ picker: null });
+  window.location.hash = '#workshop';
+}
+
 const CHIP = 'inline-flex items-center gap-2 max-w-full h-9 pl-2 pr-2.5 rounded-full '
   + 'un-touch-target font-semibold text-sm disabled:opacity-60 '
   + 'border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] '
@@ -120,25 +134,46 @@ const CHIP = 'inline-flex items-center gap-2 max-w-full h-9 pl-2 pr-2.5 rounded-
  * behind it is your apps, and a panel that says nothing is worse than a
  * control that says it has nothing to offer.
  */
-export function WorkshopScope({ apps, open }: { apps: PickerApp[] | null; open: boolean }) {
+export function WorkshopScope({ apps, open, id, scope, onToggle }: {
+  apps: PickerApp[] | null;
+  open: boolean;
+  /** Distinct per surface: the two are never on screen together, but the
+   *  shell's id inventory is a contract and two elements with one id is a
+   *  contract broken in the quietest possible way. */
+  id?: string;
+  /** The app this Workshop is showing, or null for all of them. */
+  scope?: PickerApp | null;
+  onToggle?: (next: boolean) => void;
+}) {
+  const panelId = (id || 'workshop-scope') + '-picker';
   return (
     <button
-      id="workshop-scope"
+      id={id || 'workshop-scope'}
       type="button"
       className={CHIP}
       aria-haspopup="menu"
       aria-expanded={open ? 'true' : 'false'}
-      aria-controls="workshop-picker"
-      disabled={!apps || apps.length === 0}
-      onClick={() => workshopStore.set({ picker: open ? null : 'scope' })}
+      aria-controls={panelId}
+      // DISABLED ONLY WHERE THERE IS NOTHING BEHIND IT. On the all-apps
+      // screen the one thing the panel holds is your apps, so with none of
+      // them a control that says it has nothing to offer beats a panel that
+      // says nothing. Scoped to an app there is always somewhere to go —
+      // back up to all of them — so it is never dead there.
+      disabled={!scope && (!apps || apps.length === 0)}
+      onClick={() => (onToggle
+        ? onToggle(!open)
+        : workshopStore.set({ picker: open ? null : 'scope' }))}
     >
       <span
         aria-hidden="true"
-        className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center bg-white/60 dark:bg-zinc-900/40"
+        className={scope
+          ? 'app-icon-tile shrink-0 w-6 h-6 rounded-lg overflow-hidden flex items-center justify-center text-xs font-bold'
+          : 'shrink-0 w-6 h-6 rounded-lg flex items-center justify-center bg-white/60 dark:bg-zinc-900/40'}
+        {...(scope ? { 'data-icon': appIconKind(scope as never) } : {})}
       >
-        <Squares2X2Icon className="w-4 h-4" />
+        {scope ? <AppIconContent app={scope as never} /> : <Squares2X2Icon className="w-4 h-4" />}
       </span>
-      <span className="min-w-0 truncate">All apps</span>
+      <span className="min-w-0 truncate">{scope ? (scope.name || scope.slug) : 'All apps'}</span>
       <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
     </button>
   );
@@ -186,14 +221,21 @@ function PanelRow({ id, leading, title, detail, trailing, onClick }: {
  * agreeing. The plus is retired from this screen, so the field has one value
  * left and this panel has one job.
  */
-export function WorkshopPicker({ apps }: { apps: PickerApp[] | null }) {
+export function WorkshopPicker({ apps, id, scope, onClose }: {
+  apps: PickerApp[] | null;
+  id?: string;
+  /** The app this Workshop is showing, or null for all of them. */
+  scope?: PickerApp | null;
+  onClose?: () => void;
+}) {
   const rows = apps || [];
   const heading = 'Which workshop?';
   const lead = 'All apps, or one app’s.';
+  const close = onClose || (() => workshopStore.set({ picker: null }));
 
   return (
     <div
-      id="workshop-picker"
+      id={id || 'workshop-picker'}
       role="menu"
       className={'mx-4 mb-3 rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 '
         + 'border border-zinc-200 dark:border-zinc-800'}
@@ -202,12 +244,19 @@ export function WorkshopPicker({ apps }: { apps: PickerApp[] | null }) {
         <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{heading}</span>
         <span className="text-xs text-zinc-500 dark:text-zinc-400">{lead}</span>
       </p>
+      {/* ALL APPS IS A TICK HERE AND A DESTINATION THERE. On the all-apps
+          screen this row is where you already are, so it carries the check
+          and closing the panel is the whole of it. Scoped to one app it is
+          the way back up — and the reason the app's Workshop needs no back
+          arrow beyond the rail's own Workshop tab. */}
       <PanelRow
-        id="workshop-picker-all"
+        id={(id || 'workshop-picker') + '-all'}
         leading={<Squares2X2Icon className="w-5 h-5" />}
         title="All apps"
-        trailing={<CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />}
-        onClick={() => workshopStore.set({ picker: null })}
+        trailing={scope
+          ? undefined
+          : <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />}
+        onClick={() => { close(); if (scope) goToAllApps(); }}
       />
       {rows.map((app) => (
         <PanelRow
@@ -221,9 +270,132 @@ export function WorkshopPicker({ apps }: { apps: PickerApp[] | null }) {
             </span>
           )}
           title={app.name || app.slug}
-          onClick={() => { void goToApp(app.slug); }}
+          trailing={scope && scope.slug === app.slug
+            ? <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            : undefined}
+          // THE APP YOU ARE ALREADY IN closes the panel and goes nowhere. A
+          // row that re-navigates to the current route would throw this
+          // screen's scroll position and its open windows away to arrive
+          // where it started.
+          onClick={() => {
+            if (scope && scope.slug === app.slug) { close(); return; }
+            close();
+            void goToApp(app.slug);
+          }}
         />
       ))}
+    </div>
+  );
+}
+
+
+/* ════════════════════════════════════════════════════════════════════
+   THE SAME CHIP, ON THE APP'S OWN WORKSHOP (#2718 review)
+   ════════════════════════════════════════════════════════════════════
+
+   "The workshop view, when clicked into an app, should preserve the app
+   switcher, and should preserve the side bar."
+
+   Picking an app up here NAVIGATES rather than filtering: the platform's
+   Workshop screen is the all-apps view, and one app's is its own screen
+   inside that app — far richer than a filtered copy of this list could be,
+   because it is where that app's board, sessions and discussion already
+   live. What was lost in the hop was the sense of still being IN the
+   Workshop: the rail went (an app covers it), the chip went with the screen,
+   and all that was left was a back arrow.
+
+   The rail is back (App._syncPlatformTabs) with the Workshop tab lit, and
+   this is the chip, reading from the other end. It is the same control and
+   the same panel — the scope is the app instead of null — so the two screens
+   cannot drift into two different ways of saying which workshop you are in.
+
+   ── Why it owns its own open state ───────────────────────────────────
+
+   workshopStore.picker belongs to the all-apps screen, which stays mounted
+   while this one is on show. Sharing the field would work, right up until a
+   panel left open on one screen greeted the other; a local `useState` is
+   both smaller and honest about which surface the flag is for.
+
+   ── And its own fetch ────────────────────────────────────────────────
+
+   The same GET /api/apps, partitioned by Home.partitionApps exactly as the
+   all-apps screen does — "which apps are mine" is a decision the platform
+   already makes once. It runs in an effect and never during render, so the
+   chip draws with the app it already knows and the list arrives under it.
+*/
+
+/** The demo flag every board fetch forwards, in the same spelling. */
+function demoQuery(): string {
+  try {
+    return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The scope chip and its panel, for the Workshop of ONE app.
+ *
+ * `slug` is the app on screen; `name`, `iconUrl` and `iconEmoji` are what the
+ * chip draws before the list has loaded, so it never starts as a bare slug
+ * and then changes under the reader. Once the list arrives the row for this
+ * app wins, because it is the same record every other surface draws from.
+ */
+export function AppWorkshopScope({ slug, name, iconUrl, iconEmoji }: {
+  slug: string;
+  name?: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [apps, setApps] = useState<PickerApp[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/apps${demoQuery()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const home = (window as unknown as {
+          Home?: { partitionApps?: (rows: unknown[]) => { yours: PickerApp[] } };
+        }).Home;
+        const rows = home?.partitionApps
+          ? home.partitionApps(data.apps || []).yours
+          : ((data.apps || []) as PickerApp[]);
+        if (!cancelled) setApps(rows);
+      } catch {
+        // OFFLINE IS SILENCE. The chip still names this app and still offers
+        // the way back to all of them — the list of the others is the only
+        // thing a refused request costs, and a control that works is worth
+        // more than an error where a menu should be.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // The app this Workshop is showing. The fetched record when there is one,
+  // so the tile and the name match every other surface; the props until then.
+  const scope: PickerApp = apps?.find((a) => a.slug === slug)
+    || { slug, name, icon_url: iconUrl, icon_emoji: iconEmoji };
+
+  return (
+    <div className="dev-ws-scope" data-ws-scope="">
+      <WorkshopScope
+        id="dev-ws-scope-chip"
+        apps={apps}
+        open={open}
+        scope={scope}
+        onToggle={setOpen}
+      />
+      {open ? (
+        <WorkshopPicker
+          id="dev-ws-scope-picker"
+          apps={apps}
+          scope={scope}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

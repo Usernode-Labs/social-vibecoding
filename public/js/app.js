@@ -4308,14 +4308,41 @@ const App = {
     // published is the screen and what is derived from it is the tab. See
     // features/nav/nav-store.js.
     const screen = onAuth ? null : (revealId || App._revealedScreen || 'home-screen');
+    // AN APP COVERS THE RAIL. THE PLATFORM'S WORKSHOP FOR IT DOES NOT (#2718
+    // review).
+    //
+    // `#app-view` hosts two unlike things behind one id: the running app on
+    // the `app` tab, and on `dev` the platform's own surface ABOUT that app —
+    // its Workshop, its board, its sessions, its discussion. The first is
+    // somebody's program and takes the whole window, which is what makes it
+    // feel like a program rather than a page. The second is a platform screen
+    // that happens to be scoped to one app, and hiding the rail there left it
+    // as the one such screen with no navigation, reachable only by a back
+    // arrow to the screen it was opened from.
+    //
+    // App.currentTab is assigned before every call that can reach here:
+    // navigateToApp commits the destination while the click is still
+    // synchronous (see its note), and switchTab re-syncs after assigning it.
+    const inApp = screen === 'app-view' && App.currentTab === 'app';
     App.Visibility.publish(
       'platform-tabs',
-      !!screen && !App.chromeless && screen !== 'app-view',
+      !!screen && !App.chromeless && !inApp,
     );
     // Published even when the bar is down: the store keeps the last screen
     // otherwise, and the bar coming back for a tab that has since changed
     // would light the wrong one for a frame.
-    window.UsernodeReact?.nav?.setScreen?.(screen);
+    //
+    // AND THE APP'S WORKSHOP LIGHTS THE WORKSHOP TAB, which is the other half
+    // of the rail being there: a rail with nothing lit says you are somewhere
+    // it does not know about. You are on the Workshop section seen through
+    // one app — the row you pressed to get here is on that very screen — so
+    // the tab you came through stays lit and takes you back to all of them.
+    // Passed explicitly rather than mapped, for the reason the bridge's own
+    // note gives.
+    window.UsernodeReact?.nav?.setScreen?.(
+      screen,
+      screen === 'app-view' && !inApp ? 'workshop' : null,
+    );
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -5886,6 +5913,13 @@ const App = {
     // Improve store, so this publishes the fact instead of repainting a node:
     // one owner for the attribute, which is the whole ownership rule.
     window.Improve?.setTab(tab, App.currentSubTab);
+    // AND THE RAIL, which is up on the app's Workshop and down on the app
+    // itself (see _syncPlatformTabs). This hop is the only way to cross that
+    // line without a screen reveal, so it is the only other place that has to
+    // say so. Guarded on the app view actually being on screen: switchTab is
+    // app-scoped, and publishing `app-view` as the current screen from
+    // anywhere else would light no tab and lose the one that is lit.
+    if (App._isScreenVisible?.('app-view')) App._syncPlatformTabs('app-view');
 
     // Leaving the Sessions sub-tab. The cross-app active-sessions POLL used
     // to be torn down here; it and the panel it drove are retired (#1367),

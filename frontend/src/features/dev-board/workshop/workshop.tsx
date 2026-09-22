@@ -79,6 +79,7 @@ import type { DevCardModel, DevWorkshopView, WorkshopTheme } from '../card/model
 import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
+import { AppWorkshopScope } from '../../workshop/workshop-chrome';
 import { readAskStream } from './ask-stream';
 
 type SortKey = 'people' | 'activity' | 'open';
@@ -2547,6 +2548,11 @@ function useRailHost(): HTMLElement | null {
 
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
+  // THE OPEN APP'S NAME AND ARTWORK, for the scope chip below. The same
+  // store the header's own tile draws from, so the two cannot disagree about
+  // which app this is, and no second fetch: the controller publishes both
+  // `app_icon_*` columns here already.
+  const app = useStoreState(improveStore);
   const hostRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<SortKey>('people');
   // HOW FAR THE WEEK WALK IS OPEN, held here rather than inside WeekWalk
@@ -2822,6 +2828,25 @@ export function DevWorkshop(): ReactNode {
 
   return (
     <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
+      {/* WHICH WORKSHOP YOU ARE IN, and the way to another (#2718 review).
+          The same chip the all-apps Workshop screen wears, read from the
+          other end: there it says "All apps" and picking one navigates
+          here, here it names this app and its panel offers the others —
+          and All apps, which is the way back up.
+
+          ABOVE THE RAIL in the markup, so it leads on both layouts: above
+          the breakpoint the tabs are in flow right below it, and below it
+          they are portalled to the foot of the window and this is simply
+          the first thing on the screen. It scrolls with the content, like
+          the same chip on the all-apps screen. */}
+      {slug ? (
+        <AppWorkshopScope
+          slug={slug}
+          name={app.name || undefined}
+          iconUrl={app.iconUrl}
+          iconEmoji={app.iconEmoji}
+        />
+      ) : null}
       {railHost ? null : railNode}
       {/* Everything but the rail lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is

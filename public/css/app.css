@@ -13714,6 +13714,29 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-muted);
 }
+/* WHICH WORKSHOP YOU ARE IN (#2718 review) — the scope chip, and the panel
+   it opens. The chip itself is the shared component's, styled there; what
+   this owns is where the pair SITS on this screen, which the all-apps screen
+   answers with its own page padding.
+
+   The panel's own `mx-4` is cancelled: it was written for a screen whose
+   column runs to the window's edge, and this column is already inset. A
+   second inch of margin inside an already-inset card reads as a panel that
+   missed its anchor. */
+.dev-ws-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+.dev-ws-scope > button {
+  align-self: flex-start;
+  max-width: 100%;
+}
+.dev-ws-scope > [role='menu'] {
+  margin-inline: 0;
+  margin-bottom: 0;
+}
 .dev-ws-strip {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -16154,6 +16177,25 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
   --platform-tabs-h: calc(52px + 56px + var(--platform-safe-bottom, 0px));
 }
 
+/* THE APP WORKSHOP'S PILL RESTS ON THE PLATFORM'S BAR (#2718 review).
+   `.dev-ws-tabs` is a floating oval fixed to the foot of the window, and
+   `--ws-lift` is the air under it — until this change it was alone down
+   there, because an app hid the platform's bar. The app's WORKSHOP keeps
+   that bar now (App._syncPlatformTabs), so on a phone the two share the
+   bottom edge and the pill rides above rather than through.
+
+   DECLARED ON `body`, not on :root beside the token's default: a custom
+   property's var()s resolve on the element it is declared on, and
+   `--platform-tabs-h` is a body-level answer. The pill inherits this through
+   its portal host, which is a descendant of body like everything else.
+
+   The inset is still spent exactly once. `--platform-tabs-h` already carries
+   it (`56px + --platform-safe-bottom`), which is why this adds air and not
+   the inset again — the double-count the default value's own note is about. */
+html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)) {
+  --ws-lift: calc(var(--platform-tabs-h, 0px) + 8px);
+}
+
 /* KEYBOARD UP, BAR GONE. The same reasoning `html.un-kb .platform-safe-scroll`
    states for the home-indicator strip: a bar pinned to the bottom of the
    viewport with a keyboard over it is either behind the keyboard or riding
@@ -16554,6 +16596,23 @@ html.un-kb #platform-tabs {
        left. Spending the same figure on both sides is what makes a centred
        column inside actually centre in the window rather than sit a gutter's
        width to the left of centre. */
+    padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
+    padding-right: var(--platform-gutter);
+  }
+
+  /* …AND #app-view JOINS THEM WHILE ITS RAIL IS UP (#2718 review). It is
+     absent from the list above because that list is keyed on the screen id
+     and this screen is TWO screens behind one id: the running app on the
+     `app` tab, which takes the whole window, and on `dev` the platform's own
+     Workshop for it, which is a platform screen like the others.
+
+     Keyed off the RAIL rather than off the tab, because the rail is already
+     the answer to that question — App._syncPlatformTabs publishes it — and a
+     second flag saying the same thing is a second flag to keep in step. The
+     peeking and folded cases are excluded for the reason they always are: a
+     rail that claimed 224px on the way in would reflow the page under the
+     pointer that revealed it. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
     padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
     padding-right: var(--platform-gutter);
   }
