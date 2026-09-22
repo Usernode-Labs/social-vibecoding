@@ -3861,14 +3861,9 @@
       "expectText": "We sent you a code. It expires in 10 minutes."
     },
     {
-      "name": "Back from a dev session is the header's own arrow, a real link at the Workshop (#1036, Streamlined Concept)",
-      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/workshop\"]"
-    },
-    {
-      "name": "…and a cold session link opened by a Workshop viewer goes back to the Workshop",
+      "name": "#2770 (reverses #1036's Workshop fallback): a dev session is an agent conversation, so it lights the Messages tab and its back arrow goes up to Messages",
       "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/workshop\"]"
+      "expectSelector": "body:has(#platform-tabs [data-tab=\"messages\"][aria-current=\"page\"]) a#back-btn:not(.hidden)[href=\"#messages\"]"
     },
     {
       "name": "Back from an issue returns to the layout it was opened from: the Workshop",
@@ -4657,6 +4652,11 @@
       "name": "#2607: the venue dropdown on a new change names the venue it would be built in, and opens the sheet that changes it",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
       "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:not([disabled]) > .dc-venue-name"
+    },
+    {
+      "name": "#2772: a change in progress is listed in Messages as an agent conversation, and opens its session",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"][href$=\"/dev/sessions/990101\"]"
     },
     {
       "name": "Waitlist connect callback shows a status page, not the home page, and says when a link has expired",

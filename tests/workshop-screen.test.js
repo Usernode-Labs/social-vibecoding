@@ -628,14 +628,16 @@ test('the Dev lander needs no back arrow, because the rail is beside it', () => 
     'the lander publishes no arrow of its own');
   assert.match(appViewJs, /App\.setBackIcon\?\.\('none'\);/,
     'and the sub-view reset is an empty slot, not the house');
-  // The reset still sits ABOVE the branches, so the session's own ← to the
-  // board survives it and nothing else inherits that arrow.
+  // The reset still sits ABOVE the branches, so the session's own ← survives
+  // it and nothing else inherits that arrow. #2770 moved its destination: a
+  // change is an agent conversation, so it hangs off Messages, not the board.
   const reset = appViewJs.indexOf("App.setBackIcon?.('none');");
   const session = appViewJs.indexOf("if (subTab === 'sessions' && ref) {");
   assert.ok(reset > 0 && session > reset,
     'the reset leads, so every sub-view that wants a slot claims it after');
-  assert.match(appViewJs, /App\.setBackIcon\?\.\('arrow', App\._appUrl\(/,
-    'and a session still leads with a real ← to the board');
+  const sessionBranch = appViewJs.slice(session, appViewJs.indexOf('\n    }', session));
+  assert.match(sessionBranch, /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
+    'and a session leads with a real ← up to Messages (#2770)');
   // `_appBackHref` is not retired: the ✕ on the app tab still lands wherever
   // the visit began.
   assert.match(read('public/js/app.js'), /App\.setBackIcon\('close', App\._appBackHref \|\| undefined\);/);
@@ -665,7 +667,7 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
   // The Workshop tab is lit, so the rail knows where you are — except on the
   // app's DISCUSSION, which is a row in the Messages inbox and lights that
   // instead (#2718 review).
-  assert.match(body, /\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/,
+  assert.match(body, /\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/,
     'and the Workshop tab is lit, so the rail knows where you are');
 
   // A TAB HOP inside the app crosses that line without a screen reveal, so
