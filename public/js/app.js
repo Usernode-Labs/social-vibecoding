@@ -4107,6 +4107,11 @@ const App = {
     App.chromeless = enable;
     App.Visibility.publish('platform-header', !enable);
     App.Visibility.publish('chromeless-pill', enable);
+    // The tab bar goes with the header, but through _syncPlatformTabs rather
+    // than a publish of its own: chromeless is only ONE of the three things
+    // that hide it (an app view and the signed-out shell are the others), so
+    // the bar has one place that decides and this tells it to decide again.
+    App._syncPlatformTabs();
     if (typeof AppView !== 'undefined' && AppView.scheduleSafeAreaBroadcast) {
       AppView.scheduleSafeAreaBroadcast();
     }
@@ -4206,6 +4211,47 @@ const App = {
     // only way back, which is an inch away and behind a menu. Every other
     // screen you navigate INTO offers the house; Browse now does too.
     App.setBackIcon(revealId === 'home-screen' ? 'none' : 'home');
+    // ...and the tab bar, in the same callback and for the same reason the
+    // comment above gives for the title and the back slot: they are all part
+    // of the swap, and the kit captures the outgoing page from whatever this
+    // callback did before it returned.
+    App._syncPlatformTabs(revealId);
+  },
+
+  // ── #platform-tabs — one place decides ──────────────────────────────
+  //
+  // The bar is up on the platform's own screens and down on three routes:
+  // inside a running app (the header becomes that app's strip and the way
+  // out is its close button), in chromeless mode (the whole shell is gone),
+  // and on the signed-out screens (there is nothing behind them to tab to).
+  // Each of those is published from a different place — the router here,
+  // setChromeless above, AuthScreens.show/hideAll in auth-screens.js — so
+  // the DECISION lives here and those three only say "look again".
+  //
+  // `revealId` is what the caller is in the middle of revealing, passed
+  // because `_revealedScreen` is assigned inside the same callback and a
+  // caller may want the answer for a root it has not committed to yet
+  // (navigateToApp hides the bar as it reveals #app-view, one transition
+  // callback before _showOnlyScreen records it).
+  //
+  // THE FALLBACK IS HOME, not "nothing". `_revealedScreen` is null until the
+  // first screen swap of the session, and a plain "/" boot never swaps — the
+  // no-hash branch of restoreFromHash is already-on-home and calls
+  // Home.load() without one. Reading null as "no section" would leave the
+  // bar hidden on the single most-visited route in the product. Home is what
+  // the shipped markup shows, which is the same reading _isScreenVisible's
+  // DOM fallback takes for the same state.
+  _syncPlatformTabs(revealId) {
+    const onAuth = !!(window.AuthScreens && AuthScreens._current);
+    const screen = revealId || App._revealedScreen || 'home-screen';
+    const section = (onAuth || App.chromeless || screen === 'app-view')
+      ? null
+      : screen;
+    App.Visibility.publish('platform-tabs', section !== null);
+    // Published even when the bar is down: the store keeps the last section
+    // otherwise, and the bar coming back for a tab that has since changed
+    // would light the wrong one for a frame.
+    window.UsernodeReact?.nav?.setScreen?.(section);
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -5287,6 +5333,11 @@ const App = {
     const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
+      // The bar leaves WITH the app arriving, not after it. `after` below
+      // runs _showOnlyScreen, which would sync it a transition later — and
+      // the kit captures the incoming page from what this callback did, so
+      // a bar still painted here rides the zoom in and then vanishes.
+      App._syncPlatformTabs('app-view');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
@@ -5821,6 +5872,20 @@ App._applyBootScreen = function _applyBootScreen() {
   if (!target || target === 'home-screen') return;
   App._revealBootScreen('home-screen', false);
   App._revealBootScreen(target, true);
+  // The tab bar's cold-boot answer, published for the same reason the screen
+  // roots' is: a bar that paints on a deep link into an app and is taken away
+  // by the router a moment later is a flash on the route people arrive on
+  // most. VISIBILITY ONLY — the store, not the class, because unlike the
+  // roots above this element is new markup that no prerendered document
+  // carries a `hidden` on, so React's first render and the document agree by
+  // construction and the island's layout effect applies the class before the
+  // first paint. Which TAB is lit is deliberately NOT set here: the bridge
+  // that carries it is installed by the bundle, which has not evaluated yet,
+  // and lighting a tab before hydration would be a first render that
+  // disagrees with the prerender.
+  if (target === 'app-view' || target.startsWith('auth-')) {
+    App.Visibility.publish('platform-tabs', false);
+  }
 };
 
 /**

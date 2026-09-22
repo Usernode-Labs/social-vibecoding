@@ -98,6 +98,11 @@ import './features/app-frame/mount';
 // must exist before DOMContentLoaded (the earliest App.init() can navigate) —
 // module scope here, not first render of the header island.
 import './features/header/mount';
+// The platform tab bar's bridge: publishes window.UsernodeReact.nav. Same
+// window as the header's — App._syncPlatformTabs() runs inside
+// PlatformUI.transition's reveal callback on every screen swap, the earliest
+// of which is App.init()'s first restoreFromHash on DOMContentLoaded.
+import './features/nav/mount';
 
 // The wallpaper's star follows the visible screen's scroll offset (the
 // washes stay put). A side effect on a custom property, not an island:

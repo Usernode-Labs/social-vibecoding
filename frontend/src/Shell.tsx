@@ -82,6 +82,7 @@ import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { PlatformTabs } from './features/nav';
 import { GlobalChatScreen } from './features/global-chat';
 import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
@@ -387,6 +388,24 @@ export function Shell() {
           #app-content write — see features/app-frame/app-frame.tsx.
       */}
       <Island name="AppViewIsland"><AppViewIsland /></Island>
+      {/*
+          #platform-tabs — the shell's five sections, as a permanent bar at
+          the foot of the screen. New in this change; features/nav/tab-bar.tsx
+          carries the whole of why, and public/css/app.css the arithmetic that
+          reserves its band on the screens above it.
+
+          HERE, after the last screen root and before every panel and overlay,
+          for a reason that is only half about z-index (it has one, and the
+          panels' is higher): this is a NAVIGATION control for the screens
+          above it, and a reader of this file should meet it where the screens
+          end rather than among the sheets. It is `position: fixed`, so its
+          place in the flow decides nothing about where it paints.
+
+          It is NOT inside any of the roots above. A bar that belonged to a
+          screen would be re-created on every swap, and the one thing a tab
+          bar must never do is flicker when you use it.
+      */}
+      <Island name="PlatformTabs"><PlatformTabs /></Island>
       {/*
           #notifications-panel (the bell dropdown) and #work-drawer-panel (the
           header-cog "your work" drawer) both used to be islands here — same

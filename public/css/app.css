@@ -286,11 +286,25 @@
    lose its 8px gap) and has no keyboard-up suppression. These wrap the
    kit's token rather than forking its CSS. */
 .platform-safe-scroll {
-  padding-bottom: var(--platform-safe-bottom) !important;
+  /* `max()` because the two things this clears are stacked, not added: when
+     #platform-tabs is up, `--platform-tabs-h` is the bar's FULL outer height
+     and the bar's own lower padding already covers the home-indicator strip,
+     so taking the larger of the two reserves each exactly once. When the bar
+     is down the token is 0px and this is the bare inset it has always been.
+     See the #platform-tabs section at the end of this file. */
+  padding-bottom: max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)) !important;
 }
 
 .platform-safe-bar {
-  padding-bottom: calc(0.5rem + var(--platform-safe-bottom)) !important;
+  /* Same `max()` as the scroller above, inside this rule's own base gap: a
+     composer row is the bottom of a column that reaches the viewport, so
+     what it has to clear is whichever of the tab bar and the home-indicator
+     strip is taller — never both stacked. Every surface that wears this
+     class sits on a screen where the bar is EITHER up (#messages-screen,
+     #global-chat-screen) or hidden (everything inside #app-view), and in the
+     hidden case `--platform-tabs-h` is 0px and this is exactly the
+     declaration it has always been. */
+  padding-bottom: calc(0.5rem + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom))) !important;
 }
 
 /* .platform-safe-sheet — a sheet's own FOOTER row (the Apps sheet's
@@ -512,6 +526,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* THE LIST, AND NOT THE THREAD. Both scrollers reach the bottom of the
+   screen, but the thread has the composer below it and the composer clears
+   the tab bar itself (`.platform-safe-bar`), so padding here as well would
+   reserve the band twice. The list has nothing under it — on a phone it IS
+   the screen, and from 768px up it is the left column beside the sheet —
+   so its last conversation row would otherwise sit behind the bar.
+
+   The bare token rather than the `max()` the others take: this scroller
+   reserves NOTHING today, so the inset is not part of what it is correcting
+   and pulling it in here would be a second change riding along. 0px with no
+   bar keeps that exactly as it was. */
+.messages-list-scroll {
+  padding-bottom: var(--platform-tabs-h, 0px);
 }
 
 /* A conversation row, drawn straight on the strip: the square swatch
@@ -3866,7 +3894,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding-bottom: var(--platform-safe-bottom);
+  /* #home-screen is the one screen root with no `.platform-safe-scroll`, so
+     it reserves the tab bar's band here instead — same `max()`, same reason
+     (see that utility near the top of this file). It matters more here than
+     anywhere else: the trailing sections are BOTTOM-ANCHORED to this box, so
+     under-reserving does not merely crop the last card, it parks Create and
+     Challenges permanently behind the bar. */
+  padding-bottom: max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom));
 }
 html[data-browser-scroller="home-screen"] .home-body-fill {
   /* The header overlaps its content by .5rem (its rounded lower edge). */
@@ -15916,3 +15950,196 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
 .home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta) { color: #8e8e93; }
 .home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="false"] { background: white; color: #0062cc; border-color: #e3e3e6; }
 .home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="false"] { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   #platform-tabs — the shell's five sections, as a permanent bar
+   ═══════════════════════════════════════════════════════════════════
+
+   The markup is frontend/src/features/nav/tab-bar.tsx, and its header
+   carries the product argument: every host this shell is modelled on keeps
+   a flat per-mini-app menu AND a permanent bar of its own sections, and
+   this shell had only the menu, so the platform's places were sitting in
+   the app's list for want of anywhere else to put them.
+
+   What lives HERE rather than in the component is everything that has to
+   agree with a second rule somewhere else: the bar is out of flow, so
+   nothing reserves its space automatically, and the space it covers is
+   held open by the screens above it. Two rules, one number. */
+
+/* THE BAND THE BAR COVERS, read by the screens above it.
+
+   Declared on `body` in both branches, NOT on `:root`, and that is not a
+   style choice. A custom property's `var()`s are substituted at
+   computed-value time on the element the property is DECLARED on, and the
+   result is what inherits — so a token declared on `:root` that reads
+   `--platform-tabs-h` would bake in `:root`'s value and never see the
+   override below. Both declarations sit on the same element so the cascade
+   picks between them the ordinary way.
+
+   `body:has(#platform-tabs:not(.hidden))` is the route test, and it is the
+   same shape as the wallpaper's a few thousand lines up: the bar's own
+   `hidden` class IS the fact, published once by the visibility store and
+   applied by the island (features/nav/tab-bar.tsx), so no second flag has
+   to be kept in step with it. A `:has()` that watches one id for one class
+   is as cheap as that selector gets.
+
+   IT INCLUDES THE INSET, unlike `--ws-bar` above, and for the opposite
+   reason. The Workshop's pill floats clear of the bottom edge, so the strip
+   beneath it is held open by the scroller and counting it twice was the
+   #4149 bug. This bar is fused to the edge — it spends the inset itself, as
+   its own lower padding — so the clearance a screen needs above it is the
+   bar's FULL outer height. Every consumer therefore takes
+   `max(--platform-tabs-h, --platform-safe-bottom)`: the bar's box when the
+   bar is there (its padding already covers the strip), the bare strip when
+   it is not. One expression, both states, no double count either way.
+
+   `html:not(.un-kb)` because the keyboard takes the bar with it — see the
+   display rule below. */
+body {
+  --platform-tabs-h: 0px;
+}
+html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
+  --platform-tabs-h: calc(56px + var(--platform-safe-bottom, 0px));
+}
+
+/* KEYBOARD UP, BAR GONE. The same reasoning `html.un-kb .platform-safe-scroll`
+   states for the home-indicator strip: a bar pinned to the bottom of the
+   viewport with a keyboard over it is either behind the keyboard or riding
+   on top of it, and neither is navigation. `display: none` rather than the
+   `hidden` class because the class has an owner (the island) and this is a
+   presentation rule, not a route fact — the bar comes back with no state to
+   restore the moment the keyboard drops. The reservation above is already
+   off, because its selector excludes this state. */
+html.un-kb #platform-tabs {
+  display: none;
+}
+
+.platform-tabs {
+  /* FIXED TO THE REAL VIEWPORT. `.dev-ws-tabs` above documents the three
+     rounds this saves: `sticky` puts a bar's resting place at the mercy of
+     whatever container it sits in, and every one of those inputs behaves
+     differently in a real iOS PWA than in a headless Chromium. This one has
+     a second reason on top — on `html[data-browser-scroller]` routes the
+     DOCUMENT is the scroller and `body` is `height: auto`, so a flex child
+     at the end of the column scrolls away with the page.
+
+     No portal, unlike the Workshop's bar: this is a direct child of <body>
+     and nothing between here and the viewport carries a `backdrop-filter`,
+     a `transform` or a `filter`, so `fixed` already means the screen. */
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* UNDER the panels, sheets and dialogs (which sit at 40 and above) and
+     OVER the screens. A tab bar that a sheet does not cover reads as part
+     of the sheet; one the screens paint over is not a bar at all. */
+  z-index: 30;
+
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: stretch;
+  padding: 0 4px;
+  /* THE INSET, SPENT EXACTLY ONCE, here. `--platform-tabs-h` above counts on
+     this and the screens count on that. */
+  padding-bottom: var(--platform-safe-bottom);
+
+  /* EDGE TO EDGE AND FROSTED, not the Workshop's floating pill. The two bars
+     are different kinds of thing and the shapes should say so: the Workshop's
+     switches between three views OF one screen, so it floats over that
+     screen's content; this one switches between screens, so it is a wall at
+     the bottom of the app with the content ending against it. Fusing it to
+     the edge is also what lets it spend the home-indicator inset itself,
+     which is what keeps the arithmetic above to one number. */
+  border-top: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .platform-tabs { background-color: var(--dc-sheet); }
+}
+
+/* A GLYPH OVER ITS LABEL, 56px tall: 8 of padding, 24 of glyph, 3 of gap, a
+   13px line, 8 again. Above the 44px minimum the shell holds every phone
+   target to, which this has to clear by a margin — it is the platform's
+   primary navigation and it is the control nearest the bottom edge, where a
+   thumb is least precise.
+
+   THE LABEL STAYS. A five-icon bar with no words asks the viewer to learn
+   five glyphs, and two of these five (Workshop, Discover) name things that
+   have no conventional icon at all. The same argument `.dev-ws-tab` makes
+   one screen down: at 11px under a glyph the glyph carries the scanning and
+   the word settles what the glyph cannot. */
+.platform-tab {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  height: 56px;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  line-height: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* THE HEADER'S PERIWINKLE, not black — the same choice and the same tokens
+   as `.dev-ws-tab[aria-selected="true"]`, because these are the same kind of
+   thing: where you are, among the places you could be. `aria-current` is the
+   only marker the component renders, so it is the only one this reads. */
+.platform-tab[aria-current="page"] {
+  color: var(--brand-ink);
+}
+
+/* The badge's anchor. `position: relative` on the glyph's wrapper rather
+   than on the whole tab, so the count sits on the ICON's corner and not on
+   the tab's — the tab is 56px tall and a badge pinned to its top-right
+   would float in the air above the glyph, away from the thing it is about. */
+.platform-tab-mark {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.platform-tab-glyph {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+.platform-tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The same red disc as #notifications-badge in the header, at the same size:
+   two counts on one screen that disagreed about what a count looks like
+   would read as two different kinds of thing. The fill is Tailwind's
+   `red-500`, which is what that badge's utility classes compile to; it is
+   spelled out because this bar's appearance lives here rather than in the
+   component, and `--danger` elsewhere in this file already falls back to the
+   same value. */
+.platform-tab-badge {
+  position: absolute;
+  top: -3px;
+  left: calc(100% - 7px);
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--danger, #ef4444);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
