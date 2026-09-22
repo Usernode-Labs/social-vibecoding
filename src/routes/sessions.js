@@ -12478,7 +12478,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       isError = true;
       const providerMsg = await codexProviderFailureText(pool, req.user.id, result);
       const msg = providerMsg || `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, turnFailure(executionAgentMeta));
+      await sendStatus(msg, turnFailure({
+        ...executionAgentMeta,
+        providerFailure: codexOpenRouter.providerFailureDiagnostics(result),
+      }));
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
@@ -12708,6 +12711,7 @@ async function runCodexAttemptLoop({
   // model stays unknown, never a false zero.
   let estimatedCostUsd = null;
   const completeAttempt = async (attempt, result, status, err) => {
+    const providerFailure = codexOpenRouter.providerFailureDiagnostics(result);
     const completion = await agentTurn.completeCodexAttempt({
       pool,
       turnUuid: attempt.turnUuid,
@@ -12727,7 +12731,8 @@ async function runCodexAttemptLoop({
           // failure, so errorClassByCode had nothing to read and the turn's
           // telemetry error_class fell back to a shapeless 'provider'.
           : codexLedgerErrorCode(result),
-      errorDetail: err ? agentTurn.sanitizeError(err) : null,
+      errorDetail: providerFailure ? JSON.stringify(providerFailure)
+        : err ? agentTurn.sanitizeError(err) : null,
     });
     const attemptUsd = completion?.estimatedCost?.estimatedCostUsd;
     if (typeof attemptUsd === 'number' && Number.isFinite(attemptUsd)) {
@@ -12829,10 +12834,9 @@ async function runCodexAttemptLoop({
     // turn. Markerless headless retries remain caller-controlled. Attempt
     // 1 is ALREADY terminal before attempt 2 starts.
     const retryFresh = lastResult?.agentRetryFresh === true;
-    // #2676: OpenRouter refused the request outright because the reply
-    // ceiling costs more than the account's remaining credit. Retry once
-    // under a ceiling it can afford rather than terminalizing the turn.
-    const clampRetry = retryFresh ? null : codexMaxTokensRetry(lastResult);
+    // OpenRouter reports how many output tokens this key can cover. Retry
+    // once below that allowance; the refusal does not prove account balance.
+    const clampRetry = retryFresh || !failed ? null : codexMaxTokensRetry(lastResult);
     const retryRequested = retryFresh || !!clampRetry
       || (typeof retryPredicate === 'function' && retryPredicate(lastResult));
     if (!retryRequested) break;
@@ -12842,7 +12846,7 @@ async function runCodexAttemptLoop({
       const status = retryFresh
         ? 'The saved OpenRouter model context is unavailable, retrying fresh once…'
         : clampRetry
-          ? 'Your OpenRouter credit only covers a shorter reply. Retrying once with a smaller reply limit…'
+          ? 'OpenRouter rejected the reply limit. Retrying once with a smaller reply limit…'
           : 'The coding step failed unexpectedly, retrying once…';
       try { await sendStatus(status); } catch {}
     }
@@ -12895,21 +12899,20 @@ function shouldRetryApiErrorTurn(result, stopHandle) {
   return !!agentApiFailure(result.lastResultText);
 }
 
-// #2676: OpenRouter rejects the whole request when the reply ceiling costs
-// more than the account's remaining credit, and the refusal names what it
-// CAN afford. That is worth exactly one retry under a smaller ceiling: 80%
-// of the affordable figure, because the price can move between the two
-// calls, and never below the floor the catalog builder enforces. Returns
-// the clamped ceiling, or null when this is a different failure (or the
-// account cannot afford a useful reply at all, in which case the terminal
-// "out of credit" copy is the honest answer).
+// Retry once at 80% of the reported allowance, leaving room for a changed
+// prompt or balance. Respect the catalog floor and never increase the cap
+// actually sent: a contradictory refusal needs diagnosis, not a larger bill.
 function codexMaxTokensRetry(result, stopHandle) {
   if (!result) return null;
   if (stopHandle && stopHandle.stopped) return null;
   if (result.agentErrorCode !== 'insufficient_credits_max_tokens') return null;
+  if (result.providerRequest?.limitSource === 'openrouter_in_flight_budget') return null;
   const affordable = Number(result.affordableOutputTokens);
   if (!Number.isFinite(affordable) || affordable < MIN_MAX_OUTPUT_TOKENS) return null;
-  return { clamped: Math.max(MIN_MAX_OUTPUT_TOKENS, Math.floor(affordable * 0.8)) };
+  const clamped = Math.max(MIN_MAX_OUTPUT_TOKENS, Math.floor(affordable * 0.8));
+  const sent = result.providerRequest?.maxOutputTokens;
+  if (Number.isSafeInteger(sent) && clamped >= sent) return null;
+  return { clamped };
 }
 
 // #2676: both credit codes land on the ledger's own `insufficient_credits`,
@@ -12938,7 +12941,9 @@ async function codexProviderFailureText(pool, userId, result) {
   } catch { includedKey = false; }
   return codexOpenRouter.describeProviderError({
     code: result.agentErrorCode,
+    requestedTokens: result.requestedOutputTokens ?? null,
     affordableTokens: result.affordableOutputTokens ?? null,
+    requestDiagnostic: result.providerRequest,
     raw: result.agentError || '',
     includedKey,
   });
@@ -14680,7 +14685,10 @@ ${buildGuidance.testingGuidance}`;
       isError = true;
       const providerMsg = await codexProviderFailureText(pool, req.user.id, result);
       const msg = providerMsg || `${executionAgentName} error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, turnFailure(executionAgentMeta));
+      await sendStatus(msg, turnFailure({
+        ...executionAgentMeta,
+        providerFailure: codexOpenRouter.providerFailureDiagnostics(result),
+      }));
       summaryParts.push(msg);
     } else if (!hasChanges) {
       const directReply = directSessionTurn && result.exitCode === 0 && !!ccText.trim();

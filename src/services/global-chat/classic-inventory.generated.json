@@ -3,9 +3,9 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 649,
-    "mappedRoutes": 512,
-    "exemptRoutes": 137,
+    "totalRoutes": 651,
+    "mappedRoutes": 513,
+    "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
     "clientApiReferences": 362,
     "unmatchedClientApiReferences": 0,
@@ -268,7 +268,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 246,
+      "line": 250,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -277,7 +277,7 @@
     },
     {
       "source": "server.js",
-      "line": 282,
+      "line": 286,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -304,7 +304,7 @@
     },
     {
       "source": "server.js",
-      "line": 312,
+      "line": 316,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -313,7 +313,7 @@
     },
     {
       "source": "server.js",
-      "line": 352,
+      "line": 356,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -339,7 +339,7 @@
     },
     {
       "source": "server.js",
-      "line": 357,
+      "line": 361,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -358,7 +358,7 @@
     },
     {
       "source": "server.js",
-      "line": 379,
+      "line": 383,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -367,7 +367,7 @@
     },
     {
       "source": "server.js",
-      "line": 661,
+      "line": 665,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +376,7 @@
     },
     {
       "source": "server.js",
-      "line": 843,
+      "line": 847,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +385,7 @@
     },
     {
       "source": "server.js",
-      "line": 847,
+      "line": 851,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +394,7 @@
     },
     {
       "source": "server.js",
-      "line": 851,
+      "line": 855,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +403,7 @@
     },
     {
       "source": "server.js",
-      "line": 855,
+      "line": 859,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +412,7 @@
     },
     {
       "source": "server.js",
-      "line": 859,
+      "line": 863,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,7 +421,7 @@
     },
     {
       "source": "server.js",
-      "line": 863,
+      "line": 867,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -11649,7 +11649,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 68,
+      "line": 69,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence",
       "expression": null,
@@ -11667,7 +11667,16 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 85,
+      "line": 90,
+      "method": "GET",
+      "path": "/api/apps/:slug/proposals/:sessionId/evidence/diagnostics",
+      "expression": null,
+      "status": "exempt",
+      "reason": "proposal-owner troubleshooting export for local replay, not a Classic user control"
+    },
+    {
+      "source": "src/routes/visual-evidence.js",
+      "line": 150,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/:artifactId",
       "expression": null,
@@ -11686,7 +11695,25 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 144,
+      "line": 212,
+      "method": "POST",
+      "path": "/api/apps/:slug/proposals/:sessionId/evidence/plan",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "governance.post.apps.item.proposals.item.evidence.plan.5727f580",
+      "domain": "governance",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/proposals/:sessionId",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/visual-evidence.js",
+      "line": 285,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/rerun",
       "expression": null,
@@ -11705,7 +11732,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 184,
+      "line": 325,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/override",
       "expression": null,
@@ -11732,7 +11759,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 1940,
+      "line": 2040,
       "method": "POST",
       "path": "/api/sessions/:id/promote",
       "expression": null,
@@ -11753,7 +11780,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2559,
+      "line": 2659,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/candidates",
       "expression": null,
@@ -11772,7 +11799,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2596,
+      "line": 2696,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/preview",
       "expression": null,
@@ -11790,7 +11817,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2659,
+      "line": 2759,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import",
       "expression": null,
@@ -11813,7 +11840,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2919,
+      "line": 3019,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import/_mock/advance",
       "expression": null,
@@ -11822,7 +11849,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2959,
+      "line": 3059,
       "method": "POST",
       "path": "/api/sessions/:id/vote",
       "expression": null,
@@ -11843,7 +11870,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3252,
+      "line": 3352,
       "method": "GET",
       "path": "/api/sessions/:id/votes",
       "expression": null,
@@ -11864,7 +11891,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3318,
+      "line": 3418,
       "method": "GET",
       "path": "/api/me/proposals",
       "expression": null,
@@ -11888,7 +11915,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3515,
+      "line": 3615,
       "method": "GET",
       "path": "/api/apps/:slug/promoted",
       "expression": null,
@@ -11913,7 +11940,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3889,
+      "line": 3989,
       "method": "GET",
       "path": "/api/apps/:slug/merged",
       "expression": null,
@@ -11936,7 +11963,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4204,
+      "line": 4326,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:id",
       "expression": null,
@@ -11956,7 +11983,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4275,
+      "line": 4397,
       "method": "POST",
       "path": "/api/sessions/:id/undo",
       "expression": null,
@@ -11977,7 +12004,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4361,
+      "line": 4483,
       "method": "POST",
       "path": "/api/sessions/:id/admin-merge",
       "expression": null,

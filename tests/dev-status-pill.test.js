@@ -117,6 +117,22 @@ test('tier 0 — a merged row is settled and reads ✓ Merged', () => {
   assert.equal(s.tone, 'ok');
 });
 
+test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
+  const AppView = makeAppView();
+  const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
+  assert.equal(deployed.label, '✓ Deployed');
+  assert.equal(deployed.tone, 'ok');
+
+  const deploying = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deploying' }));
+  assert.equal(deploying.label, 'Merged · deploying…');
+  assert.equal(deploying.tone, 'progress');
+  assert.equal(deploying.spinner, true);
+
+  const stalled = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'stalled' }));
+  assert.equal(stalled.label, 'Merged · deployment stalled');
+  assert.equal(stalled.tone, 'blocked');
+});
+
 test('tier 1 — merging stays in the bar; resolving became a tag', () => {
   const AppView = makeAppView();
   // Merging, even with failing checks and a conflict recorded: the merge is

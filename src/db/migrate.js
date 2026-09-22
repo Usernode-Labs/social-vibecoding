@@ -987,23 +987,37 @@ async function seedAdmin(pool, config) {
 // personal data. The password is a bcrypt hash of 32 random bytes that
 // are immediately discarded, so the account can never log in
 // interactively; visuals.js authenticates it by minting a JWT / session
-// row directly. Idempotent: keyed on the unique username, DO NOTHING on
-// conflict (the random hash is never rotated).
+// row directly. Idempotent: keyed on the unique username; a rerun repairs
+// platform access without rotating the random password hash.
 async function seedCaptureUser(pool) {
   try {
     const { rows } = await pool.query(
-      'SELECT id FROM users WHERE username = $1',
+      'SELECT id, has_platform_access FROM users WHERE username = $1',
       ['usernode-capture']
     );
     if (rows.length) {
+      // This non-interactive identity has to pass the platform access gate
+      // in a staging clone. Otherwise every signed visual capture lands on
+      // the waitlist and its authenticated API requests fail with 403.
+      if (!rows[0].has_platform_access) {
+        await pool.query(
+          `UPDATE users SET has_platform_access = TRUE,
+             platform_access_granted_at = COALESCE(platform_access_granted_at, NOW())
+           WHERE id = $1`,
+          [rows[0].id]
+        );
+      }
       log.debug('db', 'Capture user already exists');
       return;
     }
     const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
     await pool.query(
-      `INSERT INTO users (username, password, is_admin, can_create_apps)
-       VALUES ($1, $2, FALSE, FALSE)
-       ON CONFLICT (username) DO NOTHING`,
+      `INSERT INTO users (username, password, is_admin, can_create_apps,
+         has_platform_access, platform_access_granted_at)
+       VALUES ($1, $2, FALSE, FALSE, TRUE, NOW())
+       ON CONFLICT (username) DO UPDATE SET
+         has_platform_access = TRUE,
+         platform_access_granted_at = COALESCE(users.platform_access_granted_at, NOW())`,
       ['usernode-capture', hash]
     );
     log.info('db', 'Capture user created', { username: 'usernode-capture' });

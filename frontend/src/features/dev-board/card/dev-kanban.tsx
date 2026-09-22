@@ -115,6 +115,13 @@ function Column(
   // not in the view model.
   const [openKey, setOpenKey] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const statusTone = col.status?.tone === 'blocked'
+    ? 'text-red-700 dark:text-red-300'
+    : col.status?.tone === 'progress'
+      ? 'text-violet-700 dark:text-violet-300'
+      : col.status?.tone === 'ok'
+        ? 'text-emerald-700 dark:text-emerald-300'
+        : 'text-zinc-500 dark:text-zinc-400';
   // A merged card's kudos slot is a legacy-filled host (`_fillKudosHosts`,
   // run by app-view.js after every publish). A fold happens BETWEEN
   // publishes, so the slot a card just unfolded with would stay empty until
@@ -206,6 +213,15 @@ function Column(
           ? <span className="text-zinc-500 dark:text-zinc-500 font-mono">{'· '}<CountSkeleton /></span>
           : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
       </div>
+      {!loading && col.status ? (
+        <div
+          data-kanban-col-status={col.key}
+          className={`text-[11px] leading-snug font-medium mb-2 px-0.5 ${statusTone}`}
+          title={col.status.title}
+        >
+          {col.status.text}
+        </div>
+      ) : null}
       {cards}
       {(!deferred && col.footer) ? <div className="mt-2"><FooterView f={col.footer} /></div> : null}
     </div>
