@@ -36,20 +36,15 @@
  * `!!slug` gate went with the chip's — a menu you can only open inside an app
  * is not a way to get to an app.
  *
- * ── The app's own views ARE here, and so is the exception they make ────
+ * ── The app's own views: a row, not a control (#2761) ──────────────────
  *
  * App / Board / Activity sat here for one round of #1443, moved out to the
- * Improve panel on the argument that this menu answers WHICH APP and those
- * three answer WHICH PART OF IT, and are back — in BOTH places, which is what
- * neither round tried. The second question is a fair one to ask from the
- * control that names where you are, and the strip is one module
- * (../improve/view-tabs.tsx) rendered twice rather than two implementations
- * of one decision.
- *
- * The strip is the one thing in this sheet drawn as a CONTROL rather than as a
- * row, deliberately: a segmented control is visibly a different kind of object
- * from the destinations, which keeps "everything in the list has its own page"
- * true of the list while the app's own views sit above it.
+ * Improve panel, and came back as an App | Workshop segmented control when
+ * that panel retired (#2718 review). The owner's call in #2761 was that it
+ * should not be a toggle at all: the Workshop is one more place this menu
+ * goes, so it is a "Go to workshop" row in the list like the others, and
+ * nothing replaces the App segment — the parked app on the bar (#2762) is
+ * how you get back to a running app.
  *
  * The app's general chat spent one round here as a fourth row, because
  * Activity had taken its name and it was otherwise reachable only from a
@@ -132,7 +127,6 @@ import {
 import { AboutPane } from './about-pane';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
-import { AppViewTabs, IMPROVE_VIEW_IDS } from '../improve/view-tabs';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
@@ -193,9 +187,11 @@ function RowBody({ icon, label, trailing }: {
 }
 
 function MenuRow({
-  id, href, icon, label, trailing, onClick, elRef, shipsHidden,
+  id, href, icon, label, trailing, onClick, elRef, shipsHidden, dataContextRow,
 }: {
   id: string;
+  // Names the destination for selectors that key on it rather than on the id.
+  dataContextRow?: string;
   href: string;
   icon: ReactNode;
   label: string;
@@ -211,6 +207,7 @@ function MenuRow({
     <a
       ref={elRef}
       id={id}
+      data-context-row={dataContextRow}
       href={href}
       className={shipsHidden ? `hidden ${ROW}` : ROW}
       onClick={(e) => {
@@ -234,8 +231,8 @@ export function AppsSwitcherSheet(): ReactNode {
   const {
     slug, name, showTerminal, target, versionState, deploying, appUpdateReady,
   } = useStoreState(improveStore);
-  // Votes this viewer owes on the app in context — the badge on the view
-  // strip's Workshop segment. See the fetch below.
+  // Votes this viewer owes on the app in context — the badge on the
+  // "Go to workshop" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
 
   // "About Notes", not "About this app". The name is what the viewer is
@@ -289,7 +286,7 @@ export function AppsSwitcherSheet(): ReactNode {
       viewer has not voted on.
 
       Loaded on OPEN, and never during render: the prerender ships no figure
-      and a fetch here would be a hydration mismatch. The strip that shows it
+      and a fetch here would be a hydration mismatch. The row that shows it
       renders unconditionally for that same reason; what is conditional is
       the BADGE, which is fine because a number arriving later changes a
       subtree React already owns rather than the child count it hydrated. Failure is silence — a menu row that works is worth more than
@@ -402,50 +399,21 @@ export function AppsSwitcherSheet(): ReactNode {
             ./app-recency's read during render, and #apps-switcher-create —
             whose dialog is still reached from Home's own Create tile and from
             App.showCreateModal(). */}
-        {/* THE APP'S THREE VIEWS ARE NOT HERE ANY MORE.
-
-            An "In this app" caption over an App | Board | Activity strip sat
-            between the app list and the platform rows. It answered a
-            different question from the one this menu is for: this menu picks
-            WHICH APP, and the strip picked which part of the app you are
-            already in — so opening it to switch apps meant reading past a
-            control about the app you were leaving.
-
-            The strip is not gone, it is single-homed — HERE now (#2718
-            review). It lived in the Improve panel, and the panel is retired:
-            the drawer held two buttons, a list of sessions the Workshop took
-            earlier in this issue, and a notice. What was left did not need a
-            drawer, so the buttons, the strip and the notice moved up into
-            this menu and the drawer went. */}
-
         {/* ── WHAT THE DRAWER USED TO HOLD ───────────────────────────
-            In its order: what is happening to the build, the two things you
-            can do about it, and — inside an app — which part of it you are
-            looking at.
-
-            THE `Open in Workshop` ROW IS RETIRED, because the strip's
-            Workshop segment already goes there: two owners of one decision,
-            which is the thing view-tabs.tsx's own header warns about. The
-            row's one unique job was the vote count, so that moved WITH it —
-            `#app-menu-workshop-owed` is a badge on the segment now. The
-            strip kept the other direction the row never had: it is also how
-            you get back to the RUNNING app from its Workshop. */}
+            The Improve panel is retired (#2718 review); what it held moved up
+            into this menu. In its order: what is happening to the build, and
+            the two things you can do about it. */}
         <UpdateStatus />
         <ImproveQuickActions />
-        {/* UNCONDITIONAL, the way the panel rendered it, and for a reason
-            that is not taste: a `slug ? … : null` here renders a different
-            NUMBER of children before and after the classic writers publish
-            a target, and `public/js/app.js` is a classic script that runs
-            before this bundle hydrates. That is React #418 — the error that
-            failed all 291 declared checks earlier in this issue — and the
-            strip reads its own null slug perfectly well (`href` falls back
-            to '#'). It is inside a closed sheet until something opens it. */}
-        <AppViewTabs
-          ids={IMPROVE_VIEW_IDS}
-          onNavigate={() => void AppContext.dismissForNav()}
-          className="mx-4 mb-2"
-          owed={owed}
-        />
+        {/* THE App | Workshop STRIP IS RETIRED (#2761). It sat here as a
+            segmented control, and a toggle was the wrong shape for it: this
+            menu is a list of places, and the strip's one real job was
+            getting you to the Workshop. That is the "Go to workshop" row at
+            the top of the list below now, carrying the vote-count badge the
+            strip's Workshop segment carried. Nothing replaces the App
+            segment — the parked app on the bar (#2762) is the way back to a
+            running app. See the note on that row for why it is rendered
+            unconditionally. */}
 
         {/* THE ONLY VERTICAL SCROLLER. Everything above is `shrink-0`. */}
         <nav
@@ -530,9 +498,51 @@ export function AppsSwitcherSheet(): ReactNode {
               These are the same move — the Workshop tab and the Messages
               tab, arriving scoped rather than at the top of a list.
           */}
+          {/*
+              GO TO WORKSHOP replaced the App | Workshop strip (#2761): the
+              owner asked for a plain row, not a toggle. It is rendered
+              UNCONDITIONALLY for the reason the strip was — a `slug ? … :
+              null` here changes the child count between the prerender and
+              the hydrating render, because public/js/app.js publishes the
+              target before this bundle hydrates, and that is React #418.
+              With no slug the href falls back to '#', as the strip's did.
+
+              `data-context-row="workshop"` is the key the strip's segment
+              carried, kept so the row still names its destination.
+
+              THE BADGE IS THE ONE THING CONDITIONAL, and only in a subtree
+              React already owns: `owed` is null in the prerender and arrives
+              from the fetch above after the sheet opens.
+          */}
+          <MenuRow
+            id="app-menu-row-workshop"
+            dataContextRow="workshop"
+            href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
+            icon={<BoardIcon />}
+            label="Go to workshop"
+            trailing={owed ? (
+              <span
+                id="app-menu-workshop-owed"
+                title={`${owed} to vote`}
+                aria-label={`${owed} to vote`}
+                className="shrink-0 rounded-full bg-violet-600 px-1.5 text-[0.6875rem] font-semibold leading-5 text-white"
+              >
+                {owed}
+              </span>
+            ) : null}
+          />
+          {/*
+              #2763: the TWO-PANE route. `#app/<slug>/dev/chat` was the old
+              full-screen discussion; `#messages/app/<slug>` opens the same
+              thread in the Messages screen's right pane with the
+              conversation list still on the left at desktop widths (the
+              router's `parts[1] === 'app'` branch in public/js/app.js calls
+              App.navigateToMessages(null, slug)). It is what the inbox's own
+              rows link to, so the menu and the inbox now agree.
+          */}
           <MenuRow
             id="app-menu-row-discussion"
-            href={slug ? `#app/${encodeURIComponent(slug)}/dev/chat` : '#messages'}
+            href={slug ? `#messages/app/${encodeURIComponent(slug)}` : '#messages'}
             icon={<ChatIcon />}
             label="Go to app discussion"
           />
