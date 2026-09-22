@@ -163,6 +163,41 @@ test('a replay tool failure survives a successful planner exit with its original
   });
 });
 
+test('a retry after a failed replay cannot replace the browser error with the plan limit', async () => {
+  const replayError = Object.assign(new Error('The browser Job ended without a verdict.'), {
+    code: 'missing_replay_result',
+    detail: { execution: { partial: true, partialReason: 'capture OOM killed' } },
+  });
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await assert.rejects(control.runPlan(fixtures.plan()), { code: 'missing_replay_result' });
+      await assert.rejects(control.runPlan(fixtures.plan()), { code: 'evidence_plan_attempt_exhausted' });
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  fixture.dependencies.replay.runPass = async (_config, _sessionId, _input, options) => {
+    options.onEvent({
+      type: 'result', passed: false, code: 'missing_replay_result',
+      message: replayError.message, detail: replayError.detail,
+    });
+    throw replayError;
+  };
+
+  await assert.rejects(execute(fixture), { code: 'missing_replay_result' });
+  const failure = fixture.transitions.at(-1);
+  assert.equal(failure.patch.failureCode, 'missing_replay_result');
+  assert.deepEqual(failure.patch.traceSummary.failure, {
+    phase: 'pass_1', code: 'missing_replay_result', message: replayError.message,
+    tool: 'run-plan', detail: replayError.detail,
+  });
+  assert.equal(failure.patch.traceSummary.control.planCalls, 1);
+  assert.deepEqual(failure.patch.traceSummary.lastReplayEvent, {
+    pass: 1, type: 'result', passed: false, code: 'missing_replay_result',
+    message: replayError.message, detail: replayError.detail,
+  });
+});
+
 test('a rejected plan remains diagnosable when the planner exits without replaying', async () => {
   const invalidPlan = fixtures.plan();
   invalidPlan.stories[0].replay.before.actions[0].type = 'invalid';
