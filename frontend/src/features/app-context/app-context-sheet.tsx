@@ -292,6 +292,9 @@ export function AppsSwitcherSheet(): ReactNode {
     slug, name, showTerminal, target, versionState, deploying, appUpdateReady,
   } = useStoreState(improveStore);
   const [apps, setApps] = useState<SwitcherApp[] | null>(null);
+  // Votes this viewer owes on the app in context — the trailing figure on the
+  // Workshop row. See the fetch below.
+  const [owed, setOwed] = useState<number | null>(null);
 
   // "About Notes", not "About this app". The name is what the viewer is
   // looking at and it is already on the bar above; "this app" is what you
@@ -331,6 +334,47 @@ export function AppsSwitcherSheet(): ReactNode {
     })();
     return () => { live = false; };
   }, [open]);
+
+  /*
+      WHAT THE WORKSHOP ROW OWES YOU, as a trailing figure (#2718).
+
+      The design study drew "2 to vote" on this row, and it is the one thing
+      on this menu that reports rather than navigates — which is exactly what
+      the header of this file warns is the decay signal. It earns the
+      exception the same way the row itself does: it is not a second inbox,
+      it is a PROPERTY OF THE DESTINATION, the way a folder says how many
+      files are in it. A row that sends you to a queue and will not say
+      whether the queue is empty makes you go and look.
+
+      `/api/workshop/counts` is the Workshop tab's own endpoint and it already
+      answers per app, so this is the same number that screen shows on the
+      same app's row — one source, two readers. `needs` is votes owed:
+      promoted proposals and governance issues somebody else opened that this
+      viewer has not voted on.
+
+      Loaded on OPEN, like the strip above, and never during render: the
+      prerender ships no figure and a fetch here would be a hydration
+      mismatch. Failure is silence — a menu row that works is worth more than
+      a count, so a refused or offline request leaves `owed` null and the row
+      renders exactly as it did before this existed.
+  */
+  useEffect(() => {
+    if (!open || !slug) { setOwed(null); return; }
+    let live = true;
+    (async () => {
+      try {
+        const demo = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+        const res = await fetch(`/api/workshop/counts${demo}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const n = data?.counts?.[slug]?.needs;
+        if (live && typeof n === 'number' && n > 0) setOwed(n);
+      } catch {
+        // Offline is a state, not a failure: no figure, the row still works.
+      }
+    })();
+    return () => { live = false; };
+  }, [open, slug]);
 
   // Every way into an app funnels through improveStore.slug, so recording
   // recency here rather than in AppTile's click handler counts a home tile, an
@@ -602,6 +646,14 @@ export function AppsSwitcherSheet(): ReactNode {
             href={slug ? `#app/${encodeURIComponent(slug)}/dev` : '#workshop'}
             icon={<BoardIcon />}
             label="Open in Workshop"
+            trailing={owed ? (
+              <span
+                id="app-menu-workshop-owed"
+                className="shrink-0 text-sm text-zinc-500 dark:text-zinc-400"
+              >
+                {`${owed} to vote`}
+              </span>
+            ) : undefined}
           />
           <MenuRow
             id="app-menu-row-discussion"

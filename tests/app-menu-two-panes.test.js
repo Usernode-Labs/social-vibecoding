@@ -101,3 +101,76 @@ test('the menu row that opens it is a button, and says so', () => {
   assert.match(row, /AppContext\.showAbout\(\)/);
   assert.match(row, /w-full/, 'and fills the sheet, so its chevron sits at the edge');
 });
+
+test('the Workshop row says what it owes you, and stays silent when it cannot', () => {
+  // The design study drew "2 to vote" here. It is the one thing on this menu
+  // that REPORTS rather than navigates, which the sheet's own header calls
+  // the decay signal — and it earns the exception the way the row does: it is
+  // a property of the destination, like a folder saying how many files are in
+  // it. A row that sends you to a queue and will not say whether the queue is
+  // empty makes you go and look.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /id="app-menu-workshop-owed"/);
+  assert.match(sheet, /\$\{owed\} to vote/);
+
+  // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
+  // endpoint, so this is the same figure that screen shows on the same app's
+  // row rather than a second count computed a second way.
+  assert.match(sheet, /fetch\(`\/api\/workshop\/counts\$\{demo\}`\)/);
+  const at = sheet.indexOf("if (!open || !slug)");
+  const effect = sheet.slice(at, sheet.indexOf('}, [open, slug]);', at));
+  assert.ok(at > 0, 'it loads on open, keyed to the app in context');
+
+  // FAILURE IS SILENCE. A menu row that works is worth more than a count, so
+  // an offline or refused request leaves the row exactly as it was.
+  assert.match(effect, /catch \{/);
+  assert.match(effect, /typeof n === 'number' && n > 0/,
+    'zero is silence too — "0 to vote" is a row shouting that it has nothing');
+
+  // Nothing during render, so the prerender ships no figure and hydration has
+  // nothing to correct.
+  assert.ok(!read('public/index.html').includes('id="app-menu-workshop-owed"'),
+    'a figure read from data is not in a cold document');
+});
+
+test('a platform screen says its own name at one size', () => {
+  // Messages named itself at 28px and the Workshop named itself with the
+  // grouped list's SECTION LABEL — 15px, regular, muted — so two screens one
+  // tab apart disagreed about what a screen title is. A section label is for
+  // a group WITHIN a screen.
+  const workshop = read('frontend/src/features/workshop/index.tsx');
+  assert.match(workshop, /<h1 className="platform-screen-title">Workshop<\/h1>/);
+  assert.ok(!workshop.includes('<SectionHeader>Workshop</SectionHeader>'),
+    'the muted section label is not a screen title');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-list-title h2,\n\.platform-screen-title \{/,
+    'one rule, two spellings — the sizes cannot drift apart');
+  // HOME IS NOT A CALLER, on purpose: the bar above it carries the Homeroom
+  // wordmark, and a screen called Home under a wordmark is the same word
+  // twice.
+  const home = read('frontend/src/features/home/home.js');
+  assert.ok(!home.includes('platform-screen-title'), 'the wordmark is Home\'s title');
+});
+
+test('the desktop rail un-centres the header title', () => {
+  // use-header-layout.ts centres on the room it measures, and on a 1280px
+  // desktop with an empty left group there is room for anything — so the
+  // wordmark landed in the middle of the window, floating over the content
+  // column with the rail's 224px to its left. What the hook centres against
+  // is the WINDOW, and the window stopped being the content area the moment a
+  // rail took a fifth of it.
+  const css = read('public/css/app.css');
+  const at = css.indexOf('NOT WHILE THE DESKTOP RAIL IS UP');
+  assert.ok(at > 0, 'the rule states its reason');
+  const block = css.slice(at, css.indexOf('}', css.indexOf('text-align: left;', at)));
+  assert.match(block, /@media \(min-width: 768px\)/);
+  assert.match(block, /body:has\(#platform-tabs:not\(\.hidden\)\) #header-title\.is-centered/,
+    'keyed off the bar\'s own hidden class, like every other rail-aware rule');
+  assert.match(block, /position: static;/);
+  assert.match(block, /text-align: left;/);
+  // Expressed in CSS rather than in the hook: "is there room" is a
+  // measurement, "is there a rail" is a layout fact the stylesheet knows, and
+  // a media query cannot get out of step with the one that draws the rail.
+  const hook = read('frontend/src/features/header/use-header-layout.ts');
+  assert.ok(!hook.includes('platform-tabs'), 'the hook still only measures');
+});

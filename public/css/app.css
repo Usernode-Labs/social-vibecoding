@@ -478,13 +478,29 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-list-title { min-width: 0; flex: 1 1 auto; }
 /* Preflight resets headings to inherit, so the size is this rule's to give. */
-.messages-list-title h2 {
+.messages-list-title h2,
+.platform-screen-title {
   color: var(--text-primary);
   font-size: 28px;
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.01em;
 }
+/* ONE SIZE FOR A PLATFORM SCREEN'S NAME (#2718).
+   Messages named itself at 28px and the Workshop named itself with the
+   grouped list's SECTION LABEL — 15px, regular weight, muted — so two screens
+   one tab apart disagreed about what a screen title is. The section label is
+   for a group WITHIN a screen; a screen's own name is the biggest thing on
+   it.
+   The selector above is a second spelling of the Messages rule rather than a
+   replacement of it: that one is reached as `.messages-list-title h2` from a
+   flex toolbar that also held the New disc, and rewriting its markup to take
+   a class is a change to a screen this issue is not otherwise touching.
+   Home is deliberately NOT a caller. The bar above it carries the Homeroom
+   wordmark, and a screen called Home under a wordmark is the same word twice;
+   the wordmark IS Home's title. Every other platform screen is named by the
+   tab that opened it, so it says its own name. */
+.platform-screen-title { padding: 18px 16px 8px; }
 
 /* THE DISCS: New, the thread's actions, and the per-message tray's buttons.
    The language's floating circular control — a white disc on the plane,
@@ -9883,6 +9899,29 @@ html.web-browser-chrome {
   transform: translate(-50%, -50%);
   flex: none;
   text-align: center;
+}
+
+/* ── NOT WHILE THE DESKTOP RAIL IS UP (#2718) ──────────────────────────
+   The hook above centres on the room it measures, and on a 1280px desktop
+   with an empty left group there is room for anything — so the Homeroom
+   wordmark landed in the middle of the window, floating over the content
+   column with the rail's 224px to its left. It read as a mistake, because it
+   is one: what the hook is centring against is the WINDOW, and the window
+   stopped being the content area the moment a rail took a fifth of it.
+   Left-aligned, the wordmark sits over the rail it belongs to and the bar
+   reads the way the design draws it: mark left, alert and menu right.
+   Expressed here rather than in use-header-layout.ts on purpose. The hook's
+   job is "is there room", which is a measurement; "is there a rail" is a
+   layout fact the stylesheet already knows, and a media query cannot get out
+   of step with the one that draws the rail. `:has()` on the bar's own hidden
+   class is the same test every other rail-aware rule in this file makes. */
+@media (min-width: 768px) {
+  body:has(#platform-tabs:not(.hidden)) #header-title.is-centered {
+    position: static;
+    transform: none;
+    flex: 1 1 auto;
+    text-align: left;
+  }
 }
 
 /* THE IN-PAGE TITLE IS SHOWN IN THE NATIVE WEBVIEW TOO.

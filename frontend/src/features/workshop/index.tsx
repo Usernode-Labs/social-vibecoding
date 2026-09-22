@@ -49,7 +49,7 @@
 import { useRef, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
-import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { HandRaisedIcon, SpeechCheckIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
@@ -58,7 +58,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { workshopStore } from './workshop-store.js';
 import {
-  WorkshopPicker, WorkshopScope, WorkshopTabs, type WorkshopTab,
+  WorkshopPicker, WorkshopPlus, WorkshopScope, WorkshopTabs, type WorkshopTab,
 } from './workshop-chrome';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
@@ -276,6 +276,19 @@ export function WorkshopScreen() {
   // `#workshop-empty.hidden` to prove the card is gone once the list has
   // rows, so a tab that merely filters to nothing must not raise it. A tab
   // with nothing in it says so in its own line below.
+  // The totals the legend prints. Across EVERY app, not the filtered tab:
+  // the question is "how much is there altogether", and an answer that moved
+  // when you changed tabs would be answering a different one. Null until the
+  // list has answered — see the legend's note.
+  // Nothing to total with no apps: the empty card below already says why the
+  // screen is bare, and "0 working on · 0 waiting on your vote" over it is the
+  // same nothing said twice, in the confident voice of a measurement.
+  const totals = all && all.length > 0
+    ? all.reduce((acc, row) => ({
+      working: acc.working + (row.working || 0),
+      needs: acc.needs + (row.needs || 0),
+    }), { working: 0, needs: 0 })
+    : null;
   const empty = !!all && all.length === 0 && !state.error;
   const filteredEmpty = !!all && all.length > 0 && !!rows && rows.length === 0;
 
@@ -294,13 +307,19 @@ export function WorkshopScreen() {
           floats on. `max-w-2xl mx-auto` is the only thing here that is this
           screen's own — GroupedList owns its own `mx-4` gutter and radius. */}
       <div className="max-w-2xl mx-auto pb-8">
-        <SectionHeader>Workshop</SectionHeader>
+        {/* THE SCREEN'S NAME, at the size Messages already says its own
+            (`.platform-screen-title`, app.css). It was <SectionHeader> — the
+            grouped list's 15px muted label — which is the treatment for a
+            group INSIDE a screen, not for the screen. Two tabs apart, the two
+            screens disagreed about what a title is. */}
+        <h1 className="platform-screen-title">Workshop</h1>
         {/* THE CHIP, THE TABS AND THE PLUS — see ./workshop-chrome.tsx for
             what each is for. They render whether or not the list has
             answered: a screen whose controls appear after its data does is a
             screen that moves under the thumb reaching for them. */}
         <div className="px-4 pb-2 flex items-center gap-2">
           <WorkshopScope apps={all} open={state.picker === 'scope'} />
+          <WorkshopPlus plusOpen={state.picker !== null && state.picker !== 'scope'} />
         </div>
         <WorkshopTabs tab={state.tab} plusOpen={state.picker !== null && state.picker !== 'scope'} />
         {state.picker
@@ -309,15 +328,37 @@ export function WorkshopScreen() {
         {/* THE LEGEND IS NOT DECORATION. Two bare numbers on a row cannot be
             read, and the per-pill tooltip is not available to a thumb — so the
             two glyphs are named once, here, in the muted line the language
-            uses under a section label. */}
+            uses under a section label.
+
+            IT CARRIES THE TOTALS NOW (#2718). The design study put three
+            count cards at the top of this screen — "4 in vote / 2 working / 7
+            open issues" — and the question they answer is a fair one this
+            screen could not answer: the rows say which APPS need you, and
+            nowhere said how much there is altogether.
+
+            As numbers in the legend rather than as cards, because the legend
+            is already the line that explains these two glyphs, and a card
+            deck above a list whose every row carries the same two figures
+            would be the third telling of one fact. "Open issues" is not here:
+            /api/workshop/counts folds governance issues into `working`
+            alongside sessions and promoted proposals, so a third figure would
+            have to be invented rather than read.
+
+            Null until the list answers — the totals are a fact about the
+            rows, so they wait for the rows rather than printing a confident
+            zero over skeletons. */}
         <p className="px-4 pt-2 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
           <span className="inline-flex items-center gap-1">
             <HandRaisedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-            You are working on
+            {totals ? (
+              <><b id="workshop-total-working" className="font-semibold text-zinc-900 dark:text-zinc-100">{totals.working}</b>{' working on'}</>
+            ) : 'You are working on'}
           </span>
           <span className="inline-flex items-center gap-1">
             <SpeechCheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-            Votes waiting on you
+            {totals ? (
+              <><b id="workshop-total-needs" className="font-semibold text-zinc-900 dark:text-zinc-100">{totals.needs}</b>{' waiting on your vote'}</>
+            ) : 'Votes waiting on you'}
           </span>
         </p>
         <GroupedList id="workshop-list">

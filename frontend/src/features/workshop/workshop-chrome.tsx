@@ -55,7 +55,7 @@ import { type ReactNode } from 'react';
 
 import {
   Tabs, TabsList, TabsTrigger,
-  SECTION_TABS_LIST_BASE, SECTION_TAB_BASE, SECTION_TAB_ACTIVE, SECTION_TAB_INACTIVE,
+  SECTION_TABS_LIST_BASE, SECTION_TAB_ACTIVE, SECTION_TAB_INACTIVE,
 } from '@/components/ui/tabs';
 import {
   CheckIcon, ChevronDownIcon, PlusIcon, SparklesIcon,
@@ -154,45 +154,131 @@ export function WorkshopScope({ apps, open }: { apps: PickerApp[] | null; open: 
   );
 }
 
-/** The three tabs, with the plus at the end of the strip. */
-export function WorkshopTabs({ tab, plusOpen }: { tab: WorkshopTab; plusOpen: boolean }) {
+/**
+ * The plus, and why it is on the SCOPE row rather than beside the tabs.
+ *
+ * It shipped at the tabs' trailing edge, across from them, on the argument
+ * that a tab strip's far end is the one place on this screen about doing
+ * rather than looking. That was true and it did not fit. Measured in a real
+ * browser at 390pt: the three labels need 370px of track and the row left
+ * them 314px, so "All items" was cut off mid-word by a scroller
+ * `platform-no-scrollbar` had made invisible — the tab was reachable only by
+ * a drag nothing on screen suggested.
+ *
+ * The labels cannot give: they are the app's own Workshop's three words, and
+ * that is the whole of why the two screens read as one place at two scopes.
+ * So the ROW gives instead. The scope chip is ~170px of a 390pt row and was
+ * alone on its line; the plus joins it at the far end, which reads as well —
+ * scope on the left says WHAT you are looking at, the plus on the right adds
+ * to it, and the tabs below get the full width to themselves.
+ *
+ * Exported separately rather than folded into WorkshopScope because the two
+ * are unrelated controls that happen to share a line, and a component called
+ * "scope" that also renders an add button is a name that has stopped being
+ * true.
+ */
+export function WorkshopPlus({ plusOpen }: { plusOpen: boolean }) {
+  return (
+    <button
+      id="workshop-plus"
+      type="button"
+      className={'ml-auto shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full '
+        + 'un-touch-target border border-[color:var(--brand-line)] '
+        + 'bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]'}
+      aria-haspopup="menu"
+      aria-expanded={plusOpen ? 'true' : 'false'}
+      aria-controls="workshop-picker"
+      aria-label="Add"
+      onClick={() => workshopStore.set({ picker: plusOpen ? null : 'change' })}
+    >
+      <PlusIcon className="w-5 h-5" aria-hidden="true" />
+    </button>
+  );
+}
+
+/**
+ * The three tabs, with the whole row to themselves.
+ *
+ * ── The bug, measured ──────────────────────────────────────────────────
+ *
+ * At 390pt the three labels needed 370px of track and the row gave them 314,
+ * so "All items" was cut off mid-word by a scroller `platform-no-scrollbar`
+ * had made invisible: the tab was reachable only by a drag nothing on screen
+ * suggested. Three things fix it, and the order matters — each one is the
+ * cheapest concession left once the ones above it are spent.
+ *
+ * ── 1. The row is the tabs' alone ──────────────────────────────────────
+ *
+ * The plus moved up to the scope chip's line (WorkshopPlus above), which was
+ * carrying one ~170px control on a 390pt row. That is 56px back.
+ *
+ * ── 2. `px-2.5`, not the recipe's `px-4` ───────────────────────────────
+ *
+ * SECTION_TAB_BASE is the platform's segmented-control trigger and this is
+ * the one call site that cannot afford its padding: each step down buys three
+ * tabs times two sides. Everything else about the recipe is kept, so the
+ * strip still reads as the same control the Leaderboard and the Kudos pane
+ * wear.
+ *
+ * ── 3. `text-[13px]`, and the app's own Workshop is the precedent ──────
+ *
+ * This is the one that actually wins it, and it is not a compromise — it is
+ * the conclusion the platform already reached about THESE THREE LABELS. The
+ * app's own Workshop renders the same three words on a phone at ELEVEN
+ * pixels, with the glyph above them (`.dev-ws-tab`, app.css). So "Current
+ * status / Needs you / All items at 14px does not fit a phone row" is
+ * established, not discovered here; 13px is the largest size that fits a
+ * 360pt screen whole, which is a Galaxy and a Pixel, not a museum piece.
+ *
+ * The labels themselves are what may NOT give: they are the app Workshop's
+ * three words, and that is the whole of why the two screens read as one place
+ * at two scopes (see WorkshopTab in ./workshop-store.js).
+ *
+ * ── The floor: truncate, never hide ────────────────────────────────────
+ *
+ * Whole at 360 and up; below that the labels ellipsize. `min-w-0` on each
+ * trigger with a truncating label is what makes that possible — `shrink-0`
+ * inside a scroller was what turned "does not fit" into "is silently cut",
+ * because flex had no permission to do anything but overflow. And there is no
+ * scroller any more: on touch there is no resting scrollbar and
+ * `platform-no-scrollbar` removed the desktop one too, so the overflow it
+ * allowed was overflow nothing announced. An ellipsis says the same thing and
+ * says it in place.
+ *
+ * ── Why the class is spelled out ───────────────────────────────────────
+ *
+ * As a COMPLETE LITERAL rather than derived from the recipe with a
+ * `.replace()`. Tailwind's extractor is a regex over source text, so a class
+ * name a string operation produces at runtime is a class name that never gets
+ * compiled — and the failure is silent: the attribute is right in the DOM and
+ * the rule behind it does not exist. Every class in the platform's cva tables
+ * is spelled out for the same reason (AGENTS.md). The cost is that this one
+ * string is kept in step with the recipe by hand, which
+ * tests/workshop-scope-tabs.test.js pins.
+ */
+const WORKSHOP_TAB_CLASS =
+  'inline-flex items-center justify-center h-8 px-2.5 rounded-full text-[13px] '
+  + 'font-semibold transition-colors min-w-0';
+
+export function WorkshopTabs({ tab, plusOpen: _plusOpen }: { tab: WorkshopTab; plusOpen: boolean }) {
   return (
     <Tabs value={tab} onValueChange={(next) => workshopStore.set({ tab: next as WorkshopTab, picker: null })}>
-      <TabsList id="workshop-tabs" className="px-4 pb-1 flex items-center gap-2">
-        <div className={SECTION_TABS_LIST_BASE + ' min-w-0 overflow-x-auto platform-no-scrollbar'}>
+      <TabsList id="workshop-tabs" className="px-4 pb-1 flex items-center">
+        <div className={SECTION_TABS_LIST_BASE + ' min-w-0 max-w-full'}>
           {WORKSHOP_TABS.map(([key, label]) => (
             <TabsTrigger
               key={key}
               id={`workshop-tab-${key}`}
               value={key}
               data-workshop-tab={key}
-              className={SECTION_TAB_BASE + ' shrink-0'}
+              className={WORKSHOP_TAB_CLASS}
               activeClassName={SECTION_TAB_ACTIVE}
               inactiveClassName={SECTION_TAB_INACTIVE}
             >
-              {label}
+              <span className="min-w-0 truncate">{label}</span>
             </TabsTrigger>
           ))}
         </div>
-        {/* ACROSS FROM THE TABS, which is where Messages already puts the
-            control that starts something (#messages-new). A tab strip's
-            trailing edge is the one place on this screen that is about doing
-            rather than about looking. `ml-auto` rather than a spacer, so the
-            strip keeps the width it needs and this keeps the corner. */}
-        <button
-          id="workshop-plus"
-          type="button"
-          className={'ml-auto shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full '
-            + 'un-touch-target border border-[color:var(--brand-line)] '
-            + 'bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]'}
-          aria-haspopup="menu"
-          aria-expanded={plusOpen ? 'true' : 'false'}
-          aria-controls="workshop-picker"
-          aria-label="Add"
-          onClick={() => workshopStore.set({ picker: plusOpen ? null : 'change' })}
-        >
-          <PlusIcon className="w-5 h-5" aria-hidden="true" />
-        </button>
       </TabsList>
     </Tabs>
   );

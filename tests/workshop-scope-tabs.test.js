@@ -113,9 +113,87 @@ test('one panel, three contents, one open at a time', () => {
 
 test('the strip is the shared primitive, not a second one', () => {
   assert.match(CHROME, /from '@\/components\/ui\/tabs'/);
-  for (const token of ['SECTION_TABS_LIST_BASE', 'SECTION_TAB_BASE', 'SECTION_TAB_ACTIVE', 'SECTION_TAB_INACTIVE']) {
+  // SECTION_TAB_BASE is deliberately absent: this strip spells its trigger
+  // class out (see below). The track and the two state tables are still the
+  // primitive's.
+  for (const token of ['SECTION_TABS_LIST_BASE', 'SECTION_TAB_ACTIVE', 'SECTION_TAB_INACTIVE']) {
     assert.ok(CHROME.includes(token), `${token} comes from the primitive`);
   }
+});
+
+test('the three labels fit a phone row, and the strip cannot hide one', () => {
+  // THE BUG THIS PINS. At 390pt the three labels needed 370px of track and
+  // the row gave them 314, so "All items" was cut off mid-word by a scroller
+  // `platform-no-scrollbar` had made invisible — reachable only by a drag
+  // nothing on screen suggested. Measured in a real browser, not inferred.
+  //
+  // The labels themselves may not give: they are the app Workshop's own three
+  // words, which is why the two screens read as one place at two scopes.
+  assert.deepEqual(
+    CHROME.match(/'(Current status|Needs you|All items)'/g),
+    ["'Current status'", "'Needs you'", "'All items'"],
+    'the three words are the app Workshop\'s, unabbreviated',
+  );
+
+  // 1. The plus is off this row — it is on the scope chip's line now.
+  assert.match(CHROME, /export function WorkshopPlus\(/);
+  // Bounded to the function: everything after it is the picker, whose rows
+  // legitimately carry `shrink-0` on their glyphs.
+  const tabsAt = CHROME.indexOf('export function WorkshopTabs(');
+  const tabsFn = CHROME.slice(tabsAt, CHROME.indexOf('\n}', CHROME.indexOf('</Tabs>', tabsAt)));
+  assert.ok(!tabsFn.includes('id="workshop-plus"'),
+    'the plus does not share the tab row any more');
+  const screen = read('frontend/src/features/workshop/index.tsx');
+  assert.match(screen, /<WorkshopScope[\s\S]{0,200}<WorkshopPlus/,
+    'it renders beside the scope chip instead');
+
+  // 2 and 3. Tighter padding and a 13px label — the size the app's own
+  // Workshop already concluded these words need on a phone (it draws them at
+  // ELEVEN, with a glyph above; `.dev-ws-tab` in app.css).
+  assert.match(CHROME, /const WORKSHOP_TAB_CLASS =\n\s+'inline-flex items-center justify-center h-8 px-2\.5 rounded-full text-\[13px\] '/);
+  assert.match(CHROME, /\+ 'font-semibold transition-colors min-w-0';/);
+
+  // THE FLOOR: truncate, never hide. `shrink-0` inside a scroller was what
+  // turned "does not fit" into "is silently cut" — flex had no permission to
+  // do anything but overflow.
+  assert.ok(!tabsFn.includes('overflow-x-auto'), 'there is no scroller to hide a tab behind');
+  assert.ok(!tabsFn.includes('platform-no-scrollbar'), 'nor a hidden scrollbar');
+  assert.ok(!tabsFn.includes("shrink-0"), 'the triggers may shrink');
+  assert.match(tabsFn, /<span className="min-w-0 truncate">\{label\}<\/span>/,
+    'and their labels ellipsize rather than disappear');
+
+  // The class is a COMPLETE LITERAL, never derived. Tailwind's extractor is a
+  // regex over source text, so a computed class name is one that never gets
+  // compiled — and it fails silently, with the attribute right in the DOM.
+  // Comments stripped first: the note above WORKSHOP_TAB_CLASS says the word
+  // `.replace()` in order to warn against it, which is prose, not code.
+  const code = CHROME.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!code.includes('.replace('), 'no class name is computed at runtime');
+});
+
+test('the legend carries the totals, and says nothing when there is nothing', () => {
+  // The design study put three count cards at the top of this screen. The
+  // question they answer is real — the rows say which APPS need you, and
+  // nothing said how much there is altogether — but a deck above a list whose
+  // every row carries the same two figures is the third telling of one fact,
+  // so the numbers went into the legend that already names the two glyphs.
+  const screen = read('frontend/src/features/workshop/index.tsx');
+  assert.match(screen, /id="workshop-total-working"/);
+  assert.match(screen, /id="workshop-total-needs"/);
+  // ACROSS EVERY APP, not the filtered tab: "how much is there" is not a
+  // question whose answer should move when you change tabs.
+  const at = screen.indexOf('const totals = all');
+  const decl = screen.slice(at, screen.indexOf('const empty', at));
+  assert.match(decl, /all\.length > 0/,
+    'no totals with no apps — the empty card already says why the screen is bare');
+  assert.match(decl, /acc\.working \+ \(row\.working \|\| 0\)/);
+  assert.match(decl, /acc\.needs \+ \(row\.needs \|\| 0\)/);
+  assert.ok(!decl.includes('rows'), 'it sums `all`, not the tab-filtered rows');
+  // Null until the list answers, so the prerender ships the wordy legend and
+  // hydration has nothing to correct.
+  assert.match(screen, /\{totals \? \(/);
+  assert.ok(!HTML.includes('id="workshop-total-working"'),
+    'a figure read from data is not in a cold document');
 });
 
 test('the chrome ships in the prerendered document', () => {
