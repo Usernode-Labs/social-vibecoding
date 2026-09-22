@@ -4210,7 +4210,18 @@ const App = {
     // there and finding the bar empty left the chip menu's Home row as the
     // only way back, which is an inch away and behind a menu. Every other
     // screen you navigate INTO offers the house; Browse now does too.
-    App.setBackIcon(revealId === 'home-screen' ? 'none' : 'home');
+    // #2718: THREE answers now, not two. Home is a root and offers nothing;
+    // an APP offers a close button, because leaving an app is not going up a
+    // level — you are stepping out of somebody's program back to the platform,
+    // and every mini-app host in the study draws that as an ✕ rather than a
+    // chevron. Everything else keeps the house. `_appBackHref` still decides
+    // WHERE the ✕ lands (the Workshop, when that is where you came from),
+    // which is what setBackIcon resolves a line later.
+    App.setBackIcon(
+      revealId === 'home-screen' ? 'none'
+        : revealId === 'app-view' ? 'close'
+          : 'home',
+    );
     // ...and the tab bar, in the same callback and for the same reason the
     // comment above gives for the title and the back slot: they are all part
     // of the swap, and the kit captures the outgoing page from whatever this
@@ -4243,15 +4254,21 @@ const App = {
   // DOM fallback takes for the same state.
   _syncPlatformTabs(revealId) {
     const onAuth = !!(window.AuthScreens && AuthScreens._current);
-    const screen = revealId || App._revealedScreen || 'home-screen';
-    const section = (onAuth || App.chromeless || screen === 'app-view')
-      ? null
-      : screen;
-    App.Visibility.publish('platform-tabs', section !== null);
-    // Published even when the bar is down: the store keeps the last section
+    // null on the signed-out screens, and the RAW id everywhere else —
+    // `app-view` included. The bar has no tab for the app view and goes away
+    // there, but the HEADER needs to know it is in one (its left slot becomes
+    // a close button and the app's tile appears beside its name), so what is
+    // published is the screen and what is derived from it is the tab. See
+    // features/nav/nav-store.js.
+    const screen = onAuth ? null : (revealId || App._revealedScreen || 'home-screen');
+    App.Visibility.publish(
+      'platform-tabs',
+      !!screen && !App.chromeless && screen !== 'app-view',
+    );
+    // Published even when the bar is down: the store keeps the last screen
     // otherwise, and the bar coming back for a tab that has since changed
     // would light the wrong one for a frame.
-    window.UsernodeReact?.nav?.setScreen?.(section);
+    window.UsernodeReact?.nav?.setScreen?.(screen);
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -5528,12 +5545,14 @@ const App = {
   // stale — same reasoning that makes the icon itself reliable.
   setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
-    // THREE modes now (features/header/back-button-store.js): 'arrow' is a
-    // level up, 'home' is the house, and 'none' hides the slot outright.
-    // Home and the top-level Browse list use 'none' for their shared root
-    // header (#1569). Other screens keep the default Home button, or an arrow
-    // when they have a level above them.
-    const slot = arrow ? 'arrow' : (mode === 'none' ? 'none' : 'home');
+    // FOUR modes now (features/header/back-button-store.js): 'arrow' is a
+    // level up, 'home' is the house, 'close' is the ✕ that steps out of an
+    // app, and 'none' hides the slot outright. Home and the top-level Browse
+    // list use 'none' for their shared root header (#1569). Other screens keep
+    // the default Home button, or an arrow when they have a level above them.
+    const slot = arrow ? 'arrow'
+      : mode === 'close' ? 'close'
+        : (mode === 'none' ? 'none' : 'home');
     const target = href || (window.NavLink ? NavLink.homeHref() : '/');
     // The slot is React's (features/header/platform-header.tsx), so its
     // appearance is PUBLISHED, not written: a rendered className belongs to
@@ -5565,8 +5584,13 @@ const App = {
       // group collapses with it.
       btn.classList.toggle('hidden', slot === 'none');
       btn.setAttribute('href', target);
-      document.getElementById('back-icon-arrow')?.classList.toggle('hidden', !arrow);
-      document.getElementById('back-icon-home')?.classList.toggle('hidden', arrow);
+      // FOUR slots, three glyphs. Exactly one is shown and the other two are
+      // hidden — spelled as a comparison per glyph rather than as `!arrow`,
+      // which was right while there were two of them and silently draws the
+      // house for 'close'.
+      document.getElementById('back-icon-arrow')?.classList.toggle('hidden', slot !== 'arrow');
+      document.getElementById('back-icon-home')?.classList.toggle('hidden', slot !== 'home');
+      document.getElementById('back-icon-close')?.classList.toggle('hidden', slot !== 'close');
     }
   },
 
@@ -5609,7 +5633,7 @@ const App = {
   // file already joins title fragments with elsewhere.
   setHeaderTitle(text, subtitle) {
     // Streamlined Concept: #header-title is React-owned now
-    // (frontend/src/features/header/app-switcher-chip.tsx renders it as the
+    // (frontend/src/features/header/header-title.tsx renders it as the
     // tappable app-context tab), so the text goes through the bridge into
     // header-title-store — never a direct textContent write, which React
     // would reconcile away.

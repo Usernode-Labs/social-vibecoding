@@ -191,14 +191,20 @@ test('the header back/home control is a real anchor', () => {
   const inner = html.slice(html.indexOf('<a id="back-btn"'), html.indexOf('</a>', html.indexOf('<a id="back-btn"')));
   assert.match(inner, /id="back-icon-home"/, 'the house');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
-  // …and the document ships showing exactly one of them. Which one does not
-  // matter here (the router publishes the real state on the first screen
-  // swap); that BOTH or NEITHER is visible is the broken state.
-  const shownHome = !/id="back-icon-home"[^>]*class="[^"]*\bhidden\b/.test(inner);
-  const shownArrow = !/id="back-icon-arrow"[^>]*class="[^"]*\bhidden\b/.test(inner);
-  assert.notEqual(shownHome, shownArrow,
-    'one glyph is hidden and the other is not — two glyphs in one 28px disc '
-    + 'is what a wrong `hidden` looks like');
+  assert.match(inner, /id="back-icon-close"/, 'and the ✕ that steps out of an app (#2718)');
+  // …and AT MOST ONE of them is showing. Two glyphs in one 28px disc is what
+  // a wrong `hidden` looks like, and it is the only broken state here: the
+  // cold document publishes mode 'none', which hides the anchor itself, so
+  // none of the three being visible inside it is correct rather than empty.
+  // It used to be "exactly one", on a render where the house was drawn for
+  // every mode that was not the arrow — which is precisely the bug a third
+  // glyph introduces, so each one names its own mode now.
+  const shown = ['home', 'arrow', 'close'].filter((name) =>
+    !new RegExp(`id="back-icon-${name}"[^>]*class="[^"]*\\bhidden\\b`).test(inner));
+  assert.ok(shown.length <= 1,
+    `at most one glyph may be visible at a time, and these were: ${shown.join(', ')}`);
+  assert.match(html, /<a id="back-btn"[^>]*class="[^"]*\bhidden\b/,
+    "…and in the cold document the anchor is hidden outright, which is mode 'none'");
   // 28x28 now, not 20x28: the slot holds the app glyph as well as the arrow
   // (features/header/header-app-icon.tsx), and they never draw together. What
   // matters to the header-layout hook is that the width is FIXED, and it is.
@@ -245,7 +251,7 @@ test('every screen entry refreshes the href through the one choke point', () => 
   const at = appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   assert.ok(at !== -1, '_showOnlyScreen went missing');
   const fn = appJs.slice(at, appJs.indexOf('\n  },', at));
-  assert.match(fn, /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
+  assert.match(fn, /revealId === 'home-screen' \? 'none'\n\s+: revealId === 'app-view' \? 'close'\n\s+: 'home',/,
     'this is what keeps the href from ever going stale — every screen change '
     + 'passes through here');
 });

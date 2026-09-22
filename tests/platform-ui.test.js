@@ -562,8 +562,13 @@ test("the Board owns the view control; the header's label is the chip", () => {
   // under the Improve panel's Board row and the frame draws no view control.
   assert.ok(!/ImproveViewToggle/.test(header),
     'the header renders no view-toggle copy');
-  assert.match(header, /<AppSwitcherChip titleRef=\{titleRef\} \/>/,
-    "the header's label is the chip");
+  // #2718 took the chip back apart. The label is a NAME again — the menu it
+  // used to open listed every platform destination, and the tab bar carries
+  // those now — and the menu got its own button at the other end of the bar.
+  assert.match(header, /<HeaderTitle titleRef=\{titleRef\} \/>/,
+    "the header's label is a name, not a control");
+  assert.match(header, /<PlatformMark \/>/,
+    'the menu has its own button');
   assert.ok(!/id="dev-view-toggle"/.test(frame),
     'the Board draws no view tab strip above its cards');
   const frameCode = frame

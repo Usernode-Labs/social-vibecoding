@@ -12,7 +12,7 @@
  * React must never reconcile over those nodes: every class string below is a
  * constant prop, rendered once at hydration and never again. The exceptions
  * are React-owned end to end: <ImproveButton/> (which carries the work-in-
- * flight indicators) and <AppSwitcherChip/> — both of whose
+ * flight indicators), <HeaderTitle/> and <PlatformMark/> — all of whose
  * writers publish through improveStore rather than touching the DOM.
  *
  * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
@@ -34,6 +34,7 @@ import {
   BellIcon,
   ChevronLeftIcon,
   HomeIcon,
+  XIcon,
 } from '@/components/ui/icons';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -41,7 +42,8 @@ import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
-import { AppSwitcherChip } from './app-switcher-chip';
+import { HeaderTitle } from './header-title';
+import { PlatformMark } from './platform-mark';
 import { ImproveButton } from '../improve/improve-button';
 import { boardHref, improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
@@ -83,7 +85,7 @@ import '../notifications/mount';
 // Both halves are fixed in one place instead: the chip renders on session
 // routes now, and the pill is its subtitle. Same store, same component, same
 // #header-status-pill id and still inside #platform-header — see
-// ./app-switcher-chip.tsx.
+// ./header-title.tsx.
 
 // LIGHT-MODE SURFACES ARE zinc-50, NOT zinc-100. tailwind.config.js overrides
 // the ramp, and `zinc-100` there is #eaeaea — byte-identical to the light page
@@ -191,7 +193,7 @@ export function PlatformHeader() {
   // publishes here rather than writing `hidden` into React-owned DOM.
   const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
   // …and INSIDE AN APP the slot is derived from the ROUTE, not from the
-  // imperative call. <AppSwitcherChip/> already gates on exactly this
+  // imperative call. <HeaderTitle/> already gates on exactly this
   // condition — it is what swaps the chip's subtitle for the lifecycle pill —
   // so leaving the back slot to an ordering-dependent setBackIcon() call was
   // the odd one out, and it is the one that kept coming up hidden on staging
@@ -208,8 +210,16 @@ export function PlatformHeader() {
   // everything else keeps whatever the last setBackIcon() published, which on
   // a platform screen is 'home' by default and 'arrow' where that screen owns
   // a sub-level of its own (a Settings section, a Browse detail, a thread).
-  const mode = routeUp ? 'arrow' : backMode;
+  // #2718: the app view's own 'close' outranks the route's level-up. Inside
+  // an app the ✕ is the whole way out — the Workshop and the app's other
+  // views are rows of the mark's menu now, not a chevron's destination — so a
+  // sub-route that used to earn an arrow gets the ✕ that leaves the app
+  // instead. The DESTINATION is unchanged either way: `resolvedBackHref`
+  // still prefers the route's up-level href, so ✕ from a session lands on
+  // that app's Workshop exactly as ← did.
+  const mode = backMode === 'close' ? 'close' : (routeUp ? 'arrow' : backMode);
   const backArrow = mode === 'arrow';
+  const backClose = mode === 'close';
   const resolvedBackHref = routeUp
     || (mode === 'home' ? homeHref() : backHref);
 
@@ -426,7 +436,7 @@ export function PlatformHeader() {
           <a
             id="back-btn"
             className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
-            aria-label={backArrow ? 'Back' : 'Home'}
+            aria-label={backArrow ? 'Back' : backClose ? 'Close app' : 'Home'}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
           >
             {/*
@@ -444,18 +454,33 @@ export function PlatformHeader() {
             />
             <HomeIcon
               id="back-icon-home"
-              className={backArrow ? 'hidden w-5 h-5' : 'w-5 h-5'}
+              className={mode === 'home' ? 'w-5 h-5' : 'hidden w-5 h-5'}
+            />
+            {/*
+                #2718's third glyph. It ships `hidden`, like the arrow, and
+                the house's test had to change with it: `!backArrow` drew the
+                house for every mode that was not 'arrow', which is exactly
+                the bug a third one introduces. Each glyph now names its own
+                mode. public/js/app.js's pre-hydration fallback in
+                setBackIcon() spells the same three comparisons.
+            */}
+            <XIcon
+              id="back-icon-close"
+              className={backClose ? 'w-5 h-5' : 'hidden w-5 h-5'}
             />
           </a>
         </div>
         {/*
-            The chip: the screen's only h1, and on every screen but a dev
-            session a tappable "(avatar) name ⌄" control that opens the
-            switcher menu. #1431 gated it on being inside an app; #1443
-            made it unconditional, which is what lets every other header
-            slot go. See app-switcher-chip.tsx.
+            The screen's only h1 — a NAME, not a control, since #2718. It was
+            a chip whose menu listed every platform destination; the tab bar
+            carries those now, so the menu behind it became the app's own and
+            a name that opens a menu about something else is a label that
+            lies. The menu has its own button at the other end of the bar
+            (./platform-mark.tsx) and this went back to naming where you are.
+            Inside an app it is that app's tile and name. See
+            ./header-title.tsx.
         */}
-        <AppSwitcherChip titleRef={titleRef} />
+        <HeaderTitle titleRef={titleRef} />
         {/* `gap-2.5`, not `gap-1`. The bell and Improve are an ALERT and an
             ACTION — one tells you something happened, the other starts work —
             and at 4px they read as two halves of one segmented control, which
@@ -600,6 +625,22 @@ export function PlatformHeader() {
             </span>
           </a>
           <ImproveButton />
+          {/*
+              THE MARK, LAST, and the corner is the whole argument for the
+              position. This is the one control on the bar that is always
+              there and always means the same thing — the platform's own menu
+              — and a thumb reaching the top-right corner should find the
+              thing that never moves, not the thing whose width changes with
+              the app's state. It also puts the platform's signature at the
+              edge of a bar that, inside an app, is otherwise entirely that
+              app's: its tile, its name, its close button.
+
+              #improve-btn is still here, so the group reads bell · Improve ·
+              mark for the length of this commit. The next one retires it —
+              its rows are what the mark's menu is made of — and the bar lands
+              on the two controls the design draws.
+          */}
+          <PlatformMark />
           {/*
               The "Create new app" entry point used to live here in the header
               as a "+" pill; it's been moved into the home-screen feed itself,

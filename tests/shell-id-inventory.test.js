@@ -432,8 +432,33 @@ const ADDED_IDS = {
   'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
   'app-context-row-workshop': 'The app\'s Workshop — the lander, and the strip\'s only Dev segment: the same cards the kanban draws, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment, then outlived the Board segment.',
   // ── #1443: the chip and its menu ────────────────────────────────
-  'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
-  'app-switcher-name': 'The chip\'s label, a named slot so a declared check can assert WHAT the chip says and not merely that it exists. It holds the Homeroom logotype on a platform screen and the app\'s name inside an app (frontend/@/components/ui/wordmark.tsx), so a check that wants the platform case asserts the <svg> rather than text — the mark has no text to match.',
+  // ── #2718: the chip came back apart ──────────────────────────────
+  // #app-switcher-btn was the header's label AND the one control that opened
+  // a list, on the reading that one control should name where you are and
+  // list everywhere you can go. The tab bar (#platform-tabs) carries the
+  // platform's destinations now, so the menu behind the name holds the APP's
+  // options — and a name that opens a menu about something else is a label
+  // that lies about its button. The name went back to being a name and the
+  // menu got its own button. Both of the chip's ids leave THIS map rather
+  // than entering RETIRED_IDS: the frozen baseline never recorded them.
+  'platform-mark-btn': '#2718: the Homeroom mark with a chevron, at the far right of the bar, opening the app-context menu that #app-switcher-btn used to open. THE MARK RATHER THAN A "…", which is what WeChat, Telegram, Alipay and Chrome\'s Custom Tabs all draw in this seat: the hosts whose mini-apps are made BY the people using them use their logo instead (Roblox, the Steam button on a Deck), and inside somebody else\'s app "whose menu is this" is the question the button answers. It is UNFRAMED beside the framed bell on purpose — two identical containers side by side read as one segmented control, so the pair differ in kind instead.',
+  'header-title-name': '#2718: the heading\'s label, a named slot so a declared check can assert WHAT the header says and not merely that it exists. It holds the Homeroom logotype on a platform screen and the app\'s name inside an app (frontend/@/components/ui/wordmark.tsx), so a check that wants the platform case asserts the <svg> rather than text — the mark has no text to match. It replaces #app-switcher-name one-for-one; the id changed because the element is no longer inside a switcher.',
+  // #header-subtitle and #header-app-tile are NOT in this map, and that is
+  // not an omission. Both render conditionally — the subtitle only on a
+  // screen that publishes one, the tile only inside the app view — so
+  // neither is in the prerendered document, and this map is for ids that ARE
+  // (the check below asserts exactly that). They replace
+  // #app-switcher-subtitle, which was absent from here for the same reason.
+  //   #header-subtitle: the destination WITHIN the screen the title names —
+  //     "Board", "Activity", or a dev session's lifecycle pill — beside the
+  //     name on one baseline rather than under it. #header-status-pill is
+  //     still its child on a session route, same id, same writer.
+  //   #header-app-tile: the open app's own artwork beside its name, which is
+  //     what makes the launcher → app step read as one movement. Drawn from
+  //     features/improve/improve-store.js, which already carried the name,
+  //     icon url and emoji for the panel that used to live in this bar, so
+  //     there is no new fetch and no new publisher.
+  'back-icon-close': '#2718: the ✕ in the header\'s left slot, shown inside a running app. NOT a fourth name for the chevron — leaving an app is not going up a level, it is stepping out of somebody else\'s program, and every mini-app host in the study draws that as an ✕. Where it LANDS is unchanged (App._appBackHref, so ✕ from a session still returns to that app\'s Workshop): only the glyph knows the difference. It ships `hidden`, like #back-icon-arrow, and each of the three glyphs now names its own mode rather than one of them being "not the other".',
   'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
   'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
   'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',

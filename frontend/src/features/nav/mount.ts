@@ -37,7 +37,8 @@ if (typeof window !== 'undefined') {
      * @param screenId A root from App.SCREEN_IDS, or null/'' for none.
      */
     setScreen(screenId: string | null) {
-      navStore.set({ tab: screenId ? tabForScreen(screenId) : null });
+      const screen = screenId || null;
+      navStore.set({ screen, tab: screen ? tabForScreen(screen) : null });
     },
     /**
      * @param count Conversations with something unread. Clamped at zero so a

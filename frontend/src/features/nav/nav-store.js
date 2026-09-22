@@ -77,7 +77,14 @@ export const TAB_FOR_SCREEN = Object.freeze({
 
 /**
  * @typedef {object} NavState
- * @property {TabKey|null} tab  The section the router last revealed, or null
+ * @property {string|null} screen  The screen root the router last revealed —
+ *   the RAW id, `app-view` included, and null on the signed-out screens.
+ *   The tab bar does not read it; the header does, because "am I inside an
+ *   app" is the question that decides whether its left slot is a close
+ *   button and whether the app's tile is beside its name. Keeping the fact
+ *   here rather than deriving it from `tab` is the difference between "no
+ *   section" and "a section the bar has no tab for": both read `tab: null`.
+ * @property {TabKey|null} tab  The section that screen belongs to, or null
  *   before the first screen swap of the session — which is also what the
  *   prerendered document shows.
  * @property {number} messages  Unread conversations, for the Messages tab's
@@ -86,6 +93,7 @@ export const TAB_FOR_SCREEN = Object.freeze({
 
 /** @type {NavState} */
 const INITIAL = {
+  screen: null,
   tab: null,
   messages: 0,
 };

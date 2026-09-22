@@ -77,11 +77,15 @@ test('the bridge narrows to all THREE, not to two', () => {
   assert.match(body, /mode === 'arrow' \? 'arrow'/, "…and 'arrow' still wins first");
 });
 
-test('setBackIcon maps the three modes and toggles both glyphs', () => {
+test('setBackIcon maps the four modes and toggles all three glyphs', () => {
   const at = APP_JS.indexOf('  setBackIcon(mode, href) {');
   assert.ok(at > 0, 'setBackIcon must exist');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(body, /const slot = arrow \? 'arrow' : \(mode === 'none' \? 'none' : 'home'\)/,
+  // #2718 added 'close' — the ✕ inside a running app. One expression still
+  // owns the mapping and the fallback is unchanged: anything unrecognised
+  // falls to 'home' rather than 'none', because an unknown mode should leave
+  // a way OFF the screen, not remove one.
+  assert.match(body, /const slot = arrow \? 'arrow'\n\s+: mode === 'close' \? 'close'\n\s+: \(mode === 'none' \? 'none' : 'home'\);/,
     'one expression owns the mapping, and anything unrecognised falls to '
     + "'home' rather than 'none' — an unknown mode should leave a way OFF "
     + 'the screen, not remove one');
@@ -89,8 +93,12 @@ test('setBackIcon maps the three modes and toggles both glyphs', () => {
     'and the SAME value is what gets published');
   // The pre-hydration fallback has three nodes to keep in step again.
   assert.match(body, /toggle\('hidden', slot === 'none'\)/, 'the anchor hides on none');
-  assert.match(body, /back-icon-arrow'\)\?\.classList\.toggle\('hidden', !arrow\)/);
-  assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', arrow\)/);
+  // EACH GLYPH NAMES ITS OWN MODE. It was `!arrow` / `arrow` — correct while
+  // there were two of them and exactly the bug a third introduces, because
+  // "not the arrow" silently drew the house for 'close' too.
+  assert.match(body, /back-icon-arrow'\)\?\.classList\.toggle\('hidden', slot !== 'arrow'\)/);
+  assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', slot !== 'home'\)/);
+  assert.match(body, /back-icon-close'\)\?\.classList\.toggle\('hidden', slot !== 'close'\)/);
 });
 
 // ── 2. Home and Browse share one root-header rule ──────────────────────
@@ -106,7 +114,10 @@ test('Home is the only root, and it gets that from the shared screen reveal', ()
   // arrive at, it is one you go to from Home's "Find more apps", and landing
   // there with an empty bar left the chip menu's Home row as the only way
   // back. One rule still owns the answer, and now only Home is exempt.
-  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
+  // #2718: three answers, still one rule. An APP gets the ✕ that steps out
+  // of it — leaving somebody else's program is not going up a level — and
+  // everything that is not Home or the app view keeps the house.
+  assert.match(body, /revealId === 'home-screen' \? 'none'\n\s+: revealId === 'app-view' \? 'close'\n\s+: 'home',/,
     'one rule, including cold boots and history navigation');
   assert.doesNotMatch(body, /browse-screen/,
     'Browse takes the default like every other screen you navigate into');
@@ -134,16 +145,20 @@ test('Home is the only root, and it gets that from the shared screen reveal', ()
 test('the anchor renders both glyphs and hides exactly one', () => {
   assert.match(HEADER, /id="back-icon-arrow"\n\s+className=\{backArrow \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
     'the chevron shows on arrow');
-  assert.match(HEADER, /id="back-icon-home"\n\s+className=\{backArrow \? 'hidden w-5 h-5' : 'w-5 h-5'\}/,
-    'the house shows otherwise — the two are complements of one flag, so '
-    + 'they cannot both be on');
+  // NOT `!backArrow`. With three glyphs, "not the arrow" is two of them, so
+  // each names its own mode — the same change public/js/app.js's
+  // pre-hydration fallback made for the same reason.
+  assert.match(HEADER, /id="back-icon-home"\n\s+className=\{mode === 'home' \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+    'the house shows on home, and on nothing else');
+  assert.match(HEADER, /id="back-icon-close"\n\s+className=\{backClose \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+    'and the ✕ inside a running app');
   // Both in the COLD DOCUMENT. Rendering only the active one would take an
   // id out of the shipped inventory whenever the initial mode is the other,
   // and that inventory is a contract (tests/shell-id-inventory.test.js).
   assert.match(HEADER, /className=\{BACK_BTN_CLASS \+ \(mode === 'none' \? ' hidden' : ''\)\}/,
     "the anchor itself hides only on 'none'");
-  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : 'Home'\}/,
-    'and the accessible name follows the glyph — two meanings, two names');
+  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : backClose \? 'Close app' : 'Home'\}/,
+    'and the accessible name follows the glyph — three meanings, three names');
 });
 
 // ── 4. The ladder inside an app ────────────────────────────────────────
@@ -177,9 +192,15 @@ test('the route decides where UP is, inside an app', () => {
 });
 
 test('the derived answer outranks the imperative one, and only inside an app', () => {
-  assert.match(HEADER, /const mode = routeUp \? 'arrow' : backMode;/,
-    'an app route with a level above it wins; everything else keeps what '
-    + 'setBackIcon published');
+  // #2718 put ONE thing above the route: the app view's own 'close'. Inside
+  // an app the ✕ is the whole way out — the Workshop and the app's other
+  // views are rows of the mark's menu now, not a chevron's destination — so
+  // a sub-route that used to earn an arrow gets the ✕ instead. The
+  // DESTINATION is untouched: resolvedBackHref still prefers the route's
+  // up-level href, so ✕ from a session lands on that app's Workshop as ← did.
+  assert.match(HEADER, /const mode = backMode === 'close' \? 'close' : \(routeUp \? 'arrow' : backMode\);/,
+    'an app view wins outright; an app route with a level above it wins over '
+    + 'the imperative call; everything else keeps what setBackIcon published'); 
   assert.match(HEADER, /const resolvedBackHref = routeUp\n\s+\|\| \(mode === 'home' \? homeHref\(\) : backHref\);/,
     "and 'home' resolves its own href rather than relying on a caller to "
     + 'pass one');
@@ -425,7 +446,8 @@ test('both writers of the bar agree that the Browse list gets the house', () => 
   // Writer 1: the screen reveal.
   const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(body, /revealId === 'home-screen' \? 'none' : 'home'/);
+  assert.match(body, /revealId === 'home-screen' \? 'none'/);
+  assert.match(body, /: 'home',/, 'and every screen that is not Home or an app keeps the house');
 
   // Writer 2: Browse's own chrome sync, which runs after it.
   assert.match(browse, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,

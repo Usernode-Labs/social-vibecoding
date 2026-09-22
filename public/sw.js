@@ -594,6 +594,12 @@ const SHELL_ASSETS = [
   // first run would otherwise render the new landing around a broken image.
   // Provenance and export settings in public/brand/README.md.
   '/brand/people.png',
+  // #2718: the Homeroom mark, drawn in the header on EVERY route — the
+  // button that opens the platform's menu. The landing's illustration above
+  // is precached because the signed-out screen has nothing to put in its
+  // place; this one because a missing header logo is a hole at the top of
+  // every screen, offline and on a cold cache alike.
+  '/brand/homeroom-mark.png',
 ];
 
 // Server-rendered standalone pages that stay online-only: never serve the

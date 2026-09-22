@@ -166,8 +166,8 @@ test('the header back button defers to the console, then goes home', () => {
     'and home is the fallback for a screen that named none');
 });
 
-test('the back button has both icons and one named toggle', () => {
-  // TWO icons, exactly one shown. #back-icon-home retired in #1443 — Home is
+test('the back button has all three icons and one named toggle', () => {
+  // THREE icons, at most one shown. #back-icon-home retired in #1443 — Home is
   // a row of the chip's menu, so a house an inch to its left answered one
   // question twice — and came back when the rule became "every page has a
   // back or a home button, except Home": that retirement left the app itself,
@@ -179,6 +179,10 @@ test('the back button has both icons and one named toggle', () => {
   // (tests/shell-id-inventory.test.js, plus the dapp.json selectors).
   assert.ok(html.includes('id="back-icon-home"'), 'the house ships');
   assert.ok(html.includes('id="back-icon-arrow"'), 'the chevron ships');
+  // #2718's third: the ✕ that steps out of a running app. Leaving somebody
+  // else's program is not going up a level, and every mini-app host in the
+  // study draws that as an ✕ rather than a chevron.
+  assert.ok(html.includes('id="back-icon-close"'), 'and the ✕ ships');
   // #1036 widened it to setBackIcon(mode, href): the control is a real
   // anchor now, so the same choke point that owns which icon shows also
   // owns where it points.
@@ -194,10 +198,15 @@ test('the back button has both icons and one named toggle', () => {
     'setBackIcon publishes the slot state rather than only writing to the DOM');
   assert.ok(body.indexOf('backButton') < body.indexOf('back-btn'),
     'the publish comes first; the DOM writes are the pre-hydration fallback');
-  // The pre-hydration fallback toggles all three nodes again: the anchor for
-  // 'none', and one glyph each for which of the two remaining modes it is.
-  assert.match(body, /back-icon-home/, 'the fallback toggles the house');
-  assert.match(body, /back-icon-arrow/, 'and the chevron');
+  // The pre-hydration fallback toggles all four nodes again: the anchor for
+  // 'none', and one glyph each for which of the three remaining modes it is.
+  // Each names its own mode — `!arrow` drew the house for 'close' too.
+  assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', slot !== 'home'\)/,
+    'the fallback toggles the house');
+  assert.match(body, /back-icon-arrow'\)\?\.classList\.toggle\('hidden', slot !== 'arrow'\)/,
+    'and the chevron');
+  assert.match(body, /back-icon-close'\)\?\.classList\.toggle\('hidden', slot !== 'close'\)/,
+    'and the ✕');
   assert.match(body, /back-btn/, 'it toggles the anchor itself');
   // 'none' is what hides the slot now — NOT 'home', which draws a house.
   // The distinction is the whole point: a screen that publishes the default
@@ -215,8 +224,11 @@ test('the back button has both icons and one named toggle', () => {
   assert.ok(!exit.slice(0, exit.indexOf('\n  },')).includes('setBackIcon'),
     '_exitAdminConsole leaves the icon to _showOnlyScreen');
   const swap = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
-  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
-    '_showOnlyScreen restores Home on secondary screens and hides it on the Home/Browse roots');
+  assert.match(
+    swap.slice(0, swap.indexOf('\n  },')),
+    /revealId === 'home-screen' \? 'none'\n\s+: revealId === 'app-view' \? 'close'\n\s+: 'home',/,
+    '_showOnlyScreen restores Home on secondary screens, hides it on the Home '
+    + 'root and gives an app the ✕ that steps out of it (#2718)');
 });
 
 test('the admin gate runs before the already-open route() shortcut', () => {

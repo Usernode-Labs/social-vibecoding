@@ -180,11 +180,21 @@ test('a plain "/" boot never swaps screens, and the bar is still up', () => {
 test('the section is published even when the bar is down', () => {
   // Otherwise the store keeps the last one and the bar returns lighting a tab
   // the viewer has since left.
-  const { App, lit } = harness();
+  //
+  // THE RAW SCREEN, not the tab, and not null for the app view: the bar has
+  // no tab for #app-view and goes away there, but the HEADER reads the same
+  // publication to know it is inside an app (its left slot becomes a close
+  // button, the app's tile appears beside its name). features/nav/mount.ts
+  // derives the tab from it; only the signed-out screens publish nothing.
+  const { App, context, lit } = harness();
   App._syncPlatformTabs('workshop-screen');
   assert.equal(lit.at(-1), 'workshop-screen');
   App._syncPlatformTabs('app-view');
-  assert.equal(lit.at(-1), null);
+  assert.equal(lit.at(-1), 'app-view');
+  assert.equal(App.Visibility.read('platform-tabs'), false, 'and the bar is still down');
+  context.AuthScreens = { _current: 'landing' };
+  App._syncPlatformTabs();
+  assert.equal(lit.at(-1), null, 'the signed-out screens are the one nothing');
 });
 
 test('a cold boot into an app or the signed-out shell never paints the bar', () => {

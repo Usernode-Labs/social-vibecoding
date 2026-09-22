@@ -9,7 +9,7 @@
  *
  * The DATA half is deliberately absent — the sheet renders from improveStore.
  *
- * One caller outside React: `app-switcher-chip.tsx`'s tap goes through
+ * One caller outside React: `../header/platform-mark.tsx`'s tap goes through
  * `window.AppContext.toggle()` (published below, the same seam every
  * classic-script-reachable controller uses).
  */

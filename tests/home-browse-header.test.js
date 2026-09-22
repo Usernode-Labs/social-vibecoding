@@ -109,26 +109,23 @@ function harness({ improveAvailable = true } = {}) {
   return { App, Browse, header, writes, transitions, visible, flush };
 }
 
-// The chip is the ONE thing that may legitimately differ between the two root
-// headers: it says where you are, and Home and Browse are different places.
-// Two places carry that — the visible label, which is the logotype on Home
-// (#1443 / the logged-out redesign) and the words "All apps" on Browse, and
-// the name interpolated into the button's aria-label. Blanking exactly those
-// two keeps the comparison below an EQUALITY over everything else — controls,
-// classes, wrappers, attribute order — which is the whole value of this test.
-// Each is then asserted on its own terms, rather than by substituting one
-// string for the other, which is what stopped working when the visible half
-// became a drawing and the spoken half stayed a word.
-const LABEL = /<span id="app-switcher-name" class="min-w-0 truncate">[\s\S]*?<\/span>/;
-const CHIP_NAME = /aria-label="[^"]*: open the menu"/;
+// The LABEL is the ONE thing that may legitimately differ between the two
+// root headers: it says where you are, and Home and Browse are different
+// places. Blanking exactly it keeps the comparison below an EQUALITY over
+// everything else — controls, classes, wrappers, attribute order — which is
+// the whole value of this test. It is then asserted on its own terms, rather
+// than by substituting one string for the other, which is what stopped
+// working when the visible half became a drawing and the spoken half stayed
+// a word.
+//
+// #2718 took the second half away. The label used to be inside a button
+// whose aria-label interpolated the same name, so there were two carriers to
+// mask; the heading is not a control any more (the menu has its own button —
+// features/header/platform-mark.tsx) and there is one.
+const LABEL = /<span id="header-title-name" class="min-w-0 truncate">[\s\S]*?<\/span>/;
 const label = (html) => {
   const found = html.match(LABEL);
-  assert.ok(found, 'the header carries the chip label slot');
-  return found[0];
-};
-const chipName = (html) => {
-  const found = html.match(CHIP_NAME);
-  assert.ok(found, 'the chip still names itself to a screen reader');
+  assert.ok(found, 'the header carries the title label slot');
   return found[0];
 };
 // #2639: the back slot is the one intended difference between the two
@@ -136,17 +133,15 @@ const chipName = (html) => {
 const maskBackSlot = (html) => html
   .replace(/<div class="h-7 shrink-0[^"]*"[\s\S]*?<\/a><\/div>/, '[back slot]')
   .replace(/<div class="h-7 shrink-0[^"]*">\s*<\/div>/, '[back slot]');
-const maskChip = (html) => html
-  .replace(label(html), '[chip label]')
-  .replace(chipName(html), 'aria-label="[chip name]: open the menu"');
+const maskChip = (html) => html.replace(label(html), '[title label]');
 
-// The chip's own pill, verbatim. `h-7` in it is the 28px content row
-// (tests/header-height-parity.test.js) and the three brand tokens are what
-// re-ink it per theme and app tone; neither may move when the label does.
-const CHIP_CLASS = 'pointer-events-auto inline-flex items-center gap-1 max-w-full h-7 '
-  + 'pl-3.5 pr-2.5 rounded-full align-middle un-touch-target font-bold '
-  + 'border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] '
-  + 'text-[color:var(--brand-ink)]';
+// THE PILL IS GONE (#2718), and its absence is the assertion now. The chip
+// wore a tinted 28px surface because it was a control sitting on the page
+// ground and had to read as one; the heading is not a control any more, so a
+// surface around it would be a button that does nothing. What has to stay is
+// the h1's own className, which ./use-header-layout.ts toggles `.is-centered`
+// on — a re-rendered class attribute there drops the measurement's own flag.
+const TITLE_CLASS = 'flex-1 min-w-0 text-base font-semibold pointer-events-none truncate';
 
 for (const improveAvailable of [true, false]) {
   test(`Home and Browse differ only in the back slot, with Improve ${improveAvailable ? 'available' : 'unavailable'}`, () => {
@@ -166,7 +161,7 @@ for (const improveAvailable of [true, false]) {
     // controls, the classes, the wrappers — must still be byte-identical,
     // which is what #1569 built this comparison to protect.
     assert.equal(maskChip(maskBackSlot(browse)), maskChip(maskBackSlot(home)),
-      'apart from the back slot, only what the chip says changes');
+      'apart from the back slot, only what the title says changes');
     assert.match(home, /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/,
       'Home is the root: its slot is hidden');
     assert.match(browse, /id="back-btn"[^>]*aria-label="Home"/,
@@ -177,12 +172,9 @@ for (const improveAvailable of [true, false]) {
       'Home names the platform with the logotype');
     assert.doesNotMatch(label(home), /Homeroom/,
       'and draws it INSTEAD of the word, not beside it');
-    assert.equal(chipName(home), 'aria-label="Homeroom: open the menu"',
-      'while the accessible name still says it in words — the graphic is aria-hidden');
     assert.equal(label(browse),
-      '<span id="app-switcher-name" class="min-w-0 truncate">All apps</span>',
+      '<span id="header-title-name" class="min-w-0 truncate">All apps</span>',
       'Browse names the destination in words, in the same slot');
-    assert.equal(chipName(browse), 'aria-label="All apps: open the menu"');
     // Two writers own this transition — the screen reveal and Browse's own
     // chrome sync — and the LATER one wins. Both must say 'home', or the
     // house is published and overwritten inside one transition and the bar
@@ -203,10 +195,10 @@ for (const improveAvailable of [true, false]) {
   });
 }
 
-// Nothing asserted what the chip's label IS until now — only that the slot
-// existed. It is a drawing on the platform's own screens and a word everywhere
-// else, so both halves of that switch get a pin here.
-test('the chip draws the logotype when it names the platform', () => {
+// Nothing asserted what the label IS until now — only that the slot existed.
+// It is a drawing on the platform's own screens and a word everywhere else,
+// so both halves of that switch get a pin here.
+test('the header draws the logotype when it names the platform', () => {
   const h = harness();
   h.App._showOnlyScreen('home-screen');
   h.App.setHeaderTitle('Homeroom');
@@ -219,8 +211,12 @@ test('the chip draws the logotype when it names the platform', () => {
     'the mark takes the chip ink, so --brand-ink re-inks it across theme and app tone');
   assert.doesNotMatch(mark, /\bdark:/,
     'no hand-written dark variant — currentColor already covers all four combinations');
+  // #2718: the h1 takes its accessible name from its CONTENTS now, there
+  // being no button with an aria-label to override them. The drawing IS the
+  // word, so a role="img", a <title> or an sr-only twin would have it read
+  // twice — aria-hidden is still the right call, for a new reason.
   assert.match(mark, /<svg[^>]*\baria-hidden="true"/,
-    'the mark is decorative: the button aria-label is what names this control');
+    'the mark is decorative: the screens publish the name in words');
   assert.doesNotMatch(mark, /role="img"|<title>/,
     'so it must not announce the word a second time');
 
@@ -232,32 +228,31 @@ test('the chip draws the logotype when it names the platform', () => {
   for (const banned of ['h-8', 'h-9', 'h-10', 'h-12', 'py-2', 'py-3', 'py-4',
     'text-xl', 'text-2xl', 'text-3xl']) {
     assert.ok(!new RegExp(`\\b(?:sm:|md:|lg:)?${banned}\\b`).test(mark),
-      `the chip label carries no ${banned} — the content row is still 28px`);
+      `the title label carries no ${banned} — the content row is still 28px`);
   }
 
   // Everything AROUND the label is untouched.
-  assert.ok(header.includes(`class="${CHIP_CLASS}"`),
-    'the chip keeps its h-7 pill and its brand tokens, verbatim');
-  assert.match(header, /aria-label="Homeroom: open the menu"/,
-    'the accessible name is unchanged — aria-label overrides the contents either way');
-  assert.match(header, /id="app-switcher-name" class="min-w-0 truncate"/,
+  assert.ok(header.includes(TITLE_CLASS),
+    "the h1 keeps its className, which use-header-layout.ts writes .is-centered onto");
+  assert.doesNotMatch(header, /id="header-title"[^>]*<button/,
+    'and it is not a control: the menu has its own button (#2718)');
+  assert.match(header, /id="header-title-name" class="min-w-0 truncate"/,
     'the named slot and its truncation stay, whatever is inside them');
-  assert.doesNotMatch(header, /id="app-switcher-subtitle"/, 'Home publishes no subtitle');
+  assert.doesNotMatch(header, /id="header-subtitle"/, 'Home publishes no subtitle');
 });
 
-test('the chip writes a name in words for an app, and whenever there is a subtitle', () => {
+test('the header writes a name in words for an app, and whenever there is a subtitle', () => {
   const h = harness();
   h.App.setHeaderTitle('Notes', 'Board');
   const header = h.header();
   assert.equal(label(header),
-    '<span id="app-switcher-name" class="min-w-0 truncate">Notes</span>',
+    '<span id="header-title-name" class="min-w-0 truncate">Notes</span>',
     'an app is named in words, in the same slot');
   assert.doesNotMatch(label(header), /<svg/, 'and nothing is drawn in its place');
-  assert.match(header, /id="app-switcher-subtitle" class="shrink-0/,
+  assert.match(header, /id="header-subtitle" class="shrink-0/,
     'the subtitle still does not shrink — the name is what truncates');
-  assert.match(header, /id="app-switcher-subtitle"[\s\S]*?>Board</,
+  assert.match(header, /id="header-subtitle"[\s\S]*?>Board</,
     'and it still says which part of the app you are in');
-  assert.match(header, /aria-label="Notes, Board: open the menu"/);
 
   // The self-hosted platform app is ITSELF named "Homeroom", so the title
   // string alone is true inside it too. The mark is suppressed there: it has
@@ -266,7 +261,7 @@ test('the chip writes a name in words for an app, and whenever there is a subtit
   h.App.setHeaderTitle('Homeroom', 'Workshop');
   const subtitled = h.header();
   assert.equal(label(subtitled),
-    '<span id="app-switcher-name" class="min-w-0 truncate">Homeroom</span>',
+    '<span id="header-title-name" class="min-w-0 truncate">Homeroom</span>',
     'a subtitled screen keeps the word, even when the word is the platform name');
   assert.match(subtitled, />Workshop</, 'beside the subtitle it shares the line with');
 });
@@ -315,11 +310,17 @@ test('a detail opened directly from a Home card still offers Home', () => {
 
 test('secondary screens keep their Home button instead of inheriting the root state', () => {
   const h = harness();
-  for (const screen of ['app-view', 'settings-screen', 'profile-screen', 'messages-screen', 'admin-screen', 'leaderboard-screen']) {
+  for (const screen of ['settings-screen', 'profile-screen', 'messages-screen', 'admin-screen', 'leaderboard-screen']) {
     h.App._showOnlyScreen('browse-screen');
     h.App._showOnlyScreen(screen);
     assert.equal(ui.backButtonStore.get().mode, 'home', `${screen} keeps its way out`);
   }
+  // …and the app view gets the ✕ instead (#2718), which is the same
+  // guarantee in a different glyph: leaving somebody else's program is not
+  // going up a level, so the slot says "step out" rather than "go up".
+  h.App._showOnlyScreen('browse-screen');
+  h.App._showOnlyScreen('app-view');
+  assert.equal(ui.backButtonStore.get().mode, 'close', 'an app view offers the way out');
 });
 
 test('the shared navigation menu still has reachable Home and Discover destinations', () => {
