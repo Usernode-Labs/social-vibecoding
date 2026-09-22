@@ -419,7 +419,7 @@
       + order
       + connectors
       + '<div class="dc-flow-actions dc-flow-actions-footer">'
-      + actionHtml({ action: 'cancel', label: 'Build on Homeroom instead' }, !!s.busy)
+      + actionHtml({ action: 'cancel', label: 'Build on the Homeroom platform instead' }, !!s.busy)
       + '</div>'
       + '</div>';
   }

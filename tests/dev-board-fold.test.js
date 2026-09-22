@@ -941,14 +941,34 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // once its own total stood on the old ceiling's 20-slot floor; that move
   // carries over unchanged (services/app-manifest.js).
   //
-  // 712 → 716: #2706 puts the connector walkthrough inline on the dev
+  // 712 -> 713: #2681 renames the dev walkthrough's footer button to "Build
+  // on the Homeroom platform instead", and no declared check asserted the
+  // old string, so the rename adds one rather than editing one. 37 slots
+  // left against MAX_DECLARED_TESTS (750).
+  //
+  // 712 → 715: independently on main, #2707 declares three, all on the Send
+  // Feedback dialog — the unchosen destination row and its dead Submit on
+  // ?shot=feedback-choose, and the one-destination case on ?shot=feedback,
+  // which is the half a later refactor is most likely to lose (there, a
+  // destination IS selected and Submit IS live, because a tap with one
+  // possible answer is a tax).
+  //
+  // 713 → 716: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 712 → 713 alone,
+  // with the #2681 check above; main independently took the same 712 to 715
+  // with the #2707 trio above. One +1 and one +3 against a shared 712 is
+  // 716, which leaves 34 slots against MAX_DECLARED_TESTS (750).
+  //
+  // 716 → 720: #2706 puts the connector walkthrough inline on the dev
   // session page instead of sending the reader to Settings, and that is a
   // screen state with four things to pin — the steps themselves, the live
   // MCP server URL beside them, the ChatGPT hand-off getting ChatGPT's
-  // steps rather than Claude's, and Settings still being one tap away. 34
+  // steps rather than Claude's, and Settings still being one tap away. 30
   // slots left against MAX_DECLARED_TESTS (750), still clear of the
-  // 20-slot floor.
-  assert.equal(DAPP.tests.length, 716);
+  // 20-slot floor. Both sides of this merge happened to land on 716 from
+  // different additions, which is a coincidence and not a sequence: main
+  // reached it with #2681 and #2707, and these four are new against it.
+  assert.equal(DAPP.tests.length, 720);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
