@@ -7,19 +7,26 @@ in either `package.json`, and the Docker build never touches an image). So the
 only record of where a file came from and how it was made is the table below —
 keep it true by hand, or the next person re-derives it from scratch.
 
-Only ONE of the two brand marks is a file here. The logotype ships as SOURCE,
-inlined as eight `<path>` elements in
+Two of the three brand marks are files here. The in-app logotype ships as
+SOURCE, inlined as eight `<path>` elements in
 `frontend/@/components/ui/wordmark.tsx`, because `fill="currentColor"` lets
 one drawing take the ink of wherever it sits — the landing header, the sign-in
 card, the home header's app chip at 20px — with no dark variant, no second
 file and no second request. Its own header explains the split. This note is
 here so someone looking for the logo in the obvious place finds it.
 
+`homeroom-logo-black.png` (below) is the one exception to "no image tooling
+at all": email HTML has no `currentColor` and no inline SVG support worth
+relying on across mail clients, so the mail frame in
+`src/services/mail/templates.js` (#2673) needs an actual raster file at a
+fixed color, not the scalable source the app UI uses.
+
 ## Provenance
 
 | File | Figma file key | Node id | Export | Dimensions | Size |
 |---|---|---|---|---|---|
 | `people.png` | `4kAYqXh9NhpoCU44QwWvYo` | `1246:166` | the node's raw image fill, downsampled and quantised (below) | 816 × 612, 8-bit palette PNG with `tRNS`, sRGB | 87.9 KB |
+| `homeroom-logo-black.png` | n/a — no Figma export | n/a | hand-encoded: a 5×7 bitmap "HOMEROOM" wordmark rasterized to `zinc-900` (`#1c1c1e`) on a transparent RGBA background, then wrapped in a minimal PNG (`IHDR`/`IDAT`/`IEND`) using only Node's built-in `zlib.deflateSync` — see the one-off generator note in the git history for #2673, since the repo has no `sharp`/`canvas`/ImageMagick to export from | 294 × 54, 8-bit RGBA PNG | 451 B |
 
 There is no `sha384` column, and the omission is deliberate rather than an
 oversight. `public/vendor/README.md` records a digest per file because each of
@@ -61,6 +68,14 @@ recorded.
   `frontend/src/features/auth/landing.tsx`, drawn as a plain `<img>` above the
   activity chips. Decorative: the heading beside it carries the meaning, so it
   ships with an empty `alt`.
+- **homeroom-logo-black.png** — the logo at the top of every transactional
+  email, referenced by `src/services/mail/templates.js`'s `HTML_SHELL` as an
+  absolute `${PRODUCTION_ORIGIN}/brand/homeroom-logo-black.png` URL (a mail
+  client has no page context to resolve a relative one against) with
+  `alt="Homeroom in black"`. `/brand/` is on the public, unauthenticated path
+  allowlist in `src/middleware/auth.js`, same as `/icons/` and
+  `/illustrations/`, which is what lets a mail client fetch it with no
+  session.
 
 ## Offline
 
@@ -79,6 +94,12 @@ to load draws its kind icon instead, so caching nine SVGs would buy nothing a
 reader can tell apart. The landing has no such fallback. `/index.html` is
 precached, so a signed-out visitor CAN reach the new landing offline — and
 without this entry they would reach it with a hole where the illustration is.
+
+`homeroom-logo-black.png` is deliberately NOT added to `SHELL_ASSETS`. The
+service worker only ever precaches assets the app SHELL itself draws — this
+one is drawn exclusively by outside mail clients rendering `HTML_SHELL`
+output, which the app's own worker never fetches or serves, so a precache
+entry for it would fill the cache on install and never be read back out.
 
 ## Replacing an asset
 
