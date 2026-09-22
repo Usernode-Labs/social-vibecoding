@@ -261,7 +261,25 @@
 // ignored the new field, making the proposal look unchanged even though the
 // preview served the new API and controller code. Retire that shell here so
 // existing preview tabs and installed clients receive the renderer too.
-const SW_VERSION = 'v33';
+//
+// v34 (#2718): THE NAVIGATION REDESIGN, which is the largest shell change
+// these notes have had to cover and exactly the case v10 names. The five
+// places as a permanent bar, the desktop rail and its fold, the header taking
+// the rail's surface, Messages as two panes, the mark's menu — all of it is
+// public/css/app.css, /shell/assets/shell.js and the prerendered
+// /index.html, and all three are precached here. public/js/** changes with
+// them, but a stale shell has no rail for the router to publish to and no
+// second pane for the inbox to fill, so the controller code lands against
+// markup that cannot show it.
+//
+// Found the way v15 says it gets found. The preview was rebuilt and served
+// the new code, and testing still reported one pane in Messages and a back
+// button that went to the Workshop — behaviours measured as correct on the
+// built shell, from a browser that was drawing the cached one. v15 recorded
+// "two rounds of 'still not fixed'" for the same omission; this is the
+// third, and it is the same lesson: the bump belongs in the proposal that
+// changes the shell, not in the one after it.
+const SW_VERSION = 'v34';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
