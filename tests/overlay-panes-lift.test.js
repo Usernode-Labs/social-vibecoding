@@ -97,16 +97,21 @@ test('closed panes hide only after exit and kit adoption owns its own lifetime',
   assert.match(rule('.dc-lift-panel'), /visibility: visible/);
 });
 
-test('the declared feedback text check opens its pane before reading it', () => {
+test('the declared feedback text checks open their pane before reading it', () => {
   const manifest = JSON.parse(read('dapp.json'));
-  // #2718 moved Give feedback out of the Improve panel and into the app's
-  // menu, so the pane the check has to open first is the MENU's. The rule it
-  // exists for is unchanged: a text check that reads a lifted pane must ask
-  // for that pane to be presented, or it reads an empty root.
-  const check = manifest.tests.find(t => t.name.startsWith('The app menu leads with Give feedback'));
-  assert.ok(check, 'the feedback text check must exist');
-  assert.match(check.path, /shot=app-context/);
-  assert.match(check.expectSelector, /#apps-switcher-sheet\[data-open\]/);
+  // WHICH PANE IT IS HAS CHANGED TWICE; the rule has not. #2718 moved Give
+  // feedback out of the Improve panel and into the app's menu, so the pane to
+  // open was the MENU's; its review moved the control back to a button in the
+  // panel's own well, so it is the panel's again. Either way a text check that
+  // reads a LIFTED pane must ask for that pane to be presented, or it reads an
+  // empty root — which is the whole point of this test and the reason it is
+  // written against the manifest rather than against one check's name.
+  const checks = manifest.tests.filter((t) => t.expectText === 'Give feedback');
+  assert.equal(checks.length, 2, 'the two feedback text checks must exist');
+  for (const check of checks) {
+    assert.match(check.path, /shot=improve/, `${check.name} opens the pane it reads`);
+    assert.match(check.expectSelector, /#improve-panel\[data-open\]/);
+  }
 });
 
 test('the backdrops stay, transparent — they are the click target', () => {
