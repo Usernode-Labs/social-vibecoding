@@ -47,6 +47,7 @@ interface Totals {
   ready: number;
   person: number;
   failed: number;
+  budgetStopped: number;
   rated: number;
   agreed: number;
   suppressed: number;
@@ -76,6 +77,7 @@ interface Run {
   build_note: string | null;
   reason: string | null;
   cap_suppressed: string | null;
+  budget_stop: string | null;
   rating: 'yes' | 'no' | null;
   rating_note: string | null;
   rated_at: string | null;
@@ -177,6 +179,18 @@ function VerdictBody({ run }: { run: Run }) {
   }
   if (run.verdict === 'person') {
     return <p className="text-sm">{run.reason || '(no reason given)'}</p>;
+  }
+  if (run.budget_stop) {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm">
+          {`The bot stopped this turn itself: it ran past the ${run.budget_stop} limit before reaching a verdict.`}
+        </p>
+        <p className={AdminUI.muted}>
+          It goes back to the end of the queue once. A second stop lets the issue go, rather than retrying it forever.
+        </p>
+      </div>
+    );
   }
   return <p className="text-sm text-red-400 break-words">{run.error || 'The run failed before it produced a verdict.'}</p>;
 }
@@ -317,6 +331,7 @@ function HomeroomBotSection() {
           {tile('Ask / ready / person', totals ? `${totals.questions} / ${totals.ready} / ${totals.person}` : '–', 'admin-homeroom-bot-tile-mix')}
           {tile('Agreed with', agreement == null ? (totals && totals.rated ? '–' : 'unrated') : `${agreement}% of ${totals?.rated}`, 'admin-homeroom-bot-tile-agreement')}
           {tile('Spent this week', bot ? `${dollarsFromCents(bot.weeklySpentCents)} of ${dollarsFromCents(bot.weeklyLimitCents)}` : '–', 'admin-homeroom-bot-tile-spend')}
+          {tile('Stopped on budget', String(totals?.budgetStopped ?? 0), 'admin-homeroom-bot-tile-budget')}
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
@@ -544,6 +559,7 @@ function HomeroomBotSection() {
               <option value="empty">Nothing to build</option>
               <option value="person">Needs a person</option>
               <option value="failed">Failed</option>
+              <option value="budget">Stopped on budget</option>
             </select>
             {canWrite ? (
               <a
@@ -597,7 +613,9 @@ function HomeroomBotSection() {
                         aria-expanded={isOpen}
                         onClick={() => setOpen((o) => ({ ...o, [run.id]: !isOpen }))}
                       >
-                        <span className={VERDICT_BADGE[run.verdict]}>{VERDICT_LABEL[run.verdict]}</span>
+                        <span className={run.budget_stop ? AdminUI.badge.warn : VERDICT_BADGE[run.verdict]}>
+                          {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
+                        </span>
                         {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
                         <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
                       </button>

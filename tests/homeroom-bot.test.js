@@ -377,6 +377,41 @@ test('runTriage: a second budget stop on the same issue drops it instead of loop
   assert.ok(!calls.queries.some((q) => /reason = 'budget_retry'/.test(q.s)));
 });
 
+test('a budget stop records WHICH limit tripped, in a column of its own', async () => {
+  const { pool, deps, calls } = triageHarness({ verdictText: 'x' });
+  deps.worker.stopTurn = async () => {};
+  deps.worker.execInWorker = async (id, opts) => {
+    opts.onUsage({ inputTokens: 20_000_000 });
+    return { lastResultText: '', inputTokens: 20_000_000, outputTokens: 1 };
+  };
+  await bot.runTriage(pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
+    settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
+  });
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(insert.s, /budget_stop\)/, 'the insert names the column');
+  assert.ok(insert.params.includes('input tokens'),
+    'the limit is stored as data, not left to be grepped out of the error text');
+  assert.ok(insert.params.includes('budget: input tokens'), 'and the error line still reads the same');
+});
+
+test('the totals count a budget stop separately and stop calling it a failure', () => {
+  assert.match(SRC, /COUNT\(\*\) FILTER \(WHERE verdict = 'failed' AND budget_stop IS NULL\)::int AS failed/,
+    'a turn we stopped ourselves is not a failure');
+  assert.match(SRC, /COUNT\(\*\) FILTER \(WHERE budget_stop IS NOT NULL\)::int AS budget_stopped/);
+  assert.match(SRC, /budgetStopped: t\.budget_stopped \|\| 0/);
+  const schema = read('src/db/schema.sql');
+  assert.match(schema, /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS budget_stop TEXT;/,
+    'added, not backfilled: the rows already recorded keep their error text and a null here');
+});
+
+test('the runs query filters to budget stops on one static statement', () => {
+  assert.match(SRC, /AND \(NOT \$5::boolean OR r\.budget_stop IS NOT NULL\)/,
+    'a nullable parameter, so the SQL lint still sees one static query');
+  assert.match(SRC, /r\.budget_stop,/, 'and the column travels with the row');
+  assert.match(SRC, /'error', 'budget_stop', 'thread_seen_at',/, 'the export carries it beside the error');
+});
+
 // ── Refusals and backoff (#2737) ─────────────────────────────────────────
 
 test('runTriage: a busy session is a refusal — no ledger row, no lost queue row, an app that backs off', async () => {

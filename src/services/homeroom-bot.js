@@ -749,15 +749,16 @@ async function insertRun(pool, run) {
     `INSERT INTO homeroom_bot_runs
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
-        input_tokens, output_tokens, duration_ms, error)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        input_tokens, output_tokens, duration_ms, error, budget_stop)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
       run.questionDefault || null, run.buildNote || null, run.reason || null,
       run.capSuppressed || null, run.threadSeenAt || null, run.model || null,
       run.costUsd ?? null, run.inputTokens ?? null, run.outputTokens ?? null,
-      run.durationMs ?? null, run.error ? clip(run.error, MAX_ERROR_CHARS) : null],
+      run.durationMs ?? null, run.error ? clip(run.error, MAX_ERROR_CHARS) : null,
+      run.budgetStop || null],
   );
   return rows[0]?.id || null;
 }
@@ -1047,7 +1048,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     const result = routed?.result || {};
     const id = await insertRun(pool, {
       appId: app.id, issueNumber, sessionId: session.id, mode, verdict: 'failed',
-      error: `budget: ${budgetHit}`,
+      error: `budget: ${budgetHit}`, budgetStop: budgetHit,
       threadSeenAt: item.thread_seen_at || null, model,
       costUsd: Number.isFinite(routed?.estimatedCostUsd) ? routed.estimatedCostUsd : null,
       inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : null,
@@ -1349,6 +1350,7 @@ const RUNS_PAGE = 50;
 // sizes — `$3` is a keyset cursor (`id <`) over the `id DESC` order, which
 // is what lets the export walk the whole ledger a chunk at a time.
 const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, r.missing_fact,
+            r.budget_stop,
             r.question, r.question_default, r.build_note, r.reason, r.cap_suppressed,
             r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
             r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
@@ -1359,6 +1361,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
       WHERE ($1::text IS NULL OR a.slug = $1::text)
         AND ($2::text IS NULL OR r.verdict = $2::text)
         AND ($3::int IS NULL OR r.id < $3::int)
+        AND (NOT $5::boolean OR r.budget_stop IS NOT NULL)
       ORDER BY r.id DESC
       LIMIT $4`;
 
@@ -1379,7 +1382,7 @@ const EXPORT_COLUMNS = Object.freeze([
   'question', 'question_default', 'build_note', 'reason', 'cap_suppressed',
   'rating', 'rating_note', 'rated_by', 'rated_at',
   'model', 'cost_usd', 'input_tokens', 'output_tokens', 'duration_ms',
-  'error', 'thread_seen_at',
+  'error', 'budget_stop', 'thread_seen_at',
 ]);
 
 /** One run as the values of EXPORT_COLUMNS, in that order. */
@@ -1404,12 +1407,14 @@ const EXPORT_CHUNK = 500;
  * the last id of the previous chunk cannot skip or repeat a row while the
  * export runs. Caller writes each chunk out and never holds the whole set.
  */
-async function* iterateRunsForExport(pool, { app = null, verdict = null, chunk = EXPORT_CHUNK } = {}) {
+async function* iterateRunsForExport(pool, {
+  app = null, verdict = null, chunk = EXPORT_CHUNK, budgetOnly = false,
+} = {}) {
   const size = Math.min(Math.max(Number(chunk) || EXPORT_CHUNK, 1), 2000);
   let cursor = null;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
-    const { rows } = await pool.query(RUNS_SQL, [app || null, verdict || null, cursor, size]);
+    const { rows } = await pool.query(RUNS_SQL, [app || null, verdict || null, cursor, size, !!budgetOnly]);
     if (!rows.length) return;
     yield rows;
     if (rows.length < size) return;
@@ -1417,7 +1422,9 @@ async function* iterateRunsForExport(pool, { app = null, verdict = null, chunk =
   }
 }
 
-async function adminPayload(pool, config, { app = null, verdict = null, before = null, limit = RUNS_PAGE } = {}) {
+async function adminPayload(pool, config, {
+  app = null, verdict = null, before = null, limit = RUNS_PAGE, budgetOnly = false,
+} = {}) {
   const settings = await readSettings(pool);
   const limits = require('./limits');
   const managedOpenRouter = require('./openrouter-managed-keys');
@@ -1462,7 +1469,8 @@ async function adminPayload(pool, config, { app = null, verdict = null, before =
             COUNT(*) FILTER (WHERE verdict = 'question')::int AS questions,
             COUNT(*) FILTER (WHERE verdict = 'ready')::int AS ready,
             COUNT(*) FILTER (WHERE verdict = 'person')::int AS person,
-            COUNT(*) FILTER (WHERE verdict = 'failed')::int AS failed,
+            COUNT(*) FILTER (WHERE verdict = 'failed' AND budget_stop IS NULL)::int AS failed,
+            COUNT(*) FILTER (WHERE budget_stop IS NOT NULL)::int AS budget_stopped,
             COUNT(*) FILTER (WHERE rating IS NOT NULL)::int AS rated,
             COUNT(*) FILTER (WHERE rating = 'yes')::int AS agreed,
             COUNT(*) FILTER (WHERE cap_suppressed IS NOT NULL)::int AS suppressed,
@@ -1477,7 +1485,10 @@ async function adminPayload(pool, config, { app = null, verdict = null, before =
     questions: t.questions || 0,
     ready: t.ready || 0,
     person: t.person || 0,
+    // Failures are failures again: a turn we stopped ourselves is counted
+    // separately, not as one (#2742).
     failed: t.failed || 0,
+    budgetStopped: t.budget_stopped || 0,
     rated: t.rated || 0,
     agreed: t.agreed || 0,
     suppressed: t.suppressed || 0,
@@ -1498,7 +1509,7 @@ async function adminPayload(pool, config, { app = null, verdict = null, before =
   const pageSize = Math.min(Math.max(Number(limit) || RUNS_PAGE, 1), 200);
   const { rows: runRows } = await pool.query(
     RUNS_SQL,
-    [app || null, verdict || null, before == null ? null : Number(before), pageSize],
+    [app || null, verdict || null, before == null ? null : Number(before), pageSize, !!budgetOnly],
   );
 
   const { rows: appRows } = await pool.query(

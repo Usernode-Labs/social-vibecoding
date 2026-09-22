@@ -951,9 +951,14 @@ function adminRoutes(config) {
   // the verdicts are the point of the screen. The three writes (settings,
   // a rating, a "run now") are requireAdminWrite, like every mutation here,
   // and so is the CSV export — see its own note below.
+  // `verdict=budget` is not a verdict: it selects the runs the bot stopped
+  // on their own budget, which are recorded as failures carrying the limit
+  // that tripped (#2742). It rides the same parameter because it is the same
+  // control on the screen — one "what am I looking at" picker.
   const botRunFilters = (q) => ({
     app: typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null,
     verdict: ['question', 'ready', 'person', 'empty', 'failed'].includes(q.verdict) ? q.verdict : null,
+    budgetOnly: q.verdict === 'budget',
   });
 
   router.get('/api/admin/homeroom-bot', async (req, res) => {
@@ -987,7 +992,10 @@ function adminRoutes(config) {
   router.get('/api/admin/homeroom-bot/export.csv', requireAdminWrite, async (req, res) => {
     const filters = botRunFilters(req.query || {});
     try {
-      const scope = [filters.app || 'all-apps', filters.verdict || 'all-verdicts'].join('-');
+      const scope = [
+        filters.app || 'all-apps',
+        filters.budgetOnly ? 'budget-stops' : (filters.verdict || 'all-verdicts'),
+      ].join('-');
       const day = new Date().toISOString().slice(0, 10);
       res.status(200);
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
