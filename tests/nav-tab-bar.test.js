@@ -389,21 +389,36 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(toggle, /aria-label=\{railOpen \? 'Hide sidebar' : 'Show sidebar'\}/);
   assert.match(toggle, /aria-controls="platform-tabs"/);
 
-  // IT RENDERS NOTHING WHERE THE ROUTE HAS NO RAIL — inside an app,
-  // chromeless, signed out. A toggle for a thing that is not there is a dead
+  // IT IS UNSEEN WHERE THE ROUTE HAS NO RAIL — inside an app, chromeless,
+  // signed out — because a toggle for a thing that is not there is a dead
   // control, and an app's rail comes back by pointing at the window's edge.
-  assert.match(toggle, /const hasRail = useVisibility\('platform-tabs', true\);/);
-  assert.match(toggle, /if \(!hasRail\) return null;/);
+  // BUT THAT IS CSS'S ANSWER, not a `return null`: see the hydration note
+  // further down, and the selector asserted with it.
+  assert.ok(!/^import .*visibility-store/m.test(toggle),
+    'the route may not reach this component through anything render-time');
+  assert.ok(!/^\s*(if \(.*\) )?return null;/m.test(toggle), 'it always renders');
 
   // IT LIVES IN THE MEASURED LEFT GROUP, so use-header-layout.ts counts it
   // without being told: that hook decides whether the title can centre from
   // the group's inner edge, and a control outside the group is 28px of room
   // it would hand to the title.
   assert.match(header, /<SidebarToggle \/>/);
-  assert.match(header, /const hasRail = useVisibility\('platform-tabs', true\);/);
-  assert.match(header,
-    /\+ \(mode !== 'none' \? '' : hasRail \? ' platform-header-left-desktop' : ' hidden'\)/,
-    'three states: content at every width, desktop-only, or gone');
+
+  // NOTHING ABOUT THE MARKUP VARIES WITH THE RAIL (#2718 review). Both this
+  // group's class and the toggle's existence were computed from
+  // `useVisibility('platform-tabs')` during render — a store public/js/app.js
+  // publishes before this deferred bundle hydrates — so the prerender and the
+  // first client render disagreed, and React threw #418 on every route. A
+  // console error on any route fails every declared check.
+  assert.match(header, /className=\{LEFT_GROUP_CLASS\}/, 'a constant, rendered once');
+  assert.match(header, /const LEFT_GROUP_CLASS = '[^']*platform-header-left';/);
+  // The header still READS a visibility flag — its own — and that is fine
+  // because it spends it through `useHiddenClass`, a ref effect that runs
+  // after hydration has already agreed with the prerender. The rule is not
+  // "never read the store", it is "never let a read reach the markup".
+  const reads = header.match(/^\s*const \w+ = useVisibility\(/gm) || [];
+  assert.equal(reads.length, 1, 'one read, and it is not the rail\u2019s');
+  assert.match(header, /const visible = useVisibility\('platform-header', true\);\n\s*useHiddenClass\(headerRef, !visible\);/);
 
   // A PHONE'S BAR IS AT THE FOOT OF THE SCREEN and is the only navigation
   // there is. Folding must never reach it — so the fold is a CLASS that
@@ -425,8 +440,17 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   // first time this was tried. The id beats Tailwind's own `.flex`, which
   // wins equal-specificity conflicts because app.css loads first.
   assert.match(css, /\.platform-sidebar-toggle \{\n  display: none;\n\}/);
+  // All three questions are CSS's, and none is part of hydration: does the
+  // rail exist (`#platform-tabs.hidden`), is there room for it (the media
+  // query), and has the group anything in it (`:has(> #back-btn.hidden)`).
   assert.match(css,
-    /@media \(max-width: 767px\) \{[\s\S]{0,600}#platform-header \.platform-header-left-desktop \{\s*display: none;/);
+    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: none;/);
+  assert.match(css,
+    /body:has\(#platform-tabs:not\(\.hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
+    '…unless the toggle is in it, which needs both a rail and the width');
+  assert.match(css,
+    /body:has\(#platform-tabs:not\(\.hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/,
+    'which is what replaces the `return null` the component used to do');
   // FOLDED RESERVES NOTHING, and only on the desktop layout.
   const zero = css.indexOf('body:has(#platform-tabs.platform-tabs-folded)');
   assert.ok(zero > 0);

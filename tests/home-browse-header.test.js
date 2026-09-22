@@ -167,14 +167,16 @@ for (const improveAvailable of [true, false]) {
     // it — but the slots are asserted EQUAL rather than opposite.
     assert.equal(maskChip(maskBackSlot(browse)), maskChip(maskBackSlot(home)),
       'apart from the back slot, only what the title says changes');
-    // THE GROUP IS NOT `hidden` ON A ROOT ANY MORE — it holds the desktop
-    // sidebar toggle, which is the one control in the bar that belongs to the
-    // ROOTS (#2718 review). `.platform-header-left-desktop` is how it goes
-    // away on a phone, where the toggle has no rail to fold: app.css owns
-    // that, because whether the control exists is a question about the
-    // viewport and React does not know the viewport. The back ANCHOR inside
-    // is still `hidden`, which is the fact these two screens are compared on.
-    const EMPTY_SLOT = /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 platform-header-left-desktop">[\s\S]{0,1200}id="back-btn"[^>]*un-touch-target hidden"/;
+    // THE GROUP'S CLASS IS A CONSTANT (#2718 review). It holds the desktop
+    // sidebar toggle now, and for one round it varied with the rail's
+    // visibility so a tab root could show that toggle — which read a store
+    // published by a classic script BEFORE this bundle hydrates, so the
+    // prerender and the first client render disagreed and React threw #418
+    // on every route. Whether the group SHOWS is app.css's question now: it
+    // can see the back anchor's `hidden`, the bar's `hidden` and the
+    // viewport, and it is not part of hydration. The back ANCHOR inside is
+    // still `hidden`, which is the fact these two screens are compared on.
+    const EMPTY_SLOT = /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 platform-header-left">[\s\S]{0,1200}id="back-btn"[^>]*un-touch-target hidden"/;
     assert.match(home, EMPTY_SLOT, 'Home is a root: its slot is hidden');
     assert.match(browse, EMPTY_SLOT, 'and so is Discover');
     assert.match(label(home), /<svg[^>]*\bfill="currentColor"/,
@@ -322,10 +324,10 @@ test('a detail opened directly from a Home card has no list to go up to', () => 
   assert.equal(ui.backButtonStore.get().mode, 'none');
   // The anchor keeps its default aria-label while hidden — 'none' hides the
   // slot rather than renaming it — so the observable is the class on the
-  // anchor. Its WRAPPER stays rendered on a root: it carries the desktop
-  // sidebar toggle, and `.platform-header-left-desktop` is what takes the
-  // group away on a phone (see the note beside EMPTY_SLOT above).
-  assert.match(h.header(), /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 platform-header-left-desktop">/);
+  // anchor. Its WRAPPER renders the same class on every route (see the note
+  // beside EMPTY_SLOT above): app.css takes the group away when the anchor
+  // is hidden and no toggle is showing beside it.
+  assert.match(h.header(), /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 platform-header-left">/);
   assert.match(h.header(), /id="back-btn"[^>]*un-touch-target hidden"/);
 });
 

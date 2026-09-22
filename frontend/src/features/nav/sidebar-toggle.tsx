@@ -25,12 +25,13 @@
  * before either — the same corner the prototype and all four of those
  * products use.
  *
- * DESKTOP ONLY, and only where there is a rail to fold. app.css hides it
- * below the breakpoint, because a phone's bar is at the foot and folding it
- * would leave a reader with no navigation and no hover to bring it back. It
- * renders nothing at all when the ROUTE has no rail — inside an app, signed
- * out — since a toggle for a thing that is not there is a dead control, and
- * an app's rail comes back by pointing at the window's edge instead.
+ * DESKTOP ONLY, and only where there is a rail to fold — but BOTH of those
+ * are app.css's to decide, not this component's. The breakpoint, because a
+ * phone's bar is at the foot and folding it would leave a reader with no
+ * navigation and no hover to bring it back; and `#platform-tabs.hidden`,
+ * because a toggle for a thing that is not there is a dead control and an
+ * app's rail comes back by pointing at the window's edge instead. The note
+ * on the component below says why neither may be a render-time question.
  *
  * ── Collapsed is the app view's state, reached another way ─────────────
  *
@@ -44,7 +45,6 @@
 import { SidebarIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
-import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from './nav-store.js';
 
 // THE SAME DISC the back slot beside it wears — ../header/platform-header.tsx
@@ -60,12 +60,22 @@ const TOGGLE_CLASS = 'platform-sidebar-toggle shrink-0 w-7 h-7 items-center just
   + ' bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]';
 
 export function SidebarToggle() {
-  // The ROUTE's answer, not the viewer's: `true` is what the prerendered
-  // document ships, and the routes with no rail publish `false` once the
-  // router has run.
-  const hasRail = useVisibility('platform-tabs', true);
+  // IT ALWAYS RENDERS, and app.css decides whether it is seen (#2718 review).
+  //
+  // This read `useVisibility('platform-tabs')` and returned null on a route
+  // with no rail, which is the right ANSWER reached the wrong way: the
+  // visibility store is published by public/js/app.js — a classic script,
+  // which runs before this deferred module hydrates — so the prerender drew
+  // the button from the default `true` and the first client render dropped
+  // it. React error #418 on every route, and a console error fails every
+  // declared check.
+  //
+  // The markup is therefore constant and `body:has(#platform-tabs.hidden)`
+  // hides it, which is a question CSS can answer without being part of
+  // hydration. `railOpen` stays a rendered attribute because nothing
+  // publishes it before hydration: INITIAL is `true`, and only a press
+  // moves it.
   const { railOpen } = useStoreState(navStore);
-  if (!hasRail) return null;
 
   return (
     <button

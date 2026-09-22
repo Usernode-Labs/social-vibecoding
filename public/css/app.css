@@ -16692,20 +16692,37 @@ html.un-kb #platform-tabs {
   display: none;
 }
 
-/* THE GROUP THAT HOLDS IT, when that is ALL it holds. On a tab root the back
-   slot is empty (App._BACK_SLOT), so the toggle is the group's only content
-   and the group has to go with it — an empty-but-present flex item still
-   reserves the header's own `gap-4`, which put the wordmark 16px in from the
-   edge of every root screen the first time this was tried. */
-@media (max-width: 767px) {
-  /* SCOPED TO THE HEADER for its specificity, not for its reach. The group
-     carries Tailwind's `flex`, app.css is loaded BEFORE tailwind.css so the
-     utilities win every equal-specificity conflict in this file (#938), and a
-     bare `.platform-header-left-desktop` lost to `.flex` — measured: the
-     wordmark sat at x=32 on a 390px phone instead of x=16. The id puts this
-     rule a class ahead and settles it. */
-  #platform-header .platform-header-left-desktop {
-    display: none;
+/* ── WHAT REACT STOPPED DECIDING (#2718 review) ──────────────────────
+   The toggle's markup is constant and so is its group's class string. Both
+   used to be computed from `useVisibility('platform-tabs')` during render,
+   and that store is published by public/js/app.js — a classic script, which
+   runs BEFORE the deferred island bundle hydrates. The prerender used the
+   default and the first client render used the router's real answer, so the
+   two disagreed and React threw #418 on every route. A console error on any
+   route fails every declared check; 291 of them, which is all of them.
+
+   All three questions are CSS's now, and none of them is part of hydration:
+
+     does the rail exist   → `#platform-tabs.hidden`, which the island
+                             publishes through useHiddenClass
+     is there room for it  → the media query
+     has the group anything→ `:has(> #back-btn.hidden)` plus the two above
+
+   THE GROUP GOES WHEN IT IS EMPTY, and that is not cosmetic: an
+   empty-but-present flex item still reserves the header's own `gap-4`, which
+   put the wordmark 16px in from the edge of every root screen the first time
+   this was tried. Scoped through `#platform-header` for specificity, not for
+   reach — the group carries Tailwind's `flex`, app.css loads BEFORE
+   tailwind.css, and the utilities win every equal-specificity conflict in
+   this file (#938). */
+#platform-header .platform-header-left:has(> #back-btn.hidden) {
+  display: none;
+}
+@media (min-width: 768px) {
+  /* …unless the toggle is in it, which needs both a rail and the width. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) #platform-header
+    .platform-header-left:has(> #back-btn.hidden) {
+    display: flex;
   }
 }
 
@@ -16714,8 +16731,12 @@ html.un-kb #platform-tabs {
      periwinkle disc while the rail is up and goes quiet when it is down —
      the rail being there is what the control is asserting. Colour only: the
      disc does not move, because it is the fixed thing the layout pivots
-     around when the whole content column slides. */
-  .platform-sidebar-toggle {
+     around when the whole content column slides.
+
+     `body:has(...)` is what replaces the `return null` this component used
+     to do for itself: a route with no rail has no fold to offer, and a dead
+     control is worse than none. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) .platform-sidebar-toggle {
     display: inline-flex;
     transition: background-color 140ms ease, color 140ms ease,
                 border-color 140ms ease;

@@ -106,6 +106,12 @@ import '../notifications/mount';
 // pinned to 28px (tests/header-height-parity.test.js, and #909 before it), so
 // the ratio scales rather than the row. The hairline is inside the h-7 box
 // (border-box), so the row's ceiling holds.
+// The left group's class string, hoisted for the reason every other one in
+// this file is: it has to be a CONSTANT, rendered once at hydration and never
+// recomputed. `.platform-header-left` is what app.css hangs the group's own
+// visibility on; nothing here decides it.
+const LEFT_GROUP_CLASS = 'h-7 shrink-0 flex items-center gap-1.5 min-w-0 platform-header-left';
+
 const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
   + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
   + ' text-[color:var(--brand-ink)] un-touch-target';
@@ -240,12 +246,6 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
-  // THE SECOND READER of the rail's own visibility flag (../nav/tab-bar.tsx
-  // is the first). The left group holds the sidebar toggle, and the toggle
-  // renders nothing on a route with no rail — so whether this group has
-  // content on a tab root is exactly this question, asked here rather than
-  // guessed from `mode`.
-  const hasRail = useVisibility('platform-tabs', true);
   useNativeBackNavigation(nativeBackEnabled({
     visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
   }));
@@ -403,28 +403,27 @@ export function PlatformHeader() {
             Derived from the same two flags the children use, so there is no
             third source of truth about whether this group has content.
 
-            THREE STATES NOW, not two (#2718 review), because the sidebar
-            toggle joined the group and is desktop-only:
+            AND ITS CLASS IS A CONSTANT AGAIN (#2718 review). It spent a
+            round varying with the rail's visibility, so that a tab root whose
+            back slot is empty could still show the sidebar toggle. That read
+            `useVisibility('platform-tabs')` DURING RENDER — and the visibility
+            store is published by public/js/app.js, a classic script, which
+            runs BEFORE this deferred module hydrates. So the prerender used
+            the default `true` and the first client render saw the router's
+            real answer, and the two disagreed about this element's className
+            AND about whether it had a toggle in it: React error #418 on every
+            route, which is a console error, which fails every declared check.
+            Found by building the shell against React's development bundle and
+            reading the diff it prints.
 
-              back slot filled        → the group has content at every width
-              empty, but there IS a   → content on a desktop, nothing on a
-                rail to fold            phone, so the WIDTH decides and the
-                                        decision belongs in CSS
-              empty, and no rail      → `hidden`, as before
-
-            The middle case cannot be a rendered class toggle: React does not
-            know the viewport, and reading it would put a measurement in the
-            render path and make the prerender disagree with the first client
-            render. `.platform-header-left-desktop` in app.css is the same
-            `display:none` keyed off a media query — which matters because an
-            empty-but-present group still reserves the header's own `gap-4`,
-            the exact 16px bug this element's `hidden` was added for.
+            Whether this group has anything IN it is now entirely app.css's
+            question — it can see the back anchor's own `hidden`, the bar's
+            own `hidden` and the viewport, and it is not part of hydration.
+            That is the same division ../nav/tab-bar.tsx already makes for the
+            bar itself, and the reason it lands its visibility through
+            `useHiddenClass` rather than through a rendered className.
         */}
-        <div
-          ref={leftGroupRef}
-          className={'h-7 shrink-0 flex items-center gap-1.5 min-w-0'
-            + (mode !== 'none' ? '' : hasRail ? ' platform-header-left-desktop' : ' hidden')}
-        >
+        <div ref={leftGroupRef} className={LEFT_GROUP_CLASS}>
           {/*
                 FIRST IN THE GROUP, so it sits in the window's top-left
                 corner — where VS Code, Slack, Linear, Notion and the design

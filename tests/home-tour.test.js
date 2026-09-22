@@ -65,18 +65,19 @@ const INDEX = read('public/index.html');
 const steps = loadTsx(`${TOUR_DIR}/tour-steps.ts`);
 const spotlight = loadTsx(`${TOUR_DIR}/spotlight.ts`);
 
-test('the eight steps are the ones the design settled on, in order', () => {
-  assert.equal(steps.TOUR_LENGTH, 8);
-  // #2718 swapped steps 4 and 5 and repointed three targets. "Give feedback"
-  // is the lead row of the APP'S OWN MENU now rather than a row of the
-  // Improve panel, so its step points at the mark that opens that menu — and
-  // a header control cannot be spotlit with a panel drawn over it, so the
-  // step that closes the panel moved up to it. The ids and the count are
-  // unchanged; the arc is welcome → create → improve → new change → the
-  // menu → Workshop → challenges → settings.
+test('the nine steps are the ones the design settled on, in order', () => {
+  assert.equal(steps.TOUR_LENGTH, 9);
+  // #2718 ADDED one and repointed three, and the count reached nine in two
+  // moves worth keeping apart. The issue moved "Give feedback" out of the
+  // Improve panel and into the mark's menu, so its step became a step about
+  // the menu and the arc stayed at eight. Testing put the feedback button
+  // back in the panel, which gave the panel its step back — and left the
+  // menu, which is new and on screen on every route, with none. So it has
+  // one of its own: welcome → create → improve → give feedback → new change
+  // → the menu → Workshop → challenges → settings.
   assert.deepEqual(steps.TOUR_STEPS.map((s) => s.id), [
-    'welcome', 'create', 'improve', 'new-change', 'feedback', 'workshop',
-    'challenges', 'settings',
+    'welcome', 'create', 'improve', 'feedback', 'new-change', 'app-menu',
+    'workshop', 'challenges', 'settings',
   ]);
 });
 
@@ -104,10 +105,13 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // the viewer opens with it. No mock anywhere in the feature.
   assert.deepEqual([...byId.improve.targets], ['#app-menu-row-improve']);
   assert.deepEqual([...byId['new-change'].targets], ['#improve-row-new-session']);
-  // …then the app's own menu, pointed at the control that opens it rather
+  // Give feedback is a row of the panel again, so its step is main's step,
+  // taken back verbatim (#2718 review).
+  assert.deepEqual([...byId.feedback.targets], ['#improve-row-feedback']);
+  // …then the app's own menu, pointed at the control that OPENS it rather
   // than at a row inside it: the mark is on screen on every route, and the
   // rows behind it are self-evident once you have opened it once.
-  assert.deepEqual([...byId.feedback.targets], ['#platform-mark-btn']);
+  assert.deepEqual([...byId['app-menu'].targets], ['#platform-mark-btn']);
   // Workshop is a TAB. Its target was `#app-context-row-workshop`, an id
   // nothing had rendered for some time, so the step fell through to no target
   // and drew its card with no cut-out at all.
@@ -139,13 +143,15 @@ test('the cut-out passes the press through only where pressing is the point', ()
   // ONE step is pressed through: the Improve step, which the viewer completes
   // by opening the panel itself and which has no Next to do it for them.
   assert.equal(byId.improve.interactive, true, 'the Improve step lets the real button be pressed');
-  // Everything else DESCRIBES its target, the three highlighted rows of the
-  // Improve bar included. Feedback presents a dialog, New change starts a
-  // session and Workshop navigates off Home, so a press there walks out of a
-  // tour that is only pointing at them; the keyboard has always been shut out
-  // of these three by the focus move and the Tab handler below, and the
-  // pointer now agrees.
-  for (const id of ['welcome', 'create', 'feedback', 'new-change', 'workshop', 'challenges', 'settings']) {
+  // EVERYTHING ELSE DESCRIBES ITS TARGET. Feedback presents a dialog, New
+  // change starts a session, Workshop navigates off Home and the mark opens a
+  // menu over the card itself, so a press on any of them walks out of a tour
+  // that is only pointing at them. The keyboard has always been shut out of
+  // them by the focus move and the Tab handler below, and the pointer agrees.
+  // #2718's two new targets arrived carrying the flag and lost it here: a tab
+  // and a menu button are the same case as the rows, not an exception to it.
+  for (const id of ['welcome', 'create', 'feedback', 'new-change', 'app-menu',
+    'workshop', 'challenges', 'settings']) {
     assert.equal(byId[id].interactive, undefined, `${id} only describes its target`);
   }
   // The rule stated once more against the table itself, so a step added later
@@ -161,21 +167,24 @@ test('the cut-out passes the press through only where pressing is the point', ()
   assert.match(OVERLAY_SRC, /useClassToggle\(spotRef, 'pointer-events-auto', !step\.interactive\)/);
 });
 
-test('one panel step knows it needs the panel, and the step after shuts it', () => {
-  // ONE, since #2718: feedback and Workshop are not in the panel any more, so
-  // the only step whose target is inside it is New change. The step that
-  // closes it moved up with them — the mark is in the HEADER, and a panel
-  // drawn over the header would put the cut-out around something the viewer
-  // cannot see.
+test('two panel steps know they need the panel, and the step after shuts it', () => {
+  // TWO, where there were three: Workshop is a TAB since #2718, so it left
+  // the panel with the other repointed targets. Feedback did not — it went to
+  // the mark's menu for a round and the review brought it back.
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
+  assert.equal(byId.feedback.needsPanel, true);
   assert.equal(byId['new-change'].needsPanel, true);
-  for (const id of ['feedback', 'workshop', 'challenges']) {
+  for (const id of ['app-menu', 'workshop', 'challenges']) {
     assert.equal(byId[id].needsPanel, undefined, `${id} does not need the panel`);
   }
   assert.equal(byId.improve.needsPanel, undefined,
     'the Improve step needs no panel: its target is a row of the app\'s own '
     + 'menu, which it presents for itself');
-  assert.equal(byId.feedback.closesPanel, true);
+  // AND THE STEP AFTER THEM SHUTS IT. The mark is in the HEADER, and a panel
+  // drawn over the header would put the cut-out around something the viewer
+  // cannot see, so the close moved up to the menu step from Challenges —
+  // which still carries it, for a viewer who never opened the panel at all.
+  assert.equal(byId['app-menu'].closesPanel, true);
   // Closed through the controller's own path, never by writing to the
   // panel's DOM, which React owns. Both surfaces, because the steps that
   // carry `closesPanel` spotlight the header and either one drawn over it
@@ -252,14 +261,14 @@ test('Back onto the Improve step shuts the panel first, then opens the menu', ()
 
 test('Next, Back and Finish cannot walk off either end', () => {
   assert.equal(steps.clampIndex(-3), 0);
-  assert.equal(steps.clampIndex(99), 7);
+  assert.equal(steps.clampIndex(99), 8);
   assert.equal(steps.clampIndex(Number.NaN), 0);
   assert.equal(steps.stepAt(0).id, 'welcome');
-  assert.equal(steps.stepAt(7).id, 'settings');
-  assert.ok(!steps.isLastStep(6));
-  assert.ok(steps.isLastStep(7));
-  assert.equal(steps.stepCounter(0), '1 of 8');
-  assert.equal(steps.stepCounter(7), '8 of 8');
+  assert.equal(steps.stepAt(8).id, 'settings');
+  assert.ok(!steps.isLastStep(7));
+  assert.ok(steps.isLastStep(8));
+  assert.equal(steps.stepCounter(0), '1 of 9');
+  assert.equal(steps.stepCounter(8), '9 of 9');
 });
 
 test('the card goes below the hole when it fits, above it when it does not', () => {
@@ -564,16 +573,18 @@ test('a storage that throws costs a reload its place and nothing else', () => {
 test('a reload resumes where the viewer was, and a panel step at the Improve step', () => {
   assert.equal(steps.resumeIndex(null), 0, 'nothing kept: from the top');
   assert.equal(steps.resumeIndex(1), 1);
-  assert.equal(steps.resumeIndex(7), 7);
+  assert.equal(steps.resumeIndex(8), 8);
   // A fresh document has no Improve panel open, so a panel step cannot be
-  // resumed as itself: the arc restarts at "press Improve". ONE step is in
-  // the panel since #2718 (New change), where three were.
+  // resumed as itself: the arc restarts at "press Improve". TWO steps are in
+  // the panel (Give feedback, New change), where three were before #2718 made
+  // Workshop a tab.
   assert.equal(steps.resumeIndex(3), steps.IMPROVE_STEP_INDEX, 'step 4 resumes at Improve');
-  // …and the two that left it resume where they are, because the mark and
-  // the Workshop tab are on screen in a fresh document.
-  assert.equal(steps.resumeIndex(4), 4, 'the menu step resumes as itself');
-  assert.equal(steps.resumeIndex(5), 5, 'and so does Workshop');
-  assert.equal(steps.resumeIndex(99), 7, 'clamped like every other index');
+  assert.equal(steps.resumeIndex(4), steps.IMPROVE_STEP_INDEX, 'and so does step 5');
+  // …and the ones that are not in it resume where they are, because the mark
+  // and the Workshop tab are on screen in a fresh document.
+  assert.equal(steps.resumeIndex(5), 5, 'the menu step resumes as itself');
+  assert.equal(steps.resumeIndex(6), 6, 'and so does Workshop');
+  assert.equal(steps.resumeIndex(99), 8, 'clamped like every other index');
   assert.equal(steps.resumeIndex(Number.NaN), 0);
 });
 
@@ -621,7 +632,7 @@ test('the first render is the hidden overlay, with nothing measured', () => {
   assert.match(html, /id="home-tour-confirm" class="hidden"/);
   assert.match(html, /Are you sure\? You can reopen this from Settings\./);
   // Step 1 is what a step-less render shows, on both sides of hydration.
-  assert.match(html, /1 of 8/);
+  assert.match(html, /1 of 9/);
   assert.match(html, /Welcome to Homeroom/);
   // No geometry in the markup: the hole and the card position are style
   // writes through refs, and a measured pixel in the prerender would be a
