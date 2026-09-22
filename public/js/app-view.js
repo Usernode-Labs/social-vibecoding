@@ -5647,12 +5647,36 @@ const AppView = {
     }
   },
 
-  renderGroupChatTab() {
+  /**
+   * @param {{host?: Element|null, slug?: string, name?: string, readOnly?: boolean}} [ctx]
+   *
+   * TWO CALLERS, TWO SURFACES (#2718 review). The app view's own chat
+   * sub-view calls it with nothing and everything comes from AppView.appData,
+   * exactly as it always did. The MESSAGES SCREEN calls it with a host and an
+   * app, because an app's general discussion is a thread of that inbox now —
+   * listed beside the people and the agent chats, and opened beside the list
+   * rather than by navigating to a different screen root.
+   *
+   * Passing the app in rather than reading AppView.appData is the point: the
+   * Messages screen is not the app view and must not have to pretend to be.
+   * Nothing here writes AppView's state, so the two surfaces can hold
+   * different apps without either noticing.
+   */
+  renderGroupChatTab(ctx) {
     // Card-list revision: general chat mounts into the full-screen chat
     // sub-view's body (falling back to the generic container for any
-    // legacy caller).
-    const content = document.getElementById('dev-chat-body') || AppView._devContainer();
+    // legacy caller), or into the host the caller named.
+    const content = (ctx && ctx.host)
+      || document.getElementById('dev-chat-body')
+      || AppView._devContainer();
     if (!content) return;
+    // The app this mount is ABOUT. AppView.appData is the app view's answer
+    // and the default; a caller that named one owns its own.
+    const app = (ctx && ctx.slug)
+      ? { slug: ctx.slug, name: ctx.name || ctx.slug, readOnly: !!ctx.readOnly }
+      : (AppView.appData
+        ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly }
+        : null);
 
     // (#3) First-arrival framing: name what Group Chat is for. Group chat
     // is rarely empty (system messages), so a permanent banner would be
@@ -5662,7 +5686,7 @@ const AppView = {
     let introAppName = null;
     try {
       if (!localStorage.getItem('usernode_seen_gc_intro')) {
-        introAppName = (AppView.appData && AppView.appData.name) ? AppView.appData.name : 'this app';
+        introAppName = (app && app.name) ? app.name : 'this app';
         localStorage.setItem('usernode_seen_gc_intro', '1');
       }
     } catch { /* private-mode / disabled storage: just skip the intro */ }
@@ -5685,7 +5709,7 @@ const AppView = {
     if (previousList) AppView._reactGroupChat()?.unmountTranscript(previousList);
     AppView._reactGroupChat()?.mountGeneralChat(content, {
       introAppName,
-      readOnly: !!AppView.readOnly,
+      readOnly: !!(app && app.readOnly),
       maxLength: typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000,
     });
 
@@ -5703,14 +5727,14 @@ const AppView = {
     // #621: read-only viewers have no composer — mount the live stream
     // (WS connects at view level; the server drops any write) and stop.
     if (!gcInput) {
-      if (AppView.appData) GroupChat.mount(AppView.appData.slug);
+      if (app) GroupChat.mount(app.slug, app);
       return;
     }
     // Restore any in-progress draft. The input element is a new DOM node
     // on every tab switch, so we rehydrate from the persisted draft
     // (localStorage-backed, keyed by app slug) — this also survives full
     // page refreshes.
-    const slugForDraft = AppView.appData?.slug;
+    const slugForDraft = app && app.slug;
     if (slugForDraft) {
       const saved = GroupChat.getDraft(slugForDraft);
       if (saved) gcInput.value = saved;
@@ -5792,11 +5816,11 @@ const AppView = {
       }
     });
 
-    if (AppView.appData) {
+    if (app) {
       // `mount` re-uses the existing WS + message cache when the user
       // comes back to this tab, preserving their scroll position; it only
       // opens a fresh connection on the first visit to an app.
-      GroupChat.mount(AppView.appData.slug);
+      GroupChat.mount(app.slug, app);
       // The inline vote buttons on activity rows read AppView.voteState,
       // which the forum's feed load (running right after this mount)
       // populates from the same /promoted + /merged data — no separate

@@ -1320,6 +1320,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .messages-thread-pane.messages-no-selection { margin: 0; }
 }
 
+/* ── An app's discussion, as a thread of this inbox (#2718 review) ──────
+   The section is the BOX and features/group-chat draws the sheet inside it,
+   so this adds no fill, no frost and no radius — see the note in the
+   component. All it does is let the host fill the pane, because the sheet
+   inside is `h-full` and a host that collapsed would give it nothing to be
+   the height of. */
+.messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
+.messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
+
 /* Phone-width only. Each of these exists because a narrow column cannot lay
    the row out sideways; the thread pane on a desktop is up to ~59rem and can. */
 @media (max-width: 767px) {

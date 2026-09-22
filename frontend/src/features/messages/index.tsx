@@ -148,7 +148,7 @@ function AppDiscussionRow({ discussion }: { discussion: AppDiscussion }) {
   };
   return (
     <a
-      href={`#app/${encodeURIComponent(discussion.slug)}/dev/chat`}
+      href={`#messages/app/${encodeURIComponent(discussion.slug)}`}
       data-inbox-app={discussion.slug}
       className="messages-conversation-row"
     >
@@ -412,7 +412,7 @@ function ConversationList() {
   const shown = inbox.filter(matches);
 
   return (
-    <section className={`messages-list-pane ${snap.route.conversationId ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+    <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -587,6 +587,107 @@ function dayLabel(message: ConversationMessage): string {
     : { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/**
+ * An app's general discussion, as a thread of this inbox (#2718 review).
+ *
+ * ── Why it is mounted rather than rendered ────────────────────────────
+ *
+ * The transcript, its composer, the @mention and #ref autocompletes, the
+ * spec side panel, the drafts and the attachment wiring are all
+ * public/js/group-chat.js and features/group-chat/. That is one surface
+ * with one owner, and re-implementing it here would be a second copy of a
+ * thing that is loaded, merged and invalidated elsewhere — the same reason
+ * the agent chats are read from their own store rather than copied into
+ * this one. So this renders a HOST and asks the owner to fill it.
+ *
+ * ── The app travels with the mount ────────────────────────────────────
+ *
+ * `AppView.renderGroupChatTab` used to read the app out of AppView.appData,
+ * which is the app view's state. This screen is not the app view and does
+ * not open one, so it passes the app in instead — see that function's note
+ * and GroupChat._app. Nothing here writes AppView's state.
+ *
+ * ── It waits for `readOnly` ───────────────────────────────────────────
+ *
+ * The row carries the app's name but not whether this viewer may write; the
+ * store fetches that (`discussionContext`). Mounting before it lands would
+ * draw a composer and then take it away, or the reverse — so the pane holds
+ * on a skeleton until the answer is here.
+ */
+function AppDiscussionThread({ slug }: { slug: string }) {
+  const snap = useMessagesSnapshot();
+  const host = useRef<HTMLDivElement | null>(null);
+  const context = snap.discussionContext;
+  const ready = !!context && context.slug === slug;
+  const name = ready ? context.name : slug;
+  const readOnly = ready ? context.readOnly : false;
+
+  useEffect(() => {
+    const el = host.current;
+    if (!el || !ready) return undefined;
+    const view = (window as any).AppView;
+    const chat = (window as any).UsernodeReact?.groupChat;
+    view?.renderGroupChatTab?.({ host: el, slug, name, readOnly });
+    return () => {
+      // BOTH PORTALS, and the transcript's first: it points INTO #gc-messages
+      // inside the pane, and a portal left pointing at a detached node keeps
+      // its subtree and its store subscription alive (rule 1 in
+      // lib/legacy-portals.tsx, and the same order renderGroupChatTab
+      // observes when it re-renders).
+      const list = el.querySelector('#gc-messages');
+      if (list) chat?.unmountTranscript?.(list);
+      chat?.unmountGeneralChat?.(el);
+    };
+  }, [slug, ready, name, readOnly]);
+
+  if (snap.discussionError) {
+    return (
+      <section className="flex messages-thread-pane messages-no-selection" aria-label={name}>
+        <h2>This discussion could not be opened.</h2>
+        <p>It may have been removed, or you may not be a member of that app.</p>
+      </section>
+    );
+  }
+  return (
+    <section
+      className="flex messages-thread-pane messages-thread-discussion"
+      aria-label={name}
+      data-discussion-app={slug}
+    >
+      {/* THE PANE SAYS WHOSE DISCUSSION IT IS. On the app view this screen
+          did not need one — the bar above it named the app — but here the
+          bar says "Messages", and the group chat's own intro banner shows
+          once per browser and then never again. The conversation pane beside
+          it carries the same row (ThreadHeader). */}
+      <header className="messages-thread-header">
+        <span
+          data-icon={appIconKind({ name } as never)}
+          className="app-icon-tile messages-inbox-tile"
+          aria-hidden="true"
+        >
+          <AppIconContent app={{ name } as never} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="messages-thread-name block">{name}</span>
+          <span className="messages-thread-sub block">Everyone building this app</span>
+        </span>
+      </header>
+      {/* NO `dc-lift dc-lift-session` HERE, unlike the conversation pane
+          beside it: features/group-chat/general-chat.tsx opens with exactly
+          that pair, so the sheet is drawn once, inside. What this section
+          contributes is the BOX — `.messages-thread-pane`'s margins put the
+          sheet on the strip with the shoulder showing, the same geometry a
+          conversation gets. `platform-kb-column` is inside too, on the chat
+          pane, for the same reason.
+
+          The host's class string is constant and its subtree is entirely
+          group-chat's: the one-owner rule satisfied at this boundary rather
+          than at a node within it. */}
+      <div ref={host} className="messages-discussion-host flex-1 min-h-0" />
+    </section>
+  );
+}
+
 function ConversationThread() {
   const snap = useMessagesSnapshot();
   const scroller = useRef<HTMLDivElement>(null);
@@ -620,6 +721,7 @@ function ConversationThread() {
     });
   }
 
+  if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
   if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your direct and group messages stay here.</p></section>;
   // The shape follows the conversation's kind, and it is on the SECTION so
   // the scroller's class string below stays the one the safe-area test pins.
@@ -680,7 +782,13 @@ export function MessagesScreen() {
     window.addEventListener('sv:authed', retry);
     return () => window.removeEventListener('sv:authed', retry);
   }, []);
-  useEffect(() => { if (snap.route.open) syncChrome(); }, [snap.active?.title, snap.route.open, snap.route.conversationId]);
+  useEffect(() => { if (snap.route.open) syncChrome(); },
+    // The DISCUSSION's two facts belong here for the same reason the
+    // conversation's title does: on a phone this is what names the thread in
+    // the bar and puts the chevron back to the list. Without them, opening a
+    // discussion kept the previous thread's name.
+    [snap.active?.title, snap.route.open, snap.route.conversationId,
+      snap.route.appSlug, snap.discussionContext?.name]);
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.

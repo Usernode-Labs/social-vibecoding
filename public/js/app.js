@@ -3842,6 +3842,21 @@ const App = {
         // ids, so keep their signed-int32 bound local to this route;
         // _numericSegment also serves BIGSERIAL-backed Topochain routes.
         App.setChromeless(false);
+        // AN APP'S DISCUSSION IS A THREAD IN THIS INBOX (#2718 review), so it
+        // has an address in this inbox: `#messages/app/<slug>`. It used to be
+        // listed here and addressed as `#app/<slug>/dev/chat`, which is a
+        // different SCREEN ROOT — so the row promised a pane beside the list
+        // and delivered a full-window takeover with the app view's own back
+        // slot. A row in a list opens beside that list.
+        if (parts[1] === 'app' && parts[2]) {
+          // The raw segment, like the #app route's own slug a few blocks
+          // below: the store validates it and the server is the authority on
+          // whether it names anything.
+          App.navigateToMessages(null, parts[2]);
+          return;
+        }
+        // Conversations use SERIAL ids, so keep their signed-int32 bound
+        // local to this route.
         const conversationId = App._numericSegment(parts[1]);
         App.navigateToMessages(
           conversationId != null && conversationId <= 2147483647
@@ -5055,7 +5070,7 @@ const App = {
   //
   // The `navigateToMessages` name is kept below because push handling and
   // notifications.js's conversation rows still say it.
-  navigateToMessages(conversationId) {
+  navigateToMessages(conversationId, appSlug) {
     const messages = window.UsernodeReact?.messages;
     // ALREADY HERE: route the island in place rather than replaying a screen
     // swap onto the screen you are on. The screen ITSELF is asked, not just
@@ -5064,7 +5079,7 @@ const App = {
     // in _showOnlyScreen is what keeps the flag honest; this is the belt to
     // its braces, and costs one condition.
     if (App._inMessages && App._isScreenVisible('messages-screen') && messages?.isOpen?.()) {
-      messages.route?.(conversationId || null);
+      messages.route?.(conversationId || null, appSlug || null);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -5080,7 +5095,7 @@ const App = {
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
     // effects resolve, and chrome remains suspended until the callback below.
-    messages?.route?.(conversationId || null);
+    messages?.route?.(conversationId || null, appSlug || null);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
