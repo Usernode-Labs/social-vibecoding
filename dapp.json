@@ -2324,9 +2324,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "The app's general discussion is a row of the Messages inbox, not of the Workshop (#2718 review)",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-list-pane a[data-inbox-app][href$=\"/dev/chat\"]"
+      "name": "The Workshop's Current status no longer carries the app's general discussion (#2718 review)",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop:not(:has([data-discussion-row]))"
     },
     {
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
