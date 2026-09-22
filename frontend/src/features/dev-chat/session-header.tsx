@@ -105,10 +105,11 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  * ── Why it is here and not in the header ───────────────────────────────
  *
  * It was an eye/pencil PAIR in the platform header's right slot, where it
- * displaced Improve. Improve is the header's standing action now (see
- * ../improve/improve-button.tsx), and this loop belongs beside the name of
- * the change it acts on anyway: it is the only genuinely contextual control
- * the product has, and a dev session is the only place it means anything.
+ * displaced Improve. That slot is gone entirely — Improve became the header's
+ * standing action and then a row of the app's own menu (#2718) — and this loop
+ * belongs beside the name of the change it acts on anyway: it is the only
+ * genuinely contextual control the product has, and a dev session is the only
+ * place it means anything.
  *
  * ── What it says ──────────────────────────────────────────────────────
  *

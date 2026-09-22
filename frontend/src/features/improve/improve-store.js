@@ -219,15 +219,18 @@ const INITIAL = {
   // SessionState's live entries and the platform version pill.
   //
   // There used to be a third and a fourth, `sessionUnread` / `sessionDone`:
-  // the unread session count Notifications._renderBadge published so this
-  // button could render it. #1610 retired both. The count is on the bell now,
-  // because the bell's list is the only surface that can mark a session
-  // notification read, and a number on a control that cannot clear it is what
-  // sent the reporter back to press Improve a second time.
+  // the unread session count Notifications._renderBadge published so the
+  // header's Improve button could render it. #1610 retired both. The count is
+  // on the bell now, because the bell's list is the only surface that can mark
+  // a session notification read, and a number on a control that cannot clear
+  // it is what sent the reporter back to press Improve a second time.
 
   /**
    * A dev session the viewer can see is mid-turn. Drives #improve-working-dot,
-   * so "something is running" is legible without opening anything.
+   * so "something is running" is legible without opening anything — which is
+   * why that dot followed the control it sat on rather than going with it when
+   * #2718 retired #improve-btn: it is on the Homeroom mark now
+   * (../header/platform-mark.tsx), the one thing on screen on every route.
    * From `SessionState.anyActive()`.
    */
   working: false,

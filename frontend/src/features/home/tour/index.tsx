@@ -11,19 +11,20 @@
  *
  * ── Real controls, all eight steps ─────────────────────────────────────
  *
- * Nothing here is a drawing of the product. The Improve arc works because
- * `#improve-btn` is on Home: the header's Improve control, targeting the
- * platform's own self-hosted row for as long as Home is up
+ * Nothing here is a drawing of the product. The Improve arc works because the
+ * Improve row is reachable on Home: the app's own menu, behind the Homeroom
+ * mark, targeting the platform's own self-hosted row for as long as Home is up
  * (`Home.publishImproveTarget`, #1367). So steps 3 to 6 are one interaction
  * rather than four descriptions:
  *
- *   * step 3 spotlights the button and asks the viewer to press it. It has no
- *     Next. The click is NOT intercepted: the tour subscribes to
- *     `improveStore` and advances when `open` goes true, so what opens the
- *     panel is the product's own handler and the tour is only watching;
- *   * steps 4 to 6 spotlight `#improve-row-feedback`, `#improve-row-new-session`
- *     and `#app-context-row-workshop` INSIDE the panel the viewer just opened,
- *     and Next moves between them;
+ *   * step 3 presents that menu (`opensSheet`) and spotlights the Improve row
+ *     inside it, asking the viewer to press it. It has no Next. The click is
+ *     NOT intercepted: the tour subscribes to `improveStore` and advances when
+ *     `open` goes true, so what opens the panel is the product's own handler
+ *     and the tour is only watching;
+ *   * steps 4 to 6 spotlight `#improve-row-new-session` inside the panel the
+ *     viewer just opened, then the mark and the Workshop tab, and Next moves
+ *     between them;
  *   * step 7 shuts the panel through `Improve.close()`, the controller's own
  *     close path and never a write into its DOM, then points at Challenges.
  *
@@ -150,6 +151,8 @@ import { Button } from '@/components/ui/button';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
+import { AppContext } from '../../app-context/app-context-controller.js';
+import { appContextStore } from '../../app-context/app-context-store.js';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import {
@@ -171,12 +174,26 @@ const HOME_WAIT_MS = 300;
 const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 /**
- * Kit surfaces. Anything presented in one of these that is NOT the Improve
- * panel means the viewer is in a flow the tour must get out of the way of.
- * app.css already keys off this vocabulary (`.un-sheet:has(#improve-panel)`),
- * so it is the kit's published seam rather than a guess.
+ * Kit surfaces. Anything presented in one of these that is not one of the
+ * tour's OWN two means the viewer is in a flow the tour must get out of the
+ * way of. app.css already keys off this vocabulary
+ * (`.un-sheet:has(#improve-panel)`), so it is the kit's published seam rather
+ * than a guess.
  */
 const KIT_SURFACES = '.un-modal, .un-sheet, .un-alert';
+
+/**
+ * The two surfaces the tour drives, and therefore does not pause for.
+ *
+ * The Improve panel has always been one. #2718 added the app's own menu,
+ * and it is not a refinement — it is required: on TOUCH that sheet is adopted
+ * into a `.un-sheet`, so a tour that paused for it would open the menu on the
+ * Improve step (`opensSheet`) and hide itself in the same frame, leaving the
+ * viewer a presented sheet and no card. The web presentation is not a kit
+ * surface at all, which is why this is only ever wrong on a phone — the
+ * surface the tour is most often run on.
+ */
+const TOUR_OWNED_SURFACES = ['#improve-panel', '#apps-switcher-sheet'];
 
 // ── Class strings ──────────────────────────────────────────────────────
 //
@@ -252,10 +269,10 @@ async function whenTermsSettled(): Promise<void> {
   }
 }
 
-/** Is a kit surface other than the Improve panel presented right now? */
+/** Is a kit surface other than the tour's own two presented right now? */
 function otherSurfacePresented(): boolean {
   for (const el of document.querySelectorAll(KIT_SURFACES)) {
-    if (!el.querySelector('#improve-panel')) return true;
+    if (!TOUR_OWNED_SURFACES.some((sel) => el.querySelector(sel))) return true;
   }
   return false;
 }
@@ -415,26 +432,53 @@ export function OnboardingTour() {
     return () => observer.disconnect();
   }, [open]);
 
-  // The Improve step's instruction is "press Improve", and it ends on the
-  // panel OPENING, so arriving with the panel already up is a dead end: there
-  // is no edge left to wait for. Whichever way the viewer got here, Back from
-  // step 4 or a panel opened through an earlier cut-out, the panel is shut
-  // again through the controller's own close path. That is also the answer to
-  // what Back does with a still-open panel: it closes it, so the step always
-  // presents the same way.
+  // ── The Improve step arrives with a clean slate ──────────────────────
+  //
+  // Two things have to be true when it presents, and they are ORDERED, which
+  // is the whole reason they are one effect rather than two.
+  //
+  // THE PANEL MUST BE SHUT. The step's instruction is "press Improve" and it
+  // ends on the panel OPENING, so arriving with it already up is a dead end:
+  // there is no edge left to wait for. Whichever way the viewer got here —
+  // Back from step 4, or a panel opened through an earlier cut-out — it is
+  // shut again through the controller's own close path. That is also the
+  // answer to what Back does with a still-open panel: it closes it, so the
+  // step always presents the same way.
+  //
+  // THEN THE APP'S MENU OPENS, because #2718 made the step's target a row of
+  // it and a row inside a closed sheet has no box for ./spotlight.ts to find.
+  // It WAITS for the panel's teardown rather than racing it: on touch the kit
+  // cannot present a surface while it is still dismissing another, which is
+  // the ordering lib/sheet-controller.js's dismissForNav exists for and the
+  // reason `Improve.close()` is awaited here rather than fired and forgotten.
+  // (AppContext.open's own `_closeSiblings` dismisses the panel too, but it
+  // does not await it — that is the race, not the fix for it.)
+  //
+  // ONCE, ON ARRIVAL, which is what the deps say and what the row needs: its
+  // own handler dismisses the sheet before opening the panel, and an effect
+  // that also watched either surface's state would put the menu straight back
+  // and swallow the press this step is waiting for. The tour presents the
+  // surface; the viewer works it.
   useEffect(() => {
     if (!live) return;
-    if (stepAt(index).advanceOn !== 'improve-open') return;
-    if (!panelOpenNow()) return;
-    void Improve.close();
+    const step = stepAt(index);
+    if (step.advanceOn !== 'improve-open' && !step.opensSheet) return;
+    let cancelled = false;
+    const shut = panelOpenNow() ? Improve.close() : Promise.resolve();
+    void shut.then(() => {
+      if (!cancelled && step.opensSheet) AppContext.open();
+    });
+    return () => { cancelled = true; };
   }, [live, index]);
 
-  // Step 7 ends the arc by shutting the panel itself.
+  // Step 7 ends the arc by shutting the panel itself — and the app's menu with
+  // it, because the steps that carry `closesPanel` spotlight the header and a
+  // sheet drawn over the header hides the thing the cut-out is drawn around.
   useEffect(() => {
     if (!live) return;
     if (!stepAt(index).closesPanel) return;
-    if (!panelOpenNow()) return;
-    void Improve.close();
+    if (panelOpenNow()) void Improve.close();
+    if (appContextStore.get().open) void AppContext.close();
   }, [live, index]);
 
   // A panel step with no panel cannot be shown. Falling back to the Improve

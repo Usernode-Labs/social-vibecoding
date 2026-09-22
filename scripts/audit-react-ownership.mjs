@@ -136,6 +136,19 @@ const OWNED = [
   // and the module patches the model rather than the class list.
   { sel: '#gc-messages', except: ['[data-vote-controls]'] },
   { sel: '#gc-thread-messages', except: ['[data-vote-controls]'] }, // 'thread' key
+  // The app's own menu, behind the Homeroom mark
+  // (features/app-context/app-context-sheet.tsx). Its rows are React's end to
+  // end and it is mounted on every route, so no `when` clause. It earns an
+  // entry with #2718, which retired #improve-btn and made this list the way to
+  // the Improve panel: the dot writers that used to aim at the header pill
+  // publish through the visibility store, and a classList write by id landing
+  // in here instead is exactly the second author this sweep exists to catch.
+  //
+  // NOT the sheet ROOT: the kit writes `platform-sheet-adopted` to that node
+  // on touch, which is the documented seam — and this sweep reports writes
+  // INSIDE a host, so scoping to the scroller states the boundary where it
+  // actually is.
+  { sel: '#switcher-nav' },
   { sel: '#gc-mention-menu' },               // features/group-chat/autocomplete.tsx
   { sel: '#gc-ref-menu' },                   // ditto
   { sel: '#gc-spec-side-panel' },            // features/group-chat/spec-panel.tsx

@@ -474,7 +474,8 @@ const Improve = {
    * The open session's staging preview, or null.
    *
    * Called by DevChat._publishPreview() whenever the open session or its
-   * `staging_url` changes. Gates the header's eye — see improve-button.tsx.
+   * `staging_url` changes. Gated the header's eye, back when the header had
+   * a contextual slot; ../dev-chat/session-header.tsx carries that loop now.
    */
   setSessionPreview(preview) {
     improveStore.set({

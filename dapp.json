@@ -1167,7 +1167,7 @@
     {
       "name": "Browse renders app-store rows with an Add button and a Home button (#2639)",
       "path": "/#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #platform-mark-btn):has(#platform-header #notifications-btn ~ #improve-btn):has(#platform-header a#back-btn:not(.hidden)[aria-label=\"Home\"]) #browse-list .browse-row .browse-add-btn",
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn:not(.hidden)[aria-label=\"Home\"]) #browse-list .browse-row .browse-add-btn",
       "expectText": "All apps"
     },
     {
@@ -2018,15 +2018,15 @@
       "expectSelector": "#app-install"
     },
     {
-      "name": "Improve button is present on an app view",
+      "name": "The app's own menu carries Improve on an app view",
       "path": "/app/staging-demo-admins",
-      "expectSelector": "#improve-btn:not(.hidden)",
+      "expectSelector": "#apps-switcher-sheet #switcher-nav #app-menu-row-improve:not(.hidden)",
       "allowConsoleErrors": true
     },
     {
-      "name": "The Dev view carries the standing Improve action in the header",
+      "name": "The Dev view carries the standing Improve action, one tap behind the mark",
       "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#platform-header #improve-btn:not(.hidden)"
+      "expectSelector": "#apps-switcher-sheet #switcher-nav #app-menu-row-improve:not(.hidden)"
     },
     {
       "name": "The Improve panel offers its two views in order: App, then Workshop",
@@ -2044,9 +2044,9 @@
       "expectSelector": "#header-title #header-title-name"
     },
     {
-      "name": "Improve is on the header right on the Dev screens too, not a contextual eye",
+      "name": "Improve is in the app's menu on the Dev screens too, glyph and all, not a contextual eye",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#platform-header #improve-btn:not(.hidden)"
+      "expectSelector": "#app-menu-row-improve:not(.hidden) #improve-btn-glyph"
     },
     {
       "name": "The Dev screen opens straight onto its cards, with no view tab strip above them",
@@ -2069,9 +2069,9 @@
       "expectSelector": "#header-title #header-title-name"
     },
     {
-      "name": "Home shows the platform Improve button (improve Homeroom itself)",
+      "name": "Home offers to improve Homeroom itself, from the same menu an app's Improve is in",
       "path": "/",
-      "expectSelector": "#improve-btn:not(.hidden)"
+      "expectSelector": "#app-menu-row-improve:not(.hidden)"
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
@@ -2605,7 +2605,7 @@
       "expectText": "new version available"
     },
     {
-      "name": "Once the open app's build has landed, the Improve panel offers to reload the app and the button shows the arrow",
+      "name": "Once the open app's build has landed, the Improve panel offers to reload the app and its menu row shows the arrow",
       "path": "/?shot=app-update-ready#app/staging-demo-forkable",
       "expectSelector": "body:has(#improve-btn-glyph[data-state=ready]) #improve-footer button#improve-app-update-ready",
       "expectText": "reload"
@@ -2636,9 +2636,9 @@
       "expectSelector": "#notifications-btn #notifications-badge:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
     },
     {
-      "name": "The Improve pill carries no notification count (#1610)",
+      "name": "The control wearing the work dots carries no notification count (#1610)",
       "path": "/?demo=1",
-      "expectSelector": "#improve-btn:not(:has([id^=\"notifications-badge\"]))"
+      "expectSelector": "#platform-mark-btn:not(:has([id^=\"notifications-badge\"]))"
     },
     {
       "name": "Admin & moderation renders on the Me tab for admins (#588, #2718)",
@@ -2808,7 +2808,7 @@
     {
       "name": "The mark opens the menu, and it lists the app's own options (#2718)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #improve-row-feedback + #app-menu-row-workshop + #app-menu-row-discussion"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #improve-row-feedback + #app-menu-row-improve + #app-menu-row-workshop + #app-menu-row-discussion"
     },
     {
       "name": "The app menu links out to the Workshop, scoped to the app (#2718)",
@@ -3826,9 +3826,14 @@
       "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
-      "name": "The bar's two edges: nothing to leave by on Home, and the bell left of Improve",
+      "name": "The bar's two edges: nothing to leave by on Home, and the bell left of the mark",
       "path": "/?demo=1",
-      "expectSelector": "#platform-header:has(#notifications-btn ~ #improve-btn) a#back-btn.hidden"
+      "expectSelector": "#platform-header:has(#notifications-btn ~ #platform-mark-btn) a#back-btn.hidden"
+    },
+    {
+      "name": "The Improve pill is retired: the bar is bell + mark, and the mark wears both work dots (#2718)",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-header:not(:has(#improve-btn)) #platform-mark-btn:has(#feedback-queue-dot):has(#improve-working-dot)"
     },
     {
       "name": "The session bar carries the lifecycle pill's seat beside the back arrow (Streamlined Concept)",
@@ -4123,7 +4128,7 @@
     {
       "name": "?sort= orders the touch directory, with a Home button in the bar (#1383, #2639)",
       "path": "/?sort=new&un-platform=ios#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #platform-mark-btn):has(#platform-header #notifications-btn ~ #improve-btn):has(#platform-header a#back-btn:not(.hidden)[aria-label=\"Home\"]) #browse-list[data-sort=\"new\"] .browse-row"
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn:not(.hidden)[aria-label=\"Home\"]) #browse-list[data-sort=\"new\"] .browse-row"
     },
     {
       "name": "Sorting by activity shows what it sorted on (#1383)",

@@ -403,20 +403,27 @@ test('the accessor the click path reads is published on the controller', () => {
 
 // ── 7. The order of the right group ────────────────────────────────────
 
-test('the bell renders BEFORE Improve, to its left', () => {
+test('the bell renders BEFORE the mark, to its left', () => {
   // The bell was moved to the far right for a round, on the argument that a
-  // standing alert wants a fixed address and Improve's width (which clears
-  // entirely on a screen with no target) moves it. The arrangement was
+  // standing alert wants a fixed address and Improve's width (which cleared
+  // entirely on a screen with no target) moved it. The arrangement was
   // preferred as it had always been: the alert reads inward from the edge and
-  // the ACTION owns the corner. Both are defensible, which is exactly why the
-  // one we ship is pinned — an order nobody asserts is an order that drifts.
+  // the corner goes to the control that never moves. Both are defensible,
+  // which is exactly why the one we ship is pinned — an order nobody asserts
+  // is an order that drifts.
+  //
+  // #2718 retired #improve-btn, so the group is two controls: the bell, then
+  // the Homeroom mark. The argument only got stronger — the mark is a fixed
+  // 26px tile, so the bell's address is fixed too.
   const group = HEADER.slice(HEADER.indexOf('<div ref={rightGroupRef}'));
   const body = group.slice(0, group.indexOf('</div>\n      </header>'));
   const bell = body.indexOf('id="notifications-btn"');
-  const improve = body.indexOf('<ImproveButton />');
-  assert.ok(bell > 0 && improve > 0, 'both controls are in the right group');
-  assert.ok(bell < improve,
-    'the bell first, then Improve — DOM order is visual order in this flex row');
+  const mark = body.indexOf('<PlatformMark />');
+  assert.ok(bell > 0 && mark > 0, 'both controls are in the right group');
+  assert.ok(bell < mark,
+    'the bell first, then the mark — DOM order is visual order in this flex row');
+  assert.equal(body.indexOf('<ImproveButton />'), -1,
+    'and the Improve pill is not back between them');
 
   // The bell must stay INSIDE this group. rightGroupRef is what
   // use-header-layout.ts measures as the title's right-hand clearance, so a

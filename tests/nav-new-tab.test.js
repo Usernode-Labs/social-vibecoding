@@ -500,10 +500,13 @@ test('#browse-detail-back keeps its own layout as an anchor', () => {
 // retired the switch, so the exception is gone with it — every navigating
 // control in the shell is an anchor or goes through App's router now.
 //
-// #improve-btn is deliberately NOT a new exception. It opens a panel rather
-// than navigating, so there is no destination for a cmd-click to open; the
-// panel's own rows are where navigation happens, and those ARE anchors
-// (see features/improve/improve-panel.tsx's SessionRow and ImproveRow).
+// #app-menu-row-improve is deliberately NOT a new exception — nor was
+// #improve-btn, the header pill it replaced when #2718 retired that. It opens
+// a panel rather than navigating, so there is no destination for a cmd-click
+// to open; the panel's own rows are where navigation happens, and those ARE
+// anchors (see features/improve/improve-panel.tsx's SessionRow). Same for
+// #app-menu-row-about, a button for the same reason: the pane it opens is the
+// sheet in another state, not an address.
 test('the retired App/Dev switch left no interception behind', () => {
   assert.equal(appJs.indexOf(".querySelectorAll('.app-mode-seg')"), -1,
     'the switch wiring is gone from app.js');

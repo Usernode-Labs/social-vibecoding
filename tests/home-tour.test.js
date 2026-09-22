@@ -99,9 +99,10 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718).
   assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
-  // The Improve arc: the header control on Home, then the one row left in
-  // the panel the viewer opens with it. No mock anywhere in the feature.
-  assert.deepEqual([...byId.improve.targets], ['#improve-btn']);
+  // The Improve arc: the Improve row of the app's own menu — the header pill
+  // it points at was retired with #2718 — then the one row left in the panel
+  // the viewer opens with it. No mock anywhere in the feature.
+  assert.deepEqual([...byId.improve.targets], ['#app-menu-row-improve']);
   assert.deepEqual([...byId['new-change'].targets], ['#improve-row-new-session']);
   // …then the app's own menu, pointed at the control that opens it rather
   // than at a row inside it: the mark is on screen on every route, and the
@@ -159,12 +160,38 @@ test('one panel step knows it needs the panel, and the step after shuts it', () 
   for (const id of ['feedback', 'workshop', 'challenges']) {
     assert.equal(byId[id].needsPanel, undefined, `${id} does not need the panel`);
   }
-  assert.equal(byId.improve.needsPanel, undefined, 'the Improve step stands on its own');
+  assert.equal(byId.improve.needsPanel, undefined,
+    'the Improve step needs no panel: its target is a row of the app\'s own '
+    + 'menu, which it presents for itself');
   assert.equal(byId.feedback.closesPanel, true);
   // Closed through the controller's own path, never by writing to the
-  // panel's DOM, which React owns.
-  assert.match(OVERLAY_SRC, /if \(!stepAt\(index\)\.closesPanel\) return;\s*\n\s*if \(!panelOpenNow\(\)\) return;\s*\n\s*void Improve\.close\(\);/);
+  // panel's DOM, which React owns. Both surfaces, because the steps that
+  // carry `closesPanel` spotlight the header and either one drawn over it
+  // would hide the thing the cut-out is drawn around.
+  assert.match(OVERLAY_SRC, /if \(!stepAt\(index\)\.closesPanel\) return;\s*\n\s*if \(panelOpenNow\(\)\) void Improve\.close\(\);\s*\n\s*if \(appContextStore\.get\(\)\.open\) void AppContext\.close\(\);/);
   assert.doesNotMatch(OVERLAY_SRC, /getElementById\('improve-panel'\)\.(?:classList|innerHTML|style)/);
+  assert.doesNotMatch(OVERLAY_SRC, /getElementById\('apps-switcher-sheet'\)\.(?:classList|innerHTML|style)/);
+});
+
+test('the Improve step presents the menu its target is in, once, on arrival', () => {
+  // #2718 put a menu in front of the arc: Improve is a row of the app's own
+  // sheet now, and a row inside a closed sheet has no box for ./spotlight.ts
+  // to find. So the step opens it — through the controller, like every other
+  // surface move in this file.
+  const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
+  assert.equal(byId.improve.opensSheet, true);
+  for (const id of ['welcome', 'create', 'new-change', 'feedback', 'workshop', 'challenges', 'settings']) {
+    assert.equal(byId[id].opensSheet, undefined, `${id} presents nothing`);
+  }
+  const guard = OVERLAY_SRC.slice(
+    OVERLAY_SRC.indexOf("if (step.advanceOn !== 'improve-open' && !step.opensSheet) return;"));
+  const body = guard.slice(0, guard.indexOf('}, ['));
+  assert.match(body, /if \(!cancelled && step\.opensSheet\) AppContext\.open\(\);/);
+  // ONCE, ON ARRIVAL. The row's own handler dismisses the sheet before it
+  // opens the panel, so an effect that also watched either surface's state
+  // would put the menu straight back and swallow the press the step is
+  // waiting for.
+  assert.match(guard.slice(0, guard.indexOf(');', guard.indexOf('}, ['))), /\}, \[live, index\]/);
 });
 
 test('the tour pauses for anything else on screen, and resumes where the rule says', () => {
@@ -175,6 +202,14 @@ test('the tour pauses for anything else on screen, and resumes where the rule sa
   assert.match(OVERLAY_SRC, /const live = open && !paused;/);
   assert.match(OVERLAY_SRC, /useHiddenClass\(rootRef, !live\)/);
   assert.match(OVERLAY_SRC, /const KIT_SURFACES = '\.un-modal, \.un-sheet, \.un-alert'/);
+  // …minus the two surfaces the tour drives itself. The app's own menu joined
+  // the Improve panel with #2718 and it is load-bearing rather than tidy: on
+  // touch that sheet is adopted into a `.un-sheet`, so a tour that paused for
+  // it would open the menu on the Improve step and hide itself in the same
+  // frame — a presented sheet and no card, on the surface the tour is most
+  // often run on.
+  assert.match(OVERLAY_SRC, /const TOUR_OWNED_SURFACES = \['#improve-panel', '#apps-switcher-sheet'\];/);
+  assert.match(OVERLAY_SRC, /if \(!TOUR_OWNED_SURFACES\.some\(\(sel\) => el\.querySelector\(sel\)\)\) return true;/);
   assert.match(OVERLAY_SRC, /new MutationObserver\(read\)/);
   // A panel step with no panel resumes at the Improve step, and only once
   // the flow that took the viewer away has finished (`live`, not `open`).
@@ -185,13 +220,19 @@ test('the tour pauses for anything else on screen, and resumes where the rule sa
   assert.match(OVERLAY_SRC, /\}, \[live, index, panelOpen\]\);/);
 });
 
-test('Back onto the Improve step shuts the panel, so the step always reads the same', () => {
+test('Back onto the Improve step shuts the panel first, then opens the menu', () => {
   // Arriving with the panel already up would be a dead end: the step ends on
-  // the panel OPENING and there is no edge left to wait for.
-  const guard = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf("if (stepAt(index).advanceOn !== 'improve-open') return;"));
+  // the panel OPENING and there is no edge left to wait for. The two moves
+  // are ONE effect because they are ordered — on touch the kit cannot present
+  // the menu while it is still dismissing the panel, so the open is chained
+  // off the close's promise rather than fired beside it. AppContext.open's
+  // own `_closeSiblings` dismisses the panel too and does NOT await it; that
+  // is the race, not the fix.
+  const guard = OVERLAY_SRC.slice(
+    OVERLAY_SRC.indexOf("if (step.advanceOn !== 'improve-open' && !step.opensSheet) return;"));
   const body = guard.slice(0, guard.indexOf('}, ['));
-  assert.match(body, /if \(!panelOpenNow\(\)\) return;/);
-  assert.match(body, /void Improve\.close\(\);/);
+  assert.match(body, /const shut = panelOpenNow\(\) \? Improve\.close\(\) : Promise\.resolve\(\);/);
+  assert.match(body, /void shut\.then\(\(\) => \{/);
   // Back itself is a plain step move; the effect above is what handles the
   // panel, so it covers every way of landing there.
   assert.match(OVERLAY_SRC, /const goBack = useCallback\(\(\) => setIndex\(clampIndex\(indexRef\.current - 1\)\), \[\]\);/);

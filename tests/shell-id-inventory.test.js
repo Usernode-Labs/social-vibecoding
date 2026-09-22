@@ -79,7 +79,7 @@ const RETIRED_IDS = {
   'home-account-avatar': 'The viewer\'s picture on that row. Its writer, App.applyUserAvatar, went with it — this was the last pair it wrote to (the header chip\'s copy was retired in the same #1443 round), and Profile\'s editor re-reads App.user when it saves.',
   'home-account-glyph': 'Its fallback person glyph.',
   // ── #1610: the completed-task count moved to the bell ───────────
-  'notifications-badge-ai': 'The green session count on #improve-btn. It counted unread session-related notifications, split out of the bell\'s number so the two would not double-count. Nothing behind that button could CLEAR it: a session notification is marked read by clicking its row in the bell\'s list, by a group-chat mark-read, or by mark-all, and opening the Improve panel marks nothing. So a finished session raised a number on the one control with no way to dismiss it, and the reporter pressed Improve again looking for a notification that was in the bell. The count is folded back into #notifications-badge, which now carries `data-session-done` in its place; what is left on the button is #improve-working-dot.',
+  'notifications-badge-ai': 'The green session count on #improve-btn. It counted unread session-related notifications, split out of the bell\'s number so the two would not double-count. Nothing behind that button could CLEAR it: a session notification is marked read by clicking its row in the bell\'s list, by a group-chat mark-read, or by mark-all, and opening the Improve panel marks nothing. So a finished session raised a number on the one control with no way to dismiss it, and the reporter pressed Improve again looking for a notification that was in the bell. The count is folded back into #notifications-badge, which now carries `data-session-done` in its place; what was left on the button is #improve-working-dot, which outlived the button itself (#2718) and is on the Homeroom mark now.',
   // ── Andrea's 27 Aug 2026 waitlist review ────────────────────────
   // Three stage-1 fields and one stage-2 field, all removed for the same
   // reason: each asked for something nothing read back.
@@ -241,7 +241,7 @@ const RETIRED_IDS = {
   'drawer-row-node': 'The native node row — #account-row-node, same component, same module.',
   'drawer-row-wallet': 'The native wallet row — #account-row-wallet, ditto.',
   'notifications-screen': 'The Notifications screen ROOT. It is #notifications-sheet now — an overlay over the current screen, out of App.SCREEN_IDS entirely, so there is no back arrow to point anywhere. Its children kept their ids.',
-  'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report.',
+  'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report. #2718 retired that button in turn and the badges moved on again, to the Homeroom mark, which is the control whose MENU holds that work now.',
   'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
   'drawer-app-rows': 'The app rows\' scroller in the drawer. The Improve panel renders them now, and #improve-sessions is the scroller.',
   'app-context-new-change': 'Merged INTO #improve-row-new-session, the panel\'s middle quick action. Two ids calling one Improve.startSession() was the duplication the merge exists to remove.',
@@ -346,6 +346,7 @@ const ADDED_IDS = {
   'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
   'app-menu-row-workshop': '#2718: "Open in Workshop", scoped to the app in context. It is the move the study found under every mini-app whose deeper options go somewhere: Telegram sends you to the bot\'s chat as a row of Chats, Steam to that game\'s community hub, Slack and Teams to the channel\'s files. This is the Workshop tab, arriving filtered rather than at the top of a list. Outside an app it falls back to #workshop, the unscoped screen.',
   'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',
+  'app-menu-row-improve': '#2718: "Improve this app" / "Improve the platform" — the header pill #improve-btn, as a row. Retiring that pill is what lands the app bar on the two controls the design draws (close · tile + name · bell · mark), and nothing it did was dropped: this row opens the same panel, carries the same three-state glyph (#improve-btn-glyph), and the two corner dots it wore are on the mark. Rendered always and `hidden` without a target, which is the pill\'s exact lifecycle and the reason its glyph is still in this inventory. A button rather than an anchor, for the About row\'s reason: what it opens is a panel, not an address.',
   'app-menu-row-about': '#2718: the row that opens the sheet\'s SECOND PANE — the repository, sharing, the running version and how to add the app to a home screen. A button and not an anchor, which is the honest shape: there is no address to open in a new tab, because the pane is this sheet in another state. Two panes of one sheet rather than two sheets, because the kit cannot present a sheet while it is still dismissing another.',
   // ── #2718: the platform's five places get a bar ──────────────────
   // The app chip's menu was carrying two unlike lists — the app's own
@@ -445,12 +446,12 @@ const ADDED_IDS = {
   'feedback-first-fix-note': 'Explains the fix draft or the collaboration access requirement (#1583).',
   'feedback-first-board': 'Opens the board of the app that received the feedback (#1583).',
   'feedback-first-done': 'Dismisses the first-feedback confirmation without starting work (#1583).',
-  'improve-working-dot': 'What is left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse, rendered only while a dev session the viewer can see is mid-turn. It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact about this button that needs no dismissal. Top-right, so it cannot hide under the bottom-left outbox dot.',
+  'improve-working-dot': 'What was left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse, rendered only while a dev session the viewer can see is mid-turn. It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact that needs no dismissal. #2718 retired the button and the dot outlived it: it is on the Homeroom mark\'s tile now, which is the control on screen on every route. Top-right, so it cannot hide under the bottom-left outbox dot, which followed it there.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Homeroom app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
   'home-browse-btn': 'Discover\'s way into the #apps directory. Not a new control — it has always been the block\'s browse link — but it is in the COLD DOCUMENT now, which is why it is a new id here. The block\'s title moved out of the card to become the section\'s label, its controls followed (a card whose first row was chrome with one link floating at the end of it reads worse than one that opens on content), and a section heading is constant markup where the block behind it is fetched. So the control ships with the shell instead of appearing when /api/home-panels answers — which is also one less thing that pops in on a cached load.',
   // ── Platform UI pass: the update state, and where the versions live ──
-  'improve-btn-glyph': 'The Improve button\'s leading glyph, and a named element rather than a bare <svg> so a declared check can read `data-state` off it. Three states, one per thing worth knowing at a glance from a control that is on every screen: a lightbulb at rest, a spinner while this app or the platform is building or downloading a build, and an arrow-path once one is ready to reload onto. It is `w-4`, inside the 28px content row, so the header height contract is untouched.',
+  'improve-btn-glyph': 'The Improve control\'s leading glyph, and a named element rather than a bare <svg> so a declared check can read `data-state` off it. Three states: a lightbulb at rest, a spinner while this app or the platform is building or downloading a build, and an arrow-path once one is ready to reload onto. It led the header pill until #2718 retired it and now leads #app-menu-row-improve, sized `w-5` to the menu\'s icons rather than `w-4` to the header\'s 28px content row. That move is also what cost the build state its at-rest cue — see frontend/src/features/improve/improve-glyph.tsx for why that is the acceptable half of the trade.',
   'settings-about-section': 'Settings → About: the three version rows. They have moved twice before (#1431 built an About block, #1443 took them to the Improve panel\'s footer). They are back because the question they were being read for — "is something happening, and is there a new version yet" — is answered directly by that footer now, as a note and a reload button. What is left over is reference material, and this is the reference screen.',
   'about-row-app-version': 'The open app\'s latest merged main, in that pane. Gated on `slug && !selfHosted`, exactly as the Improve panel\'s copy was: on the platform\'s own app this row IS the platform, so it and "Platform version" under it printed the same seven characters twice.',
   'about-app-version-slot': 'Its value. A store-fed island rather than a legacy innerHTML target — the pane around it is static, and a version arriving when an app opens should repaint one row, not the settings screen.',
@@ -577,7 +578,7 @@ const ADDED_IDS = {
   // The dim is FOUR panels tiling the viewport minus the hole, not one
   // box-shadow. A shadow paints but receives no pointer events, so it cannot
   // block a click -- and the Improve step needs exactly that split: the
-  // cut-out passes the press through to the real #improve-btn while the
+  // cut-out passes the press through to the real Improve control while the
   // dimmed area keeps swallowing clicks.
   'home-tour-shade-top': 'The dim above the cut-out, and the whole screen on a step with nothing to point at.',
   'home-tour-shade-right': 'The dim to the right of the cut-out.',
@@ -634,7 +635,7 @@ const ADDED_IDS = {
   'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
   'cli-setup-guide': 'Always-visible local-agent setup in Settings → CLI access (#1609). It is static section markup so capability detection and credential-list state cannot blank the instructions.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
-  'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
+  'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
   'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
   // ── #1603: the description's requirement, said out loud ─────────
@@ -655,7 +656,12 @@ const ADDED_IDS = {
   // plus the drawer's Share action. Fully React-owned,
   // so unlike most of the shell it holds real state — nothing in
   // public/js/** writes a node inside it.
-  'improve-btn': 'Header control that opens the Improve panel; inherits the retired App/Dev switch\'s show/hide lifecycle (App.DrawerStatus.setAppOpen).',
+  // #improve-btn LEAVES THIS MAP rather than entering RETIRED_IDS, because the
+  // frozen baseline never recorded it: the UI overhaul added it, #2718 removed
+  // it, and the baseline is untouched either way. It was the header's filled
+  // violet "Improve" pill, between the bell and the mark. The panel it opened
+  // is reached from #app-menu-row-improve below; its glyph and both its dots
+  // kept their ids and are listed here still, on the row and on the mark.
   'improve-overlay': 'Backdrop behind the Improve panel. Never uses `hidden` — opacity fades it and pointer-events stops a closed backdrop eating clicks.',
   'improve-panel': 'The panel root. Right-edge slide-over at `sm` and up, bottom sheet below it, and a real native-kit sheet on touch where the kit is loaded.',
   'improve-target-name': 'Which app the panel is about — the platform\'s own row on the home screen.',

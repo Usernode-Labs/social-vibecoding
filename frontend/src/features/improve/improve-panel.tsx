@@ -125,8 +125,10 @@ const ROW_REST =
  * a segmented control, so the panel opened with two identical shapes meaning
  * two different kinds of thing.
  *
- * So they are buttons, shaped like the control that opens this panel:
- * `h-9 rounded-full`, the same pill #improve-btn is.
+ * So they are buttons, shaped like the pill that used to open this panel:
+ * `h-9 rounded-full`, which is what #improve-btn was. That button is retired
+ * (#2718) and the shape is kept anyway — it is the platform's primary control,
+ * and these two were never copying the button so much as agreeing with it.
  *
  * ── They are the SAME button, and it is the FILLED one ─────────────────
  *
@@ -138,17 +140,19 @@ const ROW_REST =
  * WHICH of the two shared states they match in has. They spent a round in
  * `bg-violet-500/10`, a 10% tint, chosen because a solid pill put a second
  * filled violet control under #improve-btn's own and read as an accent
- * competing with the button that opened it. In use the tint went the other
+ * competing with the button that opened it (a worry that has since expired
+ * with the button). In use the tint went the other
  * way: at a tenth opacity these are the palest things in a panel whose every
  * other row is a real surface, and the two controls the panel EXISTS for read
  * as the least pressable things in it — closer to a disabled state than to an
  * action.
  *
  * `bg-violet-600` is the fill "New change" carried before that round, and it
- * is the platform's ordinary primary button. The competing-accent worry is
- * real and it is the smaller cost: #improve-btn is in the HEADER, outside the
- * panel and behind its backdrop once the panel is up, so the two are rarely
- * read together — whereas these two are read every single time it opens.
+ * is the platform's ordinary primary button. The competing-accent worry was
+ * real and it was the smaller cost even then: #improve-btn was in the HEADER,
+ * outside the panel and behind its backdrop once the panel was up, so the two
+ * were rarely read together — whereas these are read every single time it
+ * opens. Since #2718 there is no second filled pill to compete with at all.
  *
  * Every id is the one it has always had: `#improve-row-feedback` is what the
  * outbox dot's writer selects and `#improve-row-new-session` has named

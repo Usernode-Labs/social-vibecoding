@@ -9812,7 +9812,8 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
      it as the title's left side group.
    - CEILING: no direct child of either header may exceed 28px, and the
      children that could grow past it state their height OUTRIGHT rather
-     than adding up to it — the Improve pill is `h-7`, the landing CTAs
+     than adding up to it — the Homeroom mark is `h-7` around a 26px
+     tile (as the Improve pill it replaced was, #2718), the landing CTAs
      are `h-7 inline-flex items-center`. Padding arithmetic is what
      broke this twice back when the row was 28px: the old App/Dev
      switch's `py-1` segments + `p-0.5` track came to 28px only if you

@@ -323,39 +323,55 @@ test('neither the bottom tab bar nor the header switch ships', () => {
   assert.ok(!/class="[^"]*app-mode-seg/.test(INDEX), 'an orphan segment still ships');
 });
 
-test('#improve-btn lives inside the header, alone in the right group', () => {
+test('the right group is the bell and the mark, in that order, after the title', () => {
   const header = INDEX.slice(
     INDEX.indexOf('id="platform-header"'),
     INDEX.indexOf('</header>')
   );
-  // Same requirement the switch had, and for the same reason: the header
-  // layout code measures the title's right side group through a ref on that
-  // div, so a control moved out of it stops counting towards the clearance
-  // the centering measurement needs.
-  assert.ok(header.includes('id="improve-btn"'), 'Improve is outside the header');
+  // Same requirement the switch had, then #improve-btn, and for the same
+  // reason: the header layout code measures the title's right side group
+  // through a ref on that div, so a control moved out of it stops counting
+  // towards the clearance the centering measurement needs.
+  assert.ok(header.includes('id="platform-mark-btn"'), 'the mark is outside the header');
   assert.ok(
-    header.indexOf('id="improve-btn"') > header.indexOf('id="header-title"'),
-    'Improve must sit after the title, in the right group'
+    header.indexOf('id="platform-mark-btn"') > header.indexOf('id="header-title"'),
+    'the mark must sit after the title, in the right group'
+  );
+  // #2718 RETIRED #improve-btn. The bar inside an app is that app's — its
+  // close button, its tile, its name — plus the platform's signature in the
+  // corner and one alert; a third control that is neither made the right
+  // group read as a toolbar. The pill's panel is a row of the mark's menu now
+  // (#app-menu-row-improve), so nothing it did was dropped.
+  assert.ok(!header.includes('id="improve-btn"'), 'the Improve pill is retired');
+  assert.ok(
+    header.indexOf('id="notifications-btn"') < header.indexOf('id="platform-mark-btn"'),
+    'the alert reads inward from the edge; the corner goes to the control '
+    + 'that never moves'
   );
   // Streamlined Concept: the hamburger moved to the LEFT group, mirroring
-  // the drawer it opens, so it now PRECEDES the title — and Improve (or the
-  // eye that swaps in on the Dev screens) is the right group's one control.
+  // the drawer it opens, so it now PRECEDES the title.
   assert.ok(
     header.indexOf('id="header-menu-btn"') < header.indexOf('id="header-title"'),
     'the hamburger leads the bar, before the title'
   );
 });
 
-test('the Improve button ships hidden and opens the panel', () => {
-  const m = INDEX.match(/<button id="improve-btn"[\s\S]*?<\/button>/);
-  assert.ok(m, 'missing #improve-btn');
+test('the Improve row ships hidden and opens the panel', () => {
+  const m = INDEX.match(/<button id="app-menu-row-improve"[\s\S]*?<\/button>/);
+  assert.ok(m, 'missing #app-menu-row-improve');
   const el = m[0];
-  // Ships hidden for the same reason the switch did: there is nothing to
-  // improve until a target is published. The one publisher is
-  // App.DrawerStatus.setAppOpen — an open app, and nowhere else.
+  // Ships hidden for the same reason the switch did, and the pill after it:
+  // there is nothing to improve until a target is published. Rendered rather
+  // than absent so the prerender and the first client render agree — and so
+  // #improve-btn-glyph inside it stays in the shell's declared inventory,
+  // which is what a landed build's declared check selects on.
   assert.ok(el.includes('hidden'), 'ships hidden — a published target reveals it');
-  assert.ok(el.includes('aria-haspopup="dialog"'), 'it opens a dialog surface');
-  assert.ok(el.includes('aria-expanded="false"'), 'closed state reaches the a11y tree');
+  assert.ok(el.includes('id="improve-btn-glyph"'), 'it carries the pill\'s three-state glyph');
+  // The two dots the pill wore are on the mark, which is on screen on every
+  // route — a live cue inside a closed menu is not a cue.
+  const mark = INDEX.match(/<button id="platform-mark-btn"[\s\S]*?<\/button>/)[0];
+  assert.ok(mark.includes('id="feedback-queue-dot"'), 'the outbox dot moved to the mark');
+  assert.ok(mark.includes('id="improve-working-dot"'), 'and so did the working pulse');
 });
 
 test('setAppOpen publishes the Improve target instead of toggling a switch', () => {
@@ -488,9 +504,8 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
 // ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
 
-test('the Improve panel leads with its two actions, shaped like the button that opens it', () => {
+test('the Improve panel leads with its action, shaped like the pill that used to open it', () => {
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
-  const button = read('frontend/src/features/improve/improve-button.tsx');
 
   // Feedback and New change, as TWO BUTTONS. They shipped as three equal
   // thirds of one recessed well with hairline dividers — Share was the third
@@ -518,23 +533,19 @@ test('the Improve panel leads with its two actions, shaped like the button that 
   // One button in a `flex-1 basis-0` well simply spans it, which is what a
   // single primary action should do.
 
-  // They are shaped like #improve-btn, the control that opens this panel: a
-  // rounded-full pill.
+  // The shape is #improve-btn's, the pill that used to open this panel.
+  // #2718 retired that button and the shape stays: it is the platform's
+  // ordinary primary control, and this was never copying the button so much
+  // as agreeing with it.
   //
-  // BOTH TAKE THE SAME FILL, and it is the SOLID one. That they match is the
-  // settled part: describing a problem and starting a change are two ways
-  // into the same work, so neither is the primary.
-  //
-  // Which shared state they match in moved. They spent a round at
-  // `bg-violet-500/10` — a tenth opacity, chosen so a solid pill would not
-  // sit under #improve-btn's own and compete with the button that opened the
-  // panel. At that opacity they became the palest things in a panel of real
-  // surfaces: the two controls the panel EXISTS for read closer to disabled
-  // than to actionable. #improve-btn is in the header, outside the panel and
-  // behind its backdrop once it is up, so the competition is rarely seen —
-  // and these two are seen every time.
-  assert.match(button, /rounded-full[\s\S]{0,80}bg-violet-600 hover:bg-violet-500/,
-    'the header button is a filled violet pill');
+  // THE FILL IS THE SOLID ONE. It spent a round at `bg-violet-500/10` — a
+  // tenth opacity, chosen so a solid pill would not sit under #improve-btn's
+  // own and compete with the button that opened the panel. At that opacity it
+  // became the palest thing in a panel of real surfaces: the control the
+  // panel EXISTS for read closer to disabled than to actionable. That worry
+  // was always the smaller cost — the button was in the header, outside the
+  // panel and behind its backdrop once it was up — and since #2718 there is
+  // no second filled pill to compete with at all.
   assert.match(panel, /rounded-full text-sm font-semibold/,
     'and the two actions are the same pill shape');
   assert.match(panel, /const ACTION_FILL =\n\s+'bg-violet-600 hover:bg-violet-500 text-white';/,
@@ -641,16 +652,20 @@ test("the Board owns the view control; the header's label is the chip", () => {
     'switchTab must publish the active tab AND sub-tab — the header status '
     + 'pill is gated on being on a session');
 
-  // THE RIGHT SLOT IS NOT CONTEXTUAL. Improve used to swap into an eye on the
-  // Dev screens and into an eye/pencil pair on a session with a preview,
-  // which meant the action people reach for most both moved and, on a session
-  // with no preview yet, disappeared. It renders from the target alone now.
-  const improveBtn = read('frontend/src/features/improve/improve-button.tsx');
-  assert.match(improveBtn, /const pill = !!target;/,
-    'the word renders wherever there is something to improve');
-  assert.doesNotMatch(improveBtn, /tab === 'dev'/, 'and not from the route');
+  // THE RIGHT SLOT IS NOT CONTEXTUAL — and since #2718 it is not a slot at
+  // all. Improve used to swap into an eye on the Dev screens and into an
+  // eye/pencil pair on a session with a preview, which meant the action
+  // people reach for most both moved and, on a session with no preview yet,
+  // disappeared. It stopped swapping, then it left the bar: it is a row of
+  // the app's own menu, rendered from the target alone.
+  const headerSrc = read('frontend/src/features/header/platform-header.tsx');
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /className=\{target \? `\$\{ROW\} w-full text-left` : `hidden \$\{ROW\} w-full text-left`\}/,
+    'the row renders wherever there is something to improve');
+  assert.doesNotMatch(sheet, /tab === 'dev'/, 'and not from the route');
   for (const gone of ['app-eye-btn', 'session-build-btn', 'EyeIcon', 'PencilSparklesIcon']) {
-    assert.ok(!improveBtn.includes(gone), `the ${gone} half of the swap left the header`);
+    assert.ok(!headerSrc.includes(gone), `the ${gone} half of the swap left the header`);
+    assert.ok(!sheet.includes(gone), `and did not follow Improve into the menu`);
   }
   // It went to the session strip, beside the name of the change it acts on.
   const strip = read('frontend/src/features/dev-chat/session-header.tsx');

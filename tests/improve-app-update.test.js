@@ -31,7 +31,8 @@ const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP_JS = read('public/js/app.js');
-const BUTTON = read('frontend/src/features/improve/improve-button.tsx');
+const GLYPH = read('frontend/src/features/improve/improve-glyph.tsx');
+const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
 const STORE = read('frontend/src/features/improve/improve-store.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
@@ -255,11 +256,15 @@ test('with no frame on screen there is nothing to reload', () => {
 
 // ── The rendered halves, pinned by source ─────────────────────────────
 
-test('the button shows the arrow for a landed app build, and the spinner still wins while one is building', () => {
-  assert.match(BUTTON, /const \{ target, open, versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
-  assert.match(BUTTON, /appUpdateReady=\{appUpdateReady\}/);
-  const busyAt = BUTTON.indexOf('if (appDeploying || BUSY_STATES.includes(versionState))');
-  const readyAt = BUTTON.indexOf('if (appUpdateReady || READY_STATES.includes(versionState))');
+test('the glyph shows the arrow for a landed app build, and the spinner still wins while one is building', () => {
+  // The glyph led #improve-btn in the header until #2718 retired that pill;
+  // it leads #app-menu-row-improve in the app's own menu now. Same id, same
+  // three states, same `data-state` a declared check reads — what moved is
+  // which component feeds it, so that is what this asserts.
+  assert.match(SHEET, /versionState, deploying, appUpdateReady,\n  \} = useStoreState\(improveStore\);/);
+  assert.match(SHEET, /appUpdateReady=\{appUpdateReady\}/);
+  const busyAt = GLYPH.indexOf('if (appDeploying || BUSY_STATES.includes(versionState))');
+  const readyAt = GLYPH.indexOf('if (appUpdateReady || READY_STATES.includes(versionState))');
   assert.ok(busyAt > 0 && readyAt > busyAt, 'busy is decided first, so a new build starting takes the arrow back');
 });
 

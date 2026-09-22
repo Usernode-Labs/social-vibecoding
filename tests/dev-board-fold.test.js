@@ -941,7 +941,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // change introduces: the mark as the header's menu button, About as the
   // menu's second pane, the app strip inside a running app, and the bar's
   // absence there. 715 leaves 35 slots, still clear of the floor.
-  assert.equal(DAPP.tests.length, 715);
+  //
+  // 716 with the same change's last commit, which retires #improve-btn. Seven
+  // MORE were rewritten in place on the same principle and none deleted: four
+  // asserted the header pill was on screen and now assert the menu row it
+  // became, two carried it as bar-shape context in a `:has()` chain (the mark
+  // is that context now), and one pinned that it wore no notification count —
+  // a claim that followed the two work dots onto the mark. The one ADDED is
+  // the retirement itself: a header with no #improve-btn in it, and a mark
+  // with both dots on it. A check that only says an id is gone would pass on
+  // a bar that lost the mark too, which is why it says both in one selector.
+  assert.equal(DAPP.tests.length, 716);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

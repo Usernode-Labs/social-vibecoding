@@ -8,16 +8,30 @@
  *
  * ── Every step points at a REAL control ────────────────────────────────
  *
- * Nothing here is a drawing of the product. The four Improve steps used to be the
+ * Nothing here is a drawing of the product. The Improve steps used to be the
  * hard case, because Improve, Feedback, New change and Workshop all read as
  * things that live inside an app while the tour stays on Home. They are not:
- * `#improve-btn` is in the platform header on Home, where the target is the
+ * the Improve row is in the mark's menu on Home too, where the target is the
  * platform's own self-hosted row (`Home.publishImproveTarget`, #1367), and
  * pressing it opens the real panel with the real rows in it. So the tour
- * spotlights the button, waits for the viewer to press it themselves, and
+ * spotlights the row, waits for the viewer to press it themselves, and
  * then walks the rows of the panel they just opened.
  *
- * That is what `interactive` and `advanceOn` are for:
+ * ── #2718 put a menu in front of that arc ──────────────────────────────
+ *
+ * The step pointed at `#improve-btn`, a control in the header that was always
+ * on screen. That button is retired: Improve is a row of the app's own menu
+ * now, behind the Homeroom mark. A row inside a closed sheet has no box, so
+ * ./spotlight.ts would find nothing and the step would dim the screen whole.
+ *
+ * The tour OPENS the sheet for it (`opensSheet`), the same way step 7 shuts
+ * the panel — through the controller, never by writing to a React-owned
+ * subtree. What it does NOT do is press the row: the arc's whole shape is
+ * that the viewer performs each step themselves and the tour watches. So the
+ * sheet is presented, the cut-out lands on the row inside it, and
+ * `advanceOn: 'improve-open'` still waits for the panel.
+ *
+ * That is what `interactive`, `advanceOn` and the two surface flags are for:
  *
  *   * `interactive` lets the cut-out pass clicks through to the control it is
  *     drawn around, while the dimmed area keeps blocking them. It is on for
@@ -30,9 +44,16 @@
  *   * `needsPanel` marks the three steps whose target is inside the panel.
  *     If it is not open, they cannot be shown, and ./index.tsx falls back to
  *     the Improve step rather than spotlighting nothing.
+ *   * `opensSheet` presents the app's menu on the way IN, because the step's
+ *     target is a row of it. It fires once on arrival and never again, so the
+ *     row's own handler — which dismisses the sheet before opening the panel
+ *     — is not fought by a tour that keeps putting the sheet back.
  *   * `closesPanel` is how the arc ends: step 7 shuts the panel through the
- *     controller's own `Improve.close()` before pointing at Challenges.
- *     Never by writing to the panel's DOM, which is React-owned.
+ *     controller's own `Improve.close()` before pointing at Challenges. It
+ *     shuts the app's menu too, for the same reason it shuts the panel — the
+ *     steps that carry it spotlight the header, and a surface drawn over the
+ *     header would put the cut-out around something the viewer cannot see.
+ *     Never by writing to either subtree, both of which are React-owned.
  *
  * ── `targets`: a LIST, first visible one wins ──────────────────────────
  *
@@ -58,7 +79,9 @@ export interface TourStep {
   advanceOn?: 'improve-open';
   /** The target is inside the Improve panel, so the panel has to be open. */
   needsPanel?: boolean;
-  /** Shut the Improve panel on the way in, through the controller. */
+  /** Present the app's own menu on the way in, through the controller. */
+  opensSheet?: boolean;
+  /** Shut the Improve panel and the app's menu on the way in. */
   closesPanel?: boolean;
 }
 
@@ -76,11 +99,15 @@ export const TOUR_STEPS: readonly TourStep[] = [
     targets: ['#home-create-section'],
   },
   {
+    // `#improve-btn` until #2718 retired the header pill. The row it became
+    // is in the menu behind the mark, which this step opens for itself — see
+    // `opensSheet` in the header above.
     id: 'improve',
     title: 'Improve',
     body: 'Inside any app, Improve is where you change it. Press Improve to open it.',
-    targets: ['#improve-btn'],
+    targets: ['#app-menu-row-improve'],
     interactive: true,
+    opensSheet: true,
     advanceOn: 'improve-open',
   },
   {
@@ -144,10 +171,10 @@ export const TOUR_LENGTH = TOUR_STEPS.length;
 /**
  * The step the Improve arc falls back to.
  *
- * It is THE step on Home in that arc: the one whose target is the header
- * button rather than a row of a panel that may no longer be open. A viewer
- * who closes the panel, or who comes back from a feedback draft or a new
- * change, lands here and is asked to press Improve again.
+ * It is THE step on Home in that arc: the one that presents its own surface
+ * rather than needing a panel somebody else left open. A viewer who closes
+ * the panel, or who comes back from a feedback draft or a new change, lands
+ * here, the app's menu opens again, and they are asked to press Improve.
  */
 export const IMPROVE_STEP_INDEX = TOUR_STEPS.findIndex(
   (step) => step.advanceOn === 'improve-open',

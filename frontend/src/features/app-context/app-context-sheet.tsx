@@ -134,6 +134,7 @@ import { AboutPane } from './about-pane';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { useStoreState } from '../../lib/use-store-state';
+import { ImproveGlyph } from '../improve/improve-glyph';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
@@ -171,6 +172,32 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
  * activation; a modified click never reaches it because the browser handles
  * it natively.
  */
+/**
+ * A row's INSIDES — the glyph, the label, anything trailing, the chevron.
+ *
+ * Split out because this menu has three row shapes and they have to read as
+ * one kind of thing: two of them are <button>s (About, which is a second pane
+ * of this sheet rather than an address, and Improve, which opens a panel) and
+ * the rest are <a>s. One fragment is what keeps "the buttons look like the
+ * links" true by construction rather than by three copies staying in step.
+ */
+function RowBody({ icon, label, trailing }: {
+  icon: ReactNode;
+  label: string;
+  trailing?: ReactNode;
+}): ReactNode {
+  return (
+    <>
+      <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      {trailing}
+      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+    </>
+  );
+}
+
 function MenuRow({
   id, href, icon, label, trailing, onClick, elRef, shipsHidden,
 }: {
@@ -197,12 +224,7 @@ function MenuRow({
         AppContext.dismissForNav();
       }}
     >
-      <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
-      {trailing}
-      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+      <RowBody icon={icon} label={label} trailing={trailing} />
     </a>
   );
 }
@@ -266,7 +288,9 @@ export function AppsSwitcherSheet(): ReactNode {
   // three the rows need — the name to label them with, the terminal's gate,
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
-  const { slug, name, showTerminal } = useStoreState(improveStore);
+  const {
+    slug, name, showTerminal, target, versionState, deploying, appUpdateReady,
+  } = useStoreState(improveStore);
   const [apps, setApps] = useState<SwitcherApp[] | null>(null);
 
   // "About Notes", not "About this app". The name is what the viewer is
@@ -514,6 +538,57 @@ export function AppsSwitcherSheet(): ReactNode {
             }}
           />
           {/*
+              IMPROVE — the header pill, as a row (#2718).
+
+              `#improve-btn` was a filled violet pill standing between the bell
+              and the mark, and retiring it is what lands the app bar on the
+              two controls the design draws: close · tile + name · bell · mark.
+              Everything it did is here. Its GLYPH is this row's leading icon,
+              id and `data-state` intact (../improve/improve-glyph.tsx), and
+              its two corner dots are on the mark itself
+              (../header/platform-mark.tsx) — the part of it that had to stay
+              visible at rest.
+
+              THE LABEL IS THE PILL'S OWN aria-label, not the word it printed.
+              "Improve" alone was legible on a control that only ever appeared
+              beside an app's name; in a list of rows it has to say what it
+              improves, and on Home that is the platform's own self-hosted row
+              rather than an app (#1367, Home.publishImproveTarget).
+
+              RENDERED ALWAYS, `hidden` when there is no target — the pill's
+              exact lifecycle, and the reason is the prerender: a row that only
+              exists sometimes is a row whose id is not in the shell's declared
+              inventory, and `#improve-btn-glyph` inside it is what a declared
+              check selects on to prove a landed build offers its reload.
+
+              A BUTTON, not an anchor, for the About row's reason: there is no
+              address to open in a new tab, because what it opens is a panel.
+              It dismisses this sheet FIRST and waits — the kit cannot present
+              a surface while it is still tearing one down, the same ordering
+              the terminal row below uses.
+          */}
+          <button
+            id="app-menu-row-improve"
+            type="button"
+            className={target ? `${ROW} w-full text-left` : `hidden ${ROW} w-full text-left`}
+            onClick={() => {
+              void AppContext.dismissForNav().then(() => {
+                (window as any).Improve?.open?.();
+              });
+            }}
+          >
+            <RowBody
+              icon={(
+                <ImproveGlyph
+                  versionState={versionState}
+                  appDeploying={deploying}
+                  appUpdateReady={appUpdateReady}
+                />
+              )}
+              label={target === 'platform' ? 'Improve the platform' : `Improve ${appLabel}`}
+            />
+          </button>
+          {/*
               OPEN IN WORKSHOP and GO TO APP DISCUSSION are the two rows the
               study predicted: a mini-app's deeper options LINK OUT to the
               host's own sections, filtered to the app you are in. Telegram
@@ -575,11 +650,7 @@ export function AppsSwitcherSheet(): ReactNode {
             className={`${ROW} w-full text-left`}
             onClick={() => AppContext.showAbout()}
           >
-            <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
-              <InfoCircleIcon />
-            </span>
-            <span className="flex-1 min-w-0 truncate font-medium">{`About ${appLabel}`}</span>
-            <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+            <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
           </button>
           </>
           )}

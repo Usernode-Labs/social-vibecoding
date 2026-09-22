@@ -221,8 +221,8 @@ test('markAllRead early-returns when nothing is unread at all', async () => {
 test('a lone unread session notification is enough to send mark-all', async () => {
   // The regression guard for #1610. Under the old exclusion this case
   // early-returned: the only unread item was session-related, so the bell
-  // counted itself empty, and the number on #improve-btn had nothing anywhere
-  // that could clear it.
+  // counted itself empty, and the number on the header's Improve pill had
+  // nothing anywhere that could clear it.
   const body = methodBody('async markAllRead');
   const N = {
     unread: 1,

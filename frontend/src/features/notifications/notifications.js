@@ -832,8 +832,9 @@ const Notifications = {
     // invites, session kinds included. There is no second badge and no
     // split.
     //
-    // The split it replaces put unread session kinds on #improve-btn, on the
-    // grounds that the sessions themselves are behind that button so its
+    // The split it replaces put unread session kinds on #improve-btn — the
+    // header pill #2718 has since retired altogether — on the grounds that
+    // the sessions themselves are behind that button so its
     // count sent you somewhere the bell could not. What it actually did was
     // put a count on a control that CANNOT CLEAR IT: the only things that
     // mark a session notification read are a click on its row in this list,
@@ -846,9 +847,11 @@ const Notifications = {
     // _badgeTotal) and the home-screen icon badge (_publishAppBadge, which
     // reads `unread`).
     //
-    // #improve-btn keeps a LIVE indicator — the working pulse dot — because
-    // "a session is running right now" is a fact about that button, not an
-    // event waiting to be read.
+    // The pulse dot survived both moves and is the reason the distinction
+    // matters: "a session is running right now" is a live fact, true only
+    // while it is true, so it needs no dismissal and belongs wherever the
+    // work is — the Homeroom mark, since #2718 — while a COUNT is an event
+    // waiting to be read and belongs where reading happens.
     const notifCount = Notifications._badgeTotal();
 
     const paint = (id, count) => {

@@ -11,9 +11,9 @@
  * (App.setBackIcon on #back-btn, the title text, the red unread badge), so
  * React must never reconcile over those nodes: every class string below is a
  * constant prop, rendered once at hydration and never again. The exceptions
- * are React-owned end to end: <ImproveButton/> (which carries the work-in-
- * flight indicators), <HeaderTitle/> and <PlatformMark/> — all of whose
- * writers publish through improveStore rather than touching the DOM.
+ * are React-owned end to end: <HeaderTitle/> and <PlatformMark/> (which
+ * carries the work-in-flight indicators) — both of whose writers publish
+ * through improveStore rather than touching the DOM.
  *
  * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
  * (`#app/<slug>/app`) hides the whole header, and App.setChromeless used to do
@@ -44,7 +44,6 @@ import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
-import { ImproveButton } from '../improve/improve-button';
 import { boardHref, improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
@@ -481,12 +480,14 @@ export function PlatformHeader() {
             ./header-title.tsx.
         */}
         <HeaderTitle titleRef={titleRef} />
-        {/* `gap-2.5`, not `gap-1`. The bell and Improve are an ALERT and an
-            ACTION — one tells you something happened, the other starts work —
-            and at 4px they read as two halves of one segmented control, which
-            is what "they look joined together" was. 10px is the smallest gap
-            that separates them without the right group growing enough to
-            change the title's centred-vs-flow decision on a 390pt screen. */}
+        {/* `gap-2.5`, not `gap-1`. The bell and the mark are an ALERT and a
+            MENU — one tells you something happened, the other opens the app's
+            options — and at 4px they read as two halves of one segmented
+            control, which is what "they look joined together" was. 10px is the
+            smallest gap that separates them without the right group growing
+            enough to change the title's centred-vs-flow decision on a 390pt
+            screen. It was measured with Improve between them and holds
+            without it: the gap is between neighbours, not across the group. */}
         <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center gap-2.5">
           {/*
               HEADER SLIM-DOWN: the fork label, the platform + app build pills
@@ -505,11 +506,14 @@ export function PlatformHeader() {
                 #app-mode-switch   the App/Dev segmented control. An app is
                                    just an app now; "Dev" is a destination the
                                    panel links to rather than a mode the header
-                                   toggles. `#improve-btn` inherits its exact
-                                   show/hide lifecycle.
-                #feedback-btn      → the panel's "Give feedback" row. Its
-                                   outbox dot (#feedback-queue-dot) moved onto
-                                   #improve-btn, keeping its id and its writer.
+                                   toggles. `#improve-btn` inherited its exact
+                                   show/hide lifecycle, and #2718 passed that
+                                   on again to #app-menu-row-improve.
+                #feedback-btn      → the panel's "Give feedback" row, a row of
+                                   the mark's menu since #2718. Its outbox dot
+                                   (#feedback-queue-dot) went to #improve-btn
+                                   and then to the mark, keeping its id and its
+                                   writer through both moves.
                 #work-drawer-btn   → the panel's session sections, split into
                                    this app's and everything else.
                 #dev-console-btn   → the panel's "Developer terminal" row,
@@ -528,7 +532,23 @@ export function PlatformHeader() {
               availability change their contents, never whether the rows exist.
           */}
           {/*
-              The Improve button. It MUST stay inside this right-group div:
+              #improve-btn IS RETIRED (#2718), and this is where it stood.
+
+              It was the bar's one filled control — a violet "Improve" pill
+              between the bell and the mark — and it went for the reason the
+              mark's own note below gives: inside an app the bar is that app's
+              (its tile, its name, its close button) plus the platform's
+              signature, and a third control that is neither is what made the
+              right group read as a toolbar. The design draws two.
+
+              Nothing it did was dropped. The panel it opened is a row of the
+              mark's menu (#app-menu-row-improve, ../app-context/
+              app-context-sheet.tsx) carrying its glyph; its two dots are on
+              the mark (../header/platform-mark.tsx). The three things it
+              itself replaced — #app-mode-switch, #feedback-btn,
+              #work-drawer-btn — are all still reachable, by the same panel.
+
+              WHATEVER GOES HERE NEXT MUST STAY INSIDE THIS right-group div.
               rightGroupRef is what use-header-layout.ts measures as the
               title's right side group, so a control moved out of it stops
               counting towards the clearance the centering measurement needs.
@@ -536,10 +556,6 @@ export function PlatformHeader() {
               nextElementSibling, and a sibling wedged in between broke the
               measurement silently; the ref removed that particular trap, not
               the requirement.)
-
-              Unlike everything else in this bar it is React-owned end to end —
-              no public/js/** module writes to it — so its className is
-              rendered rather than constant. See ../improve/improve-button.tsx.
           */}
           {/*
               The App / Feed / Kanban segmented control rode here between
@@ -554,14 +570,16 @@ export function PlatformHeader() {
               bell survives here — see the #1443 note in RETIRED_IDS for
               where the chat bubble went.
 
-              IT SITS TO IMPROVE'S LEFT, which is the arrangement the board
+              IT SITS TO THE MARK'S LEFT, which is the arrangement the board
               draws and the one this bar has always had. It was moved to the
               far right for a round on the argument that a standing alert
-              wants a fixed address and Improve's width moves it; the
+              wants a fixed address and Improve's width moved it; the
               arrangement was preferred as it was, so the alert reads inward
-              from the edge and the ACTION owns the corner your thumb reaches
-              for. Both orders are defensible — this is the one we ship, and
-              a declared check pins it so it does not drift back by accident.
+              from the edge and the corner your thumb reaches for goes to the
+              control that never moves. Improve is retired (#2718) and the
+              argument only got stronger: the mark is a fixed 26px tile, so
+              the bell's address is now fixed too. A declared check pins the
+              order so it does not drift back by accident.
 
               THE UI OVERHAUL folded both into the hamburger and the
               Streamlined Concept takes that back, for a reason the drawer
@@ -624,7 +642,6 @@ export function PlatformHeader() {
             >
             </span>
           </a>
-          <ImproveButton />
           {/*
               THE MARK, LAST, and the corner is the whole argument for the
               position. This is the one control on the bar that is always
@@ -635,10 +652,11 @@ export function PlatformHeader() {
               edge of a bar that, inside an app, is otherwise entirely that
               app's: its tile, its name, its close button.
 
-              #improve-btn is still here, so the group reads bell · Improve ·
-              mark for the length of this commit. The next one retires it —
-              its rows are what the mark's menu is made of — and the bar lands
-              on the two controls the design draws.
+              The group is bell · mark now. #improve-btn stood between them
+              for four commits of this run, while its rows were being taken
+              into this menu one at a time; the commit that emptied it is the
+              one that removed it, so the bar never spent a commit offering a
+              control with nothing behind it.
           */}
           <PlatformMark />
           {/*
