@@ -2165,6 +2165,7 @@
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/creation-progress-store.js",
+        "frontend/src/features/messages/store.ts",
         "public/js/app-view.js",
         "public/js/build-log.js"
       ]
@@ -2529,6 +2530,7 @@
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/creation-progress-store.js",
+        "frontend/src/features/messages/store.ts",
         "public/js/app-view.js",
         "public/js/build-log.js"
       ]
