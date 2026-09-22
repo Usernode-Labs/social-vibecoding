@@ -182,6 +182,28 @@ async function requireOne(locator, description) {
   return locator;
 }
 
+async function waitForOne(locator, description, timeoutMs) {
+  // A wait action must allow React or fetched data to render its target.
+  // Counting before waitFor turned every initially absent target into an
+  // immediate failure regardless of the plan's timeout.
+  const initialCount = await locator.count();
+  if (initialCount > 1) {
+    throw new ReplayFailure('ambiguous_locator',
+      `${description} matched ${initialCount} elements; exactly one is required.`);
+  }
+  try {
+    await locator.first().waitFor({ state: 'visible', timeout: timeoutMs });
+  } catch (error) {
+    const count = await locator.count();
+    if (count !== 1) {
+      throw new ReplayFailure('ambiguous_locator',
+        `${description} matched ${count} elements after ${timeoutMs} ms; exactly one is required.`);
+    }
+    throw error;
+  }
+  return requireOne(locator, description);
+}
+
 function joinedUrl(origin, relativePath) {
   const url = new URL(relativePath, `${origin}/`);
   if (url.origin !== origin) throw new ReplayFailure('cross_origin_navigation', 'The replay plan attempted to leave its evidence origin.');
@@ -307,7 +329,7 @@ async function executeAction(page, action, origin, network, authToken = '') {
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
     case 'waitFor':
-      if (action.target) await (await requireOne(locatorFor(page, action.target), action.id)).waitFor({ state: 'visible', timeout: action.timeoutMs });
+      if (action.target) await waitForOne(locatorFor(page, action.target), action.id, action.timeoutMs);
       else if (action.text) await page.getByText(action.text, { exact: true }).first().waitFor({ state: 'visible', timeout: action.timeoutMs });
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
@@ -866,6 +888,7 @@ module.exports = {
   ReplayFailure,
   validateInput,
   locatorFor,
+  waitForOne,
   authorizedUrl,
   publicRelativePath,
   redactedUrl,

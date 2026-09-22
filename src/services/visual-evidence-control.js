@@ -30,17 +30,32 @@ function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+function repairFailureContext(error) {
+  if (!error) return null;
+  const detail = error.detail && typeof error.detail === 'object' ? error.detail : {};
+  const failure = { code: String(error.code || 'replay_failed').slice(0, 80) };
+  for (const key of ['storyId', 'viewport', 'side', 'phase', 'actionId', 'actionStage', 'actionType', 'assertionType']) {
+    if (typeof detail[key] === 'string') failure[key] = detail[key].slice(0, 96);
+  }
+  if (Number.isInteger(detail.assertionIndex) && detail.assertionIndex >= 0) {
+    failure.assertionIndex = detail.assertionIndex;
+  }
+  return failure;
+}
+
 class RunControl {
-  constructor({ runId, sessionId, intent, context, resetSide, runPlan, expiresAt }) {
+  constructor({ runId, sessionId, intent, context, resetSide, runPlan, expiresAt, repairableCodes = [] }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
     this.resetSideCallback = resetSide;
     this.runPlanCallback = runPlan;
+    this.repairableCodes = new Set(repairableCodes);
     this.expiresAt = Number(expiresAt || Date.now() + 4 * 60_000);
     this.planCalls = 0;
     this.maxPlanCalls = 1;
+    this.lastPlanHash = null;
     this.latestHard = null;
     // Tool errors also need to survive a successful model process exit. A
     // rejected plan never reaches the replay callback, but is just as useful
@@ -64,7 +79,12 @@ class RunControl {
 
   getContext() {
     this.assertLive();
-    return cloneJson({ ...this.context, attempt: this.planCalls + 1, repairReason: this.repairReason });
+    return cloneJson({
+      ...this.context,
+      attempt: this.planCalls + 1,
+      repairReason: this.repairReason,
+      repairFailure: repairFailureContext(this.lastReplayFailure?.error),
+    });
   }
 
   async resetSide(side) {
@@ -104,11 +124,18 @@ class RunControl {
           400
         );
       }
+      const planHash = planContract.planHash(plan);
+      if (this.planCalls > 0 && planHash === this.lastPlanHash) {
+        throw new EvidenceControlError('evidence_plan_unchanged',
+          'The corrected replay plan must change after the failed attempt.', 400);
+      }
       // Reserve the attempt before awaiting so concurrent calls cannot execute
       // multiple expensive paired replays.
       this.planCalls += 1;
+      this.lastPlanHash = planHash;
       this.busy = 'replaying the submitted plan';
       const replayStartedAt = Date.now();
+      let replayError = null;
       try {
         const result = await this.runPlanCallback(plan, { attempt: this.planCalls });
         this.lastToolFailure = null;
@@ -120,6 +147,7 @@ class RunControl {
       } catch (error) {
         // A corrected replay may supersede an earlier failed replay. Keep the
         // latest execution failure, separate from validation/quota errors.
+        replayError = error;
         this.lastReplayFailure = { operation: 'run-plan', error };
         throw error;
       } finally {
@@ -128,6 +156,12 @@ class RunControl {
         // work is running; it still needs to inspect the media and finish.
         this.expiresAt += Date.now() - replayStartedAt;
         this.busy = null;
+        if (replayError && this.planCalls === 1 && this.repairableCodes.has(replayError.code)) {
+          // Return the actual replay error to the agent, then permit one
+          // corrected plan in the same turn. An infrastructure failure never
+          // opens this extra attempt.
+          this.allowRepair(String(replayError.message || replayError.code));
+        }
       }
     } catch (error) {
       this.lastToolFailure = { operation: 'run-plan', error };

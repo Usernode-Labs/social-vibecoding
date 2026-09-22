@@ -98,6 +98,25 @@ test('a failed browser action identifies its plan action and stage', async () =>
   });
 });
 
+test('a targeted wait allows its element to render before enforcing uniqueness', async () => {
+  let visible = false;
+  const counts = [];
+  const locator = {
+    first: () => ({ waitFor: async ({ state, timeout }) => {
+      assert.equal(state, 'visible');
+      assert.equal(timeout, 8000);
+      visible = true;
+    } }),
+    count: async () => {
+      const count = visible ? 1 : 0;
+      counts.push(count);
+      return count;
+    },
+  };
+  assert.equal(await replay.waitForOne(locator, 'browse-control', 8000), locator);
+  assert.deepEqual(counts, [0, 1]);
+});
+
 test('focus crops use the same dimensions and remain within the viewport', () => {
   const viewport = { width: 1280, height: 800 };
   const pair = replay.normalizeCropPair(

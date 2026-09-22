@@ -163,6 +163,75 @@ test('a replay tool failure survives a successful planner exit with its original
   });
 });
 
+test('an agent can repair a locator failure and publish only the corrected replay', async () => {
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target.name = 'Members and guests';
+  const correctedHash = contract.planHash(corrected);
+  const firstError = Object.assign(new Error('open-members matched 0 elements; exactly one is required.'), {
+    code: 'ambiguous_locator', detail: { actionId: 'open-members', side: 'base' },
+  });
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await assert.rejects(control.runPlan(fixtures.plan()), { code: 'ambiguous_locator' });
+      assert.equal(control.getContext().attempt, 2);
+      assert.equal(control.getContext().repairReason, firstError.message);
+      await control.runPlan(corrected);
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  const normalPass = fixture.dependencies.replay.runPass;
+  let failedOnce = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failedOnce) {
+      failedOnce = true;
+      throw firstError;
+    }
+    assert.equal(contract.planHash(args[2].plan), correctedHash);
+    return normalPass(...args);
+  };
+
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(fixture.transitions.map((entry) => entry.next),
+    ['provisioning', 'exploring', 'replaying', 'replaying', 'reviewing', 'verified']);
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.transitions.at(-1).patch.planHash, correctedHash);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 1);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairFailure, {
+    code: 'ambiguous_locator', message: firstError.message,
+    detail: firstError.detail,
+  });
+  assert.equal(fixture.calls.stored, 1);
+});
+
+test('an unsuccessful correction reports the second browser failure, not the exhausted attempt limit', async () => {
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target.name = 'Members and guests';
+  const errors = [
+    Object.assign(new Error('open-members matched 0 elements'), { code: 'ambiguous_locator' }),
+    Object.assign(new Error('The corrected checkpoint was not visible'), { code: 'assertion_failed' }),
+  ];
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await assert.rejects(control.runPlan(fixtures.plan()), { code: 'ambiguous_locator' });
+      await assert.rejects(control.runPlan(corrected), { code: 'assertion_failed' });
+      await assert.rejects(control.runPlan(fixtures.plan()), { code: 'evidence_plan_attempt_exhausted' });
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  let call = 0;
+  fixture.dependencies.replay.runPass = async () => { throw errors[call++]; };
+
+  await assert.rejects(execute(fixture), { code: 'assertion_failed' });
+  const failure = fixture.transitions.at(-1);
+  assert.equal(failure.patch.failureCode, 'assertion_failed');
+  assert.equal(failure.patch.traceSummary.failure.message, errors[1].message);
+  assert.equal(failure.patch.traceSummary.repairCount, 1);
+  assert.equal(failure.patch.traceSummary.control.planCalls, 2);
+});
+
 test('a retry after a failed replay cannot replace the browser error with the plan limit', async () => {
   const replayError = Object.assign(new Error('The browser Job ended without a verdict.'), {
     code: 'missing_replay_result',

@@ -19,6 +19,15 @@ const state = require('./visual-evidence-state');
 const worker = require('./worker');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
+// These failures describe a plan the agent can correct after inspecting the
+// actual pages. Runtime, provenance, and artifact-storage failures are not
+// repairable by changing browser actions.
+const REPAIRABLE_REPLAY_CODES = Object.freeze([
+  'ambiguous_locator', 'assertion_failed', 'unexpected_fallback',
+  'network_not_quiet', 'surface_not_visible', 'focus_not_visible',
+  'focus_too_small', 'no_visible_interaction', 'no_visible_motion',
+  'side_timeout', 'animation_over_cap', 'non_reproducible',
+]);
 const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
 
@@ -313,6 +322,7 @@ function newRunMetrics() {
     },
     replayPasses: [],
     lastReplayEvent: null,
+    repairFailure: null,
     agentAttempts: 0,
     agentDispatches: [],
     repairCount: 0,
@@ -350,6 +360,7 @@ function traceSummary(metrics, extra = {}) {
     },
     replayPasses: metrics.replayPasses.slice(0, 12),
     lastReplayEvent: metrics.lastReplayEvent,
+    repairFailure: metrics.repairFailure,
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
     repairCount: metrics.repairCount,
@@ -498,6 +509,7 @@ async function executeRun(config, options, injected = {}) {
       sessionId: session.id,
       intent,
       context,
+      repairableCodes: authorPlan ? [] : REPAIRABLE_REPLAY_CODES,
       expiresAt: Date.now() + (config.visualEvidence?.maxRunMs || 720_000),
       resetSide: async (side) => {
         const reset = await deps.environment.resetPair(config, pair);
@@ -509,6 +521,17 @@ async function executeRun(config, options, injected = {}) {
       runPlan: async (plan, { attempt }) => {
         const replayStartedAt = Date.now();
         replayBudgetStartedAt = replayStartedAt;
+        if (attempt > 1) {
+          metrics.repairCount = attempt - 1;
+          const previousError = registration.control.lastReplayFailure?.error;
+          const previousDetail = boundedReplayDetail(previousError);
+          metrics.repairFailure = previousError ? {
+            code: errorCode(previousError),
+            message: visibleError(previousError),
+            ...(previousDetail ? { detail: previousDetail } : {}),
+          } : null;
+          metrics.lastReplayEvent = null;
+        }
         try {
           progress(attempt === 1
             ? (authorPlan

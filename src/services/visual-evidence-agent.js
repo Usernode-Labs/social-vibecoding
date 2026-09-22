@@ -48,6 +48,11 @@ A target is exactly one of:
 {by:"text",value,exact?}, or {by:"css",value}. Prefer role, label, and
 testId. Never use an ephemeral accessibility ref. CSS may identify a stable
 component but may not be html, body, or *.
+Before submitting, verify each target against both live revisions at the
+point where its action runs. Copy observed roles and accessible names exactly;
+the visible text may differ from an aria-label, and a button is not a link.
+Check that each target identifies one element. Do not infer a locator from a
+flow description or a control's abbreviated name.
 
 replay.checkpoint is { id, label, focus:{before,after},
 assertions:{before:[...],after:[...]}, animation }. Every assertion list is
@@ -78,8 +83,12 @@ evidence_run_plan. Ordinary platform code—not you—will reset both sides and
 replay it twice in fresh browser contexts. A passing replay makes the captured
 media available to human reviewers, who decide whether it proves the claim.
 You do not need image understanding or to issue a relevance verdict. If the
-replay fails, report its diagnostics. Do not merely narrate a plan in your
-final answer: submit it through the tool.`;
+replay fails, call evidence_get_context again. If its attempt is 2, use
+repairFailure to inspect the failing side and action, verify the corrected
+targets on both revisions, and submit one corrected plan. Never resubmit an
+unchanged plan. If no repair
+attempt is available, report the replay diagnostics. Do not merely narrate a
+plan in your final answer: submit it through the tool.`;
 
 function promptFor() {
   return `Open the run context, explore the declared flow on both exact

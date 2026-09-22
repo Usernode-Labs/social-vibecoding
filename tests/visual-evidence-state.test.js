@@ -12,6 +12,7 @@ test('visual evidence lifecycle permits only the documented progression and one 
     ['planned', 'provisioning'],
     ['provisioning', 'exploring'],
     ['exploring', 'replaying'],
+    ['replaying', 'replaying'],
     ['replaying', 'reviewing'],
     ['reviewing', 'replaying'],
     ['reviewing', 'verified'],

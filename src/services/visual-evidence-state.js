@@ -21,7 +21,9 @@ const TRANSITIONS = Object.freeze({
   planned: new Set(['provisioning', 'failed', 'cancelled']),
   provisioning: new Set(['exploring', 'failed', 'cancelled']),
   exploring: new Set(['replaying', 'failed', 'cancelled']),
-  replaying: new Set(['reviewing', 'failed', 'cancelled']),
+  // One corrected plan may replace a failed replay within the same run.
+  // RunControl limits the agent to two executed plans.
+  replaying: new Set(['replaying', 'reviewing', 'failed', 'cancelled']),
   reviewing: new Set(['replaying', 'verified', 'failed', 'cancelled']),
   verified: new Set(['stale']),
   failed: new Set(['stale']),

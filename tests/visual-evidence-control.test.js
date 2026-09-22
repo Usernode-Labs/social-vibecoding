@@ -53,3 +53,37 @@ test('the evidence turn stays live after waiting for bounded platform replay', a
   assert.equal(control.finish({ status: 'verified', reason: 'The replayed pair proves the claim.', planHash }).status,
     'verified');
 });
+
+test('a failed browser plan permits exactly one corrected replay in the same turn', async () => {
+  const original = contract.parseReplayPlan(fixtures.plan());
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target.name = 'Members and guests';
+  const correctedHash = contract.planHash(corrected);
+  const browserError = Object.assign(new Error('open-members matched 0 elements'), {
+    code: 'ambiguous_locator',
+    detail: { side: 'base', phase: 'action', actionId: 'open-members', actionStage: 'setup', actionType: 'waitFor', execution: { partialReason: 'do not expose' } },
+  });
+  const control = new RunControl({
+    runId: 'c'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    repairableCodes: ['ambiguous_locator'],
+    runPlan: async (submitted, { attempt }) => {
+      if (attempt === 1) throw browserError;
+      assert.equal(contract.planHash(submitted), correctedHash);
+      return { hardVerdict: { passed: true }, planHash: correctedHash };
+    },
+  });
+
+  await assert.rejects(control.runPlan(original), { code: 'ambiguous_locator' });
+  assert.equal(control.getContext().attempt, 2);
+  assert.equal(control.getContext().repairReason, browserError.message);
+  assert.deepEqual(control.getContext().repairFailure, {
+    code: 'ambiguous_locator', side: 'base', phase: 'action',
+    actionId: 'open-members', actionStage: 'setup', actionType: 'waitFor',
+  });
+  await assert.rejects(control.runPlan(original), { code: 'evidence_plan_unchanged' });
+  assert.equal(control.planCalls, 1, 'an unchanged plan cannot consume the repair attempt');
+  await control.runPlan(corrected);
+  assert.equal(control.lastReplayFailure, null);
+  assert.equal(control.latestHard.planHash, correctedHash);
+  await assert.rejects(control.runPlan(corrected), { code: 'evidence_plan_attempt_exhausted' });
+});
