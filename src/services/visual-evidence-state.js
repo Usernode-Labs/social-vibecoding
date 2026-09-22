@@ -324,6 +324,7 @@ function runSummary(row, artifactSummary = []) {
   const intent = row.intent && typeof row.intent === 'object' ? row.intent : null;
   const trace = row.trace_summary && typeof row.trace_summary === 'object'
     ? row.trace_summary : null;
+  const progress = trace?.progress;
   return {
     state: row.state,
     // A heuristic may keep an explicit `impact:none` declaration in the
@@ -341,6 +342,9 @@ function runSummary(row, artifactSummary = []) {
     repairCount: Number.isInteger(Number(row.repair_attempt))
       ? Math.max(0, Math.min(1, Number(row.repair_attempt))) : 0,
     relativePointer: trace?.relativePointer === true,
+    progress: progress && typeof progress.phase === 'string'
+      && /^[a-z][a-z0-9_-]{0,63}$/.test(progress.phase)
+      ? { phase: progress.phase, at: progress.at || null } : null,
     verifiedReason: null,
     overriddenBy: row.override_user_id || null,
     overriddenAt: row.overridden_at || null,
@@ -506,6 +510,18 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
         'This run no longer owns the proposal evidence slot.'
       );
     }
+    // Recovery reads the run before acquiring this lock. A heartbeat may
+    // renew it in between, so check the idle interval again under the lock
+    // before failing it or removing its resources.
+    if (Object.prototype.hasOwnProperty.call(patch, 'recoveryMinIdleMs')) {
+      const idleMs = Date.now() - new Date(row.updated_at).getTime();
+      if (!Number.isFinite(idleMs) || idleMs < patch.recoveryMinIdleMs) {
+        throw new VisualEvidenceStateError(
+          'evidence_run_active', 'This visual evidence run is still active.'
+        );
+      }
+      delete patch.recoveryMinIdleMs;
+    }
     assertTransition(row.state, nextState);
     assertTransitionPayload(row, nextState, patch);
 
@@ -558,6 +574,30 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     }
     return next;
   });
+}
+
+// A fire-and-forget evidence run belongs to a web process. Keep a durable
+// lease while that process is alive so a rollout can be distinguished from a
+// slow checkout, clone, or image build. Only the current active run may renew
+// its lease; a late heartbeat cannot revive a failed or superseded run.
+async function heartbeatRun(pool, runId, phase) {
+  if (!/^[0-9a-f]{32}$/.test(String(runId || ''))
+      || !/^[a-z][a-z0-9_-]{0,63}$/.test(String(phase || ''))) {
+    throw new VisualEvidenceStateError('invalid_evidence_heartbeat', 'Evidence heartbeat identity or phase is invalid.', 400);
+  }
+  const result = await pool.query(
+    `UPDATE visual_evidence_runs r
+        SET updated_at = NOW(),
+            trace_summary = jsonb_set(
+              COALESCE(r.trace_summary, '{}'::jsonb), '{progress}',
+              jsonb_build_object('phase', $2::text, 'at', NOW()), true)
+       FROM chat_sessions s
+      WHERE r.id = $1 AND s.id = r.session_id
+        AND s.visual_evidence_run_id = r.id
+        AND r.state IN ('provisioning','exploring','replaying','reviewing')`,
+    [runId, phase]
+  );
+  return { active: (result.rowCount || 0) > 0 };
 }
 
 async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer proposal revision superseded this visual change preview.') {
@@ -857,6 +897,7 @@ module.exports = {
   createRun,
   createRunInTransaction,
   transitionRun,
+  heartbeatRun,
   markStaleForHead,
   overrideRun,
   getRun,

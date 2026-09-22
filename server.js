@@ -968,15 +968,40 @@ async function becomeLeader() {
   // worker died, remove their deterministic paired runtimes/databases, and
   // enforce the shorter failed-media and bounded audit-retention windows.
   const visualEvidenceGc = require('./src/services/visual-evidence-gc');
-  const runVisualEvidenceGc = () => visualEvidenceGc.sweep(config, getPool(config))
-    .then((counts) => {
-      if (Object.values(counts).some((count) => count > 0)) {
-        log.info('visual-evidence', 'Retention/recovery sweep completed', counts);
-      }
-    })
-    .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }));
+  let evidenceGcRunning = false;
+  const runVisualEvidenceGc = () => {
+    if (evidenceGcRunning) return;
+    evidenceGcRunning = true;
+    visualEvidenceGc.sweep(config, getPool(config))
+      .then((counts) => {
+        if (Object.values(counts).some((count) => count > 0)) {
+          log.info('visual-evidence', 'Retention/recovery sweep completed', counts);
+        }
+      })
+      .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }))
+      .finally(() => { evidenceGcRunning = false; });
+  };
   runVisualEvidenceGc();
   setInterval(runVisualEvidenceGc, 6 * 60 * 60 * 1000).unref?.();
+  // Evidence runs execute after their scheduling HTTP request has returned.
+  // A platform rollout can terminate that process mid-build; heartbeats stop
+  // then, and this short recovery poll releases the abandoned proposal slot.
+  // The six-hour sweep above still owns retention and orphan-file pruning.
+  const recoverInterruptedEvidence = () => {
+    if (evidenceGcRunning) return;
+    evidenceGcRunning = true;
+    visualEvidenceGc.recoverInterrupted(config, getPool(config))
+      .then(({ failed, cancelled, cleanupRetried }) => {
+        if (failed || cancelled || cleanupRetried) {
+          log.warn('visual-evidence', 'Interrupted visual evidence runs recovered', {
+            failed, cancelled, cleanupRetried,
+          });
+        }
+      })
+      .catch((err) => log.warn('visual-evidence', 'Interrupted evidence recovery failed', { err: err.message }))
+      .finally(() => { evidenceGcRunning = false; });
+  };
+  setInterval(recoverInterruptedEvidence, 2 * 60 * 1000).unref?.();
   // Recover intent-only proposals separately from the six-hour retention
   // sweep. A missed checks hand-off should start within minutes, while the
   // durable run claim ensures this cannot duplicate a live runner.
@@ -5465,24 +5490,29 @@ async function cleanup() {
     governanceApplyTickerHandle = null;
   }
 
+  const evidenceRuns = require('./src/services/visual-evidence-orchestrator').inFlightSnapshot;
   const startingCount = getActiveWorkerCount();
+  const startingEvidence = evidenceRuns();
   log.info('server', 'Shutdown initiated, draining handlers', {
-    activeWorkers: startingCount, timeoutMs: DRAIN_TIMEOUT_MS,
+    activeWorkers: startingCount,
+    activeEvidenceRuns: startingEvidence.slice(0, 20),
+    timeoutMs: DRAIN_TIMEOUT_MS,
   });
 
   const [drained] = await Promise.all([
-    lifecycle.waitFor(() => getActiveWorkerCount() === 0, {
+    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && evidenceRuns().length === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
   ]);
 
   if (!drained) {
-    log.warn('server', 'Drain timeout — exiting; workers keep running and will be adopted on restart', {
-      remaining: getActiveWorkerCount(),
+    log.warn('server', 'Drain timeout — exiting with in-flight work', {
+      remainingWorkers: getActiveWorkerCount(),
+      remainingEvidenceRuns: evidenceRuns().slice(0, 20),
     });
-  } else if (startingCount > 0) {
-    log.info('server', 'All handlers drained; worker containers persist across restart');
+  } else if (startingCount > 0 || startingEvidence.length > 0) {
+    log.info('server', 'All handlers and visual evidence runs drained');
   }
   await pushStop;
 
