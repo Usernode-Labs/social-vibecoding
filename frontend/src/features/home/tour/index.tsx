@@ -23,7 +23,11 @@
  *     panel is the product's own handler and the tour is only watching;
  *   * steps 4 to 6 spotlight `#improve-row-feedback`, `#improve-row-new-session`
  *     and `#app-context-row-workshop` INSIDE the panel the viewer just opened,
- *     and Next moves between them;
+ *     and Next moves between them. Those three rows are DESCRIBED, not
+ *     driven: the cut-out blocks the press the way the dim around it does,
+ *     because each of them leaves the tour (a dialog, a new session, a
+ *     route off Home) and a spotlight is not an instruction to press.
+ *     ./tour-steps.ts carries the whole argument;
  *   * step 7 shuts the panel through `Improve.close()`, the controller's own
  *     close path and never a write into its DOM, then points at Challenges.
  *

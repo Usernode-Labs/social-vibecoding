@@ -20,10 +20,10 @@
  * That is what `interactive` and `advanceOn` are for:
  *
  *   * `interactive` lets the cut-out pass clicks through to the control it is
- *     drawn around, while the dimmed area keeps blocking them. It is on for
- *     the whole Improve arc, because pressing a row IS a thing a viewer may
- *     do there, and ./index.tsx's pause rule exists to handle it gracefully
- *     rather than to prevent it.
+ *     drawn around, while the dimmed area keeps blocking them. Exactly ONE
+ *     step has it: the Improve step, which the viewer completes by pressing
+ *     the real button. The three rows INSIDE the panel are described, not
+ *     driven — see "The panel rows are shown, not pressed" below.
  *   * `advanceOn: 'improve-open'` is a step with NO Next. It ends when the
  *     panel opens, which the overlay learns by subscribing to improveStore.
  *     The click is never intercepted; the tour only watches.
@@ -33,6 +33,25 @@
  *   * `closesPanel` is how the arc ends: step 7 shuts the panel through the
  *     controller's own `Improve.close()` before pointing at Challenges.
  *     Never by writing to the panel's DOM, which is React-owned.
+ *
+ * ── The panel rows are shown, not pressed ─────────────────────────
+ *
+ * Feedback, New change and Workshop spent a round `interactive`, on the
+ * argument that pressing a row is a thing a viewer may do while the tour is
+ * pointing at it. In use it is the other way round: every one of those three
+ * LEAVES the tour. Feedback presents a kit dialog, New change starts a
+ * session, and Workshop navigates off Home — so a viewer four steps into an
+ * eight step tour, following a spotlight that reads as an instruction, lands
+ * somewhere else with the tour paused behind them. ./index.tsx's pause and
+ * fallback rules recover from that, which is not the same as it being a good
+ * thing to invite.
+ *
+ * The keyboard already said as much. The focus move and the Tab handler in
+ * ./index.tsx both open up only for a step with `advanceOn`, so these three
+ * rows have never been reachable from a keyboard while their step was up; the
+ * cut-out passing a POINTER through was the odd one out. Both halves agree
+ * now: the spotlight describes the row, Next moves on, and the row is
+ * pressable again the moment the tour is done with it.
  *
  * ── `targets`: a LIST, first visible one wins ──────────────────────────
  *
@@ -88,7 +107,6 @@ export const TOUR_STEPS: readonly TourStep[] = [
     title: 'Give feedback',
     body: "Feedback sends the app's group a note about what should change.",
     targets: ['#improve-row-feedback'],
-    interactive: true,
     needsPanel: true,
   },
   {
@@ -96,7 +114,6 @@ export const TOUR_STEPS: readonly TourStep[] = [
     title: 'New change',
     body: 'New change starts a working session on the app: describe it, try the preview, then put it to a vote.',
     targets: ['#improve-row-new-session'],
-    interactive: true,
     needsPanel: true,
   },
   {
@@ -104,7 +121,6 @@ export const TOUR_STEPS: readonly TourStep[] = [
     title: 'Workshop',
     body: 'Workshop shows everything in progress on the app and what needs you.',
     targets: ['#app-context-row-workshop'],
-    interactive: true,
     needsPanel: true,
   },
   {
