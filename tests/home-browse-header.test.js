@@ -156,18 +156,20 @@ for (const improveAvailable of [true, false]) {
     assert.equal(h.header(), home);
     h.flush();
     const browse = h.header();
-    // #2639: the back slot is now the one difference, so it is masked out of
-    // the comparison and asserted separately below. Everything else — the
-    // controls, the classes, the wrappers — must still be byte-identical,
-    // which is what #1569 built this comparison to protect.
+    // #1569 built this comparison to protect one thing: the two screens share
+    // a bar, so the controls, the classes and the wrappers must be
+    // byte-identical and only the title's words may differ.
+    //
+    // #2639 made the back slot a second difference and masked it out. #2718's
+    // review takes that difference away again: Discover is a tab now, so
+    // Browse is a ROOT like Home and both slots are hidden. The mask stays
+    // anyway — it costs nothing and the next screen to differ here will want
+    // it — but the slots are asserted EQUAL rather than opposite.
     assert.equal(maskChip(maskBackSlot(browse)), maskChip(maskBackSlot(home)),
       'apart from the back slot, only what the title says changes');
-    assert.match(home, /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/,
-      'Home is the root: its slot is hidden');
-    assert.match(browse, /id="back-btn"[^>]*aria-label="Home"/,
-      'Browse offers the house');
-    assert.doesNotMatch(browse, /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/,
-      'and its slot is not hidden');
+    const EMPTY_SLOT = /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/;
+    assert.match(home, EMPTY_SLOT, 'Home is a root: its slot is hidden');
+    assert.match(browse, EMPTY_SLOT, 'and so is Discover');
     assert.match(label(home), /<svg[^>]*\bfill="currentColor"/,
       'Home names the platform with the logotype');
     assert.doesNotMatch(label(home), /Homeroom/,
@@ -176,13 +178,16 @@ for (const improveAvailable of [true, false]) {
       '<span id="header-title-name" class="min-w-0 truncate">All apps</span>',
       'Browse names the destination in words, in the same slot');
     // Two writers own this transition — the screen reveal and Browse's own
-    // chrome sync — and the LATER one wins. Both must say 'home', or the
-    // house is published and overwritten inside one transition and the bar
-    // stays empty. That is exactly how a first attempt at #2639 shipped as a
-    // no-op, so it is asserted on every write rather than the final state.
-    assert.ok(h.writes.some((entry) => entry.mode === 'home'));
-    assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'home'),
-      'no intermediate publish takes the house away again');
+    // chrome sync — and the LATER one wins, so they have to AGREE or one
+    // silently undoes the other inside a single transition. That is exactly
+    // how a first attempt at #2639 shipped as a no-op, which is why this is
+    // asserted on every write rather than on the final state.
+    //
+    // They agree on 'none' since #2718 review: Discover is a tab, so its list
+    // level is a root and shows no glyph at all.
+    assert.ok(h.writes.some((entry) => entry.mode === 'none'));
+    assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'none'),
+      'no intermediate publish puts a glyph in a root\'s corner');
 
     h.writes.length = 0;
     h.App.navigateHome();
@@ -266,13 +271,13 @@ test('the header writes a name in words for an app, and whenever there is a subt
   assert.match(subtitled, />Workshop</, 'beside the subtitle it shares the line with');
 });
 
-test('a cold Browse entry draws the house, and a repeated route changes nothing', () => {
+test('a cold Browse entry draws no glyph, and a repeated route changes nothing', () => {
   const h = harness();
   h.App.navigateToBrowse();
   assert.deepEqual(h.writes, []);
   h.flush();
-  assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'home'),
-    'a cold entry lands on the house, with no none in between (#2639)');
+  assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'none'),
+    'a cold entry lands on the empty root slot, with no house in between');
   const header = h.header();
   h.writes.length = 0;
   h.App.navigateToBrowse();
@@ -298,22 +303,40 @@ test('Browse details retain the arrow to the list, and returning restores the ho
   assert.equal(h.header(), listHeader);
 });
 
-test('a detail opened directly from a Home card still offers Home', () => {
+test('a detail opened directly from a Home card has no list to go up to', () => {
+  // It offered the house, which was the only way out of a detail reached
+  // without a list behind it. The tab bar is that way out now (#2718 review),
+  // and an arrow would promise a list level this detail never came through —
+  // so the slot is empty, the same as on the list itself.
   const h = harness();
   h.Browse.noteDetailOrigin('home');
   h.App.navigateToBrowse('notes');
   h.flush();
-  assert.equal(ui.backButtonStore.get().mode, 'home');
-  assert.equal(ui.backButtonStore.get().href, '/');
-  assert.match(h.header(), /id="back-btn"[^>]*aria-label="Home"/);
+  assert.equal(ui.backButtonStore.get().mode, 'none');
+  // The anchor keeps its default aria-label while hidden — 'none' hides the
+  // slot rather than renaming it — so the observable is the class, on the
+  // wrapper and on the anchor both.
+  assert.match(h.header(), /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 hidden">/);
+  assert.match(h.header(), /id="back-btn"[^>]*un-touch-target hidden"/);
 });
 
-test('secondary screens keep their Home button instead of inheriting the root state', () => {
+test('a tab root shows nothing; a sub-page shows an arrow to its tab', () => {
+  // #2718 review. The bar answers "how do I get out of here" for all five
+  // roots, so the corner is empty on them; the screens reached FROM one of
+  // those roots have a genuine level above and say so with a chevron that
+  // lands on it.
   const h = harness();
-  for (const screen of ['settings-screen', 'profile-screen', 'messages-screen', 'admin-screen', 'leaderboard-screen']) {
-    h.App._showOnlyScreen('browse-screen');
+  for (const screen of ['profile-screen', 'messages-screen', 'workshop-screen', 'browse-screen']) {
+    h.App._showOnlyScreen('home-screen');
     h.App._showOnlyScreen(screen);
-    assert.equal(ui.backButtonStore.get().mode, 'home', `${screen} keeps its way out`);
+    assert.equal(ui.backButtonStore.get().mode, 'none', `${screen} is a root`);
+  }
+  for (const [screen, href] of [['settings-screen', '#profile'], ['admin-screen', '#profile'],
+    ['leaderboard-screen', '#profile'], ['global-chat-screen', '#messages']]) {
+    h.App._showOnlyScreen('home-screen');
+    h.App._showOnlyScreen(screen);
+    assert.equal(ui.backButtonStore.get().mode, 'arrow', `${screen} has a level above`);
+    assert.equal(ui.backButtonStore.get().href, href, `${screen} goes up to its tab`);
   }
   // …and the app view gets the ✕ instead (#2718), which is the same
   // guarantee in a different glyph: leaving somebody else's program is not

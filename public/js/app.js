@@ -4217,11 +4217,7 @@ const App = {
     // chevron. Everything else keeps the house. `_appBackHref` still decides
     // WHERE the ✕ lands (the Workshop, when that is where you came from),
     // which is what setBackIcon resolves a line later.
-    App.setBackIcon(
-      revealId === 'home-screen' ? 'none'
-        : revealId === 'app-view' ? 'close'
-          : 'home',
-    );
+    App.setBackIcon(...App._backSlotFor(revealId));
     // ...and the tab bar, in the same callback and for the same reason the
     // comment above gives for the title and the back slot: they are all part
     // of the swap, and the kit captures the outgoing page from whatever this
@@ -4543,18 +4539,16 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('leaderboard-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Leaderboard');
+      App.setHeaderTitle(App._leaderboardTitle(sub, profileUser));
       // NO DEAD ENDS: every screen the viewer can reach shows a way back.
       // The hamburger used to be that way — it was on every bar, and it held
       // the nav rows — so these screens shipped with the back slot hidden.
       //
-      // This was `arrow` with no href, which RESOLVED to home: the right
-      // destination drawn as the wrong glyph, a chevron promising a level
-      // above where there is none. The house says the same thing honestly,
-      // and it is the default, so the explicit call goes entirely — see the
-      // 'home' publish in _showOnlyScreen. Left here as a comment because
-      // "why does this screen not set its own back state" is a fair question
-      // to have an answer to.
+      // It is an ARROW TO ME now, published from App._BACK_SLOT by
+      // _showOnlyScreen. This screen's three sections are reached from the
+      // Profile screen's rows, so there genuinely is a level above and the
+      // chevron is honest about it — which was the objection when the arrow
+      // resolved to home and the house replaced it.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
     App._routeLeaderboard(sub, profileUser, challengeTarget);
@@ -4579,7 +4573,41 @@ const App = {
   // cohort of a document, does not. Reset explicitly so both arrivals render
   // the same screen. _setSection early-returns when the section is already
   // current, so the common case costs nothing.
+  /*
+      WHAT THE BAR SAYS ON THIS SCREEN, per section.
+
+      It said "Leaderboard" for all of them, which is the name of the SCREEN
+      that hosts the three rather than the name of the one you asked for — so
+      tapping "Challenges" on the Me screen landed on a page titled
+      Leaderboard, and the Me tab stayed lit beside it. Two different things
+      claiming to be where you are.
+
+      The sections are the three `_setSection` validates against
+      (frontend/src/features/leaderboard/leaderboard.js), and the default with
+      no sub is `challenges`, which _routeLeaderboard picks.
+
+      A USER DRILL-IN OUTRANKS THE SECTION, because a profile is a page about
+      somebody rather than a tab of this screen — it is what the address
+      `#leaderboard/<section>/<user>` is carrying, and the name is the
+      answer to "where am I".
+  */
+  LEADERBOARD_TITLES: {
+    challenges: 'Challenges',
+    kudos: 'Kudos',
+    topochain: 'Topochain',
+  },
+
+  _leaderboardTitle(sub, profileUser) {
+    if (profileUser) return `@${profileUser}`;
+    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard';
+  },
+
   _routeLeaderboard(sub, profileUser, challengeTarget) {
+    // The title follows an in-screen section change too: this method is the
+    // one both entries funnel through — the cold navigation above and the tab
+    // taps that never re-enter it — so naming the screen here is what keeps
+    // the bar honest on the second tap.
+    App.setHeaderTitle(App._leaderboardTitle(sub, profileUser));
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
@@ -4646,21 +4674,21 @@ const App = {
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
       App.setHeaderTitle(username ? `@${username}` : 'Profile');
-      // A HOUSE ON THE ACCOUNT SCREENS, not nothing and not a chevron.
+      // NOTHING IN THE LEFT SLOT. Me is a tab root: the bar is on screen
+      // beside it, so a control in the corner that goes home is a second way
+      // to press a button already in view.
       //
-      // Profile, Settings and Admin & moderation lost the arrow once, on the
-      // reasoning that they form a stack of their own (Home → Profile →
-      // Settings/Admin) whose own rows are the way back up. What that left
-      // was three screens with nothing in the bar at all — and "every page
-      // should have a back or a home button, except Home" is the rule now.
+      // It was the house, and the house was right at the time — Profile,
+      // Settings and Admin lost the arrow in #1569 on the reasoning that they
+      // are their own stack, which left three screens with nothing in the bar
+      // at all, and "every page should have a back or a home button, except
+      // Home" was the rule that fixed it. The bar answers that rule for all
+      // five roots now. Settings and Admin keep a glyph and it is an ARROW,
+      // because they are reached from here — see App._BACK_SLOT.
       //
-      // The arrow does not come back: these screens have no level above them
-      // that is not home, and a chevron would promise one. The house is the
-      // honest glyph, and it is what `'home'` DRAWS now rather than a synonym
-      // for hidden (see features/header/back-button-store.js). The call is
-      // kept explicit even though _showOnlyScreen publishes the same default
-      // a moment earlier: this is the screen where the question was asked.
-      App.setBackIcon('home');
+      // _showOnlyScreen has already published this from the table; the call
+      // is not repeated, because a second writer of one fact is how the two
+      // disagree.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
     if (window.Profile?.open) Profile.open(username);
@@ -4783,11 +4811,9 @@ const App = {
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
       App.setHeaderTitle('Workshop');
-      // The house, like every other platform screen: there is no level above
-      // this one that is not home. _showOnlyScreen has already published the
-      // same default; the call is kept explicit because this is the screen
-      // whose back slot the change is about.
-      App.setBackIcon('home');
+      // Nothing in the left slot: the Workshop is a tab root, and its tab is
+      // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
+      // — see the table for why a root shows no glyph at all.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -5590,6 +5616,60 @@ const App = {
   // a message thread, a dev session) pass their own up-level hash. Because App._showOnlyScreen calls this
   // on EVERY screen change, there is no state in which the href can go
   // stale — same reasoning that makes the icon itself reliable.
+  // WHAT THE HEADER'S LEFT SLOT SHOWS, per screen — as a table, because the
+  // answer stopped being a two-way question when the tab bar landed (#2718).
+  //
+  // A TAB ROOT SHOWS NOTHING. Discover, Messages, Workshop and Me are reached
+  // by their own tab and the bar is on screen beside them, so a control in the
+  // corner that goes home is a second way to press a button already in view.
+  // It used to be the house, and the house used to be right: before the bar
+  // there was no other way out of these screens, which is what "every page
+  // should have a back or a home button, except Home" was about. Home has
+  // answered that for all five of them since the bar shipped.
+  //
+  // A SUB-PAGE SHOWS AN ARROW TO ITS TAB'S ROOT. Settings, Admin and the
+  // Leaderboard's three sections are reached FROM Me, and the app's own chat
+  // from Messages — so there is a level above, the chevron is honest about it,
+  // and it lands on the screen you came from rather than on Home.
+  //
+  // AN APP SHOWS THE ✕. Leaving an app is stepping out of somebody's program,
+  // not going up a level (see _showOnlyScreen).
+  //
+  // THIS TABLE HAS TO AGREE WITH TAB_FOR_SCREEN in
+  // frontend/src/features/nav/nav-store.js, which decides which tab lights up
+  // for the same screen. Two tables saying one thing is a thing that rots, so
+  // tests/header-back-home.test.js pins them against each other: every screen
+  // the map calls a root is listed here as a root, and every screen it maps to
+  // a tab it is not the root of is listed here with that tab's address.
+  _BACK_SLOT: {
+    'home-screen': ['none'],
+    'browse-screen': ['none'],
+    'messages-screen': ['none'],
+    'workshop-screen': ['none'],
+    'profile-screen': ['none'],
+    'app-view': ['close'],
+    'global-chat-screen': ['arrow', '#messages'],
+    'leaderboard-screen': ['arrow', '#profile'],
+    'settings-screen': ['arrow', '#profile'],
+    'admin-screen': ['arrow', '#profile'],
+  },
+
+  // The slot for a screen, as setBackIcon's own arguments. Anything off the
+  // table keeps the house: the auth screens are outside the tab bar entirely,
+  // and a screen nobody has classified is better off offering a way out than
+  // nothing at all.
+  _backSlotFor(revealId) {
+    const slot = App._BACK_SLOT[revealId];
+    if (!slot) return ['home'];
+    // The ✕'s DESTINATION is the breadcrumb navigateToApp recorded — the
+    // Workshop, when that is where this app was opened from — and home on
+    // every other route, which is what setBackIcon falls back to. The table
+    // holds the glyph; this holds the one case where the address is not the
+    // glyph's default.
+    if (revealId === 'app-view' && App._appBackHref) return ['close', App._appBackHref];
+    return slot;
+  },
+
   setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
     // FOUR modes now (features/header/back-button-store.js): 'arrow' is a
@@ -5822,7 +5902,12 @@ const App = {
       // The session screen's ← is renderDevView's; leaving Dev for the app
       // itself must take it back down (sub-view hops never pass
       // _showOnlyScreen, the usual owner of this reset).
-      App.setBackIcon('home');
+      //
+      // THE ✕, not the house: this is still inside the app, and the slot an
+      // app shows is the close button (#2718). It said 'home' because that was
+      // the default for everything that was not Home, and the reset was
+      // written before an app had a slot of its own.
+      App.setBackIcon('close', App._appBackHref || undefined);
       AppView.renderAppTab();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);

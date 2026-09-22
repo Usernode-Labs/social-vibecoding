@@ -114,13 +114,16 @@ test('Home is the only root, and it gets that from the shared screen reveal', ()
   // arrive at, it is one you go to from Home's "Find more apps", and landing
   // there with an empty bar left the chip menu's Home row as the only way
   // back. One rule still owns the answer, and now only Home is exempt.
-  // #2718: three answers, still one rule. An APP gets the ✕ that steps out
-  // of it — leaving somebody else's program is not going up a level — and
-  // everything that is not Home or the app view keeps the house.
-  assert.match(body, /revealId === 'home-screen' \? 'none'\n\s+: revealId === 'app-view' \? 'close'\n\s+: 'home',/,
+  // #2718: the answer stopped being a two-way question when the tab bar
+  // landed, so it is a TABLE (App._BACK_SLOT) that this one rule reads. A tab
+  // ROOT shows nothing — its tab is on screen beside it, so a corner control
+  // that goes home is a second way to press a button already in view — a
+  // SUB-PAGE shows an arrow to its tab's root, and an APP shows the ✕ that
+  // steps out of it.
+  assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
     'one rule, including cold boots and history navigation');
-  assert.doesNotMatch(body, /browse-screen/,
-    'Browse takes the default like every other screen you navigate into');
+  assert.doesNotMatch(body, /'home-screen' \? 'none'/,
+    'the answers live in the table, not in a chain of ternaries here');
   assert.doesNotMatch(APP_JS, /App\.setBackIcon\('none'\)/,
     'no per-entry override briefly shows the house before hiding it');
 
@@ -445,22 +448,28 @@ test('the bell renders BEFORE the mark, to its left', () => {
 //
 // So this asserts BOTH writers agree, not just the one that reads first.
 
-test('both writers of the bar agree that the Browse list gets the house', () => {
+test('both writers of the bar agree that the Browse list is a tab root', () => {
   const browse = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
   );
 
-  // Writer 1: the screen reveal.
+  // #2718 review: Discover is a TAB now, so the list level shows nothing —
+  // the bar is on screen beside it and a corner control that goes home is a
+  // second way to press a button already in view. The empty bar #2639 fixed
+  // is not back: what fixed it was giving the viewer a way out, and the tab
+  // bar is a better one than the house.
+  //
+  // Writer 1: the screen reveal, through the table.
   const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(body, /revealId === 'home-screen' \? 'none'/);
-  assert.match(body, /: 'home',/, 'and every screen that is not Home or an app keeps the house');
+  assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/);
+  assert.match(APP_JS, /'browse-screen': \['none'\],/, 'and the table calls it a root');
 
-  // Writer 2: Browse's own chrome sync, which runs after it.
-  assert.match(browse, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,
-    'the list level must not publish none over the reveal');
-  assert.doesNotMatch(browse, /: 'none';/,
-    'no remaining none in the chrome sync');
+  // Writer 2: Browse's own chrome sync, which runs after it and so decides.
+  assert.match(browse, /const backMode = upToList \? 'arrow' : 'none';/,
+    'the list level agrees with the table');
+  assert.doesNotMatch(browse, /: 'home';/,
+    'no remaining house in the chrome sync');
 
   // And the order that makes the second one decisive is still the order.
   const nav = APP_JS.slice(APP_JS.indexOf('navigateToBrowse'));
@@ -478,4 +487,55 @@ test('the detail level keeps its own two answers', () => {
   // opened from a Home card and there is no list behind it.
   assert.match(browse, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/);
   assert.match(browse, /App\.setBackIcon\(backMode, upToList \? '#apps' : undefined\)/);
+});
+
+test('the back-slot table and the tab map agree about what is a root', () => {
+  // TWO TABLES SAYING ONE THING, which is the shape that rots. App._BACK_SLOT
+  // decides what the header's left slot shows for a screen; TAB_FOR_SCREEN
+  // decides which tab lights up for the same screen. The rule that binds them
+  // is short: a screen that IS its tab's root shows nothing, and a screen that
+  // belongs to a tab it is not the root of shows an arrow to that tab's
+  // address. So the two are derived from each other here rather than trusted
+  // to stay in step by hand.
+  const nav = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/nav/nav-store.js'), 'utf8'
+  );
+  const tabFor = {};
+  const mapBody = nav.match(/TAB_FOR_SCREEN = Object\.freeze\(\{([\s\S]*?)\}\)/)[1];
+  for (const line of mapBody.split('\n')) {
+    const m = line.match(/'([a-z-]+)': '([a-z]+)'/);
+    if (m) tabFor[m[1]] = m[2];
+  }
+  assert.ok(Object.keys(tabFor).length >= 9, 'the tab map was read');
+
+  const slots = {};
+  const slotBody = APP_JS.match(/_BACK_SLOT: \{([\s\S]*?)\n  \},/)[1];
+  for (const line of slotBody.split('\n')) {
+    const m = line.match(/'([a-z-]+)': \[([^\]]*)\]/);
+    if (m) slots[m[1]] = m[2].split(',').map((p) => p.trim().replace(/'/g, ''));
+  }
+
+  // The tab bar's own hrefs, so the arrow lands where the tab does rather than
+  // at an address this test made up.
+  const HREF = { home: '/', discover: '#apps', messages: '#messages', workshop: '#workshop', me: '#profile' };
+  // The root of each tab: the screen its tab navigates to.
+  const ROOT = {
+    home: 'home-screen', discover: 'browse-screen', messages: 'messages-screen',
+    workshop: 'workshop-screen', me: 'profile-screen',
+  };
+
+  for (const [screen, tab] of Object.entries(tabFor)) {
+    assert.ok(slots[screen], `${screen} is in the tab map, so it needs a slot`);
+    if (ROOT[tab] === screen) {
+      assert.deepEqual(slots[screen], ['none'],
+        `${screen} is ${tab}'s root, so its corner is empty`);
+    } else {
+      assert.deepEqual(slots[screen], ['arrow', HREF[tab]],
+        `${screen} belongs to ${tab}, so it goes up to ${HREF[tab]}`);
+    }
+  }
+  // An app is neither: leaving somebody else's program is stepping out, not
+  // going up, and #app-view is deliberately absent from the tab map.
+  assert.deepEqual(slots['app-view'], ['close']);
+  assert.ok(!tabFor['app-view'], 'and no tab claims it');
 });

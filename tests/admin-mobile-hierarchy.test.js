@@ -226,9 +226,13 @@ test('the back button has all three icons and one named toggle', () => {
   const swap = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
   assert.match(
     swap.slice(0, swap.indexOf('\n  },')),
-    /revealId === 'home-screen' \? 'none'\n\s+: revealId === 'app-view' \? 'close'\n\s+: 'home',/,
-    '_showOnlyScreen restores Home on secondary screens, hides it on the Home '
-    + 'root and gives an app the ✕ that steps out of it (#2718)');
+    /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
+    '_showOnlyScreen publishes the back slot from App._BACK_SLOT');
+  // Admin is a SUB-PAGE of Me — it is reached from the Profile screen's rows
+  // — so its slot is an arrow up to that screen rather than the house it
+  // carried before the tab bar existed (#2718 review).
+  assert.match(appJs, /'admin-screen': \['arrow', '#profile'\],/,
+    'the console goes up to Me, not home');
 });
 
 test('the admin gate runs before the already-open route() shortcut', () => {
