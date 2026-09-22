@@ -2379,7 +2379,16 @@ const AppView = {
     AppView._teardownLaunch();
     AppView._issueStateSource = null;
     const frame = AppView._appFrame();
-    frame.mount({ slug, faded: false });
+    // WITH ITS LAUNCH COVER (#2704). The bar was all this shot pictured, and
+    // the bar's controls were already toned — so the surface where a tone
+    // actually decides whether anything is READABLE had no route that showed
+    // it. The cover is that surface: it takes --home-ground, which follows
+    // the tone, and inks its name from --text-primary, which until #2704 did
+    // not, so the app's own name came out at 1.03:1 against the ground it
+    // sits on. Mounting it here is what lets the two declared checks below
+    // select it and what gives the tone a before/after to photograph.
+    // Nothing reveals it away: this shot never calls _revealLaunch.
+    frame.mount({ slug, cover: AppView._coverDescriptor(AppView.appData), faded: false });
     frame.setBackground?.(dark ? '#0b0d1b' : '#f4f2e4');
     AppView._setSurface('app');
     App._setScreenVisible('home-screen', false);

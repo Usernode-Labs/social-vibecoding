@@ -941,58 +941,66 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // once its own total stood on the old ceiling's 20-slot floor; that move
   // carries over unchanged (services/app-manifest.js).
   //
-  // 712 -> 713: #2681 renames the dev walkthrough's footer button to "Build
-  // on the Homeroom platform instead", and no declared check asserted the
-  // old string, so the rename adds one rather than editing one. 37 slots
-  // left against MAX_DECLARED_TESTS (750).
+  // 712 → 714: the #2704 pair, one per tone. They select the launch cover
+  // inside #app-frame-host on the two tone shots — the surface whose ink the
+  // tone decides, and which those shots did not mount until that change —
+  // so each tone has a check that fails if the cover is inked for the
+  // shell's theme rather than for the ground it sits on. 712 + 2 = 714,
+  // leaving 36 slots against MAX_DECLARED_TESTS (750).
   //
-  // 712 → 715: independently on main, #2707 declares three, all on the Send
-  // Feedback dialog — the unchosen destination row and its dead Submit on
-  // ?shot=feedback-choose, and the one-destination case on ?shot=feedback,
+  // 712 -> 713: independently on main, #2681 renames the dev walkthrough's
+  // footer button to "Build on the Homeroom platform instead", and no
+  // declared check asserted the old string, so the rename adds one rather
+  // than editing one.
+  //
+  // 712 → 715: also independently on main, #2707 declares three, all on the
+  // Send Feedback dialog — the unchosen destination row and its dead Submit
+  // on ?shot=feedback-choose, and the one-destination case on ?shot=feedback,
   // which is the half a later refactor is most likely to lose (there, a
   // destination IS selected and Submit IS live, because a tap with one
   // possible answer is a tax).
   //
-  // 713 → 716: the tallies above were computed on either side of this merge
-  // and cannot be read as one sequence. This branch took 712 → 713 alone,
-  // with the #2681 check above; main independently took the same 712 to 715
-  // with the #2707 trio above. One +1 and one +3 against a shared 712 is
-  // 716, which leaves 34 slots against MAX_DECLARED_TESTS (750).
+  // 713 → 716: the tallies above were computed on either side of that same
+  // merge on main and cannot be read as one sequence. Main took 712 → 713
+  // alone, with the #2681 check above, then independently 712 → 715 with the
+  // #2707 trio above. One +1 and one +3 against a shared 712 is 716.
   //
   // 716 → 720: #2706 puts the connector walkthrough inline on the dev
   // session page instead of sending the reader to Settings, and that is a
   // screen state with four things to pin — the steps themselves, the live
   // MCP server URL beside them, the ChatGPT hand-off getting ChatGPT's
-  // steps rather than Claude's, and Settings still being one tap away. 30
-  // slots left against MAX_DECLARED_TESTS (750), still clear of the
-  // 20-slot floor. Both sides of this merge happened to land on 716 from
-  // different additions, which is a coincidence and not a sequence: main
-  // reached it with #2681 and #2707, and these four are new against it.
+  // steps rather than Claude's, and Settings still being one tap away. Both
+  // sides of the 713 → 716 merge happened to land on 716 from different
+  // additions, which is a coincidence and not a sequence: main reached it
+  // with #2681 and #2707, and these four are new against it.
   //
-  // 712 → 714: the share-view Homeroom mark (#2705) adds two, and both are
-  // assertions of an ABSENCE — that the platform's own document does not
-  // draw the mark the bridge draws on an app's subdomain. One rides the
-  // existing chromeless-view path, where a failure would be the mark
-  // sitting beside #chromeless-pill (the "not twice" case); one rides Home.
-  // Neither is a new screen, so neither is tagged visual: the surface the
-  // change is actually visible on is an app's own hostname, which no
-  // declared check can navigate to. That is where this branch stood alone,
-  // against the shared 712.
+  // 714 → 718, 720 → 722: the tallies above were computed on either side of
+  // THAT merge and cannot be read as one sequence either. This branch took
+  // 712 → 714 alone, with the #2704 pair above; main independently took the
+  // same 712 to 720, with the #2681, #2707 and #2706 checks above. Neither
+  // set overlaps the other, so that merged manifest held every one of them:
+  // 712 + 2 + 1 + 3 + 4 = 722, which left 28 slots against
+  // MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot floor.
   //
-  // 716 → 718: the tallies above were computed on either side of THIS
-  // merge and cannot be read as one sequence. Both stand on the shared
-  // 712: main took it to 716 (the #2681 rename check, plus the #2707
-  // trio), and this branch took it to 714 with the two #2705 absence
-  // checks. +4 and +2 against that shared 712 is 718, which leaves 32
-  // slots against MAX_DECLARED_TESTS (750).
+  // 712 → 714 (again, independently): the share-view Homeroom mark (#2705)
+  // adds two, and both are assertions of an ABSENCE — that the platform's
+  // own document does not draw the mark the bridge draws on an app's
+  // subdomain. One rides the existing chromeless-view path, where a failure
+  // would be the mark sitting beside #chromeless-pill (the "not twice"
+  // case); one rides Home. Neither is a new screen, so neither is tagged
+  // visual: the surface the change is actually visible on is an app's own
+  // hostname, which no declared check can navigate to. That is where main
+  // stood alone, against the same shared 712 the #2704 pair stood against.
   //
-  // 720 → 722: the tallies above were computed on either side of THIS
-  // merge too, and are again not one sequence. Both stand on the shared
-  // 716: main took it to 720 with the #2706 connector-walkthrough four,
-  // and this branch took it to 718 with the two #2705 absence checks. +4
-  // and +2 against that shared 716 is 722, which leaves 28 slots against
-  // MAX_DECLARED_TESTS (750).
-  assert.equal(DAPP.tests.length, 722);
+  // 722 → 724: the tallies above were computed on either side of THIS merge
+  // and cannot be read as one sequence either. Both stand on the shared 720
+  // (712 + the #2681, #2707 and #2706 checks): this branch already carries
+  // that 720 forward to 722 with the #2704 pair, and main independently
+  // carries the same 720 to 722 with the #2705 pair. Neither pair overlaps
+  // the other, so the merged manifest holds every one of them: 720 + 2 + 2 =
+  // 724, which leaves 26 slots against MAX_DECLARED_TESTS (750) —
+  // comfortably clear of the 20-slot floor.
+  assert.equal(DAPP.tests.length, 724);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

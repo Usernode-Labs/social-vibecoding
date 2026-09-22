@@ -1095,6 +1095,25 @@
       "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
     },
     {
+      "id": "app-tone.cover-ink-dark",
+      "name": "Inside a dark app the launch cover is inked for the ground it sits on, not for the shell's theme (#2704)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden)) #app-frame-host #app-launch-cover > .app-launch-cover-name",
+      "expectText": "Staging demo dark app",
+      "visual": true,
+      "impact": [
+        "public/css/app.css",
+        "public/js/app-view.js",
+        "frontend/src/features/app-frame/**"
+      ]
+    },
+    {
+      "name": "Inside a light app under the dark shell the launch cover is inked for its cream ground (#2704)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden)) #app-frame-host #app-launch-cover > .app-launch-cover-name",
+      "expectText": "Staging demo light app"
+    },
+    {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
       "expectText": "Fork this app",
