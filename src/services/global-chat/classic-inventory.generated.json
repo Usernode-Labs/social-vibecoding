@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 651,
-    "mappedRoutes": 513,
+    "totalRoutes": 656,
+    "mappedRoutes": 518,
     "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 362,
+    "clientApiReferences": 366,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -367,7 +367,7 @@
     },
     {
       "source": "server.js",
-      "line": 665,
+      "line": 669,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +376,7 @@
     },
     {
       "source": "server.js",
-      "line": 847,
+      "line": 851,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +385,7 @@
     },
     {
       "source": "server.js",
-      "line": 851,
+      "line": 855,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +394,7 @@
     },
     {
       "source": "server.js",
-      "line": 855,
+      "line": 859,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +403,7 @@
     },
     {
       "source": "server.js",
-      "line": 859,
+      "line": 863,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +412,7 @@
     },
     {
       "source": "server.js",
-      "line": 863,
+      "line": 867,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,12 +421,113 @@
     },
     {
       "source": "server.js",
-      "line": 867,
+      "line": 871,
       "method": "GET",
       "path": "*",
       "expression": null,
       "status": "exempt",
       "reason": "legacy or catch-all document route represented by in-app navigation capabilities"
+    },
+    {
+      "source": "src/routes/account-deletion.js",
+      "line": 29,
+      "method": "GET",
+      "path": "/api/auth/account-deletion",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.get.auth.account.deletion.c6fafb35",
+      "domain": "profile",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "profile",
+      "transport": "client_action",
+      "mobileSupported": true,
+      "classicPath": "#profile",
+      "clientReferences": [
+        "frontend/src/features/profile/delete-account.tsx",
+        "frontend/src/features/settings/facade.js",
+        "frontend/src/features/settings/settings.js"
+      ]
+    },
+    {
+      "source": "src/routes/account-deletion.js",
+      "line": 36,
+      "method": "DELETE",
+      "path": "/api/auth/account",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.delete.auth.account.2e664d11",
+      "domain": "profile",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "client_action",
+      "mobileSupported": true,
+      "classicPath": "#profile",
+      "clientReferences": [
+        "frontend/src/features/profile/delete-account.tsx",
+        "frontend/src/features/settings/facade.js",
+        "frontend/src/features/settings/settings.js"
+      ]
+    },
+    {
+      "source": "src/routes/account-deletion.js",
+      "line": 49,
+      "method": "GET",
+      "path": "/api/admin/account-deletions",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.account.deletions.1d6dd336",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/account-deletions.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/account-deletion.js",
+      "line": 52,
+      "method": "POST",
+      "path": "/api/admin/account-deletions/:id/retry",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.account.deletions.item.retry.fb98f7eb",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/account-deletions.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/account-deletion.js",
+      "line": 64,
+      "method": "POST",
+      "path": "/api/admin/account-deletions/:id/reconcile-key",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.account.deletions.item.reconcile.key.f6d3cf75",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
     },
     {
       "source": "src/routes/admin.js",
@@ -757,7 +858,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 692,
+      "line": 642,
       "method": "POST",
       "path": "/api/admin/users/:id/reset-password",
       "expression": null,
@@ -777,7 +878,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 726,
+      "line": 676,
       "method": "GET",
       "path": "/api/admin/codes",
       "expression": null,
@@ -799,7 +900,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 742,
+      "line": 692,
       "method": "POST",
       "path": "/api/admin/codes",
       "expression": null,
@@ -821,7 +922,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 757,
+      "line": 707,
       "method": "DELETE",
       "path": "/api/admin/codes/:id",
       "expression": null,
@@ -840,7 +941,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 808,
+      "line": 758,
       "method": "GET",
       "path": "/api/admin/limits",
       "expression": null,
@@ -863,7 +964,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 817,
+      "line": 767,
       "method": "PUT",
       "path": "/api/admin/limits",
       "expression": null,
@@ -886,7 +987,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 903,
+      "line": 853,
       "method": "GET",
       "path": "/api/admin/model-costs",
       "expression": null,
@@ -908,7 +1009,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 912,
+      "line": 862,
       "method": "PUT",
       "path": "/api/admin/model-costs",
       "expression": null,
@@ -930,7 +1031,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 950,
+      "line": 900,
       "method": "GET",
       "path": "/api/admin/homeroom-bot",
       "expression": null,
@@ -951,7 +1052,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 963,
+      "line": 913,
       "method": "PUT",
       "path": "/api/admin/homeroom-bot/settings",
       "expression": null,
@@ -970,7 +1071,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 977,
+      "line": 927,
       "method": "POST",
       "path": "/api/admin/homeroom-bot/runs/:id/rating",
       "expression": null,
@@ -989,7 +1090,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 991,
+      "line": 941,
       "method": "POST",
       "path": "/api/admin/homeroom-bot/run",
       "expression": null,
@@ -1008,7 +1109,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1022,
+      "line": 972,
       "method": "GET",
       "path": "/api/admin/storage",
       "expression": null,
@@ -1030,7 +1131,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1038,
+      "line": 988,
       "method": "PUT",
       "path": "/api/admin/storage/:slug",
       "expression": null,
@@ -1050,7 +1151,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1080,
+      "line": 1030,
       "method": "POST",
       "path": "/api/admin/storage/sweep",
       "expression": null,
@@ -1070,7 +1171,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1112,
+      "line": 1062,
       "method": "GET",
       "path": "/api/admin/featured-apps",
       "expression": null,
@@ -1092,7 +1193,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1156,
+      "line": 1106,
       "method": "PUT",
       "path": "/api/admin/apps/:slug/directory-review",
       "expression": null,
@@ -1111,7 +1212,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1210,
+      "line": 1160,
       "method": "PUT",
       "path": "/api/admin/featured-apps",
       "expression": null,
@@ -1133,7 +1234,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1291,
+      "line": 1241,
       "method": "GET",
       "path": "/api/admin/anthropic-credits",
       "expression": null,
@@ -1155,7 +1256,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1319,
+      "line": 1269,
       "method": "PUT",
       "path": "/api/admin/anthropic-credits",
       "expression": null,
@@ -1177,7 +1278,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1381,
+      "line": 1331,
       "method": "PUT",
       "path": "/api/admin/users/:id/daily-limit",
       "expression": null,
@@ -1197,7 +1298,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1422,
+      "line": 1372,
       "method": "PUT",
       "path": "/api/admin/users/:id/weekly-limit",
       "expression": null,
@@ -1217,7 +1318,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1490,
+      "line": 1440,
       "method": "PUT",
       "path": "/api/admin/users/:id/wallet",
       "expression": null,
@@ -1237,7 +1338,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1636,
+      "line": 1586,
       "method": "GET",
       "path": "/api/admin/submitted-features",
       "expression": null,
@@ -1259,7 +1360,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1772,
+      "line": 1722,
       "method": "GET",
       "path": "/api/admin/db-export/status",
       "expression": null,
@@ -1278,7 +1379,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1825,
+      "line": 1775,
       "method": "GET",
       "path": "/api/admin/db-export/history",
       "expression": null,
@@ -1297,7 +1398,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1867,
+      "line": 1817,
       "method": "POST",
       "path": "/api/admin/db-export/ticket",
       "expression": null,
@@ -1316,7 +1417,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 1952,
+      "line": 1902,
       "method": "GET",
       "path": "/api/admin/db-export",
       "expression": null,
@@ -1337,7 +1438,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2086,
+      "line": 2036,
       "method": "GET",
       "path": "/api/admin/mail/status",
       "expression": null,
@@ -1356,7 +1457,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2113,
+      "line": 2063,
       "method": "GET",
       "path": "/api/admin/mail/activity",
       "expression": null,
@@ -1375,7 +1476,7 @@
     },
     {
       "source": "src/routes/admin.js",
-      "line": 2161,
+      "line": 2111,
       "method": "POST",
       "path": "/api/admin/mail/test",
       "expression": null,
@@ -3564,7 +3665,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 283,
+      "line": 285,
       "method": "POST",
       "path": "/api/apps/:slug/messages",
       "expression": null,
@@ -3589,7 +3690,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 401,
+      "line": 403,
       "method": "PUT",
       "path": "/api/apps/:slug/messages/:id/bookmark",
       "expression": null,
@@ -3609,7 +3710,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 417,
+      "line": 419,
       "method": "DELETE",
       "path": "/api/apps/:slug/messages/:id/bookmark",
       "expression": null,
@@ -3629,7 +3730,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 442,
+      "line": 444,
       "method": "POST",
       "path": "/api/apps/:slug/chat-attachments",
       "expression": null,
@@ -3652,7 +3753,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 505,
+      "line": 507,
       "method": "GET",
       "path": "/api/apps/:slug/chat-attachments/:attId",
       "expression": null,
@@ -3671,7 +3772,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 549,
+      "line": 551,
       "method": "GET",
       "path": "/api/apps/:slug/chat-attachments/:attId/view",
       "expression": null,
@@ -3689,7 +3790,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 591,
+      "line": 593,
       "method": "GET",
       "path": "/api/apps/:slug/mention-suggestions",
       "expression": null,
@@ -10581,7 +10682,7 @@
     },
     {
       "source": "src/routes/topochain/admin/users.js",
-      "line": 885,
+      "line": 871,
       "method": "DELETE",
       "path": "/api/v4/admin/users/:id",
       "expression": null,

@@ -8721,10 +8721,8 @@ ON CONFLICT (key) DO NOTHING;
 
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --
--- Keep this the LAST block in the file: tests/preview-lifecycle.test.js
--- applies schema.sql from this CREATE TABLE to the end of the file into a
--- scratch schema that holds nothing else, so anything appended after it has
--- to stand on its own there — an ALTER TABLE on users or apps does not.
+-- tests/preview-lifecycle.test.js extracts this table definition into its
+-- isolated scratch schema; later migrations may follow it normally.
 CREATE TABLE IF NOT EXISTS preview_operations (
   session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
   desired_revision TEXT NOT NULL,
