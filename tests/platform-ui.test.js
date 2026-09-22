@@ -736,3 +736,23 @@ test('app.css drops the tab-bar rules and draws the Improve panel', () => {
   assert.ok(/#improve-panel \{[\s\S]{0,300}translateX/.test(css),
     'at sm and up the panel must slide in from the side');
 });
+
+for (const kind of ['sheet', 'panel', 'modal']) {
+  test(`${kind}: decoration lasts through exit and cleans up before the caller restores content`, () => {
+    const { kit, seen } = stubKit();
+    const { PlatformUI, sandbox } = makeSandbox({ kit });
+    const events = [];
+    sandbox.UsernodeReact = { decorateOverlay(el) {
+      assert.ok(el);
+      events.push('decorate');
+      return () => events.push('cleanup');
+    } };
+    const opts = { contentEl: {}, onDismiss() { events.push('restore'); } };
+    const handle = PlatformUI[kind](opts);
+    assert.equal(seen[kind + 's'][0].contentEl, opts.contentEl);
+    handle.dismiss();
+    assert.deepEqual(events, ['decorate'], 'requesting dismissal does not remove the dim');
+    seen[kind + 's'][0].onDismiss();
+    assert.deepEqual(events, ['decorate', 'cleanup', 'restore']);
+  });
+}
