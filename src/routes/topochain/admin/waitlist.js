@@ -101,12 +101,23 @@ function bareHandle(v) {
 // (answers.verified) first, and otherwise the identity connected on its
 // linked ACCOUNT — `x_handle_source` says which, since only the first is
 // the waitlist row's own claim.
+//
+// Every stage-1/stage-2 survey field the signup could have answered gets its
+// own column (see services/waitlist-questions.js for the full shape): the
+// "group" section covers what they're building and with whom
+// (group_name/size/role/tools/need), and "loss" covers the platform-loss
+// story (had_loss/loss_product/loss_kind/loss_story). Enum answers (group
+// size/role/tools, loss had/kind) are exported as the raw stored code, same
+// as `found_us` above, so the file matches what the row actually holds
+// rather than a label that can be reworded later.
 const EXPORT_HEADER = [
   'signup_id', 'email', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
   'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
   'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
   'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
-  'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+  'country', 'city', 'found_us', 'found_us_detail', 'made_url', 'made_note',
+  'group_name', 'group_size', 'group_role', 'group_tools', 'group_need',
+  'had_loss', 'loss_product', 'loss_kind', 'loss_story', 'followed_claim',
 ];
 
 function exportRow(r) {
@@ -114,6 +125,8 @@ function exportRow(r) {
   const verified = plainObject(a.verified);
   const handles = plainObject(a.handles);
   const discovery = plainObject(a.discovery);
+  const group = plainObject(a.group);
+  const loss = plainObject(a.loss);
   const signupX = bareHandle(verified.x);
   const accountX = bareHandle(r.account_x_handle);
   return [
@@ -141,6 +154,17 @@ function exportRow(r) {
     discovery.source || '',
     discovery.detail || '',
     a.made_url || '',
+    a.made_note || '',
+    group.name || '',
+    group.size || '',
+    group.role || '',
+    Array.isArray(group.tools) ? group.tools.join('; ') : '',
+    group.need || '',
+    loss.had || '',
+    loss.product || '',
+    Array.isArray(loss.kind) ? loss.kind.join('; ') : '',
+    loss.story || '',
+    a.followed_claim ? 'true' : '',
   ];
 }
 
