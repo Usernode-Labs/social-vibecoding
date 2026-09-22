@@ -110,6 +110,9 @@ import './features/nav/mount';
 // screens share, so it hangs off the document and the visibility store.
 import './lib/browser-scroll';
 import './lib/wallpaper-scroll';
+// …and the same wallpaper is copied under a screen's view transition, so the
+// pinned, translucent header and rail keep their ground mid-fade (#2758).
+import './lib/transition-ground';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at

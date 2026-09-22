@@ -61,7 +61,6 @@ const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
 // The App | Workshop | Activity strip, rendered by the mark's menu — and no
 // longer a reader of the store at all. See the note in that file: the two
 // layouts WERE Board and Activity.
-const VIEW_TABS = read('frontend/src/features/improve/view-tabs.tsx');
 // Streamlined Concept: the Board draws its own Kanban|Feed control now,
 // inside the frame itself — there is no separate toggle module to read.
 const MAIN = read('frontend/src/main.tsx');
@@ -380,13 +379,14 @@ test('the view toggle is real React state, and the className writer is gone', ()
   // subscribe: the Workshop and the kanban are ONE screen in two layouts, so
   // the strip marks Workshop in either. The store's readers are the board
   // frame's own now, which is where a LAYOUT belongs — the strip answers which
-  // part of the app you are in, not how its cards are stacked.
-  assert.ok(!VIEW_TABS.includes('useDevViewMode'),
-    'the view strip no longer reads the store — it marks Workshop in either layout');
+  // part of the app you are in, not how its cards are stacked. The strip
+  // itself then retired to a plain "Go to workshop" row (#2761).
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/improve/view-tabs.tsx')),
+    'the view strip is retired, so nothing there reads the store');
   assert.match(FRAME_ONLY, /useDevViewMode\(\)/,
     'the board frame does, which is the half that is unchanged');
   assert.ok(!/useDevViewMode\(\)/.test(SHEET),
-    'and the strip\u2019s host reads it only through the strip');
+    'and the menu that hosted the strip does not read it either');
   // The FRAME reads the mode too, and for something that is not a control:
   // the General-discussion card draws on the kanban only, because the Feed
   // draws the same fact as an activity row (see ./discussion-store.ts). What
@@ -433,33 +433,23 @@ test('the view toggle is real React state, and the className writer is gone', ()
     assert.ok(!FRAME.includes(`id: '${id}'`) && !FRAME.includes(`id="${id}"`),
       `${id} was retired with the dev-screen tab strip`);
   }
-  // The control still reports where you are to the a11y tree, and it says
-  // `aria-current="page"` rather than `aria-pressed`: these are DESTINATIONS
-  // with their own addresses, not a pair of toggles restating one panel in
-  // another layout. `data-view-segment` went with the sub-strip; the segments
-  // name themselves with `data-context-row`, the key the Board and Activity
-  // rows already carried and the one dapp.json's checks select on.
-  assert.match(VIEW_TABS, /aria-current=\{active === 'workshop' \? 'page' : 'false'\}/,
-    'the Workshop segment reports whether it is the one you are on');
-  assert.match(VIEW_TABS, /data-context-row="workshop"/,
-    'each view still names itself with data-context-row');
+  // `data-view-segment` went with the sub-strip, and the App | Workshop strip
+  // that replaced it retired to a plain "Go to workshop" row (#2761), which
+  // still names its destination with `data-context-row`.
+  assert.match(SHEET, /id="app-menu-row-workshop"\s+dataContextRow="workshop"/,
+    'the Workshop row still names itself with data-context-row');
   assert.ok(!SHEET.includes('data-view-segment') && !FRAME.includes('data-view-segment'),
     'the retired sub-strip left no data-view-segment behind');
   // The Workshop is a hash route, so it has to be an anchor — cmd/ctrl-click
   // and "open in new tab" work on it, the rule tests/nav-new-tab.test.js pins
-  // across the shell. The App segment is a button because it is not a hash (on
-  // the self-hosted row it goes home).
-  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/,
-    'the Workshop segment is an anchor at the workshop route');
-  // The Board segment retired: the Workshop and the kanban are ONE screen in
-  // two layouts, so the strip stopped offering the layout as a destination.
-  // `#app/<slug>/board` and `?view=kanban` still resolve onto the kanban —
-  // dapp.json checks both — and the strip marks Workshop while you are there.
-  assert.ok(!VIEW_TABS.includes('data-context-row="board"'),
-    'the Board segment is gone from the strip');
-  assert.ok(!VIEW_TABS.includes('${slug}/board'),
-    'and with it the only control that navigated to the board route — the '
-    + 'route itself is untouched, which is why the header still names it');
+  // across the shell. MenuRow always renders an <a>.
+  assert.match(SHEET, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/,
+    'the Workshop row is an anchor at the workshop route');
+  // No control navigates to the board route — `#app/<slug>/board` and
+  // `?view=kanban` still resolve onto the kanban, and dapp.json checks both.
+  assert.ok(!/dataContextRow="board"/.test(SHEET) && !SHEET.includes('${slug}/board'),
+    'the menu offers no Board destination — the route itself is untouched, '
+    + 'which is why the header still names it');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');

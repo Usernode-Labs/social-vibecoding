@@ -58,17 +58,17 @@ test('the app menu carries no platform destination at all', () => {
   // destination. `improve-row-feedback` became a filled button again, beside
   // "New change" — a control that says what it DOES had become the first of
   // eight rows in a place you go to navigate — and `app-menu-row-workshop`
-  // went because the view strip's Workshop segment, one band above this
-  // list, is the same destination said twice. Both are still in this sheet
-  // and neither is in this NAV, which is what the split is about: nothing
-  // here is the platform's.
-  for (const row of ['app-menu-row-discussion', 'app-menu-row-about']) {
+  // went because the view strip's Workshop segment was the same destination
+  // said twice. It came BACK when the strip retired (#2761): the owner asked
+  // for a plain "Go to workshop" row, not a toggle. Still the app's own, so
+  // the split holds: nothing here is the platform's.
+  for (const row of ['app-menu-row-workshop', 'app-menu-row-discussion', 'app-menu-row-about']) {
     assert.ok(nav.includes(`id="${row}"`), `#${row} is the app's own`);
   }
   const sheet = html.slice(html.indexOf('id="apps-switcher-sheet"'), html.indexOf('id="switcher-nav"'));
   assert.ok(!nav.includes('id="improve-row-feedback"') && sheet.includes('id="improve-row-feedback"'),
     'feedback is a button above the list, not a row in it');
-  assert.ok(!nav.includes('id="app-menu-row-workshop"')
-    && sheet.includes('id="app-context-row-workshop"'),
-    'and the Workshop is the strip\'s segment, not a row as well');
+  assert.ok(!html.includes('id="app-context-row-workshop"')
+    && !html.includes('id="improve-views"'),
+    'and the Workshop is a row, not a toggle segment as well (#2761)');
 });

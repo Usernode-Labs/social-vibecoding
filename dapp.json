@@ -2075,9 +2075,9 @@
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback"
     },
     {
-      "name": "The Improve panel offers its two views in order: App, then Workshop",
+      "name": "#2761: the mark's menu offers the Workshop as a plain row, not an App | Workshop toggle",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-views [data-context-row=\"app\"] ~ [data-context-row=\"workshop\"]"
+      "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
       "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
@@ -2105,9 +2105,9 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban"
     },
     {
-      "name": "The self-hosted platform row gets its own App segment too (#1386, #1443)",
+      "name": "#2761: the mark's menu opens its list on Go to workshop, with no App segment above it (owner's decision; reverses #1386's App segment)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-views button[data-context-row=\"app\"]"
+      "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav > a#app-menu-row-workshop:first-child"
     },
     {
       "name": "The header names the platform on Home, as a heading (#2718)",
@@ -2309,14 +2309,9 @@
       "expectText": "See what changed this week"
     },
     {
-      "name": "The view strip marks Workshop as the one you are on",
+      "name": "#2761: on the Workshop the menu's Go to workshop row is a plain link, not a selected toggle segment",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
-    },
-    {
-      "name": "The view strip marks Workshop on the board route too, so it is never blank",
-      "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
+      "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop:not([aria-current])"
     },
     {
       "name": "The app menu is the app's own options — no view strip in it",
@@ -2672,9 +2667,9 @@
       "expectSelector": "head > meta[name=\"platform-build\"][content]"
     },
     {
-      "name": "The mark's menu: the two actions, the app's views, then the app's options (#1443, #2718 review)",
+      "name": "The mark's menu: the two actions, then the app's options, with no view strip between them (#2718 review, #2761)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #improve-views + #switcher-nav"
+      "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav"
     },
     {
       "name": "The Profile account group ships the native Node status row",
@@ -2866,10 +2861,15 @@
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-discussion + #app-menu-row-about"
     },
     {
-      "name": "The menu links out to the Workshop, scoped to the app (#2718, #2718 review)",
+      "name": "The menu links out to the Workshop, scoped to the app, as a Go to workshop row (#2718, #2761)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-views a#app-context-row-workshop",
-      "expectText": "Workshop"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop[href=\"#app/usernode-2d5619/workshop\"]",
+      "expectText": "Go to workshop"
+    },
+    {
+      "name": "#2763: Go to app discussion opens the two-pane Messages route, not the old full-screen chat",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-discussion[href=\"#messages/app/usernode-2d5619\"]"
     },
     {
       "id": "workshop.all-apps",
@@ -4701,6 +4701,11 @@
       "name": "An app's Workshop keeps the rail, which only a running app covers (#2718 review)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden)) #platform-header"
+    },
+    {
+      "name": "Folded-sidebar peek (#2764): the sidebar toggle sits in the header's left corner above the rail it controls, starting open, with the edge hot zone absent until the rail is folded",
+      "path": "/?demo=1",
+      "expectSelector": "body:has(#platform-tabs[aria-label=\"Sections\"]:not(.platform-tabs-folded)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-controls=\"platform-tabs\"][aria-pressed=\"true\"]"
     }
   ],
   "governance": {

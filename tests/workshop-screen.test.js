@@ -579,15 +579,13 @@ test('#workshop is a route of its own', () => {
   assert.match(html, /id="platform-tab-workshop"[^>]*href="#workshop"/,
     'the unscoped screen is a tab');
   // The app menu keeps the SCOPED entrance — the link-out every mini-app host
-  // in the study draws under a mini-app — but as the view strip's Workshop
-  // SEGMENT rather than as a row (#2718 review). The row and the segment
-  // named one destination, one above the other, and the strip is the only
-  // one of the two that also gets you back to the running app.
-  const tabs = read('frontend/src/features/improve/view-tabs.tsx');
-  assert.match(tabs, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/,
+  // in the study draws under a mini-app — as a plain "Go to workshop" row
+  // (#2761). It spent a round as the App | Workshop strip's segment; the
+  // owner asked for a row, not a toggle.
+  assert.match(sheetTsx, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/,
     "and the app's menu links out to it, scoped");
-  assert.ok(!/id="app-menu-row-workshop"/.test(sheetTsx),
-    'the row that duplicated that segment is gone');
+  assert.match(sheetTsx, /id="app-menu-row-workshop"/, 'as a row');
+  assert.ok(!/AppViewTabs/.test(sheetTsx), 'and not as a toggle segment');
 });
 
 test('the app-entry breadcrumb has one writer and one clearer', () => {

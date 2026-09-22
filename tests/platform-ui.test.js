@@ -626,38 +626,17 @@ test("the Board owns the view control; the header's label is the chip", () => {
   assert.ok(!/matchMedia|innerWidth/.test(frameCode),
     'the frame must not measure the viewport');
 
-  // The three views are a SEGMENTED CONTROL, in ../improve/view-tabs.tsx —
-  // three rows with muted detail lines plus an indented Kanban|Feed pair under
-  // the middle one became three equal segments, because Kanban and Feed WERE
-  // Board and Activity: the same cards, one by column and one newest-first.
-  //
-  // EXACTLY ONE SURFACE DRAWS IT, and since #2718's review that surface is
-  // the menu. The chip's menu carried a SECOND copy for two rounds of #1443
-  // on the reasoning that either surface is a fair place to ask "which part
-  // of this app". With two, it was not: that menu is the APP PICKER, so a
-  // strip about the app you are already in sat between you and the list you
-  // opened it for. Retiring the Improve panel left one copy and one
-  // question, so the strip went where the rest of that drawer's contents
-  // went — which is why the assertion is now that the menu draws it, and
-  // draws it once.
-  const viewTabs = read('frontend/src/features/improve/view-tabs.tsx');
+  // THE VIEWS ARE A ROW NOW, NOT A SEGMENTED CONTROL (#2761). The App |
+  // Workshop strip was the one control in a menu of rows; the owner asked for
+  // a plain "Go to workshop" row and nothing in place of the App segment —
+  // the parked app on the bar (#2762) is the way back to a running app. So the
+  // strip's module is retired rather than left with no caller.
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(menu, /<AppViewTabs\n\s+ids=\{IMPROVE_VIEW_IDS\}/,
-    'the menu renders the strip, under the ids the panel used to');
-  assert.equal((menu.match(/<AppViewTabs/g) || []).length, 1, 'once');
-  assert.ok(!/SWITCHER_VIEW_IDS/.test(viewTabs),
-    'and the id map the second copy needed is retired with it, so another '
-    + 'surface cannot reappear by importing a map that is still lying around');
-  // The first segment still names where it GOES: the platform's reads "Home",
-  // an app's reads "App". (It read the app's NAME as a row; a segment one
-  // third of a 320pt panel wide cannot, and the name is already on the chip
-  // directly above.)
-  assert.match(viewTabs, /const appLabel = selfHosted \? 'Home' : 'App';/,
-    "the platform's segment is labelled Home, an app's App");
-  // The ATTRIBUTE names the segment's role, not its destination — the
-  // selector contract dapp.json's checks are written against.
-  assert.match(viewTabs, /data-context-row="app"/,
-    'data-context-row stays "app" on both');
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/improve/view-tabs.tsx')),
+    'the strip module is retired, not orphaned');
+  assert.ok(!/<AppViewTabs/.test(menu), 'and the menu no longer renders it');
+  assert.match(menu, /id="app-menu-row-workshop"\s+dataContextRow="workshop"/,
+    'the row still names its destination with data-context-row');
   const controller = read('frontend/src/features/improve/improve-controller.js');
   // #1406 widened where this segment is reachable from. It used to be true
   // that "no app open" meant "already home", because every other screen
@@ -747,16 +726,14 @@ test('the menu is actions, navigation and the app\'s options — one scroller', 
   const actionsAt = html.indexOf('id="improve-quick-actions"');
   assert.match(html.slice(actionsAt, html.indexOf('>', actionsAt)), /\bshrink-0\b/,
     'the quick-action band keeps its height');
-  const viewsAt = html.indexOf('id="improve-views"');
-  assert.match(html.slice(viewsAt, html.indexOf('>', viewsAt)), /\bshrink-0\b/,
-    '#improve-views keeps its height');
-  assert.ok(actionsAt < viewsAt && viewsAt < scrollAt,
-    'the actions, then the views, then the scroller');
-  // THE STRIP IS IN THE PRERENDER, which is the hydration rule and not a
-  // layout one: it renders whether or not a target has been published, so
-  // the child count cannot change when the classic writers publish one. A
-  // `slug ? … : null` here is React #418 — see the note at its call site.
-  assert.ok(viewsAt > 0, 'the strip ships rendered, not gated on a slug');
+  assert.ok(!html.includes('id="improve-views"'), 'no view strip between them (#2761)');
+  assert.ok(actionsAt < scrollAt, 'the actions, then the scroller');
+  // THE WORKSHOP ROW IS IN THE PRERENDER, which is the hydration rule and
+  // not a layout one: it renders whether or not a target has been published,
+  // so the child count cannot change when the classic writers publish one. A
+  // `slug ? … : null` there is React #418 — see the note at its call site.
+  const rowAt = html.indexOf('id="app-menu-row-workshop"');
+  assert.ok(rowAt > scrollAt, 'the row ships rendered inside the list, not gated on a slug');
 
   // THE UPDATE NOTICE IS THE FOOTER'S ONE SURVIVOR, and it moved to the TOP
   // of the band: it is the only one of the footer's facts that is news. It

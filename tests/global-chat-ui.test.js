@@ -24,7 +24,6 @@ const settings = read('frontend', 'src', 'features', 'settings', 'sections', 'gl
 const css = read('public', 'css', 'app.css');
 const shell = read('frontend', 'src', 'Shell.tsx');
 const header = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
-const viewTabs = read('frontend', 'src', 'features', 'improve', 'view-tabs.tsx');
 const appJs = read('public', 'js', 'app.js');
 
 function sourceTree(...parts) {

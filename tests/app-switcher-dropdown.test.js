@@ -46,20 +46,9 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const CSS = read('public/css/app.css');
 const HEADER = read('frontend/src/features/header/platform-header.tsx');
 const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
-const TABS = read('frontend/src/features/improve/view-tabs.tsx');
-const TW = read('tailwind.config.js');
 
 /** A Tailwind spacing step in px — the scale is 0.25rem per unit. */
 const step = (n) => n * 4;
-
-/** A radius from the config's OVERRIDDEN scale, in px. Never the stock one. */
-function radius(name) {
-  const scale = TW.match(/borderRadius:\s*\{([^}]*)\}/);
-  assert.ok(scale, 'tailwind.config.js declares a borderRadius scale');
-  const hit = scale[1].match(new RegExp(`'?${name}'?:\\s*'([\\d.]+)rem'`));
-  assert.ok(hit, `the scale declares ${name}`);
-  return Number(hit[1]) * 16;
-}
 
 /** A rule's body, by exact selector text. */
 function rule(selector) {
@@ -379,48 +368,17 @@ test('every group in the menu announces itself', () => {
     + 'and Profile rows now (#2718)');
 });
 
-test('the view strip is single-homed — in the menu, and nowhere twice', () => {
-  // THE RULE IS THE SAME; THE HOME MOVED (#2718 review). The strip is one
-  // module rendered from a caller-supplied id map, so a second surface is one
-  // import away and a duplicated navigation control is the kind of thing that
-  // reads as harmless in a diff. It used to live in the Improve panel and the
-  // menu was forbidden it; the panel is retired, so the menu is where it
-  // lives and the duplicate to guard against is the `Open in Workshop` ROW
-  // that named the same destination one row below it.
-  assert.match(SHEET, /<AppViewTabs/, 'the strip is here now');
-  assert.ok(!/id="app-menu-row-workshop"/.test(SHEET),
-    'and the row that named the same destination is gone');
-  // The row was the only one of the two carrying the vote count, so the count
-  // came with it rather than going away.
-  assert.match(TABS, /id="app-menu-workshop-owed"/);
-  assert.match(SHEET, /owed=\{owed\}/);
+test('the Workshop is a row in the menu, not a toggle (#2761)', () => {
+  // The App | Workshop strip was the one CONTROL in a menu of rows. The owner
+  // asked for a plain "Go to workshop" row instead, with nothing in place of
+  // the App segment — the parked app on the bar (#2762) is the way back.
+  assert.ok(!/AppViewTabs|view-tabs/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
+    'the strip is not rendered here any more');
+  assert.match(SHEET, /id="app-menu-row-workshop"[\s\S]{0,200}label="Go to workshop"/,
+    'the row that replaced it');
+  // The strip's Workshop segment carried the vote count; it rides the row now.
+  assert.match(SHEET, /id="app-menu-workshop-owed"/);
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'and no caption left behind — comments explaining a move are fine, '
     + 'rendered text is not');
-});
-
-// ── The segmented control's pill ───────────────────────────────────────
-
-test('the tab pill is concentric with the track it sits in', () => {
-  // THE BUG THIS PINS: a rounded box nested in a rounded box has exactly one
-  // correct radius — the outer one less the gap. The pill was `0.625rem`,
-  // which is `xl - 2px` in STOCK Tailwind, where xl is 12px. This config
-  // overrides the whole radius scale, so the track is 16px and the pill was
-  // 4px too tight, leaving a crescent of track at each end of the strip.
-  const track = TABS.match(/const TRACK =\s*\n?\s*'([^']*)'/);
-  assert.ok(track, 'the track states its classes');
-  const tr = track[1].match(/\brounded-(\w+)\b/);
-  const pad = track[1].match(/\bp-(\d+(?:\.\d+)?)\b/);
-  assert.ok(tr && pad, 'the track states a radius and a padding');
-
-  const seg = TABS.match(/const SEG =\s*\n?\s*'([^']*)'/);
-  assert.ok(seg, 'the pill states its classes');
-  const sr = seg[1].match(/rounded-\[([\d.]+)rem\]/);
-  assert.ok(sr, 'the pill states an explicit radius');
-
-  const inner = radius(tr[1]) - (Number(pad[1]) * 4);
-  assert.equal(Number(sr[1]) * 16, inner,
-    `the track is ${radius(tr[1])}px with ${Number(pad[1]) * 4}px of padding, `
-    + `so the pill must be ${inner}px — read the radius off tailwind.config.js, `
-    + 'never off what Tailwind ships by default');
 });

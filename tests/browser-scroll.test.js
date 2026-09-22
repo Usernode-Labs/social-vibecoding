@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTsx } = require('./lib/render-tsx');
-const { createBrowserScroll, allowsPageScroll, pageScroller, MOBILE_PAGE_QUERY } =
+const { createBrowserScroll, allowsPageScroll, pageScroller, strandedPan, MOBILE_PAGE_QUERY } =
   loadTsx('frontend/src/lib/browser-scroll.ts');
 
 function fixture() {
@@ -128,4 +128,70 @@ test('resizing transfers the position between the document and the bounded scree
   controller.sync();
   assert.equal(controller.scrollElement(home), doc.scrollingElement);
   assert.equal(html.scrollTop, 160);
+});
+
+// ── #2771: a pan the installed app was left with ─────────────────────
+
+function installed() {
+  const f = fixture();
+  let kb = false;
+  f.html.clientHeight = 844;
+  f.html.classList.contains = (name) => name === 'un-kb' && kb;
+  f.win.standalone = true; // display-mode: standalone — the bounded shell
+  f.win.innerHeight = 844;
+  f.win.visualViewport = { scale: 1, height: 844 };
+  f.win.scrollY = 0;
+  f.win.scrollTo = (x, y) => { f.win.scrollY = y; };
+  f.setKeyboard = (on) => { kb = on; f.win.visualViewport.height = on ? 500 : 844; };
+  return f;
+}
+
+test('an installed app puts a stranded document pan back once the keyboard is gone', () => {
+  const { add, doc, win, html, controller, setKeyboard } = installed();
+  add('home-screen');
+  controller.sync();
+  assert.equal(html.dataset.browserScroller, undefined, 'installed apps keep the bounded shell');
+
+  // Keyboard up: iOS pans the document to reveal the field. Leave it be.
+  setKeyboard(true);
+  html.scrollTop = 300;
+  controller.onScroll({ target: doc });
+  assert.equal(html.scrollTop, 300, 'a pan while the keyboard is up is the browser doing its job');
+
+  // Keyboard down, pan left behind: the tab bar is off the bottom edge.
+  setKeyboard(false);
+  controller.settle();
+  assert.equal(html.scrollTop, 0);
+  assert.equal(win.scrollY, 0);
+
+  // Any later stray pan is undone on the scroll that makes it.
+  html.scrollTop = 40;
+  controller.onScroll({ target: doc });
+  assert.equal(html.scrollTop, 0);
+});
+
+test('the pan reset never touches a paging document, a zoom, a desktop or a frame', () => {
+  const { add, doc, win, html, controller, scroll } = fixture();
+  add('home-screen');
+  controller.sync();
+  assert.equal(html.dataset.browserScroller, 'home-screen');
+  scroll(500);
+  controller.settle();
+  assert.equal(html.scrollTop, 500, 'a mobile browser tab pages the document on purpose');
+
+  const f = installed();
+  assert.equal(strandedPan(f.win, f.doc, 120), true);
+  assert.equal(strandedPan(f.win, f.doc, 0), false);
+  f.win.visualViewport.scale = 2;
+  assert.equal(strandedPan(f.win, f.doc, 120), false, 'pinch zoom pans on purpose');
+  f.win.visualViewport.scale = 1;
+  f.win.mobile = false;
+  assert.equal(strandedPan(f.win, f.doc, 120), false, 'desktop is out of scope');
+  f.win.mobile = true;
+  f.win.top = {};
+  assert.equal(strandedPan(f.win, f.doc, 120), false, 'an embedded shell is its parent\'s business');
+  f.win.top = f.win;
+  f.setKeyboard(true);
+  assert.equal(strandedPan(f.win, f.doc, 120), false);
+  void doc; void win;
 });

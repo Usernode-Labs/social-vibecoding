@@ -364,6 +364,9 @@ test('the light and dark palettes declare the same variables', () => {
     //
     // Layout insets (env(safe-area-inset-*)), not colours.
     '--platform-safe-top', '--platform-safe-bottom',
+    // How much of that bottom inset the phone tab bar spends (#2766) — a
+    // length derived from it, smaller on iOS; no colour in it.
+    '--platform-tabs-inset',
     // The mobile install strip's content-row height (#1372) — a length, and
     // the one number both `body`'s reserved padding and the strip's own
     // height read, so that the space held open and the space drawn cannot

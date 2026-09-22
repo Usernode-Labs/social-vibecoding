@@ -469,20 +469,14 @@ const ADDED_IDS = {
   // ── #1443: what came back ───────────────────────────────────────
   'messages-screen': 'The Messages screen root, restored. #1431 made it #messages-sheet because a header chat bubble on every route left a full-screen Messages with no honest answer to "back to where?" — the bubble is gone and Messages is a menu row now, so the screen is both the honest shape and the one every messaging product uses for reading past conversations.',
   'drawer-row-native-app-version': 'The installed Flutter release, back in that footer. #1431 renamed it #about-row-native-app-version for the Settings About block it built; the block is gone with the rows it existed to hold, so the name goes back too. `.drawer-ver-row` is the shared CSS recipe, not a claim about a drawer.',
-  // ── #1443: the app's own views stayed in the Improve panel ──────
-  // They spent one round of #1443 as menu rows, on the argument that they are
-  // destinations. They came back: the menu answers WHICH APP, and these answer
-  // WHICH PART OF IT, which is the question the panel you open from inside an
-  // app is already about.
-  //
-  // There were three. `#app-context-row-board` went the way of the Activity
-  // segment before it: the Workshop and the kanban are ONE screen in two
-  // layouts, so the strip was offering a layout where its other segments offer
-  // destinations. Like other post-baseline ids it simply leaves this map
-  // rather than entering RETIRED_IDS. The board route is untouched.
-  'improve-views': 'The block holding them. #1431 built it; #1443 kept it.',
-  'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
-  'app-context-row-workshop': 'The app\'s Workshop — the lander, and the strip\'s only Dev segment: the same cards the kanban draws, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment, then outlived the Board segment.',
+  // ── #2761: the app's views are a ROW, not a toggle ────────────────
+  // #improve-views, #app-context-row-app and #app-context-row-workshop were
+  // the App | Workshop strip under the mark. They were added after the frozen
+  // baseline, so they leave this map rather than entering RETIRED_IDS. The
+  // owner asked for a plain "Go to workshop" row instead of a toggle, and for
+  // nothing in place of the App segment — the parked app on the bar (#2762)
+  // is the way back to a running app.
+  'app-menu-row-workshop': '#2761: "Go to workshop" — the row that replaced the App | Workshop strip under the mark. It links to #app/<slug>/workshop and carries the vote-count badge (#app-menu-workshop-owed, conditional, so not in this map) the strip\'s Workshop segment carried. Rendered unconditionally, like the strip, so the prerender and the hydrating render agree.',
   // ── #1443: the chip and its menu ────────────────────────────────
   // ── #2718: the chip came back apart ──────────────────────────────
   // #app-switcher-btn was the header's label AND the one control that opened
@@ -856,10 +850,9 @@ const ADDED_IDS = {
   //       #improve-working-dot), which are on screen on every route rather
   //       than inside a closed menu.
   //   app-menu-row-workshop
-  //       "Open in Workshop". The view strip's Workshop segment
-  //       (#app-context-row-workshop) is one band above it in the same sheet
-  //       and goes to the same place; the row's one unique job was the vote
-  //       count, which moved with it as #app-menu-workshop-owed.
+  //       "Open in Workshop". Retired here in favour of the view strip's
+  //       Workshop segment, and back as "Go to workshop" when the strip
+  //       retired in turn (#2761) — so it is in the map above again.
 
 };
 

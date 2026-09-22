@@ -66,7 +66,7 @@ const SHELL = read('frontend/src/Shell.tsx');
 const FOLD = read('frontend/src/features/dev-board/card/fold.tsx');
 const CARD_TSX = read('frontend/src/features/dev-board/card/dev-card.tsx');
 const CSS = read('public/css/app.css');
-const VIEW_TABS = read('frontend/src/features/improve/view-tabs.tsx');
+const SHEET_TSX = read('frontend/src/features/app-context/app-context-sheet.tsx');
 // The toolbar, which renders the shared filter strip's host inside this pane.
 const ACTIONS_ROW = read('frontend/src/features/dev-board/actions-row.tsx');
 const dapp = JSON.parse(read('dapp.json'));
@@ -2588,14 +2588,14 @@ test('workshop replaced feed as a mode, and the retired names resolve onto it', 
   assert.match(APP_VIEW_SRC, /_rerenderWorkshop\(\)/);
 });
 
-test('the strip is App | Workshop, and the Workshop is an anchor at its route', () => {
-  assert.match(VIEW_TABS, /data-context-row="app"[\s\S]*data-context-row="workshop"/);
-  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/);
-  assert.ok(!VIEW_TABS.includes('data-context-row="activity"'), 'the Activity segment retired');
-  assert.ok(!VIEW_TABS.includes('data-context-row="board"'),
+test('the Workshop is a menu row, and an anchor at its route (#2761)', () => {
+  assert.match(SHEET_TSX, /id="app-menu-row-workshop"\s+dataContextRow="workshop"/);
+  assert.match(SHEET_TSX, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/);
+  assert.ok(!SHEET_TSX.includes('data-context-row="activity"'), 'the Activity segment retired');
+  assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
     'and the Board segment after it — the Workshop and the kanban are one '
-    + 'screen in two layouts, so the layout is not a destination in the strip');
-  assert.match(VIEW_TABS, />Workshop</);
+    + 'screen in two layouts, so the layout is not a destination in the menu');
+  assert.match(SHEET_TSX, /label="Go to workshop"/);
 });
 
 test('the declared checks cover the lander, its strips and an unfolded row', () => {
@@ -2667,24 +2667,18 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
     assert.ok(!/#dev-(kanban|body)[^,]*gc-explore-chat-btn/.test(t.expectSelector || ''),
       `${t.name}: nor for Explore on a card face`);
   }
-  const strip = byName(/two views in order: App, then Workshop/);
-  assert.ok(strip && /workshop/.test(strip.expectSelector)
-    && !/board/.test(strip.expectSelector),
-    'the order check lost its Board segment along with the segment');
-  // The board route keeps a check of its own, because removing a segment can
-  // leave a segmented control with NOTHING selected — which reads as broken
-  // rather than as "you are somewhere else". It marks Workshop there instead.
-  //
+  // #2761: the App | Workshop strip retired to a plain "Go to workshop" row,
+  // so the order check and the board route's "never blank" check went with
+  // the segmented control they were about. What replaced them pins the row.
+  const row = byName(/offers the Workshop as a plain row/);
+  assert.ok(row && /#app-menu-row-workshop/.test(row.expectSelector)
+    && !/board/.test(row.expectSelector),
+    'the Workshop is a row in the menu, with no Board beside it');
+  assert.ok(!byName(/marks Workshop on the board route/),
+    'no check pins a selected segment the menu no longer has');
   // A PLAIN CHAIN, for the reason this file gives above: `:has()` resolved
   // perfectly in this repo's own Chromium and failed 6 of 6 runs on the gate.
-  // The ABSENCE of the Board segment is pinned in the unit tests (this file,
-  // dev-board-island, improve-session-segment) rather than in a selector that
-  // blocks merge.
-  const onBoard = byName(/marks Workshop on the board route/);
-  assert.ok(onBoard && /\[data-context-row="workshop"\]\[aria-current="page"\]/
-    .test(onBoard.expectSelector), 'the strip is never blank on the board route');
-  assert.match(onBoard.path, /#app\/[\w-]+\/board$/, 'and the URL names that route');
-  assert.ok(!onBoard.expectSelector.includes(':has('),
+  assert.ok(!row.expectSelector.includes(':has('),
     'no :has() on a gate that blocks merge');
   for (const t of dapp.tests) {
     assert.ok(!/#dev-feed\b/.test(t.expectSelector || ''), `${t.name}: no check selects the retired #dev-feed`);
@@ -2880,8 +2874,8 @@ test('the tabs are no longer additive: the Board view mode retired onto them', (
     'the Board mode is gone from the list, not merely unreachable by default');
   assert.match(APP_VIEW_SRC, /kanban: 'workshop'/,
     'and a stored preference naming it migrates rather than being forgotten');
-  assert.ok(!/data-context-row="board"/.test(VIEW_TABS),
-    'the Improve panel offers no Board segment');
+  assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
+    'the app menu offers no Board destination');
   // WHAT IS NOT REMOVED. The columns, the route and the old deep link all
   // still resolve — onto the stage pane — and the standalone surface's own
   // code is still here, now unreachable, to be swept separately rather than
