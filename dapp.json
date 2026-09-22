@@ -3480,11 +3480,6 @@
       "expectText": "of 7 answered"
     },
     {
-      "name": "Admin Waitlist moves an admitted signup's date off the badge label and onto a hover title (#2674)",
-      "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-wl-table span[title^=\"Admitted \"]"
-    },
-    {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",
       "path": "/#admin/seasons/sql-console",
       "expectSelector": "#admin-topo-sql-schema-filter"

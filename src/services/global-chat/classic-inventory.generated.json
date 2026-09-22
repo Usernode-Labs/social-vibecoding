@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 647,
-    "mappedRoutes": 510,
+    "totalRoutes": 649,
+    "mappedRoutes": 512,
     "exemptRoutes": 137,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 360,
+    "clientApiReferences": 362,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -10634,6 +10634,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/topochain/waitlist.tsx",
         "frontend/src/features/admin/topochain/waitlist.tsx"
       ]
     },
@@ -10658,7 +10659,48 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 325,
+      "line": 326,
+      "method": "DELETE",
+      "path": "/api/v4/admin/waitlist/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.delete.v4.admin.waitlist.item.c2b93e2d",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/topochain/waitlist.tsx",
+        "frontend/src/features/admin/topochain/waitlist.tsx",
+        "frontend/src/features/admin/topochain/waitlist.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "line": 349,
+      "method": "POST",
+      "path": "/api/v4/admin/waitlist/bulk-delete",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.v4.admin.waitlist.bulk.delete.d17d63b6",
+      "domain": "admin",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/topochain/waitlist.tsx",
+        "frontend/src/features/admin/topochain/waitlist.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "line": 371,
       "method": "POST",
       "path": "/api/v4/admin/users/:id/grant-access",
       "expression": null,
@@ -10677,7 +10719,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 343,
+      "line": 389,
       "method": "GET",
       "path": "/api/v4/admin/bp-queue",
       "expression": null,
@@ -10696,7 +10738,7 @@
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
-      "line": 376,
+      "line": 422,
       "method": "POST",
       "path": "/api/v4/admin/users/:id/release-bp",
       "expression": null,

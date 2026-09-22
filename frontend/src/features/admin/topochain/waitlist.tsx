@@ -905,4 +905,10 @@ function WaitlistScreen() {
 // of our own writing, so a declared browser check cannot reach a real one — and
 // the rule this enforces (an API-supplied URL is never a clickable href) is
 // exactly the kind that needs executing, not grepping.
-export { SurveyAnswers, WaitlistScreen };
+//
+// WAITLIST_COLUMNS is exported for the same reason, for
+// tests/admin-waitlist-status-column.test.js. The Status cell's admitted
+// shape cannot be reached by a declared browser check either: the queue opens
+// on `status: 'pending'`, whose server filter is `released_at IS NULL`, so an
+// admitted row is never in the table a check at `/#admin/waitlist` sees.
+export { SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS };
