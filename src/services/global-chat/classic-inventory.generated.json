@@ -12123,6 +12123,7 @@
       "mobileSupported": true,
       "classicPath": "#apps",
       "clientReferences": [
+        "frontend/src/features/app-context/app-context-sheet.tsx",
         "frontend/src/features/workshop/index.tsx"
       ]
     },

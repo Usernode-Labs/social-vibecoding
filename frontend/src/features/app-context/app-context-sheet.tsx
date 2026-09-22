@@ -335,8 +335,23 @@ export function AppsSwitcherSheet(): ReactNode {
     return () => { live = false; };
   }, [open]);
 
+  // Every way into an app funnels through improveStore.slug, so recording
+  // recency here rather than in AppTile's click handler counts a home tile, an
+  // /app/<slug> deep link and a notification tap as uses too — not just the
+  // two entries that happen to go through this menu.
+  useEffect(() => {
+    if (slug) recordAppUse(slug);
+  }, [slug]);
+
   /*
       WHAT THE WORKSHOP ROW OWES YOU, as a trailing figure (#2718).
+
+      BELOW THE RECENCY EFFECT, not between the app-strip loader and it.
+      tests/app-switcher-dropdown.test.js reads that loader as a SOURCE SLICE
+      bounded by the two comments around it, and asserts things about the
+      whole slice — among them that it does not gate on anything but `open`.
+      An effect wedged in between joins the slice and fails assertions written
+      about a different effect. The order of these three is otherwise free.
 
       The design study drew "2 to vote" on this row, and it is the one thing
       on this menu that reports rather than navigates — which is exactly what
@@ -375,14 +390,6 @@ export function AppsSwitcherSheet(): ReactNode {
     })();
     return () => { live = false; };
   }, [open, slug]);
-
-  // Every way into an app funnels through improveStore.slug, so recording
-  // recency here rather than in AppTile's click handler counts a home tile, an
-  // /app/<slug> deep link and a notification tap as uses too — not just the
-  // two entries that happen to go through this menu.
-  useEffect(() => {
-    if (slug) recordAppUse(slug);
-  }, [slug]);
 
   // Most-recently-used first, which on a horizontal strip is left-to-right.
   // Safe to read storage during render here and nowhere else in this island:
