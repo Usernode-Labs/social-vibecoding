@@ -146,6 +146,14 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // no way to land the fix. The route itself refuses everything that is not
   // the caller's own open proposal.
   { method: 'POST', pattern: '/api/apps/:slug/proposals/:id/update-from-fork' },
+  // The proposal owner supplies a typed UI flow. The platform itself runs
+  // the exact-revision replay and verifies the resulting media; this grants
+  // no ability to publish a screenshot or declare evidence verified.
+  { method: 'POST', pattern: '/api/apps/:slug/proposals/:id/evidence/plan' },
+  // Failure diagnostics are read-only and the handler requires the proposal
+  // owner. A connector needs this exact route to retrieve the replay plan
+  // and error for a local reproduction without infrastructure credentials.
+  { method: 'GET', pattern: '/api/apps/:slug/proposals/:id/evidence/diagnostics' },
   // Sharing work to the IN-PROGRESS area instead of putting it to a vote
   // (#1347). Allowlisted for the same reason as the route above: the agent
   // that wrote the code lives in the connector, and until this existed its

@@ -81,6 +81,28 @@ function settingParameters(value) {
   return result;
 }
 
+function localSettingParameters(value) {
+  const result = exactParameters(value, {
+    setting: /^(?:theme|devAlerts|devConsoleMode|adminPreview)$/,
+    value: /^(?:system|light|dark|true|false|always|errors-only)$/,
+  });
+  const allowed = {
+    theme: new Set(['system', 'light', 'dark']),
+    devAlerts: new Set(['true', 'false']),
+    devConsoleMode: new Set(['always', 'errors-only']),
+    adminPreview: new Set(['true', 'false']),
+  };
+  if (!allowed[result.setting]?.has(result.value)) {
+    throw new SuggestionActionError('invalid_direct_action', 'That setting value is unavailable.');
+  }
+  return {
+    setting: result.setting,
+    value: ['devAlerts', 'adminPreview'].includes(result.setting)
+      ? result.value === 'true'
+      : result.value,
+  };
+}
+
 function fixed({ label, message, domain, steps, itemSelection = null }) {
   return Object.freeze({
     label,
@@ -445,6 +467,12 @@ const ACTIONS = Object.freeze({
     domain: 'governance',
     steps: [manualStep('governance.mine')],
   }),
+  'governance.completed': fixed({
+    label: 'Completed work',
+    message: 'Here is your recently completed work.',
+    domain: 'governance',
+    steps: [manualStep('governance.completed', { limit: 10 })],
+  }),
   'messages.recent': fixed({
     label: 'Recent conversations',
     message: 'Here are your recent conversations.',
@@ -518,6 +546,11 @@ const ACTIONS = Object.freeze({
     label: 'View setting', message: 'Here are the current settings for this group.', domain: 'settings',
     parameters: settingParameters,
     steps: ({ group }) => [manualStep('settings.inspect', { group })],
+  }),
+  'settings.local.update': Object.freeze({
+    label: 'Save setting', message: 'The setting is ready to apply.', domain: 'settings',
+    parameters: localSettingParameters,
+    steps: (input) => [manualStep('settings.local.update', input)],
   }),
   'profile.me': fixed({
     label: 'View my profile',

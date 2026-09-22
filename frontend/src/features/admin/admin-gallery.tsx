@@ -251,7 +251,7 @@ function StatsStrip({ s }: { s: Stats }) {
       {item('before fell back', s.before_fell_back || 0, true)}
       {item('front page only', s.root_only || 0, true)}
       {item('failed / skipped', s.failed_or_skipped || 0, true)}
-      {item('preview verified', s.evidence_verified || 0, true)}
+      {item('preview captured', s.evidence_verified || 0, true)}
       {item('relevance failures', s.relevance_failure || 0, true)}
       {item('replay failures', s.replay_failure || 0, true)}
       {item('unsupported agents', s.unsupported_agent || 0, true)}

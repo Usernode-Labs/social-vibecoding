@@ -140,6 +140,11 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'test-only mock control unavailable in normal production Classic mode',
   },
   {
+    matches: (route) => route.source === 'src/routes/visual-evidence.js'
+      && route.path === '/api/apps/:slug/proposals/:sessionId/evidence/diagnostics',
+    reason: 'proposal-owner troubleshooting export for local replay, not a Classic user control',
+  },
+  {
     matches: (route) => route.source === 'src/routes/waitlist-connect.js',
     reason: 'signed-out waitlist OAuth protocol outside the authenticated Global Chat surface',
   },
@@ -174,6 +179,7 @@ const DOMAIN_RULES = [
   [/^\/api\/(?:conversations|apps\/[^/]+\/messages)/, 'messages'],
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
   [/^\/api\/(?:issues|apps\/[^/]+\/(?:issues|github-issues|board-order|board-search|topic))/, 'issues'],
+  [/^\/api\/me\/proposals(?:\/|$)/, 'governance'],
   [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|governance)|approver)/, 'governance'],
   [/^\/api\/(?:leaderboard|kudos|me\/(?:kudos|history|challenges)|v4\/leaderboard|v4\/season-events)/, 'leaderboards'],
   [/^\/api\/admin/, 'admin'],

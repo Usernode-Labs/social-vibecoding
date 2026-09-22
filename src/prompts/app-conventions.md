@@ -694,9 +694,10 @@ Per-test fields:
 
 Visual scenario metadata remains useful executable documentation and durable
 regression coverage. Reviewer-facing visual evidence is proposal-specific:
-the authoring agent declares up to three claims, a purpose-bound evidence
-agent explores the real interaction on exact base/head previews, and the
-platform replays the resulting typed plan twice. No matching scenario and no
+the authoring agent declares up to three claims and can submit the typed UI
+flow it used during implementation. A purpose-bound evidence agent can also
+explore the exact base/head previews to produce a plan. The platform replays
+either plan twice and verifies the generated media. No matching scenario and no
 submitted legacy route is ever permission to publish `/` as a fallback.
 
 When you add or change a user-visible screen, **add or extend a test for
@@ -2983,8 +2984,8 @@ locally inside the worker the same way a staging container does:
   or fail the turn.
 
 This is an agent-facing quality aid. Before finishing a user-visible build,
-call `record_visual_evidence_intent`; the exact-revision paired replay is the
-reviewer-facing proof and the "Test this change" action remains a separate
+call `record_visual_evidence_intent`; the exact-revision paired replay creates
+captures for people to review, and the "Test this change" action remains a separate
 manual aid.
 
 ## Writing user-facing copy: no em dashes

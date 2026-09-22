@@ -151,6 +151,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // text to a build the user already started.
 const ACTING_TOOLS = Object.freeze([
   'submit_work',
+  'submit_visual_evidence_plan',
   'create_request',
   'prepare_work',
   'start_platform_build',
@@ -1017,7 +1018,7 @@ async function buildRequestDiscussion({ pool, baseUrl, accessToken, appId, slug,
 //
 // An in-platform build turn may still end with a "==== TESTING ====" block.
 // Those routes drive the manual test link and the legacy check/capture path;
-// they are not revision-scoped, semantically reviewed visual evidence.
+// they are not revision-scoped, replay-checked visual evidence.
 //
 // So submit_work takes the same two things as ordinary arguments. The parsing
 // rules are NOT restated here — services/testing-notes.js owns them, and this
@@ -1090,7 +1091,7 @@ function testingRouteNote(shaped, updating) {
   const list = rejected.join('; ');
   return kept
     ? ` Homeroom could not use ${rejected.length} of the testingPaths you sent — ${list}. The manual test link uses `
-      + `${kept.join(', ')} only; verified visual evidence is independent.`
+      + `${kept.join(', ')} only; replay-checked visual evidence is independent.`
     : ` Homeroom could not use any of the testingPaths you sent — ${list}. Correct them only if the manual test link `
       + 'needs them; use visualEvidence for the reviewer-facing interaction proof.';
 }
@@ -2220,7 +2221,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `visualEvidence` is the exact-head, claim-labelled proof: verified entries include authenticated media; pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
+    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `visualEvidence` contains exact-head, claim-labelled captures: a verified state means two clean replays produced authenticated media, which people must inspect to judge the claim. Pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
     inputSchema: {
       proposalId: z.number().int().positive().optional()
         .describe('The proposal id, as list_my_proposals, prepare_work and submit_work report it — also the last number in a proposal\'s webPath. Either this or prNumber; this one wins when both are given, and a pair that names two different proposals is refused rather than answered.'),
@@ -2331,7 +2332,7 @@ function registerTools(server, ctx) {
         .describe('Stable dapp.json scenario ids used by the last capture, or null for submitted/historical routes.'),
       capturePaths: z.array(z.string()).nullable(),
       visualEvidence: visualEvidenceOutputSchema.describe(
-        'Current exact-head visual evidence. Verified entries include authenticated artifact URLs; pending or '
+        'Current exact-head visual captures. A verified state means replay checks passed and authenticated artifacts are ready for human review; pending or '
         + 'failed entries never fall back to legacy route screenshots. Null means this proposal predates evidence v2.'
       ),
       yesVotes: z.number().nullable(),
@@ -2483,6 +2484,48 @@ function registerTools(server, ctx) {
       prBodyStatus: String(body.prBodyStatus || 'unknown'),
       webPath: changeWebPath(origin, body.appSlug || '', proposalId),
       nextStep: `The proposal now carries the returned linkedIssues set. No code or votes changed.${prNote}`,
+    });
+  });
+
+  // ── submit_visual_evidence_plan ─────────────────────────────────────
+  server.registerTool('submit_visual_evidence_plan', {
+    title: 'Submit the author’s visual replay plan',
+    description: 'After submit_work has recorded a visualEvidence intent, the coding agent that made the change can submit the executable flow for that exact proposal head. Homeroom replays the plan twice on private base/head builds and captures PNGs and any declared WebM. People judge whether the captures support the claim. This tool accepts no image bytes or verdict. Use get_proposal to read the current headSha and proposalId; a moved head or a plan that changes the accepted claims is refused.',
+    inputSchema: {
+      proposalId: z.number().int().positive(),
+      slug: z.string(),
+      headSha: z.string().regex(/^[0-9a-f]{40}$/)
+        .describe('The exact current proposal head from get_proposal.'),
+      plan: z.unknown()
+        .describe('A version-1 plan copying the submitted visualEvidence intent exactly. For each story add replay:{before:{startPath,actions},after:{startPath,actions},checkpoint:{id,label,focus:{before:locator,after:locator},assertions:{before:[assertion],after:[assertion]},animation}}. Each action has id,stage,type and type-specific fields. Locators use by:testId,role,label,placeholder,text,or css. No executable JavaScript.'),
+    },
+    outputSchema: {
+      proposalId: z.number(),
+      appSlug: z.string(),
+      runId: z.string(),
+      headSha: z.string(),
+      visualEvidenceState: z.string(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ proposalId, slug, headSha, plan: replayPlan }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const result = await callPlatform(baseUrl, accessToken, 'POST',
+      `/api/apps/${slug}/proposals/${proposalId}/evidence/plan`,
+      { headSha, plan: replayPlan });
+    if (!result.ok) return platformError(result);
+    const body = result.body || {};
+    return toolResult({
+      proposalId,
+      appSlug: slug,
+      runId: String(body.runId || ''),
+      headSha: String(body.headSha || headSha),
+      visualEvidenceState: String(body.visualEvidenceState || 'provisioning'),
+      webPath: changeWebPath(origin, slug, proposalId),
+      nextStep: 'The platform is generating and verifying the exact-revision media. Read get_proposal for the final evidence state and any replay failure.',
     });
   });
 
@@ -3015,7 +3058,7 @@ function registerTools(server, ctx) {
       summary: z.string().optional()
         .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description.'),
       testingPaths: z.array(z.string()).optional()
-        .describe('Backward-compatible routes for the manual “Test this change” link and legacy checks. They do not count as verified visual evidence. For evidence-v2 proposals, describe the actual user interaction in visualEvidence; Homeroom’s evidence agent explores it and the platform replays it against exact base/head revisions. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing routes.'),
+        .describe('Backward-compatible routes for the manual “Test this change” link and legacy checks. They do not count as replay-checked visual evidence. For evidence-v2 proposals, describe the actual user interaction in visualEvidence; Homeroom’s evidence agent explores it and the platform replays it against exact base/head revisions. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing routes.'),
       testingSteps: z.string().optional()
         .describe('A few short numbered lines telling a person what to click to see the change, shown beside the staging preview. Markdown.'),
       visualEvidence: z.unknown().optional()
@@ -3070,7 +3113,7 @@ function registerTools(server, ctx) {
       visualEvidenceRejected: z.boolean().nullable()
         .describe('Whether a supplied visualEvidence intent was not persisted (for example because collection is disabled). Validation errors fail the tool instead of silently returning true here.'),
       visualEvidenceRequired: z.boolean().nullable()
-        .describe('Whether the proposal must produce verified evidence for its current revision.'),
+        .describe('Whether the proposal must produce replay-checked captures for its current revision.'),
       visualEvidenceNextStep: z.string().nullable()
         .describe('Machine-readable next action for evidence, such as await_visual_evidence or rerun_or_correct_visual_evidence.'),
       // Set only by an UPDATE that carried `propose: true`: whether the

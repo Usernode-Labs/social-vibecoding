@@ -253,7 +253,15 @@
 // serves them. The new /brand/people.png joins SHELL_ASSETS in the same
 // change; an entry alone would be install bandwidth nothing ever reads, so
 // classifyRequest gains the matching /brand/ rule below.
-const SW_VERSION = 'v32';
+//
+// v33 (#2695): the Done column gains a production-deployment summary. The
+// server and app-view.js publish the new deployment state, but the node that
+// displays the summary lives in /shell/assets/shell.js. A preview browser
+// that already cached v32 therefore kept the old component and silently
+// ignored the new field, making the proposal look unchanged even though the
+// preview served the new API and controller code. Retire that shell here so
+// existing preview tabs and installed clients receive the renderer too.
+const SW_VERSION = 'v33';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

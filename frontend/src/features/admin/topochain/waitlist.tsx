@@ -376,6 +376,7 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
 function Queue<T>({
   hostId, title, subtitle, filterId, filterLabel, statusLabels, endpoint, columns,
   rowKey, empty, errorTitle, actions, extra, onlyFilterId, sortId, exportCsv,
+  deleteAction,
 }: {
   hostId: string;
   title: string;
@@ -407,6 +408,17 @@ function Queue<T>({
    * downloads EVERY row the filters select rather than the page on screen.
    */
   exportCsv?: { id: string; path: string };
+  /**
+   * Turns on a checkbox per row plus a "Delete N selected" header button,
+   * set only for an admin allowed to write. Omitted: no selection column,
+   * same as before this existed.
+   */
+  deleteAction?: {
+    bulkPath: string;
+    itemLabel: (item: T) => string;
+    confirmTitle: (n: number) => string;
+    confirmMessage: (n: number) => string;
+  };
 }) {
   const [status, setStatus] = useState<Status>('pending');
   const [only, setOnly] = useState<Only>('any');
@@ -415,8 +427,12 @@ function Queue<T>({
   const [items, setItems] = useState<T[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const [selected, setSelected] = useState<Set<string | number>>(new Set());
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+  // A new page or a changed filter is a different set of rows, so a
+  // selection made under the old ones no longer means anything.
+  useEffect(() => { setSelected(new Set()); }, [status, only, sort, page]);
 
   // The filters alone, shared by the page fetch and the export so the file
   // always holds the rows the selects describe.
@@ -448,6 +464,24 @@ function Queue<T>({
 
   useEffect(() => { load(); }, [load]);
 
+  const runBulkDelete = useCallback(async () => {
+    if (!canWrite() || !deleteAction || !selected.size) return;
+    const n = selected.size;
+    const okd = await topo()._confirm({
+      title: deleteAction.confirmTitle(n),
+      message: deleteAction.confirmMessage(n),
+      confirmLabel: 'Delete',
+    });
+    if (!okd) return;
+    const { ok, data } = await send('POST', deleteAction.bulkPath, { ids: Array.from(selected) });
+    if (!ok || !data?.success) {
+      topo()._alert(data?.error || 'Could not delete the selected entries.');
+      return;
+    }
+    setSelected(new Set());
+    load();
+  }, [deleteAction, load, selected]);
+
   const blank = empty({ status, only });
 
   return (
@@ -457,6 +491,16 @@ function Queue<T>({
         subtitle={subtitle}
         actions={(
           <>
+            {deleteAction && selected.size > 0 ? (
+              <button
+                id={`${hostId}-bulk-delete`}
+                type="button"
+                className={BTN.dangerSm}
+                onClick={runBulkDelete}
+              >
+                {`Delete ${selected.size} selected`}
+              </button>
+            ) : null}
             <StatusSelect
               id={filterId}
               label={filterLabel}
@@ -532,6 +576,21 @@ function Queue<T>({
               columns={columns}
               actions={actions ? (it) => actions(it, load) : undefined}
               extra={extra}
+              selection={deleteAction ? {
+                isSelected: (it) => selected.has(rowKey(it)),
+                onToggle: (it, checked) => {
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (checked) next.add(rowKey(it)); else next.delete(rowKey(it));
+                    return next;
+                  });
+                },
+                allSelected: items.length > 0 && items.every((it) => selected.has(rowKey(it))),
+                onToggleAll: (checked) => {
+                  setSelected(checked ? new Set(items.map(rowKey)) : new Set());
+                },
+                itemLabel: (it) => `Select ${deleteAction.itemLabel(it)}`,
+              } : undefined}
             />
             <Pager meta={meta} onPage={setPage} />
           </>
@@ -573,7 +632,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     // pair, and neither named what an admin was looking at.
     label: 'Status',
     cell: (w) => (w.released_at
-      ? <Badge tone="green" label={`Admitted ${fmt(w.released_at)}`} />
+      ? <span title={`Admitted ${fmt(w.released_at)}`}><Badge tone="green" label="Admitted" /></span>
       : <Badge tone="amber" label="Waiting" />),
   },
   {
@@ -728,6 +787,20 @@ function WaitlistScreen() {
     reload();
   }, []);
 
+  const deleteWaitlistEntry = useCallback(async (w: WaitlistRow, reload: () => void) => {
+    if (!canWrite()) return;
+    const okd = await topo()._confirm({
+      title: `Delete ${w.email} from the waitlist?`,
+      message: 'This removes the signup and its survey answers entirely. Anyone who used its invite '
+        + 'link keeps their own place in line. This cannot be undone.',
+      confirmLabel: 'Delete',
+    });
+    if (!okd) return;
+    const { ok, data } = await send('DELETE', `/api/v4/admin/waitlist/${w.id}`);
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not delete this signup.'); return; }
+    reload();
+  }, []);
+
   const enableBp = useCallback(async (u: BpRow, reload: () => void) => {
     if (!canWrite()) return;
     const okd = await topo()._confirm({
@@ -764,18 +837,38 @@ function WaitlistScreen() {
         rowKey={(w) => w.id}
         empty={waitlistEmpty}
         errorTitle="Couldn't load the waitlist"
-        actions={write ? (w, reload) => (!w.released_at ? (
-          <button
-            data-release-wl={w.id}
-            data-email={w.email}
-            type="button"
-            className={BTN.rowPrimary}
-            onClick={() => admitWaitlist(w, reload)}
-          >
-            Admit
-          </button>
-        ) : null) : undefined}
+        actions={write ? (w, reload) => (
+          <>
+            {!w.released_at ? (
+              <button
+                data-release-wl={w.id}
+                data-email={w.email}
+                type="button"
+                className={BTN.rowPrimary}
+                onClick={() => admitWaitlist(w, reload)}
+              >
+                Admit
+              </button>
+            ) : null}
+            <button
+              data-delete-wl={w.id}
+              data-email={w.email}
+              type="button"
+              className={BTN.rowDanger}
+              onClick={() => deleteWaitlistEntry(w, reload)}
+            >
+              Delete
+            </button>
+          </>
+        ) : undefined}
         extra={(w) => <WaitlistDetails row={w} />}
+        deleteAction={write ? {
+          bulkPath: '/api/v4/admin/waitlist/bulk-delete',
+          itemLabel: (w) => w.email,
+          confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
+          confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
+            + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,
+        } : undefined}
       />
       <div className="mt-10">
         <Queue<BpRow>
@@ -812,4 +905,10 @@ function WaitlistScreen() {
 // of our own writing, so a declared browser check cannot reach a real one — and
 // the rule this enforces (an API-supplied URL is never a clickable href) is
 // exactly the kind that needs executing, not grepping.
-export { SurveyAnswers, WaitlistScreen };
+//
+// WAITLIST_COLUMNS is exported for the same reason, for
+// tests/admin-waitlist-status-column.test.js. The Status cell's admitted
+// shape cannot be reached by a declared browser check either: the queue opens
+// on `status: 'pending'`, whose server filter is `released_at IS NULL`, so an
+// admitted row is never in the table a check at `/#admin/waitlist` sees.
+export { SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS };

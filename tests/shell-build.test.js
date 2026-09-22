@@ -209,7 +209,7 @@ test('every file the shell bundle imports from outside frontend/ is copied into 
     ['Dockerfile.kubernetes', kubernetesDockerfile],
   ]) {
     const shellStart = source.indexOf('FROM node:22-alpine AS shell');
-    const shellEnd = source.indexOf('FROM node:22-alpine AS css', shellStart);
+    const shellEnd = source.indexOf('\nFROM node:22-alpine', shellStart + 1);
     assert.ok(shellStart > -1 && shellEnd > shellStart, `${name} must keep its shell builder stage`);
     const shellStage = source.slice(shellStart, shellEnd);
 

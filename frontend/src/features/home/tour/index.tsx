@@ -51,6 +51,26 @@
  * Nothing in `public/js/**` writes into this subtree, so the region is
  * React-owned end to end and may hold state (AGENTS.md).
  *
+ * ── Following the target ───────────────────────────────────────────────
+ *
+ * The hole is measured once per animation frame for as long as the overlay
+ * is up, and written only when the numbers move. It used to be measured on a
+ * 50ms ticker for 600ms after each step change, which covered the kit
+ * sheet's entrance spring and nothing after it -- and on a phone the panel
+ * keeps moving after it: `Improve.open()` refreshes the sessions list over
+ * the network once the sheet is up, a session state tick reloads it while
+ * the panel is open, the Chats group appears when its bootstrap answers, and
+ * the deploy note comes and goes. Every one of those changes the height of a
+ * bottom-anchored, content-sized sheet, and the kit answers by holding the
+ * top edge and springing the sheet to its new rest (native.js's watchSize),
+ * so every row moves by exactly that much. A refresh that lands after the
+ * window left the ring on the row's OLD position, over the panel's title
+ * (the report behind this). None of those motions announces itself -- a
+ * spring on a transform fires no event and no ResizeObserver -- so the only
+ * signal that is always right is the next frame. One `getBoundingClientRect`
+ * a frame, on one element, while a tour is on screen, is a cost nobody can
+ * measure; a ring on the wrong row is not.
+ *
  * ── Where the card goes while the panel is open ────────────────────────
  *
  * Beside the panel, never on it. On desktop, where the panel is a right-side
@@ -107,6 +127,21 @@
  * Settings' "Replay the tour" clears the stored flag and asks for it again
  * through ./tour-request.ts, which is the one path that ignores all of the
  * above except "Home has to be on screen".
+ *
+ * ── A reload is not a restart ──────────────────────────────────────────
+ *
+ * Nothing here moves a tour backwards except Back, so a viewer who pressed
+ * Next and saw step 1 again had their document replaced under them: the
+ * shell reloads itself once its replacement build is cached after a cold
+ * boot from the worker cache (App._reloadPrefetchedShellIfSafe), and the
+ * boot-time session reconcile reloads when the server disagrees about the
+ * session. Both land during the first seconds on Home, which is exactly when
+ * the tour is up, and a tour that only remembered "finished" started over at
+ * step 1 every time -- the "looping between the first and second step" that
+ * was reported. The step now rides sessionStorage (./tour-storage.ts), the
+ * auto-start resumes there (`resumeIndex`, ./tour-steps.ts), and the shell's
+ * automatic reload treats a live `#home-tour` the way it treats a draft in a
+ * textarea: not now (App._hasUnsavedShellInput).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -122,23 +157,16 @@ import {
 } from './spotlight';
 import { useTourRequest } from './tour-request';
 import {
-  clampIndex, hasNext, IMPROVE_STEP_INDEX, isLastStep, stepAt, stepCounter, TOUR_LENGTH,
+  clampIndex, hasNext, IMPROVE_STEP_INDEX, isLastStep, resumeIndex, stepAt, stepCounter,
+  TOUR_LENGTH,
 } from './tour-steps';
-import { currentUserId, readDone, writeDone } from './tour-storage';
+import {
+  clearStep, currentUserId, readDone, readStep, writeDone, writeStep,
+} from './tour-storage';
 
 /** How long to keep waiting for Home before giving up on this page load. */
 const HOME_WAIT_TRIES = 60;
 const HOME_WAIT_MS = 300;
-
-/**
- * Re-measure for this long after anything that moves the target.
- *
- * A smooth scroll, the panel's CSS slide and the kit sheet's spring all take
- * a few hundred milliseconds and none of them reports when it is done. The
- * scroll listener catches the first; this catches the other two.
- */
-const SETTLE_MS = 600;
-const SETTLE_TICK_MS = 50;
 
 const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
@@ -295,8 +323,8 @@ export function OnboardingTour() {
     return () => document.removeEventListener('sv:authed', resolve);
   }, []);
 
-  const start = useCallback(() => {
-    setIndex(0);
+  const start = useCallback((at = 0) => {
+    setIndex(clampIndex(at));
     setConfirming(false);
     setOpen(true);
   }, []);
@@ -320,10 +348,22 @@ export function OnboardingTour() {
       // the gates above were still resolving.
       if (readDone(userId)) return;
       started.current = true;
-      start();
+      // At the step this page session had reached, if the document was
+      // reloaded under a tour in progress; from the top otherwise.
+      start(resumeIndex(readStep(userId)));
     })();
     return () => { cancelled = true; };
   }, [userId, start]);
+
+  // ── Where the viewer is, kept across a reload ────────────────────────
+  //
+  // Written on every step while the tour is up, so a reload -- whichever of
+  // the shell's own reasons caused it -- comes back here rather than at step
+  // 1. Cleared by finish(), because a finished tour has nowhere to resume.
+  useEffect(() => {
+    if (!open || userId == null) return;
+    writeStep(userId, index);
+  }, [open, index, userId]);
 
   // ── Settings' "Replay the tour" ──────────────────────────────────────
   const request = useTourRequest();
@@ -413,8 +453,12 @@ export function OnboardingTour() {
   //
   // One pass: find the step's target, lay the four shades around it, outline
   // it, and put the card beside it. Called from the layout effect below on
-  // every state change, and directly from the resize/scroll listeners, which
-  // is why it writes the DOM rather than setting state.
+  // every state change and then once per frame while the overlay is up,
+  // which is why it writes the DOM rather than setting state -- and why it
+  // writes only when the numbers have moved: the last geometry painted is
+  // kept as one string, and a frame that measures the same thing touches
+  // nothing.
+  const paintedRef = useRef('');
   const apply = useCallback(() => {
     const card = cardRef.current;
     const spot = spotRef.current;
@@ -423,6 +467,22 @@ export function OnboardingTour() {
     const target = findTarget(stepAt(indexRef.current).targets);
     const hole = target ? padRect(target.getBoundingClientRect()) : null;
     const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const boxes = shadeBoxes(viewport, hole);
+
+    // The card's width goes first because its height, measured next, depends
+    // on it. Written only when it changes, so a steady frame touches nothing.
+    const width = cardWidth(viewport.width);
+    if (card.style.width !== `${width}px`) card.style.width = `${width}px`;
+    // The card must not sit ON the Improve panel while it is open: a tooltip
+    // over the row it describes hides the thing it is pointing at. Only the
+    // three panel steps consult it, so a closed panel's off-screen rect never
+    // reaches the arithmetic.
+    const panel = stepAt(indexRef.current).needsPanel && panelOpenNow() ? panelBox() : null;
+    const placed = placeCardForPanel(viewport, { width, height: card.offsetHeight }, hole, panel);
+
+    const painted = JSON.stringify([hole, boxes, placed]);
+    if (painted === paintedRef.current) return;
+    paintedRef.current = painted;
 
     // The class strings above are constants React writes once, so this toggle
     // is the `useHiddenClass` contract spelled imperatively: the pass that
@@ -434,45 +494,34 @@ export function OnboardingTour() {
       spot.style.width = `${hole.width}px`;
       spot.style.height = `${hole.height}px`;
     }
-    shadeBoxes(viewport, hole).forEach((box: Box, i: number) => {
+    boxes.forEach((box: Box, i: number) => {
       const el = shades[i] as HTMLDivElement;
       el.style.top = `${box.top}px`;
       el.style.left = `${box.left}px`;
       el.style.width = `${box.width}px`;
       el.style.height = `${box.height}px`;
     });
-
-    const width = cardWidth(viewport.width);
-    card.style.width = `${width}px`;
-    // The card must not sit ON the Improve panel while it is open: a tooltip
-    // over the row it describes hides the thing it is pointing at. Only the
-    // three panel steps consult it, so a closed panel's off-screen rect never
-    // reaches the arithmetic.
-    const panel = stepAt(indexRef.current).needsPanel && panelOpenNow() ? panelBox() : null;
-    const placed = placeCardForPanel(viewport, { width, height: card.offsetHeight }, hole, panel);
     card.style.top = `${placed.top}px`;
     card.style.left = `${placed.left}px`;
   }, []);
 
   useIsomorphicLayoutEffect(() => {
     if (!live) return;
+    // Forget what was painted last: the first pass after a state change, or
+    // after a pause, always writes, even when the numbers happen to match.
+    paintedRef.current = '';
     apply();
-    const onChange = () => apply();
-    window.addEventListener('resize', onChange);
-    // Capture, so a scroll inside #home-screen or the panel's own body (which
-    // are the scrollers, not the document) re-measures too: scroll does not
-    // bubble, but it is delivered to a capturing listener on the way down.
-    window.addEventListener('scroll', onChange, true);
-    // And a short settle, for the animations that report nothing: the smooth
-    // scroll below, the panel's CSS slide, the kit sheet's spring.
-    const ticker = window.setInterval(apply, SETTLE_TICK_MS);
-    const stop = window.setTimeout(() => window.clearInterval(ticker), SETTLE_MS);
-    return () => {
-      window.removeEventListener('resize', onChange);
-      window.removeEventListener('scroll', onChange, true);
-      window.clearInterval(ticker);
-      window.clearTimeout(stop);
-    };
+    // Then follow the target for as long as the overlay is up. A resize, a
+    // scroll in #home-screen or in the panel's own body, the panel's CSS
+    // slide, the kit sheet's spring and the sheet re-sizing under a list that
+    // loads later all move the target; only the last two report nothing, and
+    // the next frame is the one signal that is right for all of them. See
+    // "Following the target" in the header.
+    let frame = window.requestAnimationFrame(function follow() {
+      apply();
+      frame = window.requestAnimationFrame(follow);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [live, index, confirming, panelOpen, apply]);
 
   // Bring the step's target into view before pointing at it. Skipped for a
@@ -517,6 +566,7 @@ export function OnboardingTour() {
 
   const finish = useCallback(() => {
     writeDone(userId);
+    clearStep(userId);
     setConfirming(false);
     setOpen(false);
   }, [userId]);

@@ -189,9 +189,9 @@ test('OpenRouter JSON parsing preserves Unicode split across network chunks', as
   assert.equal(result.content, '€');
 });
 
-test('an unterminated or length-capped provider response is rejected as incomplete', async () => {
-  for (const body of [
-    {
+test('an unterminated or length-capped provider response is rejected with a retryable cause', async () => {
+  for (const [body, code] of [
+    [{
       choices: [{
         message: {
           tool_calls: [{
@@ -200,8 +200,8 @@ test('an unterminated or length-capped provider response is rejected as incomple
           }],
         },
       }],
-    },
-    { choices: [{ message: { content: 'partial' }, finish_reason: 'length' }] },
+    }, 'stream_error'],
+    [{ choices: [{ message: { content: 'partial' }, finish_reason: 'length' }] }, 'output_limit'],
   ]) {
     await assert.rejects(
       provider.streamChat({
@@ -213,7 +213,7 @@ test('an unterminated or length-capped provider response is rejected as incomple
         tools: [],
         fetchImpl: async () => jsonResponse(body),
       }),
-      (error) => error.code === 'stream_error' && error.dispatched === true,
+      (error) => error.code === code && error.dispatched === true,
     );
   }
 });

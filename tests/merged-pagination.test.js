@@ -47,7 +47,7 @@ function makeRows(n) {
   return out;
 }
 
-function loadVotes({ mergedRows, total, shipped }) {
+function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary }) {
   const routes = [];
   const ids = {
     express: 'express',
@@ -86,6 +86,9 @@ function loadVotes({ mergedRows, total, shipped }) {
     getPool: () => ({
       async query(sql, params) {
         captured.calls.push({ sql, params });
+        if (/FROM chat_sessions live/.test(sql)) {
+          return { rows: deploymentBoundary ? [deploymentBoundary] : [] };
+        }
         // #433: the column-total COUNT (no `cs.` alias) — answer it before
         // the per-row merged SELECT so the two don't collide.
         if (/COUNT\(\*\)::int AS total/.test(sql)) {
@@ -117,7 +120,7 @@ function loadVotes({ mergedRows, total, shipped }) {
   stub(ids.adminApproval, {});
   stub(ids.events, { record() {}, EVENT_TYPES: {} });
   stub(ids.appAccess, {
-    getAppForUser: async () => ({ id: 1, slug: 'demo' }),
+    getAppForUser: async () => ({ id: 1, slug: 'demo', ...(app || {}) }),
     sessionCollabGuard: () => (req, res, next) => next(),
     ACCESS_COLUMNS: '',
   });
@@ -211,6 +214,91 @@ test('malformed cursor is ignored — newest page, no predicate', async () => {
   assert.equal(payload.merged.length, 3);
   const mergedCall = captured.calls.find((c) => /cs\.status = 'merged'/.test(c.sql));
   assert.ok(!/\(cs\.created_at, cs\.id\) </.test(mergedCall.sql), 'no cursor predicate for bad cursor');
+});
+
+test('hosted apps expose every merged proposal as deployed', async () => {
+  const rows = makeRows(2);
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: {
+      self_hosted: false,
+      main_sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      main_pr_number: 500,
+    },
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deployed', 'deployed']);
+  assert.deepEqual(payload.deployment, {
+    state: 'deployed',
+    runningSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    liveSessionId: null,
+    livePrNumber: 500,
+    pendingCount: 0,
+  });
+});
+
+test('self-hosted apps derive deployed and deploying rows from the live merge boundary', async () => {
+  const shas = ['cccccccccccccccccccccccccccccccccccccccc', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+  const rows = makeRows(3).map((row, i) => ({
+    ...row,
+    merge_commit_sha: shas[i],
+    merged_at: new Date(Date.UTC(2026, 0, 3 - i)).toISOString(),
+  }));
+  const boundary = { ...rows[1], pending_count: 1 };
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: { self_hosted: true, main_sha: shas[1], release_stall: null },
+    deploymentBoundary: boundary,
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deploying', 'deployed', 'deployed']);
+  assert.equal(payload.deployment.state, 'deploying');
+  assert.equal(payload.deployment.liveSessionId, rows[1].id);
+  assert.equal(payload.deployment.livePrNumber, rows[1].pr_number);
+  assert.equal(payload.deployment.pendingCount, 1);
+  const boundaryCall = captured.calls.find((call) => /FROM chat_sessions live/.test(call.sql));
+  assert.ok(boundaryCall, 'live boundary is resolved outside the paginated row query');
+  assert.match(boundaryCall.sql, /LOWER\(live\.merge_commit_sha\) = LOWER\(\$2\)/);
+});
+
+test('self-hosted deployment stalls mark the matching pending proposal', async () => {
+  const running = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const stalled = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const rows = makeRows(2).map((row, i) => ({
+    ...row,
+    merge_commit_sha: i === 0 ? stalled : running,
+    merged_at: new Date(Date.UTC(2026, 0, 2 - i)).toISOString(),
+  }));
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: {
+      self_hosted: true,
+      main_sha: running,
+      release_stall: { sha: stalled, kind: 'workflow_failed', detectedAt: '2026-01-03T00:00:00Z' },
+    },
+    deploymentBoundary: { ...rows[1], pending_count: 1 },
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['stalled', 'deployed']);
+  assert.equal(payload.deployment.state, 'stalled');
+  assert.equal(payload.deployment.stall.sha, stalled);
+});
+
+test('unmatched self-hosted revisions keep the honest merged fallback', async () => {
+  const rows = makeRows(2);
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: {
+      self_hosted: true,
+      main_sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      release_stall: null,
+    },
+    deploymentBoundary: null,
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['unknown', 'unknown']);
+  assert.equal(payload.deployment.state, 'unknown');
+  assert.equal(payload.deployment.pendingCount, null);
 });
 
 test('#433: returns a numeric `total` independent of limit and cursor', async () => {
