@@ -323,8 +323,17 @@ test('secondary screens keep their Home button instead of inheriting the root st
   assert.equal(ui.backButtonStore.get().mode, 'close', 'an app view offers the way out');
 });
 
-test('the shared navigation menu still has reachable Home and Discover destinations', () => {
+test('Home and Discover are reachable from the bar, on every platform screen', () => {
+  // They were rows of the app chip's menu, which is what this test named.
+  // #2718 put them on #platform-tabs, and the guarantee it was written for is
+  // the one that matters: both destinations exist, both are reachable without
+  // opening anything, and Home's plain click is still routed in place while
+  // its href stays a real path so a modified click opens a tab.
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(bar, /key: 'home' as const[\s\S]{0,400}href: '\/'/);
+  assert.match(bar, /App\?\.navigateHome\?\.\(\)/);
+  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
+  // …and the menu they left carries no platform destination at all.
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(menu, /label="Home"[\s\S]{0,500}App\?\.navigateHome\?\.\(\)/);
-  assert.match(menu, /href="#apps"\s+icon=\{<SearchIcon \/>\}\s+label="Discover"/);
+  assert.doesNotMatch(menu, /id="switcher-row-/);
 });

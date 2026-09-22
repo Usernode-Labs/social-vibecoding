@@ -1,8 +1,21 @@
 'use strict';
 
-// #1823: the app menu (the app chip's sheet) gains a Challenges row in its
-// Platform group, directly under Discover, linking to the Leaderboard
-// screen's Challenges tab.
+// Challenges, and where its entrance lives.
+//
+// #1823 put a Challenges row in the app chip's menu, under Discover: it was a
+// platform place reachable only from Home's Challenges area, so from inside
+// an app there was no way to it short of going Home first.
+//
+// #2718 answers the same complaint with a different shape. The menu was
+// carrying two unlike lists — the app's options and the platform's places —
+// and every mini-app host it was modelled on keeps those apart: the host's
+// sections on a permanent bar, the mini-app's options behind one button. So
+// the platform's destinations left the menu, and Challenges is a row of the
+// Profile screen the Me tab lands on.
+//
+// The GUARANTEE #1823 asked for is unchanged and is what this file still
+// pins: Challenges is reachable from inside an app without going Home first.
+// Two taps, by a different route — the Me tab, then the row.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,23 +24,39 @@ const path = require('node:path');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 const html = read('public/index.html');
-const dapp = JSON.parse(read('dapp.json'));
+const panel = read('frontend/src/features/profile/account-panel.tsx');
 
-test('the prerendered menu has Challenges right after Discover', () => {
-  const nav = html.slice(html.indexOf('id="switcher-nav"'));
-  const discover = nav.indexOf('id="switcher-row-discover"');
-  const challenges = nav.indexOf('id="switcher-row-challenges"');
-  const messages = nav.indexOf('id="switcher-row-messages"');
-  assert.ok(discover > 0 && challenges > discover && messages > challenges,
-    'Home, Discover, Challenges, Messages in that order');
-  assert.match(nav, /id="switcher-row-challenges" href="#leaderboard\/challenges"/);
-  const row = nav.slice(challenges, nav.indexOf('</a>', challenges));
-  assert.match(row, />Challenges</);
-  assert.match(row, /<svg/, 'with an icon like its siblings');
+test('Challenges is a row of the Me tab, leading the platform group', () => {
+  assert.match(panel, /id="profile-row-challenges"[\s\S]{0,200}?href="#leaderboard\/challenges"/,
+    'the destination is unchanged — the Leaderboard screen\'s Challenges tab');
+  const challenges = panel.indexOf('id="profile-row-challenges"');
+  const settings = panel.indexOf('id="profile-row-settings"');
+  assert.ok(challenges > 0 && challenges < settings,
+    'it leads: the group\'s shared goals before your own configuration');
 });
 
-test('a declared check pins the row under Discover', () => {
-  const t = dapp.tests.find((x) => /switcher-row-challenges/.test(x.expectSelector || ''));
-  assert.ok(t, 'a dapp.json check selects the row');
-  assert.match(t.expectSelector, /#switcher-row-discover \+ #switcher-row-challenges/);
+test('and the Me tab is on the bar, from inside an app or anywhere else', () => {
+  // This is the whole of what #1823 was asking for. The row used to be two
+  // taps from an app because the menu was; it is two taps now because the bar
+  // is, and the bar is on every platform screen.
+  assert.match(html, /id="platform-tab-me"[^>]*href="#profile"/);
+});
+
+test('the app menu carries no platform destination at all', () => {
+  const nav = html.slice(html.indexOf('id="switcher-nav"'), html.indexOf('</nav>', html.indexOf('id="switcher-nav"')));
+  for (const gone of [
+    'switcher-row-home', 'switcher-row-discover', 'switcher-row-challenges',
+    'switcher-row-messages', 'switcher-row-workshop', 'switcher-row-profile',
+    'switcher-row-settings', 'switcher-row-admin',
+    'switcher-row-wallet', 'switcher-row-validator',
+  ]) {
+    assert.ok(!nav.includes(gone), `#${gone} left the menu`);
+  }
+  // …and what IS there is the app's, which is the other half of the split.
+  for (const row of [
+    'improve-row-feedback', 'app-menu-row-workshop',
+    'app-menu-row-discussion', 'app-menu-row-about',
+  ]) {
+    assert.ok(nav.includes(`id="${row}"`), `#${row} is the app's own`);
+  }
 });

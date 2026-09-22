@@ -299,6 +299,28 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #2718: the platform's destinations leave the app's menu ──────
+  //
+  // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the
+  // frozen baseline never recorded any of them: #switcher-row-home,
+  // -workshop, -discover, -challenges, -messages, -profile, -wallet,
+  // -validator, -settings, -admin and #switcher-byok-dot.
+  //
+  // They were the app chip menu's "Platform" and "You" groups, on #1443's
+  // rule that one control names where you are and its menu lists everywhere
+  // you can go. That rule is now split the way every mini-app host it was
+  // modelled on already had it: the host's sections live on a permanent bar
+  // (#platform-tabs) and the menu under a mini-app holds the MINI-APP's
+  // options. Home, Discover, Messages, Workshop and Profile are TABS;
+  // Challenges, Settings and Admin are rows of the Profile screen the Me tab
+  // lands on (features/profile/account-panel.tsx); Wallet and Validator were
+  // already rows there and are only rows there again.
+  //
+  // `switcher-row-admin` survives as a published FLAG name — app.js still
+  // publishes it and Profile reads it — which is a capability, not a row.
+  'app-menu-row-workshop': '#2718: "Open in Workshop", scoped to the app in context. It is the move the study found under every mini-app whose deeper options go somewhere: Telegram sends you to the bot\'s chat as a row of Chats, Steam to that game\'s community hub, Slack and Teams to the channel\'s files. This is the Workshop tab, arriving filtered rather than at the top of a list. Outside an app it falls back to #workshop, the unscoped screen.',
+  'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',
+  'app-menu-row-about': '#2718: the row that opens the sheet\'s SECOND PANE — the repository, sharing, the running version and how to add the app to a home screen. A button and not an anchor, which is the honest shape: there is no address to open in a new tab, because the pane is this sheet in another state. Two panes of one sheet rather than two sheets, because the kit cannot present a sheet while it is still dismissing another.',
   // ── #2718: the platform's five places get a bar ──────────────────
   // The app chip's menu was carrying two unlike lists — the app's own
   // options and the platform's destinations — because there was no bar for
@@ -339,17 +361,13 @@ const ADDED_IDS = {
   'app-permissions-list': '#2219: the rows host, React-owned end to end (features/settings/app-permissions-list.tsx). Ships EMPTY, like #llm-grants-list beside it: the list is fetched when the section opens, so contents in the prerender would be a hydration mismatch.',
   'app-permissions-status': '#2219: the section\'s status line, written by Settings._setAppPermissionsStatus after a revoke or a re-enable. Same controller-host contract as #llm-grants-status.',
   // ── #1823: Challenges in the app menu ────────────────────────────
-  'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
   // ── #2382: Wallet and Validator under the app chip ───────────────
   // Profile's native account rows stay where they are; these are second
   // entrances in the menu's You group, between Profile and Settings.
-  'switcher-row-wallet': '#2382: the app menu\'s Wallet row. Ships `hidden` with a constant className and is revealed from walletSheetStore.visible, which WalletSheet.init() sets for a native top frame only. A plain tap awaits the menu\'s dismissal, then calls WalletSheet.openFromRow() — the same sheet #account-row-wallet opens; its #profile href is only the modified-click fallback.',
-  'switcher-row-validator': '#2382: the app menu\'s Validator row, to #settings/usernode, where the native block-production card asks to produce blocks. Ships `hidden` with a constant className and is revealed from nodePillStore.visible (NodePill.init(), native top frame only).',
   // ── The Workshop screen ──────────────────────────────────────────
   // The app's own Workshop page answers "what is happening in THIS app";
   // nothing answered "which of my apps wants something from me", short of
   // opening each one in turn. This is that page's two numbers, once per app.
-  'switcher-row-workshop': 'The app menu\'s Workshop row, directly under Home and above Discover. Home is the launcher (which app do I want to open); this is which app wants something from me, so it leads the Platform group with Home rather than sitting among the places you go once you know nothing is waiting. The adjacent-sibling check in dapp.json that pinned `#switcher-row-home + #switcher-row-discover` names this row between them now.',
   'workshop-screen': 'The Workshop SCREEN root (#workshop), a React-owned sibling of #messages-screen: every app in the viewer\'s "Your apps", with how many items that app\'s own Workshop page holds for them. Ships hidden and EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts in the controller\'s open() — so the prerender and the first client render agree.',
   'workshop-list': 'That screen\'s card of rows — a <GroupedList> from @/components/ui/grouped-list, the widget language\'s primary content shape, so the id sits on the primitive rather than on a hand-rolled div. It carries no rows in the prerender, like #browse-list beside it; a row is a <ListRow as="a"> with `[data-workshop-app="<slug>"]` carrying `[data-workshop-working]` and `[data-workshop-needs]`, which is what the declared checks select on.',
   'workshop-empty': 'Its nothing-to-show state, for an account with no apps. #2445 made it a CARD rather than the grey caption line it shipped as — a <ListRow as="a" href="#apps"> reading as an invitation to the directory, the way Home\'s Discover block\'s own empty card does (#1913): title over subtitle with the row\'s disclosure chevron. THE ID IS ON A WRAPPER <div>, NOT ON THAT ANCHOR, and that is load-bearing in two directions. dapp.json selects `#workshop-empty.hidden`, so the id and the `hidden` class toggle stay together on one element and visibility is never conditional rendering; and a SECOND declared check selects `#workshop-list a[data-workshop-app]:first-of-type`, which an `<a id="workshop-empty">` sibling of the rows silently steals — `:first-of-type` is structural and `display: none` does not exempt it. That shipped once and failed on the next run; the wrapper is the fix. Ships `hidden`, and stays hidden while the list is still loading — the skeleton rows are that state, and an empty list that reads as "you have no apps" before the fetch lands is the bug this distinction prevents. It is the list\'s FIRST child, not its last: GroupedList\'s row separator is `[&:not(:last-child)]:after:*` on the row, so a note after the rows would leave the last one drawing a hairline under nothing.',
@@ -460,13 +478,6 @@ const ADDED_IDS = {
   //     there is no new fetch and no new publisher.
   'back-icon-close': '#2718: the ✕ in the header\'s left slot, shown inside a running app. NOT a fourth name for the chevron — leaving an app is not going up a level, it is stepping out of somebody else\'s program, and every mini-app host in the study draws that as an ✕. Where it LANDS is unchanged (App._appBackHref, so ✕ from a session still returns to that app\'s Workshop): only the glyph knows the difference. It ships `hidden`, like #back-icon-arrow, and each of the three glyphs now names its own mode rather than one of them being "not the other".',
   'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
-  'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
-  'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',
-  'switcher-row-messages': 'Messages. Was #messages-btn in the header; it has its own page, so it is a row. Carries NO count: a message notification is counted on the bell and listed in the notifications sheet with every other notification, which leaves this a plain destination like Home and Discover beside it.',
-  'switcher-row-profile': 'Profile.',
-  'switcher-row-settings': 'Settings. Was #profile-row-settings on the Profile screen.',
-  'switcher-byok-dot': 'The BYOK dot on that row — was #profile-byok-dot. settings.js publishes the flag; the className stays a constant.',
-  'switcher-row-admin': 'Admin & moderation. Was #profile-row-admin. Ships `hidden`; App.renderAdminButton publishes the isAdmin flag, unchanged.',
   // ── …and the Apps sheet behind the title tab ─────────────────────
   'apps-switcher-sheet': 'The board\'s Apps sheet — its "Switching between Apps" connector. Reuses the retired #app-context-sheet\'s controller, store and kit bottom-sheet lifecycle.',
   'apps-switcher-overlay': 'Its backdrop.',

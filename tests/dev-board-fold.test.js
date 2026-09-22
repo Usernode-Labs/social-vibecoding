@@ -932,8 +932,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // tests/proposal-tests-manifest.test.js) both say to move the ceiling
   // rather than delete a check. It moved with this branch
   // (services/app-manifest.js, 730 → 750, still not a coupled move), so
-  // 711 leaves 39 slots, clear of the 20-slot floor. The count is unchanged.
-  assert.equal(DAPP.tests.length, 711);
+  // 711 left 39 slots, clear of the 20-slot floor.
+  //
+  // 715 with #2718. The navigation change rewrote NINE checks in place — the
+  // app chip's menu no longer holds the platform's destinations, so each one
+  // names the control that carries it now (a tab, a Profile row, the app's
+  // own menu row) rather than being deleted — and ADDED four for what the
+  // change introduces: the mark as the header's menu button, About as the
+  // menu's second pane, the app strip inside a running app, and the bar's
+  // absence there. 715 leaves 35 slots, still clear of the floor.
+  assert.equal(DAPP.tests.length, 715);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

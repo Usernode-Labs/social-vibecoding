@@ -199,14 +199,19 @@ for (const touch of [false, true]) {
   });
 }
 
-test('Improve retains one wired quick action per feature and the New change read-only gate', () => {
-  for (const [id, label, handler] of [
-    ['feedback', 'Give feedback', 'giveFeedback'],
-    ['new-session', 'New change', 'startSession'],
-  ]) {
-    assert.equal(PANEL.split(`id="improve-row-${id}"`).length - 1, 1);
-    assert.match(PANEL, new RegExp(`id="improve-row-${id}"\\s+label="${label}"\\s+onClick=\\{\\(\\) => Improve\\.${handler}\\(\\)\\}`));
-  }
+test('Improve retains one wired quick action, and the New change read-only gate', () => {
+  // ONE, since #2718: "Give feedback" moved to the mark's menu, where it
+  // leads. It is the row somebody who is NOT a developer of this app wants,
+  // and this panel assumes you are. Its id went with it, because that id is
+  // what the outbox dot's writer selects.
+  assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 1);
+  assert.match(PANEL, /id="improve-row-new-session"\s+label="New change"\s+onClick=\{\(\) => Improve\.startSession\(\)\}/);
+  assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 0,
+    'feedback is not in two places');
+  const MENU = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.equal(MENU.split('id="improve-row-feedback"').length - 1, 1,
+    'it is in exactly one');
+  assert.match(MENU, /Improve\?\.giveFeedback\?\.\(\)/, 'and still calls one method');
   assert.match(PANEL, /state\.readOnly \? null : \(\s*<QuickAction\s+id="improve-row-new-session"/);
   assert.doesNotMatch(VIEW, /querySelector\('\[data-plus="proposal"\]'\)/);
 });

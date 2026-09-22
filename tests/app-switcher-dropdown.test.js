@@ -373,29 +373,26 @@ test('the Apps label is the same label as In this app, not a heading', () => {
 });
 
 test('every group in the menu announces itself', () => {
-  // Apps, the platform's destinations, the viewer's own. Home/Discover/
-  // Messages were the one group without a label, which read as rows left
-  // over above "You".
+  // TWO GROUPS NOW (#2718): the apps, and the app's own options. "Platform"
+  // and "You" were the platform's destinations and the viewer's, and both
+  // left — the tab bar carries the first and the Profile screen the second.
+  // What is left is named after the APP, which is what the rows are about.
   //
-  // "In this app" is NOT in this list any more, and its absence is the point:
-  // the App | Board | Activity strip it captioned has left this menu. The
-  // menu picks WHICH APP, so a control about the app you are already inside
-  // sat between you and the list you opened it for. The Improve panel keeps
-  // the strip and the header's back arrow is the way out of a Board — see
-  // the assertion below, which is what stops it drifting back.
-  for (const label of ['Apps', 'Platform', 'You']) {
-    assert.ok(SHEET.includes('>' + label + '<') || SHEET.includes('\n            ' + label + '\n'),
-      `the ${label} group is labelled`);
-  }
-  // It goes INSIDE #switcher-nav, above Home — which keeps Home and Discover
-  // adjacent siblings, and dapp.json selects on exactly that.
+  // "In this app" is not in this list either, and its absence is older: the
+  // App | Board | Activity strip it captioned left when the menu was still
+  // picking WHICH APP, because a control about the app you are already inside
+  // sat between you and the list you opened it for.
+  assert.ok(SHEET.includes('\n              Apps\n'), 'the Apps group is labelled');
+  assert.match(SHEET, /<div className=\{SECTION\}>\{appLabel\}<\/div>/,
+    "and the app's own group is labelled with the app's name");
+  // The label goes INSIDE #switcher-nav, above the first row it names.
   const nav = SHEET.slice(SHEET.indexOf('id="switcher-nav"'));
-  const label = nav.indexOf('>Platform<');
-  const home = nav.indexOf('id="switcher-row-home"');
-  assert.ok(label > 0 && label < home, 'the label precedes the rows it names');
-  assert.doesNotMatch(nav.slice(label, home), /id="switcher-row-/,
-    'and nothing sits between it and Home, so #switcher-row-home + '
-    + '#switcher-row-discover still resolves (dapp.json)');
+  const label = nav.indexOf('{appLabel}</div>');
+  const first = nav.indexOf('id="improve-row-feedback"');
+  assert.ok(label > 0 && label < first, 'the label precedes the rows it names');
+  assert.doesNotMatch(nav, /id="switcher-row-/,
+    'and no platform destination is left in this menu at all — they are tabs '
+    + 'and Profile rows now (#2718)');
 });
 
 test('the menu is the APP PICKER — the view strip is not in it', () => {
@@ -412,7 +409,10 @@ test('the menu is the APP PICKER — the view strip is not in it', () => {
 });
 
 test('equal air above and below the app strip, which is not equal padding', () => {
-  const strip = SHEET.match(/id="apps-switcher-list"[\s\S]{0,200}?className="([^"]*)"/);
+  // The className is computed now — the strip is the MENU pane's and carries
+  // `hidden` on the About pane — so the constant half is read out of the
+  // template rather than out of a plain attribute.
+  const strip = SHEET.match(/id="apps-switcher-list"[\s\S]{0,300}?className=\{'([^']*)'/);
   assert.ok(strip, 'the strip states its padding');
   const pt = strip[1].match(/\bpt-(\d+)\b/);
   const pb = strip[1].match(/\bpb-(\d+)\b/);

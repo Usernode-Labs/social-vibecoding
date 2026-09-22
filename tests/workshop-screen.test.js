@@ -569,12 +569,18 @@ test('#workshop is a route of its own', () => {
   assert.match(appJs, /navigateToWorkshop\(\) \{/);
   assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
   assert.match(appJs, /App\.setHeaderTitle\('Workshop'\)/);
-  // The menu row is the door, and it sits between Home and Discover.
-  const nav = /switcher-row-home([\s\S]*?)switcher-row-discover/.exec(sheetTsx);
-  assert.ok(nav, 'the Platform group still runs Home → … → Discover');
-  assert.match(nav[1], /id="switcher-row-workshop"/);
-  assert.match(nav[1], /href="#workshop"/);
-  assert.match(nav[1], /label="Workshop"/);
+  // THE DOOR IS A TAB (#2718). It was a menu row between Home and Discover,
+  // on the rule that the app chip's menu listed every destination; the bar
+  // carries them now, and Workshop is the fourth of five. What the app menu
+  // keeps is the SCOPED entrance — "Open in Workshop", filtered to the app
+  // you are in — which is the link-out every mini-app host in the study
+  // draws under a mini-app.
+  const html = read('public/index.html');
+  assert.match(html, /id="platform-tab-workshop"[^>]*href="#workshop"/,
+    'the unscoped screen is a tab');
+  assert.match(sheetTsx, /id="app-menu-row-workshop"/,
+    "and the app's menu links out to it, scoped");
+  assert.match(sheetTsx, /label="Open in Workshop"/);
 });
 
 test('the app-entry breadcrumb has one writer and one clearer', () => {

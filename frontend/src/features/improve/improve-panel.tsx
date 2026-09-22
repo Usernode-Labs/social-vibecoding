@@ -62,10 +62,7 @@ import { useCallback, type ReactNode } from 'react';
 
 import {
   ArrowPathIcon,
-  GitHubIcon,
-  ShareIcon,
   SpinnerArcIcon,
-  TerminalIcon,
   XIcon,
 } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
@@ -278,51 +275,14 @@ function UpdateStatus(): ReactNode {
   return null;
 }
 
-function ImproveRow({
-  id,
-  icon,
-  label,
-  detail,
-  onClick,
-  href,
-  external,
-}: {
-  id?: string;
-  icon: ReactNode;
-  label: string;
-  detail?: ReactNode;
-  onClick?: () => void;
-  href?: string;
-  external?: boolean;
-}): ReactNode {
-  const body = (
-    <>
-      <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
-      {detail}
-    </>
-  );
-  if (href) {
-    return (
-      <a
-        id={id}
-        href={href}
-        {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
-        className={ROW_BASE + ROW_REST}
-        onClick={() => Improve.dismissForNav()}
-      >
-        {body}
-      </a>
-    );
-  }
-  return (
-    <button id={id} type="button" className={ROW_BASE + ROW_REST} onClick={onClick}>
-      {body}
-    </button>
-  );
-}
+// ImproveRow lived here — a row with a leading glyph, a label and either an
+// href or an onClick. Its two remaining callers (View on GitHub, Share app)
+// moved to the About pane in #2718 and it went with them, in the shape that
+// pane needs: ../app-context/about-pane.tsx's AboutRow is the same component
+// with this panel's class constants swapped for the sheet's. Nothing here
+// renders a row any more — what is left is a button well, a segmented
+// control, a session list and a notice.
+
 
 /**
  * The target's artwork, at header scale (#1599).
@@ -491,15 +451,24 @@ export function ImprovePanel() {
               `#app-context-new-change` retires INTO the second — two ids
               calling one method was the duplication the merge removed.
           */}
+          {/*
+              ONE ACTION LEFT (#2718). "Give feedback" moved to the mark's
+              menu, where it leads: it is the row somebody who is NOT a
+              developer of this app wants, and this panel assumes you are.
+              `#improve-row-feedback` went with its id, because that id is
+              what the outbox dot's writer selects.
+
+              The well keeps its shape and its id rather than collapsing into
+              the row below it: dapp.json's band-order check selects
+              `#improve-body > #improve-quick-actions + #improve-views +
+              #improve-sessions + #improve-footer` on DIRECT children, so the
+              band is structural. One button in a `flex-1 basis-0` well simply
+              spans it, which is what a single primary action should do.
+          */}
           <div
             id="improve-quick-actions"
             className="shrink-0 flex items-stretch gap-2 px-4 pt-1 pb-2"
           >
-            <QuickAction
-              id="improve-row-feedback"
-              label="Give feedback"
-              onClick={() => Improve.giveFeedback()}
-            />
             {state.readOnly ? null : (
               <QuickAction
                 id="improve-row-new-session"
@@ -652,21 +621,12 @@ export function ImprovePanel() {
               </>
             ) : null}
 
-            {state.showTerminal ? (
-              <button
-                id="improve-row-terminal"
-                type="button"
-                className={ROW_BASE + ROW_REST + ' mt-2'}
-                onClick={() => Improve.openTerminal()}
-              >
-                <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5" aria-hidden="true">
-                  <TerminalIcon />
-                </span>
-                <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                  Developer terminal
-                </span>
-              </button>
-            ) : null}
+            {/* THE TERMINAL IS THE MARK'S MENU'S NOW (#2718), top level, on
+                the argument that an app whose build is failing is exactly
+                when you want it one tap away — and this panel is two, behind
+                a button that is itself about sessions. Same id, same
+                `showTerminal` gate, same method; see
+                ../app-context/app-context-sheet.tsx. */}
           </div>
 
           {/*
@@ -708,31 +668,19 @@ export function ImprovePanel() {
             id="improve-footer"
             className="shrink-0 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll"
           >
-            {state.repoUrl ? (
-              <ImproveRow
-                id="improve-row-github"
-                icon={<GitHubIcon className="w-5 h-5 shrink-0" />}
-                label="View on GitHub"
-                href={state.repoUrl}
-                external={true}
-              />
-            ) : null}
-            {/* Share, next to the repository link, because the two are the
-                same KIND of thing: the app as something you point other people
-                at. It was the third segment of the action well at the top,
-                where it sat among things you do TO the app — and it is
-                conditional (`canShare` is false for an app that is still
-                creating, errored, or waiting on its secrets), so it was also
-                the one segment that could leave a three-up control drawn as
-                two. Same id, same gate, same dialog. */}
-            {state.canShare ? (
-              <ImproveRow
-                id="improve-row-share"
-                icon={<ShareIcon className="w-5 h-5 shrink-0" />}
-                label="Share app"
-                onClick={() => Improve.share()}
-              />
-            ) : null}
+            {/* VIEW ON GITHUB AND SHARE ARE IN ABOUT (#2718). This footer
+                found the right line and drew it in the wrong place: both are
+                "the app as something you point other people at" — facts ABOUT
+                it rather than things you do to it — which is why they were
+                down here rather than in the action well. They are the About
+                pane now, with the version and how to add the app to a home
+                screen, and they keep their ids and their gates
+                (`repoUrl`, `canShare`). See
+                ../app-context/about-pane.tsx.
+
+                What stays is the update notice, which is neither: it is this
+                app or this platform TELLING you something, and it belongs
+                with the surface that shows what is happening to the app. */}
             <UpdateStatus />
           </div>
         </div>

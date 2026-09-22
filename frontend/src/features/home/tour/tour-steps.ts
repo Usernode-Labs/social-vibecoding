@@ -84,14 +84,6 @@ export const TOUR_STEPS: readonly TourStep[] = [
     advanceOn: 'improve-open',
   },
   {
-    id: 'feedback',
-    title: 'Give feedback',
-    body: "Feedback sends the app's group a note about what should change.",
-    targets: ['#improve-row-feedback'],
-    interactive: true,
-    needsPanel: true,
-  },
-  {
     id: 'new-change',
     title: 'New change',
     body: 'New change starts a working session on the app: describe it, try the preview, then put it to a vote.',
@@ -100,12 +92,33 @@ export const TOUR_STEPS: readonly TourStep[] = [
     needsPanel: true,
   },
   {
+    // #2718 turned this step around. "Give feedback" was a row of the Improve
+    // panel and is the lead row of the APP'S OWN MENU now — the one behind
+    // the Homeroom mark, which also holds the app's Workshop, its discussion
+    // and the developer terminal. Pointing at the mark rather than at the row
+    // inside it is the better step either way: it teaches the control that is
+    // on screen on every route, and the rows behind it are then self-evident.
+    //
+    // It CLOSES the panel on the way in, which the Challenges step used to do
+    // one later: the mark is in the header, and a panel drawn over the header
+    // would put the cut-out around something the viewer cannot see.
+    id: 'feedback',
+    title: "The app's own menu",
+    body: 'The mark opens the menu for the app you are in: give feedback, open its Workshop, go to its discussion.',
+    targets: ['#platform-mark-btn'],
+    interactive: true,
+    closesPanel: true,
+  },
+  {
+    // `#app-context-row-workshop` until #2718, which is an id nothing has
+    // rendered for some time — the step fell through to no target and drew
+    // its card with no cut-out. Workshop is a TAB now, and the tab is on
+    // screen on every platform route, so the target resolves everywhere.
     id: 'workshop',
     title: 'Workshop',
-    body: 'Workshop shows everything in progress on the app and what needs you.',
-    targets: ['#app-context-row-workshop'],
+    body: 'Workshop shows what is in progress across your apps, and what needs you.',
+    targets: ['#platform-tab-workshop'],
     interactive: true,
-    needsPanel: true,
   },
   {
     id: 'challenges',
@@ -115,10 +128,14 @@ export const TOUR_STEPS: readonly TourStep[] = [
     closesPanel: true,
   },
   {
+    // `#app-switcher-btn` until #2718, which retired the chip. Settings is a
+    // row of the Profile screen the Me tab lands on, so the tab is where this
+    // step points — the control that gets you there, rather than the sheet
+    // that used to list it.
     id: 'settings',
     title: 'Replay this any time',
-    body: 'You can replay this tour any time from Settings.',
-    targets: ['#app-switcher-btn'],
+    body: 'You can replay this tour any time from Settings, under Me.',
+    targets: ['#platform-tab-me'],
   },
 ];
 

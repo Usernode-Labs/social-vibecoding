@@ -99,9 +99,14 @@ test('closed panes hide only after exit and kit adoption owns its own lifetime',
 
 test('the declared feedback text check opens its pane before reading it', () => {
   const manifest = JSON.parse(read('dapp.json'));
-  const check = manifest.tests.find(t => t.name.startsWith('Improve panel leads'));
-  assert.match(check.path, /shot=improve/);
-  assert.match(check.expectSelector, /#improve-panel\[data-open\]/);
+  // #2718 moved Give feedback out of the Improve panel and into the app's
+  // menu, so the pane the check has to open first is the MENU's. The rule it
+  // exists for is unchanged: a text check that reads a lifted pane must ask
+  // for that pane to be presented, or it reads an empty root.
+  const check = manifest.tests.find(t => t.name.startsWith('The app menu leads with Give feedback'));
+  assert.ok(check, 'the feedback text check must exist');
+  assert.match(check.path, /shot=app-context/);
+  assert.match(check.expectSelector, /#apps-switcher-sheet\[data-open\]/);
 });
 
 test('the backdrops stay, transparent — they are the click target', () => {

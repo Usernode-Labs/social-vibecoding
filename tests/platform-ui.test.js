@@ -503,14 +503,20 @@ test('the Improve panel leads with its two actions, shaped like the button that 
   assert.match(panel, /id="improve-quick-actions"/, 'the band exists');
   assert.ok(!/divide-x divide-zinc-950\/5/.test(panel),
     'and is no longer one divided well');
-  // "Give feedback", not "Feedback": both segments are things you DO, and a
-  // bare noun beside the verb phrase "New change" read as a category label
-  // sitting next to an action.
-  assert.match(panel, /id="improve-row-feedback"\n\s+label="Give feedback"/,
-    'Feedback survives, verbized');
-  assert.match(panel, /Improve\.giveFeedback\(\)/, 'with the same handler');
+  // ONE ACTION, since #2718. "Give feedback" is the app menu's lead row now:
+  // it is what somebody who is NOT a developer of this app wants, and this
+  // panel assumes you are. Its id and its handler went with it, so the dot
+  // that writes to that id has one target and one method still answers.
+  assert.doesNotMatch(panel, /id="improve-row-feedback"/,
+    'feedback is not in two places');
+  assert.doesNotMatch(panel, /Improve\.giveFeedback\(\)/, 'nor its handler');
   assert.match(panel, /id="improve-row-new-session"/, 'New change survives');
   assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
+  // The BAND stays, and that is structural rather than cosmetic: dapp.json's
+  // band-order check selects `#improve-body > #improve-quick-actions +
+  // #improve-views + #improve-sessions + #improve-footer` on DIRECT children.
+  // One button in a `flex-1 basis-0` well simply spans it, which is what a
+  // single primary action should do.
 
   // They are shaped like #improve-btn, the control that opens this panel: a
   // rounded-full pill.
@@ -538,13 +544,18 @@ test('the Improve panel leads with its two actions, shaped like the button that 
   assert.ok(!/\bprimary\b/.test(panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
     'and no call site marks one of them as the primary');
 
-  // Share moved to the footer beside the repository link, keeping its id, its
-  // canShare gate and its dialog.
-  assert.match(panel, /id="improve-row-share"/, 'Share survives');
-  assert.match(panel, /Improve\.share\(\)/, 'with the same handler');
-  assert.ok(panel.indexOf('id="improve-row-github"') < panel.indexOf('id="improve-row-share"'),
-    'and sits next to View on GitHub in the reference footer');
-  assert.match(panel, /\{state\.canShare \? \(/, 'still gated on canShare');
+  // Share moved to the footer beside the repository link (#1443), and both
+  // moved on to the menu's About pane (#2718) — which is the same argument
+  // one level further: they are the app as something you POINT OTHER PEOPLE
+  // AT, and About is the surface named for facts about it. Same ids, same
+  // canShare gate, same dialog.
+  const aboutPane = read('frontend/src/features/app-context/about-pane.tsx');
+  assert.match(aboutPane, /id="improve-row-share"/, 'Share survives');
+  assert.match(aboutPane, /Improve\?\.share\?\.\(\)/, 'with the same handler');
+  assert.ok(aboutPane.indexOf('id="improve-row-github"') < aboutPane.indexOf('id="improve-row-share"'),
+    'and sits next to View on GitHub, in that order');
+  assert.match(aboutPane, /\{canShare \? \(/, 'still gated on canShare');
+  assert.doesNotMatch(panel, /id="improve-row-share"/, 'and not in two places');
 
   // Everything else left: the view toggle is the view STRIP now.
   assert.ok(!/id="improve-row-kanban"/.test(panel), 'the Kanban ROW is retired');
@@ -694,10 +705,18 @@ test('the Improve panel is navigation, work and reference — one scroller', () 
   assert.ok(actionsAt < viewsAt && viewsAt < scrollAt && scrollAt < footerAt,
     'actions, views, the scroller, then the reference footer');
 
-  // The footer came back (#1443). #1431 dissolved it and rehomed each fact
-  // separately; every move was defensible alone and the sum meant leaving the
-  // app to read facts about the app you were standing in.
-  assert.match(panel, /id="improve-row-github"/, 'the GitHub link is back');
+  // THE FOOTER IS THE UPDATE NOTICE, and nothing else (#2718). #1431
+  // dissolved it and rehomed each fact separately; #1443 brought it back,
+  // because the sum of those moves meant leaving the app to read facts about
+  // the app you were standing in. #2718 gives those facts a NAME instead —
+  // the menu's About pane — which is the home #1443 was reaching for without
+  // one. "View on GitHub" and "Share app" are there, with their ids and their
+  // gates; see features/app-context/about-pane.tsx.
+  assert.doesNotMatch(panel, /id="improve-row-github"|id="improve-row-share"/,
+    'the outward-facing facts are About\'s');
+  const about = read('frontend/src/features/app-context/about-pane.tsx');
+  assert.match(about, /id="improve-row-github"/, 'and About is where they went');
+  assert.match(about, /id="improve-row-share"/);
   // THE VERSION ROWS ARE NOT IN IT. They were, and the question they were
   // being read for was never "which SHA" — it was "is something happening,
   // and is there a new version yet". Three static rows answered that only by
@@ -723,8 +742,10 @@ test('the Improve panel is navigation, work and reference — one scroller', () 
   // is the better home, because lineage is a fact about an app.
   assert.ok(!panel.includes('id="drawer-row-app-fork"'),
     'fork lineage stays on the app detail page');
-  assert.match(panel, /id="improve-row-share"/,
-    "Share app survived as the panel's third action");
+  // Share app is the About pane's, with the repository link it belongs
+  // beside — asserted at the top of this suite, where the move is argued.
+  assert.doesNotMatch(panel, /id="improve-row-share"/,
+    'and Share is not a third action here');
 });
 
 test('app.css drops the tab-bar rules and draws the Improve panel', () => {

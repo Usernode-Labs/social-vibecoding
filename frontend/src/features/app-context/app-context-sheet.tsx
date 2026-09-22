@@ -121,26 +121,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   BoardIcon,
   ChatBubbleTailIcon,
+  ChatIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
-  CogIcon,
-  HomeIcon,
+  InfoCircleIcon,
   PlusWideIcon,
-  SearchIcon,
-  ShieldCheckIcon,
-  TrophyIcon,
-  StakingIcon,
-  UserIcon,
-  WalletIcon,
+  TerminalIcon,
   XIcon,
 } from '@/components/ui/icons';
 
+import { AboutPane } from './about-pane';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { NO_APPS_YET } from '../apps/no-apps-yet';
-import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { useVisibilityHiddenClass } from '../../lib/visibility-store';
-import { nodePillStore } from '../header/node-pill-store';
-import { walletSheetStore } from '../header/wallet-sheet-store';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
@@ -267,30 +260,21 @@ function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
 }
 
 export function AppsSwitcherSheet(): ReactNode {
-  const { open, adopted } = useStoreState(appContextStore);
-  const { slug } = useStoreState(improveStore);
+  const { open, adopted, view } = useStoreState(appContextStore);
+  // Everything this sheet says about the app comes from ONE store, published
+  // by the classic writers that already owned those facts. #2718 adds the
+  // three the rows need — the name to label them with, the terminal's gate,
+  // and what About prints — and adds no fetch: the Improve panel was reading
+  // exactly these for the rows that moved here.
+  const { slug, name, showTerminal } = useStoreState(improveStore);
   const [apps, setApps] = useState<SwitcherApp[] | null>(null);
 
-  // Both flags arrive from classic modules through the visibility store —
-  // App.renderAdminButton for the console, settings.js for the BYOK dot — and
-  // both elements ship `hidden` with a CONSTANT className, which is what makes
-  // a `hidden` toggle from outside React sanctioned rather than a second owner.
-  const adminRef = useRef<HTMLAnchorElement | null>(null);
-  const byokRef = useRef<HTMLSpanElement | null>(null);
-  useVisibilityHiddenClass(adminRef, 'switcher-row-admin', false);
-  useVisibilityHiddenClass(byokRef, 'switcher-byok-dot', false);
-
-  // Wallet and Validator (#2382) follow Profile's own native rows: the same
-  // two stores, revealed by NodePill.init() / WalletSheet.init() for a native
-  // top frame and never otherwise — so a desktop browser and a child-app
-  // iframe never show them, in staging or production alike. Same constant
-  // className as Admin; only the `hidden` class moves.
-  const { visible: walletVisible } = useStoreState(walletSheetStore);
-  const { visible: nodeVisible } = useStoreState(nodePillStore);
-  const walletRef = useRef<HTMLAnchorElement | null>(null);
-  const validatorRef = useRef<HTMLAnchorElement | null>(null);
-  useHiddenClass(walletRef, !walletVisible);
-  useHiddenClass(validatorRef, !nodeVisible);
+  // "About Notes", not "About this app". The name is what the viewer is
+  // looking at and it is already on the bar above; "this app" is what you
+  // write when you do not have it. It falls back to the slug and then to a
+  // bare "this app", because the menu opens on Home too — where the context
+  // is the platform's own self-hosted row and the name may not have landed.
+  const appLabel = name || slug || 'this app';
 
   const close = useCallback(() => AppContext.close(), []);
 
@@ -363,9 +347,30 @@ export function AppsSwitcherSheet(): ReactNode {
             spacing is the same as every other label in this menu even though
             the class string cannot be. */}
         <div className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0">
-          <span className={'flex-1 min-w-0 block ' + SECTION_TYPE}>
-            Apps
-          </span>
+          {/*
+              THE BACK ARROW IS THE ABOUT PANE'S, and it replaces the label
+              rather than sitting beside it: About is one level inside this
+              sheet, so the row that names the level has to be the row that
+              leaves it. On the menu it is the "Apps" label it has always
+              been.
+          */}
+          {view === 'about' ? (
+            <button
+              id="app-about-back"
+              type="button"
+              className={'flex-1 min-w-0 flex items-center gap-1.5 text-left un-touch-target '
+                + SECTION_TYPE}
+              onClick={() => AppContext.showMenu()}
+            >
+              <ChevronLeftIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 truncate">{appLabel}</span>
+            </button>
+          ) : (
+            <span className={'flex-1 min-w-0 block ' + SECTION_TYPE}>
+              Apps
+            </span>
+          )}
+          {view === 'about' ? null : (
           <button
             id="apps-switcher-create"
             type="button"
@@ -396,6 +401,7 @@ export function AppsSwitcherSheet(): ReactNode {
             <PlusWideIcon className="w-3.5 h-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />
             Create New
           </button>
+          )}
           <button
             id="apps-switcher-close"
             type="button"
@@ -426,9 +432,13 @@ export function AppsSwitcherSheet(): ReactNode {
             opens with SECTION's `pt-4`, so 16px under the tiles is already
             there — `pb-5` on top of it made the gap below more than three
             times the gap above. It reads as balanced at `pb-0`. */}
+        {/* THE STRIP IS THE MENU'S. About is one level inside this sheet and
+            is about ONE app, so a row of every other app at the top of it
+            would be an invitation to leave the thing you opened. */}
         <div
           id="apps-switcher-list"
-          className="shrink-0 flex gap-4 px-5 pt-4 pb-0 overflow-x-auto overscroll-contain platform-no-scrollbar"
+          className={'shrink-0 flex gap-4 px-5 pt-4 pb-0 overflow-x-auto overscroll-contain platform-no-scrollbar'
+            + (view === 'about' ? ' hidden' : '')}
         >
           {rows.map((app) => (
             <AppTile key={app.slug} app={app} current={app.slug === slug} />
@@ -460,156 +470,119 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
-          {/* The one group that had no label. Apps and the viewer's own rows
-              each announced themselves; Home, Discover and Messages opened
-              straight off the hairline, which read as rows left over above
-              "You" rather than as a group of their own.
+          {view === 'about' ? <AboutPane label={appLabel} /> : (
+          <>
+          {/*
+              ── THE APP'S OPTIONS, and nothing else ────────────────────
 
-              "Platform" because that is what they are — the places that are
-              not inside an app — which is the distinction this whole menu is
-              organised on now that the app's own views have left it. Not
-              "You": that label means the viewer's own things, and Home is
-              nobody's. */}
-          <div className={SECTION}>Platform</div>
+              This list used to hold the PLATFORM's destinations — Home,
+              Workshop, Discover, Challenges, Messages, Profile, Wallet,
+              Validator, Settings, Admin — on #1443's rule that one control
+              names where you are and its menu lists everywhere you can go.
+              #2718 split that rule in two, the way every mini-app host it was
+              modelled on already had: the host's sections live on a permanent
+              bar (features/nav/) and the menu under a mini-app holds the
+              MINI-APP's options. Five of those rows are tabs now; the other
+              five are rows of the Profile screen the Me tab lands on
+              (../profile/account-panel.tsx), which is where a destination
+              about your account belongs.
+
+              What is left is flat and short, which is the shape the study
+              found everywhere — WeChat, Telegram, Alipay, Chrome's Custom
+              Tabs, Safari's view controller, Discord, Slack, Teams. Nobody
+              nests a mini-app's menu.
+          */}
+          <div className={SECTION}>{appLabel}</div>
+          {/*
+              GIVE FEEDBACK FIRST, because it is the row somebody who is not a
+              developer of this app will want, and every other row on this list
+              assumes you are. It keeps `#improve-row-feedback`: that id is
+              what the outbox dot's writer selects, and moving the row must not
+              move the dot's target.
+          */}
           <MenuRow
-            id="switcher-row-home"
-            href="/"
-            icon={<HomeIcon />}
-            label="Home"
+            id="improve-row-feedback"
+            href={slug ? `#app/${encodeURIComponent(slug)}/dev` : '#'}
+            icon={<ChatBubbleTailIcon />}
+            label="Give feedback"
             onClick={(e) => {
               if ((window as any).NavLink?.isNativeClick?.(e)) return;
               e.preventDefault();
-              AppContext.dismissForNav();
-              (window as any).App?.navigateHome?.();
-            }}
-          />
-          {/* Workshop, directly under Home, because it answers the question
-              Home does not: Home is the launcher — which app do I want to
-              OPEN — and this is which app wants something from ME. Every app
-              already has a Workshop page (its Dev lander); this is that page's
-              two numbers, once per app, on one screen. It leads the rest of
-              the group for the same reason Home does: it is where a returning
-              member starts, and Discover, Challenges and Messages are all
-              places you go once you know there is nothing waiting. */}
-          <MenuRow
-            id="switcher-row-workshop"
-            href="#workshop"
-            icon={<BoardIcon />}
-            label="Workshop"
-          />
-          <MenuRow
-            id="switcher-row-discover"
-            href="#apps"
-            icon={<SearchIcon />}
-            label="Discover"
-          />
-          {/* #1823: Challenges is a platform place too — the group's shared
-              goals, on the Leaderboard screen's Challenges tab. It was only
-              reachable from Home's Challenges area, so from inside an app
-              there was no way to it short of going Home first. It sits
-              under Discover and before Messages; the `~` chains dapp.json
-              walks through this nav still resolve. */}
-          <MenuRow
-            id="switcher-row-challenges"
-            href="#leaderboard/challenges"
-            icon={<TrophyIcon />}
-            label="Challenges"
-          />
-          {/* Messages carries NO count. It wore #drawer-messages-badge from
-              #1431's header bubble through #1443's row, and the argument for
-              it was that a per-conversation number beats the bell's. The
-              argument the number lost is about WHERE, not how good it is: an
-              unread count tells you something happened, and this menu is
-              where you say where you are going. A message notification is a
-              notification, so it is counted on the bell and listed in the
-              notifications sheet with the rest of them — leaving this a plain
-              destination like Home, Discover and Profile beside it. The
-              per-conversation counts still exist where they read as counts:
-              on the conversation rows inside Messages. */}
-          <MenuRow
-            id="switcher-row-messages"
-            href="#messages"
-            icon={<ChatBubbleTailIcon />}
-            label="Messages"
-          />
-          <div className={SECTION}>You</div>
-          <MenuRow
-            id="switcher-row-profile"
-            href="#profile"
-            icon={<UserIcon />}
-            label="Profile"
-          />
-          {/* #2382: the native Wallet and Validator, under Profile because
-              Profile's account group is where they already were. Both ship
-              hidden and native only (see the store read above).
-
-              Wallet has no page, so the anchor's #profile is only what a
-              modified click opens — the screen whose row opens the same
-              sheet. A plain tap presents the sheet itself, AFTER this one has
-              torn down: the kit cannot present a sheet while it is still
-              dismissing another, the ordering "Create New" awaits above. */}
-          <MenuRow
-            elRef={walletRef}
-            shipsHidden
-            id="switcher-row-wallet"
-            href="#profile"
-            icon={<WalletIcon />}
-            label="Wallet"
-            onClick={(e) => {
-              const win = window as any;
-              if (win.NavLink?.isNativeClick?.(e)) return;
-              e.preventDefault();
               void AppContext.dismissForNav().then(() => {
-                win.WalletSheet?.openFromRow?.();
+                (window as any).Improve?.giveFeedback?.();
               });
             }}
           />
-          {/* Validator is block production: Settings › Homeroom app, whose
-              "Ask to produce blocks" is how this device becomes one. Gated on
-              the node's store rather than the wallet's because that section
-              is the embedded node's. */}
-          <MenuRow
-            elRef={validatorRef}
-            shipsHidden
-            id="switcher-row-validator"
-            href="#settings/usernode"
-            icon={<StakingIcon />}
-            label="Validator"
-          />
-          <MenuRow
-            id="switcher-row-settings"
-            href="#settings"
-            icon={<CogIcon />}
-            label="Settings"
-            trailing={(
-              <span
-                ref={byokRef}
-                id="switcher-byok-dot"
-                className="hidden w-2 h-2 rounded-full bg-emerald-500 shrink-0"
-                aria-hidden="true"
-              >
-              </span>
-            )}
-          />
           {/*
-              Admin & moderation. Ships `hidden`; App.renderAdminButton()
-              publishes the flag for platform admins AND view-only admins —
-              gated on `App.user.isAdmin`, which both roles carry, and
-              deliberately NOT on `canAdminWrite` (the full-admin mutation
-              gate, which would hide the console from exactly the moderation
-              audience). Never gated on USERNODE_ENV: the row must exist
-              identically in staging and production. Navigation rides the
-              anchor's #admin hash, which navigateToAdminConsole re-gates
-              server-side.
+              OPEN IN WORKSHOP and GO TO APP DISCUSSION are the two rows the
+              study predicted: a mini-app's deeper options LINK OUT to the
+              host's own sections, filtered to the app you are in. Telegram
+              sends you to the bot's chat as a row of Chats; Steam to that
+              game's community hub; Slack and Teams to the channel's files.
+              These are the same move — the Workshop tab and the Messages
+              tab, arriving scoped rather than at the top of a list.
           */}
           <MenuRow
-            elRef={adminRef}
-            shipsHidden
-            id="switcher-row-admin"
-            href="#admin"
-            icon={<ShieldCheckIcon />}
-            label="Admin & moderation"
+            id="app-menu-row-workshop"
+            href={slug ? `#app/${encodeURIComponent(slug)}/dev` : '#workshop'}
+            icon={<BoardIcon />}
+            label="Open in Workshop"
           />
+          <MenuRow
+            id="app-menu-row-discussion"
+            href={slug ? `#app/${encodeURIComponent(slug)}/dev/chat` : '#messages'}
+            icon={<ChatIcon />}
+            label="Go to app discussion"
+          />
+          {/*
+              The terminal is the one Improve row that stays TOP LEVEL rather
+              than moving into About: it is something you do, not a fact about
+              the app, and an app whose build is failing is exactly when you
+              want it one tap away. Same id, same gate (`showTerminal`, which
+              DevConsole publishes), same method.
+          */}
+          {showTerminal ? (
+            <MenuRow
+              id="improve-row-terminal"
+              href="#"
+              icon={<TerminalIcon />}
+              label="Developer terminal"
+              onClick={(e) => {
+                e.preventDefault();
+                void AppContext.dismissForNav().then(() => {
+                  (window as any).Improve?.openTerminal?.();
+                });
+              }}
+            />
+          ) : null}
+          {/*
+              ABOUT is the second PANE of this sheet, not a second sheet: the
+              kit cannot present one while it is still dismissing another, and
+              "about" is where the menu goes rather than something that opens
+              over it. The row is a button and not an anchor for the same
+              reason — there is no address to open in a new tab, because the
+              pane is this sheet in another state.
+          */}
+          <button
+            id="app-menu-row-about"
+            type="button"
+            // `w-full` because a <button> shrinks to its content where the
+            // <a> rows above are block-level flex items that fill the sheet.
+            // Without it the label's `flex-1` has nothing to push against and
+            // the chevron sits against the words instead of at the edge —
+            // which reads as a different KIND of row, on the one row where
+            // that would be a lie.
+            className={`${ROW} w-full text-left`}
+            onClick={() => AppContext.showAbout()}
+          >
+            <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
+              <InfoCircleIcon />
+            </span>
+            <span className="flex-1 min-w-0 truncate font-medium">{`About ${appLabel}`}</span>
+            <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+          </button>
+          </>
+          )}
         </nav>
       </div>
       <OverlayScrim panelId="apps-switcher-sheet" backdropId="apps-switcher-overlay" />

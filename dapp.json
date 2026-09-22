@@ -1282,9 +1282,9 @@
       "expectText": "New change"
     },
     {
-      "name": "Improve keeps Give feedback after deduplicating the '+' menu (#1490)",
-      "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
-      "expectSelector": "#improve-panel[data-open] #improve-row-feedback",
+      "name": "Give feedback survives the menu split, in exactly one place (#1490, #2718)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/board",
+      "expectSelector": "#apps-switcher-sheet[data-open] #improve-row-feedback",
       "expectText": "Give feedback"
     },
     {
@@ -2273,9 +2273,9 @@
       "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
     },
     {
-      "name": "The chip's menu is the app picker only — no view strip in it",
+      "name": "The app menu is the app's own options — no view strip in it",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #switcher-row-home"
+      "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
       "name": "The Workshop carries the app's general discussion as a row of its own",
@@ -2577,9 +2577,9 @@
       "expectText": "Session finished"
     },
     {
-      "name": "Improve panel leads with Give feedback, a verb like New change beside it",
-      "path": "/?demo=1&shot=improve",
-      "expectSelector": "#improve-panel[data-open] #improve-quick-actions #improve-row-feedback",
+      "name": "The app menu leads with Give feedback, the row a non-developer wants (#2718)",
+      "path": "/?shot=app-context&demo=1",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #improve-row-feedback",
       "expectText": "Give feedback"
     },
     {
@@ -2641,9 +2641,9 @@
       "expectSelector": "#improve-btn:not(:has([id^=\"notifications-badge\"]))"
     },
     {
-      "name": "Admin & moderation renders in the chip's menu for admins (#588, #1443)",
-      "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#switcher-nav #switcher-row-admin:not(.hidden)"
+      "name": "Admin & moderation renders on the Me tab for admins (#588, #2718)",
+      "path": "/?shot=profile&demo=1#profile",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-account #profile-row-admin"
     },
     {
       "name": "Settings renders the platform build as plain text, not a pill",
@@ -2696,12 +2696,12 @@
     {
       "name": "The menu's destination order: platform, then you (#1443)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#switcher-nav #switcher-row-home ~ #switcher-row-discover ~ #switcher-row-messages ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop + #platform-tab-me"
     },
     {
-      "name": "Messages is a destination in the chip's menu, carrying no unread tag",
-      "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#switcher-nav #switcher-row-messages:not(:has([aria-label=\"Unread messages\"]))"
+      "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] #platform-tabs-badge"
     },
     {
       "name": "A message notification is listed in the notifications sheet",
@@ -2800,20 +2800,20 @@
       "expectSelector": "#messages-message-9100101 .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
     },
     {
-      "name": "The app menu lists Challenges under Discover (#1823)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-discover + #switcher-row-challenges[href=\"#leaderboard/challenges\"]",
+      "name": "The Me tab lists Challenges above Settings (#1823, #2718)",
+      "path": "/?shot=profile&demo=1#profile",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-row-challenges[href=\"#leaderboard/challenges\"]",
       "expectText": "Challenges"
     },
     {
-      "name": "The chip opens the menu, and it lists Home, Workshop and Discover (#1443)",
+      "name": "The mark opens the menu, and it lists the app's own options (#2718)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-workshop + #switcher-row-discover"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #improve-row-feedback + #app-menu-row-workshop + #app-menu-row-discussion"
     },
     {
-      "name": "Workshop is a destination in the chip's menu, directly under Home",
+      "name": "The app menu links out to the Workshop, scoped to the app (#2718)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-workshop[href=\"#workshop\"]",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-workshop",
       "expectText": "Workshop"
     },
     {
@@ -3985,7 +3985,10 @@
       "id": "native-android-header-safe-area",
       "name": "Native Android retains the header status-bar inset",
       "visual": true,
-      "impact": ["frontend/src/head.html", "public/css/app.css"],
+      "impact": [
+        "frontend/src/head.html",
+        "public/css/app.css"
+      ],
       "path": "/?un-platform=android&un-native-webview=1",
       "expectSelector": "html.un-android.in-native-webview:not(.web-browser-chrome) #platform-header.un-safe-top-extend"
     },
@@ -4242,7 +4245,7 @@
     {
       "name": "The app chip's menu is that pane too, keeping its own menu shape",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open] #switcher-nav #switcher-row-home"
+      "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open] #switcher-nav #improve-row-feedback"
     },
     {
       "name": "Unread notification rows read source, bold subject, muted preview",
@@ -4579,6 +4582,27 @@
       "name": "Profile staking: real preview supplies the receiver URL and chain without demo data (#1551)",
       "path": "/api/me/staking/context",
       "expectText": "\"observabilityUrl\":\"https://"
+    },
+    {
+      "name": "The mark is the header's menu button, unframed beside the framed bell (#2718)",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-header #notifications-btn ~ #platform-mark-btn img.platform-mark-tile"
+    },
+    {
+      "name": "About is the menu's second pane: the repository, sharing, the version (#2718)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-about",
+      "expectText": "About"
+    },
+    {
+      "name": "Inside an app the header is that app's strip: close, tile, name (#2718)",
+      "path": "/?demo=1#app/usernode-2d5619/app",
+      "expectSelector": "#platform-header #back-btn:not(.hidden) #back-icon-close:not(.hidden) ~ *, #platform-header #header-app-tile"
+    },
+    {
+      "name": "The tab bar is gone inside a running app (#2718)",
+      "path": "/?demo=1#app/usernode-2d5619/app",
+      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden) #platform-header"
     }
   ],
   "governance": {

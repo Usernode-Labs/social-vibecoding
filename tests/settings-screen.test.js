@@ -590,21 +590,32 @@ test('the header back button consults Settings.handleBack behind _inSettings', (
     'and home is the fallback for one that named none');
 });
 
-test("Settings is reached from the chip's menu, by a real anchor", () => {
+test('Settings is reached from the Me tab, by a real anchor', () => {
   // It was a hamburger row; #1431 retired the hamburger and parked it in the
   // Profile screen's account group; #1443 gave the shell a menu again and
-  // Settings went back into it, because it has its own page and the menu's
-  // rule is that everything in it does. One entrance, one hop, from anywhere.
-  const panel = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(panel, /id="switcher-row-settings"[\s\S]{0,80}href="#settings"/,
-    'navigation rides the anchor hash, like Challenges / Profile');
-  assert.match(panel, /id="switcher-byok-dot"/, 'the BYOK indicator dot survives');
+  // Settings went into it; #2718 took the platform's destinations back out,
+  // because the menu holds the APP's options now and the tab bar carries the
+  // platform's places. It is a Profile row again — one entrance, two hops
+  // from anywhere: the Me tab, then the row.
+  const panel = read('frontend/src/features/profile/account-panel.tsx');
+  assert.match(panel, /id="profile-row-settings"[\s\S]{0,120}href="#settings"/,
+    'navigation rides the anchor hash, like Challenges beside it');
   // The row does not call Settings.open — the hash does the navigating and
-  // always did. It DOES dismiss the menu it sits in, which is the one thing
-  // the Profile-screen version of this row had nothing to do: a menu that
-  // stays open over the screen it just sent you to is the bug.
-  assert.match(panel, /AppContext\.dismissForNav\(\)/,
-    'activating a row closes the menu before the hash lands');
+  // always did. Nor does it dismiss anything: it is on a screen rather than
+  // in a sheet, which is the whole of what changed.
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.doesNotMatch(menu, /id="switcher-row-settings"/,
+    'and there is no second entrance left in the menu');
+});
+
+test('the BYOK dot went with the row it marked', () => {
+  // It was `#switcher-byok-dot` on the menu's Settings row, published by
+  // settings.js. The row left; the dot has no seat on the Profile row yet and
+  // is not rendered anywhere, which is the honest state — a published flag
+  // with no reader is dead, and a dot invented on a new row without a design
+  // board is worse than none.
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.doesNotMatch(menu, /switcher-byok-dot/);
 });
 
 // ── Two-level layout ───────────────────────────────────────────────────

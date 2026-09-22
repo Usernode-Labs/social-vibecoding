@@ -115,7 +115,14 @@ export function boardHref(slug, boardView) {
  * @property {boolean} loadingSessions
  * @property {boolean} sessionsLoaded
  * @property {boolean} working
- * @property {'idle'|'deploying'|'stale'} versionState
+ * @property {'idle'|'deploying'|'downloading'|'ready'|'failed'} versionState
+ *   Every value Improve.setVersionState() can publish. It read
+ *   `'idle'|'deploying'|'stale'` until #2718, which is the vocabulary from
+ *   BEFORE that method split 'stale' into downloading / ready / failed — the
+ *   three states the panel has branched on ever since, and which this typedef
+ *   had never caught up with. Nothing changed about the values; only the
+ *   annotation, which had been quietly wrong for as long as a consumer
+ *   happened to read the store in a way that widened it to `string`.
  * @property {boolean} appUpdateReady
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
  * @property {'workshop'|'kanban'} boardView

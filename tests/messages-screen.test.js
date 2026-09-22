@@ -25,23 +25,25 @@ const dapp = JSON.parse(read('dapp.json'));
 
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
   assert.match(html, /<main id="messages-screen" class="hidden /);
-  assert.match(html, /id="switcher-row-messages" href="#messages"/);
-  // The row is a DESTINATION and carries no count. #1431 put an unread number
-  // on a header chat bubble and #1443 moved it onto this row; both made one
-  // incoming message light two badges in two colours, and the one it lit here
-  // sat two taps down inside the menu you open to choose where to go. Message
-  // notifications are counted on the bell and listed in the notifications
-  // sheet with the rest of them, so nothing paints #drawer-messages-badge and
-  // the element is gone rather than shipped hidden.
+  // A TAB since #2718, not a menu row. The destination and its address are
+  // unchanged; what changed is that it is on screen instead of two taps down
+  // inside a sheet you open to choose where to go.
+  assert.match(html, /id="platform-tab-messages"[^>]*href="#messages"/);
+  // #drawer-messages-badge stays retired, and the count that replaced it is
+  // the TAB's. #1431 put an unread number on a header chat bubble and #1443
+  // moved it onto the menu row; both made one incoming message light two
+  // badges in two colours, and the one it lit sat inside a closed sheet. A
+  // tab is visible without opening anything, which is the difference the
+  // argument turned on.
   assert.doesNotMatch(html, /drawer-messages-badge/,
-    'the Messages row carries no unread tag');
-  // The nav order check. The menu reads platform-then-you: Home, Discover,
-  // Messages, then Profile, Settings, Admin. `~` rather than `+` because the
-  // section labels sit between the groups.
+    'the retired row tag stays retired');
+  assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
+  // The bar's order, pinned as a declared check. `+` rather than `~`: the
+  // five tabs are adjacent siblings with nothing between them.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#switcher-nav #switcher-row-home ~ #switcher-row-discover ~ #switcher-row-messages'
-      + ' ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin'),
-  'a declared check pins the menu order');
+    === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
+      + ' + #platform-tab-workshop + #platform-tab-me'),
+  'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,
   // /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/, matched the id anywhere
