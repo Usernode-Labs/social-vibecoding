@@ -35,7 +35,6 @@ export function MessageComposer() {
   const [uploading, setUploading] = useState(0);
   const [object, setObject] = useState<SharedObjectReference | null>(null);
   const [error, setError] = useState('');
-  const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   // #1955: the paperclip and the share tray were two adjacent icons that both
   // answered "put something in this message", and neither said which was
@@ -171,15 +170,17 @@ export function MessageComposer() {
     };
   }, [addOpen]);
 
-  async function submit() {
-    if (sending || uploading || (!value.trim() && !attachments.length && !object)) return;
-    setSending(true); setError(''); notifyTyping(false);
-    try {
-      await send({ content: value.trim(), attachmentIds: attachments.map((item) => item.id), object: object || undefined });
-      setValue(''); setAttachments([]); setObject(null);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    } catch (err) { setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'); }
-    finally { setSending(false); }
+  // NO SENDING STATE (#2907). The message is drawn in the transcript the
+  // moment it is sent — faded until the server has it, with a Retry if it
+  // never does — so the box empties at once and is ready for the next one.
+  // The button does not wait on the round trip or change its glyph.
+  function submit() {
+    if (uploading || (!value.trim() && !attachments.length && !object)) return;
+    setError(''); notifyTyping(false);
+    const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object || undefined };
+    setValue(''); setAttachments([]); setObject(null);
+    requestAnimationFrame(() => inputRef.current?.focus());
+    send(input).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
@@ -216,8 +217,8 @@ export function MessageComposer() {
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
-        <button type="button" onClick={() => void submit()} disabled={sending || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message">{sending ? '…' : <ArrowUpIcon aria-hidden="true" />}</button>
+        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
+        <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       <div className="mt-1 px-1 flex justify-end"><span className={`text-[10px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>

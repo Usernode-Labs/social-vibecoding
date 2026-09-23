@@ -800,8 +800,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   gap: 12px;
   padding: 8px 16px;
 }
-.messages-message-pending { opacity: .7; }
+/* A message in flight is drawn at once, faded, and changes nothing else
+   (#2907): no spinner, no "sending…" line, so confirming it moves no row.
+   The fade lifts when the server has it. */
+.messages-message { transition: opacity .15s ease-out; }
+.messages-message-pending { opacity: .55; }
 .messages-message-failed { background: rgba(239, 68, 68, .06); }
+.messages-message-meta.messages-message-failed-note { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 0; }
+.messages-message-failed-note button {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.messages-message-failed-note button.messages-discard { color: var(--text-muted); font-weight: 400; }
 .messages-message-head {
   display: flex;
   align-items: baseline;
@@ -921,6 +933,41 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-message-actions button svg { display: block; width: 16px; height: 16px; }
 .messages-bubble-wrap > .messages-message-actions { top: 0; right: auto; left: calc(100% + 6px); }
 .messages-message-self .messages-bubble-wrap > .messages-message-actions { left: auto; right: calc(100% + 6px); }
+
+/* The tray of a message still in flight keeps its place but draws nothing
+   (#2907) — on touch it is a line of the row, and growing it only once the
+   send confirmed moved every row under it. */
+.messages-message-actions.messages-message-actions-reserved { visibility: hidden; }
+
+/* #2905: report message, report the person and block, behind one ⋯ disc.
+   A small card under the tray on a pointer; on touch, where the tray is the
+   row's last line, it opens upward from that line. */
+.messages-more-menu {
+  position: absolute;
+  z-index: 25;
+  top: 38px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--messages-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+.messages-more-menu button {
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: left;
+}
+.messages-more-menu button:hover { background: var(--messages-surface-2); }
+.messages-more-menu button.messages-more-danger { color: #dc2626; }
+.dark .messages-more-menu button.messages-more-danger { color: #f87171; }
+@media (hover: none) {
+  .messages-more-menu { top: auto; bottom: 42px; }
+}
 
 /* A saved message's bookmark, solid and in the accent — the state lives in
    the glyph's SHAPE, the same way the app-chat bookmark's does, so the two
@@ -8207,6 +8254,31 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   transition: opacity 120ms, color 120ms;
 }
 .gc-msg-save svg { width: 12px; height: 12px; display: block; }
+/* #2905: the ⋯ that holds report and block — the bookmark's disc, so a row
+   carries two small marks at most and never a column of words. */
+.gc-msg-more {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 120ms;
+}
+.gc-msg-more[aria-expanded="true"] { opacity: 1; }
+@media (hover: hover) {
+  .gc-msg:hover .gc-msg-more { opacity: 0.85; }
+  .gc-msg-more:hover { opacity: 1; }
+}
 .gc-msg-save.gc-msg-saved { opacity: 1; color: var(--accent); }
 @media (hover: hover) {
   .gc-msg:hover .gc-msg-save,

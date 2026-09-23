@@ -152,8 +152,8 @@ test('message creation realtime carries ids and refetches viewer-authorized REST
   assert.match(created, /loadThread\(conversationId, true\)/);
   assert.doesNotMatch(created, /normalizeMessage\(event\.message/,
     'WS must never trust a sender-hydrated private object card');
-  assert.match(store, /filter\(\(item\) => item\.id !== optimisticId && item\.id !== message\.id\)/,
-    'HTTP completion removes both optimistic and raced-in server rows');
+  assert.match(store, /filter\(\(item\) => item\.clientKey !== key && item\.id !== message\.id\)/,
+    'HTTP completion removes both the local row and a raced-in server row');
   const reaction = store.slice(store.indexOf("case 'conversation_reaction_updated'"),
     store.indexOf("case 'conversation_read'"));
   assert.match(reaction, /loadThread\(conversationId, true\)/);
