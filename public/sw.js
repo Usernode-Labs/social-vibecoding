@@ -1408,6 +1408,19 @@ if (typeof module !== 'undefined' && module.exports) {
   // trips on a pathological session, and dropping it wholesale is harmless —
   // the worst an empty set costs is one extra correction lap.
   const CORRECTING_MAX = 200;
+  // The same loop on the ORDINARY deadline. The lane guard above covers only
+  // a lane serve, but an endpoint that is BOTH slow and never the same twice
+  // loops there too: the Workshop's /promoted list carries every running
+  // check's live progress (ran, passed, updatedAt), so under load it lost the
+  // 1s race and differed on every lap, and each correction re-pulled the
+  // whole board — about nine requests a second per visible tab, until Chrome
+  // refused new requests (net::ERR_INSUFFICIENT_RESOURCES). A re-pull after
+  // such a correction is asking for the current state, so it WAITS for the
+  // network (up to CORRECTION_WAIT_MS) instead of racing the cache it was
+  // just told is wrong. Consumed on read like `correcting`; a boot in another
+  // tab keeps its zero-deadline lane and its own correction.
+  const awaitingNetwork = new Set();
+  const CORRECTION_WAIT_MS = 10000;
 
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
@@ -1425,9 +1438,11 @@ if (typeof module !== 'undefined' && module.exports) {
 
     // Consume the correction mark, if any: this request pays the ordinary
     // deadline once and the next one is back in the lane.
-    const laned = !correcting.delete(event.request.url)
+    const settling = awaitingNetwork.delete(event.request.url);
+    const laned = !correcting.delete(event.request.url) && !settling
       && bootLaneApplies(event.request.url, ORIGIN, Date.now(), refreshIntentUntil);
-    const timeoutMs = laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
+    const timeoutMs = settling ? CORRECTION_WAIT_MS
+      : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 
     const { response, pending } = await raceNetworkAndCache({
       startFetch: () => fetch(event.request).then((res) => {
@@ -1448,6 +1463,9 @@ if (typeof module !== 'undefined' && module.exports) {
               if (laned) {
                 if (correcting.size >= CORRECTING_MAX) correcting.clear();
                 correcting.add(event.request.url);
+              } else {
+                if (awaitingNetwork.size >= CORRECTING_MAX) awaitingNetwork.clear();
+                awaitingNetwork.add(event.request.url);
               }
               await notifyClients({ type: 'api-updated', url: event.request.url });
             }
