@@ -1189,9 +1189,12 @@ function ConversationThread() {
 
   useEffect(() => {
     const el = scroller.current;
-    const last = snap.messages.at(-1)?.id || null;
+    const lastMessage = snap.messages.at(-1);
+    const last = lastMessage?.id || null;
     if (!el || !last) return;
-    if (previousLast.current === null || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
+    // The viewer's own send always lands in view, wherever they had scrolled.
+    const sentNow = !!lastMessage?.pending && last !== previousLast.current;
+    if (previousLast.current === null || sentNow || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
       requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     }
     previousLast.current = last;
@@ -1272,7 +1275,11 @@ function ConversationThread() {
           inside of this scroller on top of that — the inset twice over, as
           dead space under the last message. */}
       <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
-        {snap.loadingThread ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
+        {/* Only a thread with nothing to show yet says it is loading (#2907).
+            A refresh of the visible thread — the realtime echo of every send
+            is one — re-reads it silently: this row drawn above the messages
+            pushed the whole transcript down on each message sent. */}
+        {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
         {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p><button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button></div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
         {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button></div> : null}

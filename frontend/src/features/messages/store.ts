@@ -58,6 +58,19 @@ let state: InternalState = {
 const drafts = new Map<number, string>();
 const replyTargets = new Map<number, ConversationMessage>();
 const pendingByConversation = new Map<number, PendingSend[]>();
+/*
+ * THE SENDER'S OWN ROWS OUTLIVE A REFRESH (#2907). A send draws its message
+ * at once, faded, and nothing else: no spinner, no "sending…" line. The
+ * realtime echo of that same send re-reads the thread, and the page it reads
+ * back must not take the row away (it is still in flight) nor draw it twice
+ * (the server already has it). `unsent` holds each local row's payload by its
+ * client key — what a failed row's Retry sends again, under the same
+ * idempotency key so the server never stores it twice — and `sentKeys` maps a
+ * confirmed server id back to the client key the row was drawn under, so the
+ * row keeps its React key and is updated in place rather than remounted.
+ */
+const unsent = new Map<string, { conversationId: number; payload: PendingSend }>();
+const sentKeys = new Map<number, string>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
 let pendingShare: SharedObjectReference | null | undefined;
@@ -293,7 +306,7 @@ export async function loadThread(conversationId: number, force = false): Promise
       ? await api.listMessages(conversationId)
       : { messages: [], nextBefore: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
-    const messages = [...page.messages].sort((a, b) => a.id - b.id);
+    const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id));
     publish({ active, messages, nextBefore: page.nextBefore, loadingThread: false, online: true });
     upsertConversation(active);
     const last = messages.at(-1);
@@ -302,6 +315,37 @@ export async function loadThread(conversationId: number, force = false): Promise
     if (request !== threadRequest) return;
     publish({ loadingThread: false, threadError: errorMessage(error, 'Couldn’t load this conversation.') });
   }
+}
+
+/**
+ * A page read from the server, with the viewer's still-local rows kept.
+ *
+ * Confirmed rows get back the client key they were first drawn under. A
+ * local row (pending or failed) stays at the end unless the page already
+ * holds it: the realtime echo can land before the POST that caused it
+ * returns, and then the server's copy — the viewer's, same words, not yet
+ * claimed by another local row — IS that row, so it takes its key and the
+ * local one goes.
+ */
+function withLocalRows(conversationId: number, page: ConversationMessage[]): ConversationMessage[] {
+  const me = currentUser().id;
+  const claimed = new Set(sentKeys.values());
+  const messages = page.map((item) => {
+    const key = sentKeys.get(item.id);
+    return key ? { ...item, clientKey: key } : item;
+  });
+  const local: ConversationMessage[] = [];
+  for (const row of state.messages) {
+    if (row.id >= 0 || row.conversationId !== conversationId || !row.clientKey || claimed.has(row.clientKey)) continue;
+    const match = messages.find((item) => !item.clientKey && item.sender.id === me && item.content === row.content);
+    if (match && row.pending) {
+      sentKeys.set(match.id, row.clientKey);
+      match.clientKey = row.clientKey;
+      continue;
+    }
+    local.push(row);
+  }
+  return messages.concat(local);
 }
 
 async function refreshActiveAfterMembershipChange(conversationId: number): Promise<void> {
@@ -726,7 +770,7 @@ function idempotencyKey(): string {
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export async function send(input: { content: string; attachmentIds?: string[]; object?: SharedObjectReference }): Promise<void> {
+export async function send(input: { content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments'] }): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
   const content = input.content.slice(0, 8000);
@@ -738,30 +782,47 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
     replyToId: reply?.id,
     idempotencyKey: idempotencyKey(),
   };
-  const optimisticId = -Date.now();
   const optimistic: ConversationMessage = {
-    id: optimisticId,
+    id: -Date.now(),
     conversationId,
     sender: currentUser(),
     content,
     createdAt: new Date().toISOString(),
     reply: reply ? { id: reply.id, sender: reply.sender, content: reply.content } : null,
-    reactions: [], attachments: [], objects: [], pending: true, clientKey: pending.idempotencyKey,
+    // The files already uploaded draw with the row, so a file-only send is
+    // not an empty line while it is in flight.
+    reactions: [], attachments: input.attachments || [], objects: [], pending: true, clientKey: pending.idempotencyKey,
   };
+  unsent.set(pending.idempotencyKey, { conversationId, payload: pending });
   setDraft(conversationId, '');
   setReply(conversationId, null);
   publish({ messages: [...state.messages, optimistic], threadError: null });
+  await deliver(conversationId, pending);
+}
+
+/**
+ * Send a local row's payload and settle the row: the server's message in its
+ * place (same client key, so it is updated rather than remounted), or the
+ * row marked failed with its Retry. The row is found by client key, not by
+ * its temporary id, because a refresh can have re-read the thread meanwhile.
+ */
+async function deliver(conversationId: number, pending: PendingSend): Promise<void> {
+  const key = pending.idempotencyKey;
   try {
     const message = await api.sendMessage(conversationId, pending);
+    unsent.delete(key);
+    sentKeys.set(message.id, key);
     if (state.route.conversationId === conversationId) {
       // The member-scoped WS event can win the race with this HTTP response
       // and refresh the real row into the thread first. Remove both the
-      // optimistic placeholder and any already-present server id before the
+      // local row and any already-present server id before the
       // authoritative POST response is inserted.
       const messages = state.messages
-        .filter((item) => item.id !== optimisticId && item.id !== message.id)
-        .concat(message)
-        .sort((a, b) => a.id - b.id);
+        .filter((item) => item.clientKey !== key && item.id !== message.id)
+        .concat({ ...message, clientKey: key })
+        // Server rows by id; local rows (negative ids) stay after them in
+        // the order they were sent.
+        .sort((a, b) => (a.id < 0 || b.id < 0 ? Number(a.id < 0) - Number(b.id < 0) : a.id - b.id));
       publish({ messages });
     }
     await loadConversations(true);
@@ -774,10 +835,34 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
     }
     publish({
       online: !offline,
-      messages: state.messages.map((item) => item.id === optimisticId ? { ...item, pending: false, failed: true } : item),
+      messages: state.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
       threadError: offline ? 'Message queued. It will retry when you reconnect.' : errorMessage(error, 'Your message wasn’t sent.'),
     });
   }
+}
+
+/** Send a failed row again, in place (#2907). */
+export async function retrySend(clientKey: string): Promise<void> {
+  const entry = unsent.get(clientKey);
+  if (!entry) return;
+  const queue = pendingByConversation.get(entry.conversationId);
+  if (queue) pendingByConversation.set(entry.conversationId, queue.filter((item) => item.idempotencyKey !== clientKey));
+  publish({
+    threadError: null,
+    messages: state.messages.map((item) => item.clientKey === clientKey ? { ...item, pending: true, failed: false } : item),
+  });
+  await deliver(entry.conversationId, entry.payload);
+}
+
+/** Drop a failed row the sender no longer wants to send. */
+export function discardFailed(clientKey: string): void {
+  const entry = unsent.get(clientKey);
+  unsent.delete(clientKey);
+  if (entry) {
+    const queue = pendingByConversation.get(entry.conversationId);
+    if (queue) pendingByConversation.set(entry.conversationId, queue.filter((item) => item.idempotencyKey !== clientKey));
+  }
+  publish({ messages: state.messages.filter((item) => !(item.clientKey === clientKey && item.failed)) });
 }
 
 export async function retryPending(): Promise<void> {
@@ -786,7 +871,11 @@ export async function retryPending(): Promise<void> {
   for (const [conversationId, queue] of [...pendingByConversation]) {
     const remaining: PendingSend[] = [];
     for (const pending of queue) {
-      try { await api.sendMessage(conversationId, pending); }
+      try {
+        const message = await api.sendMessage(conversationId, pending);
+        unsent.delete(pending.idempotencyKey);
+        sentKeys.set(message.id, pending.idempotencyKey);
+      }
       catch { remaining.push(pending); }
     }
     if (remaining.length) pendingByConversation.set(conversationId, remaining);

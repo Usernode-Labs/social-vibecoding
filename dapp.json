@@ -3046,6 +3046,24 @@
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
     },
     {
+      "name": "#2905: a follow-up message's report and block sit behind one ⋯ disc, not three, so the line keeps its width on a phone",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100402.messages-message-grouped:not(:has(button[aria-label=\"Report message\"])) > .messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
+      "impact": [
+        "frontend/src/features/messages/**",
+        "public/css/app.css"
+      ]
+    },
+    {
+      "name": "#2905: an app's chat in Messages draws no report or block text links in its rows",
+      "path": "/?demo=1#messages/app/usernode-2d5619",
+      "expectSelector": "#messages-screen:not(.hidden) #gc-messages:has(.gc-msg):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
+      "impact": [
+        "frontend/src/features/group-chat/**",
+        "public/css/app.css"
+      ]
+    },
+    {
       "name": "A message in Messages offers a save button",
       "path": "/?demo=1#messages/910001",
       "expectSelector": "#messages-message-9100102 .messages-message-actions button[aria-label=\"Save message\"]"

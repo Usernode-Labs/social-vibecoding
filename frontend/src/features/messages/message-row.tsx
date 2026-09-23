@@ -1,9 +1,9 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
 import * as api from './api';
-import { edit, react, setReply, setUserBlocked, toggleSaved } from './store';
+import { discardFailed, edit, react, retrySend, setReply, setUserBlocked, toggleSaved } from './store';
 import type { ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -53,6 +53,9 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
   const [notice, setNotice] = useState('');
   const [reporting, setReporting] = useState(false);
   const [userReporting, setUserReporting] = useState(false);
+  const [more, setMore] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
   const longPress = useRef<number | null>(null);
   // #1408: the edit box grows with the message being edited, same as the
   // composer it visually replaces.
@@ -88,6 +91,26 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
     catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t block this person.'); }
     finally { setBusy(false); }
   }
+
+  // The ⋯ menu closes on a tap outside it or on Escape, like the composer's
+  // add menu. The ⋯ itself is not outside: its own click toggles it shut.
+  useEffect(() => {
+    if (!more) return undefined;
+    const onDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      if (moreRef.current?.contains(target) || moreButton.current?.contains(target)) return;
+      setMore(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setMore(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [more]);
 
   function startLongPress() {
     if (mine) return;
@@ -133,7 +156,12 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
 
   // The per-message controls. Hover-revealed on a pointer, always laid out
   // on touch (app.css), on the row's trailing edge.
-  const actions: ReactNode = !message.pending && !message.failed ? <div className="messages-message-actions">
+  //
+  // WHILE A SEND IS IN FLIGHT the tray is still laid out, but invisible and
+  // inert (#2907): on touch it is a line of its own under the message, and a
+  // row that grew that line only once the server answered moved everything
+  // under it. A failed row has no tray — its Retry is its control.
+  const actions: ReactNode = !message.failed ? <div className={`messages-message-actions ${message.pending ? 'messages-message-actions-reserved' : ''}`} aria-hidden={message.pending || undefined} inert={message.pending || undefined}>
     <button type="button" onClick={() => setReply(conversationId, message)} title="Reply" aria-label="Reply">↩</button>
     <button type="button" onClick={() => setPicker((open) => !open)} title="React" aria-label="React">☺</button>
     {/* Save, the Messages half of the app-chat bookmark (#1280). It sits
@@ -162,9 +190,16 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
       aria-label={message.saved ? 'Unsave message' : 'Save message'}
     >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}</button>
     {mine && message.content ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
-    {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setUserReporting(false); setNotice(''); }} title="Report message" aria-label="Report message">!</button> : null}
-    {!mine && message.sender.id ? <button type="button" onClick={() => { setUserReporting((open) => !open); setReporting(false); }} title={`Report @${message.sender.username}`} aria-label={`Report @${message.sender.username}`}>⚑</button> : null}
-    {!mine && message.sender.id ? <button type="button" disabled={busy} onClick={() => void blockSender()} title={`Block @${message.sender.username}`} aria-label={`Block @${message.sender.username}`}>⊘</button> : null}
+    {/* #2905: reporting and blocking are one ⋯ disc, not three. They are
+        the rare acts on a row, and each disc they took was one more on the
+        line every message carries on a phone. */}
+    {!mine ? <button ref={moreButton} type="button" className="messages-action-more" onClick={() => setMore((open) => !open)} title="More" aria-label="More actions" aria-haspopup="menu" aria-expanded={more}>⋯</button> : null}
+  </div> : null;
+
+  const moreNode = more && !mine ? <div ref={moreRef} className="messages-more-menu" role="menu" aria-label="More actions">
+    <button type="button" role="menuitem" onClick={() => { setMore(false); setReporting(true); setUserReporting(false); setNotice(''); }}>Report message</button>
+    {message.sender.id ? <button type="button" role="menuitem" onClick={() => { setMore(false); setUserReporting(true); setReporting(false); }}>Report @{message.sender.username}</button> : null}
+    {message.sender.id ? <button type="button" role="menuitem" className="messages-more-danger" disabled={busy} onClick={() => { setMore(false); void blockSender(); }}>Block @{message.sender.username}</button> : null}
   </div> : null;
 
   const pickerNode = picker ? <div className="messages-reaction-picker" role="menu" aria-label="Choose a reaction">{REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" onClick={() => void toggle(emoji)}>{emoji}</button>)}</div> : null;
@@ -172,16 +207,24 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
   const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''}`;
   const pointerProps = { onPointerDown: startLongPress, onPointerUp: cancelLongPress, onPointerCancel: cancelLongPress, onPointerMove: cancelLongPress };
 
-  // The state words a header carries — edited, sending, not sent. A
-  // continuation line has no header, so it carries them on a meta line of its
-  // own, beside nothing: the time is already in the gutter.
-  const status = (
-    <>
-      {message.editedAt ? <span title={fullTime(message.editedAt)}>edited</span> : null}
-      {message.pending ? <span>sending…</span> : null}
-      {message.failed ? <span className="text-red-700 dark:text-red-400">not sent</span> : null}
-    </>
-  );
+  // The state word a header carries — edited. A continuation line has no
+  // header, so it carries it on a meta line of its own, beside nothing: the
+  // time is already in the gutter.
+  //
+  // NO "sending…" (#2907). A message in flight says so by being faded
+  // (app.css), which changes no line's height; the word came and went in a
+  // line of its own on a continuation row and moved the transcript twice.
+  const status = message.editedAt ? <span title={fullTime(message.editedAt)}>edited</span> : null;
+
+  // A send that failed says so under its text, with the two things to do
+  // about it: send it again (the same idempotency key, so never twice) or
+  // drop it. Its own line, not the header's: three more words beside the
+  // name and time wrapped the header on a phone.
+  const failedNote = message.failed ? <div className="messages-message-meta messages-message-failed-note" role="status">
+    <span className="text-red-700 dark:text-red-400">Not sent</span>
+    {message.clientKey ? <button type="button" className="messages-retry" onClick={() => void retrySend(message.clientKey as string)}>Retry</button> : null}
+    {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>Discard</button> : null}
+  </div> : null;
 
   return (
     <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${grouped ? 'messages-message-grouped' : ''} ${stateClasses}`} {...pointerProps}>
@@ -192,10 +235,12 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
         {grouped ? null : <div className="messages-message-head"><span className={mine ? 'text-violet-700 dark:text-violet-300' : ''}>@{message.sender.username}</span><time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {body}
         {extras}
-        {grouped && (message.editedAt || message.pending || message.failed) ? <div className="messages-message-meta">{status}</div> : null}
+        {grouped && message.editedAt ? <div className="messages-message-meta">{status}</div> : null}
+        {failedNote}
       </div>
       {actions}
       {pickerNode}
+      {moreNode}
     </article>
   );
 }

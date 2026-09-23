@@ -51,7 +51,7 @@
  * it the next time anything else about the message changed.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
@@ -350,18 +350,99 @@ function RowActions({ msg, onReportMessage, onReportUser }: {
         </button>
       ) : null}
       {msg.kind === 'message' && !msg.mine && msg.senderId ? (
-        <>
-          {onReportMessage ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
-            onClick={onReportMessage} aria-label="Report message">Report message</button> : null}
-          {onReportUser ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
-            onClick={onReportUser} aria-label={`Report @${msg.username}`}>Report user</button> : null}
-          <button type="button" className="text-[11px] text-red-600 hover:underline" onClick={() => { void blockSender(); }}
-            title={`Block @${msg.username}`} aria-label={`Block @${msg.username}`}>
-            Block
-          </button>
-        </>
+        <MoreMenu username={msg.username} onReportMessage={onReportMessage} onReportUser={onReportUser}
+          onBlock={() => { void blockSender(); }} />
       ) : null}
     </>
+  );
+}
+
+/**
+ * Report message, report the person, block them — behind one small ⋯ disc
+ * the size of the bookmark beside it (#2905).
+ *
+ * #2895 drew the three as text links in the row's action slot. On a named
+ * row that slot shares the header line, so the name truncated to its first
+ * letter; on a continuation line it is a column BESIDE the text, so a
+ * follow-up message wrapped at a fifth of a phone's width. One disc is the
+ * same footprint the bookmark already has, and the menu it opens floats over
+ * the transcript rather than taking width from it. It opens upward when the
+ * row is near the bottom of the transcript's scroller, so the last message's
+ * menu is not cut off by the composer.
+ */
+function MoreMenu({ username, onReportMessage, onReportUser, onBlock }: {
+  username: string;
+  onReportMessage?: () => void;
+  onReportUser?: () => void;
+  onBlock: () => void;
+}) {
+  const [open, setOpen] = useState<'down' | 'up' | null>(null);
+  const root = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (event: MouseEvent | TouchEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(null);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(null); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  const choose = (act?: () => void) => { setOpen(null); act?.(); };
+  return (
+    <span ref={root} className="relative inline-flex self-center">
+      <button
+        type="button"
+        className="gc-msg-more"
+        title="More"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={!!open}
+        onClick={(event) => {
+          if (open) { setOpen(null); return; }
+          // Room below is measured to the transcript's own scroller, not the
+          // window: the composer and the tab bar sit under it.
+          let floor = window.innerHeight;
+          for (let node = event.currentTarget.parentElement; node; node = node.parentElement) {
+            if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) { floor = node.getBoundingClientRect().bottom; break; }
+          }
+          setOpen(event.currentTarget.getBoundingClientRect().bottom + 150 > floor ? 'up' : 'down');
+        }}
+      >
+        {'\u22EF'}
+      </button>
+      {open ? (
+        <span
+          role="menu"
+          aria-label="More actions"
+          className={open === 'up'
+            ? 'gc-msg-more-menu absolute bottom-full right-0 z-30 mb-1 flex min-w-[11rem] flex-col rounded-xl bg-white p-1 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700'
+            : 'gc-msg-more-menu absolute top-full right-0 z-30 mt-1 flex min-w-[11rem] flex-col rounded-xl bg-white p-1 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700'}
+        >
+          {onReportMessage ? (
+            <button type="button" role="menuitem" onClick={() => choose(onReportMessage)}
+              className="rounded-lg px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700">
+              Report message
+            </button>
+          ) : null}
+          {onReportUser ? (
+            <button type="button" role="menuitem" onClick={() => choose(onReportUser)}
+              className="rounded-lg px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700">
+              Report @{username}
+            </button>
+          ) : null}
+          <button type="button" role="menuitem" onClick={() => choose(onBlock)} title={`Block @${username}`}
+            className="rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-zinc-100 dark:text-red-400 dark:hover:bg-zinc-700">
+            Block @{username}
+          </button>
+        </span>
+      ) : null}
+    </span>
   );
 }
 

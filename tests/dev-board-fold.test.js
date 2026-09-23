@@ -1166,7 +1166,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // merged manifest holds 763 + 15 = 778. That is past the 20-slot floor
   // under the 790 ceiling, so the ceiling moved to 810 with it
   // (services/app-manifest.js), leaving 32 slots.
-  assert.equal(DAPP.tests.length, 778);
+  //
+  // 778 → 780: +2 (#2905), counted on this branch against the shared 759
+  // above and not yet folded into main's own count: a follow-up message in
+  // #general carries one ⋯ disc for report and block instead of three, and
+  // an app's chat in Messages draws no report/block text links in its rows.
+  // 780 leaves 30 slots under the 810 ceiling.
+  assert.equal(DAPP.tests.length, 780);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
