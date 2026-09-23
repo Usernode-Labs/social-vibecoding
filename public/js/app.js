@@ -4850,6 +4850,13 @@ const App = {
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('profile-screen');
+    App._inProfile = true;
+    // Loads into the still-hidden root BEFORE the transition, as the Workshop
+    // does (#2777): the requests are in flight while the transition runs, and
+    // a return visit paints the cached profile into the root before it is
+    // revealed, so the incoming frame already has content instead of the
+    // skeleton.
+    if (window.Profile?.open) Profile.open(username);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
@@ -4871,8 +4878,6 @@ const App = {
       // is not repeated, because a second writer of one fact is how the two
       // disagree.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
-    App._inProfile = true;
-    if (window.Profile?.open) Profile.open(username);
   },
 
   // A hash change between the signed-in profile editor and a public
