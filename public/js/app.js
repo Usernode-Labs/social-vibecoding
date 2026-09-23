@@ -206,6 +206,14 @@ const App = {
     try {
       if (typeof Home !== 'undefined') localStorage.removeItem(Home.IMPROVE_TARGET_KEY);
     } catch (err) { /* nothing stored, or no storage at all */ }
+    // …and the parked app (#2762), the same residue once more: the app this
+    // account last left, drawn by name above the tab bar and kept in storage
+    // across reloads. Offering it to the next account on this device would
+    // be the previous one's app name on their first screen. Cleared through
+    // the bridge, which forgets it in the store and in storage together.
+    try {
+      window.UsernodeReact?.nav?.park?.(null);
+    } catch (err) { /* nothing parked, or no bridge */ }
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
@@ -534,6 +542,7 @@ const App = {
       NativeChrome.prepareIdentityPublication(user);
     }
     App.user = user;
+    App._syncViewer();
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
     // than reading /api/auth/me for themselves. Published HERE on an
@@ -593,6 +602,7 @@ const App = {
       nativeBoundary = NativeChrome.enterAnonymous();
     }
     App.user = null;
+    App._syncViewer();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
@@ -776,6 +786,7 @@ const App = {
       NativeChrome.prepareIdentityPublication(user);
     }
     App.user = user;
+    App._syncViewer();
     // A snapshot is display-only and unverified. _reconcileSession publishes
     // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
@@ -2492,6 +2503,10 @@ const App = {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
+    // The fifth tab's name (#2760): both username writers change
+    // `App.user.username` and then run this sweep, so this is where the tab
+    // hears about a rename.
+    App._syncViewer();
     // The cog drawer used to be refreshed here. It is retired; its session
     // list is the Improve panel's, which reloads only while it is open.
     if (window.Improve) Improve.onSessionStateChanged?.();
@@ -4267,9 +4282,9 @@ const App = {
     // ...and the tab bar, in the same callback and for the same reason the
     // comment above gives for the title and the back slot: they are all part
     // of the swap, and the kit captures the outgoing page from whatever this
-    // callback did before it returned.
+    // callback did before it returned. The parked app is decided inside it,
+    // from the same answer (see _syncParkedApp).
     App._syncPlatformTabs(revealId);
-    App._syncParkedApp(revealId);
   },
 
   // ── #platform-parked — the app you left ─────────────────────────────
@@ -4278,42 +4293,107 @@ const App = {
   // makes the app you were IN the one thing that is not: it has no tab, the
   // header's app strip goes with it, and Home's grid is every app rather than
   // the one you were halfway through. So leaving an app leaves a handle to
-  // it, above the bar, until it is resumed or dismissed.
+  // it, above the bar (at the foot of the rail on a desktop), until it is
+  // resumed or dismissed.
   //
-  // HERE, in the one place every screen swap passes through, rather than at
-  // the eight `leavingApp` call sites that each run AppView.close(): they all
-  // reveal a screen through this function on their next line, and a rule
-  // spelled once cannot be half-applied. It runs AFTER the reveal for the
-  // same reason the rest of this callback does — the kit snapshots what the
-  // callback did.
+  // "LEAVING" MEANS THE RUNNING APP GOING OFF SCREEN, which is precisely the
+  // `inApp` _syncPlatformTabs decides — #app-view on its `app` tab — and that
+  // is why this is called from there and nowhere else. Every path that can
+  // change that answer already goes through it: every screen swap
+  // (_showOnlyScreen), the reveal that opens an app (navigateToApp), the hop
+  // between an app and its own Workshop that never swaps a screen
+  // (switchTab), chromeless and the signed-out shell. The strip is the bar's
+  // complement — drawn wherever the bar is, never over the running app — so
+  // one decision serves both, and a rule spelled once cannot be half-applied.
+  // Stepping from the running app out to that same app's Workshop, its
+  // discussion or a change of it is leaving it too: those are platform
+  // screens with the bar up, and since #2761 took the App segment out of the
+  // mark's menu this handle is the way back from them.
   //
-  // THE DISPLAY DATA IS CAPTURED, not looked up later. The strip's promise is
-  // to be instant, and a handle that has to fetch a name and an icon before
-  // it can draw is a handle that appears after you have stopped looking for
-  // it. `launchRecordFor` is the launcher's own cached row — the same one
-  // navigateToApp reads to decide an app's default tab — and AppView.appData
-  // is the record the app view itself loaded; either answers, and a slug on
-  // its own is enough to offer the app by name-as-slug if neither does.
-  _syncParkedApp(revealId) {
+  // THE APP IS CAPTURED WHILE IT IS ON SCREEN, NOT LOOKED UP ON THE WAY OUT
+  // (#2762). This used to read `App.currentApp` at the moment of leaving, and
+  // that was the whole bug: every way out of an app — the ✕, each tab, the
+  // peeked rail, Back — nulls `App.currentApp` before its transition starts
+  // and runs AppView.close() (which nulls AppView.appData) before the screen
+  // swap that called this, so the handle was never once written. So the
+  // running app is recorded in `_runningApp` each time the answer is "in the
+  // app", and parked from there when it stops being. Each re-assertion
+  // replaces the capture, which is how a cold deep link that entered with only
+  // a slug gets its name and icon: navigateToApp ends in switchTab once the
+  // record has loaded, and switchTab asks again.
+  //
+  // THE DISPLAY DATA IS CAPTURED, not fetched later. The strip's promise is to
+  // be instant, and a handle that has to fetch a name and an icon before it
+  // can draw is a handle that appears after you have stopped looking for it.
+  _runningApp: null,
+
+  _syncParkedApp(inApp) {
     const bridge = window.UsernodeReact?.nav;
     if (!bridge || typeof bridge.park !== 'function') return;
-    // Entering the app clears its own handle: resuming the app you are in is
-    // a shortcut to where you already are.
-    if (revealId === 'app-view') { bridge.park(null); return; }
-    const slug = App.currentApp;
-    if (!slug) return;
+    if (inApp) {
+      // In the app: remember it, and clear its own handle — resuming the app
+      // you are in is a shortcut to where you already are. The platform's own
+      // row has no capture (see _parkRecord) and leaves the handle alone: its
+      // App tab is Home, so it is never the running app for long enough to be
+      // the one you left.
+      const running = App._parkRecord(App.currentApp);
+      App._runningApp = running;
+      if (running) bridge.park(null);
+      return;
+    }
+    const left = App._runningApp;
+    App._runningApp = null;
+    if (!left) return;
+    // The platform's own row is never parked. Its App tab is Home, and a cold
+    // link to it holds `app` for as long as its record takes to say
+    // `self_hosted` — switchTab then turns it to the Workshop, which reaches
+    // here as a leave.
+    try {
+      if (typeof AppView !== 'undefined' && AppView.appData?.slug === left.slug
+          && AppView.appData.self_hosted) return;
+    } catch (_) { /* no record to ask */ }
+    bridge.park(left);
+  },
+
+  // The handle's display data for `slug`, or null for no app (or the platform
+  // itself, which is never parked). AppView.appData is the record the app
+  // view loaded and is the fresher of the two; `launchRecordFor` is the
+  // launcher's own cached row, the same one navigateToApp reads to choose an
+  // app's default tab, and it is what answers before the load lands. A slug
+  // on its own is enough to offer the app by name-as-slug if neither does.
+  _parkRecord(slug) {
+    if (!slug) return null;
     let rec = null;
     try {
       rec = (typeof AppView !== 'undefined'
-        && (AppView.launchRecordFor?.(slug)
-          || (AppView.appData?.slug === slug ? AppView.appData : null))) || null;
+        && ((AppView.appData?.slug === slug ? AppView.appData : null)
+          || AppView.launchRecordFor?.(slug))) || null;
     } catch (_) { /* a record we cannot read is a name we do without */ }
-    bridge.park({
+    if (rec?.self_hosted) return null;
+    return {
       slug,
       name: rec?.name || slug,
       iconUrl: rec?.icon_url || null,
       iconEmoji: rec?.icon_emoji || null,
-    });
+    };
+  },
+
+  // ── The fifth tab says who you are (#2760) ──────────────────────────
+  //
+  // "Me" became the signed-in user's username, on the phone's bar and the
+  // desktop rail alike. The bar is React's, so the name is PUBLISHED over the
+  // nav bridge like the lit tab, never written into the node.
+  //
+  // Called wherever `App.user` is assigned — enterAuthed (every boot and
+  // login, snapshot or verified), _reconcileSession (the verified answer
+  // replacing the snapshot's) and enterAnonymous — and from
+  // resyncCurrentView, the sweep both username writers run right after
+  // changing `App.user.username` (Settings → Change username, and the
+  // first-run "Choose your username" step), so a rename shows at once rather
+  // than on the next load. All of those run after hydration: the tab's first
+  // render is the prerender's "Me", and the name arrives as an update.
+  _syncViewer() {
+    window.UsernodeReact?.nav?.setViewer?.(App.user?.username || null);
   },
 
   // ── #platform-tabs — one place decides ──────────────────────────────
@@ -4397,6 +4477,11 @@ const App = {
         ? (App._isMessagesThread() ? 'messages' : 'workshop')
         : null,
     );
+    // …AND THE PARKED APP, from the same answer (#2762). The running app
+    // going off screen is what parks it, and this is the one place that says
+    // whether it is on screen. Last, so the handle lands in the same callback
+    // as the bar it rides on.
+    App._syncParkedApp(inApp);
   },
 
   // The two `#app-view` routes that are THREADS OF MESSAGES rather than the
@@ -5527,9 +5612,11 @@ const App = {
       // runs _showOnlyScreen, which would sync it a transition later — and
       // the kit captures the incoming page from what this callback did, so
       // a bar still painted here rides the zoom in and then vanishes. The
-      // parked handle goes with it, for the same reason and the same frame.
+      // parked handle goes with it, for the same reason and the same frame:
+      // _syncPlatformTabs decides it too. On a route that lands on the app's
+      // own Workshop (`App.currentTab` is committed above) the bar stays up
+      // and so does the handle — that is a platform screen, not the app.
       App._syncPlatformTabs('app-view');
-      App._syncParkedApp('app-view');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
@@ -6009,7 +6096,11 @@ const App = {
     // AND THE RAIL, which is up on the app's Workshop and down on the app
     // itself (see _syncPlatformTabs). This hop is the only way to cross that
     // line without a screen reveal, so it is the only other place that has to
-    // say so. Guarded on the app view actually being on screen: switchTab is
+    // say so — and the parked handle crosses it with the rail: the app to its
+    // Workshop parks the app, the way back clears it (#2762). It is also the
+    // re-assertion that gives a cold deep link's capture its name and icon,
+    // since navigateToApp calls this once the app's record has loaded.
+    // Guarded on the app view actually being on screen: switchTab is
     // app-scoped, and publishing `app-view` as the current screen from
     // anywhere else would light no tab and lose the one that is lit.
     if (App._isScreenVisible?.('app-view')) App._syncPlatformTabs('app-view');

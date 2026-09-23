@@ -169,10 +169,12 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // `#app-switcher-btn` until #2718, which retired the chip. Settings is a
     // row of the Profile screen the Me tab lands on, so the tab is where this
     // step points — the control that gets you there, rather than the sheet
-    // that used to list it.
+    // that used to list it. The copy said "under Me" until #2760 named that
+    // tab after the signed-in user, so it names the place instead of a label
+    // the tab no longer shows.
     id: 'settings',
     title: 'Replay this any time',
-    body: 'You can replay this tour any time from Settings, under Me.',
+    body: 'You can replay this tour any time from Settings, on your profile.',
     targets: ['#platform-tab-me'],
   },
 ];

@@ -80,6 +80,22 @@ if (typeof window !== 'undefined') {
       navStore.set({ messages: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0 });
     },
     /**
+     * Name the fifth tab after the signed-in user (#2760), or put it back to
+     * "Me" with null.
+     *
+     * The one writer is `App._syncViewer()` in public/js/app.js, called
+     * wherever `App.user` is assigned and from the sweep both username
+     * writers run after changing it. Trimmed, and anything that is not a
+     * non-empty string clears it, so a user object that has not loaded its
+     * username yet leaves the tab saying "Me" rather than saying nothing.
+     *
+     * @param name The username, or null/'' for nobody.
+     */
+    setViewer(name: string | null) {
+      const viewer = typeof name === 'string' ? name.trim() : '';
+      navStore.set({ viewer: viewer || null });
+    },
+    /**
      * Offer `app` above the tab bar until it is resumed or dismissed, or
      * clear the offer with null.
      *
@@ -87,8 +103,10 @@ if (typeof window !== 'undefined') {
      * strip's whole promise is to be instant: a handle that has to fetch a
      * name and an icon before it can draw is a handle that appears after you
      * have given up looking for it. The caller has all four to hand — app.js
-     * parks from AppView.appData, the record it already loaded to draw the
-     * app's own header.
+     * captures them while the app is on screen (`App._runningApp`, from the
+     * record the app view loaded or the launcher's cached row) and parks that
+     * capture on the way out, because every way out has cleared both records
+     * by the time the screen swap runs (#2762).
      *
      * @param app `{ slug, name, iconUrl, iconEmoji }`, or null to clear.
      */
