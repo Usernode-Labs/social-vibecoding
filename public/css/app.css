@@ -17514,6 +17514,65 @@ html.un-kb #platform-parked {
     background: var(--accent);
   }
 
+  /* ── RECENTS BY DAY (#2919) ──────────────────────────────────────────
+     frontend/src/features/nav/recents.ts (groupRecents) carries the argument.
+     A small label before each day that has a row, quieter than the RECENTS
+     heading above it: sentence case, no caps or tracking, and the muted ink
+     taken down a step so the rows stay the thing you read. Less air above
+     the first one, which already sits under the heading. */
+  .platform-recents-day {
+    flex: none;
+    padding: 8px 12px 2px;
+    color: var(--text-muted);
+    opacity: .75;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .01em;
+    line-height: 1.5;
+  }
+  .platform-recents-head + .platform-recents-day {
+    padding-top: 2px;
+  }
+  /* "Show N older" / "Show less": a quiet row at the list's foot, in the
+     rows' own muted ink and hover, a little smaller than a row so it reads
+     as a control on the list rather than one more place to go. */
+  .platform-recents-more {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    margin-top: 4px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .platform-recents-more-icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
+  }
+  /* The ring is drawn inside the button: the list scrolls, and would clip
+     one drawn outside it. */
+  .platform-recents-more:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  @media (hover: hover) {
+    .platform-recents-more:hover {
+      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
+      color: var(--brand-ink);
+    }
+  }
+
   /* THE RESUME STRIP GIVES WAY TO RECENTS ON THE DESKTOP (#2802). The apps
      in the list above are the same offer, several at once, so a second copy
      at the rail's foot would say it twice. The phone has no rail and keeps

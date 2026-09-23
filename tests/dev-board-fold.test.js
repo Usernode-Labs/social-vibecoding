@@ -1173,11 +1173,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // an app's chat in Messages draws no report/block text links in its rows.
   // 780 leaves 30 slots under the 810 ceiling.
   //
-  // 780 → 781: +1 (#2912): the demo's unread conversations show as the
-  // Messages tab's quiet count, still inside the Messages tab (the badge left
-  // the icon for the row's end on the desktop rail by CSS alone, so the
-  // check pins the markup that move depends on). 781 leaves 29 slots.
-  assert.equal(DAPP.tests.length, 781);
+  // 780 → 781: +1 (#2919): the desktop rail's Recents folds everything
+  // older than five days ago behind a collapsed "Show N older" button at its
+  // foot.
+  //
+  // 780 → 781: independently on main, +1 (#2912): the demo's unread
+  // conversations show as the Messages tab's quiet count, still inside the
+  // Messages tab (the badge left the icon for the row's end on the desktop
+  // rail by CSS alone, so the check pins the markup that move depends on).
+  //
+  // 781 → 782: the tallies above were computed on either side of this merge
+  // against the same shared 780 and cannot be read as one sequence. This
+  // branch took 780 → 781 alone, with #2919 above; main independently took
+  // the same 780 to 781, with #2912 above. Neither set overlaps the other, so
+  // the merged manifest holds both: 780 + 1 + 1 = 782, leaving 28 slots under
+  // the 810 ceiling.
+  assert.equal(DAPP.tests.length, 782);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
