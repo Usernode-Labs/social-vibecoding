@@ -407,6 +407,26 @@ const GroupChat = {
     return [...byId.values()];
   },
 
+  // A block changes which persisted posts this viewer may see. Drop every
+  // cached page (including topic discussions) before reloading from the
+  // filtered API; an in-flight fetch may no longer publish its old result.
+  refreshAfterBlock() {
+    GroupChat._historyLoad = null;
+    GroupChat.messages = [];
+    GroupChat.oldestMessageId = null;
+    GroupChat.hasMore = true;
+    GroupChat.threads = new Map();
+    GroupChat.typingUsers.clear();
+    if (!GroupChat.appSlug) return;
+    GroupChat.render();
+    void GroupChat.loadHistory();
+    const active = GroupChat.activeThread;
+    if (active) {
+      GroupChat.renderThread();
+      void GroupChat.loadThreadHistory(active.type, active.ref);
+    }
+  },
+
   async loadHistory() {
     if (!GroupChat.appSlug || GroupChat._historyLoad) return;
     const load = {};
@@ -682,6 +702,7 @@ const GroupChat = {
     const pr = (isVote || linksProposal) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
     return {
       id: msg.id == null ? null : Number(msg.id),
+      senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
       time: stamp.text,

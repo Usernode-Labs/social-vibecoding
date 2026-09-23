@@ -43,7 +43,7 @@ function _onBusMessage({ kind, routing, data, oversize }) {
       deliverGlobal(payload);
       return;
     case 'room':
-      if (r.appId != null) deliverToRoom(r.appId, payload);
+      if (r.appId != null) deliverToRoom(r.appId, payload, null, r);
       return;
     case 'scoped':
       // An oversize scoped event degrades to a GLOBAL nudge rather than a
@@ -319,13 +319,21 @@ function leaveRoom(appId, client) {
 // nothing else; the `broadcast*` wrappers do that AND fan out to the other
 // instances. Splitting them is what lets a bus message replay the identical
 // local half on a remote pod without re-publishing it into a loop.
-function deliverToRoom(appId, data, excludeWs = null) {
+function deliverToRoom(appId, data, excludeWs = null, audience = {}) {
   const room = rooms.get(appId);
   if (!room) return;
   const payload = JSON.stringify(data);
+  const hidden = new Set(audience.blockedUserIds || []);
+  const quoteHidden = new Set(audience.quoteHiddenUserIds || []);
+  const withoutQuote = quoteHidden.size && data.metadata?.quote
+    ? JSON.stringify({ ...data, metadata: { ...data.metadata, quote: null } }) : null;
+  const reactionVariants = audience.reactionsByViewer || {};
   for (const client of room) {
-    if (client.ws !== excludeWs && client.ws.readyState === 1) {
-      client.ws.send(payload);
+    if (client.ws !== excludeWs && client.ws.readyState === 1 && !hidden.has(client.user.id)) {
+      const reactions = reactionVariants[client.user.id];
+      client.ws.send(reactions
+        ? JSON.stringify({ ...data, reactions })
+        : (withoutQuote && quoteHidden.has(client.user.id) ? withoutQuote : payload));
     }
   }
 }
@@ -335,6 +343,49 @@ function deliverToRoom(appId, data, excludeWs = null) {
 function broadcast(appId, data, excludeWs = null) {
   deliverToRoom(appId, data, excludeWs);
   wsBus.publish('room', { appId }, data);
+}
+
+// App discussions share a room across users, so a blocked sender must be
+// removed from the local audience and from every remote pod's audience.
+async function broadcastFromSender(pool, appId, data, senderId, excludeWs = null) {
+  const { rows } = await pool.query(
+    `SELECT blocker_id FROM user_blocks WHERE blocked_user_id = $1`, [senderId]
+  );
+  const routing = { appId, blockedUserIds: rows.map((row) => row.blocker_id) };
+  const quotedId = Number(data.metadata?.quote?.refMsgId);
+  if (Number.isInteger(quotedId) && quotedId > 0) {
+    const quoted = await pool.query(
+      `SELECT blocked.blocker_id FROM chat_messages quoted
+         JOIN user_blocks blocked ON blocked.blocked_user_id = quoted.user_id
+        WHERE quoted.id = $1`, [quotedId]
+    );
+    routing.quoteHiddenUserIds = quoted.rows.map((row) => row.blocker_id);
+  }
+  if (data.type === 'reaction') {
+    const blockedReactors = await pool.query(
+      `SELECT blocked.blocker_id, reactor.username
+         FROM message_reactions reaction
+         JOIN users reactor ON reactor.id = reaction.user_id
+         JOIN user_blocks blocked ON blocked.blocked_user_id = reaction.user_id
+        WHERE reaction.message_id = $1`, [data.messageId]
+    );
+    const namesByViewer = new Map();
+    for (const row of blockedReactors.rows) {
+      if (!namesByViewer.has(row.blocker_id)) namesByViewer.set(row.blocker_id, new Set());
+      namesByViewer.get(row.blocker_id).add(row.username);
+    }
+    if (namesByViewer.size) {
+      routing.reactionsByViewer = {};
+      for (const [viewerId, names] of namesByViewer) {
+        routing.reactionsByViewer[viewerId] = data.reactions.map((reaction) => {
+          const users = reaction.users.filter((username) => !names.has(username));
+          return { ...reaction, count: users.length, users };
+        }).filter((reaction) => reaction.count > 0);
+      }
+    }
+  }
+  deliverToRoom(appId, data, excludeWs, routing);
+  wsBus.publish('room', routing, data);
 }
 
 // Broadcast to all connected clients (global events like app status changes)
@@ -649,7 +700,7 @@ async function handleMessage(pool, client, msg) {
         postedVia,
       };
 
-      broadcast(client.appId, outMsg);
+      await broadcastFromSender(pool, client.appId, outMsg, client.user.id);
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
@@ -682,7 +733,12 @@ async function handleMessage(pool, client, msg) {
              LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
              LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
-             WHERE n.id = ANY($1::int[])`,
+             WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (
+                 SELECT 1 FROM user_blocks blocked
+                  WHERE blocked.blocker_id = n.user_id
+                    AND blocked.blocked_user_id = n.source_user_id
+               )`,
             [replyRows.map((r) => r.id)]
           );
           for (const row of hydrated) {
@@ -725,7 +781,12 @@ async function handleMessage(pool, client, msg) {
              LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
              LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
-             WHERE n.id = ANY($1::int[])`,
+             WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (
+                 SELECT 1 FROM user_blocks blocked
+                  WHERE blocked.blocker_id = n.user_id
+                    AND blocked.blocked_user_id = n.source_user_id
+               )`,
             [notifRows.map((r) => r.id)]
           );
           for (const row of hydrated) {
@@ -819,13 +880,13 @@ async function handleMessage(pool, client, msg) {
       const thread = row.thread_type
         ? { type: row.thread_type, ref: row.thread_ref }
         : null;
-      broadcast(client.appId, {
+      await broadcastFromSender(pool, client.appId, {
         type: 'chat_edit',
         messageId,
         content,
         editedAt,
         ...(thread ? { thread } : {}),
-      });
+      }, client.user.id);
       break;
     }
 
@@ -841,8 +902,13 @@ async function handleMessage(pool, client, msg) {
       if (!Number.isInteger(messageId) || !emoji || emoji.length > 16 || /\s/.test(emoji)) return;
 
       const { rows: mrows } = await pool.query(
-        `SELECT user_id FROM chat_messages WHERE id = $1 AND app_id = $2`,
-        [messageId, client.appId]
+        `SELECT m.user_id FROM chat_messages m
+          WHERE m.id = $1 AND m.app_id = $2
+            AND NOT EXISTS (
+              SELECT 1 FROM user_blocks blocked
+               WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = m.user_id
+            )`,
+        [messageId, client.appId, client.user.id]
       );
       if (!mrows.length) return;
       const authorId = mrows[0].user_id;
@@ -862,7 +928,8 @@ async function handleMessage(pool, client, msg) {
       }
 
       const reactions = await getMessageReactions(pool, messageId);
-      broadcast(client.appId, { type: 'reaction', messageId, reactions });
+      await broadcastFromSender(pool, client.appId,
+        { type: 'reaction', messageId, reactions }, client.user.id);
 
       // Notify the author only when a reaction is *added* (not removed),
       // and never for self-reactions or authorless system rows.
@@ -888,7 +955,12 @@ async function handleMessage(pool, client, msg) {
                LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
                LEFT JOIN chat_sessions cs ON cs.id = n.session_id
                LEFT JOIN users su ON su.id = n.source_user_id
-               WHERE n.id = ANY($1::int[])`,
+               WHERE n.id = ANY($1::int[])
+                 AND NOT EXISTS (
+                   SELECT 1 FROM user_blocks blocked
+                    WHERE blocked.blocker_id = n.user_id
+                      AND blocked.blocked_user_id = n.source_user_id
+                 )`,
               [notifRows.map((r) => r.id)]
             );
             for (const row of hydrated) {
@@ -915,12 +987,12 @@ async function handleMessage(pool, client, msg) {
         && ['issue', 'session', 'governance'].includes(t.type)
         && Number.isInteger(Number(t.ref)) && Number(t.ref) > 0)
         ? { type: t.type, ref: Number(t.ref) } : null;
-      broadcast(client.appId, {
+      await broadcastFromSender(pool, client.appId, {
         type: 'typing',
         userId: client.user.id,
         username: client.user.username,
         ...(typingThread ? { thread: typingThread } : {}),
-      }, client.ws);
+      }, client.user.id, client.ws);
       break;
     }
 
@@ -947,16 +1019,20 @@ async function getMessageReactions(pool, messageId) {
 }
 
 // Batch variant for history hydration: messageIds → { [id]: reactions[] }.
-async function getReactionsForMessages(pool, messageIds) {
+async function getReactionsForMessages(pool, messageIds, viewerId = null) {
   if (!messageIds.length) return {};
   const { rows } = await pool.query(
     `SELECT mr.message_id, mr.emoji, COUNT(*)::int AS count,
             COALESCE(array_agg(u.username ORDER BY mr.created_at), '{}') AS users
      FROM message_reactions mr JOIN users u ON u.id = mr.user_id
      WHERE mr.message_id = ANY($1::int[])
+       AND ($2::int IS NULL OR NOT EXISTS (
+         SELECT 1 FROM user_blocks blocked
+          WHERE blocked.blocker_id = $2 AND blocked.blocked_user_id = mr.user_id
+       ))
      GROUP BY mr.message_id, mr.emoji
      ORDER BY mr.message_id, MIN(mr.created_at)`,
-    [messageIds]
+    [messageIds, viewerId]
   );
   const out = {};
   for (const r of rows) {

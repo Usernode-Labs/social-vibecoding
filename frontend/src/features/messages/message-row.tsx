@@ -3,7 +3,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
 import * as api from './api';
-import { edit, react, setReply, toggleSaved } from './store';
+import { edit, react, setReply, setUserBlocked, toggleSaved } from './store';
 import type { ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -91,6 +91,15 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
     finally { setBusy(false); }
   }
 
+  async function blockSender() {
+    if (mine || !message.sender.id
+        || !window.confirm(`Block @${message.sender.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
+    setBusy(true); setNotice('');
+    try { await setUserBlocked(message.sender.id, true); }
+    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t block this person.'); }
+    finally { setBusy(false); }
+  }
+
   function startLongPress() {
     if (mine) return;
     longPress.current = window.setTimeout(() => setPicker(true), 520);
@@ -168,6 +177,7 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
     >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}</button>
     {mine && message.content ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
     {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setNotice(''); }} title="Report" aria-label="Report">!</button> : null}
+    {!mine && message.sender.id ? <button type="button" disabled={busy} onClick={() => void blockSender()} title={`Block @${message.sender.username}`} aria-label={`Block @${message.sender.username}`}>⊘</button> : null}
   </div> : null;
 
   const pickerNode = picker ? <div className="messages-reaction-picker" role="menu" aria-label="Choose a reaction">{REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" onClick={() => void toggle(emoji)}>{emoji}</button>)}</div> : null;
