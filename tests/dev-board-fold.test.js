@@ -1071,7 +1071,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // +2 (#2802, #2798): the desktop rail's Recents sitting between Workshop
   // and Me, and the sidebar toggle and bell carrying their blue disc on
   // hover only. 744 leaves 26 slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 744);
+  //
+  // 744 → 746: the tallies above were computed on this branch alone, against
+  // the same shared 740 main also started from. Independently, main added
+  // #2799 and #2806 — the platform's own Workshop shows no close button, and
+  // an app's Workshop is the platform surface its header frosts over (+2).
+  // Neither set overlaps the other, so the merged manifest holds every one of
+  // them: 740 + 2 (#2807/#2812) + 2 (#2802/#2798) + 2 (#2799/#2806) = 746,
+  // leaving 24 slots under the 770 ceiling.
+  assert.equal(DAPP.tests.length, 746);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
