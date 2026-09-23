@@ -604,10 +604,33 @@
       "expectText": "WAITLIST_X_CLIENT_ID"
     },
     {
-      "name": "Profile: an editable identity card above completions that link out (#982)",
-      "path": "/#profile",
-      "expectSelector": "a[data-completed-challenge][href^='#leaderboard/challenges/']",
-      "expectText": "Edit profile"
+      "name": "Me: the editable profile card leads, above the merged / kudos / challenges stat cards (#982)",
+      "path": "/?demo=1#profile",
+      "expectText": "Edit profile",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats > [data-profile-stat=\"merged\"] + [data-profile-stat=\"kudos\"] + [data-profile-stat=\"challenges\"]"
+    },
+    {
+      "name": "Me: the \"More\" list is the prototype's three rows: Challenges & standings, Kudos, Settings",
+      "path": "/?demo=1#profile",
+      "expectText": "Challenges & standings",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-more #profile-row-challenges[href=\"#leaderboard/challenges\"] + #profile-row-kudos[href=\"#leaderboard/kudos\"] + #profile-row-settings[href=\"#settings\"]"
+    },
+    {
+      "name": "Me: Your contributions lists merged proposals, each opening its proposal, and See all",
+      "path": "/?demo=1#profile",
+      "expectText": "Your contributions",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-contributions:has(#profile-contributions-all[href^=\"#leaderboard/users/\"]) a[data-contribution][href*=\"/dev/proposals/\"]"
+    },
+    {
+      "name": "A History tab after Standings lists the seasons that ended, with each season's and each event's winner",
+      "path": "/?demo=1#leaderboard/seasons",
+      "expectText": "won with",
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"topochain\"] + [data-standings-tab=\"seasons\"][aria-current=\"page\"]) #leaderboard-history-root:not(.hidden) #lb-history-seasons [data-history-season] [data-history-result]"
+    },
+    {
+      "name": "A person's page carries Message beside their name, which opens a direct message",
+      "path": "/?demo=1#leaderboard/users/usernode-capture",
+      "expectSelector": "#leaderboard-root:not(.hidden) header:has([data-lb-back]) button[data-message-person=\"usernode-capture\"]"
     },
     {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
@@ -1187,21 +1210,38 @@
       "expectText": "staging-demo-lead"
     },
     {
+      "name": "Discover leads its list with filter chips, All / Featured / Your apps / New, with All pressed (the prototype's scrDiscover)",
+      "path": "/#apps",
+      "expectSelector": "#browse-screen:not(.hidden) #browse-search-bar > #browse-filter-chips[role=\"group\"] > [data-filter=\"all\"][aria-pressed=\"true\"] + [data-filter=\"featured\"][aria-pressed=\"false\"] + [data-filter=\"yours\"] + [data-filter=\"new\"]",
+      "expectText": "Featured"
+    },
+    {
+      "name": "The Featured chip narrows Discover to the admin's featured apps (?filter=featured)",
+      "path": "/?demo=1&filter=featured#apps",
+      "expectSelector": "#browse-screen:has(#browse-filter-chips > [data-filter=\"featured\"][aria-pressed=\"true\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
+    },
+    {
+      "name": "An app's page offers Share, first in its action list (the prototype's About sheet)",
+      "path": "/#apps/staging-demo-forkable",
+      "expectSelector": "#browse-detail #browse-detail-share:first-child",
+      "expectText": "Share"
+    },
+    {
       "name": "Bare #leaderboard renders all three tabs and opens on Challenges (#962, #2374)",
       "path": "/#leaderboard",
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "The Create app section sits below the grid and opens the create flow",
+      "name": "Create an app is the launcher grid's last tile, not a section below Challenges (re-pointed: Create moved into the grid)",
       "path": "/?demo=1&shot=create-enabled",
-      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"flex-row\"]",
-      "expectText": "Create app"
+      "expectSelector": "#home-body:not(:has(#home-create-section)) #home-apps-section #app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
+      "expectText": "Create an app"
     },
     {
-      "name": "The Create app widget is present but locked without app quota",
+      "name": "The Create an app tile is present but locked without app quota, still last in the grid (re-pointed: Create moved into the grid)",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn:not([disabled])",
-      "expectText": "Create app"
+      "expectSelector": "#app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"false\"]:last-child:not([disabled])",
+      "expectText": "Create an app"
     },
     {
       "name": "Discover is one flat lane: curated cards then popular, with no sub-group label",
@@ -2257,9 +2297,14 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "The + button shares the actions row with the filter host",
+      "name": "Re-pointed: the + closes the Workshop's view-tab strip (prototype wsTabs), not the actions row",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions #dev-plus-btn"
+      "expectSelector": "#dev-workshop:has(#dev-actions > #dev-kanban-filterbar:last-child) [data-ws-tabs] > .dev-ws-tabtrack > .dev-ws-tablist[role=\"tablist\"] + .dev-ws-plus > #dev-plus-btn"
+    },
+    {
+      "name": "An app's Workshop ends its tab strip with the + on Current status too (prototype wsTabs)",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"] > [data-ws-tabs] .dev-ws-tablist:has(> [data-ws-tab-btn=\"status\"] + [data-ws-tab-btn=\"needs\"] + [data-ws-tab-btn=\"all\"]:last-child) + .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu"
     },
     {
       "name": "The Dev screen says Workshop once, with no subtitle beside it (#2718 review)",
@@ -2754,9 +2799,9 @@
       "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav"
     },
     {
-      "name": "The Profile account group ships the native Node status row",
-      "path": "/#profile",
-      "expectSelector": "#account-row-node"
+      "name": "Settings ships the native Node status row in its account block, moved there from Me",
+      "path": "/#settings",
+      "expectSelector": "#settings-footer #settings-account-rows #account-row-node"
     },
     {
       "name": "The completed-task badge sits on the bell, not the Improve pill (#1610)",
@@ -2774,9 +2819,9 @@
       "expectSelector": "#platform-mark-btn:not(:has([id^=\"notifications-badge\"]))"
     },
     {
-      "name": "Admin & moderation renders on the Me tab for admins (#588, #2718)",
-      "path": "/?shot=profile&demo=1#profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-account #profile-row-admin"
+      "name": "Admin & moderation renders in Settings for admins, above Log out, moved from Me (#588, #2718)",
+      "path": "/?demo=1#settings",
+      "expectSelector": "#settings-screen:not(.hidden) #settings-footer > #settings-account-rows:has(#settings-row-admin[href=\"#admin\"]) + #settings-logout"
     },
     {
       "name": "Settings renders the platform build as plain text, not a pill",
@@ -2906,6 +2951,11 @@
       "name": "#2778: new message is a plus to the right of the filters, and it opens a menu rather than a dialog",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) #messages-filters > .messages-filter-track + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
+    },
+    {
+      "name": "The global chat composer wears the safe-bar contract, so on a phone it sits above the tab bar (bug e)",
+      "path": "/?demo=1",
+      "expectSelector": "#global-chat-screen .global-chat-shell > .global-chat-transcript:not(.platform-safe-scroll) + form.global-chat-composer.platform-safe-bar > textarea#global-chat-composer[placeholder]"
     },
     {
       "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines",
@@ -4246,14 +4296,14 @@
       "expectText": "staging fixture"
     },
     {
-      "name": "The Filters button is a chip sharing a row with the + button (Streamlined Concept)",
+      "name": "The Filters button is a chip in the actions row (Streamlined Concept); the + moved to the tab strip",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-filters-btn.rounded-full"
     },
     {
-      "name": "The filter chips and the + button are siblings in one row",
+      "name": "Re-pointed: the filter chips hold the actions row alone; the + closes the tab strip above the pane",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar + div > #dev-plus-btn"
+      "expectSelector": "#dev-workshop:has([data-ws-tabs] .dev-ws-plus > #dev-plus-btn) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:last-child"
     },
     {
       "name": "The Filters dialog offers the priority select (Streamlined Concept)",
@@ -4261,14 +4311,14 @@
       "expectSelector": "#board-filters-modal #board-filters-priority"
     },
     {
-      "name": "On the Workshop the + button stays right-aligned with its menu anchored on-screen",
+      "name": "Re-pointed: the + is the tab strip's last item, its menu hung off its right edge so it opens on-screen",
       "path": "/?demo=1&ws=all&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
+      "expectSelector": "#dev-workshop [data-ws-tabs] > .dev-ws-tabtrack > .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu.absolute.right-0.top-full"
     },
     {
-      "name": "The Workshop shows the filter bar beside the +, not the + alone",
+      "name": "Re-pointed: the Workshop's actions row shows the filled filter bar, and the + it sat beside is in the tab strip",
       "path": "/?demo=1&ws=all&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar:not(:empty) + div > #dev-plus-btn"
+      "expectSelector": "#dev-workshop:has([data-ws-tabs] #dev-plus-btn) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:not(:empty):last-child"
     },
     {
       "name": "The Notifications sheet shows read rows on the All tab (Streamlined Concept)",
@@ -4839,14 +4889,14 @@
       "expectText": "This link has expired"
     },
     {
-      "name": "Profile staking: Active shows observability epoch counts (#1551)",
-      "path": "/?demo=staking-active#profile",
+      "name": "Settings staking (moved from Me): Active shows observability epoch counts (#1551)",
+      "path": "/?demo=staking-active#settings",
       "expectSelector": "[data-staking-sheet] [data-staking-epoch=\"128\"]",
       "expectText": "Won slots"
     },
     {
-      "name": "Profile staking: Delegated offers only Undelegate (#1551)",
-      "path": "/?demo=staking-delegated#profile",
+      "name": "Settings staking (moved from Me): Delegated offers only Undelegate (#1551)",
+      "path": "/?demo=staking-delegated#settings",
       "expectSelector": "[data-staking-sheet]:not(:has([data-staking-epochs]))",
       "expectText": "Undelegate"
     },
@@ -4865,6 +4915,24 @@
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-about",
       "expectText": "About"
+    },
+    {
+      "name": "About is the app's page (nav prototype): Open, Add to your apps, and its builders with what each has merged",
+      "path": "/?shot=app-about&demo=1&about=app#app/staging-demo-forkable/workshop",
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane:has(#app-about-actions > #app-about-add) #app-about-contributors [data-contributor]",
+      "expectText": "14 merged"
+    },
+    {
+      "name": "About Homeroom carries the platform's own figures: apps, members, merged (nav prototype)",
+      "path": "/?shot=app-about&demo=1",
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane #app-about-stats[data-loaded] > [data-stat=\"members\"] + [data-stat=\"merged\"]",
+      "expectText": "members"
+    },
+    {
+      "name": "A cold load of any platform tab but Home points the mark's menu at Homeroom, not 'this app' (audit bug)",
+      "path": "/?shot=app-context&demo=1&cold=messages#messages",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-about",
+      "expectText": "About Homeroom"
     },
     {
       "name": "Inside an app the header is that app's strip, tile and name (#2718) - except on a desktop Workshop, where the demo's app route lands and the name stands alone beside the scope chip (#2768)",
@@ -4910,6 +4978,21 @@
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
       "path": "/?demo=1",
       "expectSelector": "#platform-header:has(#sidebar-toggle[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])) #notifications-btn[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])"
+    },
+    {
+      "name": "#2740 review: an app's own Workshop has no back control, like the platform's (#2843) — no ✕ that opens the app",
+      "path": "/?demo=1#app/staging-demo-invited-approvers/workshop",
+      "expectSelector": "body:has(#app-view:not(.hidden) #dev-body) a#back-btn.hidden #back-icon-close.hidden"
+    },
+    {
+      "name": "#2763: the app discussion's old full-screen address climbs to Messages, not to the Workshop",
+      "path": "/app/usernode-2d5619/dev/chat",
+      "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
+    },
+    {
+      "name": "Over a running app the rail is the route's to hide, so a peek from the window's edge never brings the sidebar toggle into the app's strip",
+      "path": "/#app/staging-demo-forkable",
+      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden.platform-tabs-route-hidden) #platform-header .platform-header-left > #sidebar-toggle"
     }
   ],
   "governance": {

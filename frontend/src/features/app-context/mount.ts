@@ -15,6 +15,10 @@ import { flushSync } from 'react-dom';
 
 import { AppContext } from './app-context-controller.js';
 import { appContextStore } from './app-context-store.js';
+// Publishes window.PlatformTarget at module scope — before App.init, whose
+// first route is the first thing that may ask it (Home.publishImproveTarget,
+// on a cold load of any tab but Home). See the file's header.
+import './platform-target.js';
 
 appContextStore.setFlush(flushSync);
 

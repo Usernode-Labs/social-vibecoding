@@ -88,6 +88,22 @@ export interface HomeAppView {
  */
 export type GridItem = { kind: 'card'; placement: GridPlacement | null; app: HomeAppView };
 
+/**
+ * The launcher's trailing "Create an app" tile (the prototype's scrHome ends
+ * Your apps with it). NOT a `GridItem`: it has no app, no layout entry and no
+ * drag. Its cell is derived per paint by HomeLayout.trailingCell — straight
+ * after the last tile on screen — so the tile always ends the grid, collapsed
+ * or expanded. `placement` is null when the tile must FLOW instead: after the
+ * empty-launcher note, or after overflow tiles that have no cell of their own.
+ */
+export interface CreateTileView {
+  /** Home.canCreate(): creation is available, or the locked treatment. */
+  enabled: boolean;
+  /** The ask-an-admin sentence the locked tile announces. */
+  hint: string;
+  placement: GridPlacement | null;
+}
+
 export interface HomeGridState {
   /** False until the first `Home.render()` push — see the header. */
   ready: boolean;
@@ -107,6 +123,12 @@ export interface HomeGridState {
    * second writer, and would be painted straight back over by the next push.
    */
   notice: { text: string; tone: 'muted' | 'error' } | null;
+  /**
+   * The trailing Create tile, or null: before the first paint (so the
+   * prerender and the first client render agree — the tile is data-placed),
+   * in the search view, and with a load notice on screen.
+   */
+  create: CreateTileView | null;
 }
 
 export const INITIAL_GRID: HomeGridState = {
@@ -117,6 +139,7 @@ export const INITIAL_GRID: HomeGridState = {
   resultsHeading: null,
   emptyQuery: null,
   notice: null,
+  create: null,
 };
 
 export const gridStore = createStore<HomeGridState>(INITIAL_GRID);

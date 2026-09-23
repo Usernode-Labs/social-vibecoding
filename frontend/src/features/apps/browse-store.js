@@ -49,4 +49,11 @@ export const browseStore = createStore({
    * console.error, which fails proposal checks.
    */
   sort: 'recommended',
+  /**
+   * Which of Browse.FILTERS chips is on: 'all' | 'featured' | 'yours' | 'new'.
+   * 'all' is the PRERENDER value, for the same reason as `sort`: ?filter= and
+   * the session's own choice are applied on screen entry
+   * (Browse._applyInitialFilter), never during render.
+   */
+  filter: 'all',
 });

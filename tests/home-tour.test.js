@@ -93,7 +93,10 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   // Step 1 has nothing to point at: it says what the place is.
   assert.deepEqual([...byId.welcome.targets], []);
-  assert.deepEqual([...byId.create.targets], ['#home-create-section']);
+  // Create is the launcher grid's trailing tile (features/home/create-tile.tsx)
+  // rather than a section of its own; until the grid has painted, the Your apps
+  // area it ends is the next best thing to point at.
+  assert.deepEqual([...byId.create.targets], ['#home-create-tile', '#home-apps-section']);
   assert.deepEqual([...byId.challenges.targets], ['#home-challenges-section']);
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718).

@@ -418,6 +418,12 @@ export function onClickCapture(e: MouseEvent): void {
   const a = (target && typeof target.closest === 'function'
     ? target.closest('a[href]') : null) as HTMLAnchorElement | null;
   if (!a) return;
+  // THE HEADER'S ✕ LEAVES THE APP, whatever it names. It goes back to the
+  // page the app was opened from (App.closeApp), and its href names that page
+  // for a modified click — a thread or a Workshop card as often as not, which
+  // is a panel page. Taken here, closing the app would open that page BESIDE
+  // it instead. The rail's tabs and the ✕ are the two ways out (#2854).
+  if (a.id === 'back-btn') return;
   if (a.target && a.target !== '_self') return;
   if (a.hasAttribute('download')) return;
   if (!isShellAddress(a.href, origin)) return;
