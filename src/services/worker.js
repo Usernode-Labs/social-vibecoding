@@ -429,13 +429,40 @@ function evidenceDiagnosticTool(name) {
   return { tool, ...(server ? { persona: server } : {}) };
 }
 
+function evidenceNavigationTarget(state, input) {
+  if (!state.evidenceOrigins) return {};
+  let args = input;
+  if (typeof args === 'string' && args.length <= 8192) {
+    try { args = JSON.parse(args); } catch { return {}; }
+  }
+  if (!args || typeof args.url !== 'string') return {};
+  let destination;
+  try { destination = new URL(args.url); } catch { return {}; }
+  let side = null;
+  for (const candidate of ['base', 'head']) {
+    try {
+      if (destination.origin === new URL(state.evidenceOrigins?.[candidate]).origin) {
+        side = candidate;
+        break;
+      }
+    } catch { /* No paired origin is available in a non-evidence turn. */ }
+  }
+  if (!side) return { side: 'outside' };
+  // Only an ordinal leaves the worker. It distinguishes repeated routes and
+  // base/head navigation without storing private paths, queries, or tokens.
+  const routes = state.evidenceRouteOrdinals || (state.evidenceRouteOrdinals = new Map());
+  const key = `${destination.pathname}${destination.search}${destination.hash}`;
+  if (!routes.has(key) && routes.size < 1000) routes.set(key, routes.size + 1);
+  return { side, ...(routes.has(key) ? { routeOrdinal: routes.get(key) } : {}) };
+}
+
 function emitEvidenceDiagnostic(state, event) {
   if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
   try { state.evidenceDiagnosticObserver(event); }
   catch { /* Diagnostics must never affect the worker turn. */ }
 }
 
-function observeEvidenceTool(state, { phase, id, name, failed = false }) {
+function observeEvidenceTool(state, { phase, id, name, input = null, failed = false }) {
   if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
   const key = id == null ? null : String(id);
   const starts = state.evidenceDiagnosticStarts || (state.evidenceDiagnosticStarts = new Map());
@@ -444,7 +471,12 @@ function observeEvidenceTool(state, { phase, id, name, failed = false }) {
     if (key && starts.has(key)) return;
     const sequence = (state.evidenceDiagnosticSequence || 0) + 1;
     state.evidenceDiagnosticSequence = sequence;
-    const safeTool = evidenceDiagnosticTool(name);
+    const tool = evidenceDiagnosticTool(name);
+    const safeTool = {
+      ...tool,
+      ...(tool.tool === 'browser_navigate'
+        ? evidenceNavigationTarget(state, input) : {}),
+    };
     if (key) starts.set(key, { sequence, ...safeTool });
     emitEvidenceDiagnostic(state, { kind: 'tool_start', sequence, ...safeTool });
     return;
@@ -456,7 +488,9 @@ function observeEvidenceTool(state, { phase, id, name, failed = false }) {
   emitEvidenceDiagnostic(state, {
     kind: 'tool_end',
     sequence: prior?.sequence || null,
-    ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}) }
+    ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}),
+      ...(prior.side ? { side: prior.side } : {}),
+      ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}) }
       : evidenceDiagnosticTool(name)),
     outcome: failed ? 'error' : 'ok',
   });
@@ -693,10 +727,10 @@ function applyStreamEvent(event, onProgress, state) {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
-        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name });
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
       } else if (block.type === 'tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
-        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name });
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
         const input = block.input || {};
         // Track id → label mapping so the matching tool_result can
         // display "⎿ <label>: <summary>" instead of just "⎿ done".
@@ -920,7 +954,8 @@ function parseLine(line, onProgress, state) {
           emitEvidenceDiagnostic(state, { kind: 'first_output' });
         }
         if (isToolStart) {
-          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName });
+          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName,
+            input: event?.item?.arguments });
         }
         if (isToolCompletion) {
           observeEvidenceTool(state, {
@@ -2905,6 +2940,7 @@ async function execInWorker(sessionId, {
     // agent_backend in __USERNODE_RESULT__ (too late for the events), so
     // we seed it from the dispatch param up front.
     state.agentBackend = agentBackend;
+    if (mode === 'evidence') state.evidenceOrigins = evidenceOrigins;
     if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
       state.evidenceDiagnosticObserver = onEvidenceDiagnostic;
       emitEvidenceDiagnostic(state, {
