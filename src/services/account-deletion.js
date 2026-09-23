@@ -171,6 +171,12 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
       }
       await db.query('DELETE FROM mail_deliveries WHERE LOWER(recipient) = LOWER($1)', [user.email]);
     }
+    // #2779: an agent session's conversation-only rows (no change named)
+    // would outlive their owner as orphans once agent_sessions cascades and
+    // the column is nulled, so they go first. A change's own rows are kept
+    // or removed with the change, as above.
+    await db.query(`DELETE FROM chat_session_messages WHERE session_id IS NULL
+      AND agent_session_id IN (SELECT id FROM agent_sessions WHERE user_id = $1)`, [userId]);
     await db.query('DELETE FROM users WHERE id = $1', [userId]);
     await db.query(`UPDATE account_deletions SET completed_at = NOW() WHERE id = $1
       AND NOT EXISTS (SELECT 1 FROM account_deletion_tasks WHERE deletion_id = $1 AND state <> 'completed')`, [deletionId]);

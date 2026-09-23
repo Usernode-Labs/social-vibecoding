@@ -168,6 +168,7 @@ function tokenRow(overrides = {}) {
     d_change_id: 50, d_app_id: 3, d_expires_at: FUTURE(), d_revoked_at: null,
     app_slug: 'recipe-box',
     change_user_id: 7, change_status: 'active', change_app_id: 3,
+    agent_session_user_id: null, agent_session_status: null,
     now: new Date(),
     ...overrides,
   };
@@ -247,6 +248,18 @@ test('liveness is checked on every request, with no hook having to run', async (
     const auth = await authenticateConnector(authPool(tokenRow(overrides)), token);
     assert.equal(auth.error, error, why);
   }
+  // A Mayor's grant serves one agent session, and ends with it (#2779 step 3).
+  const mayor = { d_kind: 'agent_mayor', d_change_id: null, d_app_id: null, app_slug: null, d_agent_session_id: 4 };
+  for (const [overrides, error, why] of [
+    [{ agent_session_user_id: 7, agent_session_status: 'open' }, undefined, 'an open session of the user\'s'],
+    [{ agent_session_user_id: 7, agent_session_status: 'archived' }, 'revoked_token', 'an archived session'],
+    [{ agent_session_user_id: 8, agent_session_status: 'open' }, 'revoked_token', 'somebody else\'s session'],
+    [{ agent_session_user_id: null, agent_session_status: null }, 'revoked_token', 'a session that is gone'],
+  ]) {
+    const auth = await authenticateConnector(authPool(tokenRow({ ...mayor, ...overrides })), token);
+    assert.equal(auth.error, error, why);
+  }
+
   // A Mayor's grant bound to a change survives the states the Mayor still
   // acts on, where a worker's would not.
   for (const status of ['active', 'paused', 'promoted', 'merging']) {
@@ -281,7 +294,6 @@ test('each kind reaches only its own routes, never the external list or the CLI 
   // The Mayor has the change lifecycle the external list does not …
   for (const [method, target] of [
     ['POST', '/api/apps/recipe-box/sessions'],
-    ['PATCH', '/api/sessions/50/title'],
     ['POST', '/api/sessions/50/sync-main'],
     ['POST', '/api/sessions/50/archive'],
   ]) {
@@ -298,6 +310,7 @@ test('each kind reaches only its own routes, never the external list or the CLI 
     ['PUT', '/api/apps/recipe-box/secrets/KEY'],
     ['GET', '/api/admin/users'],
     ['POST', '/api/sessions/50/chat'],
+    ['PATCH', '/api/sessions/50/title'],
   ]) {
     assert.equal(policy.isDelegatedApiRequest('agent_mayor', method, target), false, `mayor never: ${method} ${target}`);
   }

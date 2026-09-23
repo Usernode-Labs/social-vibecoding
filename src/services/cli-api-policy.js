@@ -207,9 +207,9 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
 //
 // `agent_mayor` — the Mayor of an agent session. Every read its tools make,
 // the request writes the external list already carries, and the change
-// lifecycle of the user's own native changes: create, name, promote, resume,
+// lifecycle of the user's own native changes: create, promote, resume,
 // re-check, sync with main, withdraw. What is here and NOT on the external
-// list is exactly the four routes the classic dev chat's own buttons call,
+// list is exactly the three routes the classic dev chat's own buttons call,
 // each owner-scoped by its handler; and every write a Mayor makes is one the
 // user confirmed first (the token for it is minted at that moment and lives
 // for one action). Still nothing that votes, merges, touches settings,
@@ -231,9 +231,9 @@ const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/sessions/:id/spec' },
   { method: 'PATCH', pattern: '/api/sessions/:id/linked-issues' },
   // The change lifecycle (start_change, promote_change, recheck_change,
-  // sync_change, withdraw_change).
+  // sync_change, withdraw_change). start_change names the change on the
+  // create itself, so the rename route is not on this list.
   { method: 'POST', pattern: '/api/apps/:slug/sessions' },
-  { method: 'PATCH', pattern: '/api/sessions/:id/title' },
   { method: 'POST', pattern: '/api/sessions/:id/promote' },
   { method: 'POST', pattern: '/api/sessions/:id/resume' },
   { method: 'POST', pattern: '/api/sessions/:id/recheck' },

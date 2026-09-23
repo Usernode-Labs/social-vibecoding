@@ -22,6 +22,7 @@ const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
 const { contentReportRoutes } = require('./src/routes/content-reports');
 const { sessionRoutes } = require('./src/routes/sessions');
+const { agentSessionRoutes } = require('./src/routes/agent-sessions');
 const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
 const { demoModeRoutes } = require('./src/routes/demo-mode');
@@ -555,6 +556,8 @@ app.use(chatRoutes(config));
 app.use(conversationRoutes(config));
 app.use(contentReportRoutes(config));
 app.use(proposalHandoffRoutes(config));
+// #2779: agent sessions, the per-user conversation that starts changes.
+app.use(agentSessionRoutes(config));
 app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));

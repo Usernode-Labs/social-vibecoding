@@ -2897,8 +2897,11 @@ function registerTools(server, ctx) {
     if (!length.ok) return writeLengthError(length);
     const issues = [...new Set(Array.isArray(linkedIssues) ? linkedIssues : [])];
 
+    // The name rides on the create itself (#2779 step 3), so the change is
+    // never briefly nameless and an agent session's "started" note can say
+    // what it is.
     const created = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/sessions`,
-      issues.length ? { issueNumber: issues[0] } : {});
+      issues.length ? { issueNumber: issues[0], title: name } : { title: name });
     if (!created.ok) return changeRouteError(created);
     const session = (created.body && created.body.session) || {};
     const changeId = Number(session.id);
@@ -2909,8 +2912,6 @@ function registerTools(server, ctx) {
     // The change exists from here on. A name or a link that does not stick is
     // reported alongside it, never as a failure that invites a second change.
     const warnings = [];
-    const named = await callPlatform(baseUrl, accessToken, 'PATCH', `/api/sessions/${changeId}/title`, { title: name });
-    if (!named.ok) warnings.push('The change was created but its title was not saved; it will be named from its first message.');
     let linked = issues.slice(0, 1);
     if (issues.length > 1) {
       const more = await callPlatform(baseUrl, accessToken, 'PATCH', `/api/sessions/${changeId}/linked-issues`,
