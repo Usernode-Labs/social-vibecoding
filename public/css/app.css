@@ -14765,6 +14765,28 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    that is trying to fit squeezes itself, not the glyph. */
 .dev-ws-tab-glyph { width: 16px; height: 16px; flex: none; }
 .dev-ws-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* #2915: THE DOT ON ALL ITEMS, while its search or filters are on. They
+   narrow that tab alone, so from the other two this is the only sign a search
+   is still waiting there. The accent, not the tab's ink: it is a state of the
+   tab rather than part of its label, and it has to read on the selected tab's
+   tint as well as on the bare track.
+   ON A PHONE IT IS A BADGE ON THE GLYPH, AND TAKES NO WIDTH. The pill leaves
+   the three labels 8px to spare at 390px (see `.dev-ws-tab`), and a dot after
+   the label costs 10: every label lost its last letters to an ellipsis. So it
+   is moved to the head of the tab (`order`), its own width and the gap after
+   it are handed back (`margin-right`), which lays the glyph over it, and it is
+   drawn at the glyph's top-right corner. A transform, so none of that moves
+   anything else. Above 700px it goes back after the label, where the segment
+   hugs its content and has the room. */
+.dev-ws-tab-dot {
+  flex: none;
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  order: -1;
+  margin-right: -10px;
+  transform: translate(12px, -8px);
+}
 /* THE HEADER'S PERIWINKLE, not black. `--brand-ink` on `--brand-tint` with a
    hairline of `--brand-line` is how the bar above draws its own controls —
    the back glyph, the bell, the app chip — and these are the same kind of
@@ -15467,6 +15489,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     border-radius: 9999px; font-size: 14px;
   }
   .dev-ws-tab-glyph { width: 16px; height: 16px; }
+  /* #2915: the dot follows the label here, a little further off it than the
+     tab's own gap, and centred on it. */
+  .dev-ws-tab-dot { order: 0; margin: 0 0 0 6px; transform: none; }
   /* The tab list hugs its three segments inside the track, and the "+" is
      the track's last segment: a 32px round cell, the tabs' own height, so
      the pill ends on it — Current status · Needs you · All items · + — and

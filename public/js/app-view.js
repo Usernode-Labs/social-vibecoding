@@ -7853,6 +7853,17 @@ const AppView = {
       mySessions: AppView._mySessions || [],
       sharedSessions: AppView._sharedSessions || [],
     });
+    // ── THE SEARCH AND FILTERS ARE ALL ITEMS' ALONE (#2915) ──
+    //
+    // The controls live in All items' pane head and nowhere else, so they
+    // narrow what that tab draws — the themes, and the stage pane, which is
+    // `_kanbanView()` — and nothing on the other two. They used to narrow
+    // every card before it entered `entries`, so a search typed on All items
+    // quietly followed the viewer to Current status: "open items" fell from
+    // 146 to 2 on a tab with no search box to say why, while "waiting on
+    // votes" beside it stayed whole. So every card enters `entries` now and
+    // carries `matched`; only the theme grouping reads the narrowed subset,
+    // and `meta.filtered` tells the tab strip there is a search waiting there.
     const f = AppView._kanbanMatchFilters();
     const filtering = AppView._kanbanFiltersActive();
     const matchKind = (kind) => (kind === 'my-session' || kind === 'shared-session' ? 'session' : kind);
@@ -7904,7 +7915,6 @@ const AppView = {
     // vote and own-work strips, which are not grouped by category.
     const underThemeHeading = AppView._getWorkshopGroup() === 'category';
     const add = (kind, item, lane, build) => {
-      if (!match(kind, item)) return;
       let card = build();
       if (!card) return;
       if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'attr:category')) {
@@ -7921,6 +7931,8 @@ const AppView = {
         itemKey: AppView._workshopItemKey(kind, item),
         kind, item, lane, row, people, created,
         t: activityOf(kind, item),
+        // Whether All items' search and filters keep it (#2915).
+        matched: match(kind, item),
       });
     };
     for (const x of buckets.inReview) {
@@ -8107,53 +8119,71 @@ const AppView = {
       ...(ungrouped ? { ungrouped: true } : {}),
       _people: new Map(),
     });
-    const themes = themeDefs.map((d) => mkTheme(d, false));
-    const byId = new Map(themes.map((t) => [t.id, t]));
-    // While no themes have arrived the one group is everything; once they
-    // have, the remainder is what they did not name — titled below, once
-    // it is known whether those cards are on their way or were declined.
-    const rest = mkTheme(tData
-      ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the categories do not name yet.' }
-      : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
-    let placingCount = 0;
-    for (const e of entries) {
-      if (e.lane === 'done') continue;
-      let id = e.itemKey ? themeOf.get(e.itemKey) : null;
-      if (!id && e.kind === 'my-session') id = linkedTheme(e.item);
-      const theme = (id && byId.get(id)) || rest;
-      if (theme === rest && placingPossible && e.kind !== 'my-session' && e.itemKey && !unplacedSet.has(e.itemKey)) {
-        e.row.placing = true;
-        placingCount += 1;
-      }
-      const lane = theme.lanes.find((l) => l.key === e.lane);
-      theme.counts[e.lane] += 1;
-      if (e.row.fresh) theme.counts.fresh += 1;
-      if (e.t > theme.lastActive) theme.lastActive = e.t;
-      for (const p of e.people) theme._people.set(p, (theme._people.get(p) || 0) + 1);
-      if (lane.rows.length < AppView.WORKSHOP_LANE_MAX) lane.rows.push(e.row);
-      else lane.more += 1;
-    }
     const finish = (t) => {
       t.people = [...t._people.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
       delete t._people;
       return t;
     };
-    const drawn = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
-    if (rest.lanes.some((l) => l.rows.length)) {
-      if (tData) {
-        const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);
-        rest.placing = placingCount;
-        if (placingCount && placingCount === restCount) {
-          rest.name = 'Being placed';
-          rest.description = 'New cards are placed into a category within a minute or two of arriving.';
-        } else if (placingCount) {
-          rest.description = `Cards the categories do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
-        } else {
-          rest.description = 'Cards the categories do not cover yet. They count towards the next re-draft of the categories.';
+    // One grouping of a list of entries into the drawn themes, returned with
+    // how many of its rows are being placed. A function because it runs over
+    // two lists (#2915): All items draws the entries its search and filters
+    // kept, and the status tab's category count and busiest theme are facts
+    // about the whole app, so they read the grouping of all of them.
+    const groupThemes = (list) => {
+      const themes = themeDefs.map((d) => mkTheme(d, false));
+      const byId = new Map(themes.map((t) => [t.id, t]));
+      // While no themes have arrived the one group is everything; once they
+      // have, the remainder is what they did not name — titled below, once
+      // it is known whether those cards are on their way or were declined.
+      const rest = mkTheme(tData
+        ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the categories do not name yet.' }
+        : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
+      let placingCount = 0;
+      for (const e of list) {
+        if (e.lane === 'done') continue;
+        let id = e.itemKey ? themeOf.get(e.itemKey) : null;
+        if (!id && e.kind === 'my-session') id = linkedTheme(e.item);
+        const theme = (id && byId.get(id)) || rest;
+        if (theme === rest && placingPossible && e.kind !== 'my-session' && e.itemKey && !unplacedSet.has(e.itemKey)) {
+          e.row.placing = true;
+          placingCount += 1;
         }
+        const lane = theme.lanes.find((l) => l.key === e.lane);
+        theme.counts[e.lane] += 1;
+        if (e.row.fresh) theme.counts.fresh += 1;
+        if (e.t > theme.lastActive) theme.lastActive = e.t;
+        for (const p of e.people) theme._people.set(p, (theme._people.get(p) || 0) + 1);
+        if (lane.rows.length < AppView.WORKSHOP_LANE_MAX) lane.rows.push(e.row);
+        else lane.more += 1;
       }
-      drawn.push(finish(rest));
-    }
+      const drawnOf = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
+      if (rest.lanes.some((l) => l.rows.length)) {
+        if (tData) {
+          const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);
+          rest.placing = placingCount;
+          if (placingCount && placingCount === restCount) {
+            rest.name = 'Being placed';
+            rest.description = 'New cards are placed into a category within a minute or two of arriving.';
+          } else if (placingCount) {
+            rest.description = `Cards the categories do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
+          } else {
+            rest.description = 'Cards the categories do not cover yet. They count towards the next re-draft of the categories.';
+          }
+        }
+        drawnOf.push(finish(rest));
+      }
+      // A pair rather than an object: every `return {` in _workshopView is
+      // one of its view models, and each of those states `loading`
+      // (tests/dev-board-loading.test.js reads them all).
+      return [drawnOf, placingCount];
+    };
+    // All items' themes: the entries its search and filters kept.
+    const [drawn, placingCount] = groupThemes(filtering ? entries.filter((e) => e.matched) : entries);
+    // ...and every theme the app has, for the status tab's category count and
+    // busiest theme. Grouped a second time only while a search or filter is
+    // narrowing, and HERE rather than beside the dashboard: grouping is what
+    // marks a row `placing`, so every row is marked before "since" copies it.
+    const wholeThemes = filtering ? groupThemes(entries)[0] : drawn;
 
     // ── Since your last visit ──
     let since = null;
@@ -8231,7 +8261,9 @@ const AppView = {
     const idle = openEntries
       .filter((e) => e.lane === 'open' && e.kind === 'issue' && AppView._issueUnclaimed(e.item))
       .sort((a, b) => b.t - a.t);
-    const named = drawn.filter((t) => !t.ungrouped);
+    // Every theme the app has, not the ones All items' search left standing
+    // (#2915): the count and the busiest theme are on the status tab.
+    const named = wholeThemes.filter((t) => !t.ungrouped);
     // #1922: the server counts both weeks over the WHOLE merged history, so
     // those numbers are exact whatever the page holds. Without them (an older
     // server) the loaded page is counted, and `partial` below says it is a
@@ -8368,7 +8400,10 @@ const AppView = {
     // nobody on it. Recency rather than age on purpose: an issue the group is
     // still talking about has context to start from, where the oldest one on
     // the board is usually oldest for a reason.
-    const nextUp = (!filtering && idle.length)
+    //
+    // It stood down while a filter was on. The filter is All items' now and
+    // this is not (#2915), so it is offered whatever that tab is narrowed to.
+    const nextUp = idle.length
       ? { ...idle[0].row, key: `next:${idle[0].row.key}` }
       : null;
     // #1934: the rest of the unclaimed list, behind a "Show N more" under the
@@ -8383,9 +8418,9 @@ const AppView = {
     // ── The discussion row ──
     // Drawn whether or not anything has been said: on a lander it is the
     // door to the general chat, as the kanban's card is above its columns.
-    // Dropped while a filter is active, as the feed dropped it — it carries
-    // nothing to match on.
-    const discCard = filtering ? null : AppView._discussionCardModel();
+    // It was dropped while a filter was active, as the feed dropped it; the
+    // filter narrows All items alone now (#2915), and this is not on it.
+    const discCard = AppView._discussionCardModel();
     const discussion = discCard ? { t: 'card', key: discCard.key, card: discCard } : null;
 
     // ── The capture deep link ──
@@ -8414,9 +8449,13 @@ const AppView = {
       if (r) autoExpand = { theme: 'mine', key: r.key };
     }
 
+    // The BOARD holding nothing, which no search can cause: `entries` is
+    // every card, so `filtered` is always false here (#2915). All items says
+    // "Nothing here matches" for itself, from `meta.filtered`, when its
+    // search empties the themes.
     const emptyNote = entries.length
       ? null
-      : { loadFailed: !!meta.note, filtered: filtering };
+      : { loadFailed: !!meta.note, filtered: false };
     // `loading` is on EVERY return path, never omitted. The store MERGES a
     // patch (lib/plain-store.js), so a view model that simply left the key out
     // would inherit the previous publish's `true` and leave the lander on its
@@ -8453,6 +8492,9 @@ const AppView = {
         digestError: (tData && tData.digestError) || null,
         coverage: (tData && tData.coverage) || null,
         placing: placingCount,
+        // All items' search and filters are narrowing its themes. Only that
+        // tab's surfaces read it, and the tab strip's dot on All items
+        // (#2915), which says so from the other two.
         filtered: filtering,
       },
       autoExpand,
