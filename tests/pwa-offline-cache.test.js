@@ -859,3 +859,25 @@ test('the board does not wait on a token it never uses', () => {
   assert.match(app,
     /AppView\.open\(slug, \{ needsToken: !\(tab && initialRoute\.tab === 'dev'\) \}\)/);
 });
+
+test('a refresh of a board already on screen tells the worker it is not a boot', () => {
+  // The boot lane answers a boot read from cache on a zero deadline and
+  // corrects it later. Only pull-to-refresh used to say "this is a refresh",
+  // so a correction's own re-pull and every live board refresh (a session or
+  // checks event over the WS, the 20s checks poll) were laned too: served
+  // stale, found different, corrected, re-pulled — the Workshop's /promoted
+  // list carries live check progress, so under load that never settled and
+  // each visible tab re-pulled its board about once a second until Chrome
+  // refused new requests (net::ERR_INSUFFICIENT_RESOURCES).
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const view = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  const refreshActive = app.slice(app.indexOf('  refreshActiveScreen() {'));
+  assert.match(refreshActive.slice(0, 1200),
+    /if \(document\.hidden\) return;[\s\S]*?App\._announceRefreshIntent\(\);[\s\S]*?const visible =/,
+    'a correction re-pull announces refresh intent before any loader runs');
+  const refreshDev = view.slice(view.indexOf('  refreshDevData(kind) {'));
+  assert.match(refreshDev.slice(0, 800), /App\._announceRefreshIntent\?\.\(\);/,
+    'every live board refresh announces refresh intent');
+  // And the worker honours it: an announced refresh is never laned.
+  assert.match(SW_SRC, /function bootLaneApplies\(url, selfOrigin, now, refreshUntil\) \{\s*if \(refreshUntil && now < refreshUntil\) return false;/);
+});

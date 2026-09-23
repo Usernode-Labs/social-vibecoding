@@ -102,6 +102,14 @@ test('evidence heartbeat renews only the current active run and stores a bounded
   assert.deepEqual(JSON.parse(statement.values[2]), {
     lastReplayEvent: event, replayEvents: [event],
   });
+  await state.heartbeatRun(pool, id, 'agent_exploration', {
+    agentActivity: { version: 1, events: [{ kind: 'tool_start', tool: 'browser_navigate' }] },
+    agentFinalResponse: { excerpt: 'Planner stopped.', characters: 16 },
+  });
+  assert.deepEqual(JSON.parse(statement.values[2]), {
+    agentActivity: { version: 1, events: [{ kind: 'tool_start', tool: 'browser_navigate' }] },
+    agentFinalResponse: { excerpt: 'Planner stopped.', characters: 16 },
+  });
   await assert.rejects(state.heartbeatRun(pool, id, 'pass_1', {
     replayEvents: Array.from({ length: 40 }, () => ({ message: 'x'.repeat(2000) })),
   }), { code: 'invalid_evidence_heartbeat' });

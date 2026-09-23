@@ -60,7 +60,7 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
     sandbox, el, timers, calls, fixes, nav, toasts,
     failedReads: () => failedReads,
     // #2707: this harness opens with an app on screen, so BOTH destinations
-    // are real and none is preselected — Submit is dead until one is tapped.
+    // are real and none is preselected — a submit refuses until one is tapped.
     // Every test below is about what happens AFTER a submit, so the tap is
     // part of getting there, the way typing the description is.
     async submit() {
@@ -130,11 +130,10 @@ test('Done dismisses the moment and reopening restores the form', async () => {
   }
   h.sandbox.App.openFeedbackModal();
   assert.equal(h.shown(), false);
-  // #2707: a reopen asks for the destination again, so Submit starts dead
-  // and a tap — not the reopen — brings it back. What this assertion is
-  // about is that the confirmation did not leave the button locked, and
-  // that still holds.
-  assert.equal(h.el('feedback-submit').disabled, true);
+  // #2707: a reopen asks for the destination again. #2888: Submit stays
+  // pressable while it does. What this assertion is about is that the
+  // confirmation did not leave the button locked, and that still holds.
+  assert.equal(h.el('feedback-submit').disabled, false);
   h.el('feedback-target-platform').click();
   assert.equal(h.el('feedback-submit').disabled, false);
   assert.equal(h.el('feedback-form').classList.contains('hidden'), false);

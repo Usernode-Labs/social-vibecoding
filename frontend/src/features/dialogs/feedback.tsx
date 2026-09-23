@@ -122,8 +122,10 @@ export function FeedbackDialog() {
           </div>
         </div>
         {/*
-            #2707: why Submit is dead while no destination is chosen. Renders
-            EMPTY and hidden for the same two reasons #feedback-text-error
+            #2707: what the row is asking while no destination is chosen —
+            and, #2888, the red "choose one" the controller turns it into when
+            Submit is pressed anyway (Submit stays live; it refuses and says
+            why rather than sitting disabled). Renders EMPTY and hidden for the same two reasons #feedback-text-error
             does — the controller owns the text, and a prompt on the initial
             render would both lie (the one-destination case never shows it)
             and mismatch on hydration. The controller also points the

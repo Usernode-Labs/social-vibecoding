@@ -214,7 +214,7 @@ test('_showOnlyScreen records the root it revealed', () => {
 
 test('navigateHome keeps #app-view painted, which is why the router has to answer',
   () => {
-    const at = appJs.indexOf('  navigateHome() {');
+    const at = appJs.indexOf('  navigateHome(opts) {');
     const body = appJs.slice(at, appJs.indexOf('\n  },', at));
     assert.match(body, /App\._showOnlyScreen\('home-screen', \['app-view'\]\)/,
       'the shrinking card is #app-view — it stays painted for the zoom-out');

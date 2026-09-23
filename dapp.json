@@ -719,9 +719,21 @@
       ]
     },
     {
-      "name": "Submit stays dead until a destination is picked (#2707)",
+      "name": "Submit stays pressable while no destination is picked (#2707, #2888)",
       "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)) #feedback-submit:disabled"
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)):has(#feedback-target:not([aria-invalid])) #feedback-submit:not(:disabled)"
+    },
+    {
+      "id": "feedback.destination-missed",
+      "name": "Submit with no destination turns the row red and says why (#2888)",
+      "path": "/?shot=feedback-choose-missed",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target[aria-invalid=\"true\"]):has(#feedback-target-app.\\!border-red-600[aria-checked=\"false\"]) #feedback-target-hint[role=\"alert\"]:not(.hidden)",
+      "expectText": "Choose where this feedback goes",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/dialogs/feedback.tsx",
+        "frontend/src/features/dialogs/feedback-controller.js"
+      ]
     },
     {
       "name": "With only one destination reachable it stays selected and Submit is live (#2707)",
@@ -4846,6 +4858,11 @@
       "name": "Side panel beside a running app: its host ships hidden and frameless right after the app view, its header row carrying Expand and Close",
       "path": "/?demo=1",
       "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden:not(:has(iframe)) > .side-panel-head > #side-panel-expand[aria-label=\"Open full width, leaving the app\"] + #side-panel-close[aria-label=\"Close panel\"]"
+    },
+    {
+      "name": "#2886: the divider between a running app and its side panel is a focusable vertical separator on the panel's left edge, shipping with no width chosen",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-side-panel.hidden > #side-panel-divider.side-panel-divider:first-child[role=\"separator\"][aria-orientation=\"vertical\"][aria-controls=\"platform-side-panel\"][aria-label=\"Resize panel\"][tabindex=\"0\"]:not([aria-valuenow]) + .side-panel-head"
     },
     {
       "name": "Side panel: a panel=1 address opened in a window of its own is the ordinary platform, with its header, its sidebar and the screen it names",

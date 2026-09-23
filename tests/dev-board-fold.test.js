@@ -1107,22 +1107,25 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
   //
-  // 753 → 756: +3 (#2884): a run of four shared cards in #general draws as
+  // 753 → 756: the tallies above were computed on either side of this merge
+  // against the same shared 753 and do not reconcile through the comment
+  // trail alone. This branch took 753 → 754 alone, with #2886 above (the
+  // divider between a running app and its side panel ships as a vertical
+  // separator on the panel's edge); main independently took the same 753 to
+  // 755, with #2888 above (Send Feedback pressed with no destination turns
+  // the App/Platform row red) and #2800/#2878 above (Me is the rail's last
+  // row, straight after Recents, which is what places the thin rule drawn
+  // above it). Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 753 + 1 + 1 + 1 = 756, leaving 34 slots under the 790
+  // ceiling.
+  //
+  // 756 → 759: +3 (#2884): a run of four shared cards in #general draws as
   // the first card and "… 3 more"; the plain message before it is not folded
   // in; an app's channel in Messages folds its run of proposal cards the same
-  // way. 756, leaving 34 slots under the 790 ceiling.
-  //
-  // 753 → 754: independently on main, +1 (#2800, #2878): Me is the rail's
-  // last row, straight after Recents, which is what places the thin rule
-  // drawn above it. 36 slots left under the 790 ceiling.
-  //
-  // 756 → 757, 754 → 757: the tallies above were computed on either side of
-  // this merge against the same shared 753 and cannot be read as one
-  // sequence. This branch took 753 → 756 alone, with #2884 above; main
-  // independently took the same 753 to 754, with the Me-row rule above.
-  // Neither set overlaps the other, so the merged manifest holds every one of
-  // them: 753 + 3 + 1 = 757, leaving 33 slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 757);
+  // way. Counted on a branch that already held main's Me-row check; main
+  // reached 756 without these three, so the merged manifest holds 756 + 3 =
+  // 759, leaving 31 slots under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 759);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

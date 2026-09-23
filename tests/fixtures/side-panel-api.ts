@@ -27,3 +27,4 @@ export { installEmbeddedRuntime } from '../../frontend/src/features/side-panel/e
 export { sidePanelStore, sidePanelRefs, INITIAL } from '../../frontend/src/features/side-panel/store.js';
 export { headerTitleStore } from '../../frontend/src/features/header/header-title-store.js';
 export * as routes from '../../frontend/src/features/side-panel/routes';
+export * as resize from '../../frontend/src/features/side-panel/resize';

@@ -33,7 +33,8 @@ test('evidence worker reports the last browser tool without retaining its inputs
   assert.deepEqual(events, [
     { kind: 'runner_phase', phase: 'evidence_browser_bootstrap' },
     { kind: 'provider_init', mcpServerCount: 3, toolDefinitionCount: 3,
-      evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true },
+      evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
+      browserMemberToolCount: 0, browserAdminToolCount: 0 },
     { kind: 'first_stream' },
     { kind: 'first_output' },
     { kind: 'tool_start', sequence: 1, tool: 'browser_navigate', persona: 'member' },
@@ -52,6 +53,7 @@ test('provider init distinguishes unavailable evidence tools from absent tool me
   assert.deepEqual(events, [{
     kind: 'provider_init', mcpServerCount: null, toolDefinitionCount: 1,
     evidenceGetContextAvailable: false, evidenceRunPlanAvailable: false,
+    browserMemberToolCount: 1, browserAdminToolCount: 0,
   }]);
 
   const missing = [];
@@ -61,7 +63,46 @@ test('provider init distinguishes unavailable evidence tools from absent tool me
   assert.deepEqual(missing, [{
     kind: 'provider_init', mcpServerCount: null, toolDefinitionCount: null,
     evidenceGetContextAvailable: null, evidenceRunPlanAvailable: null,
+    browserMemberToolCount: null, browserAdminToolCount: null,
   }]);
+});
+
+test('context tool result reports its shape and normal model exit without retaining content', () => {
+  const events = [];
+  const state = worker.newWatchState();
+  state.evidenceDiagnosticObserver = (event) => events.push(event);
+  const progress = () => {};
+  worker.parseLine(JSON.stringify({
+    type: 'assistant', message: { content: [{
+      type: 'tool_use', id: 'context-call', name: 'mcp__evidence__evidence_get_context', input: {},
+    }] },
+  }), progress, state);
+  const context = {
+    acceptedIntent: { stories: [{ id: 'one' }, { id: 'two' }] },
+    origins: { base: 'http://base.invalid', head: 'http://head.invalid' },
+    revisions: { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) },
+    secret: 'private-token',
+  };
+  worker.parseLine(JSON.stringify({
+    type: 'user', message: { content: [{
+      type: 'tool_result', tool_use_id: 'context-call', is_error: false,
+      content: [{ type: 'text', text: JSON.stringify(context) }],
+    }] },
+  }), progress, state);
+  worker.parseLine(JSON.stringify({
+    type: 'result', subtype: 'success', stop_reason: 'end_turn',
+    result: 'No browser steps were performed. private-token', is_error: false,
+  }), progress, state);
+  assert.deepEqual(events, [
+    { kind: 'first_output' },
+    { kind: 'tool_start', sequence: 1, tool: 'evidence_get_context' },
+    { kind: 'context_result', outcome: 'ok', responseCharacters: JSON.stringify(context).length,
+      jsonValid: true, acceptedIntentPresent: true, originsPresent: true,
+      revisionsPresent: true, storyCount: 2 },
+    { kind: 'tool_end', sequence: 1, tool: 'evidence_get_context', outcome: 'ok' },
+    { kind: 'provider_result', outcome: 'ok', resultSubtype: 'success', providerStopReason: 'end_turn' },
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /private-token|base\.invalid|head\.invalid/);
 });
 
 test('evidence diagnostics classify unknown tools and phases without copying their names', () => {
