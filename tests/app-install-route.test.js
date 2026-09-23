@@ -213,7 +213,7 @@ test('an emoji app declares the SVG tile plus the platform PNGs, and reads no ic
     assert.equal(manifest.icons.length, 4);
     assert.equal(manifest.icons[0].type, 'image/svg+xml');
     assert.ok(decodeURIComponent(manifest.icons[0].src).includes('🍕'));
-    assert.equal(manifest.icons[1].src, '/icons/v2/icon-192.png');
+    assert.equal(manifest.icons[1].src, '/icons/v3/icon-192.png');
     assert.equal(manifest.icons[3].purpose, 'maskable');
     assert.equal(iconReads, 0);
   } finally {
