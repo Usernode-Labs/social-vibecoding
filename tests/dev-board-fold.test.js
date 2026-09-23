@@ -1187,14 +1187,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Messages tab (the badge left the icon for the row's end on the desktop
   // rail by CSS alone, so the check pins the markup that move depends on).
   //
-  // 782 → 784, 781 → 784: the tallies above were computed on different sides
-  // of this merge against the same shared 780 and cannot be read as one
-  // sequence. This branch took 780 → 782 alone, with #2915 above; main
-  // independently took the same 780 to 781 twice over, with #2919 and #2912
-  // above. Neither set overlaps the other, so the merged manifest holds every
-  // one of them: 780 + 2 + 1 + 1 = 784, leaving 26 slots under the 810
-  // ceiling.
-  assert.equal(DAPP.tests.length, 784);
+  // The current main has 784 checks; three #2866 checks exercise the owner
+  // menu, shared menu, and direct link, leaving 23 slots under the ceiling.
+  assert.equal(DAPP.tests.length, 787);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

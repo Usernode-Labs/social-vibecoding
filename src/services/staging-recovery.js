@@ -394,7 +394,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // on an imported session is a broken row, not an invitation to open a
   // second PR from someone else's fork. The `imported` guard makes that
   // explicit rather than relying on pr_number always being set.
-  if (!session.pr_number && !imported) {
+  if (!session.pr_number && !imported && !session.is_headless) {
     try {
       // username + latest user message give applyPrMetadata the same
       // signals the live dev-turn path has; without the username the
