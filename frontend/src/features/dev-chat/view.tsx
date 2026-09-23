@@ -149,9 +149,12 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
             >
               <div className="flex-1 min-w-0 sm:min-w-[12rem]">
                 <p className="font-semibold">You can come back later</p>
+                {/* Messages, because a change in flight is an agent
+                    conversation there (#2770). This named Improve until #2718
+                    retired that panel. */}
                 <p className="mt-1">
-                  You can leave this page and return anytime. Open <strong>Improve</strong> in
-                  the top bar to check your session’s status or find your chat again.
+                  You can leave this page and return anytime. Open <strong>Messages</strong> to
+                  check your change’s status or find this chat again.
                 </p>
               </div>
               <Button

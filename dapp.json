@@ -377,6 +377,13 @@
       "description": "Emergency availability switch for the OpenRouter coding-agent backend. When true, OpenRouter is preferred for users with a usable key while Claude remains available and is the fallback for users without one. Set false to hide/refuse OpenRouter without affecting Claude."
     },
     {
+      "key": "OPENROUTER_SESSION_MAYOR_ENABLED",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "true",
+      "description": "When true, an OpenRouter session's chat runs through the Mayor on the session's own OpenRouter model and key: a short plan before the coding agent starts, a spec before a build, and a plain-English wrap-up after, as on a Claude session. Set false to send each message straight to the coding agent instead. Never uses an Anthropic key."
+    },
+    {
       "key": "OPENROUTER_MANAGEMENT_API_KEY",
       "group": "AI & coding agents",
       "required": false,
@@ -2783,7 +2790,7 @@
     {
       "name": "The menu's destination order: platform, then you (#1443)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop + #platform-recents + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3773,10 +3780,10 @@
       "expectText": "Resets Monday 00:00 UTC"
     },
     {
-      "name": "First-use dev chat explains how to leave and return through Improve (#1595)",
+      "name": "First-use dev chat explains how to leave and return through Messages (#1595, #2718)",
       "path": "/?shot=dev-chat-first-use#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-return-hint #dc-return-hint-dismiss",
-      "expectText": "You can leave this page and return anytime. Open Improve"
+      "expectText": "You can leave this page and return anytime. Open Messages"
     },
     {
       "name": "Out of weekly credits: the chat offers every way to keep building (#967, #1049, #1086)",
@@ -4815,6 +4822,16 @@
       "name": "Side panel: a panel=1 address opened in a window of its own is the ordinary platform, with its header, its sidebar and the screen it names",
       "path": "/?demo=1&panel=1#messages",
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
+    },
+    {
+      "name": "#2802: the desktop rail's Recents sits between Workshop and Me, labelled by its heading",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
+    },
+    {
+      "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-header:has(#sidebar-toggle[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])) #notifications-btn[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])"
     }
   ],
   "governance": {

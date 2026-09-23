@@ -73,9 +73,11 @@ test('the bound is lifted for the whole direct path, not only a chat answer', ()
   assert.doesNotMatch(decision, /directChatReply/,
     'the cap decision must not be keyed on whether files changed');
 
-  // And the reason it is safe: this path has no Mayor to protect.
-  assert.match(SRC, /no Anthropic\n\s*\/\/ Mayor, wrap-up, or quick-reply generation runs around it/,
-    'the single-provider contract is what makes this not a prompt');
+  // And the reason it is safe: this path has no Mayor to protect. Since
+  // #2809 an OpenRouter session's chat normally runs through its own Mayor,
+  // and the direct turn is the fallback that still has none around it.
+  assert.match(SRC, /The DIRECT turn below[\s\S]{0,300}?with no Mayor around it/,
+    'the direct turn is what makes this not a prompt');
 });
 
 test('the Mayor tool result and the scout summary keep the bound', () => {
