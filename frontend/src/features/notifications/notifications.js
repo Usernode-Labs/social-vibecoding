@@ -445,22 +445,21 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
-  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB, and
-  // `?shot=notifications-agents` on the AGENTS tab. Both are React state
-  // inside the sheet, so without a URL that reaches them neither the capture
-  // pipeline nor a declared check could see the tab, its collapsed
-  // conversation rows, its "All messages" entry, or the session rows Agents
-  // draws — the platform's own rule for a screen that is otherwise only
-  // reachable by clicking. The sheet reads the same parameter for the tab;
-  // this only has to open it.
+  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That is
+  // React state inside the sheet, so without a URL that reaches it neither
+  // the capture pipeline nor a declared check could see the tab, its
+  // collapsed conversation rows, its "All messages" entry, or the agent
+  // session rows it draws (#2815 folded the Agents tab into it) — the
+  // platform's own rule for a screen that is otherwise only reachable by
+  // clicking. The sheet reads the same parameter for the tab; this only has
+  // to open it.
   //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications' && shot !== 'notifications-messages'
-      && shot !== 'notifications-agents') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather
@@ -1507,10 +1506,24 @@ function collapseConversationRuns(items) {
 // The sheet's rows: one descriptor per run. `count` rides only on a genuine
 // collapse, so a lone notification's view is byte-identical to what it was.
 function screenViews(items) {
-  return collapseConversationRuns(items).map((run) => (
-    run.count > 1 ? { ...rowView(run.item), count: run.count } : rowView(run.item)
-  ));
+  return collapseConversationRuns(items).map((run) => {
+    const view = AGENT_NOTIF_KINDS.has(run.item && run.item.kind)
+      ? { ...rowView(run.item), agent: true } : rowView(run.item);
+    return run.count > 1 ? { ...view, count: run.count } : view;
+  });
 }
+
+// #2815: what an AGENT did on your behalf — a session that finished, a
+// proposal run that came back, a question it asked, work it submitted or
+// shared. The sheet's Messages tab lists these beside the conversations and
+// the running sessions themselves, the way the Messages screen already puts
+// agents in its chats, so the bell has no separate Agents tab. Carried as a
+// flag for the same reason `conversation` is: the tab must never re-derive
+// the set from `kind` and drift from it. stale_pr and check_failed stay out:
+// they are about a proposal, not about an agent talking back to you.
+const AGENT_NOTIF_KINDS = new Set([
+  'session_done', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
+]);
 
 // One notification row, as data. It has ONE renderer — ScreenRow in
 // ./notifications-sheet.tsx — which draws THREE lines:

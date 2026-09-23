@@ -640,13 +640,13 @@
     },
     {
       "name": "A change row shows its title, and an idle row wears no status dot (#971, #1946)",
-      "path": "/?shot=notifications-agents&demo=1#app/usernode-2d5619/dev",
+      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990101\"]:not(:has(.h-3.w-3.rounded-full))",
       "expectText": "[Mock] Your in-progress session"
     },
     {
       "name": "A busy change row spins the standard arc, and nothing else (#1038, #1597, #1947)",
-      "path": "/?shot=notifications-agents&demo=1#app/usernode-2d5619/dev",
+      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
     },
     {
@@ -2896,9 +2896,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
     },
     {
-      "name": "The notifications strip reads Unread, Messages, Agents, All — and opens on Unread (#2718 review)",
+      "name": "The notifications strip reads Unread, Messages, All — agents live under Messages, and it opens on Unread (#2718 review, #2815)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-agents + #notifications-tab-all"
+      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-all:last-child"
     },
     {
       "name": "A filtered tab's footer link goes to All rather than paging the filter",
@@ -4261,18 +4261,18 @@
       "expectSelector": "body.bg-zinc-100"
     },
     {
-      "name": "A connector work order shows on the Agents tab (#1417, Streamlined Concept)",
-      "path": "/?shot=notifications-agents&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"task\"]"
+      "name": "A connector work order shows on the bell's Messages tab, beside an agent's finished-session notification (#1417, Streamlined Concept, #2815)",
+      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-all-messages ~ [data-notif-id=\"990209\"]) [data-improve-row=\"task\"]"
     },
     {
       "name": "The work-order row points at its request, not a session page (#1417)",
-      "path": "/?shot=notifications-agents&demo=1#app/usernode-2d5619/dev",
+      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
     },
     {
       "name": "Real sessions still render beside it on the full change destination (#1417)",
-      "path": "/?shot=notifications-agents&demo=1#app/usernode-2d5619/dev",
+      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"session\"][href*=\"/dev/proposals/\"]"
     },
     {
@@ -4520,7 +4520,7 @@
     },
     {
       "name": "#1808: a change row's age is its own element with the full instant in title",
-      "path": "/?shot=notifications-agents&demo=1#app/usernode-2d5619/dev",
+      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#notifications-sheet[data-open] [data-improve-row] time[title]"
     },
     {
