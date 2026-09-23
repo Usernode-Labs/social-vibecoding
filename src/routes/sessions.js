@@ -12,6 +12,7 @@ const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
+const proposalDescription = require('../services/proposal-description');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const { claimIssueForUser } = require('../services/issue-claims');
@@ -10264,6 +10265,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       }
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
+      testing.cleanedText = proposalDescription.extract(testing.cleanedText).cleanedText;
       const hasChanges = result.ahead > 0 && !!result.sha;
       // #170: a headless session only ever has spec_md if its own scout
       // wrote it this run — so spec_md present means this build was the
@@ -13373,6 +13375,30 @@ path: /another/changed/view
   - The block must be LAST in your final message. Skip it entirely for changes
     with nothing user-visible to test.`;
 
+// OpenRouter sessions never pay for a model call to write their proposal text
+// (pr-metadata.js deterministicPrMetadataDraft), so the description the group
+// votes on is whatever the coding agent writes here (#2820). Parsed by
+// services/proposal-description.js; each turn's block replaces the last.
+const OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE = `- Whenever you changed and committed files this turn, end your FINAL
+  message with a proposal description block. It becomes the description
+  people read before voting on this change:
+
+==== DESCRIPTION ====
+One or two short paragraphs, in plain language, describing what the WHOLE
+change on this branch does for someone using the app.
+==== END DESCRIPTION ====
+
+  Rules for the description block:
+  - Describe the ENTIRE change so far, including earlier turns on this
+    branch, not just this turn. It REPLACES the previous description, so
+    anything you leave out disappears from the proposal.
+  - Write it for the people voting on the change: what is different, what
+    they can now do, or what stops going wrong. Do not narrate your work
+    ("Done", "I updated…"), list files, quote commit hashes, or report
+    check results; that belongs in the rest of your message.
+  - Put it after the rest of your message and BEFORE the testing block,
+    which stays last. Skip it when you changed no files.`;
+
 function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   if (runLocally) return '';
   return `HOSTED WORKER LIFECYCLE (this invocation):
@@ -13833,7 +13859,7 @@ INSTRUCTIONS:
 ${workflowGuidance}
 ${turnInstructions}
 ${buildGuidance.browserGuidance}
-${buildGuidance.testingGuidance}`;
+${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildGuidance.testingGuidance}`;
 
   const fullClaudePrompt = renderClaudePrompt(specContext.fullBlock);
   const claudePrompt = reuseHostedScoutSpec
@@ -14639,7 +14665,12 @@ ${buildGuidance.testingGuidance}`;
     // leak into chat history or prompts. The parsed guidance is persisted
     // onto the session below, on the has-changes success path.
     const testing = testingNotes.extract(result.lastResultText || '');
-    const ccText = testing.cleanedText;
+    // #2820: then peel the OpenRouter agent's "==== DESCRIPTION ====" block
+    // (the whole change so far, which becomes the proposal's description).
+    // A message that was nothing but the block still gets a chat card.
+    const described = proposalDescription.extract(testing.cleanedText);
+    const turnDescription = described.description;
+    const ccText = described.cleanedText || turnDescription || '';
     commitHash = result.sha;
     const hasChanges = result.ahead > 0 && !!commitHash;
 
@@ -14928,6 +14959,7 @@ ${buildGuidance.testingGuidance}`;
         prResult = await prMetadata.applyPrMetadata({
           pool, session, repoOwner, repoName,
           userMessage, ccSummary: ccText, username: req.user.username,
+          proposalDescription: turnDescription,
           broadcast: (event, data) => send(event, data),
           apiKey: prMetadataApiKey,
           userId: req.user.id,
@@ -15282,6 +15314,7 @@ ${buildGuidance.testingGuidance}`;
       const completionMeta = {
         ...executionAgentMeta,
         ccOutput: ccText,
+        ...(turnDescription ? { proposalDescription: turnDescription } : {}),
         ccOutcome,
         durationMs: Date.now() - turnStartedMs,
         ...(runLocally
@@ -15752,4 +15785,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
