@@ -124,7 +124,7 @@ test('the no-connector paragraph names the remedy per product, from the platform
     assert.match(tail, /Codex\ncannot add it today \(Codex on the web has no custom MCP setting, and the\nCodex CLI sign-in uses a localhost callback the hosted connector refuses\),\nso push and hand the branch back/);
     // The settings page stays the click-by-click source, on the same origin.
     assert.match(tail, /https:\/\/homeroom\.example\/#settings\/connectors\.$/m);
-    assert.doesNotMatch(tail, /my\.onhomeroom\.com/, 'a configured domain replaces the hosted fallback');
+    assert.doesNotMatch(tail, /(?:app|my)\.onhomeroom\.com/, 'a configured domain replaces the hosted fallback');
     assert.doesNotMatch(tail, /—/, 'no em dash in user-facing copy');
 
     // Unset (local dev, tests): the hosted platform, as before.
