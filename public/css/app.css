@@ -16811,6 +16811,15 @@ html.un-kb #platform-parked {
     min-height: 52px;
     border-top: 1px solid var(--app-sheet-line);
     border-right: 1px solid var(--app-sheet-line);
+    /* NO FILL OF ITS OWN (#2801). The strip is fixed OVER the rail, and the
+       phone's frosted sheet laid on top of the rail's identical one stacked
+       two translucent fills into a band of a different colour. Here it is a
+       row of the rail, so it shows the rail's surface like the rows above.
+       Later than the @supports fallback and as specific, so it wins there
+       too. */
+    background-color: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   /* ABOVE the rail, so its hairline reads as the footer's edge rather than
      as a line the rail draws through it. */

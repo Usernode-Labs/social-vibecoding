@@ -369,6 +369,19 @@ test('on a peeked rail the strip rides on top, and holds the peek while pointed 
   assert.match(STRIP, /onMouseLeave=\{peek \? leavePeek : undefined\}/);
 });
 
+test('in the desktop rail the strip has no fill of its own (#2801)', () => {
+  // It is fixed OVER the rail, so the phone's frosted sheet stacked on the
+  // rail's own read as a differently coloured band under the app you left.
+  // The desktop rule clears it; the phone strip keeps its sheet.
+  const at = CSS.indexOf('/* THE PARKED STRIP IS THE RAIL\'S FOOTER.');
+  assert.ok(at > 0, 'the desktop footer rule must exist');
+  const rule = CSS.slice(at, CSS.indexOf('\n  }\n', at));
+  assert.match(rule, /background-color: transparent;/);
+  assert.match(rule, /backdrop-filter: none;/);
+  assert.match(CSS, /\.platform-parked \{[^}]*background-color: var\(--dc-sheet-fill\);/,
+    'the phone strip over page content keeps its frosted sheet');
+});
+
 test('storage is read defensively and written through one key', () => {
   const SRC = read('frontend/src/features/nav/parked-store.js');
   assert.match(SRC, /const KEY = 'usernode_parked_app_v1';/);
