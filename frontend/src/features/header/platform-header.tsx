@@ -45,7 +45,7 @@ import { ChromelessPill } from './chromeless-pill';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
 import { SidebarToggle } from '../nav/sidebar-toggle';
-import { boardHref, improveStore } from '../improve/improve-store.js';
+import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
 // ── The bundle's boot seam ────────────────────────────────────────────
@@ -151,26 +151,32 @@ function homeHref(): string {
  *                         the inbox, agreeing with App._backSlotFor. It went
  *                         up to the board, which was a screen the reader had
  *                         not come from.
- *   A topic (issue,    →  the board. `activeAppView` already counts a topic
- *   proposal, gov,        as the Board for the view strip's purposes; a card
- *   shared session)       opened full-screen is still the board's content.
+ *   A topic (issue,    →  NOT THIS BAR'S ANY MORE (#2916). Its level up is
+ *   proposal, gov,        still the board it was opened from, but the
+ *   shared session)       control is the "‹ Workshop" chip at the top of the
+ *                         pane (../dev-board/topic/topic-back.tsx), and the
+ *                         bar draws none; see `topicBackHref` in
+ *                         ../improve/improve-store.js and the `mode` line in
+ *                         PlatformHeader. It was a chevron here, and before
+ *                         that a full-width "← Back" bar in the page one row
+ *                         under it; one control, in one place, either way.
  *   A dev session      →  wherever it was opened from — see `sessionOrigin`
  *                         in ../improve/improve-store.js — falling back to
  *                         Messages on a cold deep link, because a change is
  *                         an agent conversation and that is its inbox
  *                         (#2770; it was the board before).
  *
- * ── "The board" is TWO screens, and the arrow has to pick ──────────────
+ * ── "The board" is TWO screens, and back has to pick ───────────────────
  *
  * Workshop and Board are one screen in two layouts, and the layout IS the
- * route. So the three rows above that read "the board" cannot spell one:
- * `#app/<slug>/board` sent a viewer who had opened an issue from the Workshop
- * to the Kanban board — a screen they had not been on — and, because that
- * route applies its own layout, rewrote their stored preference to kanban as
- * it went. `boardView` (published with the route by `Improve.setTab`) names
- * the layout that was on screen when the sub-view was entered, and
- * `boardHref` turns it into the matching address for this arrow and for a
- * session's captured origin alike.
+ * route. So "the board" cannot be spelled as one address: `#app/<slug>/board`
+ * sent a viewer who had opened an issue from the Workshop to the Kanban board
+ * (a screen they had not been on) and, because that route applies its own
+ * layout, rewrote their stored preference to kanban as it went. `boardView`
+ * (published with the route by `Improve.setTab`) names the layout that was on
+ * screen when the sub-view was entered, and `boardHref` turns it into the
+ * matching address for a topic's in-pane chip and for a session's captured
+ * origin alike.
  *
  * ── Every app's Workshop is the platform's own now ──────────────────────
  *
@@ -184,7 +190,6 @@ function appRouteUpHref(
   tab: string | null,
   subTab: string | null,
   sessionOrigin: string | null,
-  boardView: string,
 ): string | null {
   if (!slug || tab !== 'dev') return null;
   // #2770: a session with no captured origin is a thread of Messages — a
@@ -193,7 +198,8 @@ function appRouteUpHref(
   if (subTab === 'sessions') return sessionOrigin || '#messages';
   // The app's discussion is a thread of Messages too (#2718 review, #2763).
   if (subTab === 'chat') return '#messages';
-  if (subTab === 'topic') return boardHref(slug, boardView);
+  // A topic (subTab 'topic') falls through on purpose (#2916): its level up
+  // is drawn inside the pane, not here. See the ladder above.
   // The Workshop itself (the Board and the Activity feed): nothing above it.
   return null;
 }
@@ -223,9 +229,15 @@ export function PlatformHeader() {
     slug: backSlug, tab: backTab, subTab: backSubTab,
     sessionOrigin, boardView,
   } = useStoreState(improveStore);
-  const routeUp = appRouteUpHref(
-    backSlug, backTab, backSubTab, sessionOrigin, boardView,
-  );
+  const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
+  // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
+  // the top of the pane, so this bar draws NONE there, whatever the last
+  // setBackIcon() published. Forced from the same function the chip renders
+  // from rather than left to renderDevView's 'none' reset, so the page has
+  // exactly one back control by construction.
+  const paneBack = topicBackHref({
+    slug: backSlug, tab: backTab, subTab: backSubTab, boardView,
+  });
   // An app route that has a level above it wins over the imperative call;
   // everything else keeps whatever the last setBackIcon() published, which on
   // a platform screen is 'home' by default and 'arrow' where that screen owns
@@ -236,7 +248,9 @@ export function PlatformHeader() {
   // the rule stays so that a stale arrow can never paint over the ✕. Where
   // the ✕ lands is App._closeAppHref's answer: the page the app was opened
   // from (App.closeApp), which is `backHref`.
-  const mode = backMode === 'close' ? 'close' : (routeUp ? 'arrow' : backMode);
+  const mode = backMode === 'close' ? 'close'
+    : paneBack ? 'none'
+      : (routeUp ? 'arrow' : backMode);
   const backArrow = mode === 'arrow';
   const backClose = mode === 'close';
   const resolvedBackHref = routeUp
@@ -259,8 +273,12 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  // The swipe follows whichever control is the page's back: this bar's
+  // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
+  // with a destination even though the bar shows nothing.
   useNativeBackNavigation(nativeBackEnabled({
     visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
+    paneHref: paneBack,
   }));
 
   return (

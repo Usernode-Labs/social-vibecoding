@@ -13309,6 +13309,37 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   max-width: 900px;
   margin: 0 auto;
 }
+/* #2916: the topic page's one back control, "‹ Workshop"
+   (features/dev-board/topic/topic-back.tsx). It is the first child of
+   `.dev-topic`, so it sits at the top-left of the pane on the card's own
+   left edge and scrolls away with the page; the header draws no arrow on
+   these routes. Dressed as the header's back disc was (periwinkle ink on the
+   periwinkle tint, a hairline one step darker), stretched into a pill so it
+   can carry the destination's name. Hover steps the fill to the hairline's
+   shade; focus gets the shell's usual accent ring. `align-self` keeps the
+   column's stretch from widening it to the card. */
+.dev-topic-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  align-self: flex-start;
+  height: 30px;
+  padding: 0 12px 0 6px;
+  margin: 2px 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-line);
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background-color 120ms ease;
+}
+.dev-topic-back:hover { background: var(--brand-line); }
+.dev-topic-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-topic-back-icon { width: 18px; height: 18px; flex-shrink: 0; }
 .dev-change-overview {
   flex: 1;
   min-height: 0;
