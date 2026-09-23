@@ -1105,6 +1105,16 @@
       "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
     },
     {
+      "name": "Inside a dark app the Homeroom menu takes the app's dark palette too, not the viewer's light mode (#2803)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet.dark.platform-app-tone-dark"
+    },
+    {
+      "name": "A light app under the dark shell leaves the Homeroom menu in the shell's own dark mode (#2803)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet:not(.platform-app-tone-dark)"
+    },
+    {
       "id": "app-tone.cover-ink-dark",
       "name": "Inside a dark app the launch cover is inked for the ground it sits on, not for the shell's theme (#2704)",
       "path": "/?shot=app-tone-dark",

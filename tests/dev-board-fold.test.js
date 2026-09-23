@@ -1064,22 +1064,24 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // its title row, and a `#name` channel link beside a `#123` issue ref in a
   // message. 740 leaves 30 slots under the 770 ceiling.
   //
-  // +2 (#2807, #2812): the dev-chat model picker has no caption line under
-  // it, and stays usable while a turn runs. 742 leaves 28 slots under the
-  // 770 ceiling.
+  // 742 → 744, 742 → 744: the tallies above were computed on either side of
+  // this merge against the same shared 740 and do not reconcile through the
+  // comment trail alone. This branch added #2799 and #2806 — the platform's
+  // own Workshop shows no close button, and an app's Workshop is the
+  // platform surface its header frosts over (+2); main independently added
+  // #2807 and #2812 — the dev-chat model picker has no caption line under
+  // it, and stays usable while a turn runs (+2). Neither set overlaps the
+  // other, so the merged manifest holds every one of them: 740 + 2 + 2 = 744,
+  // leaving 26 slots under the 770 ceiling.
+  //
+  // +2 (#2803): the Homeroom menu takes a dark app's palette, and a light app
+  // under the dark shell leaves it in the shell's own dark mode. 746 leaves
+  // 24 slots under the 770 ceiling.
   //
   // +2 (#2802, #2798): the desktop rail's Recents sitting between Workshop
   // and Me, and the sidebar toggle and bell carrying their blue disc on
-  // hover only. 744 leaves 26 slots under the 770 ceiling.
-  //
-  // 744 → 746: the tallies above were computed on this branch alone, against
-  // the same shared 740 main also started from. Independently, main added
-  // #2799 and #2806 — the platform's own Workshop shows no close button, and
-  // an app's Workshop is the platform surface its header frosts over (+2).
-  // Neither set overlaps the other, so the merged manifest holds every one of
-  // them: 740 + 2 (#2807/#2812) + 2 (#2802/#2798) + 2 (#2799/#2806) = 746,
-  // leaving 24 slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 746);
+  // hover only. 748 leaves 22 slots under the 770 ceiling.
+  assert.equal(DAPP.tests.length, 748);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
