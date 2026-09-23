@@ -1463,6 +1463,15 @@ SELECT n.nspname || '.' || c.relname,
     columns: targets.map((t) => `${t.qualified}.${t.column}`),
   });
 
+  // One nonce per scrub run. ctid alone is unique only within this run: a
+  // database that was ALREADY scrubbed (the staging template, then every
+  // clone of it) still holds '__staging_redacted__(0,1)' on a row that has
+  // since moved, and a row inserted after a VACUUM (a staging fixture) can
+  // land back in slot (0,1) — so re-scrubbing wrote a duplicate and the
+  // clone failed closed on registration_code's UNIQUE index. Hex only, so
+  // it is safe to inline in the SQL literal below.
+  const runNonce = crypto.randomBytes(4).toString('hex');
+
   const failures = [];
   const scrubbed = [];
   for (const { qualified, column, notNull, maxLength } of targets) {
@@ -1491,12 +1500,14 @@ SELECT n.nspname || '.' || c.relname,
       // NOT NULL UNIQUE, so writing '__staging_redacted__' into every
       // row failed the whole clone). Derive a per-row-unique value from
       // ctid — unique within the table for the life of this single
-      // UPDATE — sized to the column's max length when it has one (e.g.
-      // VARCHAR(64)) so it never overflows. Auth code should never
-      // accept this literal in any code path — bcrypt.compare against
-      // it returns false for every plaintext, which is the only place
-      // today that meaningfully reads users.password.
-      const base = `'${STAGING_REDACTED_SENTINEL}' || ctid::text`;
+      // UPDATE — plus the run's nonce, so it can never equal a value an
+      // earlier scrub of the same data left behind. Sized to the column's
+      // max length when it has one (e.g. VARCHAR(64)) so it never
+      // overflows; the prefix, nonce and a ctid fit well inside 64. Auth
+      // code should never accept this literal in any code path —
+      // bcrypt.compare against it returns false for every plaintext, which
+      // is the only place today that meaningfully reads users.password.
+      const base = `'${STAGING_REDACTED_SENTINEL}${runNonce}:' || ctid::text`;
       value = maxLength != null ? `left(${base}, ${maxLength})` : base;
     }
     try {

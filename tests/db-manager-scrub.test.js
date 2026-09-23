@@ -5,7 +5,9 @@
 // violated the UNIQUE constraint and the whole staging clone failed closed.
 //
 // The fix derives a per-row-unique placeholder from ctid, sized to the
-// column's max length. This test doesn't touch real docker/postgres — it
+// column's max length, plus a per-run nonce: re-scrubbing an already-scrubbed
+// clone collided on ctid alone once a fixture row reused a vacuumed slot
+// (reproduced on postgres:17). This test doesn't touch real docker/postgres — it
 // stubs child_process (same seam/pattern as tests/docker-init-flag.test.js)
 // and asserts the exact UPDATE SQL scrubPrivateColumns generates for a
 // NOT NULL UNIQUE VARCHAR(64) column and for an unbounded TEXT column.
@@ -73,9 +75,9 @@ test('scrubPrivateColumns writes a per-row-unique, length-capped placeholder for
   try {
     const result = await dbManager.scrubPrivateColumns('app_demo_staging_x_abc123');
     assert.equal(updateCalls.length, 1);
-    assert.equal(
+    assert.match(
       updateCalls[0],
-      "UPDATE public.onchain_accounts SET registration_code = left('__staging_redacted__' || ctid::text, 64)"
+      /^UPDATE public\.onchain_accounts SET registration_code = left\('__staging_redacted__[0-9a-f]{8}:' \|\| ctid::text, 64\)$/
     );
     assert.deepEqual(result.scrubbed, ['public.onchain_accounts.registration_code']);
   } finally {
@@ -90,9 +92,9 @@ test('scrubPrivateColumns omits the length cap for an unbounded NOT NULL column'
   try {
     await dbManager.scrubPrivateColumns('app_demo_staging_x_abc123');
     assert.equal(updateCalls.length, 1);
-    assert.equal(
+    assert.match(
       updateCalls[0],
-      "UPDATE public.some_table SET some_col = '__staging_redacted__' || ctid::text"
+      /^UPDATE public\.some_table SET some_col = '__staging_redacted__[0-9a-f]{8}:' \|\| ctid::text$/
     );
   } finally {
     restore();
@@ -110,4 +112,32 @@ test('scrubPrivateColumns still NULLs out nullable columns (no per-row placehold
   } finally {
     restore();
   }
+});
+
+test('each scrub run writes a fresh nonce, so re-scrubbing already-scrubbed data cannot collide', async () => {
+  // The staging template is scrubbed once, then every clone of it is
+  // scrubbed again. ctid alone repeats across those runs: a fixture row
+  // inserted after a VACUUM lands back in slot (0,1), where the previous
+  // run's '__staging_redacted__(0,1)' still sits on a row that moved, and
+  // registration_code's UNIQUE index rejected the whole evidence clone
+  // ("duplicate key value violates unique constraint
+  // onchain_accounts_registration_code_key"). Two runs must never share a
+  // prefix, and the value still fits VARCHAR(64).
+  const nonces = [];
+  for (let i = 0; i < 2; i++) {
+    const { dbManager, updateCalls, restore } = loadDbManager([
+      'public.onchain_accounts|registration_code|t|64',
+    ]);
+    try {
+      await dbManager.scrubPrivateColumns('app_demo_staging_x_abc123');
+      const m = /'__staging_redacted__([0-9a-f]{8}):'/.exec(updateCalls[0]);
+      assert.ok(m, updateCalls[0]);
+      nonces.push(m[1]);
+    } finally {
+      restore();
+    }
+  }
+  assert.notEqual(nonces[0], nonces[1]);
+  // Prefix (20) + nonce (8) + ':' + the longest ctid text "(4294967295,65535)" (18).
+  assert.ok('__staging_redacted__'.length + 8 + 1 + 18 <= 64);
 });
