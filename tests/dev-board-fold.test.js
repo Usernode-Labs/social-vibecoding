@@ -1064,16 +1064,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // its title row, and a `#name` channel link beside a `#123` issue ref in a
   // message. 740 leaves 30 slots under the 770 ceiling.
   //
-  // +2 (#2807, #2812): the dev-chat model picker has no caption line under
-  // it, and stays usable while a turn runs. 742 leaves 28 slots under the
-  // 770 ceiling.
+  // 742 → 744, 742 → 744: the tallies above were computed on either side of
+  // this merge against the same shared 740 and do not reconcile through the
+  // comment trail alone. This branch added #2799 and #2806 — the platform's
+  // own Workshop shows no close button, and an app's Workshop is the
+  // platform surface its header frosts over (+2); main independently added
+  // #2807 and #2812 — the dev-chat model picker has no caption line under
+  // it, and stays usable while a turn runs (+2). Neither set overlaps the
+  // other, so the merged manifest holds every one of them: 740 + 2 + 2 = 744,
+  // leaving 26 slots under the 770 ceiling.
   //
   // +2 (the side panel beside a running app): its host ships hidden and
   // frameless after the app view, and a `?panel=1` address opened in a window
-  // of its own is the ordinary platform — counted from the same 740 base as
-  // #2807/#2812, so together they put the manifest at 744. That leaves 26
-  // slots under the 770 ceiling: 6 more before the 20-slot floor at 750.
-  assert.equal(DAPP.tests.length, 744);
+  // of its own is the ordinary platform. Counted from the merged manifest
+  // rather than either tally: 744 + 2 = 746, which leaves 24 slots under the
+  // 770 ceiling and 4 before the 20-slot floor at 750.
+  assert.equal(DAPP.tests.length, 746);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
