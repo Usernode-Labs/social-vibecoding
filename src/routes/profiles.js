@@ -209,11 +209,7 @@ function publicProfileRoutes(config) {
     }
   );
 
-  for (const reportPath of ['/api/profiles/:username/report', '/api/users/:username/report']) router.post(
-    reportPath,
-    requireUser,
-    profileReportLimiter,
-    async (req, res) => {
+  const reportAccount = async (req, res) => {
       res.set('Cache-Control', NO_STORE);
       const reason = typeof req.body?.reason === 'string' ? req.body.reason : '';
       if (!REPORT_REASONS.has(reason)) {
@@ -264,8 +260,9 @@ function publicProfileRoutes(config) {
       } finally {
         if (client) client.release();
       }
-    }
-  );
+    };
+  router.post('/api/profiles/:username/report', requireUser, profileReportLimiter, reportAccount);
+  router.post('/api/users/:username/report', requireUser, profileReportLimiter, reportAccount);
 
   router.post(
     '/api/admin/profile-reports/:id/resolve',

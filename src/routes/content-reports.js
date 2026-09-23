@@ -174,11 +174,7 @@ function contentReportRoutes(config) {
     }
   });
 
-  for (const path of [
-    '/api/admin/app-reports/:id/:action',
-    '/api/admin/app-message-reports/:id/:action',
-  ]) {
-    router.post(path, adminMiddleware, requireAdminWrite, async (req, res) => {
+  const moderateReport = (isMessage) => async (req, res) => {
       res.set('Cache-Control', NO_STORE);
       const id = reportId(req.params.id);
       const status = req.params.action === 'resolve' ? 'resolved'
@@ -186,7 +182,7 @@ function contentReportRoutes(config) {
       if (!id || !status) return res.status(404).json({ error: 'Pending report not found' });
       try {
         const params = [status, req.user.id, id];
-        const { rows } = path.includes('app-message-reports')
+        const { rows } = isMessage
           ? await pool.query(
             `UPDATE chat_message_reports
                 SET status = $1, resolved_at = NOW(), resolved_by = $2
@@ -205,8 +201,9 @@ function contentReportRoutes(config) {
         log.error('reports', 'Report moderation failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
       }
-    });
-  }
+    };
+  router.post('/api/admin/app-reports/:id/:action', adminMiddleware, requireAdminWrite, moderateReport(false));
+  router.post('/api/admin/app-message-reports/:id/:action', adminMiddleware, requireAdminWrite, moderateReport(true));
 
   return router;
 }
