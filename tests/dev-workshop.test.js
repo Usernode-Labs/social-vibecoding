@@ -3214,7 +3214,7 @@ test('the "+" is re-wired when the toolbar changes surface', () => {
   // silently stops opening.
   assert.match(APP_VIEW_SRC, /_rewirePlusMenu\(\) \{/, 'there is a re-wire');
   const body = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _repaintDevBody() {'));
-  const scoped = body.slice(0, body.indexOf('\n  _renderLockedNotice('));
+  const scoped = body.slice(0, body.indexOf('\n  _rewirePlusMenu() {'));
   assert.equal((scoped.match(/AppView\._rewirePlusMenu\(\)/g) || []).length, 2,
     'called on BOTH branches — either switch can move the row');
   // Idempotent by construction: it aborts the previous controller first.

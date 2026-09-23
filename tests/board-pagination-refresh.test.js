@@ -52,7 +52,6 @@ function fixture(rows = Array.from({ length: 100 }, (_, i) => row(i + 1))) {
   const av = sandbox.subject;
   av.appData = { slug: 'demo' };
   av._repaintDevBody = () => { state.repaints += 1; };
-  av._renderLockedNotice = () => {};
   av._loadWorkshopThemes = () => {};
   av._syncChecksPoll = () => {};
   const load = async () => { assert.equal(await av._loadDevData(), true); };

@@ -67,7 +67,6 @@ function fixture() {
   const av = sandbox.subject;
   av.appData = { slug: 'demo', repo_url: 'https://github.com/o/r' };
   av._repaintDevBody = () => {};
-  av._renderLockedNotice = () => {};
   av._loadWorkshopThemes = () => {};
   av._syncChecksPoll = () => {};
   const load = async () => av._loadDevData();

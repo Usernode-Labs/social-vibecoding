@@ -42,7 +42,6 @@ import { DevChatSubView } from './chat-frame';
 import { IssueComments } from './issue-comments';
 import { issueCommentsStore, type IssueCommentsState } from './issue-comments-store';
 import { KanbanFilters } from './kanban-filters';
-import { lockedNoticeStore } from './locked-notice-store';
 import { mainPauseStore, type MainPauseState } from './main-pause-store';
 import { releaseStallStore, type ReleaseStallState } from './release-stall-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
@@ -99,7 +98,6 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
-  publishLockedNotice(locked: boolean, inviteOnly?: boolean): void;
   publishMainPause(state: MainPauseState): void;
   publishReleaseStall(state: ReleaseStallState): void;
   publishDiscussion(state: DiscussionState): void;
@@ -247,13 +245,9 @@ export const devBoardBridge: DevBoardBridge = {
     cardMenuStore.set({ rows });
   },
 
-  publishLockedNotice(locked, inviteOnly = false) {
-    lockedNoticeStore.set({ locked, inviteOnly: !!inviteOnly });
-  },
-
   // Whether a red main is pausing the app's merges, and for whom the banner
   // carries the resume verb — see ./main-pause-store.ts. Published with the
-  // promoted list, beside the locked notice.
+  // promoted list.
   publishMainPause(state) {
     mainPauseStore.set(state);
   },
