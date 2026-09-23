@@ -344,6 +344,13 @@ function load() {
     // False restores the direct path, where the coding agent answers alone.
     openrouterSessionMayorEnabled:
       String(process.env.OPENROUTER_SESSION_MAYOR_ENABLED || 'true') === 'true',
+    // #2779: agent sessions (docs/agent-sessions.md), behind an experimental
+    // per-user flag. The default applies to a user who has not chosen (a
+    // choice either way wins, so an opt-out survives the day this flips);
+    // the opt-in audience says who may make that choice at all: 'admins'
+    // while the feature ships dark, then 'all'.
+    agentSessionsDefault: String(process.env.AGENT_SESSIONS_DEFAULT || 'false') === 'true',
+    agentSessionsOptIn: process.env.AGENT_SESSIONS_OPT_IN === 'all' ? 'all' : 'admins',
     // #717: collection-only emergency switch. Reporting remains readable so
     // operators can inspect already-recorded aggregates after disabling new
     // writes. This never changes provider/model/routing behaviour.

@@ -10,6 +10,7 @@ const planContract = require('./visual-evidence-plan');
 
 const controls = new Map();
 const FINISH_STATUSES = new Set(['verified', 'not_relevant', 'failed']);
+const MAX_REPAIR_ATTEMPTS = 2;
 
 class EvidenceControlError extends Error {
   constructor(code, message, status = 409) {
@@ -114,7 +115,7 @@ class RunControl {
           400
         );
       }
-      if (this.planCalls === 1 && this.maxPlanCalls === 2
+      if (this.planCalls > 0 && this.planCalls === this.maxPlanCalls - 1
           && planContract.planHash(plan) === planContract.planHash(this.rejectedPlan)) {
         throw new EvidenceControlError(
           'evidence_repair_unchanged',
@@ -188,11 +189,11 @@ class RunControl {
 
   allowRepair(reason, failure) {
     if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
-    if (this.planCalls !== 1 || this.maxPlanCalls !== 1
+    if (this.planCalls !== this.maxPlanCalls || this.planCalls > MAX_REPAIR_ATTEMPTS
         || !this.lastReplayFailure || !this.lastSubmittedPlan) {
-      throw new EvidenceControlError('evidence_repair_unavailable', 'The single repair attempt is not available.');
+      throw new EvidenceControlError('evidence_repair_unavailable', 'No additional repair attempt is available.');
     }
-    this.maxPlanCalls = 2;
+    this.maxPlanCalls += 1;
     this.repairReason = boundedReason(reason);
     this.repairFailure = cloneJson(failure);
     this.rejectedPlan = cloneJson(this.lastSubmittedPlan);

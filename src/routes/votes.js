@@ -5108,6 +5108,16 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       },
     });
 
+    // #2779: the agent session that started this change, if one did, hears
+    // that it landed and stops treating it as its active change. A classic
+    // session's row says agent_session_id is null and costs nothing here.
+    // Never a reason the merge fails.
+    try {
+      await require('../services/agent-sessions').noteChangeClosed(pool, { change: session, outcome: 'merged' });
+    } catch (err) {
+      log.warn('votes', 'Agent session merge note failed', { sessionId: session.id, err: err.message });
+    }
+
     // #1374: the author's change landed, and before this nothing told them.
     // Beside the funnel event on purpose — the two mark the same moment, so
     // a future edit that moves one should have to look at the other.

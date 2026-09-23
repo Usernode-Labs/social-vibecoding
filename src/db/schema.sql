@@ -6155,6 +6155,48 @@ ALTER TABLE mcp_connector_hints ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ;
 ALTER TABLE mcp_connector_hints
   ADD COLUMN IF NOT EXISTS window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- Delegated connector grants (#2779). The platform's own agents reach the
+-- same tool registry an external chat product does, on the user's behalf:
+-- the Mayor of an agent session (`agent_mayor`) and the coding agent inside
+-- one change's worker (`worker_read`). One row per grant; the access token
+-- itself is an ordinary mcp_tokens row with the same grant_id, minted by
+-- services/mcp-oauth.js issueDelegatedAccess with no refresh token and a
+-- synthetic client id that no consent or token endpoint accepts.
+--
+-- The KIND is set by the server when it issues the grant and is what decides
+-- which tools and routes the token may reach (services/mcp-audiences.js,
+-- services/cli-api-policy.js). Liveness is checked on EVERY request by
+-- joining this table, so revoking the row, expiring it, or closing the
+-- change it names ends the token with no hook having to run.
+--
+-- agent_session_id carries no foreign key yet: agent_sessions arrives in the
+-- next step of #2779, which adds the constraint with the table. change_id and
+-- app_id bind a worker token to one change and that change's app.
+CREATE TABLE IF NOT EXISTS mcp_delegations (
+  grant_id         TEXT PRIMARY KEY CHECK (grant_id ~ '^[A-Za-z0-9_-]{22}$'),
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind             TEXT NOT NULL CHECK (kind IN ('agent_mayor', 'worker_read')),
+  agent_session_id INTEGER,
+  change_id        INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  app_id           INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at       TIMESTAMPTZ NOT NULL,
+  revoked_at       TIMESTAMPTZ,
+  CHECK (expires_at > created_at),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at),
+  CHECK (kind <> 'worker_read' OR (change_id IS NOT NULL AND app_id IS NOT NULL))
+);
+COMMENT ON TABLE mcp_delegations IS 'staging:private';
+
+CREATE INDEX IF NOT EXISTS mcp_delegations_user_idx
+  ON mcp_delegations (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS mcp_delegations_change_idx
+  ON mcp_delegations (change_id) WHERE change_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS mcp_delegations_agent_session_idx
+  ON mcp_delegations (agent_session_id) WHERE agent_session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS mcp_delegations_expiry_idx
+  ON mcp_delegations (expires_at);
+
 -- ── Verified GitHub account link (IDENTITY ONLY) ────────────────────────
 -- Distinct from the self-declared `users.github` profile string above,
 -- which is unverified display text and must NEVER be used for
@@ -8932,3 +8974,126 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS users_deleted_username_guard ON users;
 CREATE TRIGGER users_deleted_username_guard BEFORE INSERT OR UPDATE OF username ON users
   FOR EACH ROW EXECUTE FUNCTION reject_deleted_username();
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Agent sessions (#2779, spec: docs/agent-sessions.md)
+-- ═══════════════════════════════════════════════════════════════════════
+--
+-- An agent session is one long-lived conversation between a user and the
+-- Mayor, not bound to an app, that never closes on its own. Its changes stay
+-- ordinary chat_sessions rows (one app, one branch, one PR, one vote), linked
+-- back through chat_sessions.agent_session_id, so every downstream system —
+-- staging, checks, visual evidence, votes, merge, the sweepers — is untouched.
+--
+-- The experimental per-user flag. NULL follows the deployment default
+-- (AGENT_SESSIONS_DEFAULT); TRUE or FALSE is the user's own choice, so an
+-- opt-out survives the day the default flips. See services/agent-sessions.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_sessions_enabled BOOLEAN;
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id                 SERIAL PRIMARY KEY,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title              VARCHAR(256),
+  -- 'auto' until the user renames it; a titler never overwrites 'manual'.
+  title_source       VARCHAR(16) NOT NULL DEFAULT 'auto',
+  -- 'open' or 'archived'. Nothing closes a session but its owner.
+  status             VARCHAR(16) NOT NULL DEFAULT 'open',
+  -- The app hint: a soft default for which app the user means, from the
+  -- entry point or the Mayor. It never restricts what the session can do.
+  focus_app_id       INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  -- {entry, issueNumber?, proposalId?} as the entry point sent it.
+  focus_context      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- The one change the Mayor is working on (D4). Scout and build dispatches
+  -- go to it only; starting or switching to another change parks it.
+  active_change_id   INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  -- The Mayor's model, split from the coding agent's (which each change
+  -- carries itself, copied from here when the change starts).
+  mayor_model        VARCHAR(100),
+  agent_backend      VARCHAR(32),
+  agent_model        VARCHAR(100),
+  -- Rolling compaction of older turns, and the last message id it covers.
+  summary_md         TEXT,
+  summary_through_id INTEGER,
+  -- Lease for the conversation-level Mayor turn: one turn at a time.
+  active_turn        JSONB,
+  last_activity_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  archived_at        TIMESTAMPTZ,
+  CONSTRAINT agent_sessions_status_check CHECK (status IN ('open', 'archived')),
+  CONSTRAINT agent_sessions_title_source_check CHECK (title_source IN ('auto', 'manual')),
+  CONSTRAINT agent_sessions_focus_context_check CHECK (jsonb_typeof(focus_context) = 'object'),
+  CONSTRAINT agent_sessions_archived_check
+    CHECK ((status = 'archived') = (archived_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS agent_sessions_user_activity
+  ON agent_sessions (user_id, last_activity_at DESC);
+COMMENT ON TABLE agent_sessions IS 'staging:private';
+
+-- A change started from an agent session. It has no chat of its own: POST
+-- /api/sessions/:id/chat refuses it and points to the parent. Classic
+-- sessions keep NULL forever.
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS agent_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS chat_sessions_agent_session
+  ON chat_sessions (agent_session_id) WHERE agent_session_id IS NOT NULL;
+
+-- One transcript table holds both views: the conversation is
+-- `WHERE agent_session_id = X` (rows with no active change carry a NULL
+-- session_id), and one change's slice is `WHERE session_id = C`, as today.
+-- SET NULL rather than CASCADE: a change's own rows outlive its parent. The
+-- conversation-only rows (session_id NULL) are removed with their owner by
+-- services/account-deletion.js.
+ALTER TABLE chat_session_messages
+  ADD COLUMN IF NOT EXISTS agent_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS chat_session_messages_agent_session
+  ON chat_session_messages (agent_session_id, id) WHERE agent_session_id IS NOT NULL;
+
+-- Stamp the parent onto every row a change writes. There are dozens of
+-- insert sites (scout publication, recovered wrap-ups, issue drafts, handoff
+-- events, …); the trigger means none of them has to change and none can drop
+-- a row out of the conversation. The WHEN clause keeps it to rows that name a
+-- change and did not already say which conversation they belong to.
+CREATE OR REPLACE FUNCTION stamp_chat_message_agent_session() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  SELECT cs.agent_session_id INTO NEW.agent_session_id
+    FROM chat_sessions cs
+   WHERE cs.id = NEW.session_id;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'chat_session_messages_stamp_agent_session'
+       AND tgrelid = 'chat_session_messages'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER chat_session_messages_stamp_agent_session
+      BEFORE INSERT ON chat_session_messages
+      FOR EACH ROW WHEN (NEW.agent_session_id IS NULL AND NEW.session_id IS NOT NULL)
+      EXECUTE FUNCTION stamp_chat_message_agent_session();
+  END IF;
+END $$;
+
+-- The foreign key #2779 step 2 left for this table: a Mayor's delegated grant
+-- names the agent session it serves, and goes with it.
+--
+-- NOT VALID, deliberately: it binds every row written from now on without
+-- checking the rows already there. A grant written before this table existed
+-- can name a session id that never did, and a validating ADD would fail the
+-- whole schema apply — at boot. Such a grant is already dead: its liveness
+-- join finds no open session of its user and refuses it.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'mcp_delegations_agent_session_fk'
+  ) THEN
+    ALTER TABLE mcp_delegations
+      ADD CONSTRAINT mcp_delegations_agent_session_fk
+      FOREIGN KEY (agent_session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+      NOT VALID;
+  END IF;
+END $$;

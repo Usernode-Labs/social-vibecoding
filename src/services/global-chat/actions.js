@@ -5,59 +5,24 @@
 // The bearer token is returned once to the authenticated client and is never
 // placed in model context, logs, or transcript payloads.
 
+// The storage-independent half (token minting, normalization, sealing, the
+// TTL bounds) lives in services/confirmations, shared with agent sessions
+// (#2779). This module keeps what is Global Chat's own: its table, its thread
+// ownership check, and its capability ids.
 const crypto = require('node:crypto');
-const secrets = require('../secrets');
+const confirmations = require('../confirmations');
 
-const DEFAULT_TTL_MS = 5 * 60 * 1000;
-const MAX_TTL_MS = 15 * 60 * 1000;
-const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+const {
+  DEFAULT_TTL_MS,
+  MAX_TTL_MS,
+  ActionConfirmationError,
+  normalizedJson,
+  openedInput,
+  sealedInput,
+  sha256,
+} = confirmations;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CAPABILITY_RE = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
-
-class ActionConfirmationError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = 'ActionConfirmationError';
-    this.code = code;
-  }
-}
-
-function stableValue(value) {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
-}
-
-function normalizedJson(input) {
-  let json;
-  try { json = JSON.stringify(stableValue(input)); } catch { json = null; }
-  if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > 1024 * 1024) {
-    throw new ActionConfirmationError('invalid_action', 'The action input is not bounded JSON.');
-  }
-  return json;
-}
-
-function sha256(value) {
-  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
-}
-
-function sealedInput(json, dataKey) {
-  return { version: 1, ciphertext: secrets.encrypt(json, dataKey) };
-}
-
-function openedInput(value, dataKey) {
-  if (!value || value.version !== 1 || typeof value.ciphertext !== 'string') {
-    throw new ActionConfirmationError('invalid_action', 'The prepared action cannot be read.');
-  }
-  const json = secrets.decrypt(value.ciphertext, dataKey);
-  if (!json) throw new ActionConfirmationError('invalid_action', 'The prepared action cannot be read.');
-  let parsed;
-  try { parsed = JSON.parse(json); } catch { parsed = null; }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new ActionConfirmationError('invalid_action', 'The prepared action input is invalid.');
-  }
-  return { json, input: parsed };
-}
 
 function validateIdentity({ userId, threadId, capabilityId }) {
   const numericUserId = Number(userId);
@@ -85,18 +50,10 @@ async function prepareAction(pool, {
 }) {
   const identity = validateIdentity({ userId, threadId, capabilityId });
   if (!dataKey) throw new ActionConfirmationError('invalid_action', 'Action encryption is unavailable.');
-  const revision = objectRevision == null ? null : String(objectRevision);
-  if (revision != null && (!revision || revision.length > 255 || /[\u0000-\u001f\u007f]/.test(revision))) {
-    throw new ActionConfirmationError('invalid_action', 'The object revision is invalid.');
-  }
-  const issuedAt = now instanceof Date ? now : new Date(now);
-  if (Number.isNaN(issuedAt.valueOf())) throw new ActionConfirmationError('invalid_action', 'Invalid action time.');
-  const boundedTtl = Math.max(1_000, Math.min(MAX_TTL_MS, Number(ttlMs) || DEFAULT_TTL_MS));
-  const expiresAt = new Date(issuedAt.valueOf() + boundedTtl);
-  const token = crypto.randomBytes(32).toString('base64url');
-  const tokenHash = sha256(token);
-  const json = normalizedJson(input);
-  const inputHash = sha256(json);
+  const revision = confirmations.normalizedRevision(objectRevision);
+  const { issuedAt, expiresAt } = confirmations.expiryFor(now, ttlMs);
+  const { token, tokenHash } = confirmations.mintToken();
+  const { sealed, inputHash } = confirmations.sealAction(input, dataKey);
   const id = crypto.randomUUID();
   await pool.query(
     `INSERT INTO global_chat_action_tokens
@@ -112,7 +69,7 @@ async function prepareAction(pool, {
       identity.userId,
       identity.threadId,
       identity.capabilityId,
-      JSON.stringify(sealedInput(json, dataKey)),
+      JSON.stringify(sealed),
       inputHash,
       revision,
       expiresAt,
@@ -141,17 +98,14 @@ async function consumeAction(pool, {
   resolveObjectRevision = null,
   now = new Date(),
 }) {
-  if (typeof token !== 'string' || !TOKEN_RE.test(token)) {
-    throw new ActionConfirmationError('invalid_or_expired_action', 'This confirmation is invalid or expired.');
-  }
+  confirmations.assertTokenShape(token);
   const identity = validateIdentity({
     userId,
     threadId,
     capabilityId: capabilityId || 'action.pending',
   });
   if (!dataKey) throw new ActionConfirmationError('invalid_action', 'Action encryption is unavailable.');
-  const checkedNow = now instanceof Date ? now : new Date(now);
-  if (Number.isNaN(checkedNow.valueOf())) throw new ActionConfirmationError('invalid_action', 'Invalid action time.');
+  const checkedNow = confirmations.checkedTime(now);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -167,10 +121,7 @@ async function consumeAction(pool, {
     if (!row || (capabilityId && row.capability_id !== capabilityId)) {
       throw new ActionConfirmationError('invalid_or_expired_action', 'This confirmation is invalid or expired.');
     }
-    const opened = openedInput(row.normalized_input, dataKey);
-    if (sha256(opened.json) !== row.input_hash) {
-      throw new ActionConfirmationError('invalid_action', 'The prepared action no longer matches its input.');
-    }
+    const opened = confirmations.openAction(row.normalized_input, row.input_hash, dataKey);
     if (row.object_revision != null && typeof resolveObjectRevision === 'function') {
       const current = await resolveObjectRevision({
         client,

@@ -21,6 +21,45 @@ const SUPPORTED_SCOPES = Object.freeze([READ_SCOPE, WRITE_SCOPE]);
 const TOKEN_PREFIX = 'svmcp_';
 const REFRESH_PREFIX = 'svmcr_';
 
+// Delegated access tokens (#2779): the platform's own agents acting for a
+// user, never a client the user connected. A prefix of their own lets the
+// staging and enablement gates recognise one by shape before any lookup —
+// the one kind of connector credential those gates let through — and lets a
+// worker's output scrubber find one without knowing its value. Shape is
+// routing only: the token is still honoured only if its grant joins a live
+// mcp_delegations row.
+const DELEGATED_TOKEN_PREFIX = 'svmcd_';
+
+// Who a delegated grant is for. `agent_mayor` is the Mayor of an agent
+// session; `worker_read` is the coding agent inside one change's worker. The
+// server picks the kind when it issues the grant; nothing a client sends can
+// name one.
+const DELEGATION_KINDS = Object.freeze(['agent_mayor', 'worker_read']);
+
+// The synthetic client id each kind's tokens carry. Deliberately NOT the
+// `svmc_…` shape CLIENT_ID_RE accepts, so loadClient refuses them and the
+// consent and token endpoints can never mint, refresh or approve anything
+// under one.
+const DELEGATED_CLIENT_IDS = Object.freeze({
+  agent_mayor: 'homeroom:agent_mayor',
+  worker_read: 'homeroom:worker_read',
+});
+
+// Shown where a connector's name is (whoami's `connectedFrom`, logs).
+const DELEGATED_CLIENT_NAMES = Object.freeze({
+  agent_mayor: 'Homeroom agent session',
+  worker_read: 'Homeroom coding agent',
+});
+
+// Upper bounds on a delegated grant's life. A Mayor's read token lasts one
+// turn and a write token one confirmed action; a worker's lasts one build
+// turn. The caller asks for less and revokes in its `finally`; these are the
+// ceilings for a caller that forgets.
+const DELEGATION_MAX_TTL_SECONDS = Object.freeze({
+  agent_mayor: 15 * 60,
+  worker_read: 2 * 60 * 60,
+});
+
 const AUTH_CODE_TTL_SECONDS = 60;
 const ACCESS_TTL_SECONDS = 60 * 60;            // 1 hour
 const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
@@ -328,6 +367,11 @@ module.exports = {
   SUPPORTED_SCOPES,
   TOKEN_PREFIX,
   REFRESH_PREFIX,
+  DELEGATED_TOKEN_PREFIX,
+  DELEGATION_KINDS,
+  DELEGATED_CLIENT_IDS,
+  DELEGATED_CLIENT_NAMES,
+  DELEGATION_MAX_TTL_SECONDS,
   AUTH_CODE_TTL_SECONDS,
   ACCESS_TTL_SECONDS,
   REFRESH_TTL_SECONDS,

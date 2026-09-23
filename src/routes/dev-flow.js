@@ -164,7 +164,9 @@ function taskDeps(pool, config) {
 // How many live connector grants this account has. Advisory only — the
 // walkthrough never requires one — but worth showing at the hand-off step,
 // where "you already have Claude connected" changes the instructions from
-// "paste this" to "or just tell Claude to pick it up".
+// "paste this" to "or just tell Claude to pick it up". A delegated grant
+// (#2779) is the platform's own agent, not a connected chat product, so it
+// never counts.
 async function connectorCount(pool, userId) {
   if (IS_STAGING) return 0;
   try {
@@ -173,7 +175,8 @@ async function connectorCount(pool, userId) {
          FROM mcp_tokens t
         WHERE t.user_id = $1
           AND t.revoked_at IS NULL
-          AND t.expires_at > clock_timestamp()`,
+          AND t.expires_at > clock_timestamp()
+          AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)`,
       [userId]
     );
     return rows[0]?.n || 0;

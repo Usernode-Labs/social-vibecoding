@@ -15,6 +15,7 @@ const testingNotes = require('../services/testing-notes');
 const proposalDescription = require('../services/proposal-description');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
+const agentSessions = require('../services/agent-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
@@ -2465,6 +2466,39 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(400).json({ error: 'No GitHub repo configured for this app' });
       }
 
+      // #2779: an optional name, as the user would call the change. The
+      // agent-session Mayor's start_change sends one; the browser buttons
+      // do not, and their sessions are named from the first message.
+      let initialTitle = null;
+      if (req.body && req.body.title != null) {
+        initialTitle = typeof req.body.title === 'string'
+          ? req.body.title.replace(/\s+/g, ' ').trim() : '';
+        if (!initialTitle || initialTitle.length > MANUAL_SESSION_TITLE_MAX) {
+          return res.status(400).json({
+            error: `Title must be 1 to ${MANUAL_SESSION_TITLE_MAX} characters`,
+          });
+        }
+      }
+
+      // #2779: a change started by an agent session's Mayor (a delegated
+      // grant that names the session) becomes that session's active change,
+      // and the one it was working on is parked first — which also frees its
+      // slot before the cap below counts it. The grant's own liveness check
+      // has already refused an archived or foreign session; this re-checks
+      // at the write.
+      const agentSessionId = req.mcpDelegation && req.mcpDelegation.kind === 'agent_mayor'
+        ? req.mcpDelegation.agentSessionId || null : null;
+      if (agentSessionId) {
+        try {
+          await agentSessions.prepareChangeStart(pool, { agentSessionId, userId: req.user.id });
+        } catch (err) {
+          if (err instanceof agentSessions.AgentSessionError) {
+            return res.status(err.status).json({ error: err.message });
+          }
+          throw err;
+        }
+      }
+
       // Per-user cap (#193): only 'active' sessions count toward the
       // slot budget. Promoted sessions (PRs up for a merge vote) are
       // deliberately un-pausable — their status must stay 'promoted' so
@@ -2574,14 +2608,23 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
             linked_issues, issue_link_seeded,
-            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
-         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7, $8, $9)
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort,
+            session_title, proposed_pr_title)
+         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7, $8, $9, $10::text, $10::text)
          RETURNING *`,
         [app.id, req.user.id, issueNumber,
          issueNumber ? [issueNumber] : [], !!issueNumber,
-         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort,
+         initialTitle]
       );
       await topicAttrs.selfAssignProposal(pool, app.id, rows[0].id, req.user);
+      if (agentSessionId) {
+        await agentSessions.linkChange(pool, {
+          agentSessionId,
+          userId: req.user.id,
+          change: { ...rows[0], app_slug: app.slug, app_name: app.name },
+        });
+      }
 
       log.info('sessions', 'Session created (branch deferred to first turn)', { sessionId: rows[0].id });
 
@@ -4867,6 +4910,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(404).json({ error: 'Active session not found' });
       }
       const session = sessionRows[0];
+      // #2779: a change started from an agent session has no chat of its
+      // own. Its conversation is the agent session's, where the Mayor that
+      // started it runs every turn; two chats driving one branch would race.
+      if (session.agent_session_id != null) {
+        return res.status(409).json({
+          error: 'This change belongs to an agent session. Continue it there.',
+          agentSessionId: session.agent_session_id,
+        });
+      }
       const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
 
       // Resolve who pays for this turn once up front (#212): the shared
