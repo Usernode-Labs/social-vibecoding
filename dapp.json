@@ -4515,10 +4515,10 @@
       "expectText": "Discussion"
     },
     {
-      "name": "An underway workspace has a direct link and keeps access to its overview",
+      "name": "An underway workspace has a direct link and keeps access to its proposal card",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900801",
       "expectSelector": "#dc-quick-replies",
-      "expectText": "Change overview"
+      "expectText": "Open proposal card"
     },
     {
       "name": "#2327: an author can edit an underway proposal title",
@@ -4542,7 +4542,7 @@
       "name": "An old ?conversation=workspace link on a change page lands on the dev session page",
       "path": "/?conversation=workspace#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "#dev-section #dc-view:has(#dc-messages):has(#dc-quick-replies)",
-      "expectText": "Change overview"
+      "expectText": "Open proposal card"
     },
     {
       "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message as a named row with no bubble (#2783), a platform notice as a message from the app with one box",
