@@ -1107,13 +1107,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
   //
-  // 753 → 756: +3 (the prototype-gaps proposal, stream E): Discover's filter
-  // chips, the Featured chip's filtering (?filter=featured), and Share on an
-  // app's page. The two Create checks were RE-POINTED at the launcher grid's
-  // trailing tile rather than added, so they do not count. 756 leaves 34
-  // slots under the 790 ceiling. The other streams of the same proposal add
-  // their own; the merge reconciles the sum.
-  assert.equal(DAPP.tests.length, 756);
+  // 753 → 760: the prototype-gaps proposal (Homeroom task 598), which merges
+  // five streams of work into one change. What each adds, net of the checks
+  // it RE-POINTED rather than added (those do not count):
+  //   +3  Discover's filter chips, the Featured chip's filtering
+  //       (?filter=featured), and Share on an app's page. The two Create
+  //       checks were re-pointed at the launcher grid's trailing tile.
+  //   +4  Me's "More" rows, Me's Your contributions, the Challenges page's
+  //       History tab, and the Message button on a person's page. Five more
+  //       were re-pointed (Me's card and stat cards, and the Admin, Node and
+  //       two staking rows that moved into Settings).
+  assert.equal(DAPP.tests.length, 760);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

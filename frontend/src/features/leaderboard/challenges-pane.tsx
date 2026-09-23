@@ -58,6 +58,7 @@ import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
+import { YourStanding } from './your-standing';
 
 // The controller, by name. It is published on `window` for its legacy callers
 // (./leaderboard.js's lazy mount, app.js's pull-to-refresh and its #982
@@ -715,6 +716,12 @@ export function ChallengesPane(): ReactNode {
   return (
     <>
       <div id="tc-se-grid" className={state.detail ? 'hidden' : undefined}>
+        {/*
+            The viewer's own standing leads the tab, as the prototype's
+            Challenges page does — the points, rank, breakdown and token
+            allocation the Me screen used to carry (./your-standing.tsx).
+        */}
+        <YourStanding />
         <Grid view={state.grid} />
       </div>
       {/* Challenge detail page */}

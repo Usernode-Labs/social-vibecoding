@@ -5055,16 +5055,31 @@ const App = {
       somebody rather than a tab of this screen — it is what the address
       `#leaderboard/<section>/<user>` is carrying, and the name is the
       answer to "where am I".
+
+      THE WORDS ARE THE TAB'S OWN LABELS (bug f of the navigation audit).
+      This table said "Topochain" for the tab labelled Leaderboard, so a cold
+      #leaderboard/topochain named a tab the strip did not have, and the three
+      Kudos sub-views (#leaderboard/prs, /users, /history) fell through to
+      "Leaderboard". It is one entry per ADDRESS now, each the label of the
+      tab that address shows (frontend/src/features/leaderboard/index.tsx's
+      SECTION_TABS); `seasons` is the History tab. And it is no longer only
+      the ENTRY's title: a tab press rewrites the address with replaceState
+      and never comes back through here, so Leaderboard._syncTitle asks this
+      same method on every section change. One table, both paths.
   */
   LEADERBOARD_TITLES: {
     challenges: 'Challenges',
     kudos: 'Kudos',
-    topochain: 'Topochain',
+    prs: 'Kudos',
+    users: 'Kudos',
+    history: 'Kudos',
+    topochain: 'Standings',
+    seasons: 'History',
   },
 
   _leaderboardTitle(sub, profileUser) {
     if (profileUser) return `@${profileUser}`;
-    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard';
+    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Challenges';
   },
 
   _routeLeaderboard(sub, profileUser, challengeTarget) {
@@ -5077,7 +5092,8 @@ const App = {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
       Leaderboard._setSection('challenges');
-    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges'
+                || sub === 'seasons')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
       // Selecting the event first means the pane's very first fetch is
