@@ -11840,7 +11840,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2064,
+      "line": 2126,
       "method": "POST",
       "path": "/api/sessions/:id/promote",
       "expression": null,
@@ -11861,7 +11861,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2689,
+      "line": 2751,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/candidates",
       "expression": null,
@@ -11880,7 +11880,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2726,
+      "line": 2788,
       "method": "GET",
       "path": "/api/apps/:slug/pr-import/preview",
       "expression": null,
@@ -11898,7 +11898,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 2789,
+      "line": 2851,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import",
       "expression": null,
@@ -11921,7 +11921,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3086,
+      "line": 3148,
       "method": "POST",
       "path": "/api/apps/:slug/pr-import/_mock/advance",
       "expression": null,
@@ -11930,7 +11930,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3126,
+      "line": 3188,
       "method": "POST",
       "path": "/api/sessions/:id/vote",
       "expression": null,
@@ -11951,7 +11951,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3419,
+      "line": 3502,
       "method": "GET",
       "path": "/api/sessions/:id/votes",
       "expression": null,
@@ -11972,7 +11972,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3485,
+      "line": 3568,
       "method": "GET",
       "path": "/api/me/proposals",
       "expression": null,
@@ -11996,7 +11996,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 3682,
+      "line": 3765,
       "method": "GET",
       "path": "/api/apps/:slug/promoted",
       "expression": null,
@@ -12021,7 +12021,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4056,
+      "line": 4139,
       "method": "GET",
       "path": "/api/apps/:slug/merged",
       "expression": null,
@@ -12044,7 +12044,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4393,
+      "line": 4476,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:id",
       "expression": null,
@@ -12064,7 +12064,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4464,
+      "line": 4547,
       "method": "POST",
       "path": "/api/sessions/:id/undo",
       "expression": null,
@@ -12085,7 +12085,7 @@
     },
     {
       "source": "src/routes/votes.js",
-      "line": 4550,
+      "line": 4633,
       "method": "POST",
       "path": "/api/sessions/:id/admin-merge",
       "expression": null,
