@@ -1288,54 +1288,142 @@ const Home = {
         && App._isScreenVisible('app-view')
         && App._revealedScreen === 'app-view') return;
     const self = (Home._apps || []).find((a) => a && a.self_hosted);
-    // ── THE GAP ON A COLD BOOT ─────────────────────────────────────
-    //
-    // Everything below reads the self-hosted row out of GET /api/apps, and
-    // that request is the whole boot's slowest. Until it lands `_apps` is
-    // empty, this returns, and the header's standing action is simply MISSING
-    // — for as long as the fetch takes, on home and on every other platform
-    // screen (they all route through here via _enterScreenChrome). It then
-    // pops in, which is the "the Improve button shows up a few seconds late"
-    // report: not a stale button, an absent one.
-    //
-    // So publish the LAST ONE first. The row is the same object visit after
-    // visit — it is the platform's own app — so a remembered copy is right
-    // far more often than "nothing" is, and the real payload overwrites it a
-    // moment later either way (improveStore.set is a no-op when nothing
-    // changed, so the common case is invisible). Only while the payload is
-    // genuinely not here yet: once `_appsLoaded` is true the list is the
-    // truth, including the truth that this viewer is not served the row.
-    //
-    // It cannot leak the row's existence to someone who may not see it: the
-    // cache is written only from a successful publish below, i.e. only in a
-    // browser profile that was already served the row.
     if (!self || !self.slug) {
-      if (Home._appsLoaded) return;
-      const cached = Home._cachedImproveTarget();
-      if (cached) window.Improve.setTarget(cached);
+      Home._publishPlatformFallback();
       return;
     }
-    const target = {
+    const target = Home._platformTargetFrom(self);
+    window.Improve.setTarget(target);
+    Home._rememberImproveTarget(target);
+  },
+
+  /**
+   * The Improve target a self-hosted row describes — the ONE builder, whichever
+   * payload the row came from.
+   *
+   * Two shapes reach it: GET /api/apps's list row (Home._apps), and GET
+   * /api/apps/:slug's detail row, which ../app-context/platform-target.js
+   * fetches when this tab has no list yet. They differ in two fields, and both
+   * are read either way: the list carries a `version` block the server already
+   * shortened and a server-built `icon_url`; the detail carries the raw
+   * `main_sha` and `icon_image_id`.
+   */
+  _platformTargetFrom(row) {
+    const iconUrl = row.icon_url
+      || (row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null);
+    return {
       kind: 'platform',
-      slug: self.slug,
-      name: self.name || self.slug,
+      slug: row.slug,
+      name: row.name || row.slug,
       selfHosted: true,
-      repoUrl: self.repo_url || null,
-      iconUrl: self.icon_url || null,
-      iconEmoji: self.icon_emoji || null,
-      // The list payload's own version block, already shortened server-side.
-      version: self.version?.shortSha || null,
-      deploying: self.status === 'deploying',
+      repoUrl: row.repo_url || null,
+      iconUrl,
+      iconEmoji: row.icon_emoji || null,
+      version: row.version?.shortSha || (row.main_sha ? String(row.main_sha).slice(0, 7) : null),
+      deploying: row.status === 'deploying',
       // `can_collaborate` is the read affordance accessFlags() computes for
       // this viewer on this row — the same bit that decides whether starting
       // a session is offered anywhere else.
-      readOnly: !self.can_collaborate,
-      // Nothing to share: the platform row has no per-slug app URL, which is
-      // also why opening it lands on Dev rather than the App tab.
+      readOnly: !row.can_collaborate,
+      // Nothing to share through the APP share dialog: the platform row has no
+      // per-slug app URL, which is also why opening it lands on Dev rather
+      // than the App tab. About Homeroom shares the platform's own address
+      // (../app-context/about-pane.tsx).
       canShare: false,
     };
-    window.Improve.setTarget(target);
-    Home._rememberImproveTarget(target);
+  },
+
+  /**
+   * Homeroom, for a viewer who is NOT served its row.
+   *
+   * GET /api/apps hides the self-hosted row from a non-admin while
+   * SELF_APP_PUBLIC_VOTING is off, and answers 404 for its slug. That used to
+   * mean NO target on every platform screen, permanently: the mark's menu said
+   * "THIS APP" over a Go to workshop that went to `#` and an About with nothing
+   * in it. But the viewer is still standing in the platform, and two of its
+   * rows are theirs as much as anyone's — feedback on it, and About it. So the
+   * target is Homeroom, marked `restricted`, and the menu hides the two rows
+   * that lead to its workshop and discussion rather than into a 404.
+   *
+   * Nothing here discloses the row: the slug is what GET /api/version publishes
+   * to anyone, and every other fact is either Homeroom's name or false.
+   * `readOnly` hides New change — there is no workshop to start one in.
+   */
+  _restrictedPlatformTarget(slug) {
+    return {
+      kind: 'platform',
+      slug,
+      name: 'Homeroom',
+      selfHosted: true,
+      restricted: true,
+      repoUrl: null,
+      iconUrl: null,
+      iconEmoji: null,
+      version: null,
+      deploying: false,
+      readOnly: true,
+      canShare: false,
+    };
+  },
+
+  // ── THE GAP ON A COLD BOOT ─────────────────────────────────────────
+  //
+  // Everything above reads the self-hosted row out of GET /api/apps, and that
+  // request is the whole boot's slowest. Until it lands `_apps` is empty and
+  // the header's standing action was simply MISSING — for as long as the fetch
+  // took, on home and on every other platform screen (they all route through
+  // here via _enterScreenChrome). It then popped in, which was the "the
+  // Improve button shows up a few seconds late" report: not a stale button, an
+  // absent one.
+  //
+  // So publish the LAST ONE first. The row is the same object visit after
+  // visit — it is the platform's own app — so a remembered copy is right far
+  // more often than "nothing" is, and the real payload overwrites it a moment
+  // later either way (improveStore.set is a no-op when nothing changed, so the
+  // common case is invisible). Only while the payload is genuinely not here
+  // yet: once `_appsLoaded` is true the list is the truth, including the truth
+  // that this viewer is not served the row.
+  //
+  // It cannot leak the row's existence to someone who may not see it: the
+  // cache is written only from a publish of a row this profile was served.
+  //
+  // ── AND HOME IS NOT THE ONLY DOOR ──────────────────────────────────
+  //
+  // Only Home loads that list. A first visit that lands on #messages,
+  // #workshop, #profile or #settings — a shared link, a notification, a
+  // bookmark — never loads it and has no remembered copy, so the menu stayed
+  // untargeted for the whole visit: "THIS APP", Go to workshop to `#`, About
+  // empty. It fixed itself once Home had been visited, and for a viewer not
+  // served the row it never did. So when neither the list nor the cache can
+  // answer, ../app-context/platform-target.js finds the row on its own — the
+  // slug from GET /api/version, then GET /api/apps/<slug> — and calls this
+  // publisher again with the answer, so the two gates above still decide.
+  //
+  // Reached through `window.PlatformTarget` rather than an import: a dozen
+  // tests run this file as a classic script in a vm, where an import line is
+  // stripped and its binding would be a ReferenceError at call time.
+  _publishPlatformFallback() {
+    const resolver = window.PlatformTarget;
+    if (Home._appsLoaded) {
+      // The list is here and the row is not in it: not served. Homeroom's
+      // restricted menu rather than none, once the slug is known.
+      const slug = resolver?.slug?.();
+      if (slug) window.Improve.setTarget(Home._restrictedPlatformTarget(slug));
+      else resolver?.resolve?.({ served: false });
+      return;
+    }
+    const cached = Home._cachedImproveTarget();
+    if (cached) {
+      window.Improve.setTarget(cached);
+      return;
+    }
+    const known = resolver?.known?.();
+    if (known) {
+      window.Improve.setTarget(known);
+      if (!known.restricted) Home._rememberImproveTarget(known);
+      return;
+    }
+    resolver?.resolve?.();
   },
 
   // Per-visit only, like the widgets' own expand flag: a viewer who opened

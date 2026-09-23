@@ -1107,9 +1107,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
   //
-  // 753 → 765: the prototype-gaps proposal (Homeroom task 598), which merges
+  // 753 → 768: the prototype-gaps proposal (Homeroom task 598), which merges
   // five streams of work into one change. What each adds, net of the checks
   // it RE-POINTED rather than added (those do not count):
+  //   +3  About is the app's page (Open, Add to your apps, its builders with
+  //       what each has merged); About Homeroom carries the platform's own
+  //       figures; a cold load of any platform tab but Home points the mark's
+  //       menu at Homeroom.
   //   +3  Discover's filter chips, the Featured chip's filtering
   //       (?filter=featured), and Share on an app's page. The two Create
   //       checks were re-pointed at the launcher grid's trailing tile.
@@ -1125,7 +1129,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //       wears the safe-bar contract, so on a phone it sits above the tab
   //       bar. The four checks that pinned the "+" in All items' actions row
   //       were re-pointed.
-  assert.equal(DAPP.tests.length, 765);
+  // 768 leaves 22 slots under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 768);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

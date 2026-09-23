@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 657,
-    "mappedRoutes": 519,
+    "totalRoutes": 658,
+    "mappedRoutes": 520,
     "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 365,
+    "clientApiReferences": 366,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -268,7 +268,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 264,
+      "line": 265,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -277,7 +277,7 @@
     },
     {
       "source": "server.js",
-      "line": 300,
+      "line": 301,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -292,6 +292,7 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
@@ -304,7 +305,7 @@
     },
     {
       "source": "server.js",
-      "line": 330,
+      "line": 331,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -313,7 +314,7 @@
     },
     {
       "source": "server.js",
-      "line": 370,
+      "line": 371,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -339,7 +340,7 @@
     },
     {
       "source": "server.js",
-      "line": 375,
+      "line": 376,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -358,7 +359,7 @@
     },
     {
       "source": "server.js",
-      "line": 397,
+      "line": 398,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -367,7 +368,7 @@
     },
     {
       "source": "server.js",
-      "line": 680,
+      "line": 685,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +377,7 @@
     },
     {
       "source": "server.js",
-      "line": 862,
+      "line": 867,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +386,7 @@
     },
     {
       "source": "server.js",
-      "line": 866,
+      "line": 871,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +395,7 @@
     },
     {
       "source": "server.js",
-      "line": 870,
+      "line": 875,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +404,7 @@
     },
     {
       "source": "server.js",
-      "line": 874,
+      "line": 879,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +413,7 @@
     },
     {
       "source": "server.js",
-      "line": 878,
+      "line": 883,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,7 +422,7 @@
     },
     {
       "source": "server.js",
-      "line": 882,
+      "line": 887,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -1485,6 +1486,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -1566,6 +1568,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1589,6 +1592,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1612,6 +1616,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1635,6 +1640,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1658,6 +1664,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1771,6 +1778,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -1903,6 +1911,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1926,6 +1935,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2142,6 +2152,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/fork-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2165,6 +2176,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/creation-progress-store.js",
@@ -2189,6 +2201,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2211,6 +2224,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2273,6 +2287,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2296,6 +2311,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2320,6 +2336,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2343,6 +2360,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/rename-app.tsx",
@@ -2366,6 +2384,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2408,6 +2427,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2431,6 +2451,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2453,6 +2474,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2475,6 +2497,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2498,6 +2521,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2530,6 +2554,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/creation-progress-store.js",
@@ -2554,6 +2579,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/create-app.tsx",
         "frontend/src/features/dialogs/fork-app.tsx",
@@ -2580,6 +2606,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2621,6 +2648,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3325,6 +3353,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3347,6 +3376,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3590,6 +3620,7 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -3615,6 +3646,7 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -3680,6 +3712,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3740,6 +3773,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/mention-typeahead.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
@@ -4057,6 +4091,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -4080,6 +4115,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -5175,6 +5211,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -5197,6 +5234,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -5310,6 +5348,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -5948,6 +5987,7 @@
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
         "frontend/src/features/admin/admin-campaigns.tsx",
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
@@ -6011,6 +6051,7 @@
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
         "frontend/src/features/admin/admin-campaigns.tsx",
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
@@ -6054,6 +6095,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -6077,6 +6119,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6540,6 +6583,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -6814,6 +6858,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6838,6 +6883,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6914,6 +6960,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6992,6 +7039,25 @@
       ]
     },
     {
+      "source": "src/routes/platform-about.js",
+      "line": 150,
+      "method": "GET",
+      "path": "/api/platform/about",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.platform.about.a5222435",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js"
+      ]
+    },
+    {
       "source": "src/routes/pm-order.js",
       "line": 111,
       "method": "GET",
@@ -7007,6 +7073,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7029,6 +7096,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7452,6 +7520,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7641,6 +7710,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7681,6 +7751,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7703,6 +7774,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7881,6 +7953,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -7904,6 +7977,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7926,6 +8000,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -9072,6 +9147,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -12001,6 +12077,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/import-pr.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -12100,6 +12177,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -12125,6 +12203,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -12295,6 +12374,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",

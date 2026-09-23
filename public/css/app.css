@@ -2299,6 +2299,18 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .un-sheet:has([data-staking-sheet]) {
   touch-action: pan-x;
 }
+/* …EXCEPT ON ITS ABOUT PANE, WHICH IS A PAGE. The app's facts, its builders
+   and its MORE rows run past the sheet's 80% cap on a phone, and `pan-x`
+   above leaves #switcher-nav's overflow unreachable by touch — the pane would
+   end where the sheet does, with Share and Fork below the fold and no gesture
+   to reach them. So while About is showing the sheet takes the notifications
+   sheet's trade instead (the `pan-y` block above): a vertical drag in the
+   pane scrolls it, and the grabber still dismisses. Same specificity as the
+   rule above, so this one wins by coming after it; the menu pane keeps the
+   drag-to-dismiss it has always had. */
+.un-sheet:has(#app-about-pane) {
+  touch-action: pan-y;
+}
 
 /* THE HOME-INDICATOR INSET IS THE KIT'S JOB INSIDE AN ADOPTED SURFACE.
    #improve-footer carries .platform-safe-scroll, which is right in the two
