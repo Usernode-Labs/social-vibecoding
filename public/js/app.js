@@ -4309,11 +4309,47 @@ const App = {
   // phone's bottom bar keeps its slide (it is being reworked separately,
   // #2766), and every other entry — a drill-in, an app's zoom — keeps its
   // motion, because there the page really does go somewhere.
-  _entryTransition(preferred, screenEl) {
-    if (App._isRailSwitch(preferred, screenEl)) preferred = 'none';
+  //
+  // …AND A TAB PRESS INTO OR OUT OF AN APP'S WORKSHOP IS A TAB SWITCH TOO
+  // (#2880, #2881). The Workshop tab returns to the app Workshop you left
+  // (#2776), which is #app-view, not #workshop-screen — so the press went
+  // through navigateToApp and asked for 'zoom-in'. From Home that expanded
+  // the app's tile when it had one (the animation #2881 reports); from every
+  // other tab, and for the platform's own row, which has no tile anywhere,
+  // the kit fell back to its 'push' — the very fade-through #2797 took off
+  // the five roots, with the header and the rail swapped for snapshot images
+  // for its length. That is the flicker #2880 reports going to the Workshop
+  // from any tab. Home pressed from an app's Workshop ran navigateHome's
+  // zoom-out, shrinking the page into its tile. A press is marked `viaTab`
+  // by the one caller that knows it is one (the tab bar's Home click, and
+  // resumeWorkshopView for the Workshop's), and resolves exactly as a press
+  // on any other tab does: a cut on the desktop rail, and on the phone the
+  // same push or pop its other tabs run.
+  _entryTransition(preferred, screenEl, viaTab) {
+    if (viaTab) preferred = App._tabSwitchType(preferred === 'zoom-out' ? 'pop' : 'push');
+    else if (App._isRailSwitch(preferred, screenEl)) preferred = 'none';
     if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', preferred);
     return preferred;
   },
+
+  // What a press on a tab runs: a cut on the desktop layout, where the bar is
+  // the rail beside the page; `phoneType` on the phone's bottom bar, which is
+  // what every other tab there runs (a push into a tab, navigateHome's pop).
+  _tabSwitchType(phoneType) {
+    try {
+      if (window.matchMedia && window.matchMedia('(min-width: 768px)').matches) return 'none';
+    } catch (_) { /* unreadable: the phone's own motion */ }
+    return phoneType;
+  },
+
+  // Set for the length of one tab press's synchronous navigation (see
+  // resumeWorkshopView). Never left set: a later navigation into the same
+  // app — its tile on Home, a notification — is not a press and keeps its zoom.
+  _tabPress: false,
+
+  // How long a tab press into an app's Workshop holds the outgoing screen
+  // for the app's record before revealing the view anyway (navigateToApp).
+  _TAB_REVEAL_WAIT_MS: 250,
 
   // The rail's own places: the roots its five tabs navigate to.
   _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
@@ -4635,7 +4671,11 @@ const App = {
       App._resumingWorkshop = null;
       return false;
     }
-    App.restoreFromHash();
+    // A PRESS ON THE WORKSHOP TAB, and it swaps like one (#2880, #2881).
+    // navigateToApp reads the flag before its first await, which is where it
+    // starts its transition; restoreFromHash reaches it synchronously.
+    App._tabPress = true;
+    try { App.restoreFromHash(); } finally { App._tabPress = false; }
     return true;
   },
 
@@ -5921,7 +5961,27 @@ const App = {
     // link opens the source app), so the zoom goes through the same
     // single-motion gate — 'none' still runs fn + after as one mutation.
     const appViewEl = document.getElementById('app-view');
-    PlatformUI.transition(() => {
+    // The Workshop tab returning to this app's Workshop (resumeWorkshopView)
+    // is a tab switch, not an app opening: no tile to grow out of (#2881),
+    // and no full-page fallback over the rail and header (#2880).
+    const viaTab = App._tabPress === true;
+    // THE LAST VISIT'S BOARD IS NOT THIS ONE'S FIRST FRAME (#2880). Leaving
+    // an app's Workshop for another tab hides #app-view with its Dev surfaces
+    // still mounted, and AppView.close() marks their data stale. Revealed
+    // as-is, coming back painted that old board for a frame, then the
+    // Workshop's loading skeleton once the stale data was noticed, then the
+    // board again: the page blinking out and back in. Retiring those roots as
+    // the view is revealed makes the skeleton the first frame, and
+    // renderDevView mounts the frame afresh. Only onto a Dev route and only
+    // from another screen: the App tab owns its own surface, and a view that
+    // is on screen is not stale.
+    //
+    // BEFORE the transition, not inside its callback: a View Transition (the
+    // phone's push) runs the callback frames later, by when switchTab may
+    // already have mounted this visit's board — which the callback would then
+    // tear down. The view is still hidden here, so nothing painted changes.
+    const staleDev = initialRoute.tab === 'dev' && !App._isScreenVisible('app-view');
+    const enter = () => PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
       // The bar leaves WITH the app arriving, not after it. `after` below
       // runs _showOnlyScreen, which would sync it a transition later — and
@@ -5937,7 +5997,7 @@ const App = {
       // demo cards, non-running apps, an explicit non-app tab, offline.
       try { AppView.beginLaunch(slug, tab); } catch (err) { /* fall back to the plain path */ }
     }, {
-      type: App._entryTransition('zoom-in', appViewEl),
+      type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
       fromEl: () => App._tileFor(slug),
       // The outgoing screen: the kit hides it while measuring the
@@ -5950,6 +6010,11 @@ const App = {
       // this app would otherwise stay painted behind it.
       after: () => { App._showOnlyScreen('app-view'); },
     });
+    const reveal = () => {
+      if (staleDev) AppView._teardownDevRoots();
+      enter();
+    };
+    if (!viaTab) reveal();
     // Intentionally NOT setting the header to `slug` here. Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
     // slug-as-placeholder shows up to users as something like
@@ -5974,6 +6039,27 @@ const App = {
     };
     App._appLoad = load;
     try {
+      // A TAB PRESS REVEALS A PAINTED PAGE (#2880). Revealed at once, as an
+      // app launch is, #app-view went on screen EMPTY: nothing draws into
+      // #app-content until this record lands and switchTab mounts the Dev
+      // frame, so the press cut from the tab you were on to a bare page and
+      // only then to the Workshop. The outgoing screen stays up instead while
+      // the record loads — a service-worker hit on the boot fast lane, a few
+      // milliseconds — and the reveal runs in the same task as the mount
+      // below (the awaits between them are microtasks, and the frame mounts
+      // under flushSync), so no frame is painted between them. Bounded: a
+      // record that is slow to come is not a reason for the press to seem
+      // ignored, and past the bound the view is revealed as it always was.
+      if (viaTab) {
+        await Promise.race([
+          load.promise,
+          new Promise((resolve) => setTimeout(resolve, App._TAB_REVEAL_WAIT_MS)),
+        ]);
+        // Somewhere else was asked for while this waited; that navigation
+        // owns the screen, and this one never showed.
+        if (App.currentApp !== slug || generation !== App._appNavigationGeneration) return false;
+        reveal();
+      }
       await load.promise;
     } finally {
       if (App._appLoad === load) App._appLoad = null;
@@ -6030,7 +6116,13 @@ const App = {
     });
   },
 
-  navigateHome() {
+  // `opts.viaTab`: the Home TAB was pressed (features/nav/tab-bar.tsx), which
+  // swaps like any other tab press (#2881) — see _entryTransition. Every
+  // other caller (Back, an app's ✕, the logo) passes nothing and keeps the
+  // zoom back into the app's tile. Read strictly, because some callers are
+  // event listeners and hand an Event through.
+  navigateHome(opts) {
+    const viaTab = !!(opts && opts.viaTab === true);
     // Home is never shown in the side panel: it is the top window's, and
     // going there leaves the app.
     if (App.embeddedPanel && window.UsernodeReact?.sidePanelEmbed?.forward?.('')) return;
@@ -6081,7 +6173,7 @@ const App = {
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
       App.setHeaderTitle('Homeroom');
     }, {
-      type: App._entryTransition('zoom-out', av),
+      type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
       fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
       fallback: fallbackType,

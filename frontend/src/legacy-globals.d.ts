@@ -84,7 +84,7 @@ declare global {
         [key: string]: unknown;
       } | null;
       eventsWs?: WebSocket | null;
-      navigateHome?(): void;
+      navigateHome?(opts?: { viaTab?: boolean }): void;
       restoreFromHash?(): void;
       navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
       openAppTab?(slug: string, tab?: string, opts?: unknown): void;

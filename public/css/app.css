@@ -12356,8 +12356,13 @@ body.is-offline [data-offline-disabled] {
    under it; past ~760px a card's meta line and its bubbles were sentences
    too wide to read in one saccade, and the board strip beside them was
    empty. The strip's own padding closes to 4px at the sides so the sheets
-   sit almost edge to edge on a phone, as the Messages list does. */
-#dev-workshop { max-width: 760px; margin: 0 auto; }
+   sit almost edge to edge on a phone, as the Messages list does.
+   `width: 100%` for the LOADING state (#2880): `#dev-workshop:has(> .dev-ws)`
+   below explains why a flex item centred by auto margins needs it, but that
+   rule only matches once the Workshop has rendered. Until then the host holds
+   the skeleton, and as a flex item it shrank to the skeleton's content — a
+   72px sliver of grey tiles between the blank page and the Workshop. */
+#dev-workshop { max-width: 760px; margin: 0 auto; width: 100%; }
 /* The bottom padding is THE SAME GAP the rail sticks to, and that is what
    makes the two resting cases agree. When the lander fills the scroller the
    rail sits at its bottom edge, so the air below it is whatever `#dev-body`
@@ -17538,6 +17543,55 @@ html.un-kb #platform-parked {
   border-left: 1px solid var(--app-sheet-line);
   border-top-right-radius: 1.75rem;
   overflow: hidden;
+}
+
+/* THE DIVIDER (#2886) — the panel's left edge, as a handle. It sits over the
+   panel's own hairline (the border-left above), inside the panel because the
+   panel clips its corner, and shows itself only under the pointer, on focus
+   and while held: a brand-coloured bar where the hairline is. The width it
+   sets is `--side-panel-w` on <html> (features/side-panel/resize.ts), so the
+   app beside it follows through the margin rule below. */
+.side-panel-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.side-panel-divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--brand-ink);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.side-panel-divider:hover::after,
+.side-panel-divider:focus-visible::after,
+html.side-panel-resizing .side-panel-divider::after {
+  opacity: .45;
+}
+/* WHILE HELD: the two frames would take the pointer the moment it crossed
+   them and the drag would stall, so they stand aside; and nothing under the
+   pointer selects or shows another cursor. */
+html.side-panel-resizing iframe {
+  pointer-events: none;
+}
+html.side-panel-resizing,
+html.side-panel-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-panel-divider::after { transition: none; }
 }
 
 .side-panel-head {
