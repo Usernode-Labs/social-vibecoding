@@ -1063,7 +1063,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Channels filter, the "+" at the strip's end, #general's grouped rows and
   // its title row, and a `#name` channel link beside a `#123` issue ref in a
   // message. 740 leaves 30 slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 740);
+  //
+  // +2 (#2807, #2812): the dev-chat model picker has no caption line under
+  // it, and stays usable while a turn runs. 742 leaves 28 slots under the
+  // 770 ceiling.
+  assert.equal(DAPP.tests.length, 742);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
