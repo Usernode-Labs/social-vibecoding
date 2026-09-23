@@ -12,11 +12,14 @@
  * this list is the way back. The phone keeps the strip: it has no rail, and
  * its bar is five tabs across the foot of the screen with no room for a list.
  *
- * ── A glyph per kind ─────────────────────────────────────────────────
+ * ── A glyph per kind, and an app's own icon ─────────────────────────
  *
- * A person, a group, a channel's `#`, the agent's sparkle and an app window,
- * so a mixed list can be scanned for "the DM" or "the app" without reading
- * every label. A row with something unread carries a dot, which is all a
+ * A person, a group, a channel's `#` and the agent's sparkle, so a mixed
+ * list can be scanned for "the DM" or "the app" without reading every
+ * label. An app draws ITS OWN icon (#2878) — the image or emoji the launcher
+ * and Discover draw, through the same AppIconContent — because "an app" is
+ * not what you are scanning for, "Chess" is. The generic app window is kept
+ * only for an app that has no icon at all. A row with something unread carries a dot, which is all a
  * 224px rail has room to say; the count is on the Messages tab and the row.
  *
  * ── The initial render is the prerender ──────────────────────────────
@@ -42,6 +45,7 @@ import {
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useGlobalChatState } from '../global-chat/store';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
@@ -78,8 +82,23 @@ function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
   window.App?.openAppTab?.(slug, 'app');
 }
 
+/** The app's own icon, as the launcher draws it. */
+function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
+  const record = { icon_url: app.iconUrl, icon_emoji: app.iconEmoji, name: app.name };
+  return (
+    <span
+      data-icon={appIconKind(record)}
+      className="app-icon-tile platform-recent-tile"
+      aria-hidden="true"
+    >
+      <AppIconContent app={record} />
+    </span>
+  );
+}
+
 function RecentRow({ item }: { item: RecentItem }) {
   const Glyph = GLYPHS[item.kind];
+  const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
   return (
     <a
@@ -90,7 +109,7 @@ function RecentRow({ item }: { item: RecentItem }) {
       aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${unread}`}
       onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
     >
-      <Glyph className="platform-recent-glyph" aria-hidden="true" />
+      {app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>

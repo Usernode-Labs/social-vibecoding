@@ -33,9 +33,9 @@ import { readParked } from './parked-store.js';
 
 const KEY = 'usernode_recent_apps_v1';
 
-/** More than the rail shows, so a burst of messages cannot push every app
- *  out of storage for good. */
-export const RECENT_APPS_MAX = 8;
+/** More than the rail's list holds (./recents.ts, RECENTS_LIMIT), so a
+ *  burst of messages cannot push every app out of storage for good. */
+export const RECENT_APPS_MAX = 40;
 
 /**
  * @typedef {object} RecentApp
