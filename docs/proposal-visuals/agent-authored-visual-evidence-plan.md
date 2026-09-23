@@ -9,6 +9,14 @@
 > now means only that replay and artifact integrity checks passed. The older
 > agent verdict, fallback vision reviewer, and semantic repair loop in this
 > historical plan are no longer part of the active flow.
+>
+> **Replay submission update (2026-09-23):** `evidence_run_plan` validates and
+> accepts the frozen replay plan immediately. Its response is an acknowledgement,
+> not a replay verdict. Homeroom continues both clean replay passes after the
+> planning model finishes, records any browser failure, and starts a bounded
+> correction turn only for a repairable locator error. This prevents a long
+> browser replay from holding one model-tool HTTP request open until a proxy
+> drops the connection. People still judge the captured media.
 
 Original #2380 status: implemented, merged, and deployed. Collection, execution, and
 presentation are default-on and advisory; one emergency kill switch can stop

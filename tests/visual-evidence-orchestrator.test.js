@@ -138,6 +138,76 @@ test('a successful agent plan publishes captured media without a model verdict',
   assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
 });
 
+test('platform waits for a background replay after the hosted planner receives its acknowledgement', async () => {
+  let releaseReplay;
+  const pendingReplay = new Promise((resolve) => { releaseReplay = resolve; });
+  let acknowledge;
+  const acknowledged = new Promise((resolve) => { acknowledge = resolve; });
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      const result = control.submitPlan(fixtures.plan());
+      acknowledge(result);
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    await pendingReplay;
+    return runPass(...args);
+  };
+  const execution = execute(fixture);
+  const receipt = await acknowledged;
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.duplicate, false);
+  assert.equal(fixture.calls.stored, 0, 'acknowledgement cannot publish pending media');
+  releaseReplay();
+  const result = await execution;
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.calls.stored, 1);
+});
+
+test('a background locator failure starts a fresh hosted correction turn', async () => {
+  const rejected = fixtures.plan();
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const mismatch = Object.assign(new Error('Browse matched no visible controls.'), {
+    code: 'ambiguous_locator',
+    detail: { side: 'base', phase: 'action', actionId: 'open-browse' },
+  });
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) {
+        assert.equal(control.submitPlan(rejected).accepted, true);
+      } else {
+        assert.equal(options.repairAttempt, 1);
+        assert.equal(options.resumeThreadId, 'evidence-thread');
+        assert.equal(control.getContext().repair.failure.code, 'ambiguous_locator');
+        assert.equal(control.submitPlan(corrected).accepted, true);
+      }
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      throw mismatch;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.equal(fixture.calls.stored, 1);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 1);
+});
+
 test('a replay failure survives a correction turn that submits no new plan', async () => {
   const replayError = Object.assign(new Error('open-browse matched 0 elements; exactly one is required.'), {
     code: 'ambiguous_locator', detail: { actionId: 'open-browse', count: 0 },

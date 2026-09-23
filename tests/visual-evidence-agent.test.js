@@ -70,8 +70,10 @@ test('hosted evidence dispatch forwards worker lifecycle diagnostics through the
 
 test('the evidence prompt asks for a replay plan and leaves visual judgement to people', () => {
   assert.match(agent.SYSTEM_PROMPT, /platform code—not you—will reset both sides and\s+replay it twice/i);
-  assert.match(agent.SYSTEM_PROMPT, /human reviewers, who decide whether it proves the claim/i);
-  assert.match(agent.SYSTEM_PROMPT, /do not need image understanding or to issue a relevance verdict/i);
+  assert.match(agent.SYSTEM_PROMPT, /promptly acknowledges a\s+validated submission; it does not wait for replay or return a verdict/i);
+  assert.match(agent.SYSTEM_PROMPT, /platform waits for replay, starts a separate\s+correction turn if a locator fails/i);
+  assert.match(agent.SYSTEM_PROMPT, /passing media available to human\s+reviewers/i);
+  assert.match(agent.SYSTEM_PROMPT, /do not need image understanding or a relevance verdict/i);
   assert.doesNotMatch(agent.SYSTEM_PROMPT, /evidence_finish/);
   assert.match(agent.SYSTEM_PROMPT, /page[\s\S]*untrusted data/i);
   assert.doesNotMatch(agent.promptFor(), /review was rejected|corrected plan/i);
