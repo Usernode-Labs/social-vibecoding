@@ -2891,6 +2891,23 @@
       "expectSelector": "#messages-message-9100403 .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
     },
     {
+      "name": "#2884: four shared cards in a row in #general draw as the first card and a \u201c\u2026 3 more\u201d row, the rest folded",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel:not(:has(#messages-message-9100407)) #messages-message-9100406:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
+      "expectText": "\u2026 3 more"
+    },
+    {
+      "name": "#2884: a plain message before the run is not folded into it",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100405 + #messages-message-9100406 + .messages-card-run"
+    },
+    {
+      "name": "#2884: an app's channel in Messages folds its run of proposal cards into the first and \u201c\u2026 N more\u201d",
+      "path": "/?demo=1#messages/app/staging-demo-quiet",
+      "expectSelector": "#messages-screen:not(.hidden) #gc-messages:not(:has(.gc-event[data-msg-id=\"900117\"])) > .gc-event[data-msg-id=\"900111\"] + .gc-card-run > button.gc-card-run-more[data-card-run-more=\"4\"]",
+      "expectText": "\u2026 4 more"
+    },
+    {
       "name": "A group conversation renders an attached screenshot with a macOS-style name (#2113)",
       "path": "/?demo=1#messages/910002",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
