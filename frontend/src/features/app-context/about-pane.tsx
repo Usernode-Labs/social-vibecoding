@@ -377,9 +377,11 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             type="button"
             data-added={String(yours)}
             disabled={yours}
-            // The design's proportions: "Add to your apps" takes the room
-            // Open leaves it, "✓ Added" is a compact state beside it.
-            className={`inline-flex ${yours ? 'shrink-0' : 'flex-1 basis-0'} min-w-0 items-center justify-center gap-1.5 h-10 px-4 rounded-full text-sm font-semibold `
+            // The design's proportions: "✓ Added" is a compact state; "Add to
+            // your apps" is sized to its words beside Open — a phone's sheet
+            // has not room for both at half width without truncating it —
+            // and takes the whole row when Open is gone.
+            className={`inline-flex ${!yours && running ? 'flex-1 basis-0' : 'shrink-0'} min-w-0 items-center justify-center gap-1.5 h-10 px-4 rounded-full text-sm font-semibold whitespace-nowrap `
               + 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 '
               + 'hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:hover:bg-white dark:disabled:hover:bg-zinc-900 '
               + 'text-zinc-900 dark:text-zinc-100 disabled:text-zinc-500 dark:disabled:text-zinc-400 transition-colors'}
