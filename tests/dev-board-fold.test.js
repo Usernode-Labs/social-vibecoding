@@ -1049,8 +1049,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // +1 (#2760): the fifth tab named after the signed-in user, 731 — one past
   // that floor, so the ceiling moved with it (services/app-manifest.js,
-  // 750 → 770, still not a coupled move), leaving 39 slots.
-  assert.equal(DAPP.tests.length, 731);
+  // 750 → 770, still not a coupled move).
+  //
+  // +1 (#2748): the waitlist analytics dashboard's Analytics button/panel
+  // check, landing beside #2760 rather than after it — both counted from
+  // the same 730 base, so together they put the manifest at 732, not 731
+  // twice. The ceiling already moved 750 → 770 above; 732 leaves 38 slots.
+  assert.equal(DAPP.tests.length, 732);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

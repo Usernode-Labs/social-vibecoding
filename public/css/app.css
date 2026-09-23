@@ -9095,6 +9095,30 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   }
 }
 
+/* A DIALOG STAYS ON THE PART OF THE SCREEN THE KEYBOARD LEAVES (#2765).
+
+   The kit centres its modal in the strip above the on-screen keyboard as
+   `50% - var(--un-kb-inset) / 2`, which is the middle of what is visible
+   only while the visual viewport starts at the top of the layout viewport.
+   iOS pans it down to reveal a focused field, and a fixed box stays behind:
+   Give feedback, re-centred after that pan, landed pressed against the top
+   edge with its heading cut off, and opened with the keys already up it was
+   almost entirely above the screen. `--platform-vv-top` is the pan
+   (lib/visual-viewport.ts), so adding it moves the kit's centre into the
+   visible band. Nothing else is needed: the kit already caps the height at
+   that band less its margins (100dvh less the inset IS the visual viewport's
+   height) and scrolls the overflow, so every field and Submit stay reachable.
+
+   0px whenever the visual viewport is not panned — no keyboard, desktop, and
+   Android, where the kit measured no pan — and while pinch-zoomed, so there
+   the kit's own `top` is untouched. Every kit modal in the shell takes
+   it: each dialog `useDialog` presents, the username and terms gates,
+   session options and the build log. The alert card (`.un-alert`) is centred
+   the same way but is not a `.un-modal`, and is left to the kit. */
+.un-modal {
+  top: calc(var(--platform-vv-top, 0px) + 50% - var(--un-kb-inset, 0px) / 2);
+}
+
 /* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
    directly above the sheet.
 
