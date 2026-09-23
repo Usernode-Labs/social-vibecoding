@@ -455,9 +455,9 @@ test('bytesEqual compares whole bodies', () => {
 });
 
 test('a stale API answer that turns out to be wrong notifies the page', () => {
-  const api = SW_SRC.slice(SW_SRC.indexOf('async function networkFirstApi('));
-  // Wide enough to reach matchCache past the correction cooldown's lines.
-  const body = api.slice(0, 3200);
+  // The whole strategy, bounded by its neighbour rather than a character
+  // count that a new guard line would push matchCache past.
+  const body = strategyBody('networkFirstApi');
   // The "did we serve stale?" flag is set inside matchCache, which resolves
   // before raceNetworkAndCache returns. Reading the returned `fromCache`
   // instead would leave a window in which a just-missed network response
@@ -581,7 +581,7 @@ test('serving a stale boot read is only safe because the page is told', () => {
   // App._onApiUpdated re-running the visible screen's loader. If either
   // goes, the fast lane must go with it.
   const body = strategyBody('networkFirstApi');
-  assert.match(body, /const timeoutMs = laned \? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS/,
+  assert.match(body, /const timeoutMs = [\s\S]*?laned \? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;/,
     'the deadline is chosen per request');
   assert.match(body, /notifyClients\(\{ type: 'api-updated'/,
     'a late answer that disagrees is announced');
@@ -623,20 +623,28 @@ test('a correction does not answer itself from the cache it is correcting', () =
   assert.match(body, /correcting\.size >= CORRECTING_MAX/, 'and the set is bounded');
 });
 
-test('a slow endpoint that differs every time corrects the page at most once per cooldown', () => {
+test('a slow endpoint that differs every time is re-pulled from the network, not raced again', () => {
   // The loop the lane guard does not cover: an answer that loses the
   // ORDINARY deadline and differs on every request. The Workshop's /promoted
   // list carries each running check's live progress, so under load every
   // board re-pull was served stale, corrected, and re-pulled again — about
   // nine requests a second per visible tab, until Chrome refused new ones
-  // (net::ERR_INSUFFICIENT_RESOURCES).
-  assert.match(SW_SRC, /const lastCorrectionAt = new Map\(\);/);
-  assert.match(SW_SRC, /const CORRECTION_COOLDOWN_MS = \d+;/);
+  // (net::ERR_INSUFFICIENT_RESOURCES). A time-based cooldown is the wrong
+  // cure: a second tab booting inside it would keep a stale screen with no
+  // correction at all.
+  assert.match(SW_SRC, /const awaitingNetwork = new Set\(\);/);
+  assert.match(SW_SRC, /const CORRECTION_WAIT_MS = \d+;/);
   const body = strategyBody('networkFirstApi');
-  assert.match(body,
-    /if \(now - last < CORRECTION_COOLDOWN_MS\) return;[\s\S]*?lastCorrectionAt\.set\(event\.request\.url, now\);[\s\S]*?notifyClients\(\{ type: 'api-updated'/,
-    'the notice is skipped inside the cooldown and stamped only when it is sent');
-  assert.match(body, /lastCorrectionAt\.size >= CORRECTING_MAX/, 'and the map is bounded');
+  assert.match(body, /const settling = awaitingNetwork\.delete\(event\.request\.url\);/,
+    'the mark is consumed when the deadline is chosen');
+  assert.match(body, /const timeoutMs = settling \? CORRECTION_WAIT_MS/,
+    'and that request waits for the network instead of racing the cache');
+  assert.match(body, /&& !settling\s*&& bootLaneApplies/, 'a settling request is never laned');
+  assert.match(body, /\} else \{[\s\S]*?awaitingNetwork\.add\(event\.request\.url\)/,
+    'set by a correction on the ordinary deadline, the case the lane guard skips');
+  assert.match(body, /awaitingNetwork\.size >= CORRECTING_MAX/, 'and the set is bounded');
+  assert.ok(!/lastCorrectionAt|CORRECTION_COOLDOWN_MS/.test(SW_SRC),
+    'no time-based cooldown: it would strand a second tab on stale data');
 });
 
 test('a full API cache evicts ordinary entries before a screen\'s standing state', async () => {
