@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
+import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
 import type { AppDiscussion, InboxFilter } from './inbox';
 import type {
@@ -69,6 +70,21 @@ function browserDemo(): boolean {
 function publish(next: Partial<InternalState>): void {
   state = { ...state, ...next, revision: state.revision + 1 };
   for (const listener of [...listeners]) listener();
+  if (next.conversations) syncTabBadge();
+}
+
+/**
+ * The Messages tab's badge (#2794): how many conversations have something
+ * unread, i.e. how many rows on this screen draw a count.
+ *
+ * Derived here, from every write to `conversations`, rather than from each
+ * caller, because every path that changes an unread count already ends in
+ * one: the boot load, a socket event's reload, markRead's local zeroing, a
+ * leave or a block. The nav store drops a patch that changes nothing, so the
+ * common case — a reload with the same unread rows — notifies no one.
+ */
+function syncTabBadge(): void {
+  navStore.set({ messages: state.conversations.filter((item) => item.unreadCount > 0).length });
 }
 
 function subscribe(listener: Listener): () => void {
@@ -815,9 +831,10 @@ export function initializeMessagesStore(): () => void {
   // conversation list as soon as an already-resolved user exists, or wait for
   // the shell's one-shot authenticated boot event on an anonymous document.
   //
-  // This ran for the Messages unread badge, which is retired — it stays
-  // because the list is what the SCREEN renders, and a warm one is the
-  // difference between Messages opening populated and opening on a spinner.
+  // It also seeds the Messages tab's unread badge (#2794, see syncTabBadge),
+  // which is why it runs on every signed-in load and not only when the
+  // screen opens — and a warm list is the difference between Messages
+  // opening populated and opening on a spinner.
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   publish({ online: navigator.onLine, demo: browserDemo() });
