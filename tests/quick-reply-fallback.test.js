@@ -193,7 +193,9 @@ test('every status-only turn end carries pills on its status row', () => {
   const sites = [
     [/\$\{busyAgent\.agentName\} is already running for this session[\s\S]{0,300}?turnPills\('worker_busy'\)/,
       'worker-busy race'],
-    [/refusalText\(selectedModel, refusalCategory\)[\s\S]{0,300}?turnPills\('failed'\)/,
+    // #2809: named by the Mayor's own model, which is the session's
+    // OpenRouter model on an OpenRouter session and selectedModel otherwise.
+    [/refusalText\(mayorModel, refusalCategory\)[\s\S]{0,300}?turnPills\('failed'\)/,
       'whole-chain model refusal'],
     [/This turn failed: \$\{friendly\}[\s\S]{0,300}?turnPills\('failed'\)/,
       'provider/turn error catch'],

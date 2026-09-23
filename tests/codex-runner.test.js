@@ -265,6 +265,54 @@ exit 0
   );
 });
 
+test('runner: a scout that edits, creates or commits files leaves the tree as it found it (#2810)', () => {
+  const fakeCodex = `#!/bin/sh
+cat > /dev/null
+echo "changed" > tracked.txt
+echo "stray" > scout-notes.md
+git add -A && git -c user.name=t -c user.email=t@t commit -qm "scout commit"
+echo "uncommitted" > tracked.txt
+echo '{"type":"thread.started","thread_id":"scout-ro"}'
+echo '{"type":"item.completed","item":{"id":"i1","type":"agent_message","message":"## User-facing changes"}}'
+exit 0
+`;
+  const { env } = makeEnv(fakeCodex);
+  const git = (...args) => execFileSync('git', args, { cwd: env.WORKSPACE_DIR, encoding: 'utf8' });
+  git('init', '-q');
+  fs.writeFileSync(path.join(env.WORKSPACE_DIR, 'tracked.txt'), 'original\n');
+  git('add', 'tracked.txt');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'base');
+  const base = git('rev-parse', 'HEAD').trim();
+  // Untracked before the scout ran: not the scout's to remove.
+  fs.writeFileSync(path.join(env.WORKSPACE_DIR, 'earlier.txt'), 'kept\n');
+
+  const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /scout changed the repository; discarding its changes/);
+  assert.match(r.stdout, /mode=scout agent_backend=codex_openrouter/, 'the scout still completes');
+  assert.equal(git('rev-parse', 'HEAD').trim(), base, 'the scout commit is undone');
+  assert.equal(fs.readFileSync(path.join(env.WORKSPACE_DIR, 'tracked.txt'), 'utf8'), 'original\n');
+  assert.equal(fs.existsSync(path.join(env.WORKSPACE_DIR, 'scout-notes.md')), false, 'a file the scout created is removed');
+  assert.equal(fs.readFileSync(path.join(env.WORKSPACE_DIR, 'earlier.txt'), 'utf8'), 'kept\n');
+});
+
+test('runner: a read-only scout reports nothing to discard', () => {
+  const fakeCodex = `#!/bin/sh
+cat > /dev/null
+echo '{"type":"thread.started","thread_id":"scout-clean"}'
+exit 0
+`;
+  const { env } = makeEnv(fakeCodex);
+  const git = (...args) => execFileSync('git', args, { cwd: env.WORKSPACE_DIR, encoding: 'utf8' });
+  git('init', '-q');
+  fs.writeFileSync(path.join(env.WORKSPACE_DIR, 'tracked.txt'), 'original\n');
+  git('add', 'tracked.txt');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'base');
+  const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /scout changed the repository/);
+});
+
 test('runner: resume that fails NOT thread-missing does NOT retry fresh', () => {
   const fakeCodex = `#!/bin/sh
 echo "$*" >> "$INVOKE_LOG"
