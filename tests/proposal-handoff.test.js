@@ -1735,3 +1735,28 @@ test('handoff endpoints are unavailable to browser-cookie requests', async () =>
     assert.equal(state.github.length, 0);
   } finally { restore(); }
 });
+
+
+test('paused handoffs can retry checks without resume but revision writes still need resume', () => {
+  const { subject, restore } = makeHarness();
+  try {
+    const session = { status: 'paused', source: 'cli_handoff',
+      handoff_head_sha: HEAD, checks_commit_sha: HEAD,
+      staging_url: 'https://preview.example' };
+    const runtime = { inFlight: false, build: false, capture: false, session: false, pipeline: false };
+    for (const check_state of ['failing', 'error']) {
+      const status = subject.publicSessionStatus({ ...session, check_state }, { runtime });
+      assert.equal(status.state, 'paused');
+      assert.equal(status.revisionState, 'failed');
+      assert.match(status.nextStep, /proposal_recheck without resuming coding/);
+    }
+    const stalled = subject.publicSessionStatus({ ...session, check_state: 'pending', checks_checked_at: '2020-01-01' }, { runtime });
+    assert.equal(stalled.revisionState, 'stalled');
+    assert.match(stalled.nextStep, /proposal_recheck/);
+    const running = subject.publicSessionStatus({ ...session, check_state: 'pending' }, { runtime: { ...runtime, inFlight: true, capture: true } });
+    assert.match(running.nextStep, /poll proposal_status/);
+    assert.doesNotMatch(running.nextStep, /Resume/);
+    const draft = subject.publicSessionStatus({ status: 'paused' }, { runtime });
+    assert.match(draft.nextStep, /Resume this same session before changing or submitting/);
+  } finally { restore(); }
+});

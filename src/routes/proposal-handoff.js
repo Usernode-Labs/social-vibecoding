@@ -603,7 +603,7 @@ function isoDateOrNull(value) {
 function checksSnapshot(session, runtime, options = {}) {
   const ranOnCommit = session.checks_commit_sha || null;
   const currentHead = currentProposalBranchHead(session);
-  const managed = session.status === 'active' || session.status === 'promoted';
+  const managed = ['active', 'paused', 'promoted'].includes(session.status);
   const stalled = managed
     && !hasUnsubmittedUpload(session)
     && !runtime.inFlight
@@ -642,8 +642,13 @@ function revisionBuildState(session, checks, runtime) {
 
 function statusNextStep(state, revisionState, checks) {
   const progress = revisionState || state;
-  if (state === 'paused' && progress !== 'ready') {
-    return 'Coding is paused. Resume this same session before changing its revision or rerunning checks; do not call proposal_start.';
+  if (state === 'paused') {
+    if (progress === 'draft' || progress === 'uploaded') {
+      return 'Coding is paused. Resume this same session before changing or submitting its revision; do not call proposal_start.';
+    }
+    if (progress === 'failed') {
+      return 'Coding is paused. Re-run checks on this same revision with proposal_recheck without resuming coding. If the failure needs code changes, resume this same session and submit a later fast-forwarding commit; do not call proposal_start.';
+    }
   }
   if (progress === 'stalled') {
     return 'This check run is overdue and no live worker owns it. Re-run checks on this same session with proposal_recheck, then keep polling proposal_status. Do not call proposal_start.';
