@@ -254,12 +254,6 @@ export function AppsSwitcherSheet(): ReactNode {
   // would come back without its `hidden`.
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   const discussionRowRef = useRef<HTMLAnchorElement | null>(null);
-  // AFTER MOUNT ONLY, for the one new piece of store-derived TEXT below (the
-  // platform discussion's label): the hydrating render must print what the
-  // prerender printed whatever the store says by then, or it is React #418
-  // on every route. The class toggle above is an effect for the same reason.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
   useIsomorphicLayoutEffect(() => {
     for (const el of [workshopRowRef.current, discussionRowRef.current]) {
       if (el && el.classList.contains('hidden') !== !!restricted) {
@@ -267,6 +261,12 @@ export function AppsSwitcherSheet(): ReactNode {
       }
     }
   }, [restricted, view]);
+  // AFTER MOUNT ONLY, for the one new piece of store-derived TEXT below (the
+  // platform discussion's label): the hydrating render must print what the
+  // prerender printed whatever the store says by then, or it is React #418
+  // on every route. The class toggle above is an effect for the same reason.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
   // "About Notes", not "About this app". The name is what the viewer is
   // looking at and it is already on the bar above; "this app" is what you
