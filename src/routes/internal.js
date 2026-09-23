@@ -196,7 +196,10 @@ function internalRoutes(_config) {
 
   router.post('/api/internal/evidence/:runId/run-plan', evidenceAuth, evidenceLimiter, async (req, res) => {
     try {
-      const result = await evidenceControlForRequest(req).runPlan(req.body?.plan);
+      const control = evidenceControlForRequest(req);
+      const result = Object.hasOwn(req.body || {}, 'replays')
+        ? await control.runReplays(req.body.replays)
+        : await control.runPlan(req.body?.plan);
       return res.json({ ok: true, result });
     } catch (err) { return evidenceError(res, err); }
   });

@@ -154,6 +154,15 @@ class RunControl {
     }
   }
 
+  async runReplays(rawReplays) {
+    try {
+      return await this.runPlan(planContract.replayPlanFromIntent(this.intent, rawReplays));
+    } catch (error) {
+      this.lastToolFailure = { operation: 'run-plan', error };
+      throw error;
+    }
+  }
+
   finish({ status, reason, planHash = null }) {
     this.assertLive();
     if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
