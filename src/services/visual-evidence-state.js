@@ -588,15 +588,19 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
 // lease while that process is alive so a rollout can be distinguished from a
 // slow checkout, clone, or image build. Only the current active run may renew
 // its lease; a late heartbeat cannot revive a failed or superseded run.
-async function heartbeatRun(pool, runId, phase, replayProgress = null) {
+async function heartbeatRun(pool, runId, phase, progress = null) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))
       || !/^[a-z][a-z0-9_-]{0,63}$/.test(String(phase || ''))) {
     throw new VisualEvidenceStateError('invalid_evidence_heartbeat', 'Evidence heartbeat identity or phase is invalid.', 400);
   }
-  const progressPatch = replayProgress == null ? null : JSON.stringify({
-    lastReplayEvent: replayProgress.lastReplayEvent || null,
-    replayEvents: Array.isArray(replayProgress.replayEvents)
-      ? replayProgress.replayEvents.slice(-40) : [],
+  const progressPatch = progress == null ? null : JSON.stringify({
+    ...(progress.lastReplayEvent || Array.isArray(progress.replayEvents) ? {
+      lastReplayEvent: progress.lastReplayEvent || null,
+      replayEvents: Array.isArray(progress.replayEvents)
+        ? progress.replayEvents.slice(-40) : [],
+    } : {}),
+    ...(progress.agentActivity ? { agentActivity: progress.agentActivity } : {}),
+    ...(progress.agentFinalResponse ? { agentFinalResponse: progress.agentFinalResponse } : {}),
   });
   if (progressPatch && progressPatch.length > 64_000) {
     throw new VisualEvidenceStateError('invalid_evidence_heartbeat', 'Evidence heartbeat trace is too large.', 400);
