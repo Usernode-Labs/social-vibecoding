@@ -481,6 +481,32 @@ async function revokeDelegation(pool, { grantId, reason = 'turn_finished' }) {
   });
 }
 
+// The grants the platform's own agents are handed turn by turn accumulate —
+// one or two rows a turn — and are useless the moment they end. Remove the
+// ones that ended more than `graceDays` ago, with their token rows, a bounded
+// batch at a time. The audit trail keeps its own rows; it names the token by
+// id only.
+async function pruneDelegations(pool, { graceDays = 7, limit = 1000 } = {}) {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query(
+      `DELETE FROM mcp_delegations
+        WHERE grant_id IN (
+          SELECT grant_id FROM mcp_delegations
+           WHERE COALESCE(revoked_at, expires_at) < clock_timestamp() - ($1 || ' days')::interval
+           ORDER BY expires_at
+           LIMIT $2)
+        RETURNING grant_id`,
+      [String(graceDays), limit]
+    );
+    if (!rows.length) return 0;
+    await client.query(
+      'DELETE FROM mcp_tokens WHERE grant_id = ANY($1::text[])',
+      [rows.map((row) => row.grant_id)]
+    );
+    return rows.length;
+  });
+}
+
 // ── Request-shape helpers ──────────────────────────────────────────────
 //
 // These live here rather than in routes/mcp-remote.js so they carry no
@@ -601,4 +627,5 @@ module.exports = {
   normalizeDelegation,
   issueDelegatedAccess,
   revokeDelegation,
+  pruneDelegations,
 };

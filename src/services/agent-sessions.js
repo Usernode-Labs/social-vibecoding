@@ -419,6 +419,96 @@ async function noteChangeClosed(pool, { change, outcome }) {
   }
 }
 
+// ── The Mayor's own moves (#2779 step 3b) ──────────────────────────────
+
+// Make one of this conversation's earlier changes the active one again. The
+// change must be the user's, started from this session, and still open; the
+// change it replaces is parked. Resuming a parked change's worker happens on
+// the next dispatch, not here.
+async function switchActiveChange(pool, { agentSessionId, userId, changeId }) {
+  const id = positiveInt(Number(changeId));
+  if (!id) throw new AgentSessionError(400, 'changeId must be a positive integer');
+  const { rows: change } = await pool.query(
+    `SELECT c.id, c.status, c.app_id, c.pr_number, COALESCE(c.pr_title, c.session_title) AS title
+       FROM chat_sessions c
+      WHERE c.id = $1 AND c.user_id = $2 AND c.agent_session_id = $3`,
+    [id, userId, agentSessionId]
+  );
+  if (!change.length) throw new AgentSessionError(404, 'That change was not started from this conversation.');
+  if (['archived', 'merged'].includes(change[0].status)) {
+    throw new AgentSessionError(409, `That change is ${change[0].status}, so it cannot be made active.`);
+  }
+  const { rows: session } = await pool.query(
+    `SELECT active_change_id FROM agent_sessions
+      WHERE id = $1 AND user_id = $2 AND status = 'open'`,
+    [agentSessionId, userId]
+  );
+  if (!session.length) throw new AgentSessionError(404, 'Agent session not found');
+  const previous = session[0].active_change_id;
+  if (previous === id) return { changed: false, change: change[0] };
+  if (previous) await parkChange(pool, { userId, changeId: previous, reason: 'agent-session-switch' });
+  await pool.query(
+    `UPDATE agent_sessions SET active_change_id = $1, focus_app_id = $2, last_activity_at = NOW()
+      WHERE id = $3 AND user_id = $4`,
+    [id, change[0].app_id, agentSessionId, userId]
+  );
+  const ref = change[0].pr_number ? `PR #${change[0].pr_number} (change ${id})` : `change ${id}`;
+  await appendConversationEvent(pool, {
+    agentSessionId,
+    content: `Switched to ${ref}.`,
+    event: 'change_switched',
+    metadata: { changeId: id, previousChangeId: previous || null },
+  });
+  return { changed: true, change: change[0] };
+}
+
+// Record which app the user means. Resolved with the user's own access, so
+// the focus can never name an app they cannot see.
+async function setFocusApp(pool, { agentSessionId, user, slug }) {
+  const clean = typeof slug === 'string' ? slug : '';
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(clean)) throw new AgentSessionError(400, 'slug must be an app slug');
+  const app = await appAccess.getAppForUser(pool, clean, user, 'view', appAccess.ACCESS_COLUMNS);
+  if (!app) throw new AgentSessionError(404, 'That app does not exist, or the user cannot see it.');
+  const { rows } = await pool.query(
+    `UPDATE agent_sessions SET focus_app_id = $1
+      WHERE id = $2 AND user_id = $3 AND status = 'open'
+      RETURNING id`,
+    [app.id, agentSessionId, user.id]
+  );
+  if (!rows.length) throw new AgentSessionError(404, 'Agent session not found');
+  return { id: app.id, slug: app.slug };
+}
+
+// ── The turn lease ─────────────────────────────────────────────────────
+//
+// One Mayor turn at a time per conversation. The lease is a row write, not a
+// process-local lock, so two tabs (or two pods) cannot both start a turn. A
+// lease older than TURN_LEASE_STALE_MINUTES belongs to a turn whose process
+// died without releasing it, and is taken over.
+const TURN_LEASE_STALE_MINUTES = 20;
+
+async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
+  const { rows } = await pool.query(
+    `UPDATE agent_sessions
+        SET active_turn = jsonb_build_object('id', $3::text, 'startedAt', NOW()),
+            last_activity_at = NOW()
+      WHERE id = $1 AND user_id = $2 AND status = 'open'
+        AND (active_turn IS NULL
+             OR (active_turn->>'startedAt')::timestamptz < NOW() - make_interval(mins => $4))
+      RETURNING id`,
+    [agentSessionId, userId, turnId, TURN_LEASE_STALE_MINUTES]
+  );
+  return rows.length > 0;
+}
+
+async function releaseTurnLease(pool, { agentSessionId, turnId }) {
+  await pool.query(
+    `UPDATE agent_sessions SET active_turn = NULL
+      WHERE id = $1 AND active_turn->>'id' = $2`,
+    [agentSessionId, turnId]
+  );
+}
+
 module.exports = {
   TITLE_MAX,
   ENTRIES,
@@ -440,4 +530,9 @@ module.exports = {
   closedSentence,
   outcomeForArchiveReason,
   noteChangeClosed,
+  switchActiveChange,
+  setFocusApp,
+  TURN_LEASE_STALE_MINUTES,
+  acquireTurnLease,
+  releaseTurnLease,
 };

@@ -1210,6 +1210,15 @@ async function becomeLeader() {
   void runAccountDeletionCleanup();
   setInterval(runAccountDeletionCleanup, 60_000).unref();
 
+  // #2779: delegated connector grants — the agent-session Mayor's, one or two
+  // a turn — are dead the moment their turn ends. Keep a week for the audit
+  // trail's sake, then remove them and their tokens.
+  const runDelegationPrune = () => require('./src/services/mcp-oauth')
+    .pruneDelegations(getPool(config))
+    .then((n) => { if (n) log.info('mcp', 'Pruned ended delegated grants', { count: n }); })
+    .catch((err) => log.warn('mcp', 'Delegated-grant prune failed', { code: err.code, message: err.message }));
+  setInterval(runDelegationPrune, 60 * 60 * 1000).unref();
+
   // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
   // reclaims that memory after a tunable idle period. The CC volume
   // (cc-volume-<sessionId>) is preserved so the next dispatch's

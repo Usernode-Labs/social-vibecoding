@@ -9097,3 +9097,34 @@ BEGIN
       NOT VALID;
   END IF;
 END $$;
+
+-- The Mayor's confirmation cards (#2779 step 3b). A write the Mayor proposes
+-- — starting, promoting, syncing or withdrawing a change, filing or claiming
+-- a request — never runs from the model. It is stored here, sealed, and runs
+-- only when the owner presses Confirm on the card: once, before it expires,
+-- with the exact input the card showed. The sealing is the shared core in
+-- services/confirmations: an AES-GCM copy of the normalized input and its
+-- fingerprint, so a stored row cannot be edited into a different action.
+CREATE TABLE IF NOT EXISTS agent_session_actions (
+  id                UUID PRIMARY KEY,
+  agent_session_id  INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tool_name         VARCHAR(64) NOT NULL,
+  sealed_input      JSONB NOT NULL,
+  input_hash        VARCHAR(64) NOT NULL,
+  -- pending → running → done | failed, or pending → dismissed. Expiry is
+  -- read from expires_at rather than written, so nothing has to sweep it.
+  status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+  -- What the tool answered, bounded, for the card and the conversation.
+  result            JSONB,
+  expires_at        TIMESTAMPTZ NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at        TIMESTAMPTZ,
+  CONSTRAINT agent_session_actions_status_check
+    CHECK (status IN ('pending', 'running', 'done', 'failed', 'dismissed')),
+  CONSTRAINT agent_session_actions_hash_check CHECK (input_hash ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT agent_session_actions_expiry_check CHECK (expires_at > created_at)
+);
+CREATE INDEX IF NOT EXISTS agent_session_actions_session
+  ON agent_session_actions (agent_session_id, created_at DESC);
+COMMENT ON TABLE agent_session_actions IS 'staging:private';

@@ -100,6 +100,7 @@ const DENIED_TABLES = new Set([
   'global_chat_messages', // private user/assistant transcript content
   'global_chat_tool_runs', // private action inputs and authoritative results
   'global_chat_action_tokens', // one-use action capabilities and sealed payloads
+  'agent_session_actions', // the agent-session Mayor's sealed confirmation cards (#2779)
 ]);
 
 const DENIED_COLUMNS = {
@@ -130,6 +131,11 @@ const DENIED_COLUMNS = {
     'token_hash',
     'input_hash',
     'normalized_input',
+  ],
+  agent_session_actions: [
+    // The sealed exact input of a pending write and its fingerprint (#2779).
+    'input_hash',
+    'sealed_input',
   ],
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
