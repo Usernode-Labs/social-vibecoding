@@ -27,6 +27,10 @@ function validatePolicy(policy) {
       || target.composition !== PROFILES[target.profile].composition) {
       throw new Error('Only explicitly configured database profiles are supported');
     }
+    if (target.displayName !== undefined && (typeof target.displayName !== 'string'
+      || !target.displayName.trim() || target.displayName.length > 80)) {
+      throw new Error('Invalid database target display name');
+    }
     const destination = `${target.namespace}/${target.clusterName}`;
     if (ids.has(target.id) || destinations.has(destination)) throw new Error('Duplicate database target');
     ids.add(target.id);

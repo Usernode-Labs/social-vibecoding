@@ -13,7 +13,7 @@ function registerDatabaseRoutes(router, { requireAdminWrite, getPolicy = loadPol
       const placement = require('../services/database-placement');
       const selected = placement.loadSelection();
       const bindings = selected ? await placement.assertCentralPlacement([], { all: true }) : null;
-      return res.json({ ...(bindings ? { bindings } : {}), enabled: true, targets: policy.targets.map(({ id, profile }) => ({ id, profile })),
+      return res.json({ ...(bindings ? { bindings } : {}), enabled: true, targets: policy.targets.map(({ id, profile, displayName }) => ({ id, profile, ...(displayName ? { displayName } : {}) })),
         requests: requests.map(publicRequest) });
     } catch { return res.status(503).json({ error: 'Database control plane is unavailable' }); }
   });

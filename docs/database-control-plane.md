@@ -167,3 +167,7 @@ Missing metadata requires investigation and explicit restoration from the saved
 record. Turning the flag off is safe only while all selected databases remain
 central; it is not a rollback strategy once external placements are implemented.
 Do not mistake binding reconstruction for data recovery.
+
+Targets may have an optional `displayName` (up to 80 characters) for the admin
+screen. It is presentation only: requests still use the immutable target ID,
+and changing the label does not change placement, Kubernetes names or identity.
