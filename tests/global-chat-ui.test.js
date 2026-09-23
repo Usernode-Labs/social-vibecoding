@@ -62,7 +62,10 @@ test('the inbox lists resumable chats, and is where one is deleted', () => {
   // invalidated in one place — so what the panel's copy is asserted for is
   // asserted of that row now.
   assert.match(inbox, /function AgentChatRow/);
-  assert.match(inbox, /href=\{`#chat\/\$\{encodeURIComponent\(chat\.id\)\}`\}/);
+  // #2813: the row's address is the inbox's own, so on a desktop the chat
+  // opens beside the list; a phone's router swaps it for `#chat/<id>`.
+  assert.match(inbox, /const thread: MessagesAgentThread = \{ kind: 'chat', id: chat\.id \};/);
+  assert.match(inbox, /href=\{href\}/);
   assert.match(inbox, /data-inbox-agent=\{chat\.id\}/);
   assert.match(inbox, /chat\.busy \? 'Working…'/);
   // The DELETE is the one thing that lived nowhere else, so it moved rather

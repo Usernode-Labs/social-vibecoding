@@ -4760,9 +4760,21 @@
       "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:not([disabled]) > .dc-venue-name"
     },
     {
-      "name": "#2772: a change in progress is listed in Messages as an agent conversation, and opens its session",
+      "name": "#2772: a change in progress is listed in Messages as an agent conversation, and opens its session (beside the list since #2813)",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"][href$=\"/dev/sessions/990101\"]"
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"][href^=\"#messages/session/\"][href$=\"/990101\"]"
+    },
+    {
+      "name": "#2813: on a desktop a dev session opens in the pane beside the Messages list, not on a screen of its own",
+      "path": "/?demo=1#messages/session/usernode-2d5619/990002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-pane + .messages-thread-session[data-agent-session=\"usernode-2d5619/990002\"] .messages-session-host .dev-session-read [data-transcript-section=\"990002\"] .st-readonly-tag",
+      "expectText": "Dev chat by staging-demo-user"
+    },
+    {
+      "name": "#2813: the session pane links to the session's full view in the app",
+      "path": "/?demo=1#messages/session/usernode-2d5619/990002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-session .messages-session-bar a.messages-session-full[href=\"#app/usernode-2d5619/dev/sessions/990002\"]",
+      "expectText": "Open full view"
     },
     {
       "name": "Waitlist connect callback shows a status page, not the home page, and says when a link has expired",

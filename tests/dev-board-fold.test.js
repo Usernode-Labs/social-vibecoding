@@ -1100,7 +1100,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // on hover only. 751 was one past the 20-slot floor under the 770
   // ceiling, so the ceiling moved to 790 with it (services/app-manifest.js),
   // leaving 39 slots.
-  assert.equal(DAPP.tests.length, 751);
+  //
+  // 751 → 753: +2 (#2813): a dev session opens in the Messages pane beside
+  // the list on a desktop, and that pane links to the session's full view.
+  // This branch counted them against an older shared base; main reached 751
+  // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
+  // slots under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 753);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
