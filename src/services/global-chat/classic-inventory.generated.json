@@ -11040,7 +11040,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 730,
+      "line": 769,
       "method": "GET",
       "path": "/api/v4/mobile/__ping",
       "expression": null,
@@ -11049,7 +11049,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 737,
+      "line": 776,
       "method": "GET",
       "path": "/api/v4/mobile/me",
       "expression": null,
@@ -11067,7 +11067,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 955,
+      "line": 999,
       "method": "GET",
       "path": "/api/v4/mobile/me/ranking",
       "expression": null,
@@ -11085,7 +11085,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1049,
+      "line": 1094,
       "method": "GET",
       "path": "/api/v4/mobile/me/breakdown",
       "expression": null,
@@ -11103,7 +11103,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1057,
+      "line": 1102,
       "method": "GET",
       "path": "/api/v4/mobile/event/points",
       "expression": null,
@@ -11121,7 +11121,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1206,
+      "line": 1251,
       "method": "GET",
       "path": "/api/v4/mobile/leaderboard",
       "expression": null,
@@ -11139,7 +11139,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1344,
+      "line": 1389,
       "method": "GET",
       "path": "/api/v4/mobile/challenges",
       "expression": null,
@@ -11157,7 +11157,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1439,
+      "line": 1484,
       "method": "GET",
       "path": "/api/v4/mobile/seasons",
       "expression": null,
@@ -11175,7 +11175,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1458,
+      "line": 1503,
       "method": "GET",
       "path": "/challenges-api/seasons",
       "expression": null,
@@ -11193,7 +11193,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1459,
+      "line": 1504,
       "method": "GET",
       "path": "/challenges-api/challenges",
       "expression": null,
@@ -11211,7 +11211,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1460,
+      "line": 1505,
       "method": "GET",
       "path": "/challenges-api/leaderboard",
       "expression": null,
@@ -11229,7 +11229,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1461,
+      "line": 1506,
       "method": "GET",
       "path": "/challenges-api/me/ranking",
       "expression": null,
@@ -11247,7 +11247,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1462,
+      "line": 1507,
       "method": "GET",
       "path": "/challenges-api/me/breakdown",
       "expression": null,
@@ -11265,7 +11265,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1467,
+      "line": 1512,
       "method": "GET",
       "path": "/challenges-api/terms/current",
       "expression": null,
@@ -11283,7 +11283,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1468,
+      "line": 1513,
       "method": "POST",
       "path": "/challenges-api/terms/consent",
       "expression": null,
@@ -11301,7 +11301,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1472,
+      "line": 1517,
       "method": "GET",
       "path": "/challenges-api/bp/state",
       "expression": null,
@@ -11319,7 +11319,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1473,
+      "line": 1518,
       "method": "POST",
       "path": "/challenges-api/bp/request",
       "expression": null,
@@ -11337,7 +11337,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1622,
+      "line": 1667,
       "method": "POST",
       "path": "/api/v4/mobile/zkpassport/complete",
       "expression": null,
@@ -11355,7 +11355,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1871,
+      "line": 1916,
       "method": "POST",
       "path": "/api/v4/mobile/wallet/claim",
       "expression": null,
