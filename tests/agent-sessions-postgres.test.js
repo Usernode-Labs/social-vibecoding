@@ -401,6 +401,16 @@ test('one Mayor turn at a time, and a dead turn\'s lease is taken over', async (
         WHERE id = $1`,
       [session.id, agentSessions.TURN_LEASE_STALE_MINUTES + 1]
     );
+    // A turn that is still running renews its lease; only the holder can.
+    assert.equal(await agentSessions.renewTurnLease(client, { agentSessionId: session.id, turnId: 'turn-x' }), false);
+    assert.equal(await agentSessions.renewTurnLease(client, { agentSessionId: session.id, turnId: 'turn-b' }), true);
+    assert.equal(await acquire('turn-d'), false, 'a renewed lease is live however long ago it started');
+    await client.query(
+      `UPDATE agent_sessions
+          SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW() - make_interval(mins => $2))
+        WHERE id = $1`,
+      [session.id, agentSessions.TURN_LEASE_STALE_MINUTES + 1]
+    );
     assert.equal(await acquire('turn-d'), true, 'a lease its process never released goes stale');
     const { rows: [row] } = await client.query('SELECT active_turn FROM agent_sessions WHERE id = $1', [session.id]);
     assert.equal(row.active_turn.id, 'turn-d');

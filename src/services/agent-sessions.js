@@ -483,8 +483,10 @@ async function setFocusApp(pool, { agentSessionId, user, slug }) {
 //
 // One Mayor turn at a time per conversation. The lease is a row write, not a
 // process-local lock, so two tabs (or two pods) cannot both start a turn. A
-// lease older than TURN_LEASE_STALE_MINUTES belongs to a turn whose process
-// died without releasing it, and is taken over.
+// running turn renews it every minute (a dispatch can run far longer than
+// the stale window), so a lease not renewed for TURN_LEASE_STALE_MINUTES
+// belongs to a turn whose process died without releasing it, and is taken
+// over.
 const TURN_LEASE_STALE_MINUTES = 20;
 
 async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
@@ -494,9 +496,22 @@ async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
             last_activity_at = NOW()
       WHERE id = $1 AND user_id = $2 AND status = 'open'
         AND (active_turn IS NULL
-             OR (active_turn->>'startedAt')::timestamptz < NOW() - make_interval(mins => $4))
+             OR COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
+                < NOW() - make_interval(mins => $4))
       RETURNING id`,
     [agentSessionId, userId, turnId, TURN_LEASE_STALE_MINUTES]
+  );
+  return rows.length > 0;
+}
+
+// Only the turn holding the lease renews it.
+async function renewTurnLease(pool, { agentSessionId, turnId }) {
+  const { rows } = await pool.query(
+    `UPDATE agent_sessions
+        SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW())
+      WHERE id = $1 AND active_turn->>'id' = $2
+      RETURNING id`,
+    [agentSessionId, turnId]
   );
   return rows.length > 0;
 }
@@ -534,5 +549,6 @@ module.exports = {
   setFocusApp,
   TURN_LEASE_STALE_MINUTES,
   acquireTurnLease,
+  renewTurnLease,
   releaseTurnLease,
 };

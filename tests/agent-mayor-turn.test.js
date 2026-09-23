@@ -99,12 +99,31 @@ const SESSION = {
   changes: [],
 };
 
-function turnDeps({ model, shim, opened = [], agentSessions = {}, actionsDeps = {} }) {
+// No active change that can take a dispatch, unless a test says otherwise.
+function noDispatch(overrides = {}) {
+  const real = require('../src/services/mayor/agent-dispatch');
+  return {
+    ...real,
+    loadActiveChange: async () => null,
+    canDispatch: () => false,
+    runDispatch: async () => { throw new Error('no dispatch expected'); },
+    ...overrides,
+  };
+}
+
+function turnDeps({ model, shim, opened = [], agentSessions = {}, actionsDeps = {}, extra = {} }) {
   const spend = [];
   const events = [];
   const deps = {
     llm: { estimateCostCents: () => 4, isEnabled: () => true },
-    limits: { recordSpend: async (...args) => { spend.push(args); } },
+    limits: {
+      recordSpend: async (...args) => { spend.push(args); },
+      resolveBillingPath: async () => ({ apiKey: null }),
+      checkBudget: async () => ({}),
+    },
+    dispatch: noDispatch(),
+    debugAccess: { isEligible: async () => false },
+    dataTools: { resolveWebFetchToolResult: async (url) => JSON.stringify({ url, content: 'page' }) },
     openMayorMcp: async (args) => { opened.push(args); return args.scopes && args.scopes.includes(WRITE_SCOPE) ? fakeShim() : shim; },
     agentSessions: {
       getAgentSession: async () => SESSION,
@@ -112,10 +131,12 @@ function turnDeps({ model, shim, opened = [], agentSessions = {}, actionsDeps = 
       releaseTurnLease: async () => {},
       switchActiveChange: async (_pool, args) => ({ changed: true, change: { id: args.changeId } }),
       setFocusApp: async (_pool, args) => ({ id: 4, slug: args.slug }),
+      renewTurnLease: async () => true,
       ...agentSessions,
     },
     actions: { ...actions, ...actionsDeps },
     sessionBus: { publish() {}, clearSession() {} },
+    ...extra,
   };
   return { deps, spend, events, model };
 }
@@ -124,14 +145,17 @@ function mayorFor(model) {
   return { ok: true, provider: 'anthropic', client: model, model: 'claude-opus-5-5', apiKey: null, spendRecorded: true, byok: false };
 }
 
-async function runTurn({ steps, shim = fakeShim(), pool = recordingPool({ 'RETURNING id': () => ({ rows: [{ id: 99 }] }) }), agentSessions, actionsDeps, message = 'What is on the board?' }) {
+async function runTurn({
+  steps, shim = fakeShim(), pool = recordingPool({ 'RETURNING id': () => ({ rows: [{ id: 99 }] }) }),
+  agentSessions, actionsDeps, message = 'What is on the board?', followUp = null, extra = {},
+}) {
   const model = scriptedModel(steps);
   const opened = [];
-  const { deps, spend, events } = turnDeps({ model, shim, opened, agentSessions, actionsDeps });
+  const { deps, spend, events } = turnDeps({ model, shim, opened, agentSessions, actionsDeps, extra });
   const res = fakeRes();
   await agentTurn.runAgentTurn({
     pool, config: CONFIG, user: USER, agentSessionId: 5, turnId: 'turn-0001-aaaa',
-    messageText: message, mayor: mayorFor(model), res, deps,
+    messageText: message, followUp, mayor: mayorFor(model), res, deps,
   });
   return { model, shim, pool, res, spend, events, opened };
 }
@@ -277,13 +301,13 @@ test('stop aborts the model call and is not reported as a failure', async () => 
   });
   const turn = runTurn({ steps: [step] });
   await running;
-  assert.equal(agentTurn.stopAgentTurn(5, { by: 'ada' }), true);
+  assert.deepEqual(agentTurn.stopAgentTurn(5, { by: 'ada' }), { stopped: true, phase: 'mayor' });
   const { res, events, pool } = await turn;
   const types = res.events().map((e) => e.type);
   assert.ok(types.includes('stopping') && types.includes('stopped'));
   assert.ok(!types.includes('error'));
   assert.deepEqual(events, [], 'no failure note');
-  assert.equal(agentTurn.stopAgentTurn(5), false, 'nothing left to stop');
+  assert.deepEqual(agentTurn.stopAgentTurn(5), { stopped: false, reason: 'no_active_turn' }, 'nothing left to stop');
   const assistant = pool.calls.find((c) => /'assistant'/.test(c.sql) && /INSERT INTO chat_session_messages/.test(c.sql));
   assert.equal(assistant.params[2], 'I was about to say', 'what the user already read is kept');
   assert.deepEqual(JSON.parse(assistant.params[5]), { agentTurnId: 'turn-0001-aaaa', stopped: true });
@@ -329,6 +353,13 @@ test('what the platform did between turns reaches the Mayor as a note', () => {
     ['user', 'And now?'],
   ], 'history opens with the user, and a platform note rides on the Mayor\'s side');
   assert.equal(agentTurn.titleFromMessage('a '.repeat(100)).length <= 81, true);
+
+  const built = agentTurn.historyToMessages([
+    { id: 1, role: 'user', content: 'Build it', metadata: {} },
+    { id: 2, session_id: 50, role: 'system', content: 'done', metadata: { ccOutput: 'Added the toggle.', ccOutcome: 'success' } },
+  ], buildMayorMessages);
+  assert.equal(built[1].content, '[CODING AGENT COMPLETED]:\n(change 50) Added the toggle.',
+    'a coding agent\'s result says which change it ran on');
 });
 
 // ── Who runs the Mayor ─────────────────────────────────────────────────
@@ -569,7 +600,8 @@ test('the prompt says where the conversation stands, and wraps what users wrote'
   assert.match(prompt, /- PR #2001 \(change 101\) on recipe-box:/, 'a change is named by its PR first');
   assert.equal((prompt.match(/^- (PR #\d+ \()?change \d+/gm) || []).length, MAX_LISTED_CHANGES,
     'the active change is not listed twice, and the list is bounded');
-  assert.match(prompt, /cannot be dispatched from this conversation yet/);
+  assert.match(prompt, /The coding agent works on the ACTIVE change only\. dispatch_scout/);
+  assert.doesNotMatch(prompt, /EARLIER IN THIS CONVERSATION/, 'no summary, no block');
   assert.ok(prompt.endsWith(charter.charterFor('agent_mayor')), 'the platform rules are the charter\'s own');
 
   const bare = getAgentMayorPrompt({ username: null, session: { focusApp: null, focusContext: {}, activeChange: null, changes: [] } });
