@@ -170,6 +170,10 @@ export function init() {
     let pendingFirstFeedback = null;
     let closeTimer = null;
     let presentation = 0;
+    // #2796: whose words are sitting in the composer. A dismissal keeps the
+    // draft for the next open, but only for the account that typed it — a
+    // sign-out and sign-in on the same tab must not hand it to someone else.
+    let draftOwner;
 
     const showFirstFeedback = (moment, notice) => {
       if (!moment || Number(moment.userId) !== Number(App.user?.id)) return false;
@@ -420,10 +424,13 @@ export function init() {
 
     // Reset on modal open / cancel / successful submit. Bumping the
     // sequence invalidates any in-flight response so it can never fill
-    // the field of a later modal session.
+    // the field of a later modal session. #2796: a title a dismissal kept
+    // keeps its provenance too — a typed one stays the user's, and an
+    // auto-fill stays fresh for the description it was generated from.
     const resetTitleGenState = () => {
-      titleDirty = false;
-      lastGeneratedFor = '';
+      const keptTitle = feedbackTitle.value.trim().length > 0;
+      titleDirty = titleDirty && keptTitle;
+      if (!keptTitle) lastGeneratedFor = '';
       titleGenSeq++;
       titleGenCount = 0;
       if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
@@ -1258,6 +1265,13 @@ export function init() {
       setComposerLocked(false);
       firstSuccess?.classList.add('hidden');
       feedbackForm?.classList.remove('hidden');
+      // #2796: a draft kept from another account's dismissal is not ours.
+      if (draftOwner !== App.user?.id) {
+        feedbackText.value = '';
+        feedbackTitle.value = '';
+        titleDirty = false;
+      }
+      draftOwner = App.user?.id;
       // Opening a queued success must not consume a failed outbox draft or
       // start screenshot/title probes behind the confirmation.
       if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved feedback has been sent.')) return;
@@ -1333,7 +1347,9 @@ export function init() {
       // A submit the server refused outright (a 400 no amount of retrying can
       // satisfy) is handed back here rather than disappearing: the user's own
       // words, their title and their target, with the reason above them.
-      if (window.FeedbackQueue) {
+      // #2796: not while a kept draft fills the composer — taking the record
+      // would consume it with nowhere to put it; it waits for an empty open.
+      if (window.FeedbackQueue && !feedbackText.value.trim()) {
         Promise.resolve(window.FeedbackQueue.takeFailed()).then((failed) => {
           const modal = document.getElementById('feedback-modal');
           if (!failed || modal.classList.contains('hidden')) return;
@@ -1409,11 +1425,14 @@ export function init() {
       feedbackForm?.classList.remove('hidden');
       // #1284: a dismissal that lands mid-capture is the stale teardown of
       // the presentation `suspendDialog()` closed, not the user closing the
-      // dialog — so the draft, the title and the notice stay. (The screenshot
-      // half below resets either way: that attempt is over.)
+      // dialog — so the notice stays too. (The screenshot half below resets
+      // either way: that attempt is over.)
+      // #2796: the description and title are NOT cleared here. Cancel, the
+      // backdrop, Escape and a kit dismiss all leave the words in the fields
+      // for the next open; only a send (filed or saved for later) empties
+      // them, before its grace-window click lands here. In memory only — a
+      // reload starts empty, as it always has outside a capture rescue.
       if (!captureInFlight) {
-        feedbackText.value = '';
-        feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
         clearDescriptionError();
         resetTitleGenState();

@@ -524,9 +524,9 @@
 
     // Hand the oldest permanently-failed record back to the caller and remove
     // it from the store, so the dialog can re-open with the user's own words
-    // in the textarea and the server's reason above it. Exactly once: if they
-    // close the dialog it is gone, which is the same contract as any other
-    // unsent draft.
+    // in the textarea and the server's reason above it. Exactly once: from
+    // then on it is the dialog's draft, kept across a dismissal like any other
+    // unsent draft (#2796) and gone with a reload.
     async takeFailed() {
       const s = await ensureStore();
       const failed = mine(await s.all()).filter((r) => r.status === 'failed');

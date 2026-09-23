@@ -70,8 +70,13 @@ test('a dismissal that lands mid-capture does not clear the draft', () => {
   assert.match(reset, /if \(!captureInFlight\) \{/,
     '_reset must keep the draft while a capture round trip is open');
   const guarded = reset.slice(reset.indexOf('if (!captureInFlight) {'), reset.indexOf('setComposerLocked(false)'));
-  for (const kept of ["feedbackText.value = ''", "feedbackTitle.value = ''", "feedbackStatus.classList.add('hidden')"]) {
-    assert.ok(guarded.includes(kept), `${kept} belongs inside the captureInFlight guard`);
+  assert.ok(guarded.includes("feedbackStatus.classList.add('hidden')"),
+    "feedbackStatus.classList.add('hidden') belongs inside the captureInFlight guard");
+  // #2796: no dismissal clears the words at all now, mid-capture or not —
+  // tests/feedback-dismiss-keeps-draft.test.js drives that for real.
+  const resetBody = reset.slice(0, reset.indexOf('feedbackBtn.addEventListener'));
+  for (const kept of ["feedbackText.value = ''", "feedbackTitle.value = ''"]) {
+    assert.ok(!resetBody.includes(kept), `_reset must not run ${kept}`);
   }
   // The flag is released whatever the attempt did, or the dialog would never
   // clear again.
