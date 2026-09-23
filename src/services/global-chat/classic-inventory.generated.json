@@ -7342,7 +7342,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 842,
+      "line": 839,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:id/update-from-fork",
       "expression": null,
@@ -7360,7 +7360,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 953,
+      "line": 950,
       "method": "POST",
       "path": "/api/apps/:slug/work/share-in-progress",
       "expression": null,
@@ -7378,7 +7378,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1073,
+      "line": 1070,
       "method": "POST",
       "path": "/api/apps/:slug/proposal-handoffs",
       "expression": null,
@@ -7400,7 +7400,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1325,
+      "line": 1322,
       "method": "POST",
       "path": "/api/sessions/:id/proposal-handoff/context",
       "expression": null,
@@ -7409,7 +7409,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1355,
+      "line": 1352,
       "method": "POST",
       "path": "/api/sessions/:id/proposal-handoff/commits",
       "expression": null,
@@ -7418,7 +7418,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1526,
+      "line": 1523,
       "method": "POST",
       "path": "/api/sessions/:id/proposal-handoff/build",
       "expression": null,
@@ -7427,7 +7427,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1836,
+      "line": 1835,
       "method": "GET",
       "path": "/api/sessions/:id/proposal-handoff",
       "expression": null,
@@ -7447,7 +7447,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1858,
+      "line": 1857,
       "method": "POST",
       "path": "/api/sessions/:id/promote",
       "expression": null,

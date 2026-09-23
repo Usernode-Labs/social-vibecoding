@@ -573,12 +573,12 @@ function currentProposalBranchHead(session) {
 
 // Managed local revisions follow the shared proposal lifecycle: active work
 // is mutable, promoted proposals are mutable with a vote reset, and states the
-// general rule freezes (notably merging/merged) remain frozen. Paused sessions
-// retain their existing resume-first behavior.
+// general rule freezes (notably merging/merged) remain frozen. Pausing hosted
+// coding does not prevent explicitly uploading or verifying local work.
 function managedRevisionKind(session) {
   const kind = proposalUpdate.isContinuableStatus(session?.status);
   if (kind === 'proposal') return kind;
-  if (kind === 'session' && session?.status === 'active') return kind;
+  if (kind === 'session') return kind;
   return null;
 }
 
@@ -643,11 +643,8 @@ function revisionBuildState(session, checks, runtime) {
 function statusNextStep(state, revisionState, checks) {
   const progress = revisionState || state;
   if (state === 'paused') {
-    if (progress === 'draft' || progress === 'uploaded') {
-      return 'Coding is paused. Resume this same session before changing or submitting its revision; do not call proposal_start.';
-    }
     if (progress === 'failed') {
-      return 'Coding is paused. Re-run checks on this same revision with proposal_recheck without resuming coding. If the failure needs code changes, resume this same session and submit a later fast-forwarding commit; do not call proposal_start.';
+      return 'Coding is paused. Re-run checks on this same revision with proposal_recheck without resuming coding. If the failure needs code changes, upload and submit a later fast-forwarding local commit to this same session; do not call proposal_start.';
     }
   }
   if (progress === 'stalled') {
@@ -1336,7 +1333,7 @@ function proposalHandoffRoutes(config) {
     }
     try {
       const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
-      if (!session || session.status !== 'active') return res.status(404).json({ error: 'Active handoff session not found' });
+      if (!session || !['active', 'paused'].includes(session.status)) return res.status(404).json({ error: 'Open handoff session not found' });
       if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
         return res.status(404).json({ error: 'Active handoff session not found' });
       }
@@ -1580,7 +1577,7 @@ function proposalHandoffRoutes(config) {
         if (!isSessionBusy(Number(session.id))
             && !localPipelineBusy && !stagingBusy && !captureBusy
             && currentCheckedHead(session) === input.headSha
-            && publicSessionStatus(session).state === 'ready') {
+            && publicSessionStatus(session).revisionState === 'ready') {
           // The head SHA is the build's idempotency key. A retry after the
           // original 202 response was lost must not tear down a healthy
           // preview and run the entire staging/check pipeline again. Failed
@@ -1611,7 +1608,7 @@ function proposalHandoffRoutes(config) {
           // SHA pending. Build submission attaches the durable transcript/spec
           // and launches one proposal check run for the final uploaded commit.
           // It must not use the active-session pipeline, whose persistence is
-          // intentionally scoped to status='active'.
+          // scoped to the pre-vote lifecycle captured at submission.
           const releaseOperation = beginSessionOperation(session.id);
           try {
             const repo = repoCoordinates(session);
@@ -1771,18 +1768,20 @@ function proposalHandoffRoutes(config) {
                     check_error_detail = NULL,
                     staging_container_id = NULL, staging_url = NULL,
                     last_activity_at = NOW()
-              WHERE id = $2 AND status = 'active' AND source = $3
+              WHERE id = $2 AND status = $7 AND source = $3
                 AND handoff_uploaded_sha = $1
                 AND checks_commit_sha IS NOT DISTINCT FROM $4
                 AND handoff_head_sha IS NOT DISTINCT FROM $5
                 AND handoff_upload_checked_sha IS NOT DISTINCT FROM $6`,
             [input.headSha, session.id, SOURCE, session.checks_commit_sha || null,
-              session.handoff_head_sha || null, session.handoff_upload_checked_sha || null]
+              session.handoff_head_sha || null, session.handoff_upload_checked_sha || null,
+              session.status]
           );
           // Manual archive/pause is intentionally allowed to abort work. If
           // it won while the GitHub checks above were in flight, keep the
           // pushed branch/history but do not resurrect a check pipeline for
-          // a session that is no longer active.
+          // a session whose lifecycle changed during this request. An explicit build
+          // submitted while paused keeps that exact paused status.
           if (!adopted.rowCount) {
             return res.status(409).json({ error: 'session_state_changed' });
           }
