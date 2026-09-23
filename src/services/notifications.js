@@ -1088,6 +1088,12 @@ const ACTION_COMPLETIONS = {
   // notification. Triggered in POST /api/sessions/:id/clone-headless,
   // scoped to the SOURCE (headless) session id.
   headless_cloned: { kinds: ['auto_solve_done'], scope: 'session_id' },
+  // #2847: opening a proposal card, or touching anything on it, answers the
+  // "New proposal" nudge the same way a vote does — the viewer has seen it.
+  // Only pr_proposed: revision_recheck asks for a re-vote and stale_pr is the
+  // author's warning, and looking at a card resolves neither. Triggered by
+  // POST /api/notifications/read { session_id } from the dev board.
+  proposal_opened: { kinds: ['pr_proposed'], scope: 'session_id' },
 };
 
 // The scope columns the registry is allowed to target. A defensive

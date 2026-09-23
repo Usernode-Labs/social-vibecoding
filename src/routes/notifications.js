@@ -653,7 +653,7 @@ function notificationsRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     const {
       id, all, chat_message_id: chatMessageId, app_id: appId,
-      conversation_id: conversationId,
+      conversation_id: conversationId, session_id: sessionId,
       kinds, exclude_kinds: excludeKinds,
     } = req.body || {};
     // Kind scoping for the split drawers (cog vs bell). Sanitize to
@@ -675,6 +675,31 @@ function notificationsRoutes(config) {
         }
         const cleared = await notifications.markReadForConversation(
           pool, req.user.id, parsedConversationId
+        );
+        const unread = await notifications.countUnread(pool, req.user.id);
+        if (cleared > 0) {
+          try {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          } catch (err) {
+            log.warn('notifications', 'cross-tab push failed', { message: err.message });
+          }
+        }
+        return res.json({ unread, cleared });
+      }
+
+      // `{ session_id }` (#2847): the viewer opened or touched a proposal card
+      // on the dev board, which resolves that proposal's "New proposal" nudge
+      // (the registry's `proposal_opened`: pr_proposed only). Same validation
+      // and fan-out shape as the conversation branch above.
+      if (sessionId != null) {
+        const rawSessionId = String(sessionId);
+        const parsedSessionId = Number(rawSessionId);
+        if (!/^[1-9]\d{0,9}$/.test(rawSessionId) || parsedSessionId > 2147483647) {
+          return res.status(400).json({ error: 'Invalid session id' });
+        }
+        const cleared = await notifications.markReadForAction(
+          pool, req.user.id, 'proposal_opened', parsedSessionId
         );
         const unread = await notifications.countUnread(pool, req.user.id);
         if (cleared > 0) {
