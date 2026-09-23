@@ -2479,6 +2479,9 @@ const App = {
               }
             }
             break;
+          case 'user_blocks_changed':
+            window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
+            break;
           case 'conversation_message_created':
           case 'conversation_message_updated':
           case 'conversation_reaction_updated':

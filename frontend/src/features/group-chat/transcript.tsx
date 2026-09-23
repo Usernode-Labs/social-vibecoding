@@ -63,6 +63,7 @@ import { PostedViaChip } from './posted-via-chip';
 import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
+import { setUserBlocked } from '../messages/store';
 import {
   transcriptStore,
   type Attachment,
@@ -309,8 +310,13 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
  * chat and counting the buttons, not by a test.
  */
 function RowActions({ msg }: { msg: TranscriptMessage }) {
-  if (!(msg.showEdit || msg.showBookmark || msg.showReact)) return null;
+  if (!(msg.showEdit || msg.showBookmark || msg.showReact || (msg.senderId && !msg.mine && msg.kind === 'message'))) return null;
   const saved = msg.bookmarked;
+  async function blockSender() {
+    if (!msg.senderId || !window.confirm(`Block @${msg.username}? Their messages in Messages and app discussions will be hidden.`)) return;
+    try { await setUserBlocked(msg.senderId, true); }
+    catch (error) { window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'); }
+  }
   return (
     <>
       {msg.showEdit ? (
@@ -335,6 +341,12 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
       {msg.showReact ? (
         <button type="button" className="gc-react-add" title="React" aria-label="Add reaction" tabIndex={-1}>
           {'\u{1F642}'}
+        </button>
+      ) : null}
+      {msg.kind === 'message' && !msg.mine && msg.senderId ? (
+        <button type="button" className="text-[11px] text-red-600 hover:underline" onClick={() => { void blockSender(); }}
+          title={`Block @${msg.username}`} aria-label={`Block @${msg.username}`}>
+          Block
         </button>
       ) : null}
     </>
