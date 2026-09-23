@@ -21,6 +21,8 @@ permissions:
 concurrency:
   group: kubernetes-images-${{ github.ref }}
   cancel-in-progress: false
+  # The default single pending slot cancels an earlier merge's release.
+  queue: max
 
 jobs:
   plan:
@@ -372,13 +374,31 @@ jobs:
           echo "release_channel=$release_channel" >> "$GITHUB_OUTPUT"
           echo "registry_owner=$registry_owner" >> "$GITHUB_OUTPUT"
 
+      # Push events can be queued out of order. An old source revision must
+      # not publish a higher chart version after main has advanced.
+      - name: Check branch tip before publishing
+        id: current_head
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_sha="$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)"
+          test -n "$current_sha"
+          if [ "$current_sha" = "$GITHUB_SHA" ]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            echo "Skipping $GITHUB_SHA: $GITHUB_REF is now $current_sha." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Log in to GHCR for Helm
+        if: steps.current_head.outputs.publish == 'true'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
             --username "${{ github.actor }}" \
             --password-stdin
 
       - name: Publish OCI Helm release
+        if: steps.current_head.outputs.publish == 'true'
         run: |
           helm push "${{ steps.chart.outputs.package_path }}" \
             "oci://ghcr.io/${{ steps.chart.outputs.registry_owner }}/charts"
@@ -400,7 +420,7 @@ jobs:
       # 200 means the sync is already underway. Only stable releases: Argo
       # tracks `0.1.*`, so a `feat-k8s` candidate has nothing to refresh.
       - name: Ask Argo CD to pick up the release now
-        if: steps.chart.outputs.release_channel == 'stable' && env.ARGOCD_REFRESH_TOKEN != ''
+        if: steps.current_head.outputs.publish == 'true' && steps.chart.outputs.release_channel == 'stable' && env.ARGOCD_REFRESH_TOKEN != ''
         continue-on-error: true
         env:
           ARGOCD_SERVER: argocd.platform.beta.usernodelabs.org
@@ -421,6 +441,7 @@ jobs:
           exit 1
 
       - name: Record atomic release
+        if: steps.current_head.outputs.publish == 'true'
         run: |
           echo '## Atomic Kubernetes release' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
