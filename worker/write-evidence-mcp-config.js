@@ -13,7 +13,7 @@ if (!output || !stateDir || !proxy || new Set(origins).size !== 2) {
   throw new Error('Evidence MCP config inputs are incomplete.');
 }
 const browserArgs = (persona) => [
-  '--browser', 'chromium', '--headless', '--isolated',
+  '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox',
   '--storage-state', path.join(stateDir, `${persona}.json`),
   '--allowed-origins', origins.join(';'),
   '--block-service-workers', '--image-responses', 'allow',

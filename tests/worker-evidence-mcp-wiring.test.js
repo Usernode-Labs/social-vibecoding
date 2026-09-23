@@ -43,7 +43,10 @@ test('both evidence agent backends launch the Playwright MCP executable installe
       assert.equal(config.mcpServers[server].command, command);
       assert.ok(config.mcpServers[server].args.includes(path.join(dir, 'state', state)));
       assert.ok(config.mcpServers[server].args.includes('http://base.example.invalid;http://head.example.invalid'));
+      assert.ok(config.mcpServers[server].args.includes('--no-sandbox'));
     }
+    assert.equal((codexRunner.match(/"--no-sandbox"/g) || []).length, 3);
+    assert.match(read('worker-run.sh'), /"--browser", "chromium", "--headless", "--isolated", "--no-sandbox"/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
