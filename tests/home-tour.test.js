@@ -114,27 +114,52 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   }
 });
 
-test('the Improve step waits for the viewer, and has no Next to skip it with', () => {
+test('the Improve step waits for the menu, and its Next opens the menu rather than skipping it', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   assert.equal(byId['app-menu'].advanceOn, 'menu-open');
-  assert.equal(steps.hasNext(steps.IMPROVE_STEP_INDEX), false);
   assert.equal(steps.IMPROVE_STEP_INDEX, 2);
-  // Every other step is driven by Next.
+  // Only the menu step's Next opens the menu; every other Next moves the
+  // counter (or finishes, on the last step).
   for (const [i, step] of steps.TOUR_STEPS.entries()) {
-    if (step.advanceOn) continue;
-    assert.equal(steps.hasNext(i), true, `${step.id} has a Next`);
+    assert.equal(steps.nextOpensMenu(i), step.advanceOn === 'menu-open', `${step.id}'s Next`);
   }
-  // The click is watched, never intercepted: the overlay subscribes to the
-  // store and advances on the EDGE into open.
+  // Next is on EVERY step now: nothing hides it.
+  assert.doesNotMatch(OVERLAY_SRC, /nextRef/);
+  assert.doesNotMatch(OVERLAY_SRC, /hasNext|showsNext/);
+  // The menu step's Next goes through the controller's own open path, and
+  // does NOT move the counter itself: the store watcher below does that,
+  // so step 4 can only ever arrive with the menu it points into.
+  const goNext = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const goNext = useCallback('));
+  const body = goNext.slice(0, goNext.indexOf('}, [finish]);'));
+  assert.match(body, /if \(nextOpensMenu\(at\)\) void AppContext\.open\(\);\s*else if \(isLastStep\(at\)\) finish\(\);/);
+  // The click on the mark is watched, never intercepted: the overlay
+  // subscribes to the store and advances on the EDGE into open.
   assert.match(OVERLAY_SRC, /appContextStore\.subscribe\(/);
   assert.match(OVERLAY_SRC, /if \(now && stepAt\(indexRef\.current\)\.advanceOn === 'menu-open'\)/);
   assert.doesNotMatch(OVERLAY_SRC, /addEventListener\('click'/);
 });
 
+test("a press on the tour never dismisses the menu it is pointing into", () => {
+  // Steps 4 and 5 spotlight rows INSIDE the app's menu, whose desktop
+  // popover closes on any click outside it. The tour's card sits outside it,
+  // so Next counted as an outside click: the menu shut, the next step (which
+  // needs it) fell back to the menu step, and Next on step 4 landed on
+  // step 3. The outside-click listener spares the tour's whole overlay.
+  const MENU_SRC = read('frontend/src/features/app-context/index.tsx');
+  assert.match(MENU_SRC, /const TOUR_ID = 'home-tour';/);
+  const onDoc = MENU_SRC.slice(MENU_SRC.indexOf('const onDoc = (event: Event) => {'));
+  const body = onDoc.slice(0, onDoc.indexOf('void AppContext.close();'));
+  assert.match(body, /const tour = document\.getElementById\(TOUR_ID\);/);
+  assert.match(body, /if \(t && \(sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\) \|\| tour\?\.contains\(t\)\)\) return;/);
+  // And the id it spares is the overlay's root, which holds the card, the
+  // shades and every button the tour draws.
+  assert.match(OVERLAY_SRC, /ref=\{rootRef\}\s*id="home-tour"/);
+});
+
 test('the cut-out passes the press through only where pressing is the point', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   // ONE step is pressed through: the Improve step, which the viewer completes
-  // by opening the panel itself and which has no Next to do it for them.
+  // by opening the menu themselves (or with Next, which opens it the same way).
   assert.equal(byId['app-menu'].interactive, true, 'the menu step lets the real mark be pressed');
   // EVERYTHING ELSE DESCRIBES ITS TARGET. Feedback presents a dialog, New
   // change starts a session, Workshop navigates off Home and the mark opens a
@@ -640,7 +665,6 @@ test('visibility rides refs, never a rendered className', () => {
     'useHiddenClass(rootRef, !live)',
     'useHiddenClass(bodyRef, confirming)',
     'useHiddenClass(confirmRef, !confirming)',
-    'useHiddenClass(nextRef, !showsNext)',
   ]) {
     assert.ok(OVERLAY_SRC.includes(call), `${call} is how that node hides`);
   }
