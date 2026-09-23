@@ -17172,7 +17172,11 @@ html.un-kb #platform-parked {
     height: 34px;
     padding: 0 12px;
     border-radius: 10px;
-    color: var(--text-primary);
+    /* THE RAIL'S OWN INK (#2890): the muted grey `.platform-tab` draws its
+       sections in, not the page's near-black, so the history reads as more
+       of the same rail rather than louder than it. The hover above lifts it
+       to periwinkle exactly as it lifts a tab. */
+    color: var(--text-muted);
     font-size: 14px;
     font-weight: 500;
     text-decoration: none;
