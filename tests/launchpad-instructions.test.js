@@ -130,8 +130,8 @@ test('the no-connector paragraph names the remedy per product, from the platform
     // Unset (local dev, tests): the hosted platform, as before.
     delete process.env.USERNODE_DOMAIN;
     const fallback = getLaunchpadInstructions({ appName: 'Recipe Box', slug: SLUG });
-    assert.match(fallback, /https:\/\/my\.onhomeroom\.com\/mcp/);
-    assert.match(fallback, /https:\/\/my\.onhomeroom\.com\/#settings\/connectors\./);
+    assert.match(fallback, /https:\/\/app\.onhomeroom\.com\/mcp/);
+    assert.match(fallback, /https:\/\/app\.onhomeroom\.com\/#settings\/connectors\./);
   } finally {
     if (saved === undefined) delete process.env.USERNODE_DOMAIN;
     else process.env.USERNODE_DOMAIN = saved;

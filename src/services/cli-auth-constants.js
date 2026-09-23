@@ -16,7 +16,7 @@ const REQUIRED_SCOPES = Object.freeze([IDENTITY_SCOPE, API_SCOPE, AGENT_SCOPE]);
 const REQUIRED_SCOPE_TEXT = REQUIRED_SCOPES.join(' ');
 // MCP and local agents use the hosted platform by default. Self-hosted
 // deployments can still select their canonical origin with USERNODE_DOMAIN.
-// Concretely: the production profile resolves to https://my.onhomeroom.com
+// Concretely: the production profile resolves to https://app.onhomeroom.com
 // with no environment set, so normal production use of the CLI, the stdio
 // MCP server and the local-agent commands needs no USERNODE_DOMAIN. When
 // USERNODE_DOMAIN *is* set it still wins, which is how a self-hosted
@@ -29,7 +29,7 @@ const REQUIRED_SCOPE_TEXT = REQUIRED_SCOPES.join(' ');
 // fail rather than follow the hop.
 const PRODUCTION_ORIGIN = process.env.USERNODE_DOMAIN
   ? `https://${process.env.USERNODE_DOMAIN}`
-  : 'https://my.onhomeroom.com';
+  : 'https://app.onhomeroom.com';
 const LOCAL_ORIGIN = 'http://localhost:3000';
 const DEVICE_TTL_SECONDS = 600;
 const ACCESS_TTL_SECONDS = 30 * 24 * 60 * 60;

@@ -70,9 +70,14 @@ import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
 // No `inline-flex`: app.css owns this control's `display`, because whether it
 // exists at all is a question about the VIEWPORT and React does not know the
 // viewport. `items-center justify-center` are inert until it does.
+//
+// NO DISC AT REST (#2798). The periwinkle tint used to sit behind the glyph
+// all the time, which made a plain toggle read as a pressed, highlighted
+// control. It shows on HOVER now, the same tint and hairline, and the border
+// is transparent at rest so the hover does not shift the glyph by a pixel.
 const TOGGLE_CLASS = 'platform-sidebar-toggle shrink-0 w-7 h-7 items-center justify-center'
-  + ' rounded-full un-touch-target border border-[color:var(--brand-line)]'
-  + ' bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]';
+  + ' rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)]'
+  + ' hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]';
 
 export function SidebarToggle() {
   // IT ALWAYS RENDERS, and app.css decides whether it is seen (#2718 review).
@@ -105,7 +110,7 @@ export function SidebarToggle() {
       // the next press folded the rail under the same pointer.
       onClick={() => {
         clearPeekTimer();
-        navStore.set({ railOpen: !navStore.get().railOpen, peek: false });
+        navStore.set({ railOpen: !navStore.get().railOpen, peek: false, peekOut: false });
       }}
       onMouseEnter={railOpen ? undefined : enterPeek}
       onMouseLeave={peek ? leavePeek : undefined}

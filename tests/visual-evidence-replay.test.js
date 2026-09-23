@@ -86,6 +86,29 @@ test('element resolution waits for a late accessible target before counting matc
   assert.equal(calls.some(([name]) => name === 'visible-count'), true);
 });
 
+test('a readiness wait accepts repeated visible matches while an interaction stays strict', async () => {
+  const visible = {
+    first: () => ({ waitFor: async () => {} }),
+    count: async () => 2,
+  };
+  const matches = {
+    first: () => ({ waitFor: async () => {} }),
+    filter: (options) => {
+      assert.deepEqual(options, { visible: true });
+      return visible;
+    },
+    count: async () => 2,
+    nth: () => ({ isVisible: async () => true }),
+  };
+  const page = { getByRole: () => matches };
+  const target = { by: 'role', role: 'heading', name: 'Global Chat', exact: false };
+
+  await replay.waitForAnyVisible(page, target, 'wait-heading', 1000);
+  await assert.rejects(replay.resolveOne(page, target, 'click-heading', {
+    state: 'visible', timeoutMs: 1000,
+  }), { code: 'ambiguous_locator' });
+});
+
 test('element resolution distinguishes a hidden role target from a missing target', async () => {
   const visibleLocator = {
     first: () => ({ waitFor: async () => { throw new Error('timeout'); } }),

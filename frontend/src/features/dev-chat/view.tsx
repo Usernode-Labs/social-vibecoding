@@ -149,9 +149,12 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
             >
               <div className="flex-1 min-w-0 sm:min-w-[12rem]">
                 <p className="font-semibold">You can come back later</p>
+                {/* Messages, because a change in flight is an agent
+                    conversation there (#2770). This named Improve until #2718
+                    retired that panel. */}
                 <p className="mt-1">
-                  You can leave this page and return anytime. Open <strong>Improve</strong> in
-                  the top bar to check your session’s status or find your chat again.
+                  You can leave this page and return anytime. Open <strong>Messages</strong> to
+                  check your change’s status or find this chat again.
                 </p>
               </div>
               <Button
@@ -243,17 +246,12 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
   );
 }
 
-/** Session URLs are the workspace; Open card has its own topic destination. */
+/** Session URLs are the workspace; the card has its own topic destination.
+ *  #2821: the way there is the session header's "Open proposal card", so the
+ *  workspace carries no strip of its own above the header. */
 function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
   useEffect(() => { window.DevChat?.restoreSessionScroll?.(); }, []);
-  if (!s.change || s.embedded) return <WorkspaceView s={s} />;
-  return <>
-    <nav className="dev-change-tabs" aria-label="Change views">
-      <button type="button" className="gc-vote-btn" onClick={() => (window as any).AppView?.openTopic('proposal', s.change!.item.id)}>Change overview</button>
-      <span className="dev-topic-note">Agent workspace</span>
-    </nav>
-    <WorkspaceView s={s} />
-  </>;
+  return <WorkspaceView s={s} />;
 }
 
 export function DevChatViewView({ s }: { s: DevViewState }): ReactNode {
