@@ -78,6 +78,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
+import { RecentsList } from './recents-list';
 
 /**
  * The five tabs, in order.
@@ -256,7 +257,7 @@ export function PlatformTabs() {
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  const { tab, messages, screen, peek, railOpen, viewer } = useStoreState(navStore);
+  const { tab, messages, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -267,6 +268,9 @@ export function PlatformTabs() {
   // second class app.css keys the peeking case off.
   useHiddenClass(barRef, !visible && !peek);
   useClassToggle(barRef, 'platform-tabs-peek', collapsed && peek);
+  // THE FADE OUT (#2795). The peek stays up for the length of the fade and
+  // this class is what app.css turns into it; ./rail-peek.ts times both.
+  useClassToggle(barRef, 'platform-tabs-peek-out', collapsed && peek && peekOut);
   // FOLDED IS A CLASS, NOT A `hidden`, and that is the whole safety of it: a
   // phone's bar is at the FOOT of the screen and is the only navigation there
   // is, so folding must never reach it. app.css acts on this class inside
@@ -318,7 +322,11 @@ export function PlatformTabs() {
         onMouseEnter={enter}
         onMouseLeave={leave}
       >
-      {TABS.map(({ key, label, href, Icon }) => (
+      {TABS.flatMap(({ key, label, href, Icon }) => [
+        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after Workshop,
+        // before Me at the rail's foot, which is where the Resume strip it
+        // replaces sat. Desktop only; app.css keeps it off the phone's bar.
+        key === 'me' ? <RecentsList key="recents" /> : null,
         <a
           key={key}
           id={`platform-tab-${key}`}
@@ -355,8 +363,8 @@ export function PlatformTabs() {
             {key === 'messages' ? <TabBadge count={messages} /> : null}
           </span>
           <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
-        </a>
-      ))}
+        </a>,
+      ])}
       </nav>
     </>
   );

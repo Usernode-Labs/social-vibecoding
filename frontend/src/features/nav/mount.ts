@@ -14,12 +14,14 @@ import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
+import { readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
 
 navStore.setFlush(flushSync);
 // Same reason as the tab's: App.navigateToApp clears the strip inside
 // PlatformUI.transition's reveal callback, and the kit captures the incoming
 // page from what that callback did before it returned.
 parkedStore.setFlush(flushSync);
+recentAppsStore.setFlush(flushSync);
 
 export { navStore, parkedStore };
 
@@ -68,7 +70,7 @@ if (typeof window !== 'undefined') {
       navStore.set({
         screen,
         tab: tabOverride || (screen ? tabForScreen(screen) : null),
-        ...(changed ? { peek: false } : null),
+        ...(changed ? { peek: false, peekOut: false } : null),
       });
     },
     /**
@@ -93,6 +95,12 @@ if (typeof window !== 'undefined') {
      */
     setViewer(name: string | null) {
       const viewer = typeof name === 'string' ? name.trim() : '';
+      // A different account (or none) is a different Recents (#2802): the
+      // list is read back for whoever is signed in now, and for nobody it
+      // is empty. Nothing to do while the name has not changed.
+      if ((viewer || null) !== navStore.get().viewer) {
+        recentAppsStore.set({ apps: readRecentApps(viewer || null) });
+      }
       navStore.set({ viewer: viewer || null });
     },
     /**
@@ -113,6 +121,10 @@ if (typeof window !== 'undefined') {
     park(app: {
       slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null;
     } | null) {
+      // The desktop rail's Recents keeps every app you left, with when
+      // (#2802). A park with null is the router clearing the strip because
+      // you went back into the app; it is still recent, so nothing is removed.
+      if (app && app.slug) rememberRecentApp(app, navStore.get().viewer);
       setParked(app && app.slug ? {
         slug: app.slug,
         name: app.name || app.slug,

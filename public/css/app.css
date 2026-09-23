@@ -16417,6 +16417,14 @@ html.un-ios {
 }
 
 
+/* RECENTS ARE THE DESKTOP RAIL'S (#2802). The phone's bar is five tabs
+   across the foot of the screen with no room for a list, so the element is
+   in the markup at every width and drawn only from 768px up, below. */
+.platform-recents {
+  display: none;
+}
+
+
 /* ── #platform-parked — the app you left ─────────────────────────────
    frontend/src/features/nav/parked-store.js carries the argument. What lives
    here is the geometry: a 52px strip resting ON the tab bar, out of flow like
@@ -16605,11 +16613,13 @@ html.un-kb #platform-parked {
 }
 
 @media (min-width: 768px) {
-  /* THE PRESSED STATE IS THE DEFAULT ONE, so the button wears the bar's own
-     periwinkle disc while the rail is up and goes quiet when it is down —
-     the rail being there is what the control is asserting. Colour only: the
-     disc does not move, because it is the fixed thing the layout pivots
-     around when the whole content column slides.
+  /* NO DISC AT REST, EITHER WAY (#2798). The button used to wear the bar's
+     periwinkle disc for as long as the rail was up, which read as a control
+     permanently highlighted. The disc is a HOVER state now (the component's
+     `hover:` classes); what still tells the two states apart is the ink —
+     periwinkle while the rail is up, muted while it is folded. Colour only:
+     the button does not move, because it is the fixed thing the layout
+     pivots around when the whole content column slides.
 
      `body:has(...)` is what replaces the `return null` this component used
      to do for itself: a route with no rail has no fold to offer, and a dead
@@ -16844,6 +16854,97 @@ html.un-kb #platform-parked {
   .platform-tab-label {
     max-width: none;
     min-width: 0;
+  }
+
+  /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,
+     so nothing said a row was a target until it was pressed. The hover is the
+     same periwinkle as the lit tab at about half the strength, so the tab you
+     are on stays the strongest thing in the rail and the one under the
+     pointer reads as "this one, if you press". Only where there IS a pointer:
+     a touch screen's sticky hover would leave a tapped tab half lit. */
+  .platform-tab,
+  .platform-recent {
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  @media (hover: hover) {
+    .platform-tab:not([aria-current="page"]):hover,
+    .platform-recent:hover {
+      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
+      color: var(--brand-ink);
+    }
+  }
+
+  /* ── RECENTS (#2802) ────────────────────────────────────────────────
+     frontend/src/features/nav/recents-list.tsx carries the argument: what you
+     were just doing, apps and conversations on one clock, between the
+     sections and Me. It takes the room the rail has left over and scrolls
+     inside it rather than pushing Me off the foot of a short window. */
+  .platform-recents:not(.hidden) {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--app-sheet-line);
+  }
+  .platform-recents-head {
+    margin: 0 0 4px;
+    padding: 0 12px;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    line-height: 1.35;
+    text-transform: uppercase;
+  }
+  .platform-recent {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .platform-recent-glyph {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    color: var(--text-muted);
+  }
+  .platform-recent-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.35;
+  }
+  /* UNREAD IS A DOT, not a count: the count lives on the Messages tab and
+     on the row in Messages, and a 224px rail has room for one mark. */
+  .platform-recent-dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 999px;
+    /* The unread count's own fill in Messages (`.messages-unread`). */
+    background: var(--accent);
+  }
+
+  /* THE RESUME STRIP GIVES WAY TO RECENTS ON THE DESKTOP (#2802). The apps
+     in the list above are the same offer, several at once, so a second copy
+     at the rail's foot would say it twice. The phone has no rail and keeps
+     the strip. By id so no later `.platform-parked` rule can bring it back. */
+  #platform-parked {
+    display: none;
   }
 
   /* THE PARKED STRIP IS THE RAIL'S FOOTER. It is the app you left, and the
@@ -17184,7 +17285,15 @@ html.un-kb #platform-parked {
      rail's own, because it IS the rail; what changes is that it floats. */
   .platform-tabs.platform-tabs-peek {
     z-index: 40;
-    background-color: var(--dc-sheet);
+    /* THE SAME FROSTED SURFACE AS THE DOCKED RAIL (#2795). This was the solid
+       `--dc-sheet`, so the rail came back over the page as a white panel
+       rather than as the rail. `.platform-tabs` already carries the frost;
+       restating the fill is what stops the solid one winning, and the
+       `@supports not` fallback above still gives a browser with no
+       backdrop-filter the solid sheet. */
+    background-color: var(--dc-sheet-fill);
+    backdrop-filter: var(--dc-frost);
+    -webkit-backdrop-filter: var(--dc-frost);
     border-right: 1px solid var(--app-sheet-line);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
     /* A FADE, NOT A SLIDE. A rail that slides in from the edge races the
@@ -17192,6 +17301,17 @@ html.un-kb #platform-parked {
        already where it is going to be. It was tried both ways in the design
        study and this is the one that stopped feeling like a mistake. */
     animation: platform-rail-peek-in 140ms ease-out;
+    /* On the peek itself, so the way back in from a half-finished fade is
+       the same curve as the way out. */
+    transition: opacity 200ms ease-in;
+  }
+  /* …AND IT FADES OUT THE SAME WAY (#2795). It used to snap: the grace
+     period ran out and the rail went straight to `display: none`. The peek
+     now stays up for 200ms with this class on (frontend/src/features/nav/
+     rail-peek.ts, PEEK_FADE_MS), and pointing back at it during the fade
+     takes the class off, so the rail comes back from wherever it had got to. */
+  .platform-tabs.platform-tabs-peek.platform-tabs-peek-out {
+    opacity: 0;
   }
   /* The peeked rail's footer: the parked strip rides ON the rail rather than
      under it (a peeking rail is 40, above the strip's 31 beside a docked one)
@@ -17211,4 +17331,5 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .platform-tabs.platform-tabs-peek,
   body:has(#platform-tabs.platform-tabs-peek) .platform-parked { animation: none; }
+  .platform-tabs.platform-tabs-peek { transition: none; }
 }

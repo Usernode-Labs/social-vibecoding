@@ -395,7 +395,7 @@ test('every screen change clears the peek, and nothing else does', () => {
   // exactly that rate. Nothing in the shipped router does that today; the
   // guard is here so that nothing ever can.
   assert.match(mount, /const changed = navStore\.get\(\)\.screen !== screen;/);
-  assert.match(mount, /\.\.\.\(changed \? \{ peek: false \} : null\),/);
+  assert.match(mount, /\.\.\.\(changed \? \{ peek: false, peekOut: false \} : null\),/);
 });
 
 test('the desktop rail folds by hand, and a phone can never lose its bar', () => {

@@ -23,6 +23,20 @@ import { navStore } from './nav-store.js';
 
 export const PEEK_GRACE_MS = 280;
 
+/**
+ * How long the peeked rail takes to fade away once the grace period is up
+ * (#2795). It used to snap: the grace timer set `peek: false` and the rail
+ * went straight to `display: none`, so a rail that FADED IN vanished in one
+ * frame on the way out. Now the grace timer starts the fade (`peekOut`, which
+ * app.css turns into an opacity transition) and a second timer, this long,
+ * takes the rail away once the fade has finished.
+ *
+ * The SAME timer slot holds both stages, so a pointer that comes back onto
+ * the rail at any point — during the grace period or halfway through the
+ * fade — cancels whichever is pending and brings the rail straight back.
+ */
+export const PEEK_FADE_MS = 200;
+
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 export function clearPeekTimer(): void {
@@ -32,14 +46,18 @@ export function clearPeekTimer(): void {
 /** The pointer is on something that shows the rail: show it now. */
 export function enterPeek(): void {
   clearPeekTimer();
-  if (!navStore.get().peek) navStore.set({ peek: true });
+  const { peek, peekOut } = navStore.get();
+  if (!peek || peekOut) navStore.set({ peek: true, peekOut: false });
 }
 
-/** The pointer left one: put the rail away unless it arrives at another. */
+/** The pointer left one: fade the rail away unless it arrives at another. */
 export function leavePeek(): void {
   clearPeekTimer();
   timer = setTimeout(() => {
-    timer = null;
-    navStore.set({ peek: false });
+    navStore.set({ peekOut: true });
+    timer = setTimeout(() => {
+      timer = null;
+      navStore.set({ peek: false, peekOut: false });
+    }, PEEK_FADE_MS);
   }, PEEK_GRACE_MS);
 }
