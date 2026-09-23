@@ -5,7 +5,7 @@
  * you stepped out of, and a conversation — a DM, a group chat, a channel or
  * an agent chat. The rail used to answer the first with a single Resume strip
  * at its foot and left the second to the Messages tab. This merges both onto
- * ONE clock, newest first, and keeps the first few.
+ * ONE clock, newest first, and keeps as many as the rail has room for.
  *
  * NOT ../messages/inbox.ts's order. The inbox puts channels in a section of
  * their own after the chats (#2783), because a channel is a room you visit
@@ -57,8 +57,11 @@ export interface RecentConversation {
   members?: Array<{ id: number; username: string }>;
 }
 
-/** How many rows the rail shows. */
-export const RECENTS_LIMIT = 8;
+/** How many rows the list holds (#2878). NOT how many the rail shows: the
+ *  list runs down the rest of the rail to the rule above Me and scrolls
+ *  inside it (app.css), so a tall window shows more history and a short one
+ *  scrolls. This is only the ceiling on how far back that history goes. */
+export const RECENTS_LIMIT = 30;
 
 function stamp(value: string | null | undefined): number {
   if (!value) return Number.NEGATIVE_INFINITY;
