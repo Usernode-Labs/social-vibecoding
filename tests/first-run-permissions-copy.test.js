@@ -110,16 +110,18 @@ test('iOS first-run sheet asks for notifications, not alarms or blocks', async (
     'the iOS body copy explains the notification permission');
   assert.match(text, /Allow notifications/,
     'the iOS grant button says what the OS will actually ask');
-  assert.doesNotMatch(text, /Battery optimization/,
+  assert.doesNotMatch(text, /battery/i,
     'iOS never shows the Android battery row');
 });
 
-test('Android first-run sheet keeps the exact-alarm + battery copy', async () => {
+test('Android first-run sheet explains exact alarms, battery and notifications', async () => {
   const text = await showFirstRunSheet({
     platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false,
   });
   assert.match(text, /Exact alarms/);
-  assert.match(text, /Battery optimization/);
+  assert.match(text, /Unrestricted battery use/);
+  assert.match(text, /notifications/,
+    'Android copy says the grant button also asks for notifications');
   assert.match(text, /produce blocks/,
     'Android copy still explains block production');
   assert.match(text, /exact slot times/);
