@@ -1088,7 +1088,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // #2803 (+2). Neither set overlaps the other, so the merged manifest holds
   // every one of them: 740 + 1 + 6 = 747, leaving 23 slots under the 770
   // ceiling.
-  assert.equal(DAPP.tests.length, 747);
+  //
+  // 747 → 749: independently on main, +2 (the side panel beside a running
+  // app): its host ships hidden and frameless after the app view, and a
+  // `?panel=1` address opened in a window of its own is the ordinary
+  // platform. 749, which leaves 21 slots under the 770 ceiling and 1 before
+  // the 20-slot floor at 750.
+  assert.equal(DAPP.tests.length, 749);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

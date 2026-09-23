@@ -209,11 +209,25 @@
       } catch { /* best-effort */ }
     },
 
+    // Is this the side panel's document? The class head.html puts on <html>
+    // when it is (frontend/src/lib/side-panel-mode.ts reads the same one).
+    _inSidePanel() {
+      try {
+        const root = document.documentElement;
+        return !!(root && root.classList && root.classList.contains('in-side-panel'));
+      } catch { return false; }
+    },
+
     // Single entry the notifications module calls when a completion
     // notification arrives: chime when the app is visible, OS notification
     // when it's hidden. The decision is made once, synchronously, here.
     onCompletion(info) {
       if (!DevAlerts.enabled()) return;
+      // The side panel's document (`?panel=1`, framed beside a running app)
+      // hears the same `notification_new` as the top window, over its own
+      // socket. The top window chimes; a second copy would chime twice, or
+      // raise the same OS notification twice.
+      if (DevAlerts._inSidePanel()) return;
       if (document.visibilityState === 'hidden') {
         DevAlerts.systemNotify(info);
       } else {
