@@ -60,6 +60,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton, backToLanding } from './back-button';
+import { NativeLoginDetailsLink } from './native-login-details';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
@@ -70,6 +71,7 @@ import {
   isNative,
   legacy,
   NativeLoginPreparationError,
+  type NativeLoginFailureDetails,
   sessionMintFailureMessage,
   useAuthScreensPatch,
 } from './shared';
@@ -388,8 +390,10 @@ export function LoginScreen() {
   const [walletControls, setWalletControls] = useState(false);
 
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginDetails, setLoginDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [passwordResetComplete, setPasswordResetComplete] = useState(false);
   const [otpError, setOtpError] = useState<string | null>(null);
+  const [otpDetails, setOtpDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [otpStatus, setOtpStatus] = useState<string | null>(null);
   const [otpEmailEcho, setOtpEmailEcho] = useState('');
   // The address a waitlist-release link carried, and the moment the resend
@@ -448,11 +452,14 @@ export function LoginScreen() {
 
   const showLoginBaseView = useCallback(() => {
     setPasswordResetComplete(false);
+    setLoginDetails(null);
+    setOtpDetails(null);
     setView('base');
   }, []);
 
   const otpShowStep = useCallback((step: OtpStep) => {
     setOtpError(null);
+    setOtpDetails(null);
     setOtpStep(step);
   }, []);
 
@@ -654,6 +661,7 @@ export function LoginScreen() {
   const onLoginSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoginError(null);
+    setLoginDetails(null);
     if (blockedOffline(setLoginError)) return;
     try {
       const res = await fetchSessionMint('/api/auth/login', {
@@ -672,6 +680,7 @@ export function LoginScreen() {
       finishLogin();
     } catch (error) {
       setLoginError(sessionMintFailureMessage(error));
+      setLoginDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
   }, []);
 
@@ -687,6 +696,7 @@ export function LoginScreen() {
    */
   const otpRequestCode = useCallback(async (explicitEmail?: string) => {
     setOtpError(null);
+    setOtpDetails(null);
     const email = (explicitEmail || otpEmailInput.current?.value || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       setOtpError('Enter a valid email address');
@@ -759,6 +769,7 @@ export function LoginScreen() {
 
   const onOtpVerify = useCallback(async () => {
     setOtpError(null);
+    setOtpDetails(null);
     const code = (otpCode.current?.value || '').trim();
     if (!code) {
       setOtpError('Enter the code from the email');
@@ -810,11 +821,13 @@ export function LoginScreen() {
     } catch (error) {
       setOtpStatus(null);
       setOtpError(sessionMintFailureMessage(error));
+      setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
   }, [otpShowStep, showLoginBaseView, st]);
 
   const onOtpSetPassword = useCallback(async () => {
     setOtpError(null);
+    setOtpDetails(null);
     const value = otpNewPassword.current?.value || '';
     const confirm = otpConfirmPassword.current?.value || '';
     if (value.length < 8) {
@@ -845,6 +858,7 @@ export function LoginScreen() {
     } catch (error) {
       setOtpStatus(null);
       setOtpError(sessionMintFailureMessage(error));
+      setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
   }, [st]);
 
@@ -1401,6 +1415,7 @@ export function LoginScreen() {
             </div>
             <div id="login-error" className={hiddenLast(!loginError, ERROR)}>
               {loginError}
+              <NativeLoginDetailsLink details={loginDetails} />
             </div>
             <Button type="submit" data-offline-disabled="" {...SOLID}>
               Sign in
@@ -1636,6 +1651,7 @@ export function LoginScreen() {
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
               {otpError}
+              <NativeLoginDetailsLink details={otpDetails} />
             </div>
             <div
               id="otp-status"
