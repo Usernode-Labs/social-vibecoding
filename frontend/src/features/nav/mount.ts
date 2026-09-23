@@ -72,6 +72,10 @@ if (typeof window !== 'undefined') {
       });
     },
     /**
+     * For a classic-script caller. The shipped writer is the Messages store,
+     * which is in this bundle and sets `messages` on the nav store itself
+     * (../messages/store.ts syncTabBadge, #2794).
+     *
      * @param count Conversations with something unread. Clamped at zero so a
      *   caller that subtracts its way negative cannot render "-1 unread".
      */
