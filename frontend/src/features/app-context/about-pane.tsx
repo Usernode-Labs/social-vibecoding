@@ -274,7 +274,12 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;
   const showFork = isApp && !!forkItem;
 
-  const note = platform ? platformNote(row, !!restricted) : appNote(row);
+  // The platform's rules are its row's, which a cold tab may still be loading
+  // (./about-data.ts asks Home for the list): no sentence until they are here,
+  // rather than the default rules for a moment and then the platform's own.
+  const note = platform
+    ? (restricted || row ? platformNote(row, !!restricted) : null)
+    : appNote(row);
   const people = ready.map(contributorView);
   const shown = showAll ? people : people.slice(0, CONTRIB_FOLD);
 
@@ -432,7 +437,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
         </div>
       ) : null}
 
-      {isApp || platform ? (
+      {(isApp || platform) && note ? (
         <p id="app-about-note" className="px-5 pt-1 pb-1 text-[0.8125rem] leading-relaxed text-zinc-600 dark:text-zinc-300">
           {note}
         </p>
