@@ -152,7 +152,8 @@ test('Back climbs: a discussion or a message to Messages, a proposal, an issue o
 test('the title is the page\'s own header title, except where that would only name the app', () => {
   assert.equal(R.titleFor('messages/4242', 'Design review'), 'Design review');
   assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Notes', 'a discussion is its app\'s');
-  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Workshop'), 'Workshop');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Workshop', 'the Workshop is the Workshop, as the prototype titles it');
+  assert.equal(R.titleFor('messages', 'Inbox'), 'Messages', 'and the inbox is Messages');
   assert.equal(R.titleFor('app/notes-ab12/dev/proposals/12', 'Notes'), 'Proposal');
   assert.equal(R.titleFor('app/notes-ab12/dev/issues/7', 'Notes'), 'Issue');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/41', 'Notes'), 'Change');
@@ -595,12 +596,14 @@ test('the panel\'s document adds no history entry, and reports each page to the 
   assert.equal(p.win.AppView._proposalHint, true, 'the first page\'s hint is in place before the router runs');
   p.boot();
   await tick();
-  assert.deepEqual(p.reports[0], ['ready', 'app/notes-ab12/workshop', 'Homeroom']);
+  // No page has titled the header yet: the store's placeholder (the
+  // platform's name) is reported as nothing, and the top titles the kind.
+  assert.deepEqual(p.reports[0], ['ready', 'app/notes-ab12/workshop', '']);
   // The router pushes (updateHash, a proposal opened from the board)…
   p.win.history.pushState(null, '', '/app/notes-ab12/dev/proposals/12?panel=1');
   assert.deepEqual(p.history.pushes, [], '…and it becomes a replace: no entry in the joint history');
   await tick();
-  assert.deepEqual(p.reports.at(-1), ['navigated', 'app/notes-ab12/dev/proposals/12', 'Homeroom', true]);
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'app/notes-ab12/dev/proposals/12', '', true]);
   // A canonical rewrite is the same page settling.
   p.win.history.replaceState(null, '', '/app/notes-ab12/dev/proposals/12?panel=1');
   await tick();
@@ -631,7 +634,7 @@ test('the top document sends the panel somewhere by replacing its address and ro
   await tick();
   assert.equal(p.url(), 'https://homeroom.test/?panel=1#messages/app/notes-ab12');
   assert.equal(p.routed.length, 1, 'routed through the router\'s own entry point');
-  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/app/notes-ab12', 'Homeroom', false],
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/app/notes-ab12', '', false],
     'the top put it there, so it is already on the top\'s stack');
   p.runtime.go('app/notes-ab12/dev/sessions/new', { proposalHint: true });
   assert.equal(p.win.AppView._proposalHint, true, 'the hint is in place before the router runs');
@@ -677,7 +680,7 @@ test('a link inside the panel is followed in place, keeping panel=1', async () =
   assert.equal(click('#messages/4243'), true);
   assert.equal(p.url(), 'https://homeroom.test/?panel=1&demo=1#messages/4243', 'a replace, not a push');
   await tick();
-  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/4243', 'Homeroom', true]);
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/4243', '', true]);
   assert.equal(click('/app/notes-ab12/dev/issues/7'), true);
   assert.equal(p.url(), 'https://homeroom.test/app/notes-ab12/dev/issues/7?panel=1&demo=1',
     'a clean path keeps this document\'s query');
@@ -693,14 +696,14 @@ test('a script\'s hash push is refused and replayed as a replace; the store\'s o
   assert.equal(p.navigate('push', '#messages/channel/general'), true, 'refused: it would be an entry');
   await tick();
   assert.equal(p.url(), 'https://homeroom.test/?panel=1#messages/channel/general');
-  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/channel/general', 'Homeroom', true]);
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/channel/general', '', true]);
   // The Messages store's `location.replace('#messages/88')` once it knows the
   // room: let through, and NOT a second page — Back from #general must not
   // land on the reference that only sends it here again.
   assert.equal(p.navigate('replace', '#messages/88'), false, 'a replace is let through');
   p.win.location.replace('#messages/88');
   await tick();
-  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/88', 'Homeroom', false]);
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/88', '', false]);
   assert.equal(p.navigate('traverse', '#messages'), false, 'and a traversal is never touched');
   delete globalThis.document;
 });
@@ -713,7 +716,7 @@ test('without the Navigation API an unannounced hash change is taken for a push'
   await tick();
   p.win.location.replace('#messages/4243');
   await tick();
-  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/4243', 'Homeroom', true]);
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/4243', '', true]);
   delete globalThis.document;
 });
 

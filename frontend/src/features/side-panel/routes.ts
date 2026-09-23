@@ -255,24 +255,27 @@ const KIND_TITLE: Record<PanelKind, string> = {
   messages: 'Messages',
 };
 
+/** The pages whose title is their kind, whatever their header says. */
+const FIXED_TITLE: ReadonlySet<PanelKind> = new Set<PanelKind>([
+  'workshop', 'messages', 'proposal', 'issue', 'change', 'new-change',
+]);
+
 /**
- * The header row's title for `route`.
+ * The header row's title for `route`, as the prototype draws it.
  *
- * The embedded document's own header title (`reported`) is the source where it
- * says something: a conversation's name, the app a discussion belongs to, the
- * inbox, the Workshop. On a proposal, an issue or a change that header names
- * only the APP — it draws the app's tile beside it on a phone — which beside
- * the app itself would say nothing, so those take the page's kind instead:
- * "Proposal", "Issue", "Change", "New change", as the prototype draws them.
+ * The embedded document's own header title (`reported`) is the source where
+ * it names the page: a conversation's name, the app a discussion belongs to,
+ * an agent chat's title. The Workshop, the inbox and a piece of work — a
+ * proposal, an issue, a change — take their kind instead: "Workshop",
+ * "Messages", "Proposal", "Issue", "Change", "New change". On those the
+ * header names only the APP (it draws the app's tile beside it on a phone),
+ * which beside the app itself would say nothing.
  */
 export function titleFor(route: string | null | undefined, reported?: string | null): string {
   const page = route ? panelPage(route) : null;
   const text = String(reported || '').trim();
   if (!page) return text;
-  if (page.kind === 'proposal' || page.kind === 'issue'
-      || page.kind === 'change' || page.kind === 'new-change') {
-    return KIND_TITLE[page.kind];
-  }
+  if (FIXED_TITLE.has(page.kind)) return KIND_TITLE[page.kind];
   return text || KIND_TITLE[page.kind];
 }
 

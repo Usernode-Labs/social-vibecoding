@@ -100,7 +100,14 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
   let lastUrl = loc.href;
 
   const route = () => routeFromUrl(loc.href);
+  // Has a page titled the header yet? Until one has, the store holds the
+  // prerender's placeholder — the platform's name, which is no page's title —
+  // and a panel that has just booted would read "Homeroom" until its page
+  // loaded enough to title itself. Reported as '' instead, so the top falls
+  // back to the page's kind ("Discussion", "Messages").
+  let titled = false;
   const title = () => {
+    if (!titled) return '';
     const t = headerTitleStore.get();
     return String((t && t.text) || '');
   };
@@ -220,7 +227,10 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
     schedule();
   });
   win.addEventListener('popstate', () => schedule());
-  headerTitleStore.subscribe(() => schedule());
+  headerTitleStore.subscribe(() => {
+    titled = true;
+    schedule();
+  });
 
   // ── 2. Boot ────────────────────────────────────────────────────────────
   // The first page is the frame's own address. A hint the top had for it (New
