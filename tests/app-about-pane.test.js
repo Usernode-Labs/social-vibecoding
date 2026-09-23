@@ -298,8 +298,9 @@ test('the restricted rows hide through a layout effect, so the prerendered menu 
   const html = read('public/index.html');
   assert.match(html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#" class="flex/,
     'the prerender ships both rows unhidden, with the one class string React keeps');
-  assert.match(sheet, /label=\{target === 'platform' \? 'Go to platform discussion' : 'Go to app discussion'\}/,
-    'the design\'s "Go to platform discussion" on a platform tab');
+  assert.match(sheet, /label=\{mounted && target === 'platform' \? 'Go to platform discussion' : 'Go to app discussion'\}/,
+    'the design\'s "Go to platform discussion" on a platform tab, decided after mount');
+  assert.match(sheet, /const \[mounted, setMounted\] = useState\(false\);\s*useEffect\(\(\) => \{ setMounted\(true\); \}, \[\]\);/);
 });
 
 test('About is the menu\'s pane, and the menu\'s two actions stay on the menu pane', () => {

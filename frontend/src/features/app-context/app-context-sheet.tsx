@@ -254,6 +254,12 @@ export function AppsSwitcherSheet(): ReactNode {
   // would come back without its `hidden`.
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   const discussionRowRef = useRef<HTMLAnchorElement | null>(null);
+  // AFTER MOUNT ONLY, for the one new piece of store-derived TEXT below (the
+  // platform discussion's label): the hydrating render must print what the
+  // prerender printed whatever the store says by then, or it is React #418
+  // on every route. The class toggle above is an effect for the same reason.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   useIsomorphicLayoutEffect(() => {
     for (const el of [workshopRowRef.current, discussionRowRef.current]) {
       if (el && el.classList.contains('hidden') !== !!restricted) {
@@ -576,17 +582,16 @@ export function AppsSwitcherSheet(): ReactNode {
               rows link to, so the menu and the inbox now agree.
           */}
           {/* On a platform tab the discussion is the PLATFORM's, and the row
-              says so — the design's "Go to platform discussion". The text is
-              the one store-derived thing here, and it is text in a subtree
-              React already owns: `target` is null in the prerender, which
-              renders the app wording, and the platform's arrives with the
-              route after hydration. */}
+              says so — the design's "Go to platform discussion". Decided
+              after mount (`mounted` above): the prerender and the hydrating
+              render both print the app wording, and the platform's arrives
+              one commit later. */}
           <MenuRow
             id="app-menu-row-discussion"
             elRef={discussionRowRef}
             href={slug ? `#messages/app/${encodeURIComponent(slug)}` : '#messages'}
             icon={<ChatIcon />}
-            label={target === 'platform' ? 'Go to platform discussion' : 'Go to app discussion'}
+            label={mounted && target === 'platform' ? 'Go to platform discussion' : 'Go to app discussion'}
           />
           {/*
               The terminal is the one Improve row that stays TOP LEVEL rather
