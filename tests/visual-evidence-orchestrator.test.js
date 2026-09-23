@@ -103,7 +103,11 @@ function setup({ dispatch, storeArtifacts } = {}) {
 async function execute(fixture, options = {}) {
   controlPlane._clearForTests();
   return orchestrator.executeRun({
-    visualEvidence: { maxRunMs: 60_000, maxAgentMs: options.maxAgentMs || 10_000 },
+    visualEvidence: {
+      maxRunMs: 60_000,
+      maxAgentMs: options.maxAgentMs || 10_000,
+      maxRepairAgentMs: options.maxRepairAgentMs || 10_000,
+    },
   }, {
     pool: fixture.pool,
     run: fixture.run,
@@ -251,6 +255,48 @@ test('a wrong locator gets one explicit agent correction and two clean replays',
   });
   assert.deepEqual(fixture.transitions.map((entry) => entry.next),
     ['provisioning', 'exploring', 'replaying', 'replaying', 'reviewing', 'verified']);
+});
+
+test('a correction turn has time to inspect the page after the first planner budget expires', async () => {
+  const mismatch = Object.assign(new Error('heading matched 2 elements; exactly one is required.'), {
+    code: 'ambiguous_locator', detail: { side: 'base', phase: 'focus', actionId: 'capture-heading' },
+  });
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) {
+        await assert.rejects(control.runPlan(fixtures.plan()), { code: 'ambiguous_locator' });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } else {
+        assert.equal(options.repairAttempt, 1);
+        assert.ok(options.timeoutMs > 0, 'repair has a separate positive time budget');
+        await control.runPlan(corrected);
+      }
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw mismatch;
+    }
+    return runPass(...args);
+  };
+
+  const result = await execute(fixture, { maxAgentMs: 20, maxRepairAgentMs: 200 });
+  assert.equal(result.state, 'verified');
+  const dispatches = fixture.transitions.at(-1).patch.traceSummary.agentDispatches;
+  assert.equal(dispatches[0].budgetMs, 20);
+  assert.equal(dispatches[1].budgetMs, 200);
+  assert.ok(dispatches[1].timeoutMs > 0);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
 });
 
 test('a retry after a failed replay cannot replace the browser error with the plan limit', async () => {

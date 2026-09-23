@@ -556,8 +556,8 @@ async function executeRun(config, options, injected = {}) {
   const metrics = newRunMetrics();
   metrics.replayRuntime = String(config.captureRuntime || process.env.CAPTURE_RUNTIME || config.appRuntime || 'docker').slice(0, 32);
   const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
-  let agentWindowStartedAt = null;
-  let agentWindowSuspendedAt = 0;
+  const repairAgentBudgetMs = config.visualEvidence?.maxRepairAgentMs || 120_000;
+  const agentWindows = new Map();
   let replayBudgetStartedAt = null;
   let replaySuspendedMs = 0;
   const suspendedMs = () => replaySuspendedMs
@@ -786,9 +786,10 @@ async function executeRun(config, options, injected = {}) {
     });
 
     const dispatchOnce = async (forceBackend = null, repairAttempt = 0) => {
-      if (agentWindowStartedAt == null) {
-        agentWindowStartedAt = Date.now();
-        agentWindowSuspendedAt = suspendedMs();
+      let window = agentWindows.get(repairAttempt);
+      if (!window) {
+        window = { startedAt: Date.now(), suspendedAt: suspendedMs() };
+        agentWindows.set(repairAttempt, window);
       }
       const dispatchStartedAt = Date.now();
       const suspendedAtStart = suspendedMs();
@@ -797,15 +798,17 @@ async function executeRun(config, options, injected = {}) {
         requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64),
         requestedModel: safeModelId(session.agent_model || session.model),
         repairAttempt,
+        budgetMs: repairAttempt === 1 ? repairAgentBudgetMs : agentBudgetMs,
       };
       metrics.agentDispatches.push(dispatchTrace);
       try {
         // Provisioning and deterministic replay are platform work. Starting
         // this clock before the paired images/fixtures were ready spent the
         // agent's four minutes before it could even open its first page.
-        const remainingAgentMs = agentBudgetMs
-          - (Date.now() - agentWindowStartedAt
-            - (suspendedMs() - agentWindowSuspendedAt));
+        const remainingAgentMs = dispatchTrace.budgetMs
+          - (Date.now() - window.startedAt
+            - (suspendedMs() - window.suspendedAt));
+        dispatchTrace.timeoutMs = Math.max(0, remainingAgentMs);
         if (remainingAgentMs <= 0) {
           throw new VisualEvidenceOrchestrationError(
             'evidence_agent_timeout',
