@@ -162,6 +162,24 @@ function onHomeClick(event: React.MouseEvent<HTMLAnchorElement>): void {
 }
 
 /**
+ * The Workshop tab's plain click: back to the app Workshop you left (#2776).
+ *
+ * The router decides (App.resumeWorkshopView, public/js/app.js): when this
+ * device remembers an app's Workshop view and you are not already in one, it
+ * takes you there and says so, and the href's navigation is stopped. Every
+ * other time — nothing remembered, or already inside an app's Workshop,
+ * where the tab pops to the selector as it always did — it answers false and
+ * the href does exactly what it did before. A modified click is left alone,
+ * as Home's is.
+ */
+function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
+  const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
+  if (nav?.isNativeClick?.(event)) return;
+  const app = (window as unknown as { App?: { resumeWorkshopView?: () => boolean } }).App;
+  if (app?.resumeWorkshopView?.()) event.preventDefault();
+}
+
+/**
  * The Messages tab's count — ALWAYS IN THE MARKUP, hidden until it has one.
  *
  * It renders unconditionally for the reason #notifications-badge in the
@@ -313,7 +331,7 @@ export function PlatformTabs() {
           // step with. The colour comes from app.css keying off it.
           aria-current={tab === key ? 'page' : undefined}
           aria-label={tabLabel(key, label, viewer).ariaLabel}
-          onClick={key === 'home' ? onHomeClick : undefined}
+          onClick={key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined}
         >
           <span className="platform-tab-mark">
             <Icon className="platform-tab-glyph" aria-hidden="true" />

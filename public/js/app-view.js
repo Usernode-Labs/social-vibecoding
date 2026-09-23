@@ -3287,6 +3287,10 @@ const AppView = {
       // click did nothing". The other kinds stay silent on purpose; an issue
       // that misses even its single-issue fetch (#2365) is a bad number or
       // a pull request, not a card anyone could see.
+      //
+      // (#2776) Unless this was the Workshop tab returning to the card you
+      // left: that one goes quietly back to the app selector instead.
+      if (App._abandonWorkshopResume?.()) return;
       if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
         PlatformUI.toast('Couldn’t open that proposal’s discussion.');
       }
