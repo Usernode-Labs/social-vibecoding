@@ -1078,10 +1078,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // under the dark shell leaves it in the shell's own dark mode. 746 leaves
   // 24 slots under the 770 ceiling.
   //
+  // +2 (the side panel beside a running app): its host ships hidden and
+  // frameless after the app view, and a `?panel=1` address opened in a window
+  // of its own is the ordinary platform. 748, which leaves 22 slots under the
+  // 770 ceiling and 2 before the 20-slot floor at 750.
+  //
   // +2 (#2802, #2798): the desktop rail's Recents sitting between Workshop
   // and Me, and the sidebar toggle and bell carrying their blue disc on
-  // hover only. 748 leaves 22 slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 748);
+  // hover only. 750 leaves 20 slots under the 770 ceiling,
+  // exactly the 20-slot floor.
+  assert.equal(DAPP.tests.length, 750);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

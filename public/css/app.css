@@ -17383,3 +17383,153 @@ html.un-kb #platform-parked {
   body:has(#platform-tabs.platform-tabs-peek) .platform-parked { animation: none; }
   .platform-tabs.platform-tabs-peek { transition: none; }
 }
+
+/* ── #platform-side-panel — THE PANEL BESIDE A RUNNING APP ───────────────
+   On a desktop-width window, while an app runs on its App tab, the pages
+   about it (its Workshop, its discussion, a proposal, an issue, a change, a
+   conversation) open in a panel beside it rather than replacing it —
+   frontend/src/features/side-panel/, whose controller carries the why.
+
+   THE APP IS NEVER RE-PARENTED, HIDDEN OR RE-SOURCED: its frame lives in
+   #app-view, and the only thing that changes about #app-view is its SIZE — a
+   right margin the width of the panel, keyed off `<html data-side-panel>`,
+   which the panel's mount writes while the panel is on screen. <html> is not
+   React-owned (main.tsx hydrates <body>), and a margin on a flex item is a
+   resize, which an iframe survives with its document intact.
+
+   THE BREAKPOINT IS 1024px, not the rail's 768. The panel is
+   clamp(360px, 36vw, 560px) wide and the app keeps about 480px beside it; at
+   768px the app would be left 408, and 1024 (`lg`, used above already) is the
+   first breakpoint where both fit — 655px of app at the narrowest. Below it
+   the panel is not drawn and the app takes the width back, so a window that
+   shrinks while the panel is open simply hides it, navigating nothing; every
+   link below the breakpoint navigates as it always has (the controller's
+   DESKTOP_QUERY is the same figure). */
+:root {
+  --side-panel-w: clamp(360px, 36vw, 560px);
+}
+
+.side-panel {
+  /* From the top of the app's sheet to the floor, down the right edge. The
+     same arithmetic the rail uses for "under the header", less the half rem
+     the header's rounded lower edge overlaps the screen below it — which is
+     where #app-view, and so the app's sheet, begins. */
+  position: fixed;
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
+    + var(--platform-safe-top, 0px) - .5rem);
+  right: 0;
+  bottom: 0;
+  width: var(--side-panel-w);
+  /* Over the app view and the header's transparent lower edge, under every
+     sheet, menu and rail (30 and up). */
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  /* THE APP'S SHEET, CONTINUED. The running app arrives as a raised sheet with
+     a rounded top and a hairline (see "THE APP SHEET" above); the panel is the
+     rest of that sheet, split from it by one hairline, and it takes the
+     sheet's outer corner — the app's own top-right corner goes square while
+     the panel is up (below). */
+  background: var(--home-ground);
+  border-top: 1px solid var(--app-sheet-line);
+  border-left: 1px solid var(--app-sheet-line);
+  border-top-right-radius: 1.75rem;
+  overflow: hidden;
+}
+
+.side-panel-head {
+  /* Back · title · Expand · Close, in the header's own disc controls. */
+  height: 3rem;
+  padding: 0 0.875rem 0 0.75rem;
+  border-bottom: 1px solid var(--app-sheet-line);
+}
+/* Back's display, which its className cannot carry beside the `hidden` it
+   ships with (see side-panel.tsx). Keyed on NOT hidden, so the utility still
+   hides it whenever there is nowhere for it to go. */
+.side-panel-head > #side-panel-back:not(.hidden) {
+  display: inline-flex;
+}
+
+.side-panel-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The panel's own document. Transparent until it has routed its first page —
+   a shell booting in a frame paints its boot screen first — with the spinner
+   behind it; then it fades in once and stays. */
+.side-panel-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.side-panel-frame-ready {
+  opacity: 1;
+}
+.side-panel-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.side-panel-spinner {
+  width: 20px;
+  height: 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side-panel-frame { transition: none; }
+}
+
+@media (max-width: 1023.98px) {
+  /* Below the breakpoint the panel is not drawn at all, and the rules below
+     do not apply, so the app has the whole window back. */
+  #platform-side-panel {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  html[data-side-panel] #app-view {
+    margin-right: var(--side-panel-w);
+    min-width: 480px;
+  }
+  html[data-side-panel] #app-frame-host {
+    border-top-right-radius: 0;
+  }
+}
+
+/* ── THE SIDE PANEL'S OWN DOCUMENT (`?panel=1`) ──────────────────────────
+   The platform, framed beside a running app, showing one page: no header,
+   no tab bar or rail, no parked strip, no banners — the top window has all
+   of those — and none of the space they reserve. `in-side-panel` is put on
+   <html> by head.html before the first paint, and only when the document is
+   framed by a same-origin top window (a `?panel=1` address opened on its own
+   is the ordinary platform). The frame is narrow, so every screen takes its
+   phone layout, which is the point: the panel is a phone-width column. */
+html.in-side-panel :is(#platform-header, #platform-tabs, #platform-rail-peek,
+    #platform-parked, #chromeless-pill, #offline-banner, #mobile-install-banner,
+    #view-as-non-admin-banner, #platform-side-panel) {
+  display: none !important;
+}
+html.in-side-panel {
+  /* Nothing sits above a screen here, so nothing measured from the header's
+     foot (the Workshop's fitted area, a sheet's cap) reserves its 52px. */
+  --platform-header-h: 0px;
+}
+html.in-side-panel body {
+  /* The bar's band, its parked-strip addition and the rail's width, all nil —
+     !important because the rules that reserve them key off the bar's own
+     visibility, which the router publishes only once it has routed. */
+  --platform-tabs-h: 0px !important;
+  --platform-bar-h: 0px !important;
+  --platform-rail-w: 0px !important;
+}
