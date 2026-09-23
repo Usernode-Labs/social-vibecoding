@@ -1334,6 +1334,12 @@
       "expectText": "Give feedback"
     },
     {
+      "name": "The Homeroom menu opens anchored under the mark, not as a panel in the middle of the screen (#2784)",
+      "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
+      "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-new-session",
+      "expectText": "New change"
+    },
+    {
       "name": "The Dev '+' menu files an issue directly and keeps New change in Improve (#1900)",
       "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"])) button[data-plus=\"issue\"] ~ [data-plus=\"import-pr\"]",

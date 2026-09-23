@@ -54,6 +54,7 @@ import { createPortal } from 'react-dom';
 import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useStoreState } from '../../../lib/use-store-state';
+import { placeUnderAnchor } from '../../../lib/anchor-popover';
 import { cardTintClass } from '../../home/panels/ui';
 import { aiEnabledStore, cardNowStore } from './cards-store';
 import type {
@@ -631,16 +632,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       ? `You said yes to an earlier version. One tap carries it onto this one.`
       : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
   // The popover's frame: the switch, the box and the buttons (no box on a
-  // governance vote). Placed from the button's rect each render, exactly as
+  // governance vote). Placed from the button's rect each render by
+  // lib/anchor-popover.ts — the helper the Homeroom menu shares — exactly as
   // `_toggleCardMenu` places the ⋯ menu.
   const w = 312;
   const h = isVote ? 190 : 100;
-  const pos = rect ? (() => {
-    const left = Math.min(Math.max(8, rect.right - w), window.innerWidth - w - 8);
-    let top = rect.bottom + 6;
-    if (top + h > window.innerHeight - 8) top = Math.max(8, rect.top - h - 6);
-    return { top: Math.round(top), left: Math.round(left) };
-  })() : null;
+  const pos = rect
+    ? placeUnderAnchor(rect, { width: w, height: h }, { width: window.innerWidth, height: window.innerHeight })
+    : null;
   const spec = side === 'yes' ? yes : no;
   const trimmed = line.replace(/\s+/g, ' ').trim();
   // A No needs its line; a Yes may go without one.
