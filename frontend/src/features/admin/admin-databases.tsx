@@ -3,7 +3,7 @@ import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 type Request = { id: string; target: string; phase: string; reason: string };
-type Inventory = { enabled: boolean; targets: { id: string; profile: string }[]; requests: Request[] };
+type Inventory = { enabled: boolean; targets: { id: string; profile: string; displayName?: string }[]; requests: Request[] };
 const phases: Record<string, string> = {
   Pending: 'Queued', Provisioning: 'Creating', Ready: 'Ready',
   Blocked: 'Needs attention', RecoveryRequired: 'Recovery required',
@@ -72,7 +72,7 @@ function DatabaseSection() {
           <tbody>{data.targets.map((target) => {
             const request = data.requests.find((item) => item.target === target.id);
             return <tr key={target.id} className={AdminUI.trHover}>
-              <td className={AdminUI.td}>{target.id}</td><td className={AdminUI.td}>{target.profile === 'retained' ? 'Retained staging' : 'Previews'}</td>
+              <td className={AdminUI.td}>{target.displayName || target.id}</td><td className={AdminUI.td}>{target.profile === 'retained' ? 'Retained staging' : 'Previews'}</td>
               <td className={AdminUI.td}>{request ? (phases[request.phase] || 'Unknown') : 'Not created'}</td>
               {canWrite && <td className={AdminUI.td}>{!request && <button type="button" className={AdminUI.btn.primary}
                 disabled={!!busy} onClick={() => void create(target.id)}>{busy === target.id ? 'Requesting…' : 'Create'}</button>}</td>}
