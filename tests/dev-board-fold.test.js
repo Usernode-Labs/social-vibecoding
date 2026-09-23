@@ -1055,7 +1055,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check, landing beside #2760 rather than after it — both counted from
   // the same 730 base, so together they put the manifest at 732, not 731
   // twice. The ceiling already moved 750 → 770 above; 732 leaves 38 slots.
-  assert.equal(DAPP.tests.length, 732);
+  //
+  // +1 (#2784): the Homeroom menu opens anchored under the mark rather than
+  // centred mid-screen, 733 — 37 slots left under the 770 ceiling.
+  assert.equal(DAPP.tests.length, 733);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
