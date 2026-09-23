@@ -13372,6 +13372,28 @@ path: /another/changed/view
   - The block must be LAST in your final message. Skip it entirely for changes
     with nothing user-visible to test.`;
 
+function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
+  if (runLocally) return '';
+  return `HOSTED WORKER LIFECYCLE (this invocation):
+- You are already inside Homeroom's hosted coding worker for this session.
+  Repository instructions for an external, locally running proposal agent,
+  including .agents/skills/usernode-proposal, do not apply here. Do not run
+  that skill, the social-vibecoding CLI, device login, or external proposal
+  submission tools from this worker.
+- For a committed change, call the provided record_visual_evidence_intent MCP
+  tool with concrete reviewer-facing claims and real user flows (or impact
+  "none" with a specific reason for a non-visual change). If the tool fails,
+  report the failure; never claim that intent was recorded when it was not.
+- Implement the change, run focused checks, commit it on the existing session
+  branch, and finish the turn. The Homeroom harness handles push, pull request
+  creation, staging, checks, and scheduling the paired evidence run after
+  your commit. Do not perform those lifecycle steps yourself.
+- The in-loop browser is optional. If the supplied local runtime or app auth
+  cannot be brought up promptly, say the visual check was skipped and commit
+  the change. Do not create platform users or tokens, or copy production data
+  just to make the local browser check pass.`;
+}
+
 function buildCodingAgentBuildGuidance({ authoritativeSystemContext = false } = {}) {
   if (!authoritativeSystemContext) {
     return {
@@ -13781,6 +13803,7 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
   const buildGuidance = buildCodingAgentBuildGuidance({
     authoritativeSystemContext: Boolean(conventionsContext.systemPrompt),
   });
+  const workflowGuidance = buildHostedCodingWorkflowGuidance({ runLocally });
   const renderClaudePrompt = (renderedSpecBlock) => `${taskBlock}
 
 ${conventionsContext.promptBlock}
@@ -13806,6 +13829,7 @@ ${prodDebug && !isCodexSession ? `
 ${debugAccess.promptBlock()}
 ` : ''}
 INSTRUCTIONS:
+${workflowGuidance}
 ${turnInstructions}
 ${buildGuidance.browserGuidance}
 ${buildGuidance.testingGuidance}`;
@@ -15727,4 +15751,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

@@ -2941,9 +2941,11 @@ const AppView = {
       // screen's title — the center tab names the app here, same as the app's
       // other screens (the session's own name lives in #dc-session-header).
       if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
-      App.setBackIcon?.('arrow', App._appUrl(
-        App.currentApp, 'dev', null, 'forum', { boardView: 'kanban' }
-      ));
+      // #2770: a change is an agent conversation, a thread of Messages, so
+      // its chevron hangs off that inbox — the same slot App._backSlotFor
+      // publishes for this route (the two writers have to agree). The header
+      // still prefers the session's captured origin for the destination.
+      App.setBackIcon?.('arrow', '#messages');
       // <DevSessionShell/> — #dev-section stays the host renderDevChatTab
       // writes into, exactly as when this was a template.
       AppView._reactDevBoard()?.mountSessionShell(content);

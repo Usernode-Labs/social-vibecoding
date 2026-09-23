@@ -9360,10 +9360,11 @@ const DevChat = {
     const origin = window.Improve?.sessionOrigin?.();
     if (origin && typeof location !== 'undefined') {
       location.hash = origin;
-    } else if (typeof App !== 'undefined' && App.switchTab) {
-      // No origin: a cold deep link straight into the session. The Board is
-      // where its own card lives, which is the honest fallback.
-      App.switchTab('dev');
+    } else if (typeof location !== 'undefined') {
+      // No origin: a cold deep link straight into the session. A change is an
+      // agent conversation and Messages is its inbox (#2770), so that is the
+      // level up — the same fallback the header's arrow shows.
+      location.hash = '#messages';
     } else {
       DevChat.renderChatView();
     }

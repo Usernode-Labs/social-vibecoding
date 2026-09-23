@@ -233,9 +233,14 @@ test('the bar spends the home-indicator inset exactly once', () => {
   // strip and `--platform-tabs-h` counts it. Every consumer then takes
   // `max()` of the two rather than adding them — adding is the #4149 bug
   // (`--ws-bar`'s comment above documents the same trap from the other side).
-  assert.match(css, /\.platform-tabs\s*\{[^}]*padding-bottom:\s*var\(--platform-safe-bottom\)/,
+  // #2766: what the bar spends is `--platform-tabs-inset` — the inset itself
+  // everywhere but iOS — and the band tokens count that same figure, so the
+  // screens clear exactly the bar that is drawn.
+  assert.match(css, /\.platform-tabs\s*\{[^}]*padding-bottom:\s*var\(--platform-tabs-inset\)/,
     '.platform-tabs spends the inset itself');
-  assert.match(css, /--platform-tabs-h:\s*calc\(56px \+ var\(--platform-safe-bottom, 0px\)\)/,
+  assert.match(css, /--platform-tabs-inset: var\(--platform-safe-bottom\);/,
+    'by default the bar spends the whole inset');
+  assert.match(css, /--platform-tabs-h:\s*calc\(56px \+ var\(--platform-tabs-inset, 0px\)\)/,
     'the token is the bar\'s FULL outer height, inset included');
 
   for (const rule of ['.platform-safe-scroll', '.platform-safe-bar', '.home-body-fill']) {
@@ -244,6 +249,27 @@ test('the bar spends the home-indicator inset exactly once', () => {
     assert.match(decl, /max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)/,
       `${rule} must clear the bar and the inset with max(), never both stacked`);
   }
+});
+
+test('the bar sits lower on iOS, and only there (#2766)', () => {
+  const rule = /html\.un-ios \{\s*--platform-tabs-inset: ([^;]+);\s*\}/.exec(css);
+  assert.ok(rule, 'iOS gets its own, smaller share of the home-indicator strip');
+  assert.equal(rule[1], 'max(0px, calc(var(--platform-safe-bottom, 0px) - 14px))',
+    'all but 14px of the strip, never negative when the inset is thin');
+  assert.doesNotMatch(css, /html\.un-android[^{]*\{[^}]*--platform-tabs-inset/,
+    'Android\'s inset is the navigation bar: borrowing from it puts the tabs under it');
+});
+
+test('an installed Android app spends the navigation bar\'s full height (#2755)', () => {
+  const block = /@media \(display-mode: standalone\), \(display-mode: fullscreen\) \{\s*html\.un-android,\s*html\.un-android #app-view\[data-app-surface="platform"\] \{\s*--platform-safe-bottom: ([^;]+);/.exec(css);
+  assert.ok(block, 'standalone Android restates the inset on both the root and the platform surface');
+  assert.equal(block[1],
+    'max(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)), env(safe-area-max-inset-bottom, 0px))',
+    'the larger of the live inset and the navigation bar\'s full height, still in the kit form');
+});
+
+test('a drag that starts on the bar never pans the document (#2771)', () => {
+  assert.match(css, /\.platform-tabs\s*\{[^}]*touch-action: none;/);
 });
 
 test('the same five tabs stand up at desktop, and the band goes away', () => {
@@ -360,7 +386,7 @@ test('every screen change clears the peek, and nothing else does', () => {
   // back control" from being in it, which the app view's ✕ contradicts.
   assert.match(mount, /tab: tabOverride \|\| \(screen \? tabForScreen\(screen\) : null\),/);
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/,
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/,
     'and app.js is the one place that decides which of the two it is');
   // ON A CHANGE, not on every call. Re-asserting the screen you are already
   // on is not navigation, and clearing there yanks the rail out from under
@@ -473,7 +499,7 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
   assert.match(css, /--platform-rail-w: 0px;\n  --platform-gutter: 0px;\n\}/,
     'and the rail costs a phone no width at all, nor the gutter beside it');
   assert.match(css,
-    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-safe-bottom, 0px\)\);/,
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-tabs-inset, 0px\)\);/,
     'the strip adds its own band, and only while the bar is there to sit on '
     + 'for real rather than peeking over an app');
   assert.match(css, /\.platform-parked \{[^}]*bottom: var\(--platform-bar-h, 0px\);/,
@@ -562,10 +588,23 @@ test('an app\'s discussion belongs to Messages, and says so', () => {
   // in, and the way out it offered led to the Workshop rather than to the
   // list they opened the thread from.
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\.currentSubTab === 'chat' \? 'messages' : 'workshop'\)/);
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/);
+  const appJs = read('public/js/app.js');
+  const pred = appJs.slice(appJs.indexOf('  _isMessagesThread() {'));
+  assert.match(pred.slice(0, pred.indexOf('\n  },')),
+    /App\.currentTab === 'dev'\s*&& \(App\.currentSubTab === 'chat' \|\| App\.currentSubTab === 'sessions'\)/,
+    'the discussion and a dev session (#2770) are both threads of Messages');
+  assert.match(appJs, /if \(App\._isMessagesThread\(\)\) return \['arrow', '#messages'\];/,
+    'and the back slot agrees with the tab that lights');
   const appView = read('public/js/app-view.js');
   const branch = appView.slice(appView.indexOf("if (subTab === 'chat') {"));
   assert.match(branch.slice(0, branch.indexOf('\n    }')),
     /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
     'a level inside Messages shows the way up to it');
+  // A CHANGE IS AN AGENT CONVERSATION (#2770): its screen hangs off Messages
+  // the same way, rather than off the board it used to point at.
+  const session = appView.slice(appView.indexOf("if (subTab === 'sessions' && ref) {"));
+  assert.match(session.slice(0, session.indexOf('\n    }')),
+    /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
+    'a dev session shows the way up to Messages');
 });

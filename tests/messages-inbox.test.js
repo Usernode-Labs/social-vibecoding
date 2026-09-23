@@ -198,3 +198,40 @@ test('the inbox initialises the global-chat bootstrap it reads', () => {
   assert.match(screen, /window\.addEventListener\('sv:authed', retry\);/);
   assert.match(screen, /return \(\) => window\.removeEventListener\('sv:authed', retry\);/);
 });
+
+// ── A change is an agent conversation (#2770, #2772) ────────────────────
+
+test('a change sorts on the same clock and files under Agents', () => {
+  const merged = inbox.buildInbox({
+    conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }],
+    discussions: [],
+    agents: [{ id: 'a1', updatedAt: at('2026-01-01T00:00:00Z') }],
+    sessions: [{ key: 's7', lastActivityAt: at('2026-01-03T00:00:00Z') }],
+    filter: 'all',
+  });
+  assert.deepEqual(merged.map((e) => e.key), ['session:s7', 'person:1', 'agent:a1']);
+  assert.equal(inbox.admits('agents', 'session'), true, 'Agents admits a change');
+  assert.equal(inbox.admits('people', 'session'), false);
+  assert.equal(inbox.admits('apps', 'session'), false);
+  const agentsOnly = inbox.buildInbox({
+    conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }],
+    discussions: [], agents: [], sessions: [{ key: 's7', lastActivityAt: null }],
+    filter: 'agents',
+  });
+  assert.deepEqual(agentsOnly.map((e) => e.key), ['session:s7']);
+});
+
+test('changes are read from the Improve store, drawn by SessionRow, and not gated on the chat flags', () => {
+  assert.match(SCREEN, /useStoreState\(improveStore\)/, 'one list, the Improve store’s');
+  assert.match(SCREEN, /<SessionRow\b/, 'drawn by the same row the bell’s Agents tab uses');
+  const list = SCREEN.slice(SCREEN.indexOf('function ConversationList'));
+  const body = list.slice(0, list.indexOf('\n}\n'));
+  assert.match(body, /const sessions: SessionRowView\[\] = mounted\s*\?/,
+    'after mount only, so the first client render matches the prerender');
+  assert.doesNotMatch(body.slice(body.indexOf('const sessions'), body.indexOf('const inbox')), /agentsOn/,
+    'a change is not the experimental global chat');
+  assert.match(SCREEN, /dev\/sessions\/\$\{session\.id\}/, 'a row opens the conversation itself');
+  assert.match(SCREEN, /Improve\.enterSessionFrom\('#messages'\)/,
+    'and records Messages as where it hangs off');
+  assert.doesNotMatch(STORE, /sessions:/, 'and this store holds no second copy of that list');
+});

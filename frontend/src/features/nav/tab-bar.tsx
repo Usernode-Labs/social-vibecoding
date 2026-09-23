@@ -62,7 +62,7 @@
  * the next render. The class string below is a constant prop.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 import {
   BoardIcon,
@@ -76,6 +76,7 @@ import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from './nav-store.js';
+import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
 
 /**
  * The five tabs, in order.
@@ -186,30 +187,15 @@ function TabBadge({ count }: { count: number }) {
  * ── The grace period, and what it is for ──────────────────────────────
  *
  * The pointer has to cross a gap to get from the hot zone onto the rail, and
- * on the way back out it crosses the same gap. Un-peeking the moment either
- * element is left makes the rail flicker away under a pointer that is on its
- * way to it. A short delay, cancelled by entering either one, is the whole
- * fix — and it is cancelled on unmount so a screen swap cannot land a timer
- * on a bar that has since become the real one.
+ * on the way back out it crosses the same gap. ./rail-peek.ts holds the delay
+ * that covers it — as module state now, because #sidebar-toggle is a second
+ * way in (#2764) and the toggle's leave and this bar's enter must share one
+ * timer. It is cancelled on unmount so a screen swap cannot land a timer on a
+ * bar that has since become the real one.
  */
 function useRailPeek(peek: boolean) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clear = useCallback(() => {
-    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-  }, []);
-  useEffect(() => clear, [clear]);
-  const enter = useCallback(() => {
-    clear();
-    if (!navStore.get().peek) navStore.set({ peek: true });
-  }, [clear]);
-  const leave = useCallback(() => {
-    clear();
-    timer.current = setTimeout(() => {
-      timer.current = null;
-      navStore.set({ peek: false });
-    }, 280);
-  }, [clear]);
-  return { enter, leave: peek ? leave : clear };
+  useEffect(() => clearPeekTimer, []);
+  return { enter: enterPeek, leave: peek ? leavePeek : clearPeekTimer };
 }
 
 export function PlatformTabs() {

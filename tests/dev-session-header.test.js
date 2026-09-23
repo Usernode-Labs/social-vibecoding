@@ -241,8 +241,12 @@ test('the strip carries no back control — the platform header owns ← now', (
   DevChat.currentSession = { ...SESSION };
   let switched = null;
   sandbox.App.switchTab = (tab) => { switched = tab; };
+  sandbox.location = { hash: '' };
   assert.equal(DevChat.handleBack(), true);
-  assert.equal(switched, 'dev', 'backing out of a session lands on the Board');
+  // #2770: with no captured origin, a change — an agent conversation — goes
+  // up to Messages rather than landing on the Board.
+  assert.equal(sandbox.location.hash, '#messages', 'backing out of a session lands on Messages');
+  assert.equal(switched, null, 'and no longer on the Board');
   // And app.js's header listener actually consults it, before the
   // navigate-home fallback.
   const appJs = read('public', 'js', 'app.js');

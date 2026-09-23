@@ -21,6 +21,79 @@ const worker = require('./worker');
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const MAX_REPLAY_EVENTS = 40;
+
+function progressPhase(event) {
+  if (!event || typeof event !== 'object') return null;
+  if (typeof event.stage === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(event.stage)) {
+    return event.stage;
+  }
+  // kpack reports container names and log lines. Persist only the phase name;
+  // never put build output, fixture values, or internal origins in the view.
+  if (typeof event.phase === 'string') {
+    const phase = event.phase.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 57);
+    return phase ? `build_${phase}` : null;
+  }
+  return null;
+}
+
+function startRunHeartbeat(pool, runId, stateService, observer = null, intervalMs = HEARTBEAT_INTERVAL_MS) {
+  let phase = 'provisioning';
+  let stopped = false;
+  let writing = false;
+  let pending = false;
+  let lastReplayEvent = null;
+  const replayEvents = [];
+  let lastReplayFlushAt = 0;
+  const flush = () => {
+    if (stopped || typeof stateService.heartbeatRun !== 'function') return;
+    if (writing) { pending = true; return; }
+    writing = true;
+    Promise.resolve().then(async () => {
+      do {
+        pending = false;
+        await stateService.heartbeatRun(pool, runId, phase,
+          lastReplayEvent ? { lastReplayEvent, replayEvents: replayEvents.slice(-MAX_REPLAY_EVENTS) } : null);
+      } while (pending && !stopped);
+    }).catch((error) => {
+      log.warn('visual-evidence', 'Evidence heartbeat failed', { runId, error: error.message });
+    }).finally(() => {
+      writing = false;
+      if (pending && !stopped) flush();
+    });
+  };
+  const timer = setInterval(flush, intervalMs);
+  timer.unref?.();
+  flush();
+  return {
+    onReplayEvent(event) {
+      if (stopped || !event || typeof event !== 'object') return;
+      lastReplayEvent = event;
+      replayEvents.push(event);
+      if (replayEvents.length > MAX_REPLAY_EVENTS) replayEvents.shift();
+      // Persist an action start immediately: if its browser call hangs or the
+      // pod exits, this identifies the exact unfinished step. Less important
+      // progress is throttled to avoid one database write per emitted event.
+      if (event.type === 'action_started' || event.type === 'side_failed'
+          || event.type === 'animation_started' || event.type === 'result'
+          || Date.now() - lastReplayFlushAt >= 5000) {
+        lastReplayFlushAt = Date.now();
+        flush();
+      }
+    },
+    onProgress(event) {
+      if (typeof observer === 'function') {
+        try { observer(event); } catch (error) {
+          log.warn('visual-evidence', 'Evidence progress observer failed', { runId, error: error.message });
+        }
+      }
+      const next = progressPhase(event);
+      if (next && next !== phase) { phase = next; flush(); }
+    },
+    stop() { stopped = true; clearInterval(timer); },
+  };
+}
 
 class VisualEvidenceOrchestrationError extends Error {
   constructor(code, message, detail = null) {
@@ -245,28 +318,39 @@ async function waitForSessionIdle(pool, sessionId, {
 }
 
 function errorCode(error) {
-  return String(error?.code || 'visual_evidence_failed').slice(0, 64);
+  const code = String(error?.code || '');
+  return /^[A-Za-z0-9_]{1,48}$/.test(code) ? code : 'visual_evidence_failed';
+}
+
+function safeModelId(value) {
+  const model = String(value || '');
+  return /^[A-Za-z0-9._:/-]{1,120}$/.test(model) ? model : null;
+}
+
+function redactDiagnosticText(value, max = 240) {
+  return String(value)
+    .replace(/(\b(?:token|access_token|auth|authorization|password|secret|api[_-]?key|code|session)\s*=\s*)[^&\s"'<>)]*/gi, '$1[redacted]')
+    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
+    .replace(/\b(?:sk-(?:proj-)?|ghp_|gho_|github_pat_)[A-Za-z0-9_-]{16,}\b/gi, '[redacted]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
+    .slice(0, max);
 }
 
 function visibleError(error) {
   const message = String(error?.message || 'The visual change preview could not be produced.').trim();
-  return message.slice(0, 2000) || 'The visual change preview could not be produced.';
+  return redactDiagnosticText(message, 2000) || 'The visual change preview could not be produced.';
 }
 
 function safeDiagnosticValue(value, depth = 0) {
   if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    return value.slice(0, 200)
-      .replace(/([?&]token=)[^&\s"'<>)]*/gi, '$1[redacted]')
-      .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]');
-  }
-  if (depth >= 4) return '[nested detail omitted]';
+  if (typeof value === 'string') return redactDiagnosticText(value);
+  if (depth >= 7) return '[nested detail omitted]';
   if (Array.isArray(value)) {
-    const limit = value.every((item) => typeof item === 'string' || typeof item === 'number') ? 12 : 2;
-    return value.slice(0, limit).map((item) => safeDiagnosticValue(item, depth + 1));
+    return value.slice(0, 12).map((item) => safeDiagnosticValue(item, depth + 1));
   }
   if (typeof value !== 'object') return null;
-  return Object.fromEntries(Object.entries(value).slice(0, 16)
+  return Object.fromEntries(Object.entries(value).slice(0, 24)
     .filter(([key]) => !/^(?:token|authorization|cookie|password|secret|payload|data)$/i.test(key))
     .map(([key, item]) => [key, safeDiagnosticValue(item, depth + 1)]));
 }
@@ -276,9 +360,9 @@ function boundedReplayDetail(error) {
     const value = error?.detail || (error?.issues ? { issues: error.issues } : null);
     if (value == null) return null;
     const serialized = JSON.stringify(safeDiagnosticValue(value));
-    return serialized.length <= 4000
+    return serialized.length <= 16000
       ? JSON.parse(serialized)
-      : { truncated: true, excerpt: serialized.slice(0, 2000) };
+      : { truncated: true, excerpt: serialized.slice(0, 8000) };
   } catch { return null; }
 }
 
@@ -286,11 +370,58 @@ function replayProgressEvent(event, pass) {
   const type = String(event?.type || 'unknown');
   const storyId = String(event?.storyId || '');
   const viewport = String(event?.viewport || '');
+  const side = String(event?.side || '');
+  const phase = String(event?.phase || '');
+  const actionId = String(event?.actionId || '');
+  const actionStage = String(event?.actionStage || '');
+  const actionType = String(event?.actionType || '');
+  const assertionType = String(event?.assertionType || '');
+  const location = event?.location && typeof event.location === 'object'
+    ? {
+      sameOrigin: event.location.sameOrigin === true,
+      ...(typeof event.location.pathname === 'string'
+        ? { pathname: safeDiagnosticValue(event.location.pathname) } : {}),
+      ...(typeof event.location.hash === 'string'
+        ? { hash: safeDiagnosticValue(event.location.hash) } : {}),
+      queryKeys: Array.isArray(event.location.queryKeys)
+        ? event.location.queryKeys.slice(0, 12).map((value) => safeDiagnosticValue(String(value))) : [],
+    } : null;
   return {
     pass,
     type: /^[a-z_]{1,40}$/.test(type) ? type : 'unknown',
     ...(/^[a-z0-9][a-z0-9_-]{0,95}$/.test(storyId) ? { storyId } : {}),
     ...(/^[a-z0-9][a-z0-9_-]{0,31}$/.test(viewport) ? { viewport } : {}),
+    ...(['base', 'head'].includes(side) ? { side } : {}),
+    ...(/^[a-z_]{1,40}$/.test(phase) ? { phase } : {}),
+    ...(/^[a-z0-9][a-z0-9_-]{0,95}$/.test(actionId) ? { actionId } : {}),
+    ...(/^[a-z0-9][a-z0-9_-]{0,63}$/.test(actionStage) ? { actionStage } : {}),
+    ...(/^[a-zA-Z][a-zA-Z0-9]{0,31}$/.test(actionType) ? { actionType } : {}),
+    ...(Number.isInteger(event?.assertionIndex) && event.assertionIndex >= 0
+      ? { assertionIndex: event.assertionIndex } : {}),
+    ...(/^[a-zA-Z][a-zA-Z0-9]{0,31}$/.test(assertionType) ? { assertionType } : {}),
+    ...(Number.isInteger(event?.durationMs) && event.durationMs >= 0
+      ? { durationMs: event.durationMs } : {}),
+    ...(['actionCount', 'assertionCount', 'recordedFrameCount', 'httpErrorCount', 'baseFrames', 'headFrames', 'bytes'].reduce((counts, key) => {
+      if (Number.isInteger(event?.[key]) && event[key] >= 0) counts[key] = event[key];
+      return counts;
+    }, {})),
+    ...(type === 'session_bootstrap' ? {
+      attempted: event.attempted === true,
+      cookieAlreadyPresent: event.cookieAlreadyPresent === true,
+      sessionCookieInstalled: event.sessionCookieInstalled === true,
+      ...(Number.isInteger(event.responseStatus) ? { responseStatus: event.responseStatus } : {}),
+    } : {}),
+    ...(['steps', 'motion'].includes(event?.animation) ? { animation: event.animation } : {}),
+    ...(Number.isInteger(event?.status) && event.status >= 100 && event.status <= 599
+      ? { status: event.status } : {}),
+    ...(location ? { location } : {}),
+    ...(typeof event?.code === 'string' && /^[a-z0-9_]{1,80}$/.test(event.code)
+      ? { code: event.code } : {}),
+    ...(type === 'result' && event?.passed === true ? {
+      passed: true,
+      ...(Number.isInteger(event.artifactCount) ? { artifactCount: event.artifactCount } : {}),
+      ...(Array.isArray(event.stories) ? { storyCount: event.stories.length } : {}),
+    } : {}),
     ...(type === 'result' && event?.passed === false ? {
       passed: false,
       code: /^[a-z0-9_]{1,80}$/.test(String(event.code || '')) ? String(event.code) : 'replay_failed',
@@ -312,7 +443,9 @@ function newRunMetrics() {
       cleanup: 0,
     },
     replayPasses: [],
+    replayRuntime: null,
     lastReplayEvent: null,
+    replayEvents: [],
     agentAttempts: 0,
     agentDispatches: [],
     repairCount: 0,
@@ -349,11 +482,14 @@ function traceSummary(metrics, extra = {}) {
       total: Math.max(0, Date.now() - metrics.startedAtMs),
     },
     replayPasses: metrics.replayPasses.slice(0, 12),
+    replayRuntime: metrics.replayRuntime,
     lastReplayEvent: metrics.lastReplayEvent,
+    replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
     repairCount: metrics.repairCount,
     artifactBytes: metrics.artifactBytes,
+    planSource: metrics.planSource || null,
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
   };
 }
@@ -416,6 +552,7 @@ async function executeRun(config, options, injected = {}) {
   let failurePhase = 'load_run';
   let agentThreadId;
   const metrics = newRunMetrics();
+  metrics.replayRuntime = String(config.captureRuntime || process.env.CAPTURE_RUNTIME || config.appRuntime || 'docker').slice(0, 32);
   const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
   let agentWindowStartedAt = null;
   let agentWindowSuspendedAt = 0;
@@ -425,6 +562,16 @@ async function executeRun(config, options, injected = {}) {
     + (replayBudgetStartedAt == null ? 0 : Date.now() - replayBudgetStartedAt);
   const progress = (message) => {
     if (typeof onProgress === 'function') onProgress(message);
+  };
+  const stage = (name) => progress({ stage: name });
+  const recordReplayEvent = (event, pass) => {
+    const summary = replayProgressEvent(event, pass);
+    summary.elapsedMs = Math.max(0, Date.now() - metrics.startedAtMs);
+    metrics.lastReplayEvent = summary;
+    metrics.replayEvents.push(summary);
+    if (metrics.replayEvents.length > MAX_REPLAY_EVENTS) metrics.replayEvents.shift();
+    if (typeof options.onReplayEvent === 'function') options.onReplayEvent(summary);
+    progress(`Evidence pass ${pass}: ${summary.type}`);
   };
 
   try {
@@ -441,6 +588,7 @@ async function executeRun(config, options, injected = {}) {
     const authorPlan = options.authorPlan == null
       ? (run.author_plan == null ? null : planContract.parseReplayPlan(run.author_plan))
       : planContract.parseReplayPlan(options.authorPlan);
+    metrics.planSource = authorPlan ? 'author' : 'hosted_planner';
     if (authorPlan && planContract.canonicalJson(planContract.semanticIntentFromPlan(authorPlan))
         !== planContract.canonicalJson(intent)) {
       throw new VisualEvidenceOrchestrationError(
@@ -451,6 +599,7 @@ async function executeRun(config, options, injected = {}) {
     if (run.state === 'not_required') return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
 
     failurePhase = 'wait_for_idle';
+    stage(failurePhase);
     const idleStartedAt = Date.now();
     await waitForSessionIdle(pool, session.id, {
       timeoutMs: Math.min(config.visualEvidence?.maxRunMs || 720_000, 120_000),
@@ -459,6 +608,7 @@ async function executeRun(config, options, injected = {}) {
     addTiming(metrics, 'idleWait', idleStartedAt);
     progress('Preparing exact base and head revisions for visual evidence…');
     failurePhase = 'prepare_pair';
+    stage(failurePhase);
     const provisioningStartedAt = Date.now();
     if (run.state === 'planned') {
       await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
@@ -470,6 +620,7 @@ async function executeRun(config, options, injected = {}) {
     notifyEvidence(session, app, 'provisioning');
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
     failurePhase = 'exploration_reset';
+    stage(failurePhase);
     const exploration = await deps.environment.resetPair(config, pair);
     const expectedProvenance = {
       baseSha: run.base_sha,
@@ -482,8 +633,10 @@ async function executeRun(config, options, injected = {}) {
       throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'The paired exploration environment did not match its prepared fixture and images.');
     }
     failurePhase = 'mint_fixture_identities';
+    stage(failurePhase);
     const authTokens = await deps.identities.mintEvidenceAuthTokens(pool, app.id);
     failurePhase = 'persist_exploration';
+    stage(failurePhase);
     await deps.state.transitionRun(pool, run.id, 'exploring', {
       fixtureFingerprint: pair.fixtureFingerprint,
       baseImageDigest: pair.sides.base.imageDigest,
@@ -491,9 +644,11 @@ async function executeRun(config, options, injected = {}) {
     });
     addTiming(metrics, 'provisioning', provisioningStartedAt);
     notifyEvidence(session, app, 'exploring');
+    stage('exploring');
 
     const context = evidenceContext({ run, session, revision, pair, deployment: exploration, intent });
     failurePhase = 'register_control';
+    stage(failurePhase);
     registration = deps.evidenceControl.registerRun({
       runId: run.id,
       sessionId: session.id,
@@ -517,6 +672,7 @@ async function executeRun(config, options, injected = {}) {
               : 'Replaying the agent-authored UI flow twice…')
             : 'Replaying the corrected UI flow twice…');
           failurePhase = 'persist_replay_plan';
+          stage(failurePhase);
           await deps.state.transitionRun(pool, run.id, 'replaying', {
             replayPlan: plan,
             planHash: planContract.planHash(plan),
@@ -525,21 +681,20 @@ async function executeRun(config, options, injected = {}) {
           notifyEvidence(session, app, 'replaying');
           const planHash = planContract.planHash(plan);
           failurePhase = 'reset_pass_1';
+          stage(failurePhase);
           const firstDeployment = await deps.environment.resetPair(config, pair);
           if (!sameProvenance(firstDeployment, expectedProvenance)) {
             throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass one did not use the prepared fixture and images.');
           }
           const firstStartedAt = Date.now();
           failurePhase = 'pass_1';
+          stage(failurePhase);
           const first = await deps.replay.runPass(
             config,
             session.id,
             replayInput({ run, plan, deployment: firstDeployment, authTokens, provenance: expectedProvenance, pass: 1 }),
             { onEvent: (event) => {
-              if (event?.type !== 'result' || event?.passed === false) {
-                metrics.lastReplayEvent = replayProgressEvent(event, 1);
-              }
-              progress(`Evidence pass 1: ${event.type}`);
+              recordReplayEvent(event, 1);
             }, previewRunId: run.id }
           );
           metrics.replayPasses.push({
@@ -548,21 +703,20 @@ async function executeRun(config, options, injected = {}) {
             durationMs: Math.max(0, Date.now() - firstStartedAt),
           });
           failurePhase = 'reset_pass_2';
+          stage(failurePhase);
           const secondDeployment = await deps.environment.resetPair(config, pair);
           if (!sameProvenance(secondDeployment, expectedProvenance)) {
             throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass two did not use the prepared fixture and images.');
           }
           const secondStartedAt = Date.now();
           failurePhase = 'pass_2';
+          stage(failurePhase);
           const second = await deps.replay.runPass(
             config,
             session.id,
             replayInput({ run, plan, deployment: secondDeployment, authTokens, provenance: expectedProvenance, pass: 2 }),
             { onEvent: (event) => {
-              if (event?.type !== 'result' || event?.passed === false) {
-                metrics.lastReplayEvent = replayProgressEvent(event, 2);
-              }
-              progress(`Evidence pass 2: ${event.type}`);
+              recordReplayEvent(event, 2);
             }, previewRunId: run.id }
           );
           metrics.replayPasses.push({
@@ -571,13 +725,14 @@ async function executeRun(config, options, injected = {}) {
             durationMs: Math.max(0, Date.now() - secondStartedAt),
           });
           failurePhase = 'compare';
+          stage(failurePhase);
           const hardVerdict = deps.replay.comparePasses(first, second, {
             plan,
             provenance: expectedProvenance,
             runId: run.id,
           });
           if (!hardVerdict.passed) {
-            throw new VisualEvidenceOrchestrationError(hardVerdict.code, hardVerdict.reason);
+            throw new VisualEvidenceOrchestrationError(hardVerdict.code, hardVerdict.reason, hardVerdict.detail || null);
           }
           const replayTrace = traceSummary(metrics, {
             planHash,
@@ -586,6 +741,7 @@ async function executeRun(config, options, injected = {}) {
             relativePointer: hardVerdict.relativePointer,
           });
           failurePhase = 'persist_replay_verdict';
+          stage(failurePhase);
           await deps.state.transitionRun(pool, run.id, 'reviewing', {
             hardVerdict,
             traceSummary: replayTrace,
@@ -594,6 +750,7 @@ async function executeRun(config, options, injected = {}) {
           notifyEvidence(session, app, 'reviewing');
           const artifactPersistStartedAt = Date.now();
           failurePhase = 'store_artifacts';
+          stage(failurePhase);
           await deps.replay.storeArtifacts(pool, run.id, second.artifacts, {
             headSha: run.head_sha,
             planHash,
@@ -608,6 +765,7 @@ async function executeRun(config, options, injected = {}) {
           latestPlanHash = planHash;
           latestHardVerdict = hardVerdict;
           failurePhase = 'agent_exploration';
+          stage(failurePhase);
           return {
             hardVerdict,
             planHash,
@@ -633,7 +791,10 @@ async function executeRun(config, options, injected = {}) {
       const dispatchStartedAt = Date.now();
       const suspendedAtStart = suspendedMs();
       metrics.agentAttempts += 1;
-      const dispatchTrace = { requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64) };
+      const dispatchTrace = {
+        requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64),
+        requestedModel: safeModelId(session.agent_model || session.model),
+      };
       metrics.agentDispatches.push(dispatchTrace);
       try {
         // Provisioning and deterministic replay are platform work. Starting
@@ -663,9 +824,13 @@ async function executeRun(config, options, injected = {}) {
         addAgentUsage(metrics, dispatched);
         agentThreadId = dispatched.threadId || agentThreadId || null;
         dispatchTrace.backend = String(dispatched.backend || dispatchTrace.requestedBackend).slice(0, 64);
+        dispatchTrace.model = safeModelId(dispatched.model);
+        if (dispatched.fallbackReason) dispatchTrace.fallbackReason = String(dispatched.fallbackReason).slice(0, 64);
         dispatchTrace.outcome = 'completed';
         return { dispatched, error: null };
       } catch (error) {
+        if (error?.evidenceBackend) dispatchTrace.backend = String(error.evidenceBackend).slice(0, 64);
+        if (error?.evidenceModel) dispatchTrace.model = safeModelId(error.evidenceModel);
         dispatchTrace.outcome = 'failed';
         dispatchTrace.code = errorCode(error);
         return { dispatched: null, error };
@@ -676,6 +841,7 @@ async function executeRun(config, options, injected = {}) {
     };
 
     failurePhase = 'agent_exploration';
+    stage(failurePhase);
     let agentOutcome = null;
     if (authorPlan) {
       // The implementing agent already knows the UI flow. It supplies only
@@ -714,6 +880,7 @@ async function executeRun(config, options, injected = {}) {
     // and no verified row can leave private fixture runtimes live.
     if (pair) {
       failurePhase = 'cleanup';
+      stage(failurePhase);
       const cleanupStartedAt = Date.now();
       await deps.environment.cleanupPair(config, pair);
       addTiming(metrics, 'cleanup', cleanupStartedAt);
@@ -727,6 +894,7 @@ async function executeRun(config, options, injected = {}) {
       terminalFailureClass: null,
     });
     failurePhase = 'verify';
+    stage(failurePhase);
     await deps.state.transitionRun(pool, run.id, 'verified', {
       hardVerdict: latestHardVerdict,
       planHash: latestPlanHash,
@@ -892,13 +1060,18 @@ async function scheduleForSession(config, options, injected = {}) {
   // The run is under way, so whatever an earlier attempt recorded about it
   // not starting is no longer true (#2601/#2558).
   await (injected.state || state).clearNotStarted(pool, sessionId).catch(() => {});
+  const heartbeat = startRunHeartbeat(
+    pool, run.id, injected.state || state, onProgress,
+    injected.heartbeatIntervalMs || HEARTBEAT_INTERVAL_MS
+  );
   const promise = executeRun(config, {
     pool,
     run: { ...run, state: 'provisioning' },
     session: sessionValue,
     app,
     revision,
-    onProgress,
+    onProgress: heartbeat.onProgress,
+    onReplayEvent: heartbeat.onReplayEvent,
     authorPlan: run.author_plan || authorPlan,
   }, injected).catch((error) => {
     log.warn('visual-evidence', 'Visual evidence run failed', {
@@ -908,7 +1081,10 @@ async function scheduleForSession(config, options, injected = {}) {
       error: visibleError(error),
     });
     throw error;
-  }).finally(() => inFlight.delete(key));
+  }).finally(() => {
+    heartbeat.stop();
+    inFlight.delete(key);
+  });
   // Attach a rejection observer now so fire-and-forget callers never create
   // an unhandled rejection; callers that need completion may still await the
   // original promise returned below.
@@ -938,6 +1114,8 @@ module.exports = {
   addTiming,
   addAgentUsage,
   traceSummary,
+  progressPhase,
+  startRunHeartbeat,
   notifyEvidence,
   failCurrentRun,
   executeRun,

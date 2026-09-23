@@ -4386,12 +4386,26 @@ const App = {
     // Workshop's Current status pane. Lighting Workshop there put the reader
     // in a section they had not been in, and the way back it offered led to
     // the Workshop rather than to the list they opened the thread from.
+    //
+    // …AND A CHANGE, WHICH IS AN AGENT CONVERSATION (#2770). A dev session is
+    // listed under Messages → Agents beside the agent chats, and New change
+    // lands on one — so its screen lights Messages, not the Workshop it used
+    // to be reached through.
     window.UsernodeReact?.nav?.setScreen?.(
       screen,
       screen === 'app-view' && !inApp
-        ? (App.currentSubTab === 'chat' ? 'messages' : 'workshop')
+        ? (App._isMessagesThread() ? 'messages' : 'workshop')
         : null,
     );
+  },
+
+  // The two `#app-view` routes that are THREADS OF MESSAGES rather than the
+  // app's Workshop: its discussion (#2718 review) and a dev session (#2770).
+  // One predicate, because the tab that lights and the back slot's glyph are
+  // two answers to the same question and have to agree.
+  _isMessagesThread() {
+    return App.currentTab === 'dev'
+      && (App.currentSubTab === 'chat' || App.currentSubTab === 'sessions');
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -5766,7 +5780,12 @@ const App = {
       // the reveal, not about `after`.) The fix is the one this file
       // already states for setBackIcon's two writers: THE TWO HAVE TO AGREE. Both now say
       // the same thing, so the order stopped mattering.
-      if (App.currentTab === 'dev' && App.currentSubTab === 'chat') return ['arrow', '#messages'];
+      //
+      // A DEV SESSION IS ONE TOO (#2770): a change is an agent conversation,
+      // a row under Messages → Agents, so it gets the same chevron. The
+      // header resolves its destination from the session's captured origin
+      // first (features/header/platform-header.tsx), and Messages otherwise.
+      if (App._isMessagesThread()) return ['arrow', '#messages'];
       // The ✕'s DESTINATION is the breadcrumb navigateToApp recorded — the
       // Workshop, when that is where this app was opened from — and home on
       // every other route, which is what setBackIcon falls back to. The table
