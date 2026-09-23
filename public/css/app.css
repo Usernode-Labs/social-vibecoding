@@ -16398,6 +16398,57 @@ html.un-ios {
   color: var(--brand-ink);
 }
 
+/* THE LIT TAB'S MARKER (#2824) — the Workshop's sliding pill, on the phone's
+   bar. The colour above was the only thing that said which tab you were on,
+   and at 11px under a glyph that is easy to miss; the Workshop's strip one
+   screen down already answers the same question with a blue fill that slides
+   between tabs, so this is that answer with the same tokens and the same
+   curve (`.dev-ws-tab-marker`).
+
+   Its geometry is measured off the lit tab (useTabMarker in
+   frontend/src/features/nav/tab-bar.tsx), so this rule carries none: the
+   transform is the only thing that moves. `.platform-tabs` is `position:
+   fixed`, which makes it the containing block the offsets are measured in.
+
+   Each tab is raised one step so the marker, rendered before them, paints
+   behind the glyph and label rather than over them. */
+.platform-tab {
+  position: relative;
+  z-index: 1;
+}
+.platform-tabs-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: 16px;
+  background: var(--brand-tint);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+  pointer-events: none;
+  /* Hidden until measured, and while nothing is lit. */
+  opacity: 0;
+}
+.platform-tabs-marker[data-marker-at] { opacity: 1; }
+/* ONLY A SELECTION CHANGE SLIDES, as on the Workshop's strip: the first
+   placement and a re-measure of the same tab carry `data-marker-at` without
+   `data-marker-slide`, and land where they are.
+
+   IT SLIDES THROUGH A VIEW TRANSITION TOO. A tab change is a screen swap,
+   and the swap runs as a view transition in which #platform-tabs is its own
+   group whose OLD image is dropped and whose NEW image is shown at once
+   (see the `platform-tabs` group near the top of this file). The new image
+   is a live rendering of the element, not a still, so a CSS transition
+   started by the swap plays inside it; this is the one part of the bar that
+   moves on a tab change, and the label colour still pops, as it should. */
+@media (prefers-reduced-motion: no-preference) {
+  .platform-tabs-marker[data-marker-slide] {
+    transition:
+      transform .26s cubic-bezier(.32, .72, 0, 1),
+      width .26s cubic-bezier(.32, .72, 0, 1),
+      height .26s cubic-bezier(.32, .72, 0, 1);
+  }
+}
+
 /* The badge's anchor. `position: relative` on the glyph's wrapper rather
    than on the whole tab, so the count sits on the ICON's corner and not on
    the tab's — the tab is 56px tall and a badge pinned to its top-right
@@ -16895,6 +16946,11 @@ html.un-kb #platform-parked {
   }
   .platform-tab[aria-current="page"] {
     background: var(--brand-tint);
+  }
+  /* The rail keeps its own row fill; the phone's sliding marker is not
+     drawn here (#2824). */
+  .platform-tabs-marker {
+    display: none;
   }
   /* `min-width: 0` so the label can SHRINK in the row and the ellipsis the
      base rule asks for actually appears (#2760). The fifth tab carries the

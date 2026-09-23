@@ -1064,30 +1064,43 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // its title row, and a `#name` channel link beside a `#123` issue ref in a
   // message. 740 leaves 30 slots under the 770 ceiling.
   //
+  // +1 (#2824): the lit tab's sliding marker on the phone's bar, 741 — 29
+  // slots left under the 770 ceiling.
+  //
   // 742 → 744, 742 → 744: the tallies above were computed on either side of
   // this merge against the same shared 740 and do not reconcile through the
-  // comment trail alone. This branch added #2799 and #2806 — the platform's
-  // own Workshop shows no close button, and an app's Workshop is the
-  // platform surface its header frosts over (+2); main independently added
-  // #2807 and #2812 — the dev-chat model picker has no caption line under
-  // it, and stays usable while a turn runs (+2). Neither set overlaps the
-  // other, so the merged manifest holds every one of them: 740 + 2 + 2 = 744,
-  // leaving 26 slots under the 770 ceiling.
+  // comment trail alone. Main added #2799 and #2806 — the platform's own
+  // Workshop shows no close button, and an app's Workshop is the platform
+  // surface its header frosts over (+2); main also added #2807 and #2812 —
+  // the dev-chat model picker has no caption line under it, and stays
+  // usable while a turn runs (+2). Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 740 + 2 + 2 = 744, leaving 26
+  // slots under the 770 ceiling.
   //
   // +2 (#2803): the Homeroom menu takes a dark app's palette, and a light app
   // under the dark shell leaves it in the shell's own dark mode. 746 leaves
   // 24 slots under the 770 ceiling.
   //
-  // +2 (the side panel beside a running app): its host ships hidden and
-  // frameless after the app view, and a `?panel=1` address opened in a window
-  // of its own is the ordinary platform. 748, which leaves 22 slots under the
-  // 770 ceiling and 2 before the 20-slot floor at 750.
+  // 741 → 747: the tallies above were computed on either side of this merge
+  // against the same shared 740 and cannot be read as one sequence. This
+  // branch took 740 → 741 alone, with #2824 above; main independently took
+  // the same 740 to 746, with the #2799/#2806/#2807/#2812 checks (+4) and
+  // #2803 (+2). Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 740 + 1 + 6 = 747, leaving 23 slots under the 770
+  // ceiling.
   //
-  // +2 (#2802, #2798): the desktop rail's Recents sitting between Workshop
-  // and Me, and the sidebar toggle and bell carrying their blue disc on
-  // hover only. 750 leaves 20 slots under the 770 ceiling,
-  // exactly the 20-slot floor.
-  assert.equal(DAPP.tests.length, 750);
+  // 747 → 749: independently on main, +2 (the side panel beside a running
+  // app): its host ships hidden and frameless after the app view, and a
+  // `?panel=1` address opened in a window of its own is the ordinary
+  // platform. 749, which leaves 21 slots under the 770 ceiling and 1 before
+  // the 20-slot floor at 750.
+  //
+  // 749 → 751: +2 (#2802, #2798): the desktop rail's Recents sitting between
+  // Workshop and Me, and the sidebar toggle and bell carrying their blue disc
+  // on hover only. 751 was one past the 20-slot floor under the 770
+  // ceiling, so the ceiling moved to 790 with it (services/app-manifest.js),
+  // leaving 39 slots.
+  assert.equal(DAPP.tests.length, 751);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

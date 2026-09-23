@@ -44,7 +44,9 @@ const { attachmentDisposition } = attachmentsSvc;
 
 // #1808: staging demo rows for a chat transcript, injected at request time
 // (?demo=1) only when the real read came back EMPTY, so a genuine transcript
-// always wins. Never persisted, and a strict no-op outside staging.
+// always wins — except on the mock topics in PINNED_DEMO_THREADS below, whose
+// transcript is fixture content the declared checks read. Never persisted,
+// and a strict no-op outside staging.
 //
 // Why the group chat needs one at all: `chat_messages` IS cloned into a
 // staging preview, so a prod-cloned container has a transcript. A declared
@@ -101,6 +103,37 @@ function stagingMockGroupChat(appId, thread) {
       posted_via: 'agent',
     },
   ];
+}
+
+// The demo topics whose mock transcript IS the fixture: the declared checks
+// read these rows (#1926's folded conflict notices, #2236's via-agent chip on
+// issue 900008's Discussion), so they must not depend on nobody having typed
+// there. The empty-transcript rule above assumed a check sees an untouched
+// database, but a preview is a live, shared stack: a reviewer trying the
+// composer on the demo issue, or an evidence replay doing the same, leaves one
+// real row, and from then on every load of that preview answered with that row
+// alone and the chip check failed on proposals that never touched it. A thread
+// listed here keeps its mock rows on every first page in demo mode and shows
+// whatever was posted there AFTER them, so a preview still echoes what a
+// tester sends. Only mock topics belong here: none exists outside a preview,
+// so no genuine transcript is ever padded with fixture rows.
+const PINNED_DEMO_THREADS = new Set(['issue:900008']);
+
+function isPinnedDemoThread(thread) {
+  return !!thread && PINNED_DEMO_THREADS.has(`${thread.type}:${thread.ref}`);
+}
+
+// What a staging `?demo=1` first page answers with, or null to serve the real
+// rows unchanged. `realRows` is the page the SELECT returned, oldest first.
+function stagingDemoTranscript(appId, thread, realRows) {
+  if (isPinnedDemoThread(thread)) {
+    const mock = stagingMockGroupChat(appId, thread);
+    const mockIds = new Set(mock.map((m) => m.id));
+    // A real id equal to a mock one would collapse into it on the client
+    // (history is merged by id); keep the fixture row, which the checks read.
+    return [...mock, ...realRows.filter((m) => !mockIds.has(m.id))];
+  }
+  return realRows.length === 0 ? stagingMockGroupChat(appId, thread) : null;
 }
 
 function parseThreadRef(value) {
@@ -258,14 +291,16 @@ function chatRoutes(config) {
         }
       }
 
-      // The empty-transcript fallback described at stagingMockGroupChat.
-      // Only a first page: a `before` cursor is the client paging PAST what
-      // it already has, and answering that with the same four rows again
-      // would loop the transcript.
-      if (IS_STAGING && req.query.demo === '1' && !before && messages.length === 0) {
-        return res.json({
-          messages: stagingMockGroupChat(appId, threadType ? { type: threadType, ref: threadRef } : null),
-        });
+      // The empty-transcript fallback described at stagingMockGroupChat, and
+      // the pinned demo topics described at PINNED_DEMO_THREADS. Only a first
+      // page: a `before` cursor is the client paging PAST what it already
+      // has, and answering that with the same rows again would loop the
+      // transcript.
+      if (IS_STAGING && req.query.demo === '1' && !before) {
+        const demo = stagingDemoTranscript(
+          appId, threadType ? { type: threadType, ref: threadRef } : null, messages
+        );
+        if (demo) return res.json({ messages: demo });
       }
 
       res.json({ messages });
@@ -641,4 +676,4 @@ function chatRoutes(config) {
   return router;
 }
 
-module.exports = { chatRoutes, postedViaFor, stagingMockGroupChat };
+module.exports = { chatRoutes, postedViaFor, stagingMockGroupChat, stagingDemoTranscript };
