@@ -108,3 +108,34 @@ test('a rejected locator exposes the failed plan and permits one changed replay 
   assert.equal(replays, 2);
   await assert.rejects(control.runPlan(corrected), { code: 'evidence_plan_attempt_exhausted' });
 });
+
+test('two bounded repairs each require a changed complete plan', async () => {
+  const plans = [fixtures.plan(), fixtures.plan(), fixtures.plan()];
+  plans[1].stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  plans[2].stories[0].replay.after.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: false,
+  };
+  let calls = 0;
+  const control = new RunControl({
+    runId: 'e'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (plan) => {
+      calls += 1;
+      if (calls < 3) throw Object.assign(new Error('Missing locator'), { code: 'locator_not_found' });
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(plan) };
+    },
+  });
+  await assert.rejects(control.runPlan(plans[0]), { code: 'locator_not_found' });
+  control.allowRepair('Check the first locator.', { code: 'locator_not_found' });
+  await assert.rejects(control.runPlan(plans[1]), { code: 'locator_not_found' });
+  control.allowRepair('Check the next locator.', { code: 'locator_not_found' });
+  assert.equal(control.getContext().attempt, 3);
+  assert.deepEqual(control.getContext().repair.rejectedPlan, contract.parseReplayPlan(plans[1]));
+  await assert.rejects(control.runPlan(plans[1]), { code: 'evidence_repair_unchanged' });
+  await control.runPlan(plans[2]);
+  assert.equal(calls, 3);
+  assert.throws(() => control.allowRepair('No more attempts.', { code: 'locator_not_found' }),
+    { code: 'evidence_repair_unavailable' });
+});

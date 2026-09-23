@@ -82,6 +82,7 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.replayPlanGuide(), /Do not copy those fields yourself/);
   assert.match(agent.replayPlanGuide(), /Every interaction target and each checkpoint focus must\s+identify exactly one visible element/);
   assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches/);
+  assert.match(agent.replayPlanGuide(), /waitFor text matches a visible substring/);
 });
 
 test('a second hosted dispatch receives an explicit repair task through the normal worker', async () => {

@@ -42,6 +42,8 @@ drag(from,to), clickPoint(surface,xRatio,yRatio),
 dragPoints(surface,from:{xRatio,yRatio},to:{xRatio,yRatio}),
 scrollIntoView(target), scrollBy(x,y), or waitFor(exactly one of target, text,
 path, quietNetwork; optional timeoutMs up to 10000).
+waitFor text matches a visible substring. For an exact full-element text match,
+use waitFor target:{by:"text",value,exact:true}.
 
 A target is exactly one of:
 {by:"testId",value}, {by:"role",role,name?,exact?},
@@ -53,9 +55,14 @@ component but may not be html, body, or *.
 Before submitting the replays, inspect both revisions in the states where each
 target will be used. Every interaction target and each checkpoint focus must
 identify exactly one visible element; a waitFor target only needs one or more
-visible matches. Check full accessible names instead of assuming a partial
-name is unique. If a target cannot be verified, report that instead of
-submitting a guessed locator.
+visible matches. Role, label, and text locators default to exact full-element
+matching; an accessible name can include description text inside a wrapping
+label. Copy the observed full name, use exact:false after checking uniqueness,
+or use a stable id. Inspect every action, assertion, and focus target, not just
+the first action. The platform resets the paired app fixture before EACH
+story and viewport, so each flow must establish its own required state. For a
+checkbox, use check or uncheck to express the desired state. If a target cannot
+be verified, report that instead of submitting a guessed locator.
 
 replay.checkpoint is { id, label, focus:{before,after},
 assertions:{before:[...],after:[...]}, animation }. Every assertion list is
@@ -96,7 +103,9 @@ function promptFor({ repair = false } = {}) {
 evidence_get_context to read the rejected plan and the exact replay failure.
 Inspect the failed control in the live browser on BOTH exact revisions; use
 its observed role and accessible name or another stable unique locator.
-Do not guess a replacement from the error text alone. Submit one complete
+Review the remaining actions, assertions, and focus targets for the same
+mistake before resubmitting. Do not guess a replacement from the error text
+alone. Submit one complete
 corrected set of replays through evidence_run_plan. The platform will reset both sides
 and run two fresh replay passes; the failed plan's media is not published.`
     : `Open the run context, explore the declared flow on both exact
@@ -171,7 +180,7 @@ async function dispatchClaude(config, options, deps) {
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'evidence',
-    prompt: promptFor({ repair: options.repairAttempt === 1 }),
+    prompt: promptFor({ repair: options.repairAttempt > 0 }),
     systemPrompt: SYSTEM_PROMPT,
     model,
     resumeSessionId: resumeThreadId === undefined
@@ -265,7 +274,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
       reportDiagnostic(options, { kind: 'turn_start' });
       result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
         mode: 'evidence',
-        prompt: promptFor({ repair: options.repairAttempt === 1 }),
+        prompt: promptFor({ repair: options.repairAttempt > 0 }),
         branchName: session.branch_name,
         agentBackend: 'codex_openrouter',
         agentModel: runtimeContext.agentModel,

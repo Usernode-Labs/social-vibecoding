@@ -24,6 +24,22 @@ const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_REPLAY_EVENTS = 40;
+const REPAIRABLE_LOCATOR_CODES = new Set([
+  'ambiguous_locator', 'locator_not_found', 'locator_not_visible',
+]);
+const MAX_REPAIR_ATTEMPTS = 2;
+
+function repairableReplayFailure(error) {
+  const code = errorCode(error);
+  if (REPAIRABLE_LOCATOR_CODES.has(code)) return true;
+  // A missing element in a positive assertion is another locator error.
+  // An existing element with the wrong state/value, or an expected absence
+  // that failed, may be a real app regression and must remain a hard failure.
+  return code === 'assertion_failed' && error?.detail?.phase === 'assertion'
+    && error.detail.count === 0
+    && ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
+      .includes(error.detail.assertion?.type);
+}
 
 function progressPhase(event) {
   if (!event || typeof event !== 'object') return null;
@@ -578,6 +594,8 @@ function newRunMetrics() {
     agentFinalResponse: null,
     repairCount: 0,
     repairTrigger: null,
+    repairTriggers: [],
+    fixtureResets: [],
     artifactBytes: 0,
     tokenUsage: {},
   };
@@ -625,11 +643,13 @@ function traceSummary(metrics, extra = {}) {
     replayRuntime: metrics.replayRuntime,
     lastReplayEvent: metrics.lastReplayEvent,
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
+    fixtureResets: metrics.fixtureResets.slice(0, 12),
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
     agentActivity: agentActivitySummary(metrics),
     repairCount: metrics.repairCount,
     ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
+    repairTriggers: metrics.repairTriggers.slice(0, MAX_REPAIR_ATTEMPTS),
     artifactBytes: metrics.artifactBytes,
     planSource: metrics.planSource || null,
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
@@ -823,20 +843,29 @@ async function executeRun(config, options, injected = {}) {
           });
           notifyEvidence(session, app, 'replaying');
           const planHash = planContract.planHash(plan);
-          failurePhase = 'reset_pass_1';
-          stage(failurePhase);
-          const firstDeployment = await deps.environment.resetPair(config, pair);
-          if (!sameProvenance(firstDeployment, expectedProvenance)) {
-            throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass one did not use the prepared fixture and images.');
-          }
+          const prepareCase = (pass) => async ({ storyId, viewport }) => {
+            failurePhase = `reset_pass_${pass}`;
+            stage(failurePhase);
+            const resetStartedAt = Date.now();
+            const deployment = await deps.environment.resetPair(config, pair);
+            if (!sameProvenance(deployment, expectedProvenance)) {
+              throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch',
+                `Replay pass ${pass} did not use the prepared fixture and images.`);
+            }
+            metrics.fixtureResets.push({ pass, storyId, viewport,
+              durationMs: Math.max(0, Date.now() - resetStartedAt) });
+            failurePhase = `pass_${pass}`;
+            stage(failurePhase);
+            return deployment;
+          };
           const firstStartedAt = Date.now();
           failurePhase = 'pass_1';
           stage(failurePhase);
-          const first = await deps.replay.runPass(
+          const first = await deps.replay.runPassCases(
             config,
             session.id,
-            replayInput({ run, plan, deployment: firstDeployment, authTokens, provenance: expectedProvenance, pass: 1 }),
-            { onEvent: (event) => {
+            replayInput({ run, plan, deployment: exploration, authTokens, provenance: expectedProvenance, pass: 1 }),
+            { prepareCase: prepareCase(1), onEvent: (event) => {
               recordReplayEvent(event, 1);
             }, previewRunId: run.id }
           );
@@ -845,20 +874,14 @@ async function executeRun(config, options, injected = {}) {
             pass: 1,
             durationMs: Math.max(0, Date.now() - firstStartedAt),
           });
-          failurePhase = 'reset_pass_2';
-          stage(failurePhase);
-          const secondDeployment = await deps.environment.resetPair(config, pair);
-          if (!sameProvenance(secondDeployment, expectedProvenance)) {
-            throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass two did not use the prepared fixture and images.');
-          }
           const secondStartedAt = Date.now();
           failurePhase = 'pass_2';
           stage(failurePhase);
-          const second = await deps.replay.runPass(
+          const second = await deps.replay.runPassCases(
             config,
             session.id,
-            replayInput({ run, plan, deployment: secondDeployment, authTokens, provenance: expectedProvenance, pass: 2 }),
-            { onEvent: (event) => {
+            replayInput({ run, plan, deployment: exploration, authTokens, provenance: expectedProvenance, pass: 2 }),
+            { prepareCase: prepareCase(2), onEvent: (event) => {
               recordReplayEvent(event, 2);
             }, previewRunId: run.id }
           );
@@ -939,7 +962,7 @@ async function executeRun(config, options, injected = {}) {
         requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64),
         requestedModel: safeModelId(session.agent_model || session.model),
         repairAttempt,
-        budgetMs: repairAttempt === 1 ? repairAgentBudgetMs : agentBudgetMs,
+        budgetMs: repairAttempt > 0 ? repairAgentBudgetMs : agentBudgetMs,
       };
       metrics.agentDispatches.push(dispatchTrace);
       try {
@@ -1015,47 +1038,53 @@ async function executeRun(config, options, injected = {}) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
       }
-      const replayFailure = registration.control.lastReplayFailure?.error;
-      if (!latestHardVerdict && registration.control.planCalls === 1
+      while (!latestHardVerdict
+          && registration.control.planCalls === metrics.repairCount + 1
+          && metrics.repairCount < MAX_REPAIR_ATTEMPTS
           && ['pass_1', 'pass_2'].includes(failurePhase)
-          && errorCode(replayFailure) === 'ambiguous_locator') {
+          && repairableReplayFailure(registration.control.lastReplayFailure?.error)) {
+        const replayFailure = registration.control.lastReplayFailure.error;
         // A wrong role/name is a planner error, not a reason to publish
         // partial captures or silently substitute another DOM element.
-        // The platform explicitly starts one correction turn with the exact
+        // The platform explicitly starts a bounded correction turn with the exact
         // failed plan and replay location; its replacement still has to pass
         // both clean, provenance-fenced replay passes.
         const failureDetail = boundedReplayDetail(replayFailure);
         registration.control.allowRepair(
-          'The first replay found zero or multiple elements for a planned locator. Inspect the actual control on both revisions and correct the complete plan.',
+          'A planned locator did not match the intended visible element during replay. Inspect its actual state on both revisions and correct the replays.',
           {
-            code: 'ambiguous_locator',
+            code: errorCode(replayFailure),
             message: visibleError(replayFailure),
             detail: failureDetail,
           }
         );
         metrics.repairTrigger = {
-          code: 'ambiguous_locator',
+          code: errorCode(replayFailure),
           ...(Number.isInteger(metrics.lastReplayEvent?.pass)
             ? { pass: metrics.lastReplayEvent.pass } : {}),
           ...(['base', 'head'].includes(failureDetail?.side)
             ? { side: failureDetail.side } : {}),
           ...(/^[a-z0-9][a-z0-9_-]{0,95}$/.test(String(failureDetail?.actionId || ''))
             ? { actionId: failureDetail.actionId } : {}),
+          ...(Number.isInteger(failureDetail?.assertionIndex)
+            ? { assertionIndex: failureDetail.assertionIndex } : {}),
         };
+        metrics.repairTriggers.push(metrics.repairTrigger);
         // The failed pass may have changed its fixture. Restore the same
         // pinned pair before the planner inspects the control again.
         failurePhase = 'repair_reset';
         const repairResetStartedAt = Date.now();
         try { await registration.control.resetSide('base'); }
         finally { replaySuspendedMs += Date.now() - repairResetStartedAt; }
-        metrics.repairCount = 1;
+        metrics.repairCount += 1;
         failurePhase = 'agent_repair';
-        progress('A planned control did not match the page; the evidence agent is inspecting and correcting it once…');
+        progress('A planned control did not match the page; the evidence agent is inspecting and correcting it…');
         const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
-        agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, 1);
+        agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, metrics.repairCount);
+        if (registration.control.planCalls === metrics.repairCount) break;
       }
       if (agentOutcome.error && !latestHardVerdict) {
-        if (metrics.repairCount === 1 && registration.control.planCalls === 1) {
+        if (metrics.repairCount > 0 && registration.control.planCalls === metrics.repairCount) {
           throw agentOutcome.error;
         }
         throw registration.control.lastReplayFailure?.error

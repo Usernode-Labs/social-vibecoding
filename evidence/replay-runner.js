@@ -121,6 +121,18 @@ function validateInput(raw) {
   const plan = planContract.parseReplayPlan(raw.plan);
   const pass = Number(raw.pass);
   if (![1, 2].includes(pass)) throw new ReplayFailure('invalid_pass', 'Replay pass must be 1 or 2.');
+  let selection = null;
+  if (raw.selection != null) {
+    if (!raw.selection || typeof raw.selection !== 'object'
+        || Object.keys(raw.selection).sort().join(',') !== 'storyId,viewport') {
+      throw new ReplayFailure('invalid_selection', 'Replay selection must name one declared story and viewport.');
+    }
+    const story = plan.stories.find((item) => item.id === raw.selection.storyId);
+    if (!story?.viewports.some((item) => item.name === raw.selection.viewport)) {
+      throw new ReplayFailure('invalid_selection', 'Replay selection must name one declared story and viewport.');
+    }
+    selection = { storyId: raw.selection.storyId, viewport: raw.selection.viewport };
+  }
   const baseOrigin = parseOrigin(raw.origins?.base, 'Base');
   const headOrigin = parseOrigin(raw.origins?.head, 'Head');
   if (baseOrigin === headOrigin) throw new ReplayFailure('identical_origins', 'Base and head origins must be distinct.');
@@ -147,6 +159,7 @@ function validateInput(raw) {
     publishArtifacts: raw.publishArtifacts === true && pass === 2,
     plan,
     planHash: planContract.planHash(plan),
+    selection,
     origins: { base: baseOrigin, head: headOrigin },
     cookies: raw.cookies && typeof raw.cookies === 'object' ? raw.cookies : {},
     authTokens,
@@ -309,6 +322,10 @@ async function waitForAnyVisible(page, spec, description, timeoutMs) {
       { ...snapshot, waitState: 'visible', timeoutMs }
     );
   }
+}
+
+async function waitForVisibleText(page, text, description, timeoutMs) {
+  return waitForAnyVisible(page, { by: 'text', value: text, exact: false }, description, timeoutMs);
 }
 
 function joinedUrl(origin, relativePath) {
@@ -529,7 +546,7 @@ async function executeAction(page, action, origin, network, authToken = '') {
       break;
     case 'waitFor':
       if (action.target) await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
-      else if (action.text) await page.getByText(action.text, { exact: true }).first().waitFor({ state: 'visible', timeout: action.timeoutMs });
+      else if (action.text) await waitForVisibleText(page, action.text, action.id, action.timeoutMs);
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
       break;
@@ -1180,6 +1197,8 @@ async function runReplay(browser, input) {
   try {
     for (const story of input.plan.stories) {
       for (const viewport of story.viewports) {
+        if (input.selection && (input.selection.storyId !== story.id
+            || input.selection.viewport !== viewport.name)) continue;
         emitEvent({ type: 'viewport_started', runId: input.runId, pass: input.pass, storyId: story.id, viewport: viewport.name });
         let phase = 'base';
         try {
@@ -1301,6 +1320,7 @@ module.exports = {
   locatorSnapshot,
   resolveOne,
   waitForAnyVisible,
+  waitForVisibleText,
   authorizedUrl,
   publicRelativePath,
   redactedUrl,
