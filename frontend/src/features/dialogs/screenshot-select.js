@@ -412,21 +412,82 @@
   // last failure as { ok: false, reason }.
   const REGISTRATION_BUDGET_MS = 2500;
   const REGISTRATION_MAX_FRAMES = 90;
+
+  // What one frame looked like, for telling failures apart. Firefox on
+  // a Mac, sharing its own window, failed with "expected 4 markers, found 0":
+  // not one frame in the budget had a marker in it. That has two unrelated
+  // causes a bare count cannot separate — frames that arrive BLANK (a window
+  // capture with no content in it, which is what macOS hands over when the
+  // browser's screen-recording permission is missing or lapsed) and a video
+  // that never advances past the frames from before the markers existed. The
+  // luminance range answers the first (the same < 32 test binarize applies);
+  // a coarse sampled fingerprint answers the second.
+  function frameStats(frame) {
+    const { data, width, height } = frame;
+    let min = 255;
+    let max = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const v = ((data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000) | 0;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    const step = Math.max(1, Math.floor(Math.sqrt((width * height) / 4096)));
+    let hash = 2166136261;
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const i = (y * width + x) * 4;
+        hash = Math.imul(hash ^ data[i] ^ (data[i + 1] << 8) ^ (data[i + 2] << 16), 16777619) >>> 0;
+      }
+    }
+    return { blank: max - min < 32, signature: `${width}x${height}:${hash}` };
+  }
+
   async function registerFromFrames(nextFrame, cssCenters, opts = {}) {
     const budgetMs = opts.budgetMs ?? REGISTRATION_BUDGET_MS;
     const maxFrames = opts.maxFrames ?? REGISTRATION_MAX_FRAMES;
     const now = opts.now || (() => Date.now());
     const started = now();
     let last = { ok: false, reason: 'No video frame available' };
+    const stats = { read: 0, blank: 0, distinct: 0, width: 0, height: 0 };
+    const seen = new Set();
     for (let i = 0; i < maxFrames; i++) {
       if (i > 0 && now() - started >= budgetMs) break;
       const frame = await nextFrame();
       if (!frame || !frame.width || !frame.height) continue;
       const solved = solveRegistration(detectMarkers(frame), cssCenters, frame.width, frame.height);
       if (solved.ok) return { ok: true, mapping: solved.mapping, width: frame.width, height: frame.height };
+      const s = frameStats(frame);
+      stats.read++;
+      if (s.blank) stats.blank++;
+      seen.add(s.signature);
+      stats.distinct = seen.size;
+      stats.width = frame.width;
+      stats.height = frame.height;
       last = solved;
     }
-    return last;
+    if (!stats.read) return last;
+    // The count alone is what the notice keys on; the rest is what a report
+    // needs to say WHICH failure it was.
+    return {
+      ok: false,
+      reason: `${last.reason} (${stats.read} frames at ${stats.width}x${stats.height}, `
+        + `${stats.blank} blank, ${stats.distinct} distinct)`,
+      stats,
+    };
+  }
+
+  // How a failed registration should be reported and retried. 'blank': every
+  // frame had no content, so the share itself is empty — retaking it the same
+  // way cannot help, and the viewer needs to be told where the problem is.
+  // 'frozen': frames had content but never changed, so the video element is
+  // stuck on a frame from before the markers — worth re-attaching the stream
+  // once. Anything else is a genuine failure to locate the page.
+  function classifyRegistrationFailure(solved) {
+    const s = solved && solved.stats;
+    if (!s || !s.read) return 'no-frames';
+    if (s.blank === s.read) return 'blank';
+    if (s.read > 1 && s.distinct === 1) return 'frozen';
+    return 'not-found';
   }
 
   // Whether a frame still shows the registration markers where the solved
@@ -471,6 +532,15 @@
     };
   }
 
+  // Only a tab self-capture is trusted for direct mapping; anything else
+  // goes through marker registration, which fails closed if the page isn't
+  // actually visible in the share. That includes an UNREPORTED surface:
+  // Firefox's getSettings() carries no displaySurface at all for a window
+  // share, and treating that as a tab would crop the window's toolbar.
+  function isTabCapture(settings) {
+    return !!settings && settings.displaySurface === 'browser';
+  }
+
   // How dark the page goes behind the markers while a window / screen
   // share is registered. Not opaque (#2885): at 80% the brightest thing the
   // page can draw is ~20% luminance, well under the dark/light threshold a
@@ -513,6 +583,7 @@
     MARKER,
     REGISTRATION_VEIL_ALPHA,
     displayMediaOptions,
+    isTabCapture,
     MAX_UPLOAD_BYTES,
     markerCssCenters,
     directMapping,
@@ -522,6 +593,7 @@
     classifyCorners,
     solveRegistration,
     registerFromFrames,
+    classifyRegistrationFailure,
     markersStillVisible,
     validateNativeCapturePayload,
   };
@@ -702,7 +774,7 @@
   // stream is granted (app.js hides the feedback modal there). Resolves
   // { blob, contentType } or rejects with a coded Error:
   //   'unsupported' | 'denied' | 'cancelled' | 'register_failed' |
-  //   'capture_failed'
+  //   'capture_blank' | 'capture_failed'
   async function start(opts = {}) {
     if (!isSupported()) throw fail('unsupported');
 
@@ -718,10 +790,7 @@
 
     const track = stream.getVideoTracks()[0];
     const settings = (track && track.getSettings && track.getSettings()) || {};
-    // Only a tab self-capture is trusted for direct mapping; anything
-    // else (or an unreported surface) goes through marker registration,
-    // which fails closed if the page isn't actually visible in the share.
-    const tabMode = settings.displaySurface === 'browser';
+    const tabMode = isTabCapture(settings);
 
     const video = document.createElement('video');
     video.muted = true;
@@ -908,19 +977,34 @@
         // One frame is not enough — see registerFromFrames. The first read
         // takes the frame two frames after the veil; each retry waits for the
         // next one the stream delivers.
-        let first = true;
-        const solved = await registerFromFrames(async () => {
-          if (!first) await waitFrames(video, 1);
-          first = false;
-          if (video.paused) { try { await video.play(); } catch { /* grab what is there */ } }
-          const reg = grabFrame(video);
-          return reg && reg.ctx.getImageData(0, 0, reg.width, reg.height);
-        }, markerCssCenters(viewportW, viewportH));
+        const register = () => {
+          let first = true;
+          return registerFromFrames(async () => {
+            if (!first) await waitFrames(video, 1);
+            first = false;
+            if (video.paused) { try { await video.play(); } catch { /* grab what is there */ } }
+            const reg = grabFrame(video);
+            return reg && reg.ctx.getImageData(0, 0, reg.width, reg.height);
+          }, markerCssCenters(viewportW, viewportH));
+        };
+        let solved = await register();
+        if (!solved.ok && classifyRegistrationFailure(solved) === 'frozen') {
+          // Every grab returned the same picture: the element is stuck on a
+          // frame from before the markers. Re-attaching the stream makes it
+          // start presenting again; one more budget, then fail as before.
+          console.warn('[screenshot] capture video not advancing, re-attaching:', solved.reason);
+          video.srcObject = null;
+          video.srcObject = stream;
+          try { await video.play(); } catch { /* the grab below reports it */ }
+          await waitFrames(video, 2);
+          solved = await register();
+        }
         if (!solved.ok) {
-          // The notice the user sees is one sentence for every reason; the
-          // reason itself is what a bug report needs.
+          // The reason itself is what a bug report needs.
           console.warn('[screenshot] registration failed:', solved.reason);
-          throw fail(solved.reason === 'No video frame available' ? 'capture_failed' : 'register_failed', solved.reason);
+          const kind = classifyRegistrationFailure(solved);
+          const code = kind === 'no-frames' ? 'capture_failed' : (kind === 'blank' ? 'capture_blank' : 'register_failed');
+          throw fail(code, solved.reason);
         }
         regFrameW = solved.width;
         regFrameH = solved.height;

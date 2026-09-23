@@ -59,6 +59,8 @@ const {
   classifyCorners,
   solveRegistration,
   registerFromFrames,
+  classifyRegistrationFailure,
+  isTabCapture,
   markersStillVisible,
   displayMediaOptions,
   REGISTRATION_VEIL_ALPHA,
@@ -493,6 +495,94 @@ test('registerFromFrames: no frames at all reports that, not a locate failure', 
   assert.equal(solved.ok, false);
   assert.equal(solved.reason, 'No video frame available');
 });
+
+// ── Firefox window share on a Retina Mac ────────────────────────────
+// What Firefox hands over when you share its WINDOW on a 2x display: device
+// pixels, the page below a title bar + tab strip + toolbar band, and a
+// getSettings() with no displaySurface at all.
+
+const RETINA = { viewportW: 640, viewportH: 400, scale: 2, toolbarCss: 108 };
+function buildFirefoxWindowFrame({ withMarkers = true, seed = 3 } = {}) {
+  const { viewportW, viewportH, scale, toolbarCss } = RETINA;
+  const frameW = viewportW * scale + 2;
+  const frameH = (viewportH + toolbarCss) * scale;
+  const offsetX = 1;
+  const offsetY = toolbarCss * scale;
+  const frame = makeFrame(frameW, frameH, 18);        // the veiled page
+  fillRect(frame, 0, 0, frameW, offsetY, 236);        // light browser chrome
+  fillRect(frame, 520, 40, 700, 56, 255);             // the URL bar
+  fillRect(frame, 40, 120, 20, 20, 60);               // toolbar glyphs
+  fillRect(frame, 80, 120, 20, 20, 60);
+  const centers = markerCssCenters(viewportW, viewportH);
+  if (withMarkers) {
+    for (const key of ['tl', 'tr', 'bl', 'br']) {
+      const c = centers[key];
+      drawFinder(frame, c.x * scale + offsetX, c.y * scale + offsetY, MARKER.MODULE * scale);
+    }
+  }
+  addNoise(frame, 6, seed);
+  return { frame, centers, offsetX, offsetY };
+}
+
+test('isTabCapture: a share that does not report its surface is registered, not trusted', () => {
+  assert.equal(isTabCapture({ displaySurface: 'browser' }), true);
+  assert.equal(isTabCapture({ width: 3024, height: 1964, frameRate: 30 }), false); // Firefox window
+  assert.equal(isTabCapture({ displaySurface: 'window' }), false);
+  assert.equal(isTabCapture({}), false);
+  assert.equal(isTabCapture(null), false);
+});
+
+test('registerFromFrames: Firefox window share at 2x below a toolbar registers and crops the page', async () => {
+  const stale = buildFirefoxWindowFrame({ withMarkers: false }).frame;  // before the markers painted
+  const { frame, centers, offsetX, offsetY } = buildFirefoxWindowFrame();
+  const solved = await registerFromFrames(frameSource([stale, stale, frame]).next, centers);
+  assert.ok(solved.ok, `registration failed: ${solved.reason}`);
+  assert.ok(Math.abs(solved.mapping.scaleX - 2) < 0.03, `scaleX ${solved.mapping.scaleX}`);
+  assert.ok(Math.abs(solved.mapping.scaleY - 2) < 0.03, `scaleY ${solved.mapping.scaleY}`);
+  assert.ok(Math.abs(solved.mapping.offsetX - offsetX) < 4, `offsetX ${solved.mapping.offsetX}`);
+  assert.ok(Math.abs(solved.mapping.offsetY - offsetY) < 4, `offsetY ${solved.mapping.offsetY}`);
+  // A selection in CSS px lands on the page, below the toolbar, in device px.
+  const crop = applyMapping({ x: 100, y: 50, w: 200, h: 120 }, solved.mapping, solved.width, solved.height);
+  assert.ok(Math.abs(crop.sx - (200 + offsetX)) <= 3, `sx ${crop.sx}`);
+  assert.ok(Math.abs(crop.sy - (100 + offsetY)) <= 3, `sy ${crop.sy}`);
+  assert.ok(Math.abs(crop.sw - 400) <= 3 && Math.abs(crop.sh - 240) <= 3, `size ${crop.sw}x${crop.sh}`);
+});
+
+// ── Telling "found 0" apart ─────────────────────────────────────────
+// The failure reported from Firefox on a Mac was "expected 4 markers, found
+// 0": no frame in the budget had a marker in it. A blank share and a video
+// stuck on a stale frame both produce that, and they need different answers.
+
+test('registerFromFrames: an all-blank share is reported as blank, with the frame stats', async () => {
+  const blank = makeFrame(1282, 1016, 0);
+  const solved = await registerFromFrames(frameSource([blank]).next, RETINA_CENTERS(), { maxFrames: 4 });
+  assert.equal(solved.ok, false);
+  assert.match(solved.reason, /^expected 4 markers, found 0 \(4 frames at 1282x1016, 4 blank, 1 distinct\)$/);
+  assert.equal(classifyRegistrationFailure(solved), 'blank');
+});
+
+test('registerFromFrames: a video stuck on one pre-marker frame is reported as frozen', async () => {
+  const stale = buildFirefoxWindowFrame({ withMarkers: false }).frame;
+  const solved = await registerFromFrames(frameSource([stale]).next, RETINA_CENTERS(), { maxFrames: 5 });
+  assert.equal(solved.ok, false);
+  assert.match(solved.reason, /found 0 \(5 frames at \d+x\d+, 0 blank, 1 distinct\)/);
+  assert.equal(classifyRegistrationFailure(solved), 'frozen');
+});
+
+test('registerFromFrames: changing frames that never show the page are a plain locate failure', async () => {
+  const a = buildFirefoxWindowFrame({ withMarkers: false, seed: 1 }).frame;
+  const b = buildFirefoxWindowFrame({ withMarkers: false, seed: 2 }).frame;
+  const solved = await registerFromFrames(frameSource([a, b]).next, RETINA_CENTERS(), { maxFrames: 2 });
+  assert.equal(solved.ok, false);
+  assert.equal(classifyRegistrationFailure(solved), 'not-found');
+});
+
+test('classifyRegistrationFailure: no frames at all stays a capture failure', async () => {
+  const solved = await registerFromFrames(async () => null, RETINA_CENTERS(), { maxFrames: 2 });
+  assert.equal(classifyRegistrationFailure(solved), 'no-frames');
+});
+
+function RETINA_CENTERS() { return markerCssCenters(RETINA.viewportW, RETINA.viewportH); }
 
 test('markersStillVisible: a stale frame of the veil is recognised; the clean page is not', () => {
   const { frame: veiled, centers } = buildRegistrationFrame({ ...REG_VIEW, bg: 10 });
