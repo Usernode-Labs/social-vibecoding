@@ -393,6 +393,61 @@
     return { ok: true, mapping: best.mapping };
   }
 
+  // ── Registration over a live stream (pure given nextFrame) ────────
+  // A single grab is not a registration. The frame a capture stream hands
+  // over right after the veil goes black is not reliably a frame of the veil:
+  // window and screen capturers deliver frames with a lag, queue the ones the
+  // viewer's own cursor produced on the way to the confirm button, and emit
+  // nothing at all while the surface is static — so the one frame the solve
+  // used to see could predate the markers entirely ("found 0") and the whole
+  // capture failed on the first try (#2808). Keep reading frames until one of
+  // them solves, and fail closed only when none does within the budget.
+  //
+  // `nextFrame()` resolves the next frame as an ImageData-like
+  // { data, width, height }, or null when none is available. The budget is
+  // time, not a frame count — a capturer at 30fps and one that only emits on
+  // damage get the same chance — with a frame cap as a backstop. Resolves
+  // { ok: true, mapping, width, height } for the frame that solved, or the
+  // last failure as { ok: false, reason }.
+  const REGISTRATION_BUDGET_MS = 2500;
+  const REGISTRATION_MAX_FRAMES = 90;
+  async function registerFromFrames(nextFrame, cssCenters, opts = {}) {
+    const budgetMs = opts.budgetMs ?? REGISTRATION_BUDGET_MS;
+    const maxFrames = opts.maxFrames ?? REGISTRATION_MAX_FRAMES;
+    const now = opts.now || (() => Date.now());
+    const started = now();
+    let last = { ok: false, reason: 'No video frame available' };
+    for (let i = 0; i < maxFrames; i++) {
+      if (i > 0 && now() - started >= budgetMs) break;
+      const frame = await nextFrame();
+      if (!frame || !frame.width || !frame.height) continue;
+      const solved = solveRegistration(detectMarkers(frame), cssCenters, frame.width, frame.height);
+      if (solved.ok) return { ok: true, mapping: solved.mapping, width: frame.width, height: frame.height };
+      last = solved;
+    }
+    return last;
+  }
+
+  // Whether a frame still shows the registration markers where the solved
+  // mapping put them — i.e. the "clean" grab is really a stale frame of the
+  // veil, and cropping it would attach a black rectangle. Two or more of the
+  // four at their solved position and size is the veil; one is a
+  // coincidence the page can produce.
+  function markersStillVisible(detected, mapping, cssCenters, frameW) {
+    if (!Array.isArray(detected) || !detected.length || !mapping) return false;
+    const tol = Math.max(4, frameW * 0.01);
+    const expectedUnit = MARKER.MODULE * (mapping.scaleX + mapping.scaleY) / 2;
+    let seen = 0;
+    for (const k of ['tl', 'tr', 'bl', 'br']) {
+      const px = cssCenters[k].x * mapping.scaleX + mapping.offsetX;
+      const py = cssCenters[k].y * mapping.scaleY + mapping.offsetY;
+      const hit = detected.some((p) => Math.hypot(p.x - px, p.y - py) <= tol
+        && (typeof p.unit !== 'number' || Math.abs(p.unit - expectedUnit) <= expectedUnit * 0.4 + 0.5));
+      if (hit) seen++;
+    }
+    return seen >= 2;
+  }
+
   const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
   const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
 
@@ -431,6 +486,8 @@
     detectMarkers,
     classifyCorners,
     solveRegistration,
+    registerFromFrames,
+    markersStillVisible,
     validateNativeCapturePayload,
   };
 
@@ -645,7 +702,13 @@
     video.muted = true;
     video.playsInline = true;
     video.srcObject = stream;
-    video.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+    // Inside the viewport and not fully transparent, on purpose (#2808): a
+    // muted video a browser considers invisible — parked at -9999px, or at
+    // opacity 0 — is one it may stop presenting frames for (WebKit pauses
+    // invisible muted playback), and every grab then returns the frame from
+    // before the markers existed. 2px at 1% in the corner, under the overlay,
+    // is visible to the browser and to nobody else.
+    video.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;';
     document.body.appendChild(video);
 
     const cleanupBits = [];
@@ -816,20 +879,46 @@
         hint.style.display = 'none';
         veil.style.background = '#000';
         await waitFrames(video, 2);
-        const reg = grabFrame(video);
-        if (!reg) throw fail('capture_failed', 'No video frame available');
-        regFrameW = reg.width;
-        regFrameH = reg.height;
-        const detected = detectMarkers(reg.ctx.getImageData(0, 0, reg.width, reg.height));
-        const solved = solveRegistration(detected, markerCssCenters(viewportW, viewportH), reg.width, reg.height);
-        if (!solved.ok) throw fail('register_failed', solved.reason);
+        // One frame is not enough — see registerFromFrames. The first read
+        // takes the frame two frames after the veil; each retry waits for the
+        // next one the stream delivers.
+        let first = true;
+        const solved = await registerFromFrames(async () => {
+          if (!first) await waitFrames(video, 1);
+          first = false;
+          if (video.paused) { try { await video.play(); } catch { /* grab what is there */ } }
+          const reg = grabFrame(video);
+          return reg && reg.ctx.getImageData(0, 0, reg.width, reg.height);
+        }, markerCssCenters(viewportW, viewportH));
+        if (!solved.ok) {
+          throw fail(solved.reason === 'No video frame available' ? 'capture_failed' : 'register_failed', solved.reason);
+        }
+        regFrameW = solved.width;
+        regFrameH = solved.height;
         mapping = solved.mapping;
       }
 
-      // Clean frame: nothing of ours visible.
+      // Clean frame: nothing of ours visible. The same lag that could hand
+      // registration a frame from before the veil can hand this grab a frame
+      // OF the veil, which crops to a black rectangle; read on until the
+      // markers are gone (bounded — past the budget the last frame is used,
+      // exactly as a single grab did).
       overlay.style.display = 'none';
       await waitFrames(video, 2);
-      const clean = grabFrame(video);
+      let clean = grabFrame(video);
+      if (!tabMode) {
+        const css = markerCssCenters(viewportW, viewportH);
+        const cleanStarted = Date.now();
+        while (clean && Date.now() - cleanStarted < 1500) {
+          const m = clean.width === regFrameW && clean.height === regFrameH
+            ? mapping
+            : rescaleMapping(mapping, regFrameW, regFrameH, clean.width, clean.height);
+          const pixels = clean.ctx.getImageData(0, 0, clean.width, clean.height);
+          if (!m || !markersStillVisible(detectMarkers(pixels), m, css, clean.width)) break;
+          await waitFrames(video, 1);
+          clean = grabFrame(video) || clean;
+        }
+      }
       if (!clean) throw fail('capture_failed', 'No video frame available');
       if (tabMode) {
         mapping = directMapping(viewportW, viewportH, clean.width, clean.height);

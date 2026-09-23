@@ -58,6 +58,8 @@ const {
   detectMarkers,
   classifyCorners,
   solveRegistration,
+  registerFromFrames,
+  markersStillVisible,
   MAX_UPLOAD_BYTES,
   validateNativeCapturePayload,
 } = loadScreenshotSelect();
@@ -418,4 +420,86 @@ test('solveRegistration: wrong marker count is rejected', () => {
   const centers = markerCssCenters(800, 600);
   assert.equal(solveRegistration(idealDetections(centers, 1, 0, 0).slice(0, 3), centers, 800, 600).ok, false);
   assert.equal(solveRegistration([], centers, 800, 600).ok, false);
+});
+
+// ── #2808: registration reads the stream, not one frame ──────────────
+//
+// A window/screen capturer delivers frames with a lag, so the first frame
+// read after the veil goes black can predate the markers — a frame of the
+// page, or of the dialog that was open when capture was granted. The solve
+// used to see exactly that one frame and failed the whole capture with
+// "Couldn't locate this page in the shared window".
+
+function frameSource(frames) {
+  let i = 0;
+  const reads = { count: 0 };
+  const next = async () => {
+    reads.count++;
+    return i < frames.length ? frames[i++] : frames[frames.length - 1];
+  };
+  return { next, reads };
+}
+
+const REG_VIEW = { viewportW: 500, viewportH: 360, scale: 1.5, offsetX: 64, offsetY: 48, frameW: 900, frameH: 640 };
+
+test('registerFromFrames: a stale first frame with no markers yet still registers (#2808)', async () => {
+  const stale = makeFrame(900, 640, 200);           // the page, before the markers painted
+  fillRect(stale, 300, 200, 200, 120, 30);           // with something on it
+  const { frame: veiled, centers } = buildRegistrationFrame({ ...REG_VIEW, bg: 10, noise: 4, seed: 7 });
+  // What a single grab saw: nothing to register against.
+  assert.equal(solveRegistration(detectMarkers(stale), centers, 900, 640).ok, false);
+  const src = frameSource([stale, stale, veiled]);
+  const solved = await registerFromFrames(src.next, centers);
+  assert.ok(solved.ok, `registration failed: ${solved.reason}`);
+  assert.equal(src.reads.count, 3, 'stops at the first frame that solves');
+  assert.equal(solved.width, 900);
+  assert.equal(solved.height, 640);
+  assert.ok(Math.abs(solved.mapping.scaleX - 1.5) < 0.05);
+  assert.ok(Math.abs(solved.mapping.offsetX - 64) < 6);
+  assert.ok(Math.abs(solved.mapping.offsetY - 48) < 6);
+});
+
+test('registerFromFrames: a missing frame is skipped, not fatal', async () => {
+  const { frame: veiled, centers } = buildRegistrationFrame({ ...REG_VIEW, bg: 10 });
+  const src = frameSource([null, veiled]);
+  const solved = await registerFromFrames(src.next, centers);
+  assert.ok(solved.ok, `registration failed: ${solved.reason}`);
+});
+
+test('registerFromFrames: still fails closed when no frame ever solves', async () => {
+  const { frame: threeOnly, centers } = buildRegistrationFrame({ ...REG_VIEW, bg: 10, skipCorner: 'br' });
+  const src = frameSource([threeOnly]);
+  const solved = await registerFromFrames(src.next, centers, { maxFrames: 5 });
+  assert.equal(solved.ok, false);
+  assert.match(solved.reason, /expected 4 markers, found 3/);
+  assert.equal(src.reads.count, 5, 'bounded by the frame cap');
+});
+
+test('registerFromFrames: gives up once the time budget is spent', async () => {
+  const { frame: threeOnly, centers } = buildRegistrationFrame({ ...REG_VIEW, bg: 10, skipCorner: 'br' });
+  let clock = 0;
+  const src = frameSource([threeOnly]);
+  const next = async () => { clock += 400; return src.next(); };
+  const solved = await registerFromFrames(next, centers, { budgetMs: 2500, now: () => clock });
+  assert.equal(solved.ok, false);
+  assert.ok(src.reads.count >= 6 && src.reads.count <= 8, `read ${src.reads.count} frames in a 2.5s budget of 400ms frames`);
+});
+
+test('registerFromFrames: no frames at all reports that, not a locate failure', async () => {
+  const centers = markerCssCenters(500, 360);
+  const solved = await registerFromFrames(async () => null, centers, { maxFrames: 3 });
+  assert.equal(solved.ok, false);
+  assert.equal(solved.reason, 'No video frame available');
+});
+
+test('markersStillVisible: a stale frame of the veil is recognised; the clean page is not', () => {
+  const { frame: veiled, centers } = buildRegistrationFrame({ ...REG_VIEW, bg: 10 });
+  const mapping = { scaleX: 1.5, scaleY: 1.5, offsetX: 64, offsetY: 48 };
+  assert.equal(markersStillVisible(detectMarkers(veiled), mapping, centers, 900), true);
+  const clean = makeFrame(900, 640, 200);
+  assert.equal(markersStillVisible(detectMarkers(clean), mapping, centers, 900), false);
+  // One finder-shaped thing on the page at a marker position is not the veil.
+  const one = makeFrame(900, 640, 200);
+  drawFinder(one, centers.tl.x * 1.5 + 64, centers.tl.y * 1.5 + 48, MARKER.MODULE * 1.5);
+  assert.equal(markersStillVisible(detectMarkers(one), mapping, centers, 900), false);
 });
