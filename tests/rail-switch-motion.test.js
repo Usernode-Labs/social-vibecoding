@@ -135,18 +135,31 @@ test('the platform\'s own row shows no ✕ on its Workshop', () => {
   assert.deepEqual([...App._backSlotFor('app-view')], ['none']);
 });
 
-test('any other app keeps its ✕, and a thread keeps its chevron to Messages', () => {
+test('no app\'s Workshop has a ✕ — only the running app does — and a thread keeps its chevron to Messages', () => {
+  // #2740 review: an app's Workshop has NO back control. #2799 made that true
+  // for the platform's own row and left every other app's Workshop wearing a
+  // "Close app" ✕ that OPENED the app it claimed to close.
   const { App, AppView } = harness();
   App.currentApp = 'todo';
   App.currentTab = 'dev';
   App.currentSubTab = 'forum';
   AppView.appData = { slug: 'todo', self_hosted: false };
-  assert.deepEqual([...App._backSlotFor('app-view')], ['close']);
-  // A stale record for a different slug must not decide it.
-  AppView.appData = { slug: 'homeroom', self_hosted: true };
-  assert.deepEqual([...App._backSlotFor('app-view')], ['close']);
+  assert.deepEqual([...App._backSlotFor('app-view')], ['none'], 'an app\'s Workshop, like the platform\'s');
+  // A card opened in it is empty here too: the header derives its ‹ back to
+  // the Workshop from the route (features/header/platform-header.tsx).
+  App.currentSubTab = 'topic';
+  assert.deepEqual([...App._backSlotFor('app-view')], ['none']);
+  // The RUNNING app keeps its ✕, and it names where the ✕ goes: Home, with
+  // nowhere else to return to…
+  App.currentTab = 'app';
+  App.currentSubTab = null;
+  assert.deepEqual([...App._backSlotFor('app-view')], ['close', '/']);
+  // …or the page it was opened from (App.closeApp; tests/app-close-origin.test.js).
+  App._appReturn = { slug: 'todo', url: '/#messages/5', depth: null, pushes: null };
+  assert.deepEqual([...App._backSlotFor('app-view')], ['close', '/#messages/5']);
   // The platform's own discussion is still a row of Messages.
   App.currentApp = 'homeroom';
+  App.currentTab = 'dev';
   App.currentSubTab = 'chat';
   assert.deepEqual([...App._backSlotFor('app-view')], ['arrow', '#messages']);
 });

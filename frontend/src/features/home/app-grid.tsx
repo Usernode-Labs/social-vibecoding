@@ -65,16 +65,20 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { AppsLoadError } from '../apps/load-error';
 import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { TileSkeleton } from '../apps/tile-skeleton';
-import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
+import { CreateTile } from './create-tile';
+import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-function cellStyle(item: GridItem): string | undefined {
-  const p = item.placement;
+function placementStyle(p: GridPlacement | null): string | undefined {
   if (!p) return undefined;
   return `grid-column:${p.col + 1}/span ${p.w};grid-row:${p.row + 1}/span ${p.h}`;
+}
+
+function cellStyle(item: GridItem): string | undefined {
+  return placementStyle(item.placement);
 }
 
 function AppIcon({ icon }: { icon: IconView }) {
@@ -433,6 +437,15 @@ export function AppGrid() {
           yours={state.view === 'grid'}
         />
       ))}
+      {/*
+          "Create an app", the grid's LAST child (./create-tile.tsx). Null
+          until Home.render() has painted the launcher — the store's initial
+          value — so the prerender and the first client render agree on this
+          node's children. Its cell comes from the same paint as the tiles'.
+      */}
+      {state.create ? (
+        <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
+      ) : null}
     </div>
   );
 }

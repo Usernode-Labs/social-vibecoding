@@ -98,6 +98,7 @@ export function boardHref(slug, boardView) {
  * @property {string|null} slug
  * @property {string} name
  * @property {boolean} selfHosted
+ * @property {boolean} restricted
  * @property {string|null} repoUrl
  * @property {string|null} iconUrl
  * @property {string|null} iconEmoji
@@ -178,6 +179,15 @@ const INITIAL = {
   name: '',
   /** True when the target is the platform's own self-hosted row. */
   selfHosted: false,
+  /**
+   * The target is Homeroom, for a viewer who is NOT served its self-hosted
+   * row (SELF_APP_PUBLIC_VOTING off, not an admin). The platform they are
+   * standing in is still the menu's subject — feedback on it and About it
+   * work for everyone — but its workshop and discussion answer 404, so the
+   * rows that go there are hidden rather than left leading nowhere.
+   * Published by ../app-context/platform-target.js through Home.
+   */
+  restricted: false,
   /** `appData.repo_url`, or null — gates the "View on GitHub" row. */
   repoUrl: null,
   /** The open app's own artwork, for the header cluster's 28px tile. Both

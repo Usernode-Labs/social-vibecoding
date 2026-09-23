@@ -20,9 +20,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 const { installGridStore, installPanelsStore } = require('./helpers/home-grid-store');
-// The "Create app" tile moved out of home.js: it is a home-screen WIDGET now
-// (HomePanels.renderCreatePanel), so home-panels.js is loaded here too, to
-// keep it under the same shared-icon-treatment assertions the app tiles are.
+// The "Create app" tile moved out of home.js: it was a home-screen WIDGET, then
+// a section, and is the launcher grid's trailing TILE now
+// (features/home/create-tile.tsx), kept under the same shared-icon-treatment
+// assertions the app tiles are. home-panels.js is still loaded here for the
+// render path the other tiles take.
 const { HOME_SRC: SRC, PANELS_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
 // The widget strip is React as of #1191: `Home.renderWidgetTile` is
 // `Home.widgetTileView` (a view model) plus features/home/widget-strip.tsx's
@@ -38,16 +40,16 @@ function widgetTileHtml(Home, item) {
   return renderComponent(WIDGET_STRIP, 'WidgetTile', { tile: Home.widgetTileView(item) });
 }
 
-// The Create app block, the same way: HomePanels.createView() decides and
-// features/home/panels/create.tsx draws. It is here for the shared TILE
-// TREATMENT — the block's plus sits in an `.app-icon-tile`, and the rule that
-// no tile carries its own violet colouring has to span every call site or it
-// is not a rule.
-const CREATE_PANEL = 'frontend/src/features/home/panels/create.tsx';
+// The Create tile, the same way: Home.render() decides (gridStore's `create`)
+// and features/home/create-tile.tsx draws. It is here for the shared TILE
+// TREATMENT — the rule that no tile carries its own violet colouring has to
+// span every call site or it is not a rule, and the Create tile's face is the
+// one tile face that is deliberately NOT an `.app-icon-tile`.
+const CREATE_TILE = 'frontend/src/features/home/create-tile.tsx';
 
-function createPanelHtml(Home) {
-  return renderComponent(CREATE_PANEL, 'CreatePanel', {
-    view: Home.__HP.createView({ key: 'create' }),
+function createTileHtml() {
+  return renderComponent(CREATE_TILE, 'CreateTile', {
+    view: { enabled: true, hint: 'hint', placement: { col: 3, row: 0, w: 1, h: 1 } },
   });
 }
 
@@ -162,12 +164,13 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     assert.doesNotMatch(tile[0], /bg-violet/, 'no violet tile background');
     assert.doesNotMatch(tile[0], /text-violet/, 'no violet glyph colour');
   }
-  // The Create block is NOT an app tile any more: it is the dashed placeholder
-  // card the locked challenges slot draws, so its plus sits in that card's
-  // hatched tile rather than in the shared app-icon face.
-  const create = createPanelHtml(Home);
+  // The Create tile is NOT an app tile: its face is an EMPTY slot (the
+  // prototype's `.tile.create .aic` — a dashed ring, no fill), so it is not
+  // drawn in the shared app-icon face, which is a filled surface. It keeps the
+  // app face's 56px `rounded-2xl` geometry so it lines up with its neighbours.
+  const create = createTileHtml();
   assert.doesNotMatch(create, /app-icon-tile/);
-  assert.match(create, /class="home-create-glyph[^"]*rounded-\[0\.6875rem\]/);
+  assert.match(create, /class="home-create-glyph[^"]*\bh-14 w-14\b[^"]*rounded-2xl[^"]*border-dashed/);
 });
 
 // The fainter letter is CSS-side: the tile tags its kind with

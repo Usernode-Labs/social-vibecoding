@@ -7,6 +7,11 @@
  * to assert on this screen's behaviour — it has no JSX transform, so a decision
  * expressed in this file would be a decision no test could reach.
  *
+ * Me is the navigation prototype's Me (`scrMe`): the profile card, three stat
+ * cards, a "More" list with a line under each row, and Your contributions —
+ * see ./profile-store.js's header for where each part of the older, longer
+ * Profile went.
+ *
  * The initial store state is `open: false`, whose view is `kind: 'empty'` and
  * renders nothing at all. That is the empty `#profile-root` the hand-written
  * shell shipped, so the prerender pass emits it and hydration matches. Data
@@ -15,8 +20,9 @@
 
 import { type ReactNode } from 'react';
 
-import { Button, buttonVariants } from '@/components/ui/button';
-import { SectionHeading } from '@/components/ui/field';
+import { Button } from '@/components/ui/button';
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useStoreState } from '../../lib/use-store-state';
 import {
@@ -25,7 +31,7 @@ import {
   profileStore,
 } from './profile-store.js';
 import { Profile } from './profile.js';
-import { AccountPanel } from './account-panel';
+import { MorePanel } from './account-panel';
 import { ProfileEditSheet } from './profile-edit-sheet';
 import { PublicProfileCard } from './public-profile-card';
 
@@ -35,7 +41,7 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
   if (url) {
     return (
       <img
-        className="w-20 h-20 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
+        className="w-14 h-14 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800 shrink-0"
         src={url}
         alt=""
       />
@@ -44,7 +50,7 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
   return (
     <div
       className={
-        'w-20 h-20 text-2xl rounded-full shrink-0 flex items-center justify-center '
+        'w-14 h-14 text-xl rounded-full shrink-0 flex items-center justify-center '
         + 'font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
       }
       aria-hidden="true"
@@ -55,21 +61,24 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
 }
 
 /** Identity card (#982) — who this profile belongs to, and the way in to
- *  editing it. Sits above the score header so the screen leads with the person
- *  rather than the number. */
+ *  editing it. The prototype's compact card: the name, one muted line of
+ *  facts ("@handle · Building since March 2026 · 3 apps"), then the bio. */
 function IdentityCard({ identity }: { identity: any }): ReactNode {
   return (
     <div
       id="profile-identity-card"
-      className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5"
+      className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-3"
     >
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <IdentityAvatar url={identity.avatarUrl} initial={identity.initial} />
         <div className="flex-1 min-w-0">
-          <div className="text-xl font-bold truncate">{identity.name}</div>
-          {identity.handle ? (
-            <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
-              {identity.handle}
+          <div className="text-[1.0625rem] font-bold truncate">{identity.name}</div>
+          {identity.sub ? (
+            // Wraps rather than truncating: beside the Edit button a phone
+            // has room for "Building since March 2026" but not the rest, and
+            // a fact cut off mid-word is not a fact.
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">
+              {identity.sub}
             </div>
           ) : null}
         </div>
@@ -121,263 +130,150 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
   );
 }
 
-/** The owner's own controls for the opt-in public profile (#582). */
-function PublicControls({ controls, status, publishing, previewOpen }: {
-  controls: any;
-  status: string;
-  publishing: boolean;
-  previewOpen: boolean;
-}): ReactNode {
+/** The three stat cards (the prototype's `.stat`): merged, kudos, challenges.
+ *  Numbers the Me screen never had until GET /api/me/summary added them up. */
+function StatCards({ stats }: { stats: Array<{ key: string; value: string; label: string }> }): ReactNode {
   return (
-    <section
-      id="public-profile-controls"
-      className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5"
-    >
-      {/* Heading, blurb, then the controls they explain — the settings-section
-          shape, so it is @/components/ui/field's SectionHeading rather than a
-          fifth spelling of it. Not grouped-list's SectionHeader: this is a
-          form section inside one card, not a label over a group of cards. */}
-      <SectionHeading title="Public profile">
-        Private by default. The public page includes only your username,
-        display name, bio, Homeroom-hosted photo and verified social accounts,
-        not unverified handles, wallet, email, roles, memberships or private activity.
-      </SectionHeading>
-      <div className={`mt-3 text-sm font-medium ${controls.visibilityClass}`}>
-        {controls.visibility}
-      </div>
-      {controls.moderationDisabled ? (
-        <p className="mt-1 text-xs text-red-700 dark:text-red-400">
-          You can keep editing or unpublish, but the public page remains unavailable.
-        </p>
-      ) : null}
-      <div className="flex flex-wrap gap-2 mt-3">
-        <Button
-          type="button"
-          layout="tap"
-          variant="tapPrimary"
-          size="none"
-          ink="solidText"
-          className="disabled:opacity-60"
-          disabled={publishing}
-          onClick={() => { void Profile._setPublished(!controls.published); }}
-        >
-          {controls.publishLabel}
-        </Button>
-        <Button
-          type="button"
-          layout="tap"
-          variant="neutral"
-          size="none"
-          ink="neutral"
-          className="text-sm font-medium"
-          onClick={() => Profile.togglePreview()}
-        >
-          {previewOpen ? 'Hide preview' : 'Preview'}
-        </Button>
-        <a
-          className={`${buttonVariants({ layout: 'tap', variant: 'neutral', size: 'none', ink: 'neutral' })} inline-flex items-center text-sm font-medium`}
-          href={controls.openHref}
-        >
-          Open public page
-        </a>
-        <Button
-          type="button"
-          layout="tap"
-          variant="neutral"
-          size="none"
-          ink="neutral"
-          className="text-sm font-medium"
-          onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
-        >
-          Copy public link
-        </Button>
-      </div>
-      <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-400" role="status" aria-live="polite">{status}</div>
-      <div id="public-profile-preview" className={previewOpen ? 'mt-4' : 'hidden mt-4'}>
-        {previewOpen ? (
-          <PublicProfileCard profile={controls.profile} allowReport={false} />
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-/** Completed challenges — the viewer's OWN, and every row links out. */
-function Completed({ completed }: { completed: any }): ReactNode {
-  return (
-    <>
-      <div className="flex items-baseline gap-2 mt-6 mb-2">
-        <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 flex-1 min-w-0 truncate">
-          {completed.title}
-        </div>
-        {completed.count ? (
-          <div className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{completed.count}</div>
-        ) : null}
-      </div>
-      {completed.rows.length === 0 ? (
+    <div id="profile-stats" className="grid grid-cols-3 gap-2 mb-2">
+      {stats.map((stat) => (
         <div
-          id="profile-completed-empty"
-          className="rounded-2xl bg-white dark:bg-zinc-900 p-4 text-center"
+          key={stat.key}
+          data-profile-stat={stat.key}
+          className="rounded-2xl bg-white dark:bg-zinc-900 px-2 py-3 text-center"
         >
-          <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-            No completed challenges yet.
-          </div>
-          <a
-            className={`${buttonVariants({ variant: 'neutral', size: 'none', ink: 'neutral' })} inline-flex items-center justify-center px-3 min-h-[36px] text-sm font-medium`}
-            href="#leaderboard/challenges"
-          >
-            Browse challenges
-          </a>
+          <div className="text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{stat.value}</div>
+          <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{stat.label}</div>
         </div>
-      ) : (
-        <>
-          {completed.rows.map((row: any) => (
-            <a
-              key={row.id}
-              className={
-                'rounded-2xl bg-white dark:bg-zinc-900 p-3 mb-2 '
-                // dark:hover was zinc-900 back when the card was transparent;
-                // it is the card's own fill now, so the row had no hover at
-                // all in dark. One step up the ramp, as everywhere else.
-                + 'flex items-center gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
-                + 'transition-colors'
-              }
-              href={row.href}
-              data-completed-challenge={row.id}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm truncate">{row.title}</div>
-                {row.meta ? (
-                  <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{row.meta}</div>
-                ) : null}
-              </div>
-              <span
-                className={
-                  'shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-semibold '
-                  + 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
-                }
-              >
-                Completed
-              </span>
-            </a>
-          ))}
-          <div className="mt-1 mb-2">
-            <a
-              className="text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
-              href="#leaderboard/challenges"
-            >
-              See all challenges
-            </a>
-          </div>
-        </>
-      )}
-    </>
+      ))}
+    </div>
   );
 }
 
-/** The token allocation card. The backend zeroes total_tokens until terms are
- *  accepted, so a gated allocation shows the terms notice and never a fake 0. */
-function TokenCard({ token }: { token: any }): ReactNode {
-  if (token.gated) {
+/** A contribution's app tile: the platform's own mark, the app's image, its
+ *  emoji, or its initial — the same order the launcher draws an app in. */
+function ContributionTile({ tile }: { tile: any }): ReactNode {
+  if (tile.kind === 'platform') {
     return (
-      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
-        <div className="font-semibold mb-1">Token allocation withheld</div>
-        <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-          Review and accept the terms to see your token allocation.
-        </div>
-        <Button
-          variant="neutral"
-          size="sm"
-          ink="neutral"
-          onClick={() => Profile.reviewTerms()}
-        >
-          Review terms
-        </Button>
-      </div>
+      <IconTile size="sm" className="overflow-hidden">
+        <img src="/brand/homeroom-mark.png" alt="" aria-hidden="true" className="h-full w-full" draggable="false" />
+      </IconTile>
     );
   }
-  // #1825: no allocation, no card. #1552 had replaced a blurred 0 behind
-  // "Reveal" with a card saying so in words, but that is
-  // still a whole card about a program most people are not in, on a screen
-  // that should be about them. The card now appears only for someone it
-  // concerns: a real allocation (below), or a terms gate that may be hiding
-  // one (above).
-  if (token.empty) return null;
+  if (tile.kind === 'image') {
+    return (
+      <IconTile size="sm" className="overflow-hidden">
+        <img src={tile.url} alt="" aria-hidden="true" className="h-full w-full object-cover" loading="lazy" />
+      </IconTile>
+    );
+  }
   return (
-    <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
-      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">
-        Token allocation
+    <IconTile size="sm" className={tile.kind === 'emoji' ? 'text-2xl' : 'text-lg font-bold'} aria-hidden="true">
+      {tile.text}
+    </IconTile>
+  );
+}
+
+/** "Your contributions": the newest merged proposals, each a link to its
+ *  proposal page, and "See all" to the builder page with every one of them. */
+function Contributions({ view }: { view: any }): ReactNode {
+  return (
+    <section id="profile-contributions" className="mt-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <SectionHeader className="px-1">Your contributions</SectionHeader>
+        {view.seeAllHref ? (
+          <a
+            id="profile-contributions-all"
+            href={view.seeAllHref}
+            className="shrink-0 px-1 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
+          >
+            See all
+          </a>
+        ) : null}
       </div>
-      <div
-        className={token.revealed ? 'text-2xl font-bold' : 'text-2xl font-bold blur-md select-none'}
-        aria-hidden={token.revealed ? 'false' : 'true'}
-      >
-        {token.amount}
-      </div>
-      <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-        {/* What the number IS, before what it is subject to. The old card
-            said only the second half, so the figure was a quantity of
-            something the reader had to guess at. */}
-        Your share of the season&rsquo;s token pool. Allocations are
-        provisional and subject to the program terms.
-      </div>
-      {token.revealed ? null : (
-        <Button
-          variant="neutral"
-          size="sm"
-          ink="neutral"
-          className="mt-3"
-          onClick={() => Profile.revealTokens()}
-        >
-          Reveal
-        </Button>
+      {view.rows.length ? (
+        <GroupedList className="mx-0">
+          {view.rows.map((row: any) => (
+            <ListRow
+              key={row.key}
+              as="a"
+              href={row.href}
+              data-contribution={row.key}
+              leading={<ContributionTile tile={row.tile} />}
+              title={row.title}
+              // Two lines for a title, and the meta wraps: the prototype's
+              // rows let "Homeroom · You · merged 3d ago" run on, and a
+              // proposal title cut to "CSV export for the r…" says nothing.
+              titleClassName="text-[0.9375rem] font-semibold whitespace-normal line-clamp-2"
+              subtitle={row.meta}
+              subtitleClassName="text-[0.8125rem] whitespace-normal"
+              chevron={false}
+              trailing={(
+                <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[0.7rem] font-semibold text-emerald-700 dark:text-emerald-400">
+                  Merged
+                </span>
+              )}
+            />
+          ))}
+        </GroupedList>
+      ) : (
+        <div id="profile-contributions-empty" className="rounded-2xl bg-white dark:bg-zinc-900 p-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
+          {view.loaded
+            ? 'Nothing merged yet. When a proposal of yours is voted in, it shows up here.'
+            : 'Your contributions could not be loaded. Check your connection and try again.'}
+        </div>
       )}
-    </div>
+    </section>
   );
 }
 
 /**
  * The profile's loading state, at the SCREEN's own shape.
  *
- * It was the words "Loading profile…" centred in an otherwise empty screen —
- * the emptiest of the three this pass fixed, because unlike a list there is
- * no chrome around it to say what is coming. What arrives is an identity card,
- * a large points figure, and a breakdown list, and this stands in for all
- * three at their own geometry: the card's `rounded-2xl … p-4 mb-5` face, the
- * 44px avatar beside a name and handle, the `text-4xl` figure with its label
- * under it, and three list rows in the same `rounded-2xl` card.
- *
- * The Edit button's shape is here too. It sits at the card's right end and is
- * the widest thing in that row; leaving it out would let the name line run to
- * an edge the real card never reaches.
+ * It was the words "Loading profile…" centred in an otherwise empty screen.
+ * What arrives now is the prototype's Me: the profile card, three stat cards,
+ * the three "More" rows and the contributions list, and this stands in for
+ * each at its own geometry — the card's `rounded-2xl p-4` face with the 56px
+ * avatar, a name and a facts line, and the Edit button's shape at its right
+ * end (leaving it out would let the name line run to an edge the real card
+ * never reaches); three short cards in a row; and two lists of rows with a
+ * leading tile and two lines of text.
  */
 function ProfileSkeleton(): ReactNode {
   return (
     <SkeletonGroup label="Loading your profile">
-      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5">
-        <div className="flex items-center gap-4">
-          <Skeleton shape="circle" className="w-11 h-11" />
+      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-3">
+        <div className="flex items-center gap-3">
+          <Skeleton shape="circle" className="w-14 h-14" />
           <div className="flex-1 min-w-0">
             <Skeleton className="w-40 h-4" />
-            <Skeleton shape="muted" className="mt-2 w-24" />
+            <Skeleton shape="muted" className="mt-2 w-48" />
           </div>
           <Skeleton shape="block" className="w-24 h-8 rounded-full" />
         </div>
       </div>
-      {/* The rank + points header: one big figure over its label. */}
-      <div className="mb-5 flex flex-col items-center">
-        <Skeleton shape="block" className="w-24 h-9" />
-        <Skeleton shape="muted" className="mt-2 w-12" />
-      </div>
-      {/* The points breakdown, in the card the real rows are drawn in. */}
-      <div className="rounded-2xl bg-white dark:bg-zinc-900">
+      {/* The three stat cards: a figure over its label. */}
+      <div className="grid grid-cols-3 gap-2 mb-2">
         {Array.from({ length: 3 }, (_, i) => (
-          <div key={i} className="flex items-center gap-3 px-3 py-2.5">
-            <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-            <Skeleton shape="muted" className="ml-auto w-14" />
+          <div key={i} className="rounded-2xl bg-white dark:bg-zinc-900 px-2 py-3 flex flex-col items-center">
+            <Skeleton shape="block" className="w-8 h-6" />
+            <Skeleton shape="muted" className="mt-1.5 w-14" />
           </div>
         ))}
       </div>
+      {/* "More", then "Your contributions": rows with a tile and two lines. */}
+      {[3, 2].map((count, group) => (
+        <div key={group} className="mt-8 rounded-2xl bg-white dark:bg-zinc-900">
+          {Array.from({ length: count }, (_, i) => (
+            <div key={i} className="flex items-center gap-4 px-4 py-3.5">
+              <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
+              <div className="flex-1 min-w-0">
+                <Skeleton className={i % 2 ? 'w-28' : 'w-40'} />
+                <Skeleton shape="muted" className="mt-2 w-48" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
     </SkeletonGroup>
   );
 }
@@ -421,7 +317,13 @@ export function ProfileRoot(): ReactNode {
     );
   }
   if (view.kind === 'public') {
-    return <PublicProfileCard profile={view.profile} allowReport={view.allowReport} />;
+    return (
+      <PublicProfileCard
+        profile={view.profile}
+        allowReport={view.allowReport}
+        allowMessage={view.allowMessage}
+      />
+    );
   }
 
   return (
@@ -430,67 +332,22 @@ export function ProfileRoot(): ReactNode {
         <ProfileEditSheet
           avatarUrl={view.identity.avatarUrl}
           initial={view.identity.initial}
-        />
-      ) : null}
-      <IdentityCard identity={view.identity} />
-      {view.publicControls ? (
-        <PublicControls
-          controls={view.publicControls}
-          status={state.publicStatus}
+          publicControls={view.publicControls}
+          publicStatus={state.publicStatus}
           publishing={state.publishing}
           previewOpen={state.previewOpen}
         />
       ) : null}
-
-      {/* Rank + points header (native ScoreHeader equivalent). */}
-      <div className="text-center mb-5">
-        <div className="text-4xl font-extrabold tracking-tight">{view.points}</div>
-        <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mt-1">
-          points
-        </div>
-        {view.sub ? (
-          <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">{view.sub}</div>
-        ) : null}
-      </div>
-
-      <TokenCard token={view.token} />
-
-      {view.breakdown.length > 0 ? (
-        <>
-          <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2">
-            Points breakdown
-          </div>
-          <div
-            className="rounded-2xl bg-white dark:bg-zinc-900"
-          >
-            {view.breakdown.map((row: any, index: number) => (
-              // The separator is INSET to the text column and drawn by the row
-              // rather than by `divide-y` on the parent: a rule that runs the
-              // full width of a rounded card reaches its corner radius. Same
-              // idiom, same reason, as @/components/ui/grouped-list.tsx and as
-              // the home panels' hairlines in app.css.
-              <div
-                key={`${row.label}:${index}`}
-                className="relative flex items-center gap-3 px-3 py-2 text-sm [&:not(:first-child)]:before:absolute [&:not(:first-child)]:before:top-0 [&:not(:first-child)]:before:left-3 [&:not(:first-child)]:before:right-0 [&:not(:first-child)]:before:h-px [&:not(:first-child)]:before:bg-zinc-200 dark:[&:not(:first-child)]:before:bg-zinc-800 [&:not(:first-child)]:before:content-['']"
-              >
-                <span className="flex-1 min-w-0 truncate">{row.label}</span>
-                <span className="shrink-0 font-semibold text-violet-700 dark:text-violet-400">
-                  {`${Number(row.points || 0).toLocaleString()} pts`}
-                </span>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      <Completed completed={view.completed} />
+      <IdentityCard identity={view.identity} />
+      <StatCards stats={view.stats} />
       {/*
-          Settings, Admin and the two native rows — the account group the
-          retired hamburger drawer used to close with. LAST, because this
-          screen leads with who you are and what you have done; where you
-          configure it is the footer of that, not the headline.
+          "More": Challenges & standings, Kudos and Settings — the prototype's
+          three rows, each saying what is behind it. Admin & moderation, the
+          native node / wallet / staking rows and Log out are in Settings now
+          (features/settings/account-rows.tsx).
       */}
-      <AccountPanel />
+      <MorePanel rows={view.rows} />
+      <Contributions view={view.contributions} />
     </>
   );
 }

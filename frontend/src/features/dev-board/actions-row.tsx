@@ -1,6 +1,22 @@
 /**
  * `#dev-actions` — the Dev screen's toolbar: the shared Board/Workshop filter
- * strip and the "+" menu beside it.
+ * strip — and `DevPlusMenu`, the "+" and its menu.
+ *
+ * ── The "+" lives at the end of the Workshop's tab strip ──────────────
+ *
+ * On the Workshop the "+" is not in this row any more. It is the last item of
+ * the view-tab strip — Current status · Needs you · All items · + — on all
+ * three tabs, which is where the navigation prototype drew it (`wsTabs`, a
+ * `.tplus` closing the `.tabs` row) and where the spec puts it: "a plus at the
+ * end of the tab strip holds Add … and Manage". It sat at the end of All
+ * items' search row, so two of the three tabs had no way to file an issue or
+ * reach the app's settings, and the empty-state notes on those tabs pointed at
+ * a "+" that was not on screen. workshop/workshop.tsx renders `DevPlusMenu`
+ * inside the strip and this row with `withPlus={false}` in the pane head.
+ *
+ * The standalone Board surface (./board-frame.tsx), unreachable since 'kanban'
+ * retired as a view mode, still draws the row with its "+" at the end — the
+ * default — so that surface is unchanged until the sweep that removes it.
  *
  * ── Why it is its own file now ─────────────────────────────────────────
  *
@@ -27,7 +43,8 @@
  * EXACTLY ONE of the two call sites renders at a time — ./board-frame.tsx when
  * the Dev screen is on the Board, ./workshop/workshop.tsx when it is on the
  * Workshop — which is what keeps `#dev-actions`, `#dev-plus-btn` and
- * `#dev-plus-menu` unique ids. board-frame reads the view mode to decide.
+ * `#dev-plus-menu` unique ids. board-frame reads the view mode to decide, and
+ * the Workshop renders the "+" once, in its tab strip, never in this row.
  *
  * tests/dev-plus-menu.test.js, tests/pr-import-menu.test.js and
  * tests/board-plus-menu-rows.test.js read this file's TEXT and compare row
@@ -41,7 +58,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, GitHubIcon, KeyIcon, LightBulbIcon, PencilSquareIcon, UserGroupIcon,
+  AppWindowIcon, GitHubIcon, KeyIcon, LightBulbIcon, PencilSquareIcon, PlusIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { callAppView } from './card/fold';
@@ -54,6 +71,12 @@ export interface DevActionsRowProps {
   readOnly: boolean;
   canCollaborate: boolean;
   showsMembers: boolean;
+  /**
+   * Whether the row carries the "+" at its end. The Board frame's row does
+   * (the default); the Workshop's pane-head row does not, because the
+   * Workshop draws the "+" in its tab strip — see the header.
+   */
+  withPlus?: boolean;
 }
 
 /**
@@ -153,7 +176,47 @@ function PlusRow({
   );
 }
 
-export function DevActionsRow({
+/**
+ * The "+" and its menu: `#dev-plus-btn` and `#dev-plus-menu`.
+ *
+ * ── Where it renders ────────────────────────────────────────────────────
+ *
+ * On the Workshop, as the LAST ITEM OF THE VIEW-TAB STRIP (workshop.tsx's
+ * rail): Current status · Needs you · All items · +, on every tab. It is the
+ * strip's own trailing control, drawn on the strip's metrics — app.css
+ * `.dev-ws-plus-btn`, beside `.dev-ws-tab` — so it reads as part of the bar
+ * rather than as the violet floating action it used to be at the end of All
+ * items' search row. It is NOT inside the `role="tablist"`: a tab list owns
+ * tabs, and a menu button among them is announced as a fourth tab that does
+ * not select anything.
+ *
+ * On the (unreachable) Board, at the end of `#dev-actions`, as it always was.
+ *
+ * ── Who owns what ───────────────────────────────────────────────────────
+ *
+ * React renders the button, the menu and its rows; `AppView._wirePlusMenu`
+ * (public/js/app-view.js) co-owns the two nodes for their listeners, the
+ * menu's `hidden` and the button's `aria-expanded` — the two mutations the
+ * migration sanctions on a React-rendered node. Both are looked up BY ID, so
+ * exactly one of these may be mounted at a time.
+ *
+ * ── Why it asks to be wired (#2141) ─────────────────────────────────────
+ *
+ * `_wirePlusMenu` binds the button's handlers by looking `#dev-plus-btn` up,
+ * and `_repaintDevBody` re-runs it right after `_rerenderWorkshop()`, which is
+ * sound only while the button is in the DOM by then. It is not always: the
+ * Workshop renders a skeleton until its data lands, and a deep-linked tab
+ * reaches the lander through a late-arrival effect whose render lands a task
+ * AFTER the synchronous publish `_rewirePlusMenu()` follows. A button that
+ * arrived after the one call that wires it stayed dead until the next body
+ * repaint — "sometimes need to refresh before it works". So the "+" asks for
+ * itself on mount. `_rewirePlusMenu` aborts the previous controller before
+ * binding, so this call on top of the module's own leaves exactly one handler
+ * per node. In the effect BODY: it binds listeners and flushes nothing
+ * through React, and the nodes it looks up are committed by the time any
+ * effect runs — which is also before anyone can have tapped.
+ */
+export function DevPlusMenu({
   illustrationApp,
   canManageIllustration,
   selfHosted,
@@ -162,77 +225,15 @@ export function DevActionsRow({
   showsMembers,
 }: DevActionsRowProps): ReactNode {
   const [editingIllustration, setEditingIllustration] = useState(false);
-  /**
-   * FILL THE FILTER HOST THE FRAME BELOW RENDERS, as soon as it exists.
-   *
-   * `_renderKanbanFilterBar()` is called from `_repaintDevBody()`, and on the
-   * Workshop that call runs BEFORE the surface it is filling has rendered:
-   * the branch creates an empty `#dev-workshop` and then calls the filler,
-   * but `#dev-kanban-filterbar` is a node of THIS row, which the Workshop's
-   * All-items pane renders — so the filler found no host, returned, and the
-   * search field only appeared on whatever repaint happened to come next.
-   * A WebSocket push or a pull-to-refresh, which is why it read as "the
-   * search is missing for a few seconds, then it is there".
-   *
-   * So the host asks to be filled itself, on the effect after it mounts.
-   * `mountKanbanFilters` is idempotent per host (legacy-portals keeps one
-   * entry per element and reconciles on a re-mount), and the publish that
-   * follows it is the same view model `_repaintDevBody` would have sent.
-   *
-   * IN A MICROTASK, which is React's own advice and not a superstition. The
-   * mount publishes inside `flushSync` (lib/legacy-portals.tsx — that is
-   * where the module's synchronous-DOM contract comes from), and React
-   * answers a `flushSync` raised while it is still committing with "flushSync
-   * was called from inside a lifecycle method… Consider moving this call to a
-   * scheduler task or micro task". An effect body is inside that commit,
-   * passive or not. Verified both ways in a browser against a DEVELOPMENT
-   * React build, which is the only build that carries the complaint: from the
-   * effect body it fires, from the microtask it does not. The shipped shell
-   * is a production build, so this is not what stands between the app and a
-   * green check — it is the difference between calling this where React says
-   * it is legal and calling it where React says it is not.
-   *
-   * Nothing waits on the microtask: it runs as soon as React's work loop
-   * unwinds, and the host below holds the field's row open with `min-h-8`
-   * from the frame's first paint, so arriving a beat later shifts nothing.
-   *
-   * AND ASK FOR THE "+" TO BE WIRED (#2141) — the same bug, one line later
-   * in the module. `_wirePlusMenu` binds the button's handlers by looking
-   * `#dev-plus-btn` up, and `_repaintDevBody` re-runs it right after
-   * `_rerenderWorkshop()`, which is sound only while the pane is in the DOM
-   * by then. Twice it is not. A tap on the All items tab mounts this row
-   * from `setTab`, on React's own schedule, and `_setWorkshopTab` only
-   * persists the choice. And on the first Workshop paint of a page session
-   * a deep-linked or remembered `ws=all` reaches the pane through the
-   * late-arrival effect on `v.tab` (workshop/workshop.tsx): a state update
-   * raised inside a passive effect is scheduled at default priority, so that
-   * render lands a task AFTER the synchronous publish `_rewirePlusMenu()`
-   * follows. Both ways the button arrived after the one call that wires it
-   * and stayed dead until the next body repaint — a WebSocket-driven reload,
-   * a vote, a card action — or until a Dev re-entry remounted the Workshop
-   * with its tab already in the store. Whether the "+" worked depended on
-   * what else had happened since: "sometimes need to refresh before it
-   * works".
-   *
-   * `_rewirePlusMenu` aborts the previous controller before binding, so
-   * this call on top of the module's own leaves exactly one handler per
-   * node. In the effect BODY, not the microtask: it binds listeners and
-   * flushes nothing through React, and the nodes it looks up are committed
-   * by the time any effect runs — which is also before anyone can have
-   * tapped.
-   */
   useEffect(() => {
-    let live = true;
-    queueMicrotask(() => { if (live) callAppView('_renderKanbanFilterBar'); });
     callAppView('_rewirePlusMenu');
-    return () => { live = false; };
   }, []);
   /*
       #2478 — ONE string for the "+" button's tooltip and its accessible
-      name. The button's only child is the glyph `+`, so a screen reader
-      announced it as "+": `title` is a tooltip, and no assistive technology
-      is obliged to fall back to it for a name (VoiceOver in Safari does not).
-      Every other glyph-only trigger on this board already pairs the two —
+      name. The button's only child is a glyph, so a screen reader announced
+      it as "+": `title` is a tooltip, and no assistive technology is obliged
+      to fall back to it for a name (VoiceOver in Safari does not). Every
+      other glyph-only trigger on this board already pairs the two —
       `MenuTrigger` in card/dev-card.tsx, the rail's "More" in
       workshop/workshop.tsx — and this was the last one without.
       Held in a const rather than written twice so the tooltip and the name
@@ -250,41 +251,43 @@ export function DevActionsRow({
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
   {editingIllustration && illustrationApp ? createPortal(<FeaturedIllustrationEditor key={illustrationApp.slug} app={illustrationApp} onClose={() => setEditingIllustration(false)} />, document.body) : null}
-  <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
     {/*
-        Legacy portal host for the filter strip. It ships EMPTY because the
-        store is published only after the first data load, but `min-h-8`
-        reserves the search field's one-row height from the frame's first
-        paint. Without that reservation, a read-only self-hosted view —
-        where the adjacent "+" is hidden — grows by 32px when the search
-        arrives and pushes the scrolling board down. `min-height`, rather
-        than a fixed height, still lets active chips wrap onto extra rows.
+        The wrapper is the menu's containing block (`.dev-ws-plus` is
+        `position: relative` in app.css). Hidden outright for a read-only
+        viewer of the self-hosted app: that viewer gets no Fork (the platform
+        is not forkable) and no board writes, so the menu would be empty.
     */}
-    <div id="dev-kanban-filterbar" className="flex-1 min-w-0 min-h-8" />
-    {/*
-        The filter host's `flex-1` places the "+" at the right edge on both
-        Board and Activity. Keep `ml-auto` as the button wrapper's own
-        defensive alignment; with the always-present host it is a no-op.
-    */}
-    <div className={`relative ml-auto ${readOnly && selfHosted ? 'hidden' : ''}`}>
+    <div className={`dev-ws-plus ${readOnly && selfHosted ? 'hidden' : ''}`}>
       <button
         id="dev-plus-btn"
+        type="button"
         aria-haspopup="true"
         aria-expanded="false"
         aria-label={plusLabel}
-        className="un-touch-target rounded-lg bg-violet-600 hover:bg-violet-500 w-9 h-9 flex items-center justify-center text-lg font-bold leading-none text-white transition-colors"
+        className="dev-ws-plus-btn un-touch-target"
         title={plusLabel}
       >
-        +
+        {/* The same glyph the Messages strip's own "+" draws (#2778), so
+            the two strips end on one mark. Decoration: the name is the
+            label above. */}
+        <PlusIcon className="dev-ws-plus-glyph" aria-hidden="true" />
       </button>
+      {/*
+          The desktop dropdown. `right-0` hangs it off the button's right
+          edge, so it opens leftward into the column from the end of the
+          strip, and `top-full mt-2` sets it 8px under the button at either
+          size of the strip. On touch `_wirePlusMenu` presents the same rows
+          as the kit's action sheet instead and this stays hidden.
+      */}
       <div
         id="dev-plus-menu"
-        className="hidden absolute right-0 top-11 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
+        className="hidden absolute right-0 top-full mt-2 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
       >
         {readOnly ? null : (
           <>
             {/*
-                New change lives in Improve (#1490). Filing an issue is back
+                New change lives in Improve (#1490) — the Homeroom menu's New
+                change button now (#2740 review). Filing an issue is back
                 HERE as well (#1900): #1490 folded it into Improve's Give
                 feedback beside New change, and people on the board could not
                 find "create an issue" any more. Same dialog, opened with the
@@ -396,7 +399,74 @@ export function DevActionsRow({
         )}
       </div>
     </div>
-  </div>
     </>
+  );
+}
+
+export function DevActionsRow({
+  withPlus = true,
+  ...plusProps
+}: DevActionsRowProps): ReactNode {
+  /**
+   * FILL THE FILTER HOST THE FRAME BELOW RENDERS, as soon as it exists.
+   *
+   * `_renderKanbanFilterBar()` is called from `_repaintDevBody()`, and on the
+   * Workshop that call runs BEFORE the surface it is filling has rendered:
+   * the branch creates an empty `#dev-workshop` and then calls the filler,
+   * but `#dev-kanban-filterbar` is a node of THIS row, which the Workshop's
+   * All-items pane renders — so the filler found no host, returned, and the
+   * search field only appeared on whatever repaint happened to come next.
+   * A WebSocket push or a pull-to-refresh, which is why it read as "the
+   * search is missing for a few seconds, then it is there".
+   *
+   * So the host asks to be filled itself, on the effect after it mounts.
+   * `mountKanbanFilters` is idempotent per host (legacy-portals keeps one
+   * entry per element and reconciles on a re-mount), and the publish that
+   * follows it is the same view model `_repaintDevBody` would have sent.
+   *
+   * IN A MICROTASK, which is React's own advice and not a superstition. The
+   * mount publishes inside `flushSync` (lib/legacy-portals.tsx — that is
+   * where the module's synchronous-DOM contract comes from), and React
+   * answers a `flushSync` raised while it is still committing with "flushSync
+   * was called from inside a lifecycle method… Consider moving this call to a
+   * scheduler task or micro task". An effect body is inside that commit,
+   * passive or not. Verified both ways in a browser against a DEVELOPMENT
+   * React build, which is the only build that carries the complaint: from the
+   * effect body it fires, from the microtask it does not. The shipped shell
+   * is a production build, so this is not what stands between the app and a
+   * green check — it is the difference between calling this where React says
+   * it is legal and calling it where React says it is not.
+   *
+   * Nothing waits on the microtask: it runs as soon as React's work loop
+   * unwinds, and the host below holds the field's row open with `min-h-8`
+   * from the frame's first paint, so arriving a beat later shifts nothing.
+   *
+   * The "+" asks to be WIRED on its own mount now (#2141) — see
+   * `DevPlusMenu` — because on the Workshop it is no longer in this row.
+   */
+  useEffect(() => {
+    let live = true;
+    queueMicrotask(() => { if (live) callAppView('_renderKanbanFilterBar'); });
+    return () => { live = false; };
+  }, []);
+  return (
+  <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
+    {/*
+        Legacy portal host for the filter strip. It ships EMPTY because the
+        store is published only after the first data load, but `min-h-8`
+        reserves the search field's one-row height from the frame's first
+        paint. Without that reservation, a read-only self-hosted view —
+        where the "+" is hidden — grows by 32px when the search arrives and
+        pushes the scrolling board down. `min-height`, rather than a fixed
+        height, still lets active chips wrap onto extra rows.
+    */}
+    <div id="dev-kanban-filterbar" className="flex-1 min-w-0 min-h-8" />
+    {/*
+        The filter host's `flex-1` places the "+" at the right edge of the
+        Board's row. On the Workshop there is no "+" here: it is the last
+        item of the view-tab strip above the pane.
+    */}
+    {withPlus ? <DevPlusMenu {...plusProps} /> : null}
+  </div>
   );
 }

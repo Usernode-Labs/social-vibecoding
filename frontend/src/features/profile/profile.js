@@ -1,8 +1,20 @@
 // Profile screen — the mobile app's native Profile screen absorbed into SV
 // (profile-and-settings-to-web migration, NATIVE-BRIDGE.md), extended into
-// an EDITABLE profile by issue #982. Renders the user's identity card
-// (picture / display name / bio / verified links), rank + points, token allocation
-// (with reveal), points breakdown, and the challenges THEY completed.
+// an EDITABLE profile by issue #982, and reshaped into the navigation
+// prototype's Me page: the identity card (picture / display name / bio /
+// verified links), three stat cards (merged, kudos, challenges), a "More"
+// list and "Your contributions". The rank, points, token allocation and
+// per-event breakdown it used to lead with are the Challenges tab's standing
+// card now (features/leaderboard/my-standing.js); see ./profile-store.js's
+// header for where every other piece went.
+//
+// ── The three numbers are ONE read ────────────────────────────────────
+//
+// GET /api/me/summary (src/routes/profile.js) adds up the three subsystems
+// the stat cards come from — merged proposals, kudos received, challenges
+// done — and returns the newest merged proposals with them. The completed
+// COUNT it returns uses the same per-user done rule as
+// GET /api/me/challenges/completed, whose history is below.
 //
 // It deliberately does NOT list completed challenges (#981). It used to,
 // from /challenges-api/challenges?season_id=…, and that section was wrong
@@ -49,7 +61,6 @@
 
 import {
   profileStore,
-  breakdownRows,
   relativeDate,
   safeHref,
   displayNameOf,
@@ -61,7 +72,7 @@ const Profile = {
   _loading: false,
   _targetUsername: null,
   _loadToken: 0,
-  // What the screen is showing: { ranking, breakdown, completed, season, … }
+  // What the screen is showing: { ranking, summary, ownerPublicProfile, … }
   // for the viewer's own profile, or one of the public/signed-out/error
   // shapes. Reset on every open() — see _ownCache for what survives.
   _data: null,
@@ -77,10 +88,6 @@ const Profile = {
   // and tokens may be stale for the length of one refresh; that is the trade.
   // { username, data } | null
   _ownCache: null,
-
-  // The token figure stays blurred until the user taps "Reveal" once;
-  // mirrors the native TokenAllocationReveal acknowledgement.
-  _REVEAL_KEY: 'sv:profile_tokens_revealed',
 
   // The avatar change staged by the photo picker. `_pendingAvatar` is a Blob to
   // upload, the string 'remove' to delete, or null for "leave it alone" —
@@ -125,14 +132,20 @@ const Profile = {
   // legacy `window.Profile` surface keeps every method it published.
   _safeHref: safeHref,
   _relativeDate: relativeDate,
-  _breakdownRows: breakdownRows,
   _displayName() { return displayNameOf(Profile._user()); },
   _initial() { return initialOf(Profile._user()); },
 
   _user() { return (typeof window !== 'undefined' && window.App && App.user) || {}; },
 
-  _revealed() {
-    try { return localStorage.getItem(Profile._REVEAL_KEY) === '1'; } catch (_) { return false; }
+  // `?demo=1` rides the summary read, as it does every staging read with a
+  // demo overlay: chat_sessions is staging:private, so without it a preview's
+  // Me has nothing merged to show (GET /api/me/summary's withDemoSummary).
+  _demoQuery() {
+    try {
+      return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+    } catch (_) {
+      return '';
+    }
   },
 
   async open(targetUsername = null) {
@@ -229,26 +242,21 @@ const Profile = {
       // entry is written under it, so a sign-in that changes mid-flight can
       // never file one person's figures under another's name.
       const username = Profile._user().username || null;
-      // Scope the score header to the active season, like the challenges
-      // screen. (The completed list resolves its own season SERVER-side —
-      // see fetchProfileSeason — because the strict "running right now"
-      // rule would return nothing between seasons.)
+      // The ranking is only the "Challenges & standings" row's second line
+      // now ("Season 3 · rank #3 · 2 of 7 done"), scoped to the active
+      // season by the server (`season_id=active`, #2777). It still decides
+      // signed-out-ness: the /challenges-api/me/* reads are session-scoped
+      // and answer 401 to a lapsed session, which the catch below turns into
+      // the sign-in prompt.
       //
-      // `season_id=active` has the server pick that season (#2777). This
-      // used to be a separate first round: await all of /challenges-api/
-      // seasons — every season's events, challenges and onboarding — to
-      // read one id off it, and only then start the four requests below.
-      // The breakdown asks for neither activities nor challenge progress:
-      // this screen draws one row per event from its name and points.
-      const [ranking, breakdown, completed, ownerPublicProfile] = await Promise.all([
+      // The summary is the three stat cards and Your contributions, and the
+      // public-profile state backs the Edit profile sheet's "Public page".
+      // Both are non-fatal: a failure leaves the rest of the screen intact
+      // (the cards read "–", the list says nothing arrived).
+      const demo = Profile._demoQuery();
+      const [ranking, summary, ownerPublicProfile] = await Promise.all([
         Profile._fetchJson('/challenges-api/me/ranking?season_id=active'),
-        Profile._fetchJson(
-          '/challenges-api/me/breakdown?season_id=active'
-          + '&include_activity=0&include_progress=0')
-          .catch(() => null),
-        // The viewer's OWN completions. Non-fatal: a failure leaves the
-        // rest of the screen intact and the section shows its empty state.
-        Profile._fetchJson('/api/me/challenges/completed').catch(() => null),
+        Profile._fetchJson(`/api/me/summary${demo}`).catch(() => null),
         Profile._fetchJson('/api/me/public-profile').catch(() => null),
       ]);
 
@@ -256,14 +264,11 @@ const Profile = {
       // screen was left, or overtaken by a public profile, is still the
       // freshest copy of this user's own profile for the next visit.
       const data = {
-        // Only the season's name is read from this (as a fallback for the
-        // header); the ranking already carries the season it scoped to.
         season: ranking && ranking.scope === 'season'
           ? { season_id: ranking.season_id, name: ranking.season_name }
           : null,
         ranking,
-        breakdown,
-        completed,
+        summary,
         ownerPublicProfile,
       };
       if (username) Profile._ownCache = { username, data };
@@ -304,27 +309,15 @@ const Profile = {
       open: Profile._open,
       data: Profile._data,
       user: Profile._shotUser(),
-      revealed: Profile._revealed(),
       pendingAvatarUrl: Profile._pendingAvatarUrl,
       pendingRemove: Profile._pendingAvatar === 'remove',
     });
   },
 
-  // The token figure unblurs once, and stays unblurred (the acknowledgement
-  // is the point, not the animation).
-  revealTokens() {
-    try { localStorage.setItem(Profile._REVEAL_KEY, '1'); } catch (_) { /* private mode */ }
-    profileStore.set({ revealed: true });
-  },
-
-  // Web terms sheet (thin-shell migration) — the native terms screen is
-  // gone. Refresh the profile after an accept so the token allocation
-  // un-gates immediately.
-  reviewTerms() {
-    if (window.Settings && typeof Settings.showTermsSheet === 'function') {
-      Settings.showTermsSheet(() => Profile._load());
-    }
-  },
+  // The token figure's Reveal and the terms review moved with the figure:
+  // features/leaderboard/my-standing.js (MyStanding.revealTokens /
+  // reviewTerms), under the same storage key, so an allocation revealed here
+  // stays revealed there.
 
   // ── opt-in public profile (#582) ────────────────────────────────────
 

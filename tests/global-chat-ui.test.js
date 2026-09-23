@@ -242,7 +242,25 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
   assert.match(screen, /Reasoning: \{progress\.reasoningEffort\} effort/);
   assert.match(store, /event\.type === 'turn\.progress'/);
   assert.match(store, /event\.type === 'tool\.completed'/);
-  assert.match(css, /\.global-chat-composer[\s\S]*var\(--platform-safe-bottom/);
+  // BUG e: on a phone #global-chat-screen keeps the platform tab bar up, and
+  // the composer cleared only the home-indicator strip — "Ask Homeroom…" sat
+  // under the bar. It wears the shell's safe-bar contract now, which clears
+  // whichever of the tab bar and the strip is taller; and the transcript
+  // above it no longer reserves that band too (it is always above the
+  // composer, so the band is the composer's to clear, once).
+  assert.match(screen, /<form className="global-chat-composer platform-safe-bar" onSubmit=\{submit\}>/);
+  assert.match(screen, /<div ref=\{scroll\} className="global-chat-transcript" aria-live="polite">/);
+  assert.match(css,
+    /\.platform-safe-bar \{[^}]*padding-bottom: calc\(0\.5rem \+ max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)\) !important;/,
+    'the contract the composer wears');
+  // Comments off first: the rule's own note quotes the old declaration to say
+  // what it replaced, and prose about a value is not the value.
+  const composerRule = /\n\.global-chat-composer \{([\s\S]*?)\n\}/.exec(css.replace(/\/\*[\s\S]*?\*\//g, ''));
+  assert.ok(composerRule, 'the composer rule');
+  assert.match(composerRule[1], /padding: 10px 12px 8px;/,
+    'its own bottom is the safe bar\'s base gap, so desktop renders what the rule says');
+  assert.doesNotMatch(composerRule[1], /var\(--platform-safe-bottom/,
+    'and it no longer clears the strip alone');
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-suggestions button \{ min-height: 42px; \}/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.global-chat-activity svg \{ animation: none; \}/);
   assert.match(css, /\.global-chat-progress-current/);

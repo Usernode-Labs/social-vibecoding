@@ -246,7 +246,13 @@ test('clicking a saved row opens the message rather than consuming it', () => {
     'a save is not a to-do item — opening one must not clear it');
   assert.match(handler[1], /subTab: 'topic'/,
     'a message posted in a topic thread opens that discussion (#194 parity)');
-  assert.match(handler[1], /subTab: 'chat'/, 'everything else lands on the app chat');
+  // Everything else is a message of the app's general discussion, which is a
+  // thread of MESSAGES (#2718 review, #2763) — opened there, on the saved
+  // message, rather than in the old full-screen `#app/<slug>/dev/chat` whose
+  // back arrow climbed to the Workshop.
+  assert.doesNotMatch(handler[1], /subTab: 'chat'|dev\/chat/, 'not the old full-screen chat');
+  assert.match(handler[1], /Notifications\._openAppDiscussion\(saved\.appSlug, saved\.messageId\);/,
+    'the app\'s discussion in Messages, opened on the saved message');
 });
 
 test('the drawer can be opened by URL, so the section is screenshot-able', () => {
