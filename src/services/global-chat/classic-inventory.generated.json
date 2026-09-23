@@ -5952,7 +5952,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 204,
+      "line": 207,
       "method": "POST",
       "path": "/api/internal/evidence/:runId/finish",
       "expression": null,
@@ -5961,7 +5961,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 226,
+      "line": 229,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/visual-evidence-intent",
       "expression": null,
@@ -5970,7 +5970,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 253,
+      "line": 256,
       "method": "GET",
       "path": "/__caddy/access",
       "expression": null,
@@ -5979,7 +5979,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 386,
+      "line": 389,
       "method": "GET",
       "path": "/__caddy/ask",
       "expression": null,
@@ -5988,7 +5988,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 414,
+      "line": 417,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/push",
       "expression": null,
@@ -5997,7 +5997,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 499,
+      "line": 502,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/issues",
       "expression": null,
@@ -6006,7 +6006,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 564,
+      "line": 567,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/issues/:number",
       "expression": null,
@@ -6015,7 +6015,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 642,
+      "line": 645,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/attachments",
       "expression": null,
@@ -6024,7 +6024,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 686,
+      "line": 689,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/attachments/:attId",
       "expression": null,
@@ -6033,7 +6033,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 728,
+      "line": 731,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/pr",
       "expression": null,
@@ -6042,7 +6042,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 820,
+      "line": 823,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/platform-issue",
       "expression": null,
@@ -6051,7 +6051,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 945,
+      "line": 948,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/prod-debug/sql",
       "expression": null,
@@ -6060,7 +6060,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 986,
+      "line": 989,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/prod-debug/containers",
       "expression": null,
@@ -6069,7 +6069,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 1019,
+      "line": 1022,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/prod-debug/logs/:container",
       "expression": null,
@@ -6078,7 +6078,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 1068,
+      "line": 1071,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/prod-debug/status",
       "expression": null,

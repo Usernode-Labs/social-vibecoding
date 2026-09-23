@@ -54,6 +54,27 @@ test('the evidence turn stays live after waiting for bounded platform replay', a
     'verified');
 });
 
+test('hosted replay submission attaches accepted intent before spending a replay attempt', async () => {
+  const accepted = fixtures.intent();
+  accepted.stories[0].claim = 'Keep this exact accepted wording.';
+  const replay = fixtures.plan().stories[0].replay;
+  let submitted;
+  const control = new RunControl({
+    runId: 'd'.repeat(32), sessionId: 42, intent: accepted, context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (candidate) => {
+      submitted = candidate;
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(candidate) };
+    },
+  });
+  await assert.rejects(control.runReplays([{ id: 'different-story', replay }]),
+    { code: 'invalid_visual_evidence' });
+  assert.equal(control.planCalls, 0);
+  await control.runReplays([{ id: 'invite-suggestions', replay }]);
+  assert.equal(control.planCalls, 1);
+  assert.deepEqual(contract.semanticIntentFromPlan(submitted), contract.parseIntent(accepted));
+});
+
 test('a rejected locator exposes the failed plan and permits one changed replay only', async () => {
   const rejected = fixtures.plan();
   const corrected = fixtures.plan();

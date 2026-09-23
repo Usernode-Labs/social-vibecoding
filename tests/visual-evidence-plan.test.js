@@ -154,6 +154,44 @@ test('relative pointer provenance and semantic projection are derived from valid
   assert.deepEqual(semantic, evidence.parseIntent(intent()));
 });
 
+test('hosted replays inherit every accepted semantic field and accepted story order', () => {
+  const accepted = intent();
+  accepted.stories.push({
+    ...structuredClone(accepted.stories[0]),
+    id: 'second-story',
+    claim: 'A second claim stays word for word as accepted.',
+  });
+  const executable = plan().stories[0].replay;
+  const assembled = evidence.replayPlanFromIntent(accepted, [
+    { id: 'second-story', replay: executable },
+    { id: 'invite-suggestions', replay: executable },
+  ]);
+  assert.deepEqual(assembled.stories.map((story) => story.id),
+    ['invite-suggestions', 'second-story']);
+  assert.deepEqual(evidence.semanticIntentFromPlan(assembled), evidence.parseIntent(accepted));
+});
+
+test('hosted replays reject missing, duplicate, unknown, or altered story metadata', () => {
+  const accepted = intent();
+  const replay = plan().stories[0].replay;
+  assert.throws(() => evidence.replayPlanFromIntent(accepted, []), /at least 1/i);
+  assert.throws(() => evidence.replayPlanFromIntent(accepted, [
+    { id: 'unknown-story', replay },
+  ]), /not in the accepted intent/);
+  assert.throws(() => evidence.replayPlanFromIntent(accepted, [
+    { id: 'invite-suggestions', replay },
+    { id: 'invite-suggestions', replay },
+  ]), /duplicated/);
+  assert.throws(() => evidence.replayPlanFromIntent(accepted, [
+    { id: 'invite-suggestions', claim: 'A changed claim', replay },
+  ]), /Unrecognized key/);
+  const changedAnimation = structuredClone(replay);
+  changedAnimation.checkpoint.animation = 'none';
+  assert.throws(() => evidence.replayPlanFromIntent(accepted, [
+    { id: 'invite-suggestions', replay: changedAnimation },
+  ]), /animation must match the accepted intent/);
+});
+
 test('author plan handoff is bound to the accepted claims, hash, and exact PR revisions', () => {
   const baseSha = 'a'.repeat(40);
   const headSha = 'b'.repeat(40);
