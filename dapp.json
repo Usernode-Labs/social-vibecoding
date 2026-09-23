@@ -4096,14 +4096,19 @@
       "expectSelector": "body:has(#platform-tabs [data-tab=\"messages\"][aria-current=\"page\"]) a#back-btn:not(.hidden)[href=\"#messages\"]"
     },
     {
-      "name": "Back from an issue returns to the layout it was opened from: the Workshop",
+      "name": "#2916: back from an issue is the Workshop chip at the top of the pane, to the layout it was opened from, and the header draws no arrow beside it",
       "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/workshop\"]"
+      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #dev-topic-thread #gc-thread-head .dev-topic > a.dev-topic-back:first-child[aria-label=\"Back to Workshop\"][href=\"#app/usernode-2d5619/workshop\"] ~ .dev-topic-card"
     },
     {
-      "name": "…and from an issue opened on it, the same arrow to the same screen",
+      "name": "…and from an issue opened on it, the same chip to the same screen (#2916)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/workshop\"]"
+      "expectSelector": "body:has(#platform-header a#back-btn.hidden) .dev-topic > a.dev-topic-back:first-child[href=\"#app/usernode-2d5619/workshop\"]"
+    },
+    {
+      "name": "#2916: a proposal page leads with the same Workshop chip above its hero, and the header draws no arrow",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000202",
+      "expectSelector": "body:has(#platform-header a#back-btn.hidden) .dev-change-overview .dev-topic > a.dev-topic-back:first-child[href=\"#app/usernode-2d5619/workshop\"] ~ .dev-topic-hero"
     },
     {
       "name": "The bar's two edges: nothing to leave by on Home, and the bell left of the mark",

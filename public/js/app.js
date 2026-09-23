@@ -6545,8 +6545,11 @@ const App = {
       // non-thread route, so the Workshop reached from the Workshop tab wore
       // a "Close app" ✕ that OPENED the app, and the same Workshop reached
       // from the mark's menu wore a ‹ to it (the header's up-link). A card
-      // opened in the Workshop still gets its ‹ back to the Workshop, from the
-      // header's own derivation (features/header/platform-header.tsx).
+      // opened in the Workshop still has its way back to the Workshop, and
+      // since #2916 that is the "‹ Workshop" chip at the top of the page
+      // (features/dev-board/topic/topic-back.tsx), not an arrow in this slot:
+      // the header derives 'none' for a topic route itself
+      // (features/header/platform-header.tsx).
       //
       // Homeroom's own row has no App tab at all — switchTab coerces one to
       // the Workshop — so it is never the running app. _repaintDevBody

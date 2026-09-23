@@ -14,8 +14,17 @@
  * the header's title tab names it"), and the dev session's strip retired its
  * `←` too — see features/dev-chat/session-header.tsx, whose note reads "one
  * back control, in the bar the board draws it in". This page was the one that
- * kept its copy; it does not any more, and there is no in-page back left in
- * the Dev area to find.
+ * kept its copy; it does not any more.
+ *
+ * ── #2916 PUT BACK INSIDE THE PANE, AND NOT HERE ──────────────────────
+ *
+ * The header's chevron was then asked to sit "inside" the Workshop pane, and
+ * it does: the "‹ Workshop" chip at the top of the topic, with the header
+ * drawing no arrow on these routes. Still ONE back control, and still not
+ * this frame's: it is the first child of `.dev-topic`
+ * (./topic/topic-back.tsx, rendered by TopicHead), so it scrolls with the
+ * card it sits on instead of being pinned above the thread as this bar was.
+ * The frame keeps taking no props.
  *
  * What is left is `#dev-topic-thread`: change routes mount the full card
  * with conversation tabs here; issue/governance routes mount the thread
@@ -31,10 +40,9 @@
  * root is re-rendered rather than torn out from under.
  *
  * The frame takes NO props now. It had two, both only for the retired anchor
- * (`backHref` from `AppView._devPageHref()` and the plain-click handler), and
- * the header's own chevron is a real `<a href>` with the same modified-click
- * guard — so what #1036 bought that anchor is not lost, it is simply provided
- * once instead of twice.
+ * (`backHref` from `AppView._devPageHref()` and the plain-click handler). The
+ * chip that replaced it is a real `<a href>` with the same modified-click
+ * guard, so what #1036 bought that anchor is not lost; it is provided once.
  */
 
 import { skeletonListHtml } from './card/skeleton';

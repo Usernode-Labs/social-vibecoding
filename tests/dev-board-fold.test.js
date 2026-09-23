@@ -1172,7 +1172,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // #general carries one ⋯ disc for report and block instead of three, and
   // an app's chat in Messages draws no report/block text links in its rows.
   // 780 leaves 30 slots under the 810 ceiling.
-  assert.equal(DAPP.tests.length, 780);
+  //
+  // 780 → 781: +1 (#2916). A topic's back control moved from the header into
+  // the pane as the "‹ Workshop" chip: the two checks that pinned the header
+  // arrow on an issue (Workshop and kanban layouts) were re-pointed at the
+  // chip, and one new check pins it above a proposal's hero. The dev
+  // session's header arrow is still #2770's check. 29 slots left.
+  assert.equal(DAPP.tests.length, 781);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

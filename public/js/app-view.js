@@ -3491,11 +3491,12 @@ const AppView = {
     // composer is pinned). The topic's icon, title and number live on that
     // header card, so repeating them up here would be pure duplication.
     //
-    // The back bar that used to be pinned is gone with its props: the platform
-    // header carries a chevron to this page's Board on this route, so the bar
-    // was a second back control one row under the first. Its `_devPageHref()`
-    // and the NavLink-guarded click both live on that chevron instead — see
-    // features/dev-board/topic-frame.tsx.
+    // The back bar that used to be pinned is gone with its props: it sat one
+    // row under the header's chevron to the same Board, two back controls one
+    // row apart. The one control left is the "‹ Workshop" chip at the top of
+    // the topic head (#2916, features/dev-board/topic/topic-back.tsx), which
+    // scrolls with the page and carries the NavLink-guarded click; the header
+    // draws no arrow on this route. See features/dev-board/topic-frame.tsx.
     AppView._reactDevBoard()?.mountTopicSubView(content);
 
     const ok = await AppView._loadDevData();
