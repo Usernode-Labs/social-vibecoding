@@ -8,7 +8,7 @@ const llmTelemetry = require('./llm-telemetry');
 // across hardcoded slugs (which is how the conflict-resolver previously
 // pinned a stale model). Kept aligned with services/models.js
 // DEFAULT_MODEL (the user-facing allowlist default).
-const DEFAULT_MODEL = 'claude-opus-5';
+const DEFAULT_MODEL = 'claude-opus-5-5';
 
 // ── Fable classifier fallback ───────────────────────────────────────
 // claude-fable-5-1 requests run through Anthropic's safety classifiers,
@@ -24,7 +24,7 @@ const DEFAULT_MODEL = 'claude-opus-5';
 // fallback config, the detection, and the billing attribution — route
 // new Messages calls through streamChat.
 const FABLE_MODEL = 'claude-fable-5-1';
-const FALLBACK_TARGET_MODEL = 'claude-opus-5';
+const FALLBACK_TARGET_MODEL = 'claude-opus-5-5';
 const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
 
 // A fallback-served response is detected reliably ONLY via
@@ -608,7 +608,7 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
     // One attempt against `runModel`. Fable 5 requests go through the
     // beta surface with the server-side fallback opt-in (see the module
-    // header) so a classifier decline is re-served by Opus 5 inside
+    // header) so a classifier decline is re-served by Opus 5.5 inside
     // the same call; every other model keeps the plain path byte-for-byte.
     const runStream = async (runModel, { withFallbacks }) => {
       const params = {
@@ -767,7 +767,8 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 }
 
 // Dollars per 1k tokens, aligned with services/models.js (the allowlist's
-// $/MTok figures: haiku 1/5, sonnet 2/10, opus 5/25, fable 10/50). The
+// $/MTok figures: haiku 1/5, sonnet 2/10, opus 5.5 4/20, fable 10/50; any
+// other opus, Opus 5 included, 5/25). The
 // sonnet row is Sonnet 5's rate; the 4.6 generation cost 3/15, and billing
 // it at that over-debited every Sonnet 5 turn by a third.
 // Fable previously matched no branch and silently fell through to sonnet
@@ -776,11 +777,13 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 // `servedModel`) so a fallback-served turn bills at the fallback's rates.
 function estimateCostCents(usage, model) {
   const inputPer1k = model?.includes('fable') ? 0.010
+    : model?.includes('opus-5-5') ? 0.004
     : model?.includes('opus') ? 0.005
       : model?.includes('sonnet') ? 0.002
         : model?.includes('haiku') ? 0.001
           : 0.003;
   const outputPer1k = model?.includes('fable') ? 0.050
+    : model?.includes('opus-5-5') ? 0.020
     : model?.includes('opus') ? 0.025
       : model?.includes('sonnet') ? 0.010
         : model?.includes('haiku') ? 0.005
