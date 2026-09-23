@@ -1913,7 +1913,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   flex: 0 0 auto;
   width: min(calc(100% - 24px), 52rem);
   margin: 0 auto;
-  padding: 10px 12px calc(10px + var(--platform-safe-bottom, 0px));
+  /* THE BOTTOM IS THE SAFE BAR'S. The form wears `.platform-safe-bar` (top of
+     this file): its 8px base gap plus the larger of the tab bar's band and
+     the home-indicator strip, since #global-chat-screen keeps the platform
+     tab bar up on a phone. This rule cleared the strip alone — `calc(10px +
+     var(--platform-safe-bottom))` — so the field sat under the tab bar. The
+     8px declared here is the value the class computes with no bar and no
+     inset, so the two cannot disagree on a desktop. */
+  padding: 10px 12px 8px;
   border-radius: 22px 22px 0 0;
   background: var(--dc-sheet-fill);
   box-shadow: 0 -5px 18px rgba(0, 0, 0, .06);

@@ -1110,7 +1110,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 753 → 754: +1 (task 598): an app's Workshop ends its view-tab strip with
   // the "+" on Current status too (prototype wsTabs). The four checks that
   // pinned the "+" in All items' actions row were re-pointed, not added.
-  assert.equal(DAPP.tests.length, 754);
+  //
+  // 754 → 755: +1 (task 598): the global chat's composer wears the safe-bar
+  // contract, so on a phone it sits above the tab bar. The proposal's other
+  // parts add their own; the merge reconciles the total.
+  assert.equal(DAPP.tests.length, 755);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
