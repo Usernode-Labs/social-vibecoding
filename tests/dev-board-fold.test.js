@@ -1073,7 +1073,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // it, and stays usable while a turn runs (+2). Neither set overlaps the
   // other, so the merged manifest holds every one of them: 740 + 2 + 2 = 744,
   // leaving 26 slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 744);
+  //
+  // +2 (#2803): the Homeroom menu takes a dark app's palette, and a light app
+  // under the dark shell leaves it in the shell's own dark mode. 746 leaves
+  // 24 slots under the 770 ceiling.
+  assert.equal(DAPP.tests.length, 746);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

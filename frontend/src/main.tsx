@@ -113,6 +113,9 @@ import './lib/wallpaper-scroll';
 // …and where the on-screen keyboard has panned the screen to, so a centred
 // dialog stays inside what is visible above the keys (#2765).
 import './lib/visual-viewport';
+// …and a sheet, dialog or menu opened over a dark app takes the app's tone
+// rather than the viewer's light mode (#2803).
+import './lib/surface-tone';
 // …and the same wallpaper is copied under a screen's view transition, so the
 // pinned, translucent header and rail keep their ground mid-fade (#2758).
 import './lib/transition-ground';
