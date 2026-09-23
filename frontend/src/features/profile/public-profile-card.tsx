@@ -8,6 +8,10 @@
  * the identical card inside `#public-profile-preview` with the affordance off —
  * reporting yourself is not a thing.
  *
+ * `allowMessage` is the same split for the prototype's person-page "Message"
+ * button (./message-button.tsx): on for someone else's page and a viewer who
+ * can use Messages, off in the owner's preview and on your own page.
+ *
  * The avatar keeps its layout trick: the initial sits in the box and the photo
  * is absolutely positioned over it, so a failed load drops the image and
  * reveals the fallback without shifting anything. The legacy code did that by
@@ -20,6 +24,7 @@ import { useState, type ReactNode } from 'react';
 
 import { publicAvatarView, verifiedSocialLinksView } from './profile-store.js';
 import { Profile } from './profile.js';
+import { MessageButton } from './message-button';
 
 const REPORT_REASONS: Array<[string, string]> = [
   ['impersonation', 'Impersonation'],
@@ -120,9 +125,11 @@ function ReportForm({ username }: { username: string }): ReactNode {
 export function PublicProfileCard({
   profile,
   allowReport,
+  allowMessage = false,
 }: {
   profile: any;
   allowReport: boolean;
+  allowMessage?: boolean;
 }): ReactNode {
   const socialLinks = verifiedSocialLinksView(profile);
   return (
@@ -134,11 +141,21 @@ export function PublicProfileCard({
         <div className="flex items-start gap-4">
           <PublicAvatar profile={profile} />
           <div className="min-w-0 flex-1">
-            <h2 className="text-xl font-bold break-words">
-              {profile.displayName || profile.username}
-            </h2>
-            <div className="text-sm text-zinc-500 dark:text-zinc-400 break-all">
-              {`@${profile.username}`}
+            {/*
+                The name row carries Message at its right end, as the
+                prototype's person card does, so the bio below keeps the
+                column's whole width.
+            */}
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-xl font-bold break-words">
+                  {profile.displayName || profile.username}
+                </h2>
+                <div className="text-sm text-zinc-500 dark:text-zinc-400 break-all">
+                  {`@${profile.username}`}
+                </div>
+              </div>
+              {allowMessage ? <MessageButton username={profile.username} /> : null}
             </div>
             {profile.bio ? (
               <p className="mt-3 text-sm whitespace-pre-wrap break-words">{profile.bio}</p>

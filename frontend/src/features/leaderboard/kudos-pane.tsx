@@ -71,6 +71,7 @@ import {
 } from '@/components/ui/tabs';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { MessageButton } from '../profile/message-button';
 import { kudosPaneStore } from './kudos-pane-store.js';
 
 type Tone = 'emerald' | 'amber' | 'zinc' | 'violet' | 'sky' | 'red';
@@ -78,7 +79,7 @@ type Tone = 'emerald' | 'amber' | 'zinc' | 'violet' | 'sky' | 'red';
 type Badge = { tone: Tone; label: string };
 
 type ChromeView =
-  | { kind: 'profile'; who: string; initial: string }
+  | { kind: 'profile'; who: string; initial: string; canMessage?: boolean }
   | {
       kind: 'tabs';
       subtitle: string;
@@ -300,10 +301,10 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
         ← Top users
       </a>
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
+        <div className="w-12 h-12 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
           {view.initial}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">
             {`@${view.who}`}
           </h2>
@@ -311,6 +312,11 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
             All PRs this user has proposed, newest first.
           </p>
         </div>
+        {/*
+            The prototype's person page carries "Message" beside the name.
+            Never on your own page (Leaderboard._canMessage decides).
+        */}
+        {view.canMessage ? <MessageButton username={view.who} /> : null}
       </div>
     </header>
   );

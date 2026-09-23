@@ -604,10 +604,33 @@
       "expectText": "WAITLIST_X_CLIENT_ID"
     },
     {
-      "name": "Profile: an editable identity card above completions that link out (#982)",
-      "path": "/#profile",
-      "expectSelector": "a[data-completed-challenge][href^='#leaderboard/challenges/']",
-      "expectText": "Edit profile"
+      "name": "Me: the editable profile card leads, above the merged / kudos / challenges stat cards (#982)",
+      "path": "/?demo=1#profile",
+      "expectText": "Edit profile",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats > [data-profile-stat=\"merged\"] + [data-profile-stat=\"kudos\"] + [data-profile-stat=\"challenges\"]"
+    },
+    {
+      "name": "Me: the \"More\" list is the prototype's three rows: Challenges & standings, Kudos, Settings",
+      "path": "/?demo=1#profile",
+      "expectText": "Challenges & standings",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-more #profile-row-challenges[href=\"#leaderboard/challenges\"] + #profile-row-kudos[href=\"#leaderboard/kudos\"] + #profile-row-settings[href=\"#settings\"]"
+    },
+    {
+      "name": "Me: Your contributions lists merged proposals, each opening its proposal, and See all",
+      "path": "/?demo=1#profile",
+      "expectText": "Your contributions",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-contributions:has(#profile-contributions-all[href^=\"#leaderboard/users/\"]) a[data-contribution][href*=\"/dev/proposals/\"]"
+    },
+    {
+      "name": "A History tab after Standings lists the seasons that ended, with each season's and each event's winner",
+      "path": "/?demo=1#leaderboard/seasons",
+      "expectText": "won with",
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"topochain\"] + [data-standings-tab=\"seasons\"][aria-current=\"page\"]) #leaderboard-history-root:not(.hidden) #lb-history-seasons [data-history-season] [data-history-result]"
+    },
+    {
+      "name": "A person's page carries Message beside their name, which opens a direct message",
+      "path": "/?demo=1#leaderboard/users/staging-tester",
+      "expectSelector": "#leaderboard-root:not(.hidden) header:has([data-lb-back]) button[data-message-person=\"staging-tester\"]"
     },
     {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
@@ -2715,9 +2738,9 @@
       "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav"
     },
     {
-      "name": "The Profile account group ships the native Node status row",
-      "path": "/#profile",
-      "expectSelector": "#account-row-node"
+      "name": "Settings ships the native Node status row in its account block, moved there from Me",
+      "path": "/#settings",
+      "expectSelector": "#settings-footer #settings-account-rows #account-row-node"
     },
     {
       "name": "The completed-task badge sits on the bell, not the Improve pill (#1610)",
@@ -2735,9 +2758,9 @@
       "expectSelector": "#platform-mark-btn:not(:has([id^=\"notifications-badge\"]))"
     },
     {
-      "name": "Admin & moderation renders on the Me tab for admins (#588, #2718)",
-      "path": "/?shot=profile&demo=1#profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-account #profile-row-admin"
+      "name": "Admin & moderation renders in Settings for admins, above Log out, moved from Me (#588, #2718)",
+      "path": "/?demo=1#settings",
+      "expectSelector": "#settings-screen:not(.hidden) #settings-footer > #settings-account-rows:has(#settings-row-admin[href=\"#admin\"]) + #settings-logout"
     },
     {
       "name": "Settings renders the platform build as plain text, not a pill",
@@ -4783,14 +4806,14 @@
       "expectText": "This link has expired"
     },
     {
-      "name": "Profile staking: Active shows observability epoch counts (#1551)",
-      "path": "/?demo=staking-active#profile",
+      "name": "Settings staking (moved from Me): Active shows observability epoch counts (#1551)",
+      "path": "/?demo=staking-active#settings",
       "expectSelector": "[data-staking-sheet] [data-staking-epoch=\"128\"]",
       "expectText": "Won slots"
     },
     {
-      "name": "Profile staking: Delegated offers only Undelegate (#1551)",
-      "path": "/?demo=staking-delegated#profile",
+      "name": "Settings staking (moved from Me): Delegated offers only Undelegate (#1551)",
+      "path": "/?demo=staking-delegated#settings",
       "expectSelector": "[data-staking-sheet]:not(:has([data-staking-epochs]))",
       "expectText": "Undelegate"
     },

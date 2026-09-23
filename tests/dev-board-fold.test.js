@@ -1106,7 +1106,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // This branch counted them against an older shared base; main reached 751
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 753);
+  //
+  // 753 → 757: +4 (the prototype's Me and Challenges pages): Me's "More"
+  // rows, Me's Your contributions, the Challenges page's History tab, and the
+  // Message button on a person's page. Five more were RE-POINTED rather than
+  // added (Me's card and stat cards, and the Admin, Node and two staking rows
+  // that moved into Settings), so they do not count. 757 leaves 33 slots
+  // under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 757);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

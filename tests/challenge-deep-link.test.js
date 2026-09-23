@@ -38,9 +38,9 @@ const CHALLENGES_SRC = fs.readFileSync(
   path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8'
 );
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-// #1191 slice 6 split the profile screen into a shaping module and a view:
-// the address is built in profile-store.js's completedView, and the anchor
-// that carries it is rendered in profile-view.tsx.
+// #1191 slice 6 split the profile screen into a shaping module and a view.
+// Me no longer builds a completion address at all (see the last tests below);
+// both are read to pin that.
 const profileStoreJs = fs.readFileSync(
   path.join(root, 'frontend/src/features/profile/profile-store.js'), 'utf8');
 const profileViewTsx = fs.readFileSync(
@@ -997,13 +997,19 @@ test('the pane is told BEFORE the section mounts', () => {
 
 // ─── 3. Static: the anchors point at that address ───────────────────────
 
-test('the profile links each completed challenge to <event>/<challenge>', () => {
-  assert.match(profileStoreJs,
-    /href: '#leaderboard\/challenges\/'\s*\n\s*\+ `\$\{encodeURIComponent\(c\.season_event_id\)\}\/\$\{encodeURIComponent\(c\.id\)\}`/,
-    'both ids, in that order — the event id is what makes the challenge id resolvable');
-  assert.match(profileViewTsx, /href=\{row\.href\}/,
-    'the row renders as a real anchor to that address, not a click handler');
-  assert.match(profileViewTsx, /data-completed-challenge=\{row\.id\}/);
+test('Me no longer lists completions; its row lands on the Challenges tab', () => {
+  // The profile used to link each completed challenge to
+  // #leaderboard/challenges/<event>/<challenge>. The prototype's Me counts
+  // them instead (the "challenges" stat card) and leads to the Challenges
+  // tab, where every challenge, completed or not, is a card that opens this
+  // same detail page. The ADDRESS is unchanged and still resolves — the tests
+  // above pin that — it just has no Me row pointing at it.
+  assert.doesNotMatch(profileStoreJs, /#leaderboard\/challenges\/'/,
+    'no completion row is shaped on Me any more');
+  assert.doesNotMatch(profileViewTsx, /data-completed-challenge/);
+  const mePanel = fs.readFileSync(
+    path.join(root, 'frontend/src/features/profile/account-panel.tsx'), 'utf8');
+  assert.match(mePanel, /id="profile-row-challenges"[\s\S]{0,120}href="#leaderboard\/challenges"/);
 });
 
 test('the header back chevron asks the Challenges page first', () => {

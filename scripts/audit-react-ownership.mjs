@@ -127,6 +127,14 @@ const OWNED = [
   // its route: #challenges-root is only mounted — and only React's — while the
   // Leaderboard screen's Challenges tab is the section on screen.
   { sel: '#challenges-root', when: '#leaderboard/challenges' },
+  // The History pane (features/leaderboard/history-pane.tsx), the same
+  // arrangement one tab over: React-owned from the day it shipped, and only
+  // on screen while History is the section showing.
+  { sel: '#leaderboard-history-root', when: '#leaderboard/seasons' },
+  // Settings' account block (features/settings/account-rows.tsx) inside the
+  // footer settings.js MOVES between columns: the move is the module's, the
+  // subtree is React's alone.
+  { sel: '#settings-account-rows' },
   // The transcript (features/group-chat/transcript.tsx). A vote row's inline
   // controls are the one exception, and they are the controller-host seam
   // AGENTS.md documents: transcript.tsx renders `.gc-vote-inline` ONCE as an
@@ -356,7 +364,7 @@ const ROUTES = [
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
   '#home', '#apps', '#apps/recipebot', '#workshop', '#settings', '#settings/app-ai',
-  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
+  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#leaderboard/seasons', '#messages', '#notifications',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   // The spec reader, which is the one host inside `#dc-view` whose subtree
