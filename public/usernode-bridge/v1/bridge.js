@@ -6366,6 +6366,63 @@
   })();
   /* __USERNODE_BACKGROUND_END__ */
 
+  // #2902: the shell keeps the last few apps loaded in hidden frames so that
+  // coming back to one shows it exactly as it was left. A hidden app must not
+  // keep playing into the room, so on `hidden` this pauses every <audio> and
+  // <video> that is playing and, on `visible`, resumes exactly those — the
+  // ones the viewer had playing, not ones they had paused themselves. Anything
+  // else an app wants to stop (Web Audio, animation loops, polling) hangs off
+  // the `usernode:visibility-changed` event, whose `detail` is `{ hidden }`.
+  /* __USERNODE_VISIBILITY_BEGIN__ */
+  (function () {
+    if (window === window.parent) return;
+    var hidden = false;
+    var paused = [];
+
+    function pauseMedia() {
+      var media = document.querySelectorAll("audio, video");
+      for (var i = 0; i < media.length; i++) {
+        var m = media[i];
+        try {
+          if (!m.paused && !m.ended) {
+            m.pause();
+            paused.push(m);
+          }
+        } catch (_) {}
+      }
+    }
+
+    function resumeMedia() {
+      var list = paused;
+      paused = [];
+      for (var i = 0; i < list.length; i++) {
+        try {
+          if (!list[i].isConnected) continue;
+          var played = list[i].play();
+          if (played && typeof played.catch === "function") played.catch(function () {});
+        } catch (_) {}
+      }
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data) return;
+      var state = data.__usernode_visibility;
+      if (state !== "hidden" && state !== "visible") return;
+      var next = state === "hidden";
+      if (next === hidden) return;
+      hidden = next;
+      if (hidden) pauseMedia(); else resumeMedia();
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:visibility-changed", {
+          detail: { hidden: hidden },
+        }));
+      } catch (_) {}
+    });
+  })();
+  /* __USERNODE_VISIBILITY_END__ */
+
   // Rendering invariants (issue #360) — additive within v1.
   //
   // Opt-in, no-op-by-default self-checks an app registers to catch

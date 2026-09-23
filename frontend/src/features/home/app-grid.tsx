@@ -62,6 +62,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
 import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { TileSkeleton } from '../apps/tile-skeleton';
@@ -135,7 +136,9 @@ const wired = new WeakSet<Element>();
  */
 const SKELETON_TILES = 8;
 
-function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; yours: boolean }) {
+function AppCardTile({ app, style, yours, live }: {
+  app: HomeAppView; style?: string; yours: boolean; live: boolean;
+}) {
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -180,11 +183,12 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={app.name}
+      aria-label={live ? `${app.name}, ${LIVE_APP_LABEL}` : app.name}
       aria-haspopup="menu"
       title={`${app.name}. Hold or right-click for app actions`}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
+      {...(live ? { 'data-live': 'true' } : null)}
       onPointerDownCapture={(e) => {
         if ((e.target as HTMLElement).closest('.retry-btn')) { e.stopPropagation(); return; }
         const N = controller();
@@ -274,6 +278,8 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
             ⑂
           </span>
         ) : null}
+        {/* #2902: still loaded — opening it resumes it as it was left. */}
+        {live ? <LiveAppDot className="app-card-live-dot" /> : null}
       </div>
       <div className="w-full min-w-0">
         <div className="app-card-title" title={app.name}>{app.name}</div>
@@ -328,6 +334,7 @@ export function AppsEmptyNote() {
 
 export function AppGrid() {
   const state = useStoreState(gridStore);
+  const live = useLiveAppSlugs();
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // `grid-template-rows` is written to the ELEMENT rather than rendered as a
@@ -435,6 +442,7 @@ export function AppGrid() {
           app={item.app}
           style={cellStyle(item)}
           yours={state.view === 'grid'}
+          live={live.includes(item.app.slug)}
         />
       ))}
       {/*

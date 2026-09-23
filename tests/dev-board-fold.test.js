@@ -1126,13 +1126,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // reached 756 without these three, so the merged manifest holds 756 + 3 =
   // 759, leaving 31 slots under the 790 ceiling.
   //
-  // 759 → 760: +1 (#2894): a Your-apps tile dragged over the open Homeroom
-  // widget strip lights the strip up as its drop target (?shot=widget-drop).
-  // 30 slots left under the 790 ceiling.
+  // 759 → 763: the tallies above were computed on either side of this merge
+  // against the same shared 759 and cannot be read as one sequence. This
+  // branch took 759 → 762 alone, +3 (#2902): an app kept loaded in the
+  // background carries a green dot on its Home tile; its hidden frame is
+  // inert, out of the tab order and the accessibility tree, and not
+  // #app-iframe; and an app nobody has opened carries no dot. Main
+  // independently took the same 759 to 760, +1 (#2894): a Your-apps tile
+  // dragged over the open Homeroom widget strip lights the strip up as its
+  // drop target (?shot=widget-drop). Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 759 + 3 + 1 = 763, leaving 27
+  // slots under the 790 ceiling.
   //
-  // 760 → 775: the prototype-gaps proposal (Homeroom task 598), which merges
-  // five streams of work into one change. What each adds, net of the checks
-  // it RE-POINTED rather than added (those do not count):
+  // 763 → 778: independently on main, on top of the same #2894 already
+  // folded into the 763 above, the prototype-gaps proposal (Homeroom task
+  // 598) merges five streams of work into one change. What each adds, net of
+  // the checks it RE-POINTED rather than added (those do not count):
   //   +3  About is the app's page (Open, Add to your apps, its builders with
   //       what each has merged); About Homeroom carries the platform's own
   //       figures; a cold load of any platform tab but Home points the mark's
@@ -1152,11 +1161,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //       wears the safe-bar contract, so on a phone it sits above the tab
   //       bar. The four checks that pinned the "+" in All items' actions row
   //       were re-pointed.
-  // Its streams were counted against main's 753; main reached 760 without
-  // them, so the merged manifest holds 760 + 15 = 775. That is past the
-  // 20-slot floor under the 790 ceiling, so the ceiling moved to 810 with it
-  // (services/app-manifest.js), leaving 35 slots.
-  assert.equal(DAPP.tests.length, 775);
+  // Its streams were counted against main's own 760 (759 + the #2894 above),
+  // reaching 775; this branch's #2902 checks are not in that count, so the
+  // merged manifest holds 763 + 15 = 778. That is past the 20-slot floor
+  // under the 790 ceiling, so the ceiling moved to 810 with it
+  // (services/app-manifest.js), leaving 32 slots.
+  assert.equal(DAPP.tests.length, 778);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

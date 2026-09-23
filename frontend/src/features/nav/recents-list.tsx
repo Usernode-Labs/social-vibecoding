@@ -45,6 +45,7 @@ import {
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useGlobalChatState } from '../global-chat/store';
 import type { AgentChat } from '../messages/inbox';
@@ -96,21 +97,25 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item }: { item: RecentItem }) {
+function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
+  const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
   return (
     <a
       className="platform-recent"
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${unread}`}
+      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${unread}`}
+      {...(live ? { 'data-live': 'true' } : null)}
       onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
     >
       {app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
+      {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
+      {live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
   );
@@ -122,6 +127,7 @@ export function RecentsList() {
   const { apps } = useStoreState(recentAppsStore);
   const snap = useMessagesSnapshot();
   const chat = useGlobalChatState();
+  const live = useLiveAppSlugs();
 
   // POST-MOUNT, for hydration (see the header). The stored apps are read by
   // ./mount.ts when the router names the viewer, since the list is theirs;
@@ -160,7 +166,9 @@ export function RecentsList() {
       aria-labelledby="platform-recents-head"
     >
       <h2 id="platform-recents-head" className="platform-recents-head">Recents</h2>
-      {items.map((item) => <RecentRow key={item.key} item={item} />)}
+      {items.map((item) => (
+        <RecentRow key={item.key} item={item} live={!!item.app && live.includes(item.app.slug)} />
+      ))}
     </div>
   );
 }

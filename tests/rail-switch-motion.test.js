@@ -95,10 +95,18 @@ test('everything that is not a rail switch keeps its motion', () => {
   assert.equal(App._entryTransition('zoom-in', element('app-view')), 'zoom-in', 'opening an app still zooms');
 });
 
-test('the phone keeps its slide, and so does a route with no rail on screen', () => {
-  // The phone's bottom bar is being reworked separately (#2766).
+test('the phone slides nowhere (#2896, #2775), and a desktop route with no rail keeps its push', () => {
+  // Below the breakpoint every push and pop is a cut — tab roots and drill-ins
+  // alike — and the stamp says so.
   const phone = harness({ wide: false });
-  assert.equal(phone.App._entryTransition('push', phone.element('browse-screen')), 'push');
+  for (const id of ['browse-screen', 'settings-screen', 'leaderboard-screen']) {
+    const screen = phone.element(id);
+    assert.equal(phone.App._entryTransition('push', screen), 'none', `${id} swaps in place`);
+    assert.equal(screen.getAttribute('data-entered'), 'none');
+  }
+  assert.equal(phone.App._entryTransition('pop', phone.element('home-screen')), 'none');
+  // Opening an app from its tile is not a page slide; it still zooms.
+  assert.equal(phone.App._entryTransition('zoom-in', phone.element('app-view')), 'zoom-in');
   // Inside a running app the rail is down; leaving it is not a rail press.
   const inApp = harness({ railHidden: true });
   assert.equal(inApp.App._entryTransition('push', inApp.element('browse-screen')), 'push');
@@ -174,11 +182,11 @@ test('no app\'s Workshop has a ✕ — only the running app does — and a threa
 // five roots, header and rail swapped for snapshots (#2880). Home pressed
 // from an app's Workshop shrank the page into its tile. Measured frame by
 // frame on the built shell (1280x900 and 390x844): after this change the
-// press cuts on the desktop rail and pushes/pops like any other tab on the
-// phone, and no frame shows an empty #app-view, the previous visit's board,
+// press cuts on the desktop rail — and, since #2775, on the phone too, like
+// every other tab there — and no frame shows an empty #app-view, the previous visit's board,
 // or a 72px sliver of skeleton.
 
-test('a tab press into or out of an app view is a tab switch: a cut on the rail, push/pop on the phone', () => {
+test('a tab press into or out of an app view is a tab switch: a cut on the rail and on the phone', () => {
   const wide = harness();
   const appView = wide.element('app-view');
   assert.equal(wide.App._entryTransition('zoom-in', appView, true), 'none', 'Workshop resumed from the rail');
@@ -188,11 +196,11 @@ test('a tab press into or out of an app view is a tab switch: a cut on the rail,
 
   const phone = harness({ wide: false });
   const phoneView = phone.element('app-view');
-  assert.equal(phone.App._entryTransition('zoom-in', phoneView, true), 'push',
-    'the phone\'s other tabs push; this one does too, rather than growing a tile');
+  assert.equal(phone.App._entryTransition('zoom-in', phoneView, true), 'none',
+    'the phone\'s other tabs cut (#2775); this one does too, rather than growing a tile');
   phoneView.classList.remove('hidden');
-  assert.equal(phone.App._entryTransition('zoom-out', phoneView, true), 'pop',
-    'and Home pops, as it does from every other tab');
+  assert.equal(phone.App._entryTransition('zoom-out', phoneView, true), 'none',
+    'and Home cuts, as it does from every other tab');
 });
 
 test('everything that is not a tab press still zooms: a tile, a notification, Back out of an app', () => {
