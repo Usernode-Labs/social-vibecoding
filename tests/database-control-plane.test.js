@@ -126,7 +126,7 @@ test('store paginates and applies a deadline to Kubernetes requests', async () =
   assert.equal(calls[1]._continue, 'next');
 });
 
-test('binding URL never inherits the platform endpoint or administrative identity', () => {
+test('binding URL never inherits the platform endpoint or administrative identity', async () => {
   const binding = { database: 'app_notes', owner: 'app_notes_owner', host: 'apps-rw.sv-db-a.svc.cluster.local', port: 5432, sslMode: 'require' };
   const url = new URL(bindingConnectionUrl(binding, 'p@ss/word:?#'));
   assert.equal(url.hostname, binding.host);
@@ -139,8 +139,8 @@ test('binding URL never inherits the platform endpoint or administrative identit
   }
   assert.throws(() => bindingConnectionUrl(binding, ''));
   const dbManager = require('../src/services/db-manager');
-  assert.equal(dbManager.connectionUrl(binding.database, 'password', binding), bindingConnectionUrl(binding, 'password'));
-  assert.throws(() => dbManager.connectionUrl('app_other', 'password', binding), /does not match/);
+  assert.equal(await dbManager.connectionUrl(binding.database, 'password', binding), bindingConnectionUrl(binding, 'password'));
+  await assert.rejects(dbManager.connectionUrl('app_other', 'password', binding), /does not match/);
 });
 
 test('HTTP API requires admin reads and full-admin writes; rejects arbitrary manifests', async (t) => {

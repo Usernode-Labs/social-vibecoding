@@ -64,6 +64,9 @@ app.kubernetes.io/component: postgresql
 {{- end -}}
 
 {{- define "social-vibecoding-platform.validate" -}}
+{{- if and .Values.databaseControlPlane.bindingsEnabled (not .Values.databaseControlPlane.enabled) -}}
+  {{- fail "databaseControlPlane.bindingsEnabled requires databaseControlPlane.enabled" -}}
+{{- end -}}
 {{- if .Values.enabled -}}
   {{- if or .Values.platform.enabled .Values.migration.enabled .Values.databaseControlPlane.enabled -}}
     {{- if not (regexMatch "^[a-f0-9]{40}$" .Values.release.sourceRevision) -}}

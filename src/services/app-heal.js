@@ -182,7 +182,7 @@ async function provisionMissingRepo(config, pool, app) {
     });
     repoUrl = repo.html_url;
 
-    const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), app.db_password);
+    const dbUrl = await dbManager.connectionUrl(dbManager.appDbName(app.slug), app.db_password);
     const files = getTemplateFiles(app.name, app.slug, dbUrl);
     await github.pushFiles(botUsername, app.slug, files, {
       message: `Initialize ${app.name} from Homeroom template (repo heal)`,

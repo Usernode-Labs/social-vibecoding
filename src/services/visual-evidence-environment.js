@@ -387,7 +387,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         runtimeName: spec.runtimeName,
         internalOnly: true,
         env: {
-          DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
+          DATABASE_URL: await dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
           ...spec.env,
           ...evidenceEnv,
         },

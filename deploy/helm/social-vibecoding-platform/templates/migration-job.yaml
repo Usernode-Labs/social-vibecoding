@@ -22,7 +22,7 @@ spec:
     spec:
       restartPolicy: Never
       serviceAccountName: {{ include "social-vibecoding-platform.fullname" . }}-migrator
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ .Values.databaseControlPlane.bindingsEnabled }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -43,6 +43,10 @@ spec:
             - secretRef:
                 name: {{ include "social-vibecoding-platform.secretName" . }}
           env:
+            - {name: SV_DATABASE_BINDINGS_ENABLED, value: {{ .Values.databaseControlPlane.bindingsEnabled | quote }}}
+            {{- if .Values.databaseControlPlane.bindingsEnabled }}
+            - {name: SV_DATABASE_POLICY_FILE, value: /etc/sv-database/policy.json}
+            {{- end }}
             - {name: NODE_ENV, value: production}
             - {name: APP_RUNTIME, value: kubernetes}
             - {name: WORKER_RUNTIME, value: kubernetes}
@@ -57,7 +61,34 @@ spec:
           resources:
             {{- toYaml .Values.migration.resources | nindent 12 }}
           volumeMounts:
+            {{- if .Values.databaseControlPlane.bindingsEnabled }}
+            - {name: database-policy, mountPath: /etc/sv-database, readOnly: true}
+            {{- end }}
             - {name: tmp, mountPath: /tmp}
       volumes:
+        {{- if .Values.databaseControlPlane.bindingsEnabled }}
+        - name: database-policy
+          configMap:
+            name: {{ .Values.databaseControlPlane.policyConfigMap }}
+        {{- end }}
         - {name: tmp, emptyDir: {sizeLimit: 512Mi}}
+{{- end }}
+
+{{- if and .Values.enabled .Values.migration.enabled .Values.databaseControlPlane.bindingsEnabled }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-migrator-bindings-api
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: migration
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports: [{port: '443', protocol: TCP}, {port: '6443', protocol: TCP}]
 {{- end }}
