@@ -22,6 +22,9 @@ export { appContextStore, AppContext } from './mount';
 /** The trigger the desktop popover hangs from (../header/platform-mark.tsx). */
 const MARK_ID = 'platform-mark-btn';
 
+/** The welcome tour's overlay (../home/tour/index.tsx), which drives this menu. */
+const TOUR_ID = 'home-tour';
+
 /**
  * Pin the web presentation under the mark: right edges aligned, 6px below it,
  * exactly the vote popover's placement. Written as two custom properties the
@@ -72,13 +75,21 @@ export function AppContextIsland() {
   // clicked reacts. The mark itself is spared — its own click toggles.
   // Below `sm` the backdrop still catches the click first and closes the
   // sheet through its onClick; this listener then finds it already shut.
+  //
+  // THE WELCOME TOUR IS SPARED TOO. Its steps 4 and 5 point at rows inside
+  // this menu, and its card — Next included — sits outside it, so a Next
+  // that counted as an outside click shut the menu and the tour fell back
+  // to the step that asks for it again ("Next on step 4 goes back to step
+  // 3"). While the tour is up it decides when the menu closes: its
+  // `closesPanel` steps shut it through AppContext.close().
   useEffect(() => {
     if (!open || adopted) return undefined;
     const onDoc = (event: Event) => {
       const t = event.target as Node | null;
       const sheet = document.getElementById('apps-switcher-sheet');
       const mark = document.getElementById(MARK_ID);
-      if (t && (sheet?.contains(t) || mark?.contains(t))) return;
+      const tour = document.getElementById(TOUR_ID);
+      if (t && (sheet?.contains(t) || mark?.contains(t) || tour?.contains(t))) return;
       if (AppContext._sheet) return;
       void AppContext.close();
     };
