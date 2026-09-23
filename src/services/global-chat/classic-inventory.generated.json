@@ -3507,7 +3507,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 130,
+      "line": 163,
       "method": "GET",
       "path": "/api/models",
       "expression": null,
@@ -3535,7 +3535,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 147,
+      "line": 180,
       "method": "GET",
       "path": "/api/model-notes",
       "expression": null,
@@ -3562,7 +3562,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 158,
+      "line": 191,
       "method": "GET",
       "path": "/api/apps/:slug/messages",
       "expression": null,
@@ -3587,7 +3587,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 283,
+      "line": 318,
       "method": "POST",
       "path": "/api/apps/:slug/messages",
       "expression": null,
@@ -3612,7 +3612,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 401,
+      "line": 436,
       "method": "PUT",
       "path": "/api/apps/:slug/messages/:id/bookmark",
       "expression": null,
@@ -3632,7 +3632,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 417,
+      "line": 452,
       "method": "DELETE",
       "path": "/api/apps/:slug/messages/:id/bookmark",
       "expression": null,
@@ -3652,7 +3652,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 442,
+      "line": 477,
       "method": "POST",
       "path": "/api/apps/:slug/chat-attachments",
       "expression": null,
@@ -3675,7 +3675,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 505,
+      "line": 540,
       "method": "GET",
       "path": "/api/apps/:slug/chat-attachments/:attId",
       "expression": null,
@@ -3694,7 +3694,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 549,
+      "line": 584,
       "method": "GET",
       "path": "/api/apps/:slug/chat-attachments/:attId/view",
       "expression": null,
@@ -3712,7 +3712,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 591,
+      "line": 626,
       "method": "GET",
       "path": "/api/apps/:slug/mention-suggestions",
       "expression": null,

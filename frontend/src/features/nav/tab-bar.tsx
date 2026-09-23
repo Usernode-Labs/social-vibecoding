@@ -63,7 +63,7 @@
  * the next render. The class string below is a constant prop.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
   BoardIcon,
@@ -250,6 +250,90 @@ function useRailPeek(peek: boolean) {
   return { enter: enterPeek, leave: peek ? leavePeek : clearPeekTimer };
 }
 
+/**
+ * The lit tab's marker on the phone's bar (#2824): a blue pill behind the
+ * tab you are on that SLIDES to the next one, borrowed from the Workshop's
+ * own tab strip (`useTabMarker` in ../dev-board/workshop/workshop.tsx, and
+ * `.dev-ws-tab-marker` in app.css). Colour alone was the only mark the bar
+ * had, and at 11px on a phone that is easy to miss.
+ *
+ * THE SAME THREE RULES as the Workshop's, for the same reasons:
+ *   - `null` until the first measurement, so the prerender and the first
+ *     client render agree on a bare, unstyled span (nothing is lit until the
+ *     router has spoken — see the hydration test in tests/nav-tab-bar.test.js);
+ *   - only a SELECTION CHANGE slides. The first placement, and a re-measure
+ *     of the tab you are already on (a rotation, the bar coming back from
+ *     hidden, a desktop window narrowed to a phone), land instantly;
+ *   - unchanged geometry keeps the previous box, so the ResizeObserver's
+ *     delivery on `observe()` cannot cancel a slide that is still running.
+ *
+ * One addition: with nothing lit (the tab is `null`) the box goes back to
+ * null and the marker hides, so the next tab to light lands rather than
+ * sliding in from wherever the last one was.
+ *
+ * The box is an INSET of the lit tab, not the tab itself: the tab is the
+ * full 56px cell edge to edge, and a fill that met its neighbour's would read
+ * as the bar being split into panels. The desktop rail does not use it at
+ * all — its rows already carry a `--brand-tint` fill of their own, and
+ * app.css hides the marker there.
+ */
+interface TabMarkerBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  slide: boolean;
+}
+
+const MARKER_INSET = 4;
+
+export function markerBoxFor(
+  el: { offsetLeft: number; offsetTop: number; offsetWidth: number; offsetHeight: number },
+): Omit<TabMarkerBox, 'slide'> | null {
+  // A bar that is not laid out (hidden, or the keyboard is up) has nothing to
+  // say about where the tab is; keep the last box rather than collapse it.
+  if (!(el.offsetWidth > 0) || !(el.offsetHeight > 0)) return null;
+  return {
+    x: el.offsetLeft + MARKER_INSET,
+    y: el.offsetTop + MARKER_INSET,
+    w: Math.max(0, el.offsetWidth - MARKER_INSET * 2),
+    h: Math.max(0, el.offsetHeight - MARKER_INSET * 2),
+  };
+}
+
+function useTabMarker(
+  barRef: React.RefObject<HTMLElement | null>,
+  tab: string | null,
+): TabMarkerBox | null {
+  const [box, setBox] = useState<TabMarkerBox | null>(null);
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    if (!tab) {
+      setBox(null);
+      return;
+    }
+    const measure = (selectionChanged: boolean) => {
+      const el = bar.querySelector<HTMLElement>('.platform-tab[aria-current="page"]');
+      if (!el) return;
+      const next = markerBoxFor(el);
+      if (!next) return;
+      setBox((prev) => {
+        if (prev && prev.x === next.x && prev.y === next.y
+          && prev.w === next.w && prev.h === next.h) return prev;
+        return { ...next, slide: !!prev && selectionChanged };
+      });
+    };
+    // This run is the tab having changed; the observer's are layout moving.
+    measure(true);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => measure(false));
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [barRef, tab]);
+  return box;
+}
+
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
   // `true` is what the prerendered document ships: the bar is present and
@@ -275,6 +359,7 @@ export function PlatformTabs() {
   // watch the viewport.
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
+  const marker = useTabMarker(barRef, tab);
 
   return (
     <>
@@ -318,6 +403,24 @@ export function PlatformTabs() {
         onMouseEnter={enter}
         onMouseLeave={leave}
       >
+      {/*
+          THE LIT TAB'S MARKER (#2824). Before the tabs so it paints behind
+          them (app.css raises each tab one step), `aria-hidden` because
+          `aria-current` already says which tab is lit, and bare until
+          measured — see useTabMarker. `data-marker-at` is what makes it
+          visible; `data-marker-slide` is what app.css hangs the slide on.
+      */}
+      <span
+        className="platform-tabs-marker"
+        aria-hidden="true"
+        {...(marker ? { 'data-marker-at': '' } : {})}
+        {...(marker && marker.slide ? { 'data-marker-slide': '' } : {})}
+        style={marker ? {
+          transform: `translate(${marker.x}px, ${marker.y}px)`,
+          width: `${marker.w}px`,
+          height: `${marker.h}px`,
+        } : undefined}
+      />
       {TABS.map(({ key, label, href, Icon }) => (
         <a
           key={key}
