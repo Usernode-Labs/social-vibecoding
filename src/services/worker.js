@@ -192,7 +192,7 @@ function requireNonEmptySecret(value, name) {
 function buildTurnSecretEnv({
   mode, agentBackend, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
-  evidenceJwt, evidenceMemberToken, evidenceAdminToken,
+  evidenceJwt, evidenceMemberToken, evidenceAdminToken, homeroomMcpToken = null,
 }) {
   const { backend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
   if (!isClaude && !isCodex) {
@@ -219,6 +219,7 @@ function buildTurnSecretEnv({
       env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
       env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
     }
+    if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
     return env;
   }
 
@@ -244,7 +245,56 @@ function buildTurnSecretEnv({
     env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
     env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
   }
+  if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
   return env;
+}
+
+// ── The coding agent's read-only platform MCP (#2779) ──────────────────
+//
+// A build or scout turn gets a `worker_read` delegation (services/mcp-oauth):
+// six read tools on the platform's own MCP, bound to this change and its
+// app, as the change's owner. worker/homeroom-read-mcp.js bridges them into
+// Claude Code and Codex. The agent runs the repository's own code with a
+// shell, so assume it can read the token: it reads only what the owner can
+// already see on that one app, and only until the turn ends — it is revoked
+// in execInWorker's `finally`, and the grant's liveness check refuses it as
+// soon as the change is paused or closed. Minting is best effort: a turn
+// never fails because the platform could not give it this.
+const HOMEROOM_READ_MODES = new Set(['build', 'scout']);
+// Bounded by the turn's own length; revocation normally ends it far sooner.
+const HOMEROOM_READ_TTL_SECONDS = 2 * 60 * 60;
+
+async function mintHomeroomReadGrant(sessionId, mode) {
+  if (!HOMEROOM_READ_MODES.has(mode)) return null;
+  const pool = _getPoolSafe();
+  if (!pool) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT user_id, app_id FROM chat_sessions
+        WHERE id = $1 AND status IN ('active', 'promoted')`,
+      [sessionId]
+    );
+    if (!rows.length) return null;
+    const grant = await require('./mcp-oauth').issueDelegatedAccess(pool, {
+      userId: rows[0].user_id,
+      kind: 'worker_read',
+      changeId: Number(sessionId),
+      appId: rows[0].app_id,
+      ttlSeconds: HOMEROOM_READ_TTL_SECONDS,
+    });
+    return { token: grant.accessToken, grantId: grant.grantId };
+  } catch (err) {
+    log.warn('worker', 'Read-only platform MCP not issued for this turn', { sessionId, err: err.message });
+    return null;
+  }
+}
+
+async function revokeHomeroomReadGrant(sessionId, grant) {
+  if (!grant) return;
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  await require('./mcp-oauth').revokeDelegation(pool, { grantId: grant.grantId, reason: 'turn_finished' })
+    .catch((err) => log.warn('worker', 'Read-only platform MCP revoke failed', { sessionId, err: err.message }));
 }
 // ──────────────────────────────────────────────────────────────────────
 // Stream-json / marker parsing
@@ -2663,20 +2713,30 @@ async function execInWorker(sessionId, {
   // container, so a malicious prompt like "echo $ANTHROPIC_API_KEY"
   // exfiltrates only a short-lived JWT that's useless against
   // api.anthropic.com directly.
-  const secretEnv = buildTurnSecretEnv({
-    mode,
-    agentBackend: resolvedBackend,
-    workerSessionJwt,
-    workerPushJwt,
-    issuesReadJwt,
-    anthropicProxyJwt,
-    anthropicApiKey,
-    prodDebugJwt,
-    openrouterApiKey,
-    evidenceJwt,
-    evidenceMemberToken: evidenceAuthTokens?.member,
-    evidenceAdminToken: evidenceAuthTokens?.read_only_admin,
-  });
+  // #2779: minted after the prompt files are written (a failure there has
+  // nothing to revoke), and revoked on every exit from here on.
+  const homeroomGrant = await mintHomeroomReadGrant(sessionId, mode);
+  let secretEnv;
+  try {
+    secretEnv = buildTurnSecretEnv({
+      mode,
+      agentBackend: resolvedBackend,
+      workerSessionJwt,
+      workerPushJwt,
+      issuesReadJwt,
+      anthropicProxyJwt,
+      anthropicApiKey,
+      prodDebugJwt,
+      openrouterApiKey,
+      evidenceJwt,
+      evidenceMemberToken: evidenceAuthTokens?.member,
+      evidenceAdminToken: evidenceAuthTokens?.read_only_admin,
+      homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
+    });
+  } catch (err) {
+    await revokeHomeroomReadGrant(sessionId, homeroomGrant);
+    throw err;
+  }
   const safeEnv = {
     PROMPT_FILE: TURN_PROMPT_PATH,
     SYSTEM_PROMPT_FILE: systemPrompt ? TURN_SYSTEM_PROMPT_PATH : '',
@@ -2821,6 +2881,7 @@ async function execInWorker(sessionId, {
       inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
       journal: null, activeTurnId: null,
     });
+    await revokeHomeroomReadGrant(sessionId, homeroomGrant);
     const err = new Error('execInWorker: durable active turn could not be persisted');
     err.code = requireActiveTurnPersistence
       ? 'durable_retry_persist_failed'
@@ -2950,6 +3011,9 @@ async function execInWorker(sessionId, {
     }
     return state;
   } finally {
+    // The agent process is done with the platform once its journal has
+    // ended: the tail (PR, staging, the wrap-up) never uses this token.
+    await revokeHomeroomReadGrant(sessionId, homeroomGrant);
     if (providerDispatched && providerTerminalObserved && isClaude && measuredTelemetryComponent) {
       recordClaudeCodingRun({
         sessionId,
