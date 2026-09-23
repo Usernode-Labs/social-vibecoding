@@ -114,6 +114,8 @@
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+
 import {
   BoardIcon,
   ChatIcon,
@@ -230,11 +232,35 @@ export function AppsSwitcherSheet(): ReactNode {
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
   const {
-    slug, name, showTerminal, target, versionState, deploying, appUpdateReady,
+    slug, name, showTerminal, target, restricted,
   } = useStoreState(improveStore);
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to workshop" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
+
+  // HOMEROOM FOR A VIEWER WHO IS NOT SERVED ITS ROW (SELF_APP_PUBLIC_VOTING
+  // off, not an admin): the platform's workshop and discussion answer them
+  // 404, so the two rows that go there are hidden rather than left leading
+  // nowhere — feedback on the platform and About Homeroom are theirs as much
+  // as anyone's (./platform-target.js, Home._restrictedPlatformTarget).
+  //
+  // THROUGH A REF, NOT A RENDERED CLASS. Both rows are in the prerendered
+  // menu and hydrate from it, and the store that says `restricted` is written
+  // by the route's publish after hydration — so the class string stays the
+  // constant the prerender shipped and `hidden` is toggled in a layout
+  // effect, the seam lib/legacy-dom's useHiddenClass is. Written out rather
+  // than calling it because the rows unmount under About and mount again on
+  // the way back: `view` has to re-run the effect, or a row that came back
+  // would come back without its `hidden`.
+  const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
+  const discussionRowRef = useRef<HTMLAnchorElement | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    for (const el of [workshopRowRef.current, discussionRowRef.current]) {
+      if (el && el.classList.contains('hidden') !== !!restricted) {
+        el.classList.toggle('hidden', !!restricted);
+      }
+    }
+  }, [restricted, view]);
 
   // "About Notes", not "About this app". The name is what the viewer is
   // looking at and it is already on the bar above; "this app" is what you
@@ -404,8 +430,15 @@ export function AppsSwitcherSheet(): ReactNode {
             The Improve panel is retired (#2718 review); what it held moved up
             into this menu. In its order: what is happening to the build, and
             the two things you can do about it. */}
-        <UpdateStatus />
-        <ImproveQuickActions />
+        {/* THE MENU PANE'S, NOT ABOUT'S. About is facts about the app — what
+            it is, who builds it, where to take it — and the design draws it
+            as a page of its own with no actions over it; the two buttons and
+            the build notice pushed it a row further down a sheet that has to
+            scroll as it is. Back on the menu pane they are where they were.
+            `view` is 'menu' in the prerender, so the hydrating render is the
+            same markup. */}
+        {view === 'about' ? null : <UpdateStatus />}
+        {view === 'about' ? null : <ImproveQuickActions />}
         {/* THE App | Workshop STRIP IS RETIRED (#2761). It sat here as a
             segmented control, and a toggle was the wrong shape for it: this
             menu is a list of places, and the strip's one real job was
@@ -518,6 +551,7 @@ export function AppsSwitcherSheet(): ReactNode {
           <MenuRow
             id="app-menu-row-workshop"
             dataContextRow="workshop"
+            elRef={workshopRowRef}
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
             icon={<BoardIcon />}
             label="Go to workshop"
@@ -541,11 +575,18 @@ export function AppsSwitcherSheet(): ReactNode {
               App.navigateToMessages(null, slug)). It is what the inbox's own
               rows link to, so the menu and the inbox now agree.
           */}
+          {/* On a platform tab the discussion is the PLATFORM's, and the row
+              says so — the design's "Go to platform discussion". The text is
+              the one store-derived thing here, and it is text in a subtree
+              React already owns: `target` is null in the prerender, which
+              renders the app wording, and the platform's arrives with the
+              route after hydration. */}
           <MenuRow
             id="app-menu-row-discussion"
+            elRef={discussionRowRef}
             href={slug ? `#messages/app/${encodeURIComponent(slug)}` : '#messages'}
             icon={<ChatIcon />}
-            label="Go to app discussion"
+            label={target === 'platform' ? 'Go to platform discussion' : 'Go to app discussion'}
           />
           {/*
               The terminal is the one Improve row that stays TOP LEVEL rather

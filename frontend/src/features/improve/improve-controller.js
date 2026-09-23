@@ -259,6 +259,7 @@ const Improve = {
         slug: null,
         name: '',
         selfHosted: false,
+        restricted: false,
         repoUrl: null,
         iconUrl: null,
         iconEmoji: null,
@@ -288,6 +289,9 @@ const Improve = {
       slug: target.slug,
       name: target.name || '',
       selfHosted: !!target.selfHosted,
+      // Homeroom for a viewer not served its row (../app-context/
+      // platform-target.js): the menu hides the rows that would 404.
+      restricted: target.kind === 'platform' && !!target.restricted,
       repoUrl: target.repoUrl || null,
       iconUrl: target.iconUrl || null,
       iconEmoji: target.iconEmoji || null,

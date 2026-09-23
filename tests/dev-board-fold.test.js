@@ -1106,7 +1106,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // This branch counted them against an older shared base; main reached 751
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 753);
+  //
+  // 753 → 756: +3 (the mark menu's About, drawn as the nav prototype draws
+  // it): an app's About with Open / Add to your apps and its builders' merge
+  // counts; About Homeroom's apps / members / merged figures; and a cold load
+  // of a platform tab other than Home pointing the menu at Homeroom rather
+  // than "this app". 756 leaves 34 slots under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 756);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

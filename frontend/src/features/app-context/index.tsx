@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import { placeUnderAnchor } from '../../lib/anchor-popover';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { improveStore } from '../improve/improve-store.js';
 import { AppsSwitcherSheet } from './app-context-sheet';
 import { appContextStore, AppContext } from './mount';
 
@@ -21,6 +22,11 @@ export { appContextStore, AppContext } from './mount';
 
 /** The trigger the desktop popover hangs from (../header/platform-mark.tsx). */
 const MARK_ID = 'platform-mark-btn';
+
+/** `?shot=app-about` — see the effect below. */
+const ABOUT_SHOT = 'app-about';
+/** ~10s at 100ms: a cold route publishes its subject after a fetch or two. */
+const ABOUT_SHOT_TRIES = 100;
 
 /** The welcome tour's overlay (../home/tour/index.tsx), which drives this menu. */
 const TOUR_ID = 'home-tour';
@@ -96,6 +102,32 @@ export function AppContextIsland() {
     document.addEventListener('click', onDoc, true);
     return () => document.removeEventListener('click', onDoc, true);
   }, [open, adopted]);
+
+  // `?shot=app-about`: the menu open on its About pane, for the declared
+  // checks and the review captures. About is a tap inside a menu that is
+  // itself a tap away, so no URL reached it — the same gap ?shot=app-context
+  // (public/js/app.js) closes for the menu's first pane. It waits for the
+  // route to publish a subject, then opens; bounded, so a route that never
+  // publishes one still shows the pane rather than spinning. Pure UI state:
+  // nothing is fetched here or written, and it is not env-gated, so the
+  // production "before" side works the moment it ships.
+  useEffect(() => {
+    let shot: string | null = null;
+    try { shot = new URLSearchParams(window.location.search).get('shot'); } catch { /* ignore */ }
+    if (shot !== ABOUT_SHOT) return undefined;
+    let tries = ABOUT_SHOT_TRIES;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = () => {
+      if (improveStore.get().slug || --tries <= 0) {
+        void AppContext.open();
+        AppContext.showAbout();
+        return;
+      }
+      timer = setTimeout(attempt, 100);
+    };
+    timer = setTimeout(attempt, 50);
+    return () => { if (timer) clearTimeout(timer); };
+  }, []);
 
   // Escape closes the sheet — web presentation only; adopted into a kit
   // sheet the kit's modal stack owns the key. Same rule as the Improve panel.

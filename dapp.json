@@ -4811,6 +4811,24 @@
       "expectText": "About"
     },
     {
+      "name": "About is the app's page (nav prototype): Open, Add to your apps, and its builders with what each has merged",
+      "path": "/?shot=app-about&demo=1&about=app#app/staging-demo-forkable/workshop",
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane:has(#app-about-actions > #app-about-add) #app-about-contributors [data-contributor]",
+      "expectText": "14 merged"
+    },
+    {
+      "name": "About Homeroom carries the platform's own figures: apps, members, merged (nav prototype)",
+      "path": "/?shot=app-about&demo=1",
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-about-pane #app-about-stats[data-loaded] > [data-stat=\"members\"] + [data-stat=\"merged\"]",
+      "expectText": "members"
+    },
+    {
+      "name": "A cold load of any platform tab but Home points the mark's menu at Homeroom, not 'this app' (audit bug)",
+      "path": "/?shot=app-context&demo=1&cold=messages#messages",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-about",
+      "expectText": "About Homeroom"
+    },
+    {
       "name": "Inside an app the header is that app's strip, tile and name (#2718) - except on a desktop Workshop, where the demo's app route lands and the name stands alone beside the scope chip (#2768)",
       "path": "/?demo=1#app/usernode-2d5619/app",
       "expectSelector": "body:not(:has(#dev-ws-scope-chip)) #platform-header #header-app-tile + span > #header-title-name, body:has(#app-view:not(.hidden) #dev-ws-scope-chip) #platform-header #header-title > span > span:first-child > #header-title-name"

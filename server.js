@@ -64,6 +64,7 @@ const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
+const { platformAboutRoutes } = require('./src/routes/platform-about');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
@@ -592,6 +593,10 @@ app.use(workshopThemesRoutes(config));
 // sits behind authMiddleware and refuses an anonymous caller outright.
 app.use(workshopOverviewRoutes(config));
 app.use(messagesOverviewRoutes(config));
+// The mark menu's "About Homeroom" pane: the platform's name, tagline and
+// version, and its apps / members / merged figures. One cached answer for
+// every viewer, so it sits behind authMiddleware beside the other overviews.
+app.use(platformAboutRoutes(config));
 // The Workshop's placement stage runs when a card arrives on or leaves a
 // board — which every route and service announces through ws.pushSessionUpdate
 // / pushIssueUpdate — on whichever instance handled the change (the row's

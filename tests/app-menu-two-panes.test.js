@@ -35,35 +35,41 @@ const render = (patch) => {
 };
 
 test('About never opens empty', () => {
-  // Every other line in it is conditional — a repository the app may not
-  // have, a share the platform may not allow yet, a version it may never have
-  // deployed, a home screen the device may not have — and all four are absent
-  // at once often enough that a pane without an unconditional line would
-  // regularly open blank. A row that sometimes leads nowhere is the one thing
-  // a menu row must not be.
-  const bare = render({ name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
+  // Every other line in it is conditional — a description the manifest may
+  // not have, a repository, a share the platform may not allow yet, a version
+  // it may never have deployed, a home screen the device may not have — and
+  // all of them are absent at once often enough that a pane without an
+  // unconditional line would regularly open blank. A row that sometimes leads
+  // nowhere is the one thing a menu row must not be. The address stands in
+  // the tagline's place when there is no tagline.
+  const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.match(bare, /id="app-about-identity"/);
   assert.match(bare, />Notes</, 'the app is named');
   assert.match(bare, /\/app\/notes-ab12/, 'and addressed');
 });
 
 test('each fact appears only when there is one', () => {
-  const bare = render({ name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
+  const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.doesNotMatch(bare, /improve-row-github/, 'no repository, no row');
   assert.doesNotMatch(bare, /improve-row-share/, 'no share, no row');
-  assert.doesNotMatch(bare, /app-about-version/, 'no version, no line');
+  assert.doesNotMatch(bare, /app-about-version/, 'no version, no pill');
 
   const full = render({
-    name: 'Notes', slug: 'notes-ab12',
+    target: 'app', name: 'Notes', slug: 'notes-ab12',
     repoUrl: 'https://github.com/example/notes', canShare: true, version: '14',
   });
   assert.match(full, /id="improve-row-github"[\s\S]{0,200}href="https:\/\/github\.com\/example\/notes"/);
   assert.match(full, /target="_blank"/, 'the repository opens away from the shell');
   assert.match(full, /id="improve-row-share"/);
-  assert.match(full, /id="app-about-version"[\s\S]*?version 14\./,
-    'the version is a LINE, not a row: there is nowhere for it to go');
-  assert.ok(full.indexOf('improve-row-github') < full.indexOf('improve-row-share'),
-    'the repository leads, sharing follows — the order the Improve footer had');
+  // The design draws the version as a PILL beside the builders' avatars —
+  // "v41 · 2h ago" — and it is still not a row: there is nowhere for it to
+  // go. The platform names a version by its commit, so the pill does too.
+  assert.match(full, /id="app-about-pills"[\s\S]*?id="app-about-version"[^>]*>14</,
+    'the version is a pill in the identity block, not a row');
+  // The design's MORE order: Share, Add to home screen, then the source
+  // (View on GitHub is its "Source code"), then Fork.
+  assert.ok(full.indexOf('improve-row-share') < full.indexOf('improve-row-github'),
+    'sharing leads, the repository follows — the design\'s order');
 });
 
 test('two panes of ONE sheet, not two sheets', () => {
