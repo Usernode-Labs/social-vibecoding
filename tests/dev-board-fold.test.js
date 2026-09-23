@@ -1111,7 +1111,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the first card and "… 3 more"; the plain message before it is not folded
   // in; an app's channel in Messages folds its run of proposal cards the same
   // way. 756, leaving 34 slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 756);
+  //
+  // 753 → 754: independently on main, +1 (#2800, #2878): Me is the rail's
+  // last row, straight after Recents, which is what places the thin rule
+  // drawn above it. 36 slots left under the 790 ceiling.
+  //
+  // 756 → 757, 754 → 757: the tallies above were computed on either side of
+  // this merge against the same shared 753 and cannot be read as one
+  // sequence. This branch took 753 → 756 alone, with #2884 above; main
+  // independently took the same 753 to 754, with the Me-row rule above.
+  // Neither set overlaps the other, so the merged manifest holds every one of
+  // them: 753 + 3 + 1 = 757, leaving 33 slots under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 757);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -65,6 +65,7 @@ import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { setUserBlocked } from '../messages/store';
+import { ReportForm, submitReport } from '../reports/report-form';
 import {
   transcriptStore,
   type Attachment,
@@ -310,7 +311,11 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
  * every message in the group chat quietly lost all three. Found by seeding a
  * chat and counting the buttons, not by a test.
  */
-function RowActions({ msg }: { msg: TranscriptMessage }) {
+function RowActions({ msg, onReportMessage, onReportUser }: {
+  msg: TranscriptMessage;
+  onReportMessage?: () => void;
+  onReportUser?: () => void;
+}) {
   if (!(msg.showEdit || msg.showBookmark || msg.showReact || (msg.senderId && !msg.mine && msg.kind === 'message'))) return null;
   const saved = msg.bookmarked;
   async function blockSender() {
@@ -345,10 +350,16 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
         </button>
       ) : null}
       {msg.kind === 'message' && !msg.mine && msg.senderId ? (
-        <button type="button" className="text-[11px] text-red-600 hover:underline" onClick={() => { void blockSender(); }}
-          title={`Block @${msg.username}`} aria-label={`Block @${msg.username}`}>
-          Block
-        </button>
+        <>
+          {onReportMessage ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
+            onClick={onReportMessage} aria-label="Report message">Report message</button> : null}
+          {onReportUser ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
+            onClick={onReportUser} aria-label={`Report @${msg.username}`}>Report user</button> : null}
+          <button type="button" className="text-[11px] text-red-600 hover:underline" onClick={() => { void blockSender(); }}
+            title={`Block @${msg.username}`} aria-label={`Block @${msg.username}`}>
+            Block
+          </button>
+        </>
       ) : null}
     </>
   );
@@ -528,6 +539,16 @@ function SpecSnippet({ html }: { html: string }) {
  * thread's tint key off.
  */
 export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; grouped?: boolean }) {
+  const [reporting, setReporting] = useState<'message' | 'user' | null>(null);
+  const report = async (reason: string, detail: string) => {
+    if (reporting === 'user') {
+      await submitReport(`/api/users/${encodeURIComponent(msg.username)}/report`, reason, detail);
+      return;
+    }
+    const slug = controller()?.appSlug;
+    if (!slug || !msg.id) throw new Error('This message is unavailable for reporting.');
+    await submitReport(`/api/apps/${encodeURIComponent(slug)}/messages/${msg.id}/report`, reason, detail);
+  };
   return (
     <ChatMessageRow
       className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
@@ -558,7 +579,8 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
           ) : null}
         </>
       )}
-      actions={<RowActions msg={msg} />}
+      actions={<RowActions msg={msg} onReportMessage={msg.id ? () => setReporting('message') : undefined}
+        onReportUser={() => setReporting('user')} />}
     >
       {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
       <Body html={msg.bodyHtml} />
@@ -567,6 +589,8 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
         <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
       ) : null}
       <Reactions msg={msg} />
+      {reporting ? <ReportForm key={reporting} kind={reporting} onSubmit={report}
+        onCancel={() => setReporting(null)} /> : null}
     </ChatMessageRow>
   );
 }

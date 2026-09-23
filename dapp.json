@@ -4858,6 +4858,11 @@
       "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
     },
     {
+      "name": "#2800: Me is the rail's last row, straight after Recents, so the thin rule the rail draws above Me sits between them",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs > #platform-recents + a#platform-tab-me:last-child"
+    },
+    {
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
       "path": "/?demo=1",
       "expectSelector": "#platform-header:has(#sidebar-toggle[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])) #notifications-btn[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])"

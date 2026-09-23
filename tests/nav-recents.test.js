@@ -55,15 +55,74 @@ test('one list, newest first, across apps and every kind of conversation', () =>
   ]);
 });
 
-test('about eight rows, and the cut keeps the newest', () => {
-  assert.equal(RECENTS_LIMIT, 8);
-  const conversations = Array.from({ length: 12 }, (_, i) => conversation(
-    i + 1, 'group', `2026-09-${String(10 + i).padStart(2, '0')}T00:00:00Z`,
+test('#2878: more than a rail of rows, and the cut keeps the newest', () => {
+  // The list runs down the rest of the rail and scrolls there, so the cap is
+  // a ceiling on history rather than the eight rows it used to be.
+  assert.ok(RECENTS_LIMIT >= 24, 'more rows than a tall rail shows at once');
+  const conversations = Array.from({ length: RECENTS_LIMIT + 5 }, (_, i) => conversation(
+    i + 1, 'group', new Date(Date.UTC(2026, 8, 1) + i * 3600e3).toISOString(),
   ));
   const items = buildRecents({ apps: [], conversations, discussions: [], agents: [] });
-  assert.equal(items.length, 8);
-  assert.equal(items[0].key, 'conversation:12');
-  assert.equal(items[7].key, 'conversation:5');
+  assert.equal(items.length, RECENTS_LIMIT);
+  assert.equal(items[0].key, `conversation:${RECENTS_LIMIT + 5}`);
+  assert.equal(items[RECENTS_LIMIT - 1].key, 'conversation:6');
+  assert.equal(buildRecents({ apps: [], conversations, discussions: [], agents: [], limit: 3 }).length, 3);
+
+  const { RECENT_APPS_MAX } = loadTsx('frontend/src/features/nav/recent-apps-store.js');
+  assert.ok(RECENT_APPS_MAX > RECENTS_LIMIT, 'storage keeps more apps than the list holds');
+});
+
+test('#2878: the list fills the rail and scrolls; the tabs never shrink for it', () => {
+  const css = read('public/css/app.css');
+  const block = css.slice(css.indexOf('.platform-recents:not(.hidden) {'));
+  assert.match(block, /^\.platform-recents:not\(\.hidden\) \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;/);
+  const desktop = css.slice(css.indexOf('THE SAME FIVE TABS, STANDING UP'));
+  assert.match(desktop, /\n  \.platform-tab \{\s*\n(?:\s*\/\*[\s\S]*?\*\/\s*\n)?\s*flex: none;/,
+    'a tab keeps its 44px when the list overflows');
+});
+
+test('#2800/#2878: a thin rule above Me, drawn by the rail itself on the desktop only', () => {
+  const css = read('public/css/app.css');
+  const desktop = css.indexOf('THE SAME FIVE TABS, STANDING UP');
+  const rule = css.indexOf('.platform-tabs::after {');
+  assert.ok(rule > desktop, 'inside the desktop block, so the phone bar has no rule');
+  assert.equal(css.indexOf('.platform-tabs::after {', rule + 1), -1, 'drawn once');
+  const body = css.slice(rule, css.indexOf('}', rule));
+  assert.match(body, /content: "";/);
+  assert.match(body, /height: 1px;/);
+  assert.match(body, /background: var\(--app-sheet-line\);/, 'the rail\'s own hairline colour');
+  assert.match(body, /order: 1;/);
+  assert.match(css.slice(desktop), /#platform-tab-me \{\s*order: 2;\s*\}/, 'Me comes after it');
+  // Me is the rail's last child, so ordering the ::after before it is enough.
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(bar, /key === 'me' \? <RecentsList key="recents" \/> : null,/);
+});
+
+test('#2878: an app row draws the app\'s own icon, the glyph only when it has none', () => {
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  assert.match(list, /import \{ AppIconContent, appIconKind \} from '\.\.\/apps\/app-card-view';/,
+    'the launcher\'s own icon renderer');
+  assert.match(list, /const app = item\.app && \(item\.app\.iconUrl \|\| item\.app\.iconEmoji\) \? item\.app : null;/);
+  assert.match(list, /\{app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/);
+  assert.match(list, /className="app-icon-tile platform-recent-tile"/);
+
+  const { AppIconContent } = loadTsx('frontend/src/features/apps/app-card-view.tsx');
+  assert.equal(typeof AppIconContent, 'function');
+  const css = read('public/css/app.css');
+  const desktop = css.slice(css.indexOf('THE SAME FIVE TABS, STANDING UP'));
+  assert.match(desktop, /\.platform-recent-tile \{\s*width: 18px;\s*height: 18px;/,
+    'the glyph\'s footprint, so every label starts on one line');
+  assert.match(desktop, /\.platform-recent-glyph \{\s*width: 18px;\s*height: 18px;/);
+});
+
+test('#2801: the Resume row has no background of its own in the rail', () => {
+  const css = read('public/css/app.css');
+  const desktop = css.slice(css.indexOf('THE SAME FIVE TABS, STANDING UP'));
+  const at = desktop.indexOf('  .platform-parked {\n    right: auto;');
+  assert.ok(at > 0);
+  const body = desktop.slice(at, desktop.indexOf('}', at));
+  assert.match(body, /background: transparent;/);
+  assert.match(body, /backdrop-filter: none;/);
 });
 
 test('unread shows on conversations; archived and silent channels stay out', () => {
