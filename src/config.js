@@ -18,7 +18,7 @@ const {
 
 // #2600: the default reasoning effort for an OpenRouter CODING turn when the
 // user has not picked one in Settings. It is 'xhigh' — the top of the scale
-// above, the Opus 5 "max" equivalent — because the models the platform
+// above, the Opus 5.5 "max" equivalent — because the models the platform
 // recommends for coding (GLM 5.3 Flash, DeepSeek v4.1 Flash) are cheap enough
 // per token that thinking longer is the better trade on repository work: a
 // change that lands first time costs less than a cheap one that has to be
