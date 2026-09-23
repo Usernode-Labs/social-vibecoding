@@ -1,7 +1,10 @@
 import { useMemo } from 'react';
 
 import { messageStamp } from '../../lib/timestamp';
+import { decorateRefs } from './channels';
 import type { ConversationUser, SharedObjectCard } from './types';
+
+const NO_CHANNELS: ReadonlySet<string> = new Set();
 
 export function initials(label: string): string {
   return label
@@ -28,13 +31,25 @@ function fallbackMarkdown(value: string): string {
     .replace(/\n/g, '<br>');
 }
 
-export function MessageMarkdown({ content }: { content: string }) {
+/**
+ * A message body: the shared markdown renderer, then its references chipped
+ * (#2783) — `@name`, `#123` and `PR#123` as the app chat draws them, and a
+ * `#name` that names one of the viewer's channels as a link to it. Built on
+ * the sanitized HTML with DOM APIs (./channels.ts `decorateRefs`), never by a
+ * regex over markup.
+ */
+export function MessageMarkdown({ content, channels }: { content: string; channels?: ReadonlySet<string> }) {
   const html = useMemo(() => {
-    if (typeof window !== 'undefined' && window.DevChat?.renderMarkdown) {
-      return window.DevChat.renderMarkdown(content, { breaks: true });
-    }
-    return fallbackMarkdown(content);
-  }, [content]);
+    const rendered = typeof window !== 'undefined' && window.DevChat?.renderMarkdown
+      ? window.DevChat.renderMarkdown(content, { breaks: true })
+      : fallbackMarkdown(content);
+    if (typeof document === 'undefined') return rendered;
+    const root = document.createElement('div');
+    root.innerHTML = rendered;
+    const me = String(window.App?.user?.username || '').toLowerCase();
+    decorateRefs(root, channels || NO_CHANNELS, me);
+    return root.innerHTML;
+  }, [content, channels]);
   return <div className="messages-markdown gc-msg-content" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 

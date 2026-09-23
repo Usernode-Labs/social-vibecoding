@@ -574,6 +574,68 @@ export function init() {
       } catch { return null; }
     };
 
+    // #2796: the draft itself — the title and description someone has typed
+    // but not sent. Closing the dialog is not throwing the words away: the
+    // backdrop, Cancel, the back gesture and a reload all keep them, and only
+    // a send (or a save to the outbox, which owns them from then on) clears
+    // them. localStorage, so a reload keeps them too, and keyed by the viewer
+    // so a shared device never hands one person's words to another.
+    //
+    // One draft per viewer, NOT per app: the dialog files against the app or
+    // the platform, and nothing is chosen until the person picks (#2707), so
+    // a half-written platform report started from one app's screen is still
+    // the same report on another's. The destination is deliberately not part
+    // of the draft for the same reason.
+    const SAVED_DRAFT_KEY_PREFIX = 'usernode.feedbackDraft.';
+    const savedDraftKey = () => {
+      const userId = App?.user?.id;
+      return userId == null ? null : `${SAVED_DRAFT_KEY_PREFIX}${userId}`;
+    };
+    const clearSavedDraft = () => {
+      const key = savedDraftKey();
+      if (!key) return;
+      try { window.localStorage.removeItem(key); } catch { /* ignore */ }
+    };
+    const saveDraft = () => {
+      // A synthetic ?shot= state is not somebody's draft (see onShotRoute),
+      // and a locked composer is showing words that have already been sent.
+      if (onShotRoute() || feedbackText.readOnly) return;
+      const key = savedDraftKey();
+      if (!key) return;
+      const description = feedbackText.value;
+      const title = feedbackTitle.value;
+      if (!description.trim() && !title.trim()) { clearSavedDraft(); return; }
+      try {
+        window.localStorage.setItem(key, JSON.stringify({
+          description,
+          title,
+          titleDirty,
+          // An auto-filled title is only valid for the text it was made
+          // from (#732) — carried so a restored one is not dropped at submit.
+          titleFor: lastGeneratedFor,
+          savedAt: Date.now(),
+        }));
+      } catch { /* private mode or quota — the words are still on screen */ }
+    };
+    const readSavedDraft = () => {
+      if (onShotRoute()) return null;
+      const key = savedDraftKey();
+      if (!key) return null;
+      try {
+        const draft = JSON.parse(window.localStorage.getItem(key) || 'null');
+        if (!draft || typeof draft.description !== 'string') return null;
+        return draft;
+      } catch { return null; }
+    };
+    // Only the draft that was actually sent: words typed into a reopened
+    // dialog while the old request was in flight are a new draft.
+    const forgetSentDraft = (sentDescription) => {
+      const draft = readSavedDraft();
+      if (draft && draft.description.trim() === sentDescription) clearSavedDraft();
+    };
+    feedbackText.addEventListener('input', saveDraft);
+    feedbackTitle.addEventListener('input', saveDraft);
+
     const showFeedbackNotice = (text, isError) => {
       feedbackStatus.textContent = text;
       feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
@@ -983,6 +1045,8 @@ export function init() {
       clearDescriptionError();
       // #1284: safe in the outbox now — the capture stash has nothing to add.
       clearCaptureDraft();
+      // #2796: and the outbox owns the words now, so the saved draft goes too.
+      clearSavedDraft();
       resetTitleGenState();
       resetScreenshotState();
       setComposerLocked(true);
@@ -1173,6 +1237,10 @@ export function init() {
           return;
         }
         const data = await res.json();
+        // #2796: a dismissal while the POST was in flight saved these words
+        // as a draft; they are filed now, so that draft must not come back
+        // (the presentation check below returns before the cleanup does).
+        if (res.ok && submittedBy === App.user?.id) forgetSentDraft(text);
         // An old response must not replace a reopened draft or another
         // account's dialog after sign-out/sign-in.
         if (submittedPresentation !== presentation || submittedBy !== App.user?.id) return;
@@ -1206,6 +1274,8 @@ export function init() {
           clearDescriptionError();
           // #1284: filed — there is nothing left to rescue.
           clearCaptureDraft();
+          // #2796: sent — the only thing that ends a saved draft.
+          clearSavedDraft();
           // Discard any in-flight title preview so it can't repopulate
           // the cleared field during the "Thanks!" grace window.
           resetTitleGenState();
@@ -1347,9 +1417,14 @@ export function init() {
       // A submit the server refused outright (a 400 no amount of retrying can
       // satisfy) is handed back here rather than disappearing: the user's own
       // words, their title and their target, with the reason above them.
-      // #2796: not while a kept draft fills the composer — taking the record
-      // would consume it with nowhere to put it; it waits for an empty open.
-      if (window.FeedbackQueue && !feedbackText.value.trim()) {
+      //
+      // #2796: not while a saved draft is about to be restored below.
+      // takeFailed() removes the record from the outbox, so taking it into a
+      // composer the draft then fills would lose one set of words or the
+      // other; left where it is, it comes back on the first open after that
+      // draft is sent.
+      const saved = readSavedDraft();
+      if (window.FeedbackQueue && !saved) {
         Promise.resolve(window.FeedbackQueue.takeFailed()).then((failed) => {
           const modal = document.getElementById('feedback-modal');
           if (!failed || modal.classList.contains('hidden')) return;
@@ -1385,6 +1460,22 @@ export function init() {
           restoreChosenTarget(rescued.target);
           showFeedbackNotice("The screenshot didn't make it, but your feedback is safe. Here it is again.", false);
           queueLineText = '';
+        }
+      }
+
+      // #2796: the words this viewer typed and closed the dialog on — by the
+      // backdrop, Cancel, back or a reload. Same "empty, editable field only"
+      // rule as the two hand-backs above, and restored silently: this is
+      // simply where they left off. The destination is NOT restored — #2707
+      // leaves that choice to the person every time.
+      if (saved && !feedbackText.readOnly && !feedbackText.value.trim() && !feedbackTitle.value.trim()) {
+        feedbackText.value = saved.description;
+        feedbackTitle.value = typeof saved.title === 'string' ? saved.title : '';
+        titleDirty = saved.titleDirty === true && feedbackTitle.value.trim().length > 0;
+        // A restored auto-filled title stays valid only for the text it was
+        // generated from; any other text falls back to the server's naming.
+        if (!titleDirty && saved.titleFor && saved.titleFor === saved.description.trim()) {
+          lastGeneratedFor = saved.titleFor;
         }
       }
 
@@ -1433,6 +1524,11 @@ export function init() {
       // them, before its grace-window click lands here. In memory only — a
       // reload starts empty, as it always has outside a capture rescue.
       if (!captureInFlight) {
+        // #2796: closing is not discarding — whatever is in the composer is
+        // kept for the next open (saveDraft skips a locked, already-sent one).
+        saveDraft();
+        feedbackText.value = '';
+        feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
         clearDescriptionError();
         resetTitleGenState();

@@ -3087,6 +3087,18 @@ const AppView = {
     AppView._devBodyAbort = devBodyAc;
     const devBodySignal = devBodyAc.signal;
     const bodyEl = document.getElementById('dev-body');
+    // #2847: ANY click on a proposal card — unfolding it in the Workshop,
+    // a pill, the ⋯ menu, a vote button — means the viewer has seen it, so
+    // its "New proposal" nudge clears. Capture phase, because several card
+    // controls stop propagation and the bubbling handler below returns early
+    // for folds and controls. Only marks read; never changes what the click does.
+    bodyEl.addEventListener('click', (e) => {
+      const card = e.target.closest
+        && e.target.closest('[data-proposal-row], [data-shared-session-row], [data-session-chip]');
+      if (!card) return;
+      const id = card.dataset.proposalRow || card.dataset.sharedSessionRow || card.dataset.sessionChip;
+      window.Notifications?.markProposalSeen?.(parseInt(id, 10));
+    }, { capture: true, signal: devBodySignal });
     bodyEl.addEventListener('click', (e) => {
       // #313/#827: the card-level "Explore in dev chat" button is a
       // <button>, so the guard below would swallow it — handle it first,
@@ -3224,6 +3236,11 @@ const AppView = {
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // #2847: arriving at a proposal's page (card tap, deep link, notification
+    // row) is the viewer seeing it — clear its "New proposal" nudge.
+    if (ref.kind === 'proposal' || ref.kind === 'session') {
+      window.Notifications?.markProposalSeen?.(ref.id);
+    }
     // The roster is cached per proposal (see `_loadVoteRoster`, and why it
     // has to be). Arriving here is a fresh read, so mark the entry stale and
     // let the paint below re-read it once — returning to a topic shows the
@@ -3438,6 +3455,7 @@ const AppView = {
       const data = await res.json();
       const row = data.proposal || null;
       if (!row) return null;
+      AppView._overlayPendingVote(row);
       AppView._topicProposal = row;
       // Keep the inline vote/kudos controls in sync so the discussion
       // thread's activity row renders its tally + per-viewer state, just
@@ -5585,11 +5603,18 @@ const AppView = {
     }, 20000);
   },
 
+  // Returns the refresh's promise (or undefined when there is nothing on
+  // screen to refresh), so castVote can tell when its post-vote read landed.
   refreshDevData(kind) {
-    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return;
+    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
+    // #2782: a vote refresh must read data written AFTER the vote. Joining a
+    // load already in flight — the 20s checks poll, another voter's WS
+    // refresh — hands it a snapshot taken before the vote was recorded, and
+    // both the WS refresh and the POST's own refresh used to repaint the
+    // pre-vote tally that way. `fresh` queues a new load behind it instead.
+    const opts = kind === 'vote' ? { fresh: true } : undefined;
     if (App.currentSubTab === 'chat') {
-      AppView.loadVoteState(AppView.appData.slug);
-      return;
+      return AppView.loadVoteState(AppView.appData.slug);
     }
     if (App.currentSubTab === 'topic') {
       // Refresh the header card / roster in place; the mounted thread
@@ -5605,19 +5630,27 @@ const AppView = {
       // watched the tally flicker on a timer while nothing about it changed.
       // The roster now stays on screen until a vote actually moves it.
       if (kind === 'vote' && AppView._devTopic) AppView._invalidateVoteRoster(AppView._devTopic.id);
+      // #2782: re-read the roster now rather than after the whole board load
+      // below (seven requests, GitHub issues among them) — it is the one part
+      // of the page a vote changes, and it has its own endpoint.
+      if (kind === 'vote' && AppView._devTopic && AppView._devTopic.kind === 'proposal') {
+        const open = AppView._findTopicItem();
+        if (open && ['promoted', 'merging'].includes(open.status)) AppView._loadVoteRoster(open.id);
+      }
       // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
       // lists, and a topic the lists do not hold would otherwise repaint
       // from a snapshot frozen when the page opened. It no-ops for every
       // topic the lists do cover.
-      AppView._loadDevData()
+      return AppView._loadDevData(opts)
         .then(() => AppView._refreshTopicOnDemandRow())
         .then(() => AppView._renderTopicHead());
-      return;
     }
-    if (App.currentSubTab !== 'forum') return;
+    if (App.currentSubTab !== 'forum') return undefined;
     // Session rows render inside the board/feed now, so the full-feed
     // reload below covers session_update events too (no separate strip).
-    AppView._loadDevFeed();
+    // A fresh run started first is the one the feed's own load then joins.
+    if (opts) AppView._loadDevData(opts);
+    return AppView._loadDevFeed();
   },
 
   // Fetch the vote snapshot (promoted + merged) that powers the inline
@@ -5636,6 +5669,7 @@ const AppView = {
       // Promoted/merging fill in last so an open PR's live row always
       // wins over its merged snapshot.
       const voteRows = [...(merged || []), ...promoted];
+      promoted.forEach((pr) => AppView._overlayPendingVote(pr));
       AppView.voteState = {
         bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
         byPrNumber: Object.fromEntries(
@@ -5941,9 +5975,14 @@ const AppView = {
   // current state" (a pull-to-refresh, a merge broadcast, a vote), and
   // serving those from a stale snapshot would be a behaviour change nobody
   // asked for. Sharing a run that has not finished yet changes nothing about
-  // freshness — the answer is the same answer.
+  // freshness — the answer is the same answer — EXCEPT for a caller that has
+  // just written something and must read it back (#2782): a run sent before a
+  // vote landed answers with the tally from before it. That caller passes
+  // `fresh` to _loadDevData.
   _devDataInflight: null,
   _devDataInflightFor: null,
+  // #2782: the fresh load waiting in the pager queue, not yet sent — { slug, started, run }.
+  _devDataQueued: null,
 
   // One queue per app visit. A refresh must see the boundary established by
   // an earlier Load more, and a queued Load more must use the refreshed cursor.
@@ -6068,31 +6107,43 @@ const AppView = {
   //
   // `!ok` is still true for null, so the one other caller that reads this
   // (the topic sub-view's fall-back-to-the-board branch) is unchanged.
-  _loadDevData() {
+  //
+  // `opts.fresh` (#2782) declines to join a run already in flight: that run
+  // may have been sent before a write the caller needs to read back (a vote),
+  // and it would answer with the state from before it. The new run queues
+  // behind the old one on the pager, so they never race to publish.
+  _loadDevData(opts = null) {
     if (!AppView.appData) return Promise.resolve(null);
     const slug = AppView.appData.slug;
     const pager = AppView._mergedPagerFor(slug);
     // Join the run already going for this app rather than opening a second
     // set of the same six requests beside it.
-    if (AppView._devDataInflight && AppView._devDataInflightFor === slug) {
+    const fresh = !!(opts && opts.fresh);
+    if (AppView._devDataInflight && AppView._devDataInflightFor === slug && !fresh) {
       return AppView._devDataInflight;
     }
-    const run = AppView._queueMergedOperation(pager, () => AppView._fetchDevData(slug)).then(
-      (ok) => {
-        if (AppView._devDataInflight === run) {
-          AppView._devDataInflight = null;
-          AppView._devDataInflightFor = null;
-        }
-        return ok;
-      },
-      (err) => {
-        if (AppView._devDataInflight === run) {
-          AppView._devDataInflight = null;
-          AppView._devDataInflightFor = null;
-        }
-        throw err;
+    // A fresh load still waiting in the queue has not sent a request yet, so
+    // it is as fresh as a new one would be: a burst of vote_update events
+    // coalesces onto it instead of queueing a run apiece.
+    const queued = AppView._devDataQueued;
+    if (fresh && queued && queued.slug === slug && !queued.started) return queued.run;
+    const entry = { slug, started: false, run: null };
+    const clear = () => {
+      if (AppView._devDataInflight === run) {
+        AppView._devDataInflight = null;
+        AppView._devDataInflightFor = null;
       }
+      if (AppView._devDataQueued === entry) AppView._devDataQueued = null;
+    };
+    const run = AppView._queueMergedOperation(pager, () => {
+      entry.started = true;
+      return AppView._fetchDevData(slug);
+    }).then(
+      (ok) => { clear(); return ok; },
+      (err) => { clear(); throw err; }
     );
+    entry.run = run;
+    if (!entry.started) AppView._devDataQueued = entry;
     AppView._devDataInflight = run;
     AppView._devDataInflightFor = slug;
     return run;
@@ -6200,6 +6251,10 @@ const AppView = {
       const majority = promotedData.majority || 1;
       const activeUsers = promotedData.activeUsers || 1;
       const locked = !!promotedData.locked;
+      // #2782: a vote still on its way to the server survives a snapshot
+      // that was read before it landed — on the board, the proposal page and
+      // the chat's inline rows alike, which all read these row objects.
+      promoted.forEach((pr) => AppView._overlayPendingVote(pr));
 
       // Shared inline-vote snapshot (same shape loadVoteState builds) so
       // the chat view's activity rows stay in sync without a refetch.
@@ -18271,6 +18326,46 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
+  // #2782: votes sent but not yet read back, by session id → { vote, token }.
+  // A dev-data load that was already in flight when the vote was cast answers
+  // with the row as it stood before, and publishing that repainted the vote
+  // away until the next refresh. Every load re-applies these to the rows it
+  // publishes; castVote drops its entry on a refusal, or once the refresh it
+  // started after the server answered has landed.
+  _pendingVotes: new Map(),
+  // The optimistic change to one cached row: the viewer's side and the raw
+  // counts. `qualified_yes_count` is left to the server — whether this voter
+  // qualifies is the invited-approver roster's call, not the client's.
+  _applyVoteToRow(row, vote) {
+    if (!row || row.my_vote === vote) return;
+    const bump = (key, by) => {
+      if (row[key] == null) return;
+      row[key] = Math.max(0, (parseInt(row[key], 10) || 0) + by);
+    };
+    if (row.my_vote === 'yes') bump('yes_count', -1);
+    if (row.my_vote === 'no') bump('no_count', -1);
+    bump(vote === 'yes' ? 'yes_count' : 'no_count', 1);
+    row.my_vote = vote;
+  },
+  _overlayPendingVote(row) {
+    if (!row || row.status === 'merged') return;
+    const held = AppView._pendingVotes.get(Number(row.id));
+    if (held) AppView._applyVoteToRow(row, held.vote);
+  },
+  // The board paints from `#dev-body`; an open proposal page is a sheet
+  // over it with its own header, which that repaint never reached — so on the
+  // page itself a Yes showed nothing until the round-trip and two refetches
+  // had finished. Both now repaint from the same cached row.
+  _repaintAfterVote(sessionId) {
+    AppView._repaintDevBody();
+    const t = AppView._devTopic;
+    if (t && (t.kind === 'proposal' || t.kind === 'session') && Number(t.id) === Number(sessionId)) {
+      AppView._renderTopicHead();
+    }
+    if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+      GroupChat.refreshVoteControls();
+    }
+  },
   // #2038: the epoch each proposal was last seen at, so a rejection can
   // re-arm the next click without waiting on a refetch to land. The old
   // code fired the refresh without awaiting it and released the click lock
@@ -18340,17 +18435,29 @@ const AppView = {
     // setting it and repainting from cache is the whole optimistic step. The
     // server is still the authority: a refused vote puts the old value back
     // and repaints, and every path ends in the usual refetch.
-    const pr = (AppView._proposals || []).find((p) => p.id === sessionId) || null;
-    const prevVote = pr ? pr.my_vote : null;
-    const optimistic = !!pr && prevVote !== vote;
+    //
+    // #2782: the row is looked up the way the proposal PAGE finds it (the
+    // board lists, then the on-demand row a deep link loads), the page's
+    // header is repainted beside the board, and the vote is held as pending
+    // so a load that was already in flight cannot paint it away.
+    const pr = AppView._findItem('proposal', sessionId);
+    const prevRow = pr ? { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count } : null;
+    const optimistic = !!pr && pr.my_vote !== vote;
+    const token = {};
+    AppView._pendingVotes.set(Number(sessionId), { vote, token });
     if (optimistic) {
-      pr.my_vote = vote;
-      AppView._repaintDevBody();
+      AppView._applyVoteToRow(pr, vote);
+      AppView._repaintAfterVote(sessionId);
     }
+    const settle = () => {
+      const held = AppView._pendingVotes.get(Number(sessionId));
+      if (held && held.token === token) AppView._pendingVotes.delete(Number(sessionId));
+    };
     const rollback = () => {
+      settle();
       if (optimistic && pr.my_vote === vote) {
-        pr.my_vote = prevVote;
-        AppView._repaintDevBody();
+        Object.assign(pr, prevRow);
+        AppView._repaintAfterVote(sessionId);
       }
     };
     try {
@@ -18380,7 +18487,9 @@ const AppView = {
         return;
       }
       AppView._seenEpoch.delete(sessionId);
-      AppView.refreshDevData('vote');
+      // The overlay stays until the post-vote read has landed: a load queued
+      // ahead of it still publishes the pre-vote row first.
+      Promise.resolve(AppView.refreshDevData('vote')).then(settle, settle);
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.

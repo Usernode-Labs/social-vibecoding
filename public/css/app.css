@@ -816,6 +816,26 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-markdown a { color: var(--accent); text-decoration: underline; }
 
+/* A CONTINUATION LINE (#2783): the same person again, close behind their
+   last message. No avatar and no name — the time of day sits in the 36px
+   column the avatar would, muted, and only on hover (always on touch), which
+   is Discord's arrangement. */
+.messages-message-grouped { padding-top: 1px; padding-bottom: 1px; }
+.messages-message-gutter {
+  flex: 0 0 36px;
+  width: 36px;
+  padding-top: 4px;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  visibility: hidden;
+}
+.messages-message-grouped:hover .messages-message-gutter { visibility: visible; }
+@media (hover: none) {
+  .messages-message-gutter { visibility: visible; }
+}
+
 /* ── The bubble transcript (a direct conversation) ───────────────────────
    Two participants, one of them you, so side and surface say who is
    speaking and no name is drawn. Theirs is an opaque white bubble on the
@@ -1242,6 +1262,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-mention-menu button { display: block; width: 100%; padding: 9px 12px; border-radius: 10px; color: var(--text-primary); font-size: 15px; text-align: left; }
 .messages-mention-menu button:hover { background: var(--messages-surface-2); }
+.messages-mention-menu .messages-channel-option-name { color: var(--text-muted); font-size: 13px; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay {
   position: absolute;
@@ -2143,6 +2164,22 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   display: flex !important;
 }
 
+/* ONE PANE OF GLASS, NOT TWO (#2825). The kit's sheet, panel and modal are
+   already frosted in the shell (`--dc-frost`, the "Shell-only frosted kit
+   surfaces" block). The panels that ride inside them — the Homeroom menu and
+   the notifications sheet wear `.dc-lift-panel` — kept their OWN
+   `backdrop-filter` when adopted: `background: transparent` above cleared the
+   fill but not the filter, so the panel re-frosted the already-frosted sheet
+   behind it and read as a second, whiter box inset by the sheet's padding —
+   the "extra white box around pop up dialogs". The kit shell is the only
+   surface; the content sits straight on it. */
+.platform-sheet-adopted,
+.platform-panel-adopted,
+.un-modal .platform-modal-card {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 /* ── The nav surfaces grow further, and keep their scroller ────────────
    The 70vh above is right for a kit sheet that is a DIALOG — a form, a
    confirm, a short list. The four navigation surfaces are not: the Improve
@@ -2962,6 +2999,21 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* …AND OVER AN APP'S OWN WORKSHOP (#2806). The exclusion above is about the
+   APP: its page colour is under the bar, and the bar takes that tone instead.
+   An app's Workshop tab (board, sessions, a discussion) is not the app, it is
+   the platform's own page about it — `data-app-surface="platform"`, set by
+   AppView._setSurface for everything the shell renders into #app-content —
+   and with the frame parked there is no app tone either (toneForState answers
+   null). So it is the same chrome as the standalone Workshop screen and wears
+   the same glass; left clear, the bar went bare on exactly those pages and
+   nowhere else. A separate rule, not a widened selector: the one above is
+   pinned to exclude #app-view, because a running app must stay clear. */
+body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
    beneath a night one: the bar has no surface inside an app, so the
@@ -2978,9 +3030,10 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 
    SCOPED TO THE BAR AND THE SHEET, deliberately, rather than to <html>.
    The theme is still the shell's: `.dark` on <html> is the theme module's
-   alone, every `dark:` utility keeps reading it, and a sheet or dialog
-   opened from the bar over a dark app is still drawn in the viewer's own
-   mode — the tone is the STRIP's, not the page's. Custom properties
+   alone and every `dark:` utility keeps reading it. The sheets, dialogs and
+   menus opened over a dark app follow its tone too since #2803, but by
+   carrying `.dark` themselves (lib/surface-tone.ts, and the
+   `.platform-app-tone-dark` rule below), not through these tokens. Custom properties
    inherit, so setting them on the two elements reaches every control and
    edge inside them and nothing outside. The chip's subtitle is the one
    control drawn with a `dark:` utility rather than a brand token, so it is
@@ -3011,10 +3064,9 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
    carried anyway, so the ramp is complete and a later divergence cannot
    quietly reopen the split.
 
-   STILL SCOPED TO THE BAR AND THE SHEET, and still never to <html>. A sheet
-   or dialog opened from the bar is drawn in the viewer's own mode exactly as
-   before, because the tone is the STRIP's and not the page's. This widens
-   what the strip repaints; it does not widen what the strip is. */
+   STILL SCOPED TO THE BAR AND THE SHEET, and still never to <html>. This
+   widens what the strip repaints; it does not widen what the strip is. The
+   floating surfaces are the next block's job. */
 [data-app-tone="dark"]:not(.dark) #platform-header,
 [data-app-tone="dark"]:not(.dark) #app-frame-host {
   color: #eaeaea; /* zinc-100, the body's dark ink */
@@ -3076,6 +3128,30 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 }
 .dark[data-app-tone="light"] #platform-header #app-switcher-subtitle {
   color: #68686c; /* zinc-500 */
+}
+/* AND WHAT OPENS OVER A DARK APP IS DARK TOO (#2803). This used to be the
+   one thing the tone left alone: every sheet, dialog and menu kept the
+   viewer's own mode, so Send feedback and the Homeroom menu opened as cream
+   cards over a night-black app under a bar that had already gone dark. They
+   follow the app now. lib/surface-tone.ts puts `.dark` on each kit shell
+   (modal, sheet, panel, action sheet, popover, alert) and on the two in-tree
+   sheets while `data-app-tone="dark"` holds under the light shell, marked
+   with this class so it only removes its own. `.dark` is all the palette
+   needs — the token blocks here and in native.css are plain `.dark { … }`
+   and `dark:` utilities compile to `.dark .dark\:…` — so a toned surface is
+   drawn exactly as it is under the dark shell.
+
+   The one thing `.dark` on the surface cannot carry is the INK: the body's is
+   `text-zinc-900 dark:text-zinc-100`, keyed on <html>, and these shells
+   inherit it from <body>. So it is set here, the same literal the bar's tone
+   uses. `:where()` keeps this at zero specificity: a kit rule that inks its
+   own surface from a token still wins, and reads the dark token anyway.
+
+   A light app under the dark shell is out of scope, as the request says:
+   that direction would need `.dark` taken AWAY below a dark <html>. */
+:where(.platform-app-tone-dark) {
+  color: #eaeaea; /* zinc-100, the body's dark ink */
+  color-scheme: dark;
 }
 /* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
    set inline in the head (frontend/src/head.html) so the first paint is
@@ -5135,7 +5211,6 @@ body:has(#platform-header.hidden) #app-frame-host {
   transition: background 300ms;
 }
 
-.dc-pr-card-highlight { background: rgba(31, 134, 255, 0.2); }
 .dc-pr-card-header { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
 .dc-pr-link { font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
@@ -7664,6 +7739,26 @@ span.gc-vote-btn-icon { cursor: default; }
   .gc-ref:hover { filter: brightness(1.15); text-decoration: underline; }
 }
 
+/* #2783: a `#name` channel reference. A real link (`#messages/channel/<name>`),
+   not a role="link" span, because it navigates somewhere a plain anchor can
+   go — and the accent's tint rather than either ref colour, so a channel
+   never reads as an issue or a PR. Deliberately NOT `.gc-ref`: the app
+   chat's click handler sends every `.gc-ref` to the activity drawer. */
+.gc-channel-ref {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--accent);
+  background: var(--accent-tint, rgba(31, 134, 255, 0.12));
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .gc-channel-ref:hover { text-decoration: underline; }
+}
+
 .gc-msg-system {
   padding: 4px 12px;
   font-size: 11px;
@@ -7779,10 +7874,16 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background-color: var(--dc-raised);
   background-image: linear-gradient(var(--accent-tint), var(--accent-tint));
 }
-/* Your own row runs right to left, so the hover react disc — absolute at the
-   row's top-right for every other row — would land on your name there. It
-   crosses to the side your row leaves empty. */
-#gc-messages .gc-msg-self .gc-react-add { right: auto; left: 6px; }
+/* (#2783) A grouped continuation line's clock, in the avatar's column: shown
+   on hover, as Discord does, and always on touch where there is no hover. */
+.gc-msg[data-grouped] .gc-msg-gutter-time { visibility: hidden; }
+.gc-msg[data-grouped]:hover .gc-msg-gutter-time { visibility: visible; }
+@media (hover: none) {
+  .gc-msg[data-grouped] .gc-msg-gutter-time { visibility: visible; }
+}
+/* (#2783) Your own row no longer runs right to left — every row is the same
+   named row now — so the hover react disc stays at the top-right for yours
+   too, and the override that moved it is gone. */
 
 .gc-quote-pr { cursor: pointer; }
 @media (hover: hover) {
@@ -8989,9 +9090,16 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   transition: transform 200ms ease-out, box-shadow 200ms ease-out,
     opacity 0s linear 200ms, visibility 0s linear 200ms;
 }
+/* A VIEWPORT OF OVERSCAN above and below (#2822). With the on-screen keyboard
+   up, iOS pans the visual viewport inside the layout one, and the band on
+   screen is not reliably inside this fixed box: the dim stopped short of it —
+   the bottom once (#2765), the top after that. lib/overlay-scrim.js measures
+   this layer and cuts the hole relative to it, so however far it reaches, the
+   cutout still lands on the dialog; the extra reach only guarantees there is
+   dim wherever the screen has been panned to. Nothing hit-tests it. */
 .overlay-scrim {
   position: fixed;
-  inset: 0;
+  inset: -100vh 0;
   pointer-events: none;
   visibility: hidden;
   background: var(--pane-scrim);
@@ -12895,17 +13003,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   gap: 4px;
   max-width: 900px;
   margin: 0 auto;
-}
-.dev-change-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 14px;
-  flex-shrink: 0;
-}
-.dev-change-tabs [aria-pressed="true"] {
-  background: var(--dc-sheet-fill);
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
 .dev-change-overview {
   flex: 1;
@@ -16951,40 +17048,91 @@ html.un-kb #platform-parked {
   box-shadow: inset 0 0 0 1px var(--brand-line);
 }
 
-/* WHAT STARTS SOMETHING, under the strip and answering to it. Two buttons
-   share the row under All and one takes it alone elsewhere, so both are
-   `flex: 1` — the split is even by construction rather than by a width
-   either of them carries. */
-.messages-compose {
-  display: flex;
+/* WHAT STARTS SOMETHING, at the strip's trailing end (#2778): one "+"
+   that opens a small popover of three choices rather than a row of buttons
+   under the strip. It sits on the track's own height and ground, so it reads
+   as part of the strip rather than as a second control beside it. */
+.messages-filters { align-items: center; gap: 8px; }
+/* Four segments and the "+" on one line inside the 22rem list pane: the
+   segments give up some of their side padding to make room for the disc. */
+.messages-filters .messages-filter { padding: 0 11px; }
+.messages-new-btn {
   flex: 0 0 auto;
-  gap: 8px;
-  padding: 0 16px 10px;
-}
-.messages-compose-btn {
-  flex: 1 1 0;
-  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 12px;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--brand-line);
-  border-radius: 999px;
+  border-radius: 9999px;
   background: var(--brand-tint);
   color: var(--brand-ink);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.messages-compose-btn > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.messages-new-btn svg { width: 18px; height: 18px; stroke-width: 2; }
+.messages-new-btn[aria-expanded="true"] { background: var(--brand-ink); color: var(--bg-primary); }
+/* The popover: the vote picker's frame (.dev-vote-pop) — body-mounted,
+   fixed, placed from the button's rect by lib/anchor-popover.ts. */
+.messages-new-pop {
+  position: fixed;
+  z-index: 2000;
+  width: 240px;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.messages-new-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.messages-new-option:hover, .messages-new-option:focus-visible { background: var(--bg-tertiary); outline: none; }
+.messages-new-option svg { flex: 0 0 auto; width: 20px; height: 20px; color: var(--brand-ink); }
+.messages-new-option-label { display: block; font-size: 14px; font-weight: 600; }
+.messages-new-option-hint { display: block; font-size: 12px; color: var(--text-muted); }
+
+/* THE SECTION HEADS (#2783): "Chats" over the people and agents, "Channels"
+   over #general and the apps — Discord's two headings, small and muted so
+   they divide the list without competing with its rows. */
+.messages-section-head {
+  margin: 0;
+  padding: 12px 16px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* A channel's tile is the `#` it is named with. */
+.messages-channel-tile {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 22px;
+  font-weight: 700;
+}
+.messages-thread-channel-tile { width: 36px; height: 36px; font-size: 18px; }
+/* An app channel's handle, muted after its name. */
+.messages-channel-handle {
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 /* THE KIND MARK. People get none — they are the overwhelming majority of an
@@ -17113,4 +17261,154 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .platform-tabs.platform-tabs-peek,
   body:has(#platform-tabs.platform-tabs-peek) .platform-parked { animation: none; }
+}
+
+/* ── #platform-side-panel — THE PANEL BESIDE A RUNNING APP ───────────────
+   On a desktop-width window, while an app runs on its App tab, the pages
+   about it (its Workshop, its discussion, a proposal, an issue, a change, a
+   conversation) open in a panel beside it rather than replacing it —
+   frontend/src/features/side-panel/, whose controller carries the why.
+
+   THE APP IS NEVER RE-PARENTED, HIDDEN OR RE-SOURCED: its frame lives in
+   #app-view, and the only thing that changes about #app-view is its SIZE — a
+   right margin the width of the panel, keyed off `<html data-side-panel>`,
+   which the panel's mount writes while the panel is on screen. <html> is not
+   React-owned (main.tsx hydrates <body>), and a margin on a flex item is a
+   resize, which an iframe survives with its document intact.
+
+   THE BREAKPOINT IS 1024px, not the rail's 768. The panel is
+   clamp(360px, 36vw, 560px) wide and the app keeps about 480px beside it; at
+   768px the app would be left 408, and 1024 (`lg`, used above already) is the
+   first breakpoint where both fit — 655px of app at the narrowest. Below it
+   the panel is not drawn and the app takes the width back, so a window that
+   shrinks while the panel is open simply hides it, navigating nothing; every
+   link below the breakpoint navigates as it always has (the controller's
+   DESKTOP_QUERY is the same figure). */
+:root {
+  --side-panel-w: clamp(360px, 36vw, 560px);
+}
+
+.side-panel {
+  /* From the top of the app's sheet to the floor, down the right edge. The
+     same arithmetic the rail uses for "under the header", less the half rem
+     the header's rounded lower edge overlaps the screen below it — which is
+     where #app-view, and so the app's sheet, begins. */
+  position: fixed;
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
+    + var(--platform-safe-top, 0px) - .5rem);
+  right: 0;
+  bottom: 0;
+  width: var(--side-panel-w);
+  /* Over the app view and the header's transparent lower edge, under every
+     sheet, menu and rail (30 and up). */
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  /* THE APP'S SHEET, CONTINUED. The running app arrives as a raised sheet with
+     a rounded top and a hairline (see "THE APP SHEET" above); the panel is the
+     rest of that sheet, split from it by one hairline, and it takes the
+     sheet's outer corner — the app's own top-right corner goes square while
+     the panel is up (below). */
+  background: var(--home-ground);
+  border-top: 1px solid var(--app-sheet-line);
+  border-left: 1px solid var(--app-sheet-line);
+  border-top-right-radius: 1.75rem;
+  overflow: hidden;
+}
+
+.side-panel-head {
+  /* Back · title · Expand · Close, in the header's own disc controls. */
+  height: 3rem;
+  padding: 0 0.875rem 0 0.75rem;
+  border-bottom: 1px solid var(--app-sheet-line);
+}
+/* Back's display, which its className cannot carry beside the `hidden` it
+   ships with (see side-panel.tsx). Keyed on NOT hidden, so the utility still
+   hides it whenever there is nowhere for it to go. */
+.side-panel-head > #side-panel-back:not(.hidden) {
+  display: inline-flex;
+}
+
+.side-panel-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The panel's own document. Transparent until it has routed its first page —
+   a shell booting in a frame paints its boot screen first — with the spinner
+   behind it; then it fades in once and stays. */
+.side-panel-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.side-panel-frame-ready {
+  opacity: 1;
+}
+.side-panel-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.side-panel-spinner {
+  width: 20px;
+  height: 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side-panel-frame { transition: none; }
+}
+
+@media (max-width: 1023.98px) {
+  /* Below the breakpoint the panel is not drawn at all, and the rules below
+     do not apply, so the app has the whole window back. */
+  #platform-side-panel {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  html[data-side-panel] #app-view {
+    margin-right: var(--side-panel-w);
+    min-width: 480px;
+  }
+  html[data-side-panel] #app-frame-host {
+    border-top-right-radius: 0;
+  }
+}
+
+/* ── THE SIDE PANEL'S OWN DOCUMENT (`?panel=1`) ──────────────────────────
+   The platform, framed beside a running app, showing one page: no header,
+   no tab bar or rail, no parked strip, no banners — the top window has all
+   of those — and none of the space they reserve. `in-side-panel` is put on
+   <html> by head.html before the first paint, and only when the document is
+   framed by a same-origin top window (a `?panel=1` address opened on its own
+   is the ordinary platform). The frame is narrow, so every screen takes its
+   phone layout, which is the point: the panel is a phone-width column. */
+html.in-side-panel :is(#platform-header, #platform-tabs, #platform-rail-peek,
+    #platform-parked, #chromeless-pill, #offline-banner, #mobile-install-banner,
+    #view-as-non-admin-banner, #platform-side-panel) {
+  display: none !important;
+}
+html.in-side-panel {
+  /* Nothing sits above a screen here, so nothing measured from the header's
+     foot (the Workshop's fitted area, a sheet's cap) reserves its 52px. */
+  --platform-header-h: 0px;
+}
+html.in-side-panel body {
+  /* The bar's band, its parked-strip addition and the rail's width, all nil —
+     !important because the rules that reserve them key off the bar's own
+     visibility, which the router publishes only once it has routed. */
+  --platform-tabs-h: 0px !important;
+  --platform-bar-h: 0px !important;
+  --platform-rail-w: 0px !important;
 }

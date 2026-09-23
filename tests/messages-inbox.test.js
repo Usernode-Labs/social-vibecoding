@@ -20,6 +20,10 @@
 //      reason to exist; a second request must not be able to blank it.
 //   5. MEMBERSHIP, NOT VISIBILITY. A public app you have never joined is
 //      something to go and read, not something in your messages.
+//
+// #2783 sections the list the way Discord does: the CHATS (people and
+// agents) on the one clock, then the CHANNELS — #general, then one per app
+// the viewer is a member of, including one nobody has spoken in yet.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -38,14 +42,24 @@ const inbox = loadTsx('frontend/src/features/messages/inbox.ts');
 
 const at = (iso) => iso;
 
-test('one clock orders all three kinds', () => {
+test('one clock orders the chats, and the channels follow as their own section', () => {
   const merged = inbox.buildInbox({
-    conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }],
-    discussions: [{ slug: 'notes', lastAt: at('2026-01-03T00:00:00Z') }],
+    conversations: [
+      { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
+      { id: 9, kind: 'channel', lastActivityAt: at('2026-01-09T00:00:00Z') },
+    ],
+    discussions: [
+      { slug: 'quiet', lastAt: null },
+      { slug: 'notes', lastAt: at('2026-01-03T00:00:00Z') },
+    ],
     agents: [{ id: 'a1', updatedAt: at('2026-01-01T00:00:00Z') }],
     filter: 'all',
   });
-  assert.deepEqual(merged.map((e) => e.key), ['app:notes', 'person:1', 'agent:a1']);
+  // A channel with newer activity does not jump over a DM: it is a room you
+  // visit, not a conversation waiting on you. #general leads the channels,
+  // then the apps newest first, and one nobody has spoken in sits last.
+  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1', 'channel:9', 'app:notes', 'app:quiet']);
+  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats', 'channels', 'channels', 'channels']);
 });
 
 test('a row with no timestamp sorts last, not first', () => {
@@ -72,15 +86,25 @@ test('an agent chat falls back to when it was created', () => {
 });
 
 test('each filter admits exactly its own kind, and All admits every one', () => {
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'apps', 'agents']);
-  for (const kind of ['person', 'app', 'agent']) {
+  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'channels', 'agents']);
+  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['All', 'People', 'Channels', 'Agents'],
+    '"Apps" is "Channels" now (#2783)');
+  for (const kind of ['person', 'channel', 'app', 'agent']) {
     assert.equal(inbox.admits('all', kind), true, `all admits ${kind}`);
   }
   assert.equal(inbox.admits('people', 'person'), true);
   assert.equal(inbox.admits('people', 'app'), false);
-  assert.equal(inbox.admits('apps', 'app'), true);
+  assert.equal(inbox.admits('people', 'channel'), false, '#general is not a person');
+  assert.equal(inbox.admits('channels', 'app'), true);
+  assert.equal(inbox.admits('channels', 'channel'), true);
+  assert.equal(inbox.admits('channels', 'person'), false);
   assert.equal(inbox.admits('agents', 'agent'), true);
   assert.equal(inbox.admits('agents', 'person'), false);
+  const channelsOnly = inbox.buildInbox({
+    conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }, { id: 9, kind: 'channel', lastActivityAt: null }],
+    discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'channels',
+  });
+  assert.deepEqual(channelsOnly.map((e) => e.key), ['channel:9', 'app:notes']);
 });
 
 test('agent chats are read, not copied', () => {
@@ -106,31 +130,56 @@ test('the discussions read fails quietly', () => {
   assert.doesNotMatch(body, /publish\(\{ error/, 'it never blanks the conversations');
 });
 
-test('what starts something sits under the strip, and says which kind', () => {
-  // It was a disc beside the title, then a disc at the far end of the filter
-  // row. Both were ONE control for an inbox that holds THREE kinds: it
-  // opened the people dialog on the Agents tab as readily as on People.
-  //
-  // Under the strip, per tab, it can name what it does (#2718 review).
-  assert.ok(!SCREEN.includes('messages-new-button'), 'the disc is retired');
+test('the "+" is back at the strip\'s trailing end, and opens a choice rather than guessing (#2778)', () => {
+  // It was a disc at the far end of the filter row, taken off in #2718's
+  // review because ONE control could only mean one of the things the inbox
+  // holds. It comes back as a popover of three choices: DM, group, agent.
   const filters = SCREEN.slice(SCREEN.indexOf('function InboxFilters'));
-  assert.doesNotMatch(filters.slice(0, filters.indexOf('\n}\n')), /id="messages-new"/,
-    'the filter row narrows and does nothing else');
+  const body = filters.slice(0, filters.indexOf('\n}\n'));
+  assert.ok(body.indexOf('messages-filter-track') < body.indexOf('<NewMessageButton />'),
+    'the plus sits after the track, to the right of the filters');
+  assert.ok(!SCREEN.includes('function InboxCompose'), 'the row of compose buttons under the strip is gone');
+  assert.ok(!SCREEN.includes('id="messages-new-agent"'));
 
-  const compose = SCREEN.slice(SCREEN.indexOf('function InboxCompose'));
-  const body = compose.slice(0, compose.indexOf('\n}\n'));
-  assert.match(body, /const people = filter === 'all' \|\| filter === 'people';/);
-  assert.match(body, /const agent = agentsOn && \(filter === 'all' \|\| filter === 'agents'\);/);
-  // APPS OFFERS NOTHING, which is the honest answer: an app's discussion is
-  // the app's and exists already, so there is nothing here to start.
-  assert.match(body, /if \(!people && !agent\) return null;/);
-  assert.match(body, /id="messages-new"[\s\S]{0,300}messagesCreate/,
-    'the people half opens the same dialog it always did');
-  assert.match(body, /id="messages-new-agent"[\s\S]{0,300}startNewGlobalChat\(\)/,
-    'and the agent half starts a durable chat, the way Improve\'s own New chat does');
-  // BOTH ARE `flex: 1`, so All splits the row evenly by construction rather
-  // than by a width either of them carries.
-  assert.match(read('public/css/app.css'), /\.messages-compose-btn \{[\s\S]{0,200}flex: 1 1 0;/);
+  const button = SCREEN.slice(SCREEN.indexOf('function NewMessageButton'));
+  const fn = button.slice(0, button.indexOf('\n}\n'));
+  assert.match(fn, /id="messages-new"/);
+  assert.match(fn, /aria-haspopup="menu"/);
+  // THE VOTE POPUP'S MECHANICS, shared rather than copied: placement from
+  // the button's rect, dismissal on outside click / Escape / scroll / resize.
+  assert.match(fn, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
+  assert.match(fn, /placeUnderAnchor\(rect, \{ width: 240, height: 164 \}/);
+  assert.match(fn, /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');
+  assert.match(fn, /role="menu"/);
+  assert.match(fn, /pu\.actionSheet\(\{/, 'a phone gets the kit\'s action sheet');
+  const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.match(card, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/, 'the vote picker reads the same helper');
+  assert.match(card, /placeUnderAnchor\(rect, \{ width: w, height: h \}/);
+
+  assert.match(SCREEN, /\{ key: 'direct', label: 'Direct message'/);
+  assert.match(SCREEN, /\{ key: 'group', label: 'Group chat'/);
+  assert.match(SCREEN, /\{ key: 'agent', label: 'Agent chat'/);
+  const start = SCREEN.slice(SCREEN.indexOf('function startNew'));
+  const starter = start.slice(0, start.indexOf('\n}\n'));
+  assert.match(starter, /if \(choice === 'agent'\) openDialog\('messagesAgent'\);/,
+    'Agent asks which app first');
+  assert.match(starter, /else openDialog\('messagesCreate', choice\);/,
+    'DM and group open the create flow on the matching tab');
+  const create = read('frontend/src/features/messages/create-dialog.tsx');
+  assert.match(create, /setMode\(tab === 'group' \? 'group' : 'direct'\)/);
+});
+
+test('Agent chat picks one of the viewer\'s apps and opens a new dev session there', () => {
+  const dialog = read('frontend/src/features/messages/agent-dialog.tsx');
+  assert.match(dialog, /id="messages-agent-dialog"/);
+  assert.match(dialog, /useDialog\('messagesAgent'/);
+  assert.match(dialog, /snap\.discussions/, 'the apps are the channels already loaded — no second list to disagree');
+  assert.match(dialog, /Improve\.startSessionFor\(slug\)/);
+  const improve = read('frontend/src/features/improve/improve-controller.js');
+  const fn = improve.slice(improve.indexOf('async startSessionFor(slug)'));
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  assert.match(body, /Improve\._nextSessionOrigin = '#messages';/, 'back goes up to Messages');
+  assert.match(body, /navigateToApp\(slug, 'dev', ref, 'sessions'\)/, 'straight to /dev/sessions/new');
 });
 
 test('the endpoint is members-only, newest first, one row per app', () => {
@@ -143,7 +192,11 @@ test('the endpoint is members-only, newest first, one row per app', () => {
     'the id tiebreak matters: created_at defaults to NOW() and two messages '
     + 'in one transaction share it');
   assert.match(ROUTE, /WHERE m\.thread_type IS NULL/, 'the general thread, not a card’s');
-  assert.match(ROUTE, /ORDER BY latest\.created_at DESC/, 'newest first');
+  // #2783: EVERY app the viewer is in is a channel, including one nobody has
+  // spoken in — so the latest message is joined optionally, and those sort
+  // after the ones with activity.
+  assert.match(ROUTE, /LEFT JOIN latest ON latest\.app_id = mine\.id/);
+  assert.match(ROUTE, /ORDER BY latest\.created_at DESC NULLS LAST/, 'newest first, silent last');
   // No unread count, and its absence is honest: chat_messages has no
   // per-viewer read cursor, so a number here would be invented. Comments
   // stripped first — the file SAYS why there is none, and a prose match for
@@ -158,20 +211,30 @@ test('the route is registered after the workshop one', () => {
   assert.match(server, /app\.use\(messagesOverviewRoutes\(config\)\);/);
 });
 
-test('the filter row ships in the prerendered document', () => {
+test('the filter row ships in the prerendered document, with the plus at its end', () => {
   for (const id of ['messages-filters', 'messages-filter-all', 'messages-filter-people',
-    'messages-filter-apps', 'messages-filter-agents', 'messages-new']) {
+    'messages-filter-channels', 'messages-filter-agents', 'messages-new']) {
     assert.ok(HTML.includes(`id="${id}"`), `#${id} is in the shipped shell`);
   }
+  for (const id of ['messages-filter-apps', 'messages-compose', 'messages-new-agent']) {
+    assert.ok(!HTML.includes(`id="${id}"`), `#${id} is retired`);
+  }
+  assert.match(HTML, /id="messages-filter-agents"[^<]*>Agents<\/button><\/div><button[^>]*id="messages-new"/,
+    'the plus is inside the strip, right after the track');
+  assert.ok(!HTML.includes('id="messages-new-menu"'), 'the popover renders only when pressed');
   assert.ok(!HTML.includes('id="messages-filter-empty"'),
     'the narrowed-to-nothing note is not, because nothing has narrowed');
 });
 
-test('one row shape per kind, and only two of them wear a pill', () => {
-  assert.match(SCREEN, /function AppDiscussionRow/);
+test('one row shape per kind; the channels are headed rather than pilled', () => {
+  assert.match(SCREEN, /function GeneralChannelRow/);
+  assert.match(SCREEN, /function AppChannelRow/);
   assert.match(SCREEN, /function AgentChatRow/);
-  assert.match(SCREEN, /<KindPill kind="app" \/>/);
-  assert.match(SCREEN, /<KindPill kind="agent" \/>/);
+  assert.doesNotMatch(SCREEN, /<KindPill kind="app" \/>/, 'a section heading says it once');
+  assert.match(SCREEN, /<KindPill kind="agent" \/>/, 'an agent among the people still says so');
+  assert.match(SCREEN, /chats: 'Chats',\s*channels: 'Channels',/);
+  assert.match(SCREEN, /snap\.filter === 'all' && \(i === 0 \|\| shown\[i - 1\]\.section !== entry\.section\)/,
+    'a heading over each section, under All only');
   const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('function KindPill'));
   assert.doesNotMatch(conversationRow, /KindPill/,
     'a person gets none: they are the majority, and a pill on every row says nothing');
@@ -189,7 +252,7 @@ test('the inbox initialises the global-chat bootstrap it reads', () => {
   // `removeGlobalChatThread` joined them when the Improve panel retired: its
   // list of these chats was the only surface that offered the delete, so the
   // delete came to this one rather than going away (#2718 review).
-  assert.match(SCREEN, /import \{ initializeGlobalChat, removeGlobalChatThread, startNewGlobalChat, useGlobalChatState \}/);
+  assert.match(SCREEN, /import \{ initializeGlobalChat, removeGlobalChatThread, useGlobalChatState \}/);
   const screen = SCREEN.slice(SCREEN.indexOf('export function MessagesScreen'));
   assert.match(screen, /void initializeGlobalChat\(\);/);
   // The same shape the button uses: a boot-time 401 is expected before
@@ -212,7 +275,7 @@ test('a change sorts on the same clock and files under Agents', () => {
   assert.deepEqual(merged.map((e) => e.key), ['session:s7', 'person:1', 'agent:a1']);
   assert.equal(inbox.admits('agents', 'session'), true, 'Agents admits a change');
   assert.equal(inbox.admits('people', 'session'), false);
-  assert.equal(inbox.admits('apps', 'session'), false);
+  assert.equal(inbox.admits('channels', 'session'), false);
   const agentsOnly = inbox.buildInbox({
     conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }],
     discussions: [], agents: [], sessions: [{ key: 's7', lastActivityAt: null }],
@@ -234,4 +297,70 @@ test('changes are read from the Improve store, drawn by SessionRow, and not gate
   assert.match(SCREEN, /Improve\.enterSessionFrom\('#messages'\)/,
     'and records Messages as where it hangs off');
   assert.doesNotMatch(STORE, /sessions:/, 'and this store holds no second copy of that list');
+});
+
+// ── Channels as things a message can name (#2783) ─────────────────────
+
+const channels = loadTsx('frontend/src/features/messages/channels.ts');
+const overview = require('../src/routes/messages-overview');
+
+test('#general and the viewer\'s apps are the channel directory, #general first', () => {
+  const list = channels.channelDirectory(
+    [{ id: 3, kind: 'direct', title: 'ada' }, { id: 7, kind: 'channel', title: 'general', channelKey: 'general' }],
+    [{ slug: 'recipe-ab12', name: 'Recipe Box', channel: 'recipe-box' }, { slug: 'Odd_Slug', name: '42' }],
+  );
+  assert.deepEqual(list.map((c) => [c.handle, c.target]), [
+    ['general', '#messages/7'],
+    ['recipe-box', '#messages/app/recipe-ab12'],
+  ], 'a handle must start with a letter, so an app whose only name is a number has none to be named by');
+  assert.equal(channels.channelHref('general'), '#messages/channel/general');
+});
+
+test('#name is a channel only when the viewer has one; #123 stays an issue and PR#123 a PR', () => {
+  const known = new Set(['general', 'recipe-box']);
+  const segs = channels.tokenizeRefs('see #general and #recipe-box, not #todo — #123 and PR#9 @ada', known);
+  assert.deepEqual(segs.filter((s) => s.type !== 'text'), [
+    { type: 'channel', handle: 'general' },
+    { type: 'channel', handle: 'recipe-box' },
+    { type: 'ref', isPr: false, num: '123' },
+    { type: 'ref', isPr: true, num: '9' },
+    { type: 'mention', name: 'ada' },
+  ]);
+  assert.equal(segs.map((s) => s.value || '').join('').includes('#todo'), true, 'an unknown #word is left as text');
+  assert.deepEqual(channels.tokenizeRefs('x#general', known), [{ type: 'text', value: 'x#general' }],
+    'not inside a word');
+});
+
+test('the app chat chips the same channels, as a link and not as a drawer ref', () => {
+  const gc = read('public/js/group-chat.js');
+  assert.match(gc, /window\.UsernodeReact\?\.messages\?\.channels\?\.\(\)/, 'it reads the Messages store\'s directory');
+  assert.match(gc, /link\.className = 'gc-channel-ref';/);
+  assert.match(gc, /`#messages\/channel\/\$\{seg\.handle\}`/);
+  assert.doesNotMatch(gc, /gc-ref gc-ref-channel/, 'never `.gc-ref`, which the chat sends to the activity drawer');
+  const app = read('public/js/app.js');
+  assert.match(app, /parts\[1\] === 'channel'[\s\S]{0,160}openChannel\?\.\(parts\[2\] \|\| ''\)/);
+  assert.match(STORE, /export function openChannel\(raw: string\): void/);
+  assert.match(STORE, /window\.location\.replace\(found\.target\)/, 'the link\'s own history entry is replaced');
+});
+
+test('an app\'s channel handle is its name folded, unique within the viewer\'s list', () => {
+  assert.equal(overview.channelHandle('Recipe Box!'), 'recipe-box');
+  assert.equal(overview.channelHandle('42'), null);
+  const list = overview.channelHandles([
+    overview.toDiscussion({ slug: 'recipe-ab12', name: 'Recipe Box' }),
+    overview.toDiscussion({ slug: 'recipe-cd34', name: 'recipe box' }),
+    overview.toDiscussion({ slug: 'general-99', name: 'General' }),
+  ]);
+  assert.deepEqual(list.map((d) => d.channel), ['recipe-box', 'recipe-cd34', 'general-99'],
+    'a second "Recipe Box" and an app named General fall back to their slugs');
+});
+
+test('an app channel opened in Messages mounts its chat after React commits, so its composer is wired', () => {
+  // renderGroupChatTab mounts the chat as a portal and then looks up
+  // `#gc-input` to wire send, drafts and the @ / # menus. Called inside the
+  // effect, the portal could not flush and nothing typed there ever sent.
+  const thread = SCREEN.slice(SCREEN.indexOf('function AppDiscussionThread'));
+  const body = thread.slice(0, thread.indexOf('\n}\n'));
+  assert.match(body, /const timer = window\.setTimeout\(\(\) => \{\s*if \(live\) view\?\.renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly \}\);\s*\}, 0\);/);
+  assert.match(body, /live = false;\s*window\.clearTimeout\(timer\);/);
 });

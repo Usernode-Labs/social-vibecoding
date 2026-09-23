@@ -154,6 +154,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
+import { isEmbeddedPanel } from '../../../lib/side-panel-mode';
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
 import { AppContext } from '../../app-context/app-context-controller.js';
 import { appContextStore } from '../../app-context/app-context-store.js';
@@ -222,8 +223,13 @@ const CARD = 'absolute w-[340px] max-w-[calc(100vw-1.5rem)] rounded-2xl border b
   + 'dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xl focus:outline-none '
   + 'pointer-events-auto motion-safe:transition-[top,left] motion-safe:duration-200';
 
-/** True on the routes that must render the same way every single time. */
+/**
+ * True on the routes that must render the same way every single time — and in
+ * the side panel's document (`?panel=1`, beside a running app), which never
+ * shows Home and whose top window runs the tour.
+ */
 function isDeterministicRoute(): boolean {
+  if (isEmbeddedPanel()) return true;
   try {
     const params = new URLSearchParams(location.search);
     return !!(params.get('shot') || params.get('demo') || params.get('token'));

@@ -40,9 +40,12 @@ export function CreateConversationDialog() {
   const [blocked, setBlocked] = useState<ConversationUser[]>([]);
   const [showBlocked, setShowBlocked] = useState(false);
   const search = useUserSearch(query);
-  const dialog = useDialog('messagesCreate', {
-    onOpen: () => {
-      setMode('direct'); setQuery(''); setTitle(''); setSelected([]); setError(''); setShowBlocked(false);
+  // #2778: the "+" popover opens this on the tab that was chosen — `group`
+  // for Group chat, and Direct for anything else (every older caller passes
+  // nothing and keeps the tab it always opened on).
+  const dialog = useDialog<'direct' | 'group'>('messagesCreate', {
+    onOpen: (tab) => {
+      setMode(tab === 'group' ? 'group' : 'direct'); setQuery(''); setTitle(''); setSelected([]); setError(''); setShowBlocked(false);
     },
   });
 

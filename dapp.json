@@ -576,6 +576,16 @@
       "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
     },
     {
+      "name": "The platform's own Workshop is a plain Workshop panel, with no close button (#2799)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "body:has(#app-view:not(.hidden) #dev-body) #back-btn.hidden #back-icon-close.hidden"
+    },
+    {
+      "name": "An app's Workshop is the platform surface the header frosts over (#2806)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "body:has(#app-view:not(.hidden)[data-app-surface=\"platform\"] #dev-body) #platform-header"
+    },
+    {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"
@@ -1093,6 +1103,16 @@
       "name": "Inside a light app the bar takes the app's tone: cream ground under the dark shell (#1945)",
       "path": "/?shot=app-tone-light&theme=dark",
       "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
+      "name": "Inside a dark app the Homeroom menu takes the app's dark palette too, not the viewer's light mode (#2803)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet.dark.platform-app-tone-dark"
+    },
+    {
+      "name": "A light app under the dark shell leaves the Homeroom menu in the shell's own dark mode (#2803)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet:not(.platform-app-tone-dark)"
     },
     {
       "id": "app-tone.cover-ink-dark",
@@ -2423,8 +2443,18 @@
     {
       "name": "The in-composer selector is one flat list of models, with no provider headings (#2117, #2569)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)) option[value=\"anthropic:claude-opus-5\"]:checked",
-      "expectText": "Opus 5"
+      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)) option[value=\"anthropic:claude-opus-5-5\"]:checked",
+      "expectText": "Opus 5.5"
+    },
+    {
+      "name": "The model picker has no caption line under it (#2807)",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form.dc-card:not(:has(#dc-model-note)) select#dc-model-select"
+    },
+    {
+      "name": "Mid-turn, the model picker stays usable (#2812)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form:has(#dc-send-btn.dc-btn-stop) .dc-card-row select#dc-model-select:not(:disabled)"
     },
     {
       "name": "The flat list ends with the door to the full OpenRouter catalog (#2117, #2569)",
@@ -2787,9 +2817,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-conversation-row .messages-row-line .messages-row-name + .messages-row-time-unread"
     },
     {
-      "name": "A direct conversation is a bubble transcript on the frosted sheet, with your own turn tinted on the right",
+      "name": "A direct conversation is the same Discord-style named-row transcript as every chat: your own turn has your avatar, name and time, and no bubble (#2783)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct .messages-message-bubble.messages-message-self .messages-bubble-wrap .messages-bubble"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) #messages-message-9100102.messages-message-self > span[aria-hidden] + .min-w-0 > .messages-message-head time"
     },
     {
       "name": "...and the sheet carries the conversation's own title row",
@@ -2800,6 +2830,53 @@
       "name": "A group conversation is a named-row transcript",
       "path": "/?demo=1#messages/910002",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-message:not(.messages-message-bubble) .messages-message-head time"
+    },
+    {
+      "id": "messages.channels",
+      "name": "#2783: the Messages list is sectioned Discord-style — chats on top, then a Channels heading led by #general",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + a.messages-channel-row[data-inbox-channel=\"general\"][href=\"#messages/910004\"]",
+      "expectText": "Channels",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/messages/**",
+        "src/routes/messages-overview.js",
+        "src/routes/conversations.js",
+        "src/services/conversations.js"
+      ]
+    },
+    {
+      "name": "#2783: the filter strip reads All, People, Channels, Agents — Apps is Channels now",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-filters .messages-filter-track > #messages-filter-all + #messages-filter-people + #messages-filter-channels + #messages-filter-agents",
+      "expectText": "Channels"
+    },
+    {
+      "name": "#2778: new message is a plus to the right of the filters, and it opens a menu rather than a dialog",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) #messages-filters > .messages-filter-track + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
+    },
+    {
+      "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-channel #messages-message-9100401:not(.messages-message-grouped) + #messages-message-9100402.messages-message-grouped > time.messages-message-gutter + .min-w-0"
+    },
+    {
+      "name": "#2783: the #general thread names itself as a channel everyone is in",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-thread-header .messages-thread-name",
+      "expectText": "#general"
+    },
+    {
+      "name": "#2783: #name in a message is a link to that channel",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-message-9100404 .messages-markdown a.gc-channel-ref[href=\"#messages/channel/general\"]",
+      "expectText": "#general"
+    },
+    {
+      "name": "#2783: ...while #123 in a message still reads as an issue reference, not a channel",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-message-9100403 .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
     },
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name (#2113)",
@@ -3599,7 +3676,7 @@
     {
       "name": "Model costs lists each model's note beside what its changes actually cost (#2570)",
       "path": "/#admin/model-costs",
-      "expectSelector": "#admin-model-costs-table tbody tr[data-model-cost=\"claude-opus-5\"]",
+      "expectSelector": "#admin-model-costs-table tbody tr[data-model-cost=\"claude-opus-5-5\"]",
       "expectText": "general coding work"
     },
     {
@@ -4393,9 +4470,9 @@
       "expectText": "went live with 1/1 votes"
     },
     {
-      "name": "General chat: a person's message sits in a bubble under their name and stamp, the Messages screen's own bubble, with their reactions beneath it, and that bubble stays its own box inside the row a hover or tap highlights (#2464)",
+      "name": "An app's channel draws a person's message as a Discord-style named row, flat text under their name and stamp with no bubble (#2783)",
       "path": "/app/usernode-2d5619/dev/chat",
-      "expectSelector": "#gc-messages > .gc-msg:not(.gc-msg-self) .gc-bubble:not(.gc-bubble-self) > .gc-msg-content"
+      "expectSelector": "#gc-messages:not(:has(.gc-bubble)) > .gc-msg:not(.gc-msg-self) > .min-w-0 > div > .gc-msg-content"
     },
     {
       "name": "General chat: with no message from a person on screen, the transcript ends with the quiet card, after the open proposal and above the composer",
@@ -4421,7 +4498,7 @@
     {
       "name": "#1808: a DM from an earlier year is stamped with that year, not a bare time of day",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen .messages-message-meta time[title]",
+      "expectSelector": "#messages-screen #messages-message-9100100 .messages-message-head time[title]",
       "expectText": "2024"
     },
     {
@@ -4458,10 +4535,10 @@
       "expectText": "Discussion"
     },
     {
-      "name": "An underway workspace has a direct link and keeps access to its overview",
+      "name": "An underway workspace has a direct link and keeps access to its proposal card",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900801",
       "expectSelector": "#dc-quick-replies",
-      "expectText": "Change overview"
+      "expectText": "Open proposal card"
     },
     {
       "name": "#2327: an author can edit an underway proposal title",
@@ -4485,12 +4562,12 @@
       "name": "An old ?conversation=workspace link on a change page lands on the dev session page",
       "path": "/?conversation=workspace#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "#dev-section #dc-view:has(#dc-messages):has(#dc-quick-replies)",
-      "expectText": "Change overview"
+      "expectText": "Open proposal card"
     },
     {
-      "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message in a bubble under their name, a platform notice as a message from the app with one box",
+      "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message as a named row with no bubble (#2783), a platform notice as a message from the app with one box",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "[data-change-conversation] > .dev-topic-h + .dev-topic-note + [data-change-discussion]:has([data-language=\"chat\"] > .gc-msg:not(.gc-msg-self) .gc-bubble):has(.gc-event[data-event=\"notice\"][data-here] .gc-event-box > .gc-event-text) #gc-thread-input",
+      "expectSelector": "[data-change-conversation] [data-change-discussion]:has([data-language=\"chat\"] > .gc-msg:not(.gc-msg-self) .gc-msg-content):not(:has(.gc-bubble)):has(.gc-event[data-event=\"notice\"][data-here] .gc-event-text) #gc-thread-input",
       "expectText": "Visible to the group"
     },
     {
@@ -4723,6 +4800,16 @@
       "name": "Folded-sidebar peek (#2764): the sidebar toggle sits in the header's left corner above the rail it controls, starting open, with the edge hot zone absent until the rail is folded",
       "path": "/?demo=1",
       "expectSelector": "body:has(#platform-tabs[aria-label=\"Sections\"]:not(.platform-tabs-folded)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-controls=\"platform-tabs\"][aria-pressed=\"true\"]"
+    },
+    {
+      "name": "Side panel beside a running app: its host ships hidden and frameless right after the app view, its header row carrying Expand and Close",
+      "path": "/?demo=1",
+      "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden:not(:has(iframe)) > .side-panel-head > #side-panel-expand[aria-label=\"Open full width, leaving the app\"] + #side-panel-close[aria-label=\"Close panel\"]"
+    },
+    {
+      "name": "Side panel: a panel=1 address opened in a window of its own is the ordinary platform, with its header, its sidebar and the screen it names",
+      "path": "/?demo=1&panel=1#messages",
+      "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
     }
   ],
   "governance": {

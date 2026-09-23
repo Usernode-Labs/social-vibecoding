@@ -172,7 +172,9 @@ export function normalizeConversation(input: unknown): ConversationDetail {
   const row = record(input);
   const id = strictId(pick(row, 'id', 'conversationId', 'conversation_id')) || 0;
   const members = array(pick(row, 'members', 'participants')).map(normalizeMember);
-  const kind = text(pick(row, 'kind', 'type')) === 'group' ? 'group' : 'direct';
+  const rawKind = text(pick(row, 'kind', 'type'));
+  // #2783: `channel` is #general — a room everybody is in.
+  const kind = rawKind === 'group' ? 'group' : rawKind === 'channel' ? 'channel' : 'direct';
   const peerRaw = pick(row, 'peer', 'otherUser', 'other_user', 'recipient');
   const peer = peerRaw ? normalizeUser(peerRaw) : null;
   const membershipStatus = text(pick(row, 'membershipStatus', 'membership_status', 'myStatus', 'my_status', 'status'));
@@ -203,6 +205,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),
     canManage: bool(pick(row, 'canManage', 'can_manage'), text(pick(row, 'myRole', 'my_role', 'role')) === 'owner'),
     archived: bool(pick(row, 'archived')) || text(pick(row, 'status')) === 'archived',
+    channelKey: kind === 'channel' ? text(pick(row, 'channelKey', 'channel_key')) || null : null,
   };
 }
 
