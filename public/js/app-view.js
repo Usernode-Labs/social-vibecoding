@@ -3165,14 +3165,14 @@ const AppView = {
     // repeated segment. The bar names the SECTION, the chip names the scope.
     App.setHeaderTitle?.('Workshop');
     // NO BACK ARROW HERE ANY MORE (#2718 review). This used to publish a ← to
-    // the Workshop screen whenever `App._appBackHref` said that is where the
-    // app was opened from — the one thing standing between a reader and the
-    // rest of the platform, on a surface that had no rail.
+    // the Workshop screen whenever the app had been opened from it — the one
+    // thing standing between a reader and the rest of the platform, on a
+    // surface that had no rail.
     //
     // It has one now. The Workshop tab in the rail IS the way back, on the
     // exact screen the arrow pointed at, and it is there whether or not this
-    // app was reached from it. `_appBackHref` still earns its keep on the app
-    // tab, where the ✕ leaves to wherever the visit began.
+    // app was reached from it. The ✕ lives on the app tab alone, and leaves to
+    // the page the app was opened from (App.closeApp).
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.

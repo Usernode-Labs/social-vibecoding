@@ -4884,6 +4884,21 @@
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
       "path": "/?demo=1",
       "expectSelector": "#platform-header:has(#sidebar-toggle[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])) #notifications-btn[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])"
+    },
+    {
+      "name": "#2740 review: an app's own Workshop has no back control, like the platform's (#2843) — no ✕ that opens the app",
+      "path": "/?demo=1#app/staging-demo-invited-approvers/workshop",
+      "expectSelector": "body:has(#app-view:not(.hidden) #dev-body) a#back-btn.hidden #back-icon-close.hidden"
+    },
+    {
+      "name": "#2763: the app discussion's old full-screen address climbs to Messages, not to the Workshop",
+      "path": "/app/usernode-2d5619/dev/chat",
+      "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
+    },
+    {
+      "name": "Over a running app the rail is the route's to hide, so a peek from the window's edge never brings the sidebar toggle into the app's strip",
+      "path": "/#app/staging-demo-forkable",
+      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden.platform-tabs-route-hidden) #platform-header .platform-header-left > #sidebar-toggle"
     }
   ],
   "governance": {

@@ -43,10 +43,11 @@
  *            for 'arrow': leaving an app is not going up a level, it is
  *            stepping out of somebody else's program, and every mini-app
  *            host in the study that this navigation is modelled on draws
- *            that as an ✕. Where it LANDS is still `href` — the Workshop
- *            when that is where you came from (App._appBackHref), home
- *            otherwise — so the destination logic is untouched and only the
- *            glyph knows the difference.
+ *            that as an ✕. It is the RUNNING app's alone — an app's
+ *            Workshop has no back control (#2740 review) — and a plain
+ *            click goes back to the page the app was opened from
+ *            (App.closeApp); `href` names that same page, Home when there
+ *            is none, for a modified click.
  *
  * Redefining 'home' rather than adding a fourth name is deliberate: ~40 call
  * sites already spell the default that way, and every one of them meant "no

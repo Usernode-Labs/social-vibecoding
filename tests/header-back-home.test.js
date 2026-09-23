@@ -172,29 +172,37 @@ test('the route decides where UP is, inside an app', () => {
   const body = HEADER.slice(at, HEADER.indexOf('\n}', at));
   assert.match(body, /if \(!slug \|\| tab !== 'dev'\) return null;/,
     'the app tab itself has no level above it inside the app — it gets the '
-    + 'house, like every other root');
-  assert.match(body, /const board = boardHref\(slug, boardView\);/,
-    '"the board" is TWO screens — Workshop and Board are one screen in two '
-    + 'layouts and the layout IS the route — so the destination is resolved '
-    + 'from the layout that was on screen, never spelled as a literal');
+    + '✕, which leaves to the page the app was opened from');
   // #2770 REVERSED THE FALLBACK: a change is an agent conversation, a thread
   // of Messages, so a session with no captured origin goes up to that inbox
   // rather than to the board it used to fall back to.
   assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| '#messages';/,
     'a session goes where it was opened from, falling back to Messages');
-  assert.match(body, /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
-    'the general chat and a topic card are reached FROM the board');
+  // THE DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763). The old
+  // full-screen route still resolves for a legacy link, and its ‹ climbed to
+  // the board — so a bell mention's Back landed on a Workshop the reader had
+  // never been on. It agrees with App._backSlotFor now.
+  assert.match(body, /subTab === 'chat'\) return '#messages';/,
+    'the general chat goes up to the inbox it is a thread of');
+  assert.match(body, /subTab === 'topic'\) return boardHref\(slug, boardView\);/,
+    'a topic card is reached FROM the board — resolved from the layout that '
+    + 'was on screen, never spelled as a literal ("the board" is TWO screens: '
+    + 'Workshop and Board are one screen in two layouts and the layout IS the route)');
   // THE REGRESSION. `#app/${slug}/board` sent a viewer who had opened an
   // issue from the Workshop to the Kanban board — and that route APPLIES its
   // layout (AppView._setViewMode in restoreFromHash's alias block), so the
   // back arrow also rewrote their stored preference on the way.
   assert.ok(!/`#app\/\$\{slug\}\/board`/.test(body),
     'and no literal /board survives in the derivation');
-  assert.match(body, /subTab === 'forum'\) return selfHosted \? null : `#app\/\$\{slug\}\/app`/,
-    'and the Board/Activity go up to the app itself — except on the '
-    + "platform's own app, which HAS no app tab (App.switchTab coerces a "
-    + 'request for one back to the dev forum), so up there would bounce '
-    + 'straight back to the board it just left');
+  // AN APP'S WORKSHOP HAS NO BACK CONTROL (#2740 review), any app's — the
+  // platform's own (#2843) was the exception this used to carry. It went up
+  // to `#app/<slug>/app`: a ‹ from the mark's "Go to workshop" or Expand,
+  // and both it and the ✕ the Workshop tab's arrival wore OPENED the app.
+  assert.ok(!/`#app\/\$\{slug\}\/app`/.test(body),
+    'nothing in the ladder climbs from the Workshop into the running app');
+  assert.doesNotMatch(body, /subTab === 'forum'/,
+    'the Workshop itself falls through to null: nowhere up to go');
+  assert.match(body, /\n  return null;\s*$/, 'and null is the last answer');
 });
 
 test('the derived answer outranks the imperative one, and only inside an app', () => {

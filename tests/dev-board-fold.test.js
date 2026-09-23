@@ -1107,7 +1107,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
   //
-  // 753 → 760: the prototype-gaps proposal (Homeroom task 598), which merges
+  // 753 → 763: the prototype-gaps proposal (Homeroom task 598), which merges
   // five streams of work into one change. What each adds, net of the checks
   // it RE-POINTED rather than added (those do not count):
   //   +3  Discover's filter chips, the Featured chip's filtering
@@ -1117,7 +1117,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //       History tab, and the Message button on a person's page. Five more
   //       were re-pointed (Me's card and stat cards, and the Admin, Node and
   //       two staking rows that moved into Settings).
-  assert.equal(DAPP.tests.length, 760);
+  //   +3  An app's own Workshop has no back control; the app discussion's old
+  //       full-screen address climbs to Messages; a peek over a running app
+  //       never brings the sidebar toggle into the app's strip.
+  assert.equal(DAPP.tests.length, 763);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
