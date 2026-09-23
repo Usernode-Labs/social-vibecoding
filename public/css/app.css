@@ -16819,7 +16819,9 @@ html.un-ios {
 /* The badge's anchor. `position: relative` on the glyph's wrapper rather
    than on the whole tab, so the count sits on the ICON's corner and not on
    the tab's — the tab is 56px tall and a badge pinned to its top-right
-   would float in the air above the glyph, away from the thing it is about. */
+   would float in the air above the glyph, away from the thing it is about.
+   That is the PHONE's bar; the desktop rail dissolves this wrapper and draws
+   the count at the row's end instead (#2912, in the desktop block below). */
 .platform-tab-mark {
   position: relative;
   display: inline-flex;
@@ -16843,13 +16845,18 @@ html.un-ios {
   line-height: 1.35;
 }
 
-/* The same red disc as #notifications-badge in the header, at the same size:
-   two counts on one screen that disagreed about what a count looks like
-   would read as two different kinds of thing. The fill is Tailwind's
-   `red-500`, which is what that badge's utility classes compile to; it is
-   spelled out because this bar's appearance lives here rather than in the
-   component, and `--danger` elsewhere in this file already falls back to the
-   same value. */
+/* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
+   red disc as #notifications-badge, on the argument that two counts on one
+   screen should look alike. But an unread message is ALSO counted in the
+   bell, so the same news arrived twice in the loudest colour on the screen,
+   and the second red drew the eye away from the one that is the alarm. The
+   bell keeps the red; this only says "there is something here".
+
+   Same size and place on the phone's bar, on the glyph's corner, with white
+   ink. The fill is `--text-faint`, the neutral ramp's lightest step, which
+   is #8e8e93 in BOTH themes: a mid grey that reads as a mark on the light
+   bar and on the dark one without competing with either. The desktop rail
+   moves the count off the glyph altogether (the desktop block below). */
 .platform-tab-badge {
   position: absolute;
   top: -3px;
@@ -16859,7 +16866,7 @@ html.un-ios {
   padding: 0 4px;
   box-sizing: border-box;
   border-radius: 999px;
-  background: var(--danger, #ef4444);
+  background: var(--text-faint, #8e8e93);
   color: #fff;
   font-size: 0.65rem;
   font-weight: 700;
@@ -17358,6 +17365,42 @@ html.un-kb #platform-parked {
   .platform-tab-label {
     max-width: none;
     min-width: 0;
+  }
+
+  /* THE UNREAD COUNT SITS AT THE ROW'S END (#2912), as a quiet pill rather
+     than a disc on the glyph's corner. Beside a 15px label there is room to
+     say the number without covering the icon, and the far end of the row is
+     the column Recents draws its unread dots in just below, so the rail
+     keeps its marks in one place.
+
+     THE MARKUP DOES NOT MOVE. The badge stays inside the glyph's wrapper
+     (the phone still pins it to the icon's corner) and inside
+     #platform-tab-messages (a declared check selects it there). The wrapper
+     dissolves instead (`display: contents`), so the glyph, the label and the
+     badge are all items of this row. `order: 1` takes the badge past the
+     label, and `margin-left: auto` pushes it to the end. It is back in the
+     flow (`position: static`), so the label can never run under it. The
+     peeked rail over an open app is this same element, so it gets the same
+     row. */
+  .platform-tab-mark {
+    display: contents;
+  }
+  .platform-tab-badge {
+    position: static;
+    order: 1;
+    flex: none;
+    margin-left: auto;
+    margin-right: 2px;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    /* The rail's own muted ink over a faint wash of it: quieter than the
+       phone's disc, because beside the label it no longer sits on a glyph
+       it has to stand out from. */
+    background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
   }
 
   /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,
