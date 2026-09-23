@@ -472,10 +472,10 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(css,
     /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: none;/);
   assert.match(css,
-    /body:has\(#platform-tabs:not\(\.hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
     '…unless the toggle is in it, which needs both a rail and the width');
   assert.match(css,
-    /body:has\(#platform-tabs:not\(\.hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/,
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/,
     'which is what replaces the `return null` the component used to do');
   // FOLDED RESERVES NOTHING, and only on the desktop layout.
   const zero = css.indexOf('body:has(#platform-tabs.platform-tabs-folded)');
@@ -483,6 +483,32 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.ok(css.lastIndexOf('@media (min-width: 768px) {', zero) > 0,
     'the zeroing rule is inside the desktop block, so a phone never sees it');
   assert.match(css.slice(zero, zero + 120), /\{\s*--platform-rail-w: 0px;/);
+});
+
+test('a peek over a running app never brings the sidebar toggle into the app\'s strip', () => {
+  // THE BUG: the peek takes `hidden` off #platform-tabs over a running app,
+  // and the toggle's rule asked `#platform-tabs:not(.hidden)` alone — so
+  // pointing at the window's left edge inside an app drew the toggle into the
+  // app's own strip, pushed ✕, the tile and the name 34px right, and a press
+  // on it folded the docked rail behind the app.
+  //
+  // The ROUTE'S answer rides beside the peek's as its own class, applied
+  // through a ref like the others (never a rendered className, so nothing
+  // about it can reach hydration)…
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(bar, /useClassToggle\(barRef, 'platform-tabs-route-hidden', !visible\);/);
+  assert.match(bar, /useHiddenClass\(barRef, !visible && !peek\);/,
+    'while `hidden` is still the OR of the route and the peek, so the peek works');
+  // …and every rule that decides whether the toggle EXISTS reads it. A rail
+  // the viewer folded is still the route's rail, so its toggle stays: that is
+  // how the fold comes undone.
+  const decides = css.match(/body:has\(#platform-tabs:not\(\.hidden\)[^)]*\)[^{]*(?:platform-sidebar-toggle|platform-header-left)[^{]*\{/g) || [];
+  assert.equal(decides.length, 2, 'the toggle\'s own rule and its group\'s');
+  for (const rule of decides) {
+    assert.match(rule, /:not\(\.platform-tabs-route-hidden\)/, rule);
+    assert.doesNotMatch(rule, /platform-tabs-folded|platform-tabs-peek/,
+      'folding and peeking are not what decides it: the route is');
+  }
 });
 
 test('the reservation is keyed off the bar\'s own hidden class', () => {

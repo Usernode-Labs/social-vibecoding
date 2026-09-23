@@ -16738,7 +16738,9 @@ html.un-kb #platform-parked {
    All three questions are CSS's now, and none of them is part of hydration:
 
      does the rail exist   → `#platform-tabs.hidden`, which the island
-                             publishes through useHiddenClass
+                             publishes through useHiddenClass — and not
+                             `.platform-tabs-route-hidden`, which says the
+                             ROUTE has none and only the peek is showing it
      is there room for it  → the media query
      has the group anything→ `:has(> #back-btn.hidden)` plus the two above
 
@@ -16754,7 +16756,7 @@ html.un-kb #platform-parked {
 }
 @media (min-width: 768px) {
   /* …unless the toggle is in it, which needs both a rail and the width. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) #platform-header
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header
     .platform-header-left:has(> #back-btn.hidden) {
     display: flex;
   }
@@ -16771,8 +16773,18 @@ html.un-kb #platform-parked {
 
      `body:has(...)` is what replaces the `return null` this component used
      to do for itself: a route with no rail has no fold to offer, and a dead
-     control is worse than none. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) .platform-sidebar-toggle {
+     control is worse than none.
+
+     A PEEK IS NOT A RAIL THE ROUTE HAS. Over a running app the peek takes
+     `hidden` off the bar, and this rule used to answer that alone: pointing
+     at the window's left edge inside an app put the toggle into the app's
+     own strip, pushed ✕, the tile and the name 34px right, and pressing it
+     folded the docked rail behind the app. `.platform-tabs-route-hidden` is
+     the route's answer published beside the peek's (features/nav/
+     tab-bar.tsx), so the toggle stays out of the app layer and the peek
+     still works. A rail the viewer FOLDED is still the route's, so its
+     toggle stays — it is how the fold comes undone. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) .platform-sidebar-toggle {
     display: inline-flex;
     transition: background-color 140ms ease, color 140ms ease,
                 border-color 140ms ease;

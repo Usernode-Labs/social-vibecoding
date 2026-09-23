@@ -1106,7 +1106,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // This branch counted them against an older shared base; main reached 751
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 753);
+  //
+  // 753 → 756: +3 (the ✕, the app Workshop's back control and the bell's app
+  // chat rows): a regular app's own Workshop has no back control, the app
+  // discussion's old full-screen address climbs to Messages, and over a
+  // running app the rail carries the class that keeps the sidebar toggle out
+  // of the app's strip during a peek. 34 slots under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 756);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

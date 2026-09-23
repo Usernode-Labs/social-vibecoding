@@ -478,6 +478,32 @@ test('a panel link in the top document is refused before the browser follows it'
   cleanup();
 });
 
+test('the header\'s ✕ leaves the app, even when its href names a panel page', () => {
+  // The ✕ goes back to the page the app was opened from (App.closeApp), and
+  // its href names that page for a modified click — a thread or a Workshop
+  // card as often as not. Caught here, closing the app opened that page
+  // BESIDE it instead. The rail's tabs and the ✕ are the ways out (#2854).
+  topWindow();
+  const click = (id, href) => {
+    const anchor = {
+      id, href: new URL(href, 'https://homeroom.test/app/notes-ab12').href,
+      target: '', hasAttribute: () => false,
+    };
+    const e = {
+      defaultPrevented: false, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+      target: { closest: () => anchor },
+      preventDefault() { this.defaultPrevented = true; },
+    };
+    api.onClickCapture(e);
+    return e.defaultPrevented;
+  };
+  assert.equal(click('back-btn', '/#messages/4242'), false, 'the ✕ is left to its own handler');
+  assert.equal(click('back-btn', '/app/notes-ab12/dev/proposals/12'), false);
+  assert.equal(api.sidePanelStore.get().frameSrc, null, 'and no panel opened');
+  assert.equal(click('some-row', '/#messages/4242'), true, 'while any other link to a thread is caught');
+  cleanup();
+});
+
 test('a script\'s location.hash to a panel page is refused (Navigation API); a traversal never is', () => {
   topWindow();
   const nav = (type, url, extra = {}) => {
