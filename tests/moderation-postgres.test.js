@@ -17,11 +17,13 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
   const root = new Client({ connectionString:DSN, connectionTimeoutMillis:2000 });
   try { await root.connect(); } catch (err) { await root.end().catch(()=>{}); return t.skip(`Local test database unavailable: ${err.code}`); }
   const name = `moderation_test_${process.pid}`;
+  const connectionsClosed = [];
   let pool, server;
   try {
     await root.query(`CREATE DATABASE ${name}`);
     const url = new URL(DSN); url.pathname = '/'+name;
     pool = new Pool({ connectionString:url.toString(), max:10 });
+    pool.on('connect', client => connectionsClosed.push(new Promise(resolve => client.once('end',resolve))));
     await pool.query(fs.readFileSync(path.join(__dirname,'../src/db/schema.sql'),'utf8'));
     const addUser = async (username, admin=false, published=false) => (await pool.query(`INSERT INTO users (username,password,is_admin,profile_published) VALUES ($1,'unused-test-password',$2,$3) RETURNING id,username`, [username,admin,published])).rows[0];
     const alice = await addUser('reporter'), bob = await addUser('author',false,true), outsider = await addUser('outsider'), admin = { ...await addUser('moderator',true),isAdmin:true,canAdminWrite:true };
@@ -206,7 +208,10 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
   } finally {
     if (server) await new Promise(resolve=>server.close(resolve));
     if (pool) await pool.end();
-    await root.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+    // pg-pool can resolve end() before its sockets emit end. Never force-drop
+    // the database while those clients are still receiving server messages.
+    await Promise.all(connectionsClosed);
+    await root.query(`DROP DATABASE IF EXISTS ${name}`);
     await root.end();
   }
 });
