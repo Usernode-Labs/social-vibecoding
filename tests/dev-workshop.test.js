@@ -356,7 +356,10 @@ test('the vote strip pins what is owed to the viewer, whatever the filters say',
   assert.equal(v.meta.filtered, true);
   assert.equal(v.themes[0].lanes.find((l) => l.key === 'review').rows.length, 0,
     'while the theme itself is narrowed');
-  assert.equal(v.discussion, null, 'and the discussion row is dropped, as the feed dropped it');
+  // #2915: the discussion row used to be dropped under a filter, as the feed
+  // dropped it. The search narrows All items alone now, and this is not on it.
+  assert.equal(v.discussion && v.discussion.key, 'discussion',
+    'and the discussion row stays: the search is All items\' alone');
 });
 
 test('the dashboard is drawn every visit; "since" needs a baseline read once', () => {
@@ -1385,10 +1388,24 @@ test('#2573: a filter that hides everything is not an app nobody has started', (
   AppView._ghIssues = [ONE_ISSUE];
   AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
   const v = AppView._workshopView();
-  assert.equal(v.dashboard.open, 0, 'the tiles count what survived the filter');
+  // #2915: the tiles counted what survived the filter, so this banner had to
+  // wait for the filter to come off. The search is All items' alone now: the
+  // tile counts the app, and the app has an open item.
+  assert.equal(v.dashboard.open, 1, 'the tiles count the app, not what All items\' search kept');
   assert.equal(v.meta.filtered, true);
+  assert.equal(v.themes.length, 0, 'while All items itself is narrowed to nothing');
   assert.ok(!workshopHtml(AppView).includes('data-ws-start-here'),
-    'the prompt is a claim about the APP, so it waits for the filter to come off');
+    'the prompt is a claim about the APP, and the app has something open');
+});
+
+test('#2915: an unstarted app gets the start-here prompt whatever All items is searched for', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
+  const html = workshopHtml(AppView, 'status');
+  assert.match(html, /data-ws-start-here=""/, 'the search is on All items, not on this claim');
+  assert.doesNotMatch(html, /Nothing here matches/, 'and the status tab blames no search for an empty board');
+  assert.ok(!/!v\.meta\.filtered/.test(WORKSHOP), 'the banner carries no filter condition');
 });
 
 test('#2573: the button is offered on the gate the Improve panel offers New change on', () => {
@@ -1478,11 +1495,19 @@ test('#1934: the rest of the unclaimed issues are the rest of the deck', () => {
   assert.equal(one.queue.filter((r) => r.kind === 'claim').length, 1);
 });
 
-test('#1934: a filter drops the "more" along with the suggestion', () => {
+test('#1934: All items\' search leaves the "more" alone, and the claim questions with it (#2915)', () => {
   const AppView = makeAppView();
   seed(AppView);
+  // "dark" keeps issue 12 on All items and hides issue 13. A filter used to
+  // drop the "more" along with the suggestion, and the Needs-you claim rows
+  // were built from the same narrowed list; both are off All items, so the
+  // search that narrows it reaches neither now.
   AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'dark' };
-  assert.equal(AppView._workshopView().nextMore.length, 0);
+  const v = AppView._workshopView();
+  assert.equal(v.meta.filtered, true);
+  assert.equal(v.nextMore.map((r) => r.key).join(','), 'next:issue:13', 'the issue the search hides is still next');
+  assert.deepEqual(plain(v.queue.filter((r) => r.kind === 'claim').map((r) => r.key)),
+    ['need:issue:12', 'need:issue:13'], 'and Needs you still asks about both');
 });
 
 test('an issue already being worked on is never the one offered', () => {
@@ -1498,13 +1523,19 @@ test('an issue already being worked on is never the one offered', () => {
   assert.equal(v.dashboard.unclaimed, 1);
 });
 
-test('the suggestion stands down while a filter is active', () => {
+test('the suggestion does not follow All items\' search to the other tabs (#2915)', () => {
   const AppView = makeAppView();
   seed(AppView);
-  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'dark' };
-  // A narrowed board is somebody looking for something specific; offering
-  // them a different card is an interruption, not an invitation.
-  assert.equal(AppView._workshopView().nextUp, null);
+  // It stood down while a filter was active, on the reasoning that a
+  // narrowed board is somebody looking for something specific. The search
+  // narrows All items alone now, so the suggestion is the app's, whatever
+  // that tab is narrowed to — here, the very issue the search hides.
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'keyboard' };
+  const v = AppView._workshopView();
+  assert.equal(v.meta.filtered, true);
+  assert.equal(v.nextUp.key, 'next:issue:12');
+  const all = v.themes.flatMap((t) => t.lanes.flatMap((l) => l.rows.map((r) => r.key)));
+  assert.ok(!all.includes('issue:12'), 'while All items, which the search does narrow, hides it');
 });
 
 test('the strips are ordered for a returning member: state, then what to do, then what changed', () => {
@@ -3186,6 +3217,118 @@ test('a search that matches nothing keeps the pane on screen, with the search bo
   assert.match(check.expectSelector, /\[data-ws-pane\] > \.dev-ws-pane-head #dev-actions #dev-kanban-filterbar #dev-kanban-search$/,
     'and expects the search box, in the pane head');
   assert.equal(check.expectText, 'Nothing here matches the current search and filters.');
+});
+
+// ── #2915: the search and filters are All items' alone ──────────────────
+//
+// The search box and the filters are drawn in All items' pane head and
+// nowhere else, but they used to narrow every card before the view model
+// was built, so a search typed there quietly followed the viewer to Current
+// status ("open items" 146 → 2, "waiting on votes" untouched) and Needs you,
+// neither of which has a search box to say why. They narrow All items alone
+// now, and a dot on that tab says a search is waiting there.
+
+test('#2915: a search narrows All items, and leaves Current status and Needs you whole', () => {
+  const store = {};
+  // A baseline, so "since your last visit" has rows to lose.
+  store[`${'workshopSeen'}:demo-app`] = String(Date.now() - 3.5 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  AppView._workshopThemes = themes([
+    { id: 'look', name: 'Look', items: ['issue:12', 'session:34', 'session:78'] },
+    { id: 'keys', name: 'Keys', items: ['issue:13'] },
+  ]);
+  const whole = AppView._workshopView();
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
+  const v = AppView._workshopView();
+
+  // ALL ITEMS is narrowed, exactly as before: nothing left to group.
+  assert.equal(v.meta.filtered, true);
+  assert.equal(v.themes.length, 0, 'All items\' themes are what the search kept');
+  assert.equal(whole.themes.length, 2);
+
+  // CURRENT STATUS is the app's, whatever All items is searched for: the
+  // tiles, the categories behind them, the unclaimed, the since list and the
+  // suggestion are the same numbers and rows with the search on and off.
+  assert.deepEqual(plain(v.dashboard), plain(whole.dashboard), 'the dashboard is untouched');
+  assert.equal(v.dashboard.open, 3);
+  assert.equal(v.dashboard.themes, 2, 'every category counts, not only the ones the search left');
+  assert.equal(v.dashboard.unclaimed, 2);
+  assert.ok(whole.since && whole.since.total > 0, 'the fixture has a since list to lose');
+  assert.deepEqual(plain(v.since), plain(whole.since), '"since your last visit" is untouched');
+  assert.equal(v.nextUp && v.nextUp.key, whole.nextUp.key);
+  assert.deepEqual(plain(v.nextMore.map((r) => r.key)), plain(whole.nextMore.map((r) => r.key)));
+  assert.equal(v.discussion && v.discussion.key, 'discussion');
+  assert.equal(v.emptyNote, null, 'and no "nothing here" note: the board has plenty');
+
+  // NEEDS YOU: the whole queue, votes and claims alike.
+  assert.deepEqual(plain(v.queue.map((r) => r.key)), plain(whole.queue.map((r) => r.key)));
+  assert.ok(v.queue.some((r) => r.kind === 'claim'), 'the unclaimed issues are still asked about');
+
+  // Drawn: the status tab has its tiles and blames no search; All items
+  // says why it is empty, under the controls that emptied it.
+  const status = workshopHtml(AppView, 'status');
+  assert.ok(status.includes('data-ws-dashboard'), 'the status tab draws the dashboard');
+  assert.doesNotMatch(status, /data-ws-empty/, 'and no empty note over it');
+  assert.match(workshopHtml(AppView, 'all'), /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
+});
+
+test('#2915: while a search or filter is on, a dot on the All items tab says so, on every tab', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const tabOf = (html, key) => {
+    const m = new RegExp(`<button[^>]*data-ws-tab-btn="${key}"[^>]*>([\\s\\S]*?)</button>`).exec(html);
+    assert.ok(m, `the ${key} tab is drawn`);
+    return m[1];
+  };
+  for (const tab of ['status', 'needs', 'all']) {
+    assert.doesNotMatch(workshopHtml(AppView, tab), /data-ws-tab-filtered/, `${tab}: no dot without a search`);
+  }
+  // Any of the filters, not only the search: a quick toggle counts too.
+  for (const over of [{ q: 'dark' }, { assignedToMe: true }, { priority: 'high' }]) {
+    AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), ...over };
+    for (const tab of ['status', 'needs', 'all']) {
+      const html = workshopHtml(AppView, tab);
+      const all = tabOf(html, 'all');
+      // After the label, decorative, with words a screen reader reads as part
+      // of the tab's name: "All items (filtered)".
+      assert.match(all,
+        /<span class="dev-ws-tab-label">All items<\/span><span class="dev-ws-tab-dot" data-ws-tab-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>$/,
+        `${tab} / ${JSON.stringify(over)}: the dot, and its words`);
+      assert.equal(html.split('data-ws-tab-filtered').length - 1, 1, `${tab}: on All items alone`);
+      assert.doesNotMatch(tabOf(html, 'status') + tabOf(html, 'needs'), /filtered/);
+    }
+  }
+  // Cleared, it goes.
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  assert.doesNotMatch(workshopHtml(AppView, 'status'), /data-ws-tab-filtered/);
+  // The accent, a 6px round, and never shrunk out of the tab by a long label.
+  // On a phone it is a badge on the glyph that takes no width, because the
+  // pill has 8px to spare at 390px and a dot after the label costs 10: its
+  // own width and the gap after it are handed back, so the labels keep every
+  // letter. Above 700px it follows the label, 6px further off than the gap.
+  assert.match(CSS, /\.dev-ws-tab-dot \{\s*flex: none;\s*width: 6px; height: 6px;\s*border-radius: 999px;\s*background: var\(--accent\);\s*order: -1;\s*margin-right: -10px;\s*transform: translate\(12px, -8px\);\s*\}/);
+  assert.match(CSS, /\.dev-ws-tab \{[^}]*align-items: center; justify-content: center; gap: 4px;/,
+    'the 10px handed back is the dot and the phone tab\'s own 4px gap');
+  assert.match(CSS, /@media \(min-width: 700px\) \{[\s\S]*?\.dev-ws-tab-dot \{ order: 0; margin: 0 0 0 6px; transform: none; \}/);
+});
+
+test('#2915: the tab marker re-measures when a tab resizes inside an unchanged list', () => {
+  // On a phone the tab list is the pill's fixed width and the three tabs
+  // share it out, so the dot arriving re-divides the tabs while the bar and
+  // the list keep their size. The marker observes each tab for that.
+  assert.match(WORKSHOP, /for \(const el of bar\.querySelectorAll<HTMLElement>\('\[data-ws-tab-btn\]'\)\) ro\.observe\(el\);/);
+});
+
+test('#2915: declared checks open Current status and the tab strip with a search on', () => {
+  const status = dapp.tests.filter((t) => /[?&]ws=status\b/.test(t.path || '') && /[?&]q=/.test(t.path || ''));
+  const whole = status.find((t) => /\[data-ws-dashboard\]/.test(t.expectSelector || ''));
+  assert.ok(whole, 'a check opens Current status narrowed by ?q=');
+  assert.match(whole.expectSelector, /\.dev-ws\[data-ws-tab="status"\]:not\(:has\(\[data-ws-empty\]\)\)/,
+    'and expects no "nothing here" note on it');
+  const dot = status.find((t) => /data-ws-tab-filtered/.test(t.expectSelector || ''));
+  assert.ok(dot, 'and one expects the dot on All items from there');
+  assert.match(dot.expectSelector, /\[data-ws-tab-btn="all"\]\[aria-selected="false"\] > \[data-ws-tab-filtered\]/);
 });
 
 test('an empty board still gets the All items pane, and the note names the "+" that is in it', () => {

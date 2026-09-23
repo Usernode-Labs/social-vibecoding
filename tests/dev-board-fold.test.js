@@ -1172,7 +1172,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // #general carries one ⋯ disc for report and block instead of three, and
   // an app's chat in Messages draws no report/block text links in its rows.
   // 780 leaves 30 slots under the 810 ceiling.
-  assert.equal(DAPP.tests.length, 780);
+  //
+  // 780 → 782: +2 (#2915): an app's Workshop opened on Current status with
+  // an All items search in the URL still draws the whole dashboard and no
+  // "nothing matches" note, and the All items tab wears the dot that says
+  // its search is still on. 782 leaves 28 slots under the 810 ceiling.
+  assert.equal(DAPP.tests.length, 782);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
