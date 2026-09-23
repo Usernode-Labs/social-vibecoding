@@ -1056,11 +1056,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the same 730 base, so together they put the manifest at 732, not 731
   // twice. The ceiling already moved 750 → 770 above; 732 leaves 38 slots.
   //
-  // +7 (#2783, #2778): the Messages channels — the sectioned list, the
-  // Channels filter, the "+" at the strip's end, #general's grouped rows and
-  // its title row, and a `#name` channel link beside a `#123` issue ref in a
-  // message. 739 leaves 31 slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 739);
+  // 739, 733: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence either. Both stand on the shared 732:
+  // this branch carries it to 739 with the seven Messages channels checks
+  // above (#2783, #2778 — the sectioned list, the Channels filter, the "+"
+  // at the strip's end, #general's grouped rows and its title row, and a
+  // `#name` channel link beside a `#123` issue ref in a message), and main
+  // independently carries the same 732 to 733 with the Homeroom menu check
+  // above (#2784 — anchored under the mark rather than centred mid-screen).
+  // Neither set overlaps the other, so the merged manifest holds every one
+  // of them: 732 + 7 + 1 = 740, which leaves 30 slots under the 770 ceiling.
+  assert.equal(DAPP.tests.length, 740);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

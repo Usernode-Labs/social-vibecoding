@@ -66,7 +66,13 @@ try {
     const bounds = await page.evaluate(() => { const s = getComputedStyle(surface); return { ...surface.getBoundingClientRect().toJSON(), outline: [s.outlineStyle, s.outlineWidth, s.outlineOffset, s.outlineColor], transform: s.transform }; });
     await page.screenshot({ path: `${out}/${theme}-${width}-${kind}-${version}.png` });
     writeFileSync(`${out}/${theme}-${width}-${kind}-${version}.json`, JSON.stringify(bounds));
-    if (version === 'head') {
+    // The Homeroom menu is an undimmed popover at desktop widths (#2784):
+    // no scrim, and its backdrop leaves the page (and the header) clickable.
+    const undimmed = kind === 'dropdown' && width >= 640;
+    if (version === 'head' && undimmed) {
+     assert.equal(await page.evaluate(() => [...document.querySelectorAll('.overlay-scrim')].filter(e => getComputedStyle(e).visibility === 'visible').length), 0); checks++;
+     assert.equal(await page.evaluate(() => getComputedStyle(backdrop).pointerEvents), 'none'); checks++;
+    } else if (version === 'head') {
      assert.equal(await page.evaluate(() => [...document.querySelectorAll('.overlay-scrim')].filter(e => getComputedStyle(e).visibility === 'visible').length), 1); checks++;
      assert.equal(await page.evaluate(() => getComputedStyle(surface).boxShadow.includes('1280px')), false); checks++;
      if (kind !== 'creation' || width !== 390) {

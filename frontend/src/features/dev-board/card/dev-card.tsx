@@ -614,8 +614,9 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       ? `You said yes to an earlier version. One tap carries it onto this one.`
       : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
   // The popover's frame: the switch, the box and the buttons (no box on a
-  // governance vote). Placed from the button's rect each render, exactly as
-  // `_toggleCardMenu` places the ⋯ menu.
+  // governance vote). Placed from the button's rect each render by
+  // lib/anchored-popover.ts — shared with Messages' "+" popover (#2778) —
+  // exactly as `_toggleCardMenu` places the ⋯ menu.
   const w = 312;
   const h = isVote ? 190 : 100;
   const pos = rect ? anchoredPopoverPosition(rect, w, h) : null;

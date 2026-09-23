@@ -36,11 +36,13 @@
 //
 // ── The one surface still hanging from the bar ─────────────────────────
 //
-// #apps-switcher-sheet, and only on desktop, because it is a DROPDOWN: it is
-// anchored to the chip that opens it, and a menu drawn over its own trigger
-// has nothing to point at. Its backdrop dims the bar like every other one.
+// #apps-switcher-sheet, and only on desktop, because it is a POPOVER: it is
+// anchored under the Homeroom mark that opens it (#2784), and a menu drawn
+// over its own trigger has nothing to point at. It casts no dim there, and
+// its backdrop lets the pointer through, so with it open the bar is not just
+// visible but live — the bell opens in one click.
 // tests/app-switcher-dropdown.test.js owns that geometry; what this file
-// checks is that it stayed put while the rails moved.
+// checks is that it still starts under the bar while the rails cover it.
 //
 // Run with: node --test tests/header-stays-live.test.js
 
@@ -133,6 +135,11 @@ test('no rule lifts a backdrop off the bar', () => {
 });
 
 test('the dim itself is untouched — it still catches the dismissing click', () => {
+  // The base rule, which is every backdrop's at every width except the app
+  // menu's at `sm`+: there the menu is an undimmed popover and a later
+  // desktop rule releases the pointer (#2784, pinned in
+  // tests/app-switcher-dropdown.test.js). Below `sm` it is a bottom sheet
+  // and this still holds for it too.
   for (const id of BACKDROPS) {
     const at = CSS.indexOf(`${id}[data-open]`);
     assert.ok(at > 0, `${id} has an open state`);
@@ -151,8 +158,10 @@ test('the app menu is the ONE surface still hanging from the bar', () => {
   const menu = mediaBlocks('min-width: 640px')
     .filter((b) => b.includes('\n  #apps-switcher-sheet {'));
   assert.equal(menu.length, 1, 'one desktop rule positions the app menu');
-  assert.ok(menu[0].includes(`top: ${UNDER_HEADER}`),
-    'and it still starts at the bar\'s underside, where its trigger is');
+  // Measured under the mark now (#2784), with the bar's underside as the
+  // fallback for a frame where the mark cannot be measured.
+  assert.ok(menu[0].includes(`top: var(--menu-anchor-top, ${UNDER_HEADER})`),
+    'and it still starts under the bar, where its trigger is');
 });
 
 test('the phone is untouched — it is a sheet over the page there', () => {
