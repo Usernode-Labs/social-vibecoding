@@ -238,7 +238,7 @@ test('In review: pinned pipeline states sort above normal, gov in the normal tie
   assert.deepEqual(reviewOf(b.inReview), ['proposal:merging', 'proposal:normal', 'gov:gov']);
 });
 
-test('Done holds merged rows, most-recent-activity first', () => {
+test('Done retains creation-time fallback for historical merges', () => {
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({
     issues: [],
@@ -253,9 +253,28 @@ test('Done holds merged rows, most-recent-activity first', () => {
   assert.deepEqual(idsOf(b.done), [2, 3, 1]);
 });
 
-test('Done interleaves applied close-issue rows with merged PRs by activity', () => {
+test('Done sorts by merge time even when creation and comment activity disagree', () => {
+  const AppView = makeAppView();
+  const merged = [
+    { id: 1, created_at: at(1), merged_at: at(9), last_message_at: at(2) },
+    { id: 2, created_at: at(5), merged_at: at(6), last_message_at: at(23) },
+    { id: 3, created_at: at(4), merged_at: at(8) },
+  ];
+  assert.deepEqual(idsOf(AppView._bucketDevItems({ merged }).done), [1, 3, 2]);
+});
+
+test('Done recent cutoff includes old work just merged and ignores new comments on old merges', () => {
+  const AppView = makeAppView();
+  const now = new Date().toISOString();
+  const old = '2020-01-01T00:00:00Z';
+  const rows = [1, 2, 3, 4].map(id => ({ id, created_at: old, merged_at: now }));
+  rows.push({ id: 5, created_at: old, merged_at: old, last_message_at: now });
+  assert.deepEqual(idsOf(AppView._recentDone(rows)), [1, 2, 3, 4]);
+});
+
+test('Done interleaves applied close-issue rows with merged PRs by completion', () => {
   // The /merged stream now mixes row_type 'pr' and 'close_issue'; the done
-  // bucket sorts them together on the same created_at/last_message_at key.
+  // bucket sorts them together by completion, falling back to creation time.
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({
     issues: [],
