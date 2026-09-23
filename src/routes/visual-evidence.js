@@ -83,16 +83,17 @@ function visualEvidenceRoutes(config) {
     }
   });
 
-  // The proposal owner can inspect a failed run's exact submitted plan and
-  // bounded replay trace, including an older run selected by its id after a
-  // same-proposal retry. The public evidence view contains only the reviewer
-  // result, while these diagnostics support local reproduction.
+  // The proposal owner and app managers can inspect a terminal run's exact
+  // submitted plan and bounded replay trace, including an older run selected
+  // by its id after a same-proposal retry. The public evidence view contains
+  // only the reviewer result, while these diagnostics support reproduction.
   router.get('/api/apps/:slug/proposals/:sessionId/evidence/diagnostics', async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!config.visualEvidence?.present || !id) return res.status(404).json({ error: 'Evidence diagnostics not found' });
     try {
       const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view');
-      if (!ctx || ctx.session.user_id !== req.user?.id) {
+      if (!ctx || (ctx.session.user_id !== req.user?.id
+          && !(await appAdmins.canManageApp(pool, ctx.app, req.user)))) {
         return res.status(404).json({ error: 'Evidence diagnostics not found' });
       }
       const runId = req.query.runId || ctx.session.visual_evidence_run_id;
@@ -104,7 +105,7 @@ function visualEvidenceRoutes(config) {
                 trace_summary, failure_code, failure_reason
            FROM visual_evidence_runs
           WHERE id = $1 AND session_id = $2
-            AND state IN ('failed', 'stale') AND failure_code IS NOT NULL`,
+            AND state IN ('failed', 'stale', 'verified')`,
         [runId, id]
       );
       const run = rows[0];

@@ -9,6 +9,7 @@ const routes = require('../src/routes/visual-evidence');
 const fixtures = require('./fixtures/visual-evidence');
 const db = require('../src/db/pool');
 const appAccess = require('../src/services/app-access');
+const appAdmins = require('../src/services/app-admins');
 const orchestrator = require('../src/services/visual-evidence-orchestrator');
 const state = require('../src/services/visual-evidence-state');
 const planContract = require('../src/services/visual-evidence-plan');
@@ -31,7 +32,7 @@ test('artifact ids and proposal ids are canonical and traversal-proof', () => {
   assert.equal(routes.sessionId(String(2 ** 40)), null);
 });
 
-test('failed-run diagnostics expose the stored plan only to the proposal owner, including after a retry', async (t) => {
+test('terminal-run diagnostics are private to the author or app manager and retain retry history', async (t) => {
   const base = 'a'.repeat(40);
   const head = 'b'.repeat(40);
   const runId = '1'.repeat(32);
@@ -55,15 +56,17 @@ test('failed-run diagnostics expose the stored plan only to the proposal owner, 
   const pool = { query: async (sql, params) => {
     if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
     if (String(sql).includes('FROM visual_evidence_runs')) {
-      assert.match(String(sql), /state IN \('failed', 'stale'\) AND failure_code IS NOT NULL/);
+      assert.match(String(sql), /state IN \('failed', 'stale', 'verified'\)/);
       return { rows: params[0] === runId && params[1] === session.id ? [run] : [] };
     }
     throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
   } };
   const savedPool = db.getPool;
   const savedAccess = appAccess.getAppForUser;
+  const savedManage = appAdmins.canManageApp;
   db.getPool = () => pool;
   appAccess.getAppForUser = async () => ({ id: 9, slug: 'demo' });
+  appAdmins.canManageApp = async (_pool, app, user) => app.id === 9 && user.id === 8;
   const routePath = require.resolve('../src/routes/visual-evidence');
   delete require.cache[routePath];
   const isolatedRoutes = require('../src/routes/visual-evidence');
@@ -77,6 +80,7 @@ test('failed-run diagnostics expose the stored plan only to the proposal owner, 
     server.close();
     db.getPool = savedPool;
     appAccess.getAppForUser = savedAccess;
+    appAdmins.canManageApp = savedManage;
     delete require.cache[routePath];
   });
   const url = `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence/diagnostics`;
@@ -93,8 +97,10 @@ test('failed-run diagnostics expose the stored plan only to the proposal owner, 
   assert.equal(diagnostics.trace.control.planCalls, 1);
 
   userId = 8;
+  assert.equal((await fetch(url)).status, 200, 'app manager can diagnose another author’s run');
+  userId = 9;
   assert.equal((await fetch(url)).status, 404);
-  userId = 7;
+  userId = 8;
   session.imported_pr_head_sha = 'd'.repeat(40);
   session.visual_evidence_run_id = '2'.repeat(32);
   run.state = 'stale';
@@ -105,6 +111,14 @@ test('failed-run diagnostics expose the stored plan only to the proposal owner, 
   assert.equal(historicalDiagnostics.headSha, head);
   assert.equal(historicalDiagnostics.state, 'stale');
   assert.equal((await fetch(`${url}?runId=${'3'.repeat(32)}`)).status, 404);
+
+  run.state = 'verified';
+  run.failure_code = null;
+  run.failure_reason = null;
+  const verified = (await (await fetch(`${url}?runId=${runId}`)).json()).diagnostics;
+  assert.equal(verified.state, 'verified');
+  assert.equal(verified.failureCode, null);
+  assert.equal(verified.trace.agentDispatches[0].backend, 'claude_code');
 });
 
 test('the binary route is authenticated, current-run fenced, exact-head fenced, and private', () => {
