@@ -44,7 +44,7 @@ test('every kind is framed, and framed exactly once', () => {
   for (const kind of templates.KINDS) {
     const { html } = templates.buildMessage(kind, PAYLOAD);
     assert.equal((html.match(/<!doctype html>/gi) || []).length, 1, `${kind}: one document`);
-    assert.match(html, /<img\s+src="[^"]*\/brand\/homeroom-logo-black\.png"[^>]*alt="Homeroom in black"/,
+    assert.match(html, /<img\s+src="[^"]*\/brand\/homeroom-logotype-black\.png"[^>]*alt="Homeroom"/,
       `${kind}: carries the logo`);
     assert.match(html, /Homeroom<br>You are receiving this because/, `${kind}: carries the footer`);
     assert.match(html, /activity on your account or your place on the waitlist/,
@@ -91,7 +91,7 @@ test('the logo is same-origin, not a third party, and there is still no <style>/
     const { html } = templates.buildMessage(kind, PAYLOAD);
     const imgTags = html.match(/<img\b[^>]*>/gi) || [];
     assert.equal(imgTags.length, 1, `${kind}: exactly one image, the logo`);
-    assert.match(imgTags[0], /src="https:\/\/[^"/]+\/brand\/homeroom-logo-black\.png"/,
+    assert.match(imgTags[0], /src="https:\/\/[^"/]+\/brand\/homeroom-logotype-black\.png"/,
       `${kind}: the logo is same-origin, absolute, and never a third-party host`);
     assert.doesNotMatch(imgTags[0], /src="(?!https:\/\/[^"/]+\/brand\/)/,
       `${kind}: no other image host sneaks in`);
