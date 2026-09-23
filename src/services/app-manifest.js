@@ -219,7 +219,19 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 650s TESTS_DEADLINE_MS clears the 2x margin by ~284s. The deadline and
 // RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 19
 // slots over the 711 declared here.
-const MAX_DECLARED_TESTS = 750;
+//
+// Raised 750 → 770 by #2748 (PR #2750), whose one check on the waitlist
+// analytics dashboard put the manifest at 731 against the 730 floor. Tenth
+// crossing, and again the floor was ALREADY met before that check landed:
+// main stood at 730 exactly after #2764's folded-sidebar peek check, so any
+// proposal declaring a single check was red before it started.
+//
+// STILL NOT A COUPLED MOVE, same arithmetic as the four bumps above: the
+// pool is 16, so 770 checks at ~3.9s over 16 is ~188s, and the UNCHANGED
+// 650s TESTS_DEADLINE_MS clears the 2x margin by ~274s. The deadline and
+// RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 19
+// slots over the 731 declared here.
+const MAX_DECLARED_TESTS = 770;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
