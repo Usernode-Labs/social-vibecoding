@@ -9247,7 +9247,7 @@ const DevChat = {
       branch: s.branch_name || '',
       pr: s.pr_number || null,
       prTitle: s.pr_number
-        ? `This session's pull request. Every change in this chat goes to PR #${s.pr_number}. `
+        ? `Open this change's proposal card (PR #${s.pr_number}). Every change in this chat goes to PR #${s.pr_number}. `
           + 'Use “Start a new change” for separate work.'
         : '',
       newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
@@ -9307,13 +9307,12 @@ const DevChat = {
   // Named, because the component dispatches by name into `window.DevChat`
   // rather than holding a closure over a render that is already gone.
 
-  /** "PR #123" — jump to the change card below and flash it. */
-  revealPrCard() {
-    const card = document.getElementById('dc-pr-card');
-    if (!card) return;
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    card.classList.add('dc-pr-card-highlight');
-    setTimeout(() => card.classList.remove('dc-pr-card-highlight'), 1500);
+  /** "Open proposal card" (#2821) — the change's card page, the same
+   *  destination the retired "Change overview" strip opened. */
+  openProposalCard() {
+    const id = DevChat.currentSession?.id;
+    if (id == null || typeof AppView === 'undefined') return;
+    AppView.openTopic('proposal', id);
   },
 
   /**
@@ -10090,7 +10089,7 @@ const DevChat = {
     // reaches the existing catalog through `_onOpenRouterModelChange`.
 
     // `#dc-pr-header-link` and `#dc-back` are the header component's too —
-    // `revealPrCard()` and `leaveSession()` above are what they call.
+    // `openProposalCard()` and `leaveSession()` above are what they call.
 
     // `#dc-sync-btn` and `#dc-new-change-btn` are the banners component's —
     // `startSyncWithMain()` and `startNewChange()` are what they call.
