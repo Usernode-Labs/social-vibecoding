@@ -5196,7 +5196,6 @@ body:has(#platform-header.hidden) #app-frame-host {
   transition: background 300ms;
 }
 
-.dc-pr-card-highlight { background: rgba(31, 134, 255, 0.2); }
 .dc-pr-card-header { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
 .dc-pr-link { font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
@@ -12989,17 +12988,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   gap: 4px;
   max-width: 900px;
   margin: 0 auto;
-}
-.dev-change-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 14px;
-  flex-shrink: 0;
-}
-.dev-change-tabs [aria-pressed="true"] {
-  background: var(--dc-sheet-fill);
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
 .dev-change-overview {
   flex: 1;

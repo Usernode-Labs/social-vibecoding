@@ -258,12 +258,24 @@ test('the strip carries no back control — the platform header owns ← now', (
 test('a session with a pull request offers it; one without says so', () => {
   const { view } = makeDevChat();
   const withPr = headerHtml(view({ ...SESSION, pr_number: 42 }));
-  assert.match(withPr, /id="dc-pr-header-link"[^>]*>PR #42</);
+  // #2821: it names where it goes, not the PR number.
+  assert.match(withPr, /id="dc-pr-header-link"[^>]*>Open proposal card</);
+  assert.doesNotMatch(withPr, />PR #42</);
   assert.match(withPr, /title="[^"]*goes to PR #42/);
 
   const without = headerHtml(view(SESSION));
   assert.doesNotMatch(without, /dc-pr-header-link/);
   assert.match(without, /New change</);
+});
+
+test('#2821: "Open proposal card" opens the change\'s card page', () => {
+  const { DevChat, sandbox } = makeDevChat();
+  const opened = [];
+  sandbox.AppView = { openTopic: (kind, id) => opened.push([kind, id]) };
+  DevChat.currentSession = { ...SESSION, pr_number: 42 };
+  DevChat.openProposalCard();
+  assert.deepEqual(opened, [['proposal', SESSION.id]]);
+  assert.equal(typeof DevChat.revealPrCard, 'undefined', 'the in-page PR jump retired with the "PR #x" label');
 });
 
 test('the title falls back through its three sources, and the branch is the tooltip', () => {
