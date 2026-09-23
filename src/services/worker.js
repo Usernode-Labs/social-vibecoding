@@ -2429,9 +2429,9 @@ async function execInWorker(sessionId, {
   // non-Claude backend. This remains user-level input; it is never promoted
   // into the authoritative system-context transport below.
   resumeFallbackPrompt = null,
-  // Hosted Claude build-only appended system context. The caller keeps this
-  // null for Codex, scouts, sync and local turns. Materialized separately so
-  // it is a stable system layer rather than another conversation message.
+  // Hosted Claude system context; Codex evidence turns receive the same
+  // purpose-bound contract as developer instructions. Materialized separately
+  // so it is a stable instruction layer, not another conversation message.
   systemPrompt = null,
   // Restart recovery can reuse the prompt file deliberately retained by a
   // runner that emitted agent_retry_fresh=1. Live calls keep writing the
@@ -2570,8 +2570,8 @@ async function execInWorker(sessionId, {
   // One backend decision for this whole dispatch (review Commit 1 /
   // plan 3.1): all runner/token/env/active-turn choices derive from it.
   const { backend: resolvedBackend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
-  if (systemPrompt && !isClaude) {
-    throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
+  if (systemPrompt && !isClaude && !(isCodex && mode === 'evidence')) {
+    throw new Error('execInWorker: systemPrompt is only supported for Claude or Codex evidence turns');
   }
   if (resumeFallbackPrompt && !isClaude) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
@@ -2584,6 +2584,9 @@ async function execInWorker(sessionId, {
   }
   if (isClaude && ['build', 'evidence'].includes(mode) && !systemPrompt) {
     throw new Error(`execInWorker: hosted Claude ${mode} requires systemPrompt`);
+  }
+  if (isCodex && mode === 'evidence' && !systemPrompt) {
+    throw new Error('execInWorker: hosted Codex evidence requires systemPrompt');
   }
   if (mode === 'evidence') {
     if (!/^[0-9a-f]{32}$/.test(String(evidenceRunId || ''))

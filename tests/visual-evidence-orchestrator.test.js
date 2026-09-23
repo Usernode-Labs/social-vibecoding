@@ -138,6 +138,22 @@ test('a successful agent plan publishes captured media without a model verdict',
   assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
 });
 
+test('first hosted evidence turn does not resume the proposal coding thread', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      assert.equal(options.resumeThreadId, null);
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await control.runPlan(fixtures.plan());
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  fixture.session.agent_thread_id = 'coding-thread';
+  fixture.session.cc_session_id = 'coding-thread';
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+});
+
 test('platform waits for a background replay after the hosted planner receives its acknowledgement', async () => {
   let releaseReplay;
   const pendingReplay = new Promise((resolve) => { releaseReplay = resolve; });

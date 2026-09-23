@@ -54,6 +54,7 @@ die() {
 : "${EVIDENCE_HEAD_ORIGIN:=}"
 : "${EVIDENCE_MEMBER_TOKEN:=}"
 : "${EVIDENCE_ADMIN_TOKEN:=}"
+: "${SYSTEM_PROMPT_FILE:=}"
 # Scout must NEVER receive push authority (review #4): WORKER_JWT is
 # required for build (to push) but must be empty for scout.
 if [ "$MODE" = "build" ] && [ -z "$WORKER_JWT" ]; then
@@ -66,6 +67,8 @@ export WORKER_JWT
 if [ "$MODE" = "evidence" ]; then
   [ -n "$EVIDENCE_JWT" ] || die "EVIDENCE_JWT required for evidence mode"
   [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
+  [ -n "$SYSTEM_PROMPT_FILE" ] && [ -s "$SYSTEM_PROMPT_FILE" ] \
+    || die "system prompt file required for evidence mode"
 fi
 
 if [ "$MODE" = "evidence" ]; then
@@ -187,6 +190,7 @@ if ! {
   printf 'sandbox_mode = "%s"\n' "$SANDBOX_MODE"
   if [ "$MODE" = "evidence" ]; then
     printf 'web_search = "disabled"\n'
+    printf 'developer_instructions = "%s"\n' "$(toml_escape "$(cat "$SYSTEM_PROMPT_FILE")")"
   fi
   cat <<'TOML'
 approval_policy = "never"
