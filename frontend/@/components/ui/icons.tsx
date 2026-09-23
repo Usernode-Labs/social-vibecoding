@@ -425,6 +425,16 @@ export const UserGroupIcon = stroked(
   'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9',
 );
 
+/**
+ * A HASH — a channel, in the desktop rail's Recents (#2802).
+ *
+ * The Messages inbox draws a channel's tile as a literal `#` character; the
+ * rail's rows are glyphs beside a label, so it needs the same mark as a
+ * stroked icon to sit on the person / group / sparkle / app glyphs' grid.
+ * Heroicons v1 outline `hashtag`, the set this file is drawn from.
+ */
+export const HashIcon = stroked('HashIcon', 'M7 20l4-16m2 16l4-16M6 9h14M4 15h14');
+
 // ── Tooling ──────────────────────────────────────────────────────────────
 
 /**

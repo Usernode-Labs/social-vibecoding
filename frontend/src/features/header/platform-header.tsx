@@ -102,6 +102,7 @@ import '../notifications/mount';
 // app chip beside them all the same way: periwinkle ink on a periwinkle tint
 // with a hairline one step darker (--brand-ink / --brand-tint / --brand-line
 // in app.css, which also carry the dark values, so no dark: variants here).
+// The bell and the sidebar toggle wear that disc on HOVER only (#2798).
 // Discs at 28px, not the design's larger circle: the header's content row is
 // pinned to 28px (tests/header-height-parity.test.js, and #909 before it), so
 // the ratio scales rather than the row. The hairline is inside the h-7 box
@@ -648,11 +649,16 @@ export function PlatformHeader() {
               starts are listed and resumed (`#messages-new-agent`, gated on
               the same two flags as the rows). The panel retired with it
               already gone (#2718 review).
+
+              NO DISC AT REST (#2798): the bell sits on the bar with no fill,
+              and the periwinkle tint the other header controls wear shows
+              only on hover. Same for #sidebar-toggle; the back button and
+              the app chip keep theirs.
           */}
           <a
             id="notifications-btn"
             href="#notifications"
-            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]"
             aria-label="Notifications"
             aria-haspopup="dialog"
             onClick={(event) => {

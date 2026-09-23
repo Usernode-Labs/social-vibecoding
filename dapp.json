@@ -2783,7 +2783,7 @@
     {
       "name": "The menu's destination order: platform, then you (#1443)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop + #platform-recents + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -4815,6 +4815,16 @@
       "name": "Side panel: a panel=1 address opened in a window of its own is the ordinary platform, with its header, its sidebar and the screen it names",
       "path": "/?demo=1&panel=1#messages",
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
+    },
+    {
+      "name": "#2802: the desktop rail's Recents sits between Workshop and Me, labelled by its heading",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
+    },
+    {
+      "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-header:has(#sidebar-toggle[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])) #notifications-btn[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])"
     }
   ],
   "governance": {

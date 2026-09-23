@@ -1094,7 +1094,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // `?panel=1` address opened in a window of its own is the ordinary
   // platform. 749, which leaves 21 slots under the 770 ceiling and 1 before
   // the 20-slot floor at 750.
-  assert.equal(DAPP.tests.length, 749);
+  //
+  // 749 → 751: +2 (#2802, #2798): the desktop rail's Recents sitting between
+  // Workshop and Me, and the sidebar toggle and bell carrying their blue disc
+  // on hover only. 751 was one past the 20-slot floor under the 770
+  // ceiling, so the ceiling moved to 790 with it (services/app-manifest.js),
+  // leaving 39 slots.
+  assert.equal(DAPP.tests.length, 751);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
