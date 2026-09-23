@@ -101,10 +101,11 @@ test('the Leaderboard screen hosts a tab strip, an event bar and all four panes'
   assert.match(screen, /<div id="leaderboard-history-root" class="hidden w-full"><\/div>/,
     'and the History pane, shipped empty and hidden like the other non-default panes');
   // Wide enough for the Topochain table; the Kudos lists keep their
-  // narrower reading column.
+  // narrower reading column, centered on its own (#2921) rather than
+  // left-pinned inside the wider frame.
   assert.match(screen, /max-w-5xl/, 'the shell is the wider column');
-  assert.match(screen, /id="leaderboard-root" class="hidden max-w-3xl"/,
-    'the Kudos pane keeps its reading width (and now ships hidden — see below)');
+  assert.match(screen, /id="leaderboard-root" class="hidden max-w-3xl mx-auto"/,
+    'the Kudos pane keeps its reading width, centered (and now ships hidden — see below)');
 });
 
 test('the retired screens are gone from the shell', () => {

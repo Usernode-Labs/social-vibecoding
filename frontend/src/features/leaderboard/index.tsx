@@ -142,7 +142,9 @@ export function LeaderboardScreen() {
     >
       {/*
           max-w-5xl for the Topochain table's sake; the Kudos pane keeps its
-          narrower max-w-3xl reading column below.
+          narrower max-w-3xl reading column below — centered with its own
+          `mx-auto` (#2921) rather than left-pinned inside this wider frame,
+          the way Profile's own `max-w-3xl mx-auto` column is.
       */}
       <div className="max-w-5xl mx-auto p-4 w-full">
         <div className={detailOpen ? 'hidden' : undefined}>
@@ -211,7 +213,7 @@ export function LeaderboardScreen() {
             standings root's is — `_applySection()` still toggles `hidden` on
             it, per the note above.
         */}
-        <div id="leaderboard-root" className="hidden max-w-3xl">
+        <div id="leaderboard-root" className="hidden max-w-3xl mx-auto">
           <KudosPane />
         </div>
         {/*
