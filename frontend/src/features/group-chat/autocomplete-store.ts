@@ -34,8 +34,9 @@ export interface MentionOption {
 }
 
 export interface RefOption {
-  kind: 'pr' | 'issue';
-  number: number;
+  /** #2783: `channel` is a `#name` channel; its `number` is the handle. */
+  kind: 'pr' | 'issue' | 'channel';
+  number: number | string;
   title: string;
 }
 

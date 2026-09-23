@@ -53,6 +53,7 @@ import { createPortal } from 'react-dom';
 
 import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { anchorRectOf, anchoredPopoverPosition, useAnchoredDismiss } from '../../../lib/anchored-popover';
 import { useStoreState } from '../../../lib/use-store-state';
 import { cardTintClass } from '../../home/panels/ui';
 import { aiEnabledStore, cardNowStore } from './cards-store';
@@ -582,30 +583,12 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         return;
       }
     }
-    const r = e.currentTarget.getBoundingClientRect();
-    setRect({ top: r.top, bottom: r.bottom, right: r.right });
+    setRect(anchorRectOf(e.currentTarget));
     setOpen(true);
   };
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = () => shut();
-    const onDoc = (ev: Event) => {
-      const t = ev.target as Node | null;
-      if (t && (btnRef.current?.contains(t) || popRef.current?.contains(t))) return;
-      close();
-    };
-    const onKey = (ev: globalThis.KeyboardEvent) => { if (ev.key === 'Escape') close(); };
-    document.addEventListener('click', onDoc, true);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => {
-      document.removeEventListener('click', onDoc, true);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [open]);
+  // Outside click, Escape, scroll, resize — lib/anchored-popover.ts, shared
+  // with Messages' "+" popover (#2778).
+  useAnchoredDismiss(open, [btnRef, popRef], shut);
   // A card that goes away under an open sheet (a repaint that replaces it)
   // takes the sheet with it rather than leaving a kit surface pointing at a
   // portal target nothing renders into any more.
@@ -635,12 +618,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // `_toggleCardMenu` places the ⋯ menu.
   const w = 312;
   const h = isVote ? 190 : 100;
-  const pos = rect ? (() => {
-    const left = Math.min(Math.max(8, rect.right - w), window.innerWidth - w - 8);
-    let top = rect.bottom + 6;
-    if (top + h > window.innerHeight - 8) top = Math.max(8, rect.top - h - 6);
-    return { top: Math.round(top), left: Math.round(left) };
-  })() : null;
+  const pos = rect ? anchoredPopoverPosition(rect, w, h) : null;
   const spec = side === 'yes' ? yes : no;
   const trimmed = line.replace(/\s+/g, ' ').trim();
   // A No needs its line; a Yes may go without one.

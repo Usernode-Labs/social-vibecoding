@@ -202,6 +202,8 @@ export interface TranscriptMessage {
   time: string;
   /** The same instant with nothing elided, for `title`. */
   timeTitle: string;
+  /** #2783: the raw instant (ISO), which consecutive messages group on. */
+  at?: string | null;
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
   systemText: string;

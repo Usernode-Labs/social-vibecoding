@@ -1,13 +1,17 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
+import { groupsWithPrevious } from '@/components/ui/chat';
 import {
   ChatIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { anchorRectOf, anchoredPopoverPosition, useAnchoredDismiss, type AnchorRect } from '../../lib/anchored-popover';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
+import { AgentAppDialog } from './agent-dialog';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -26,16 +30,17 @@ import {
   syncChrome,
   setFilter,
   typingUsers,
+  useChannelHandles,
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { initializeGlobalChat, removeGlobalChatThread, startNewGlobalChat, useGlobalChatState } from '../global-chat/store';
+import { initializeGlobalChat, removeGlobalChatThread, useGlobalChatState } from '../global-chat/store';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
 import {
   INBOX_FILTERS, buildInbox,
-  type AgentChat, type AppDiscussion, type InboxFilter,
+  type AgentChat, type AppDiscussion, type InboxFilter, type InboxSection,
 } from './inbox';
 import type { ConversationMessage, ConversationSummary } from './types';
 
@@ -56,16 +61,18 @@ import type { ConversationMessage, ConversationSummary } from './types';
  * That is what makes the two read as one screen at two widths rather than a
  * phone layout and a desktop layout.
  *
- * The transcript has two shapes, which is the language's own split (see
- * @/components/ui/chat.tsx): a DIRECT conversation is a bubble transcript —
- * two participants, one of them you, so side and surface say who is
- * speaking and no name is needed — and a GROUP is a named-row transcript,
- * where with several voices the name is the disambiguator and a bubble
- * would waste the width the text needs. ./message-row.tsx draws both.
+ * The transcript has ONE shape now, Discord's (#2783): every conversation —
+ * a DM, a group, #general — is a named-row transcript, with consecutive
+ * messages from one person grouped under a single name. DMs lost their
+ * bubbles so that a chat reads the same whichever section it sits in.
+ * ./message-row.tsx draws it.
+ *
+ * The LIST is Discord's too: the chats (people and agents) on top, newest
+ * first, then the channels — #general and one per app you are a member of.
  */
 
-function openDialog(name: 'messagesCreate' | 'messagesMembers' | 'messagesShare') {
-  window.UsernodeReact?.dialogs?.[name]?.open();
+function openDialog(name: 'messagesCreate' | 'messagesMembers' | 'messagesShare' | 'messagesAgent', payload?: unknown) {
+  window.UsernodeReact?.dialogs?.[name]?.open(payload);
 }
 
 function conversationPeer(conversation: ConversationSummary) {
@@ -124,37 +131,88 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
  * arrangement Slack and Teams land on with a channel, a DM and a bot thread
  * in one sidebar, and the one thing that makes a single list readable.
  */
-function KindPill({ kind }: { kind: 'app' | 'agent' }) {
+function KindPill({ kind }: { kind: 'agent' }) {
+  // Only an agent wears one now (#2783): the channels have a section of
+  // their own, headed, so an "App" pill on each of them said it twice.
   return (
     <span className="messages-kind-pill" data-kind={kind}>
-      {kind === 'app' ? 'App' : 'Agent'}
+      Agent
     </span>
   );
 }
 
 /**
- * An app's own discussion — the general thread on its board.
+ * #general, the room every user is in (#2783).
+ *
+ * A `channel` conversation, so unlike an app's channel it DOES carry an
+ * unread count: it lives in the conversations domain, which keeps a read
+ * cursor per member. The tile is the `#` a channel is named with, where a
+ * person's row has their face.
+ */
+function GeneralChannelRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
+  const unread = conversation.unreadCount > 0;
+  const activity = agoStamp(conversation.lastActivityAt);
+  const by = conversation.latestMessage?.sender?.username;
+  const handle = conversation.channelKey || conversation.title;
+  return (
+    <a
+      href={`#messages/${conversation.id}`}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+        if (window.location.hash === `#messages/${conversation.id}`) {
+          event.preventDefault(); selectConversation(conversation.id);
+        }
+      }}
+      data-inbox-channel={handle}
+      className={`messages-conversation-row messages-channel-row ${active ? 'messages-conversation-active' : ''}`}
+      aria-current={active ? 'page' : undefined}
+    >
+      <span className="messages-inbox-tile messages-channel-tile" aria-hidden="true">#</span>
+      <div className="min-w-0 flex-1">
+        <div className="messages-row-line">
+          <span className="messages-row-name">{handle}</span>
+          <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
+        </div>
+        <div className="messages-row-line">
+          <span className="messages-row-preview">
+            {conversation.latestSummary
+              ? (by ? `@${by}: ${conversation.latestSummary}` : conversation.latestSummary)
+              : 'Everyone on Homeroom'}
+          </span>
+          {unread ? <span className="messages-unread" aria-label={`${conversation.unreadCount} unread`}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
+        </div>
+      </div>
+    </a>
+  );
+}
+
+/**
+ * An app's channel — the general thread on its board, one per app the
+ * viewer is a member of, including one nobody has spoken in yet (#2783).
  *
  * It carries NO unread count, and its absence is honest rather than an
  * omission: `chat_messages` has no per-viewer read cursor, so a number here
  * would be invented. What the row says instead is when the last thing was
  * said and who said it, which is what makes it worth a tap.
  *
- * An anchor at the app's own discussion address, so a modified click opens
- * it in a tab the way every other row on this screen does.
+ * An anchor at the channel's address in this inbox, so a modified click
+ * opens it in a tab the way every other row on this screen does.
  */
-function AppDiscussionRow({ discussion }: { discussion: AppDiscussion }) {
+function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; active: boolean }) {
   const activity = discussion.lastAt ? agoStamp(discussion.lastAt) : null;
   const record = {
     icon_url: discussion.iconUrl,
     icon_emoji: discussion.iconEmoji,
     name: discussion.name,
   };
+  const handle = discussion.channel || discussion.slug;
   return (
     <a
       href={`#messages/app/${encodeURIComponent(discussion.slug)}`}
       data-inbox-app={discussion.slug}
-      className="messages-conversation-row"
+      data-inbox-channel={handle}
+      className={`messages-conversation-row messages-channel-row ${active ? 'messages-conversation-active' : ''}`}
+      aria-current={active ? 'page' : undefined}
     >
       <span
         data-icon={appIconKind(record as never)}
@@ -164,7 +222,7 @@ function AppDiscussionRow({ discussion }: { discussion: AppDiscussion }) {
       </span>
       <div className="min-w-0 flex-1">
         <div className="messages-row-line">
-          <span className="messages-row-name">{discussion.name}<KindPill kind="app" /></span>
+          <span className="messages-row-name">{discussion.name}<span className="messages-channel-handle">#{handle}</span></span>
           {activity
             ? <time className="messages-row-time" dateTime={discussion.lastAt || undefined} title={activity.title}>{activity.text}</time>
             : null}
@@ -339,14 +397,16 @@ function AgentSessionRow({ session }: { session: SessionRowView }) {
 }
 
 /**
- * The filter row — a SEGMENTED STRIP, the same one the app Workshop wears.
+ * The filter row — a SEGMENTED STRIP, the same one the app Workshop wears —
+ * with the "+" that starts something at its trailing end (#2778).
  *
- * THE PLUS IS NOT ON IT ANY MORE (#2718 review). It sat at the far end on
- * the reading that a row which narrows what is shown is where the thing that
- * adds to it belongs. That put one control saying "new" beside four saying
- * "show", and it could only ever mean ONE of the three things this inbox now
- * holds — it opened the people dialog, on the Agents tab as readily as on
- * People. What starts something is below, per tab, where it can say which.
+ * THE PLUS IS BACK ON IT. #2718's review took it off because one control
+ * saying "new" could only ever mean one of the things this inbox holds — it
+ * opened the people dialog on the Agents tab as readily as on People. It
+ * comes back as a CHOICE rather than a guess: pressing it opens a small
+ * popover, the vote picker's kind rather than a dialog, offering the three
+ * things that can be started — a direct message, a group chat, an agent
+ * chat. A channel is not among them: #general and each app's exist already.
  *
  * STYLED AS THE WORKSHOP'S STRIP IS: a track with the segments inside it and
  * the selected one tinted with a hairline ring, which is the shell's one
@@ -372,62 +432,117 @@ function InboxFilters({ filter }: { filter: InboxFilter }) {
           </button>
         ))}
       </div>
+      <NewMessageButton />
     </div>
   );
 }
 
+/** The three things the "+" can start, in the order the popover lists them. */
+const NEW_CHOICES = [
+  { key: 'direct', label: 'Direct message', hint: 'Talk to one person' },
+  { key: 'group', label: 'Group chat', hint: 'Bring a few people together' },
+  { key: 'agent', label: 'Agent chat', hint: 'Start a change on one of your apps' },
+] as const;
+type NewChoice = typeof NEW_CHOICES[number]['key'];
+
+function startNew(choice: NewChoice) {
+  // DM and group are the create dialog, opened on the matching tab. Agent
+  // asks which app first (./agent-dialog.tsx), then opens a new dev session
+  // there — for now; a platform-wide agent session will take its place.
+  if (choice === 'agent') openDialog('messagesAgent');
+  else openDialog('messagesCreate', choice);
+}
+
 /**
- * What starts something, under the strip and answering to it.
+ * The "+" and its popover (#2778).
  *
- * ── One control, or two, or none ──────────────────────────────────────
+ * The popover is placed and dismissed exactly as the vote picker's desktop
+ * home is — lib/anchored-popover.ts is that code, shared — and portalled to
+ * the body so the list's own scroller cannot clip it. On touch it is the
+ * kit's action sheet instead, which is what a three-row menu is on a phone.
  *
- * The inbox holds three kinds and only two of them can be STARTED: a
- * conversation with people, and a chat with the agent. An app's discussion
- * is the app's, and exists already — so the Apps tab offers nothing, which
- * is the honest answer rather than a button that would have to invent one.
- *
- * Under ALL it is both, side by side, because All is the tab with no answer
- * to "which" — the split says the two are peers rather than making one the
- * default and the other a menu item behind it.
- *
- * ── The agent half only when there IS an agent ────────────────────────
- *
- * Agent chats are gated on the same two flags their rows are (see the list
- * below): a shell with the feature off shows no Agents rows, no Agents tab
- * doing anything, and no way to start one. `agentsOn` is passed in rather
- * than read again here, so one answer drives all three.
+ * Nothing is rendered until the button is pressed, so the prerendered
+ * document holds the button alone and hydration has nothing to disagree
+ * about.
  */
-function InboxCompose({ filter, agentsOn }: { filter: InboxFilter; agentsOn: boolean }) {
-  const people = filter === 'all' || filter === 'people';
-  const agent = agentsOn && (filter === 'all' || filter === 'agents');
-  if (!people && !agent) return null;
+function NewMessageButton() {
+  const [rect, setRect] = useState<AnchorRect | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const open = !!rect;
+  const shut = () => setRect(null);
+  useAnchoredDismiss(open, [btnRef, popRef], shut);
+
+  const toggle = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (open) { shut(); return; }
+    const pu = (window as any).PlatformUI;
+    if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
+      pu.actionSheet({
+        actions: NEW_CHOICES.map((item) => ({ label: item.label, handler: () => startNew(item.key) })),
+      });
+      return;
+    }
+    setRect(anchorRectOf(event.currentTarget));
+  };
+  const choose = (choice: NewChoice) => { shut(); startNew(choice); };
+  const pos = rect ? anchoredPopoverPosition(rect, 240, 164) : null;
+
   return (
-    <div id="messages-compose" className="messages-compose">
-      {people ? (
-        <button
-          type="button"
-          id="messages-new"
-          className="messages-compose-btn"
-          onClick={() => openDialog('messagesCreate')}
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        id="messages-new"
+        className="messages-new-btn"
+        aria-haspopup="menu"
+        aria-expanded={open ? 'true' : 'false'}
+        aria-label="New message"
+        title="New message"
+        onClick={toggle}
+      >
+        <PlusIcon aria-hidden="true" />
+      </button>
+      {open && pos ? createPortal(
+        <div
+          ref={popRef}
+          id="messages-new-menu"
+          className="messages-new-pop"
+          role="menu"
+          aria-label="Start a new conversation"
+          style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
+          onClick={(event) => event.stopPropagation()}
         >
-          <PlusIcon className="w-4 h-4" aria-hidden="true" />
-          <span>New message</span>
-        </button>
+          {NEW_CHOICES.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="menuitem"
+              data-new-choice={item.key}
+              className="messages-new-option"
+              onClick={() => choose(item.key)}
+            >
+              {item.key === 'direct' ? <ChatIcon aria-hidden="true" /> : null}
+              {item.key === 'group' ? <UserGroupIcon aria-hidden="true" /> : null}
+              {item.key === 'agent' ? <SparklesIcon aria-hidden="true" /> : null}
+              <span className="min-w-0">
+                <span className="messages-new-option-label">{item.label}</span>
+                <span className="messages-new-option-hint">{item.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>,
+        document.body,
       ) : null}
-      {agent ? (
-        <button
-          type="button"
-          id="messages-new-agent"
-          className="messages-compose-btn"
-          onClick={() => { void startNewGlobalChat(); }}
-        >
-          <SparklesIcon className="w-4 h-4" aria-hidden="true" />
-          <span>New agent chat</span>
-        </button>
-      ) : null}
-    </div>
+    </>
   );
 }
+
+/** The heading over each part of the list (#2783). */
+const SECTION_LABELS: Record<InboxSection, string> = {
+  chats: 'Chats',
+  channels: 'Channels',
+};
 
 /**
  * Narrow the inbox by what a row SAYS, not by what it is.
@@ -533,6 +648,10 @@ function ConversationList() {
   const q = query.trim().toLowerCase();
   const matches = (entry: { kind: string; key: string }) => {
     if (!q) return true;
+    if (entry.kind === 'channel') {
+      const c = byConversation.get(entry.key.slice('channel:'.length));
+      return !!c && (inboxMatches(c.title, q) || inboxMatches(c.channelKey, q));
+    }
     if (entry.kind === 'person') {
       const c = byConversation.get(entry.key.slice('person:'.length));
       if (!c) return false;
@@ -543,7 +662,7 @@ function ConversationList() {
     }
     if (entry.kind === 'app') {
       const a = byApp.get(entry.key.slice('app:'.length));
-      return !!a && (inboxMatches(a.name, q) || inboxMatches(a.slug, q));
+      return !!a && (inboxMatches(a.name, q) || inboxMatches(a.slug, q) || inboxMatches(a.channel, q));
     }
     if (entry.kind === 'session') {
       const c = bySession.get(entry.key.slice('session:'.length));
@@ -576,7 +695,6 @@ function ConversationList() {
         />
       </div>
       <InboxFilters filter={snap.filter} />
-      <InboxCompose filter={snap.filter} agentsOn={agentsOn} />
       {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
       {/* #1953: a click on the list's own blank space — below the last row,
           not on a row or a button — closes the open conversation, as it
@@ -608,32 +726,47 @@ function ConversationList() {
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !shown.length
           ? <div id="messages-search-empty" className="messages-state"><p>No messages match “{query.trim()}”.</p></div>
           : null}
-        {/* ONE LIST, THREE KINDS. ./inbox.ts orders them on one clock and
-            returns DESCRIPTORS rather than rows, so each kind is still drawn
-            by the component that knows how — which is what keeps a
-            conversation row byte-identical to the one this screen has always
-            drawn while the list it sits in grew two more kinds. */}
-        {shown.map((entry) => {
-          if (entry.kind === 'person') {
-            const conversation = byConversation.get(entry.key.slice('person:'.length));
-            return conversation
-              ? <ConversationRow key={entry.key} conversation={conversation} active={snap.route.conversationId === conversation.id} />
-              : null;
-          }
-          if (entry.kind === 'app') {
-            const discussion = byApp.get(entry.key.slice('app:'.length));
-            return discussion ? <AppDiscussionRow key={entry.key} discussion={discussion} /> : null;
-          }
-          if (entry.kind === 'session') {
-            const session = bySession.get(entry.key.slice('session:'.length));
-            return session ? <AgentSessionRow key={entry.key} session={session} /> : null;
-          }
-          const agent = byAgent.get(entry.key.slice('agent:'.length));
-          return agent ? <AgentChatRow key={entry.key} chat={agent} /> : null;
+        {/* ONE LIST, TWO SECTIONS (#2783). ./inbox.ts orders them — the
+            chats on one clock, then the channels — and returns DESCRIPTORS
+            rather than rows, so each kind is still drawn by the component
+            that knows how. Under All each section is headed, the way Discord
+            heads its DMs and its channels; under a filter the strip already
+            says which one this is. */}
+        {shown.map((entry, i) => {
+          const head = snap.filter === 'all' && (i === 0 || shown[i - 1].section !== entry.section)
+            ? <h3 key={`head-${entry.section}`} className="messages-section-head" data-inbox-section={entry.section}>{SECTION_LABELS[entry.section]}</h3>
+            : null;
+          const row = inboxRow(entry);
+          return head ? [head, row] : row;
         })}
       </div>
     </section>
   );
+
+  function inboxRow(entry: { kind: string; key: string }) {
+    if (entry.kind === 'channel') {
+      const conversation = byConversation.get(entry.key.slice('channel:'.length));
+      return conversation
+        ? <GeneralChannelRow key={entry.key} conversation={conversation} active={snap.route.conversationId === conversation.id} />
+        : null;
+    }
+    if (entry.kind === 'person') {
+      const conversation = byConversation.get(entry.key.slice('person:'.length));
+      return conversation
+        ? <ConversationRow key={entry.key} conversation={conversation} active={snap.route.conversationId === conversation.id} />
+        : null;
+    }
+    if (entry.kind === 'app') {
+      const discussion = byApp.get(entry.key.slice('app:'.length));
+      return discussion ? <AppChannelRow key={entry.key} discussion={discussion} active={snap.route.appSlug === discussion.slug} /> : null;
+    }
+    if (entry.kind === 'session') {
+      const session = bySession.get(entry.key.slice('session:'.length));
+      return session ? <AgentSessionRow key={entry.key} session={session} /> : null;
+    }
+    const agent = byAgent.get(entry.key.slice('agent:'.length));
+    return agent ? <AgentChatRow key={entry.key} chat={agent} /> : null;
+  }
 }
 
 function InvitationBanner() {
@@ -699,18 +832,23 @@ function ThreadHeader() {
     catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : 'Couldn’t block this user.'); }
     finally { setBusy(false); setMenu(false); }
   }
-  const subtitle = active.kind === 'group'
-    ? `${active.memberCount} members${active.myRole === 'owner' ? ' · you own this group' : ''}`
-    : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message';
+  const channel = active.kind === 'channel';
+  const subtitle = channel
+    ? `Everyone on Homeroom · ${active.memberCount} ${active.memberCount === 1 ? 'member' : 'members'}`
+    : active.kind === 'group'
+      ? `${active.memberCount} members${active.myRole === 'owner' ? ' · you own this group' : ''}`
+      : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
-      <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} shape="square" />
+      {channel
+        ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
+        : <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} shape="square" />}
       <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
-        <div className="messages-thread-name">{active.kind === 'direct' && peer ? `@${peer.username}` : active.title}</div>
+        <div className="messages-thread-name">{active.kind === 'direct' && peer ? `@${peer.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
         <div className="messages-thread-sub">{subtitle}</div>
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
-      <div className="relative"><button type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>{menu ? <div className="messages-thread-menu">{active.kind === 'group' ? <button type="button" onClick={() => { setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button> : <button type="button" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>}<button type="button" onClick={() => { setMenu(false); void loadConversations(true); }}>Refresh conversation</button></div> : null}</div>
+      <div className="relative"><button type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>{menu ? <div className="messages-thread-menu">{active.kind === 'group' ? <button type="button" onClick={() => { setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button> : active.kind === 'direct' ? <button type="button" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button> : null}<button type="button" onClick={() => { setMenu(false); void loadConversations(true); }}>Refresh conversation</button></div> : null}</div>
     </header>
   );
 }
@@ -768,14 +906,28 @@ function AppDiscussionThread({ slug }: { slug: string }) {
   const ready = !!context && context.slug === slug;
   const name = ready ? context.name : slug;
   const readOnly = ready ? context.readOnly : false;
+  // The channel's `#handle`, from the list row when the viewer is a member.
+  const handle = snap.discussions.find((item) => item.slug === slug)?.channel || null;
 
   useEffect(() => {
     const el = host.current;
     if (!el || !ready) return undefined;
     const view = (window as any).AppView;
     const chat = (window as any).UsernodeReact?.groupChat;
-    view?.renderGroupChatTab?.({ host: el, slug, name, readOnly });
+    // OUT OF REACT'S COMMIT (#2783). renderGroupChatTab mounts the chat as a
+    // portal and then, on its next line, looks up `#gc-input` to wire the
+    // composer — send on Enter, drafts, the @ and # menus. The portal is
+    // published inside flushSync, which cannot flush while React is still
+    // committing this effect, so the input did not exist yet and the
+    // composer of a channel opened here was never wired: nothing typed in it
+    // sent. A macrotask later the commit is over and the portal lands at once.
+    let live = true;
+    const timer = window.setTimeout(() => {
+      if (live) view?.renderGroupChatTab?.({ host: el, slug, name, readOnly });
+    }, 0);
     return () => {
+      live = false;
+      window.clearTimeout(timer);
       // BOTH PORTALS, and the transcript's first: it points INTO #gc-messages
       // inside the pane, and a portal left pointing at a detached node keeps
       // its subtree and its store subscription alive (rule 1 in
@@ -816,7 +968,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="messages-thread-name block">{name}</span>
-          <span className="messages-thread-sub block">Everyone building this app</span>
+          <span className="messages-thread-sub block">{handle ? `#${handle} · ` : ''}Everyone building this app</span>
         </span>
       </header>
       {/* NO `dc-lift dc-lift-session` HERE, unlike the conversation pane
@@ -837,6 +989,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
 
 function ConversationThread() {
   const snap = useMessagesSnapshot();
+  const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
@@ -869,22 +1022,32 @@ function ConversationThread() {
   }
 
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
-  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your direct and group messages stay here.</p></section>;
-  // The shape follows the conversation's kind, and it is on the SECTION so
-  // the scroller's class string below stays the one the safe-area test pins.
-  const shape = snap.active?.kind === 'group' ? 'row' : 'bubble';
+  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your chats and channels open here.</p></section>;
+  // The kind is on the SECTION — `messages-thread-direct`, `-group` or
+  // `-channel` — so the scroller's class string below stays the one the
+  // safe-area test pins. It no longer changes the rows' shape: every kind is
+  // the same named-row transcript (#2783).
+  const kind = snap.active?.kind || 'direct';
   const rows: ReactNode[] = [];
   let previousDay = '';
+  let previous: ConversationMessage | null = null;
   for (const message of snap.messages) {
     const day = dayKey(message);
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
     }
-    rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversationId} shape={shape} />);
+    // A failed or unsent row is its own line: it carries a status of its own.
+    const grouped = !!previous && !previous.failed && !message.failed
+      && groupsWithPrevious(
+        { author: previous.sender.id, at: previous.createdAt },
+        { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
+      );
+    rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversationId} grouped={grouped} channels={channels} />);
+    previous = message;
   }
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session ${shape === 'bubble' ? 'messages-thread-direct' : 'messages-thread-group'}`} aria-label={snap.active?.title || 'Conversation'}>
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}`} aria-label={snap.active?.title || 'Conversation'}>
       <ThreadHeader />
       <InvitationBanner />
       {/* No `un-kb-avoid` here: the column reserves the keyboard inset now
@@ -960,6 +1123,7 @@ export function MessagesScreen() {
         </div>
       </main>
       <CreateConversationDialog />
+      <AgentAppDialog />
       <ConversationMembersDialog />
       <ShareItemDialog />
     </>

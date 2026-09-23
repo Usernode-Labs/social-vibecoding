@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
-import { draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
+import { channels, draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
 import type { MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -97,6 +97,27 @@ export function MessageComposer() {
       && member.username.toLowerCase().startsWith(prefix.toLowerCase())).slice(0, 6);
   }, [active?.members, value]);
 
+  // #2783: `#` offers the viewer's channels — #general and their apps' —
+  // and inserts `#handle`, which every chat renders as a link to it. Only a
+  // word after the `#`: `#123` is an issue reference, and a DM has no app to
+  // look issues up in.
+  const channelMatches = useMemo(() => {
+    const cursor = inputRef.current?.selectionStart ?? value.length;
+    const prefix = value.slice(0, cursor).match(/(?:^|\s)#([A-Za-z][A-Za-z0-9-]*|)$/)?.[1];
+    if (prefix === undefined) return null;
+    const q = prefix.toLowerCase();
+    return channels().filter((item) => item.handle.startsWith(q)).slice(0, 6);
+  }, [value, snap.conversations, snap.discussions]);
+
+  function insertChannel(handle: string) {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? value.length;
+    const before = value.slice(0, cursor).replace(/#([A-Za-z][A-Za-z0-9-]*|)$/, `#${handle} `);
+    const next = before + value.slice(cursor);
+    updateValue(next);
+    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(before.length, before.length); });
+  }
+
   function updateValue(next: string) {
     const trimmed = next.slice(0, 8000);
     setValue(trimmed); setDraft(conversationId, trimmed);
@@ -173,6 +194,7 @@ export function MessageComposer() {
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(conversationId, null)} aria-label="Cancel reply">×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><button type="button" onClick={() => setObject(null)} aria-label="Remove shared item">×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
+      {channelMatches?.length && !mention?.length ? <div className="messages-mention-menu" role="listbox" aria-label="Channels">{channelMatches.map((item) => <button key={item.handle} type="button" role="option" data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
       {mention?.length ? <div className="messages-mention-menu" role="listbox">{mention.map((member) => <button key={member.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />

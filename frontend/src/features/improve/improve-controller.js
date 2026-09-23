@@ -974,6 +974,29 @@ const Improve = {
   },
 
   /**
+   * New change on a NAMED app (#2778): Messages' "+" → Agent chat, once the
+   * viewer has picked which app. The same destination startSession reaches —
+   * `/dev/sessions/new`, lighting the Messages tab, back arrow up to
+   * Messages — for an app that need not be the one Improve is pointed at.
+   * Nothing is created until the first send, exactly as there.
+   *
+   * A later change will point this at a platform-wide agent session instead;
+   * the caller does not need to know which.
+   */
+  async startSessionFor(slug) {
+    if (!slug || !window.App) return;
+    Improve.close();
+    Improve._nextSessionOrigin = '#messages';
+    if (window.AppView) window.AppView._proposalHint = true;
+    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
+    if (window.App.currentApp === slug) {
+      await window.App.switchTab('dev', ref, 'sessions');
+    } else {
+      await window.App.navigateToApp(slug, 'dev', ref, 'sessions');
+    }
+  },
+
+  /**
    * Open the Dev screen on one of its two tabs.
    *
    * `mode` is a dev view mode ('feed' | 'kanban'), which is what the two

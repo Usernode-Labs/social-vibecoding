@@ -361,6 +361,7 @@ async function listMessages(pool, user, conversationId, { before = null, limit =
 async function conversationRow(db, user, conversationId) {
   const { rows } = await db.query(
     `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at,
+            c.channel_key,
             me.role AS my_role, me.status AS membership_status, me.invited_by,
             me.last_read_message_id,
             inviter.username AS requester_username,
@@ -392,7 +393,18 @@ async function conversationRow(db, user, conversationId) {
 
 async function serializeConversation(db, user, row, { includeMembers = true } = {}) {
   const accepted = row.membership_status === 'member';
-  const members = accepted && includeMembers ? await loadMembers(db, row.id) : [];
+  const channel = row.kind === 'channel';
+  // A channel's roster is every user on the platform, so it is COUNTED rather
+  // than loaded: the list and the thread header need the number, and nothing
+  // renders thousands of member rows.
+  const members = accepted && includeMembers && !channel ? await loadMembers(db, row.id) : [];
+  const channelMemberCount = accepted && channel
+    ? (await db.query(
+      `SELECT COUNT(*)::int AS count FROM conversation_members
+        WHERE conversation_id = $1 AND status = 'member'`,
+      [row.id]
+    )).rows[0]?.count || 0
+    : 0;
   const latest = accepted && row.latest_message_id
     ? await getMessage(db, user, row.id, row.latest_message_id)
     : null;
@@ -427,7 +439,10 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     status: row.status,
     archived: row.status === 'archived',
     members,
-    memberCount: accepted ? members.filter((member) => member.status === 'member').length : 0,
+    memberCount: channel
+      ? channelMemberCount
+      : (accepted ? members.filter((member) => member.status === 'member').length : 0),
+    channelKey: channel ? row.channel_key : null,
     membershipStatus: row.membership_status,
     myRole: row.my_role,
     requester,
@@ -442,13 +457,50 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   };
 }
 
+/**
+ * Join the viewer to every channel they are not in yet (#2783).
+ *
+ * Channel membership is implicit — every user is in #general — but the
+ * realtime audience, the read cursor and the unread count all hang off a
+ * `conversation_members` row, so one is written the first time it matters:
+ * when the viewer's list is read, or when they open a channel before it has
+ * been. The cursor starts at the room's latest message, so a newcomer is not
+ * greeted with its whole history as unread. Idempotent: an existing row, in
+ * whatever state, is left alone.
+ */
+async function ensureChannelMemberships(db, user) {
+  if (!user || !user.id) return;
+  await db.query(
+    `INSERT INTO conversation_members
+       (conversation_id, user_id, role, status, responded_at, joined_at, last_read_message_id)
+     SELECT c.id, $1, 'member', 'member', NOW(), NOW(),
+            (SELECT MAX(m.id) FROM conversation_messages m WHERE m.conversation_id = c.id)
+       FROM conversations c
+      WHERE c.kind = 'channel' AND c.status = 'active'
+     ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+    [user.id]
+  );
+}
+
 async function getConversation(pool, user, conversationId) {
-  const row = await conversationRow(pool, user, conversationId);
+  let row = await conversationRow(pool, user, conversationId);
+  if (!row) {
+    // Opening #general by its address before the list has ever been read.
+    const channel = await pool.query(
+      `SELECT 1 FROM conversations WHERE id = $1 AND kind = 'channel' AND status = 'active'`,
+      [conversationId]
+    );
+    if (channel.rows.length) {
+      await ensureChannelMemberships(pool, user);
+      row = await conversationRow(pool, user, conversationId);
+    }
+  }
   if (!row || !(await canDirectInteract(pool, row, user.id))) return null;
   return serializeConversation(pool, user, row);
 }
 
 async function listConversations(pool, user) {
+  await ensureChannelMemberships(pool, user);
   const { rows } = await pool.query(
     `SELECT c.id FROM conversations c
       JOIN conversation_members me ON me.conversation_id = c.id
@@ -769,7 +821,9 @@ async function transferOrArchive(db, conversationId, leavingUserId) {
 async function leave(pool, user, conversationId) {
   return transaction(pool, async (db) => {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
-    if (!membership) return null;
+    // A channel cannot be left (#2783): every user is in it, and the next
+    // read of their list would only join them again.
+    if (!membership || membership.kind === 'channel') return null;
     await db.query(
       `UPDATE conversation_members
           SET status = 'left', role = 'member', left_at = NOW(), responded_at = NOW()
@@ -948,6 +1002,9 @@ async function sendMessage(pool, user, conversationId, input) {
       let kind = 'conversation_message';
       if (member.user_id === replyAuthorId) kind = 'conversation_reply';
       else if (mentionsUsername(content, member.username)) kind = 'conversation_mention';
+      // A channel is everybody (#2783): an ordinary message there would ring
+      // every bell on the platform. Only a reply or an @mention does.
+      if (membership.kind === 'channel' && kind === 'conversation_message') continue;
       notifications.push(await insertNotification(db, {
         userId: member.user_id, conversationId, messageId,
         sourceUserId: user.id, kind,
@@ -1277,6 +1334,7 @@ module.exports = {
   leave,
   removeMember,
   mentionsUsername,
+  ensureChannelMemberships,
   sendMessage,
   editMessage,
   toggleReaction,
