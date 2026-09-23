@@ -126,6 +126,7 @@ const DDL = `
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
     conversation_message_id INTEGER REFERENCES conversation_messages(id) ON DELETE CASCADE,
+    chat_message_id INTEGER,
     source_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     kind VARCHAR(32) NOT NULL,
     detail VARCHAR(32),

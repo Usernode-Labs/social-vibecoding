@@ -159,7 +159,7 @@ async function createMentionNotifications(pool, { appId, chatMessageId, senderId
   const params = [];
   recipients.forEach((u, i) => {
     const base = i * 5;
-    values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
+    values.push(`($${base + 1}::int, $${base + 2}::int, $${base + 3}::int, $${base + 4}::int, $${base + 5}::varchar)`);
     params.push(u.id, appId, chatMessageId, senderId, 'mention');
   });
 
