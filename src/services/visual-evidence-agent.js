@@ -49,6 +49,13 @@ A target is exactly one of:
 testId. Never use an ephemeral accessibility ref. CSS may identify a stable
 component but may not be html, body, or *.
 
+Before submitting the plan, inspect both revisions in the states where each
+target will be used. Every interaction target and each checkpoint focus must
+identify exactly one visible element; a waitFor target only needs one or more
+visible matches. Check full accessible names instead of assuming a partial
+name is unique. If a target cannot be verified, report that instead of
+submitting a guessed locator.
+
 replay.checkpoint is { id, label, focus:{before,after},
 assertions:{before:[...],after:[...]}, animation }. Every assertion list is
 non-empty. Supported assertions are visible/hidden/attached/detached/checked/
