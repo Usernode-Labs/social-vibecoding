@@ -253,7 +253,9 @@ function chatRoutes(config) {
         LIMIT $${params.length}`;
 
       const { rows } = await pool.query(query, params);
-      const messages = rows.reverse();
+      const messages = rows.reverse().map(message => ({ ...message,
+        username: message.username || (message.msg_type === 'message' && message.user_id == null ? 'Deleted user' : message.username),
+      }));
 
       // A reply can quote a blocked author's text even when its own sender
       // remains visible. Hide that quoted content for this viewer.

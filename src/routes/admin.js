@@ -621,63 +621,13 @@ function adminRoutes(config) {
   });
 
   router.delete('/api/admin/users/:id', requireAdminWrite, async (req, res) => {
-    const userId = parseInt(req.params.id);
-
-    if (userId === req.user.id) {
-      return res.status(400).json({ error: 'Cannot delete yourself' });
-    }
-
-    // Deleting drops the admin count just like a revoke, so it takes the
-    // same advisory lock / transaction and enforces the last-admin
-    // invariant server-side — even though the UI hides Delete for admins,
-    // a direct API call must not be able to zero out the admins.
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
-
-      const { rows: existing } = await client.query(
-        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
-        [userId]
-      );
-      if (!existing.length) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'User not found' });
-      }
-      const { rows: managedKeys } = await client.query(
-        `SELECT id FROM credentials.managed_openrouter_keys
-          WHERE user_id = $1 AND status <> 'deleted'`,
-        [userId],
-      );
-      if (managedKeys.length) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({
-          error: 'Delete this user\'s company OpenRouter key before deleting the account.',
-        });
-      }
-      // Only a FULL admin counts toward the "at least one admin" invariant
-      // (issue #311) — deleting a view-only admin never threatens it.
-      if (existing[0].is_admin && !existing[0].admin_readonly) {
-        const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
-        );
-        if (countRows[0].n <= 1) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: "Can't delete the last full admin." });
-        }
-      }
-
-      await client.query('DELETE FROM users WHERE id = $1', [userId]);
-      await client.query('COMMIT');
-      log.info('admin', 'User deleted', { id: userId, by: req.user.username });
-      res.json({ ok: true });
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      log.error('admin', 'Delete user failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    } finally {
-      client.release();
-    }
+      const result = await require('../services/account-deletion').deleteAccount(pool, {
+        userId: Number(req.params.id), actorId: req.user.id, mode: 'admin', confirmation: req.body?.confirmation,
+      });
+      res.json(result);
+      void require('../services/account-deletion-cleanup').sweep(pool, config).catch(() => {});
+    } catch (err) { require('./account-deletion').sendError(res, err); }
   });
 
   // Admin-issued temporary password (issue #282). The universal recovery

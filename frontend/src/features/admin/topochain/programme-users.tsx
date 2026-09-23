@@ -34,7 +34,7 @@ import type { Column, PageMeta } from './ui.tsx';
 //
 // Two things worth keeping in view:
 //
-//   - THE TYPED DELETE. This DELETE has no server-side confirmation body
+//   - THE TYPED DELETE. The API also requires an explicit confirmation body
 //     param at all (only a self-delete guard and a last-full-admin guard) and
 //     it targets the SHARED platform users table — it can remove a real
 //     login, including another admin, not just a programme row. The admin
@@ -114,8 +114,7 @@ function DeleteConfirm({ user, onCancel, onConfirm }: {
       <p className="text-xs text-red-700 dark:text-red-300 mb-3">
         {'This permanently deletes '}
         <strong>{expected}</strong>
-        {' from the platform users table. This can be ANY platform user, including real logins '}
-        {'and other admins, not just a user of this programme. Type '}
+        {' from their platform account and signs them out everywhere. This affects ANY platform user, not just programme membership. Shared messages and attachments remain under “Deleted user.” External cleanup may remain pending. Type '}
         <code>{expected}</code>
         {' exactly to confirm.'}
       </p>
@@ -489,7 +488,7 @@ function ProgrammeUsers() {
 
   const remove = useCallback(async (id: number) => {
     if (!canWrite()) return;
-    const res = await send('DELETE', `/api/v4/admin/users/${encodeURIComponent(id)}`);
+    const res = await send('DELETE', `/api/v4/admin/users/${encodeURIComponent(id)}`, { confirmation: 'DELETE' });
     setDeleteConfirm(null);
     if (res.ok && res.data?.success) { load(); return; }
     topo()._alert((res.data && res.data.error) || 'Delete failed.');

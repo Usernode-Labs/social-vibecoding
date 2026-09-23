@@ -59,6 +59,10 @@ function _onBusMessage({ kind, routing, data, oversize }) {
     case 'user':
       if (r.userId != null) deliverToUser(r.userId, payload);
       return;
+    case 'account_deleted':
+      void require('./account-deletion-runtime').receive(_pool, r.userId)
+        .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
+      return;
     case 'homeroom_bot':
       // Not a socket event at all: the Homeroom bot's loop runs on one Pod
       // and an issue event can land on any, so the wake rides this bus.
@@ -81,8 +85,31 @@ function noteIssueActivityForBot(appId, issueNumber, reason) {
   }
 }
 
+function disconnectUser(userId) {
+  for (const clients of [globalClients, ...rooms.values()]) {
+    for (const client of clients) {
+      if (Number(client.user.id) !== Number(userId)) continue;
+      clients.delete(client);
+      client.ws.terminate();
+    }
+  }
+}
+
+function connectedUserIds() {
+  return [...new Set([globalClients, ...rooms.values()]
+    .flatMap(clients => [...clients].map(client => Number(client.user.id))))];
+}
+
 function attach(server, config) {
   const pool = getPool(config);
+  // Also reconcile after a missed NOTIFY or reconnect. This includes HTTP
+  // streams; the timer runs on every pod, independently of leader duties.
+  const revocationTimer = setInterval(() => {
+    void require('./account-deletion-runtime').reconcile(pool)
+      .catch(() => log.warn('ws', 'Account revocation check unavailable'));
+  }, 30_000);
+  revocationTimer.unref();
+  server.once('close', () => clearInterval(revocationTimer));
   _pool = pool;
 
   // Cross-instance fan-out. A single-pod deployment (the shipped default)
@@ -132,6 +159,9 @@ function attach(server, config) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         const client = { ws, user };
         globalClients.add(client);
+        void pool.query('SELECT id FROM users WHERE id = $1', [user.id])
+          .then(result => { if (!result.rows.length) disconnectUser(user.id); })
+          .catch(() => disconnectUser(user.id));
         log.debug('ws', 'Global events client connected', { userId: user.id });
         // Which build this socket landed on — see sendPlatformVersion. A tab
         // whose socket comes back after a rollout learns the new build from
@@ -180,11 +210,15 @@ function attach(server, config) {
 
     const client = { ws, user, appId, appSlug };
     joinRoom(appId, client);
+    const live = await pool.query('SELECT id FROM users WHERE id = $1', [user.id]).catch(() => ({ rows: [] }));
+    if (!live.rows.length) { disconnectUser(user.id); return; }
 
     log.info('ws', 'Client connected', { userId: user.id, appSlug });
 
     ws.on('message', async (raw) => {
       try {
+        const live = await pool.query('SELECT id FROM users WHERE id = $1', [user.id]);
+        if (!live.rows.length) { disconnectUser(user.id); return; }
         const msg = JSON.parse(raw);
         await handleMessage(pool, client, msg);
       } catch (err) {
@@ -1394,4 +1428,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
