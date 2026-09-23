@@ -1285,6 +1285,11 @@
       "expectSelector": "#home-body:has(.home-discover-rail .app-card.un-reorder-slot) #app-list.un-reordering #home-grid-overlay .home-grid-cell--on"
     },
     {
+      "name": "A Your-apps tile can be dragged into the open Homeroom widget strip, which lights up as the target (?shot=widget-drop, #2894)",
+      "path": "/?demo=1&shot=widget-drop",
+      "expectSelector": "#home-body:has(#widget-strip[data-drop=\"ok\"] .widget-tile) #app-list .app-card.un-reorder-slot"
+    },
+    {
       "name": "App tiles carry no user count and no status dot",
       "path": "/?demo=1",
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"

@@ -242,11 +242,11 @@ const MANIFEST_FILENAME = 'dapp.json';
 // the 751 declared here.
 //
 // 790 → 810 (Homeroom task 598, the navigation prototype's remaining gaps):
-// its fifteen checks put the merged manifest at 774 against the 770 floor,
-// landing on main's own growth to 759. Twelfth crossing, same arithmetic:
+// its fifteen checks put the merged manifest at 775 against the 770 floor,
+// landing on main's own growth to 760. Twelfth crossing, same arithmetic:
 // 810 checks at ~3.9s over the pool of 16 is ~197s, and the unchanged 650s
 // TESTS_DEADLINE_MS still clears the 2x margin by ~255s, so neither the
-// deadline nor RUN_TIMEOUT_MS moves. The step buys 36 slots over the 774
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 35 slots over the 775
 // declared here.
 const MAX_DECLARED_TESTS = 810;
 

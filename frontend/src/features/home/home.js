@@ -1020,13 +1020,20 @@ const Home = {
           Home._showGridOverlay(listEl, cols, Home._contextLift.item);
           Home._contextLift = null;
         }
+        // #2894: the open widget strip is a drop target too. It is checked
+        // BEFORE the grid's own geometry because the strip sits above the
+        // canvas and a finger over it resolves to no cell there anyway.
+        Home._pointerOverWidget = Home._widgetStripAt(x, y);
+        if (Home._pointerOverWidget) return Home.WIDGET_DROP_CELL;
         return Home._targetCellFor(x, y, info, cols);
       },
       // canPlace runs first on every cell change and onHover right after, and
       // both need the SAME displacement plan — so compute it once and memo it
       // for the paint. Recomputing would risk the highlight describing a
       // different outcome than the one that commits.
-      canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
+      canPlace: (item, cell) => (Home._isWidgetDropCell(cell)
+        ? Home._canDropOnWidget(item)
+        : !!Home._planFor(item, cell, cols)),
       onLift: (item) => {
         Home._dragActive = true;
         if (Home._cardPointerType === 'touch') {
@@ -1037,15 +1044,51 @@ const Home = {
           Home._showGridOverlay(listEl, cols, item);
         }
       },
-      onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
+      onHover: (item, cell, ok) => {
+        const overWidget = Home._isWidgetDropCell(cell);
+        Home._markWidgetDrop(overWidget ? item : null, ok);
+        Home._previewDrop(item, overWidget ? null : cell, ok, cols);
+      },
       // The release spring's destination. Same memoised plan again: the tile
       // settles on the cell the tint promised, not the one it left.
-      rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
-      onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
+      rectForCell: (item, cell) => (Home._isWidgetDropCell(cell)
+        ? Home._widgetDropRect()
+        : Home._rectForCell(item, cell, cols)),
+      onPlace: (item, cell) => {
+        // A widget drop writes NOTHING to the layout: the tile stays where it
+        // is on the canvas and the app is pinned as well. The pin itself waits
+        // for onSettle, when the gesture is over and the strip may repaint.
+        if (Home._isWidgetDropCell(cell)) {
+          Home._pendingWidgetAdd = (item && item.dataset && item.dataset.slug) || null;
+          return;
+        }
+        Home._onGridPlace(item, cell, cols);
+      },
       onSettle: () => {
         Home._contextLift = null;
         Home._dragActive = false;
         Home._hideGridOverlay();
+        // Read BEFORE the reset: the kit clears the hover (onHover null) ahead
+        // of onSettle on a refused drop, so only the pointer's own last
+        // position still says the release happened over the strip.
+        const releasedOverWidget = Home._pointerOverWidget;
+        Home._pointerOverWidget = false;
+        Home._markWidgetDrop(null, false);
+        const widgetAdd = Home._pendingWidgetAdd;
+        Home._pendingWidgetAdd = null;
+        if (widgetAdd) {
+          // The drop's own add is the terminal repaint (it renders the new
+          // tile optimistically), so a deferred reload is flushed through it
+          // rather than racing it.
+          Home._rerenderPending = false;
+          Home._dropOnWidget(widgetAdd);
+          if (Home._reloadPending) {
+            Home._reloadPending = false;
+            Home.load();
+          }
+          return;
+        }
+        if (releasedOverWidget && Home._widgetFull()) Home._shakeWidgetStrip();
         if (Home._reloadPending) {
           Home._reloadPending = false;
           Home._rerenderPending = false;
@@ -3184,6 +3227,7 @@ const Home = {
   // when the app reports the widget mechanism, the registry fetch
   // succeeded, AND the user has revealed the section this session.
   _widgetUiActive() {
+    if (Home._shotWidgetDrop) return true; // ?shot=widget-drop, see below
     return Home._widgetSectionVisible
       && Home._shortcutSupport?.mechanism === 'widget'
       && Array.isArray(Home._widgetItems);
@@ -3630,6 +3674,9 @@ const Home = {
       // management section to show.
       return Home._addShortcutForApp(app);
     }
+    // #2892: the tile the menu was opened from is done being "held" the
+    // moment an action is chosen — see _releaseTile.
+    Home._releaseTile(app.slug);
     Home._revealWidgetSection();
     if (Home._widgetSlugs().has(app.slug)) return; // already in — just reveal
     if (Home._widgetItems.length >= Home.WIDGET_CAPACITY) {
@@ -3664,6 +3711,135 @@ const Home = {
       ],
       { duration: 450, easing: 'ease-in-out' }
     );
+  },
+
+  // ── Dragging a tile INTO the widget strip (#2894) ──────────────────
+  //
+  // No second recognizer: a "Your apps" tile is already carried by the kit's
+  // attachGridPlacement (_attachGridPlacement above), and its cells are
+  // host-defined tokens. The open strip is simply one more cell — a sentinel
+  // cellFromPoint returns while the finger is over #widget-strip — and every
+  // callback branches on it: canPlace says whether the app can go in,
+  // onHover tints the strip instead of the grid, rectForCell flies the ghost
+  // to the slot the new tile will take, and onPlace defers the pin to
+  // onSettle, when the gesture is over and the strip may repaint. Mouse and
+  // touch are therefore the same code path the grid reorder already is.
+  //
+  // `col`/`row` are what the kit's sameCell compares, so they must be stable
+  // and must never collide with a real cell.
+  WIDGET_DROP_CELL: Object.freeze({ col: 'widget', row: 'widget', widget: true }),
+
+  // Slug a committed widget drop still owes a pin (onPlace → onSettle).
+  _pendingWidgetAdd: null,
+
+  // Whether the finger was over the strip at the last hit-test, so onSettle
+  // can tell a refused drop ON the strip (full → shake) from one elsewhere.
+  _pointerOverWidget: false,
+
+  _isWidgetDropCell(cell) {
+    return !!(cell && cell.widget === true);
+  },
+
+  // A rect test, not elementFromPoint: the strip is a plain box and the kit's
+  // ghost is pointer-events:none anyway, so this is exact and cheap on the
+  // per-move path. Only while the section is actually showing.
+  _widgetStripAt(x, y) {
+    if (!Home._widgetUiActive() || typeof document === 'undefined') return false;
+    const strip = document.getElementById('widget-strip');
+    if (!strip || typeof strip.getBoundingClientRect !== 'function') return false;
+    const r = strip.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  },
+
+  _widgetFull() {
+    return Array.isArray(Home._widgetItems)
+      && Home._widgetItems.length >= Home.WIDGET_CAPACITY;
+  },
+
+  // The same gate as the menu's "Add to Homeroom widget": a running app, not
+  // already pinned, and room left on the widget.
+  _canDropOnWidget(el) {
+    const slug = el && el.dataset ? el.dataset.slug : null;
+    if (!slug || !Home._widgetUiActive()) return false;
+    if (Home._widgetSlugs().has(slug) || Home._widgetFull()) return false;
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    return !!(app && app.status === 'running');
+  },
+
+  // The strip's drop tint. A data attribute rather than a class because
+  // #widget-strip's className is React's (widget-strip.tsx renders it), and a
+  // class written from here would be a second writer to it; React renders no
+  // `data-drop`, so it never touches this one. app.css draws both states.
+  _markWidgetDrop(el, ok) {
+    if (typeof document === 'undefined') return;
+    const strip = document.getElementById('widget-strip');
+    if (!strip) return;
+    if (el) strip.setAttribute('data-drop', ok ? 'ok' : 'refused');
+    else strip.removeAttribute('data-drop');
+  },
+
+  // Where the dropped tile lands: the slot right after the last pinned tile
+  // (wrapping to the next line when the row is full), or the strip's first
+  // slot when it is empty. Same gap and padding as the strip's gap-3 / p-3.
+  _widgetDropRect() {
+    if (typeof document === 'undefined') return null;
+    const strip = document.getElementById('widget-strip');
+    if (!strip) return null;
+    const sr = strip.getBoundingClientRect();
+    const tiles = strip.querySelectorAll('.widget-tile');
+    const last = tiles.length ? tiles[tiles.length - 1] : null;
+    if (!last) return { left: sr.left + 12, top: sr.top + 12 };
+    const lr = last.getBoundingClientRect();
+    const left = lr.right + 12;
+    if (left + lr.width <= sr.right - 12) return { left, top: lr.top };
+    return { left: sr.left + 12, top: lr.bottom + 12 };
+  },
+
+  // The drop's pin. Optimistic, the same shape as _removeWidgetItem: the new
+  // tile is in the strip when the ghost lands, and a refusal or failure
+  // re-fetches the registry so the strip snaps back to device truth.
+  async _dropOnWidget(slug) {
+    Home._releaseTile(slug);
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    if (!app || !Home._widgetUiActive() || Home._widgetSlugs().has(slug)) {
+      Home.render();
+      return false;
+    }
+    Home._widgetItems = [...Home._widgetItems, {
+      id: `pending:${slug}`,
+      name: app.name || slug,
+      url: `${location.origin}/app/${encodeURIComponent(slug)}`,
+    }];
+    Home.render();
+    const ok = await Home._addShortcutForApp(app);
+    if (!ok) {
+      await Home._refreshWidgetItems();
+      Home.render();
+    }
+    return ok;
+  },
+
+  // #2892: "apps can get stuck in the selected state when adding to the
+  // widget". Adding is one of the few card actions that leaves you on the
+  // home screen — the others open the app, open a page or remove the tile —
+  // so whatever held state the long-press left behind is still on screen
+  // afterwards, and the strip appearing above the grid moves the tile out
+  // from under the finger whose next tap would otherwise have cleared it.
+  // Both add paths (the menu and a drop) release it here: the menu and the
+  // context lift, any displacement preview, and the focus the popover hands
+  // back to the tile it was anchored on. It writes nothing INTO the card —
+  // #app-list is React's (tests/home-grid-ownership.test.js); the kit's own
+  // drop slot comes off in its finish(), and the tile's hover fill is gated
+  // to real hover pointers in app.css.
+  _releaseTile(slug) {
+    Home.closeCardMenu();
+    Home._contextLift = null;
+    Home._clearPreview();
+    if (typeof document === 'undefined') return;
+    const active = document.activeElement;
+    const held = active && typeof active.closest === 'function' ? active.closest('.app-card[data-slug]') : null;
+    if (held && (!slug || slug === held.dataset.slug) && typeof held.blur === 'function') held.blur();
   },
 
   // Draws `text` onto a scratch canvas, finds its ink (alpha) bounding
@@ -4562,6 +4738,43 @@ const Home = {
     card.classList.add('un-reorder-slot');
     Home._previewDrop(card, { col: 0, row: 0 }, true, cols);
     Home._incoming = null;
+  },
+
+  // Screenshot-state deep link (?shot=widget-drop, #2894): the third sibling,
+  // for the drag that ends in the Homeroom widget strip. The strip exists
+  // only inside the iOS app (the bridge has to report the widget mechanism),
+  // so without this no browser — not a capture, not a declared check — could
+  // ever see the section, let alone the drop state.
+  //
+  // It shows the strip with ONE pinned tile (the second tile on the grid),
+  // lifts the first tile into the kit's dashed drop slot and tints the strip
+  // the way onHover does over it. The registry is a local stand-in:
+  // _shortcutSupport is left alone, so the heal pass, the menu item and every
+  // bridge call stay gated off — nothing is written anywhere. Idempotent and
+  // repeatable like ?shot=home-grid, because every commit is a chance for a
+  // repaint to have dropped it.
+  _shotWidgetDrop: false,
+  _maybeShowShotWidgetDrop(listEl) {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'widget-drop') return;
+    if (Home._dragActive || !listEl || listEl.offsetParent === null) return;
+    const cards = listEl.querySelectorAll('.app-card[data-yours][data-slug]');
+    if (!cards.length) return;
+    if (!Home._shotWidgetDrop) {
+      Home._shotWidgetDrop = true;
+      const pinned = cards[1] || cards[0];
+      const app = (Home._apps || []).find((a) => a.slug === pinned.dataset.slug);
+      Home._widgetItems = [{
+        id: 'shot-widget-drop',
+        name: (app && app.name) || pinned.dataset.slug,
+        url: `${location.origin}/app/${encodeURIComponent(pinned.dataset.slug)}`,
+      }];
+      Home.render(); // paints the strip; the next commit comes back here
+      return;
+    }
+    cards[0].classList.add('un-reorder-slot');
+    Home._markWidgetDrop(cards[0], true);
   },
 
   // Press-and-hold actions for search/demo tiles, pen input, and the MOUSE.
