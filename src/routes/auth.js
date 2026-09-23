@@ -51,6 +51,7 @@ const { getPlatformApp } = require('../services/platform-app');
 // Deliberately NOT destructured: tests (and the never-throws mail contract)
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
+const agentSessionsFlag = require('../services/agent-sessions-flag');
 
 // The idle lease a freshly-minted browser session starts with. This matches
 // SESSION_IDLE_DAYS in middleware/auth.js, which renews active sessions and
@@ -675,6 +676,12 @@ function authRoutes(config) {
         // spec's routing tree. build-venues.js requires this AND the
         // deployment's cliAuthEnabled before offering the `local` venue.
         sessionBridgeEnabled: !!req.user.sessionBridgeEnabled,
+        // #2779: agent sessions, the experimental flag. `Enabled` is the value
+        // in effect (the user's choice, else the deployment default) and is
+        // what routes new work; `Choosable` says whether Settings may offer
+        // the switch to this user yet.
+        agentSessionsEnabled: !!req.user.agentSessionsEnabled,
+        agentSessionsChoosable: agentSessionsFlag.canChoose(config, req.user),
         // Platform-level language preference (issue #757): a BCP-47 tag or
         // null when unset. Settings → Language renders from this; apps read
         // it via the iframe JWT `locale` claim and the bridge's
@@ -951,6 +958,34 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle session bridge', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #2779: opt in to (or out of) agent sessions. The same shape as the
+  // session-bridge toggle above, gated on who may choose yet
+  // (AGENT_SESSIONS_OPT_IN): only admins while the feature ships dark.
+  // `enabled: null` clears the choice back to the deployment default.
+  router.post('/api/me/agent-sessions', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    if (!agentSessionsFlag.canChoose(config, req.user)) {
+      return res.status(403).json({ error: 'Agent sessions are not available to your account yet.' });
+    }
+    const body = req.body || {};
+    const { enabled } = body;
+    if (!Object.prototype.hasOwnProperty.call(body, 'enabled')
+        || (enabled !== null && typeof enabled !== 'boolean')) {
+      return res.status(400).json({ error: 'enabled must be true, false or null' });
+    }
+    try {
+      await pool.query(
+        'UPDATE users SET agent_sessions_enabled = $1 WHERE id = $2',
+        [enabled, req.user.id]
+      );
+      log.info('settings', 'Agent sessions toggled', { userId: req.user.id, enabled });
+      res.json({ ok: true, choice: enabled, enabled: agentSessionsFlag.effective(config, enabled) });
+    } catch (err) {
+      log.error('settings', 'Failed to toggle agent sessions', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

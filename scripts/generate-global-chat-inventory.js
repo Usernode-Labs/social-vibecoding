@@ -46,6 +46,7 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/app-llm-proxy.js', 'child-app provider proxy, not a Classic control'],
   ['src/routes/app-platform-api.js', 'child-app platform API authenticated by app grants'],
   ['src/routes/app-storage.js', 'child-app storage transport authenticated by app grants'],
+  ['src/routes/agent-sessions.js', 'the agent-session Mayor\'s own conversation (#2779); one assistant does not drive another'],
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],

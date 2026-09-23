@@ -146,7 +146,6 @@ function fakePlatform(overrides = {}) {
     'GET /api/sessions/50': { session: { id: 50, app_slug: 'recipe-box', status: 'active', branch_name: 'b' } },
     'GET /api/sessions/50/status': { busy: false },
     'POST /api/apps/recipe-box/sessions': { session: { id: 77, status: 'active' } },
-    'PATCH /api/sessions/77/title': { ok: true },
     'PATCH /api/sessions/77/linked-issues': { linkedIssues: [12, 13] },
     'POST /api/sessions/50/promote': { ok: true, prNumber: 901, prUrl: 'https://github.com/o/r/pull/901' },
     'POST /api/sessions/50/recheck': { status: 'running', checkState: 'pending' },
@@ -350,20 +349,28 @@ test('start_change creates, names and links, and reports what did not stick', as
   const sequence = platform.calls.map((c) => `${c.method} ${c.path}`);
   assert.deepEqual(sequence, [
     'POST /api/apps/recipe-box/sessions',
-    'PATCH /api/sessions/77/title',
     'PATCH /api/sessions/77/linked-issues',
   ]);
-  assert.deepEqual(platform.calls[0].body, { issueNumber: 12 }, 'the first request seeds and claims');
-  assert.deepEqual(platform.calls[1].body, { title: 'Dark mode' });
-  assert.deepEqual(platform.calls[2].body, { addIssues: [13] });
+  assert.deepEqual(platform.calls[0].body, { issueNumber: 12, title: 'Dark mode' },
+    'the first request seeds and claims, and the name rides on the create');
+  assert.deepEqual(platform.calls[1].body, { addIssues: [13] });
 
-  const partial = fakePlatform({ 'PATCH /api/sessions/77/title': { __status: 500, body: {} } });
+  const partial = fakePlatform({ 'PATCH /api/sessions/77/linked-issues': { __status: 500, body: {} } });
   await withFetch(partial.fetchImpl, async () => {
-    const result = await register('agent_mayor').handlers.get('start_change')({ slug: 'recipe-box', title: 'x' });
+    const result = await register('agent_mayor').handlers.get('start_change')({
+      slug: 'recipe-box', title: 'x', linkedIssues: [12, 13],
+    });
     assert.equal(result.isError, undefined, 'the change exists, so this is not a failure');
     assert.equal(result.structuredContent.warnings.length, 1);
+    assert.deepEqual(result.structuredContent.linkedIssues, [12]);
   });
-  assert.deepEqual(partial.calls[0].body, {}, 'no request, no seed');
+
+  const bare = fakePlatform();
+  await withFetch(bare.fetchImpl, async () => {
+    await register('agent_mayor').handlers.get('start_change')({ slug: 'recipe-box', title: 'x' });
+  });
+  assert.deepEqual(bare.calls[0].body, { title: 'x' }, 'no request, no seed');
+  assert.equal(bare.calls.length, 1);
 });
 
 test('start_change refuses bad input before anything is created', async () => {
