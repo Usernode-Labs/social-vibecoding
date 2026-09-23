@@ -1064,11 +1064,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // its title row, and a `#name` channel link beside a `#123` issue ref in a
   // message. 740 leaves 30 slots under the 770 ceiling.
   //
+  // +2 (#2807, #2812): the dev-chat model picker has no caption line under
+  // it, and stays usable while a turn runs. 742 leaves 28 slots under the
+  // 770 ceiling.
+  //
   // +2 (the side panel beside a running app): its host ships hidden and
   // frameless after the app view, and a `?panel=1` address opened in a window
-  // of its own is the ordinary platform. 742 leaves 28 slots under the 770
-  // ceiling: 8 more before the 20-slot floor at 750.
-  assert.equal(DAPP.tests.length, 742);
+  // of its own is the ordinary platform — counted from the same 740 base as
+  // #2807/#2812, so together they put the manifest at 744. That leaves 26
+  // slots under the 770 ceiling: 6 more before the 20-slot floor at 750.
+  assert.equal(DAPP.tests.length, 744);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

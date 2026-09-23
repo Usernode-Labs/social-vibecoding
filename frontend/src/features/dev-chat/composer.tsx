@@ -309,20 +309,18 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
                 />
               </div>
             ) : null}
+            {/* #2812: the picker stays live while a turn runs, but the
+                running turn keeps its model. A pick made now is staged,
+                and this says when it lands. */}
+            {s.models?.pendingNextTurn ? (
+              <span
+                id="dc-model-pending"
+                className="flex-none whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-400"
+              >applies next turn</span>
+            ) : null}
             <span className="flex-1"></span>
             <SendButton send={s.send} />
           </div>
-          {/* #2570: the selected model's note, UNDER the control row rather
-              than in it. A closed native select shows one line, so the
-              option text carries the compact form and the sentence lives
-              here, where it has the width to be one. Its own block, because
-              `.dc-card-row` is a single non-wrapping flex line. */}
-          {s.models?.note ? (
-            <div
-              id="dc-model-note"
-              className="mt-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400"
-            >{s.models.note}</div>
-          ) : null}
         </form>
       </div>
     </>

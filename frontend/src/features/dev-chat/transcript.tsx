@@ -462,12 +462,6 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
   const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
   return (
     <>
-      {/* `revealPrCard` adds `dc-pr-card-highlight` to this node for 1.5s to
-          flash it after the header's "PR #12" jump. That stays a classList
-          mutation, and it survives every repaint because this `className` is
-          a CONSTANT literal: React writes it once and never again unless the
-          prop VALUE changes. Rendering it from a variable would silently drop
-          the flash — the same rule the adopted dialog roots follow. */}
       <div className="dc-pr-card" id="dc-pr-card">
         <div className="dc-pr-card-header">
           {r.prUrl && !embedded
@@ -757,8 +751,7 @@ function Row({ r, embedded = false, historical = false }: { r: TranscriptRow; em
  *     (the change card above does), so there is nothing to keep at hand.
  *
  * One card either way — `#dc-pr-card`, with the visuals and the actions —
- * so `revealPrCard` and the declared checks under that id resolve wherever
- * it sits.
+ * so the declared checks under that id resolve wherever it sits.
  */
 export function DevChatTranscript({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(transcriptStore);
