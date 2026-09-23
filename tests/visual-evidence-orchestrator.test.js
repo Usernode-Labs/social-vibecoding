@@ -116,6 +116,7 @@ async function execute(fixture, options = {}) {
     revision: { baseSha: BASE, headSha: HEAD, files: [], filesComplete: true },
     ...(options.authorPlan ? { authorPlan: options.authorPlan } : {}),
     ...(options.onReplayEvent ? { onReplayEvent: options.onReplayEvent } : {}),
+    ...(options.onAgentFinalResponse ? { onAgentFinalResponse: options.onAgentFinalResponse } : {}),
   }, fixture.dependencies);
 }
 
@@ -383,7 +384,11 @@ test('a completed planner turn without tool calls retains tool availability and 
     dispatch: async (options) => {
       options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_resume' });
       options.onEvidenceDiagnostic({ kind: 'provider_init', mcpServerCount: 3, toolDefinitionCount: 24,
-        evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true });
+        evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
+        browserMemberToolCount: 7, browserAdminToolCount: 7 });
+      options.onEvidenceDiagnostic({ kind: 'context_result', outcome: 'ok', responseCharacters: 12000,
+        jsonValid: true, acceptedIntentPresent: true, originsPresent: true,
+        revisionsPresent: true, storyCount: 3 });
       options.onEvidenceDiagnostic({ kind: 'first_output' });
       options.onEvidenceDiagnostic({ kind: 'provider_result', outcome: 'ok' });
       return { backend: 'claude_code', threadId: 'evidence-thread' };
@@ -394,11 +399,38 @@ test('a completed planner turn without tool calls retains tool availability and 
   assert.equal(trace.control.planCalls, 0);
   assert.equal(trace.agentDispatches[0].outcome, 'completed');
   assert.deepEqual(trace.agentActivity.events.map((event) => event.kind),
-    ['provider_dispatched', 'provider_init', 'first_output', 'provider_result']);
+    ['provider_dispatched', 'provider_init', 'context_result', 'first_output', 'provider_result']);
   assert.equal(trace.agentActivity.events[0].requestMode, 'agent_resume');
   assert.equal(trace.agentActivity.events[1].evidenceGetContextAvailable, true);
   assert.equal(trace.agentActivity.events[1].evidenceRunPlanAvailable, true);
+  assert.equal(trace.agentActivity.events[1].browserMemberToolCount, 7);
+  assert.equal(trace.agentActivity.events[2].responseCharacters, 12000);
+  assert.equal(trace.agentActivity.events[2].storyCount, 3);
   assert.deepEqual(trace.agentActivity.toolCounts, {});
+});
+
+test('an unplanned model exit preserves its redacted final explanation for the owner', async () => {
+  const observed = [];
+  const fixture = setup({
+    dispatch: async () => ({
+      backend: 'claude_code',
+      result: {
+        lastResultText: 'I could not find the browser. member.jwt http://base.internal:3000 token=secret.jwt',
+        resultSubtype: 'success', providerStopReason: 'end_turn', exitCode: 0,
+        permissionDenialCount: 0, toolErrorCount: 0, responseTextBlockCount: 1,
+        providerTurnCount: 2,
+      },
+    }),
+  });
+  await assert.rejects(execute(fixture, { onAgentFinalResponse: (summary) => observed.push(summary) }),
+    { code: 'missing_evidence_replay' });
+  const response = fixture.transitions.at(-1).patch.traceSummary.agentFinalResponse;
+  assert.match(response.excerpt, /could not find the browser/);
+  assert.doesNotMatch(response.excerpt, /member\.jwt|base\.internal|secret\.jwt/);
+  assert.equal(response.stopReason, 'end_turn');
+  assert.equal(response.resultSubtype, 'success');
+  assert.equal(response.permissionDenialCount, 0);
+  assert.deepEqual(observed, [response]);
 });
 
 test('an author plan uses the same two clean replays without a second model call', async () => {
@@ -464,11 +496,15 @@ test('background evidence heartbeat records progress and stops when the run ends
     heartbeatRun: async (_pool, _runId, phase, patch) => { seen.push(phase); writes.push(patch); },
   }, null, 10);
   heartbeat.onProgress({ stage: 'checkout_revisions' });
+  heartbeat.onAgentDiagnostic({ version: 1, events: [{ kind: 'tool_start', tool: 'browser_navigate' }] }, 'tool_start');
+  heartbeat.onAgentFinalResponse({ excerpt: 'Planner stopped.', characters: 16 });
   heartbeat.onReplayEvent({ pass: 1, type: 'action_started', side: 'base', actionId: 'open-settings' });
   await new Promise((resolve) => setTimeout(resolve, 35));
   assert.ok(seen.includes('checkout_revisions'));
   assert.equal(writes.at(-1).lastReplayEvent.actionId, 'open-settings');
   assert.equal(writes.at(-1).replayEvents.length, 1);
+  assert.equal(writes.at(-1).agentActivity.events[0].tool, 'browser_navigate');
+  assert.equal(writes.at(-1).agentFinalResponse.excerpt, 'Planner stopped.');
   assert.ok(seen.length >= 2, 'the lease renews during a slow provisioning step');
   heartbeat.stop();
   const stoppedAt = seen.length;
