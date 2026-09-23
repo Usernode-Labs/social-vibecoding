@@ -864,6 +864,20 @@ const ADDED_IDS = {
   //       Workshop segment, and back as "Go to workshop" when the strip
   //       retired in turn (#2761) — so it is in the map above again.
 
+  // ── The side panel beside a running app (features/side-panel/) ──────
+  // On a desktop-width window, the app's Workshop, its discussion, messages,
+  // agent chats, proposals and issues open in a panel BESIDE the running app
+  // instead of replacing it. The panel is one React island, placed after the
+  // app view; it ships hidden and frameless, and its <iframe> (the platform
+  // itself at /?panel=1#<route>) exists only while a panel is open, so the
+  // frame's id is not in the static markup.
+  'platform-side-panel': 'The side panel\'s root — an <aside> named by its title, shown only while a panel page is open beside a running app on a desktop-width window. Its presence also sets html[data-side-panel], which narrows #app-view by the panel\'s width instead of hiding or moving the app\'s frame.',
+  'side-panel-back': 'The panel\'s Back: climbs the pages opened in the panel, then to the list the page belongs to (a discussion or a message to Messages; a proposal, an issue or a change to the app\'s Workshop). Ships hidden, because a freshly opened list has nowhere to climb to.',
+  'side-panel-title': 'The panel\'s title — the page\'s own header title as the panel\'s document reports it, and the aside\'s accessible name.',
+  'side-panel-expand': 'Expand ("Open full width, leaving the app"): the page the panel is showing, full width, as one ordinary navigation of the top window — which closes the app and parks it, so Resume brings it back.',
+  'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
+  'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
+  'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {
