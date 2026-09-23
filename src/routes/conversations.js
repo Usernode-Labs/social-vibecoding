@@ -103,6 +103,17 @@ function demoConversations(user) {
       lastActivityAt: '2026-08-13T11:00:00Z', unreadCount: 0,
       canSend: false, canInvite: false, canManage: false,
     },
+    {
+      // #2783: the platform-wide room. A channel carries no roster (it is
+      // everybody) — only the count — and nobody owns or manages it.
+      id: 910004, kind: 'channel', title: 'general', channelKey: 'general',
+      status: 'active', archived: false,
+      members: [], memberCount: 128, membershipStatus: 'member', myRole: 'member',
+      requester: null, peer: null, latestMessage: null,
+      latestSummary: 'Anyone else trying the new #general room?',
+      lastActivityAt: '2026-08-13T13:10:00Z', unreadCount: 1,
+      canSend: true, canInvite: false, canManage: false,
+    },
   ];
 }
 
@@ -185,6 +196,39 @@ function demoMessages(user, conversationId) {
       viewUrl: null,
     }], objects: [],
   }];
+  if (conversationId === 910004) {
+    const lin = demoUser(910002, 'lin');
+    // Three from ada in a row, then lin: the transcript draws ada's name and
+    // face ONCE and her next two as continuation lines (#2783), which is the
+    // grouping the declared checks look for.
+    return [
+      {
+        id: 9100401, conversationId, sender: ada,
+        content: 'Morning all! The Messages list is sectioned now.', createdAt: '2026-08-13T13:00:00Z', editedAt: null,
+        reply: null, reactions: [{ emoji: '🎉', count: 3, reacted: false, users: ['lin'] }], attachments: [], objects: [],
+      },
+      {
+        id: 9100402, conversationId, sender: ada,
+        content: 'Direct messages and agents on top, channels underneath.', createdAt: '2026-08-13T13:01:00Z', editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [],
+      },
+      {
+        id: 9100403, conversationId, sender: ada,
+        content: 'Issue #488 has the background.', createdAt: '2026-08-13T13:02:00Z', editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [],
+      },
+      {
+        id: 9100404, conversationId, sender: lin,
+        content: 'Anyone else trying the new #general room?', createdAt: '2026-08-13T13:10:00Z', editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [],
+      },
+      {
+        id: 9100405, conversationId, sender: self,
+        content: 'Yes, from here.', createdAt: '2026-08-13T13:12:00Z', editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [],
+      },
+    ];
+  }
   return [];
 }
 

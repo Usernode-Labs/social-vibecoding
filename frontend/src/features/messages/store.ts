@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import * as api from './api';
+import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import type { AppDiscussion, InboxFilter } from './inbox';
 import type {
   ConversationDetail,
@@ -58,6 +59,8 @@ const pendingByConversation = new Map<number, PendingSend[]>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
 let pendingShare: SharedObjectReference | null | undefined;
+/** A `#messages/channel/<handle>` link followed before the lists landed. */
+let pendingChannel: string | null = null;
 let listRequest = 0;
 let threadRequest = 0;
 
@@ -131,6 +134,72 @@ export function setFilter(next: InboxFilter): void {
 }
 
 /**
+ * The channels the viewer can name — #general and their apps' (#2783).
+ *
+ * Memoised on the two arrays it is built from, so a caller that asks on
+ * every render (a transcript row, the legacy app chat) gets the same object
+ * until one of them actually changes.
+ */
+let directoryCache: { conversations: unknown; discussions: unknown; value: ChannelRef[] } | null = null;
+export function channels(): ChannelRef[] {
+  if (!directoryCache || directoryCache.conversations !== state.conversations
+      || directoryCache.discussions !== state.discussions) {
+    directoryCache = {
+      conversations: state.conversations,
+      discussions: state.discussions,
+      value: channelDirectory(state.conversations, state.discussions),
+    };
+  }
+  return directoryCache.value;
+}
+
+/** The handles alone, for the renderers that chip `#name`. */
+export function useChannelHandles(): ReadonlySet<string> {
+  useMessagesSnapshot();
+  const list = channels();
+  return handleSetFor(list);
+}
+const handleSets = new WeakMap<ChannelRef[], ReadonlySet<string>>();
+function handleSetFor(list: ChannelRef[]): ReadonlySet<string> {
+  let set = handleSets.get(list);
+  if (!set) { set = new Set(list.map((item) => item.handle)); handleSets.set(list, set); }
+  return set;
+}
+
+/**
+ * Follow a `#handle` link: `#messages/channel/<handle>` becomes the address
+ * of the channel it names, in place (the link's own entry is replaced, so
+ * Back does not bounce through it).
+ *
+ * The lists may not have landed yet — a chip clicked in an app's chat on a
+ * cold Messages store — so an unknown handle waits for both reads and then
+ * resolves, or falls back to the bare inbox when nothing answers to it.
+ */
+export function openChannel(raw: string): void {
+  if (typeof window === 'undefined') return;
+  const handle = normalizeHandle(raw);
+  if (!handle) { window.location.replace('#messages'); return; }
+  pendingChannel = handle;
+  void loadConversations();
+  void loadAppDiscussions();
+  resolvePendingChannel();
+}
+
+function resolvePendingChannel(): void {
+  if (!pendingChannel || typeof window === 'undefined') return;
+  const found = channels().find((item) => item.handle === pendingChannel);
+  if (found) {
+    pendingChannel = null;
+    window.location.replace(found.target);
+    return;
+  }
+  if (state.listLoaded && state.discussionsLoaded) {
+    pendingChannel = null;
+    window.location.replace('#messages');
+  }
+}
+
+/**
  * The app discussions beside the conversations.
  *
  * FAILS QUIETLY. The conversations are this screen's reason to exist and the
@@ -148,6 +217,11 @@ export async function loadAppDiscussions(): Promise<void> {
     publish({ discussions: data.discussions as AppDiscussion[], discussionsLoaded: true });
   } catch {
     // Offline is a state, not a crash.
+  } finally {
+    // A failed read still settles a waiting `#handle`: it falls back to the
+    // inbox rather than leaving the link going nowhere.
+    if (pendingChannel && !state.discussionsLoaded) publish({ discussionsLoaded: true });
+    resolvePendingChannel();
   }
 }
 
@@ -168,6 +242,7 @@ export async function loadConversations(force = false): Promise<void> {
       listLoaded: true,
       online: true,
     });
+    resolvePendingChannel();
   } catch (error) {
     if (request !== listRequest) return;
     publish({
@@ -176,6 +251,7 @@ export async function loadConversations(force = false): Promise<void> {
       online: typeof navigator === 'undefined' ? true : navigator.onLine,
       error: errorMessage(error, 'Couldn’t load your conversations.'),
     });
+    resolvePendingChannel();
   }
 }
 
@@ -819,6 +895,10 @@ export const messagesController = {
   handleEvent,
   share,
   paintSaved,
+  // #2783: the channel directory, for the app chat's `#name` chips and its
+  // `#` autocomplete (public/js/group-chat.js), and the link resolver.
+  channels,
+  openChannel,
   refresh: () => {
     void loadAppDiscussions();
     return loadConversations(true);
@@ -828,7 +908,9 @@ export const messagesController = {
 export function initializeMessagesStore(): () => void {
   const onOnline = () => { void retryPending(); };
   const onOffline = () => publish({ online: false });
-  const onAuthed = () => { void loadConversations(); };
+  // #2783: the app channels too, so a `#name` for one chips in any chat — an
+  // app's own discussion included — before Messages has ever been opened.
+  const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); };
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
   // The store is always mounted, but the endpoint is session-gated. Seed the
@@ -840,6 +922,7 @@ export function initializeMessagesStore(): () => void {
   // difference between Messages opening populated and opening on a spinner.
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
+  if (window.App?.user) void loadAppDiscussions();
   publish({ online: navigator.onLine, demo: browserDemo() });
   return () => {
     window.removeEventListener('online', onOnline);

@@ -239,6 +239,9 @@ const App = {
     try {
       window.UsernodeReact?.nav?.park?.(null);
     } catch (err) { /* nothing parked, or no bridge */ }
+    // …and the Workshop view the tab returns to (#2776), which names the
+    // previous account's app and card in the same way.
+    App._forgetWorkshopView();
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
@@ -3919,6 +3922,16 @@ const App = {
           App.navigateToMessages(null, parts[2]);
           return;
         }
+        // #2783: `#messages/channel/<handle>` is where a `#name` channel
+        // reference in any chat links. It names the handle, not the place:
+        // the inbox opens, and the store swaps this address for the
+        // channel's own (#general's conversation, or an app's discussion)
+        // once it knows which one the handle means.
+        if (parts[1] === 'channel') {
+          App.navigateToMessages(null);
+          window.UsernodeReact?.messages?.openChannel?.(parts[2] || '');
+          return;
+        }
         // Conversations use SERIAL ids, so keep their signed-int32 bound
         // local to this route.
         const conversationId = App._numericSegment(parts[1]);
@@ -4442,6 +4455,117 @@ const App = {
       iconEmoji: rec?.icon_emoji || null,
     };
   },
+
+  // ── #workshop — the app Workshop you left (#2776) ───────────────────
+  //
+  // The Workshop tab is a stack, like every tab in an iOS tab bar: the
+  // selector at its root, one app's Workshop (a card, a topic, the board)
+  // above it. Leaving for Messages and tapping Workshop again used to throw
+  // that stack away and land on the selector, so getting back to the card you
+  // were reading took a second tap and a scroll. Now the tab returns to the
+  // view you left, and tapping it while you are already IN an app's Workshop
+  // pops to the selector, which is what it always did from there.
+  //
+  // WHAT IS REMEMBERED IS THE ROUTE, the address updateHash has just
+  // serialised, because that is the one spelling of "where in the Workshop"
+  // the router already restores exactly, for Back/Forward and cold links
+  // alike. Only the app's Workshop routes count: the running app is the
+  // parked strip's business (#2762), and the discussion and a change are
+  // Messages threads (_isMessagesThread) that light the other tab.
+  //
+  // PERSISTED LIKE THE PARKED APP: localStorage, one small entry, forgotten by
+  // the same session sweep (_dropCachedSession) so the next account on this
+  // device is not taken into the previous one's app. Showing the selector
+  // forgets it too — the selector is then the view you left.
+  _WORKSHOP_VIEW_KEY: 'usernode_workshop_view_v1',
+
+  // `url`'s path when it is one of an app's Workshop routes, else null.
+  _workshopViewPath(url) {
+    let path;
+    try { path = new URL(String(url || ''), location.origin).pathname; } catch (_) { return null; }
+    const m = /^\/app\/[a-z0-9][a-z0-9-]{0,254}\/(workshop|board|dev(?:\/.*)?)$/.exec(path);
+    if (!m || /^dev\/(chat|sessions)(\/|$)/.test(m[1])) return null;
+    return path;
+  },
+
+  // Called by updateHash with the address it computed for the app on screen.
+  _noteWorkshopView(url) {
+    // Somewhere else now, so a resume that was in flight has landed or been
+    // left: a later miss on that card is an ordinary one.
+    if (App._resumingWorkshop && App._workshopViewPath(url) !== App._resumingWorkshop) {
+      App._resumingWorkshop = null;
+    }
+    if (!App.currentApp || App.currentTab !== 'dev' || App.chromeless) return;
+    if (App._isMessagesThread()) return;
+    const path = App._workshopViewPath(url);
+    if (!path || !path.startsWith(`/app/${encodeURIComponent(App.currentApp)}/`)) return;
+    try {
+      localStorage.setItem(App._WORKSHOP_VIEW_KEY,
+        JSON.stringify({ slug: App.currentApp, path }));
+    } catch (_) { /* a view that does not survive is the old behaviour */ }
+  },
+
+  _readWorkshopView() {
+    try {
+      const v = JSON.parse(localStorage.getItem(App._WORKSHOP_VIEW_KEY) || 'null');
+      const path = v && typeof v.slug === 'string' ? App._workshopViewPath(v.path) : null;
+      return path && path.startsWith(`/app/${encodeURIComponent(v.slug)}/`)
+        ? { slug: v.slug, path } : null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _forgetWorkshopView() {
+    App._resumingWorkshop = null;
+    try { localStorage.removeItem(App._WORKSHOP_VIEW_KEY); } catch (_) { /* nothing stored */ }
+  },
+
+  // The Workshop tab's click (features/nav/tab-bar.tsx). True when it has
+  // taken the viewer back to the remembered view — the tab then stops its own
+  // `#workshop` navigation; false leaves that navigation to happen as before.
+  //
+  // AN APP THAT IS GONE FALLS BACK QUIETLY. When the launcher's catalog has
+  // loaded and no longer lists the app (deleted, or no longer visible to this
+  // account — the catalog and GET /api/apps/:slug share one visibility rule),
+  // the view is forgotten and the tab goes to the selector, with no request
+  // that could 404 into the console. A remembered card that has since gone is
+  // caught where the topic view resolves it (_abandonWorkshopResume).
+  resumeWorkshopView() {
+    if (App._revealedScreen === 'app-view' && App.currentApp
+        && App.currentTab === 'dev' && !App._isMessagesThread()) return false;
+    const view = App._readWorkshopView();
+    if (!view) return false;
+    try {
+      if (typeof Home !== 'undefined' && Home._appsLoaded && Array.isArray(Home._apps)
+          && !Home._apps.some((a) => a && a.slug === view.slug)) {
+        App._forgetWorkshopView();
+        return false;
+      }
+    } catch (_) { /* no catalog to ask; the route answers for itself */ }
+    App._resumingWorkshop = view.path;
+    try {
+      history.pushState(null, '', `${view.path}${App._routeSearch(null)}`);
+    } catch (_) {
+      App._resumingWorkshop = null;
+      return false;
+    }
+    App.restoreFromHash();
+    return true;
+  },
+
+  // The topic view found no such card. When it is the card this tab was
+  // resuming, the fallback is the selector rather than the app's board, and
+  // silent. True when it has taken over.
+  _abandonWorkshopResume() {
+    if (!App._resumingWorkshop || App._resumingWorkshop !== location.pathname) return false;
+    App._forgetWorkshopView();
+    try { history.replaceState(null, '', App._rootUrl('#workshop')); } catch (_) { return false; }
+    App.restoreFromHash();
+    return true;
+  },
+
+  _resumingWorkshop: null,
 
   // ── The fifth tab says who you are (#2760) ──────────────────────────
   //
@@ -5047,6 +5171,8 @@ const App = {
   // until the callback runs, so it would let the second run straight through.
   navigateToWorkshop() {
     if (App._inWorkshop && !App.currentApp) return;
+    // The selector is now the view the tab returns to (#2776).
+    App._forgetWorkshopView();
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     const leavingApp = !!App.currentApp;
     App.currentApp = null;
@@ -5428,6 +5554,9 @@ const App = {
       // GroupChat._openSocket).
       newUrl = App._rootUrl();
     }
+
+    // The Workshop tab's memory (#2776) is this address, when it is one.
+    App._noteWorkshopView(newUrl);
 
     const currentFull = `${location.pathname}${location.search}${location.hash}`;
     if (currentFull === newUrl) return;

@@ -1056,11 +1056,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the same 730 base, so together they put the manifest at 732, not 731
   // twice. The ceiling already moved 750 → 770 above; 732 leaves 38 slots.
   //
+  // +1 (#2784): the Homeroom menu opens anchored under the mark rather than
+  // centred mid-screen, 733 — 37 slots left under the 770 ceiling.
+  //
+  // +7 (#2783, #2778): the Messages channels — the sectioned list, the
+  // Channels filter, the "+" at the strip's end, #general's grouped rows and
+  // its title row, and a `#name` channel link beside a `#123` issue ref in a
+  // message. 740 leaves 30 slots under the 770 ceiling.
+  //
   // +2 (the side panel beside a running app): its host ships hidden and
   // frameless after the app view, and a `?panel=1` address opened in a window
-  // of its own is the ordinary platform. 734 leaves 36 slots against 770, 16
-  // above the 750 floor.
-  assert.equal(DAPP.tests.length, 734);
+  // of its own is the ordinary platform. 742 leaves 28 slots under the 770
+  // ceiling: 8 more before the 20-slot floor at 750.
+  assert.equal(DAPP.tests.length, 742);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

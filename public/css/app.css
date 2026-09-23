@@ -140,7 +140,8 @@
      #header-title.is-centered derives from the markup — pt-3/pb-5 around a
      28px content row — restated once so a surface that hangs off the bottom
      of the bar can say so rather than hard-code a number that quietly stops
-     matching. #apps-switcher-sheet's desktop dropdown is the reader;
+     matching. #apps-switcher-sheet's desktop popover reads it as its
+     fallback position, for a frame where the mark cannot be measured;
      tests/app-switcher-dropdown.test.js pins this against the header's own
      classes so the two cannot drift.
 
@@ -815,6 +816,26 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-markdown a { color: var(--accent); text-decoration: underline; }
 
+/* A CONTINUATION LINE (#2783): the same person again, close behind their
+   last message. No avatar and no name — the time of day sits in the 36px
+   column the avatar would, muted, and only on hover (always on touch), which
+   is Discord's arrangement. */
+.messages-message-grouped { padding-top: 1px; padding-bottom: 1px; }
+.messages-message-gutter {
+  flex: 0 0 36px;
+  width: 36px;
+  padding-top: 4px;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  visibility: hidden;
+}
+.messages-message-grouped:hover .messages-message-gutter { visibility: visible; }
+@media (hover: none) {
+  .messages-message-gutter { visibility: visible; }
+}
+
 /* ── The bubble transcript (a direct conversation) ───────────────────────
    Two participants, one of them you, so side and surface say who is
    speaking and no name is drawn. Theirs is an opaque white bubble on the
@@ -1241,6 +1262,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-mention-menu button { display: block; width: 100%; padding: 9px 12px; border-radius: 10px; color: var(--text-primary); font-size: 15px; text-align: left; }
 .messages-mention-menu button:hover { background: var(--messages-surface-2); }
+.messages-mention-menu .messages-channel-option-name { color: var(--text-muted); font-size: 13px; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay {
   position: absolute;
@@ -7663,6 +7685,26 @@ span.gc-vote-btn-icon { cursor: default; }
   .gc-ref:hover { filter: brightness(1.15); text-decoration: underline; }
 }
 
+/* #2783: a `#name` channel reference. A real link (`#messages/channel/<name>`),
+   not a role="link" span, because it navigates somewhere a plain anchor can
+   go — and the accent's tint rather than either ref colour, so a channel
+   never reads as an issue or a PR. Deliberately NOT `.gc-ref`: the app
+   chat's click handler sends every `.gc-ref` to the activity drawer. */
+.gc-channel-ref {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--accent);
+  background: var(--accent-tint, rgba(31, 134, 255, 0.12));
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .gc-channel-ref:hover { text-decoration: underline; }
+}
+
 .gc-msg-system {
   padding: 4px 12px;
   font-size: 11px;
@@ -7778,10 +7820,16 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background-color: var(--dc-raised);
   background-image: linear-gradient(var(--accent-tint), var(--accent-tint));
 }
-/* Your own row runs right to left, so the hover react disc — absolute at the
-   row's top-right for every other row — would land on your name there. It
-   crosses to the side your row leaves empty. */
-#gc-messages .gc-msg-self .gc-react-add { right: auto; left: 6px; }
+/* (#2783) A grouped continuation line's clock, in the avatar's column: shown
+   on hover, as Discord does, and always on touch where there is no hover. */
+.gc-msg[data-grouped] .gc-msg-gutter-time { visibility: hidden; }
+.gc-msg[data-grouped]:hover .gc-msg-gutter-time { visibility: visible; }
+@media (hover: none) {
+  .gc-msg[data-grouped] .gc-msg-gutter-time { visibility: visible; }
+}
+/* (#2783) Your own row no longer runs right to left — every row is the same
+   named row now — so the hover react disc stays at the top-right for yours
+   too, and the override that moved it is gone. */
 
 .gc-quote-pr { cursor: pointer; }
 @media (hover: hover) {
@@ -10510,118 +10558,81 @@ a.drawer-ver--fork:hover {
    what a scrim means. */
 
 /* ── App-context sheet (Streamlined Concept) ──────────────────────
-   The surface behind the header's "app name ⌄" tab. THREE presentations,
-   one always-mounted element with the same `data-open` mechanics: a real kit
+   The surface behind the header's Homeroom mark. THREE presentations, one
+   always-mounted element with the same `data-open` mechanics: a real kit
    sheet on touch, a bottom sheet below `sm`, and — at `sm`+ for a mouse — a
-   DROPDOWN under the chip that opened it. Only the last of those differs
-   from the notifications/messages rails below; read that block's comment for
+   POPOVER anchored under the mark that opened it. Only the last of those
+   differs from the notifications rail below; read that block's comment for
    the mechanics, which transfer wholesale. */
-/* IT DROPS FROM THE CHIP; IT IS NOT A RAIL.
-   It was a right-edge slide-over reaching floor to ceiling, the same idiom as
-   the notifications and messages sheets. Those earn it: an inbox is a surface
-   you DWELL in, it holds as many rows as there are, and a full-height column
-   is the right shape for a list with no natural end.
-   This one is a MENU — a strip of apps and six destinations — opened from a
-   control that sits in the middle of the top bar. Answering from the opposite
-   edge of the screen made the eye travel the width of a 27" display away from
-   the thing it had just clicked, and the panel arrived nowhere near it; on a
-   wide window the two were a foot apart. A menu belongs under its trigger, so
-   this one hangs off the chip and the connection is visible without having to
-   be remembered.
-   The height cap comes with the shape. A rail occupies a column that is
-   otherwise empty and has nothing to take; a panel hanging in the middle of
-   the page is over content, so it stops at the fold and lets its own scroller
-   (`#switcher-nav`, the one `flex-1 min-h-0` child) take the rest. */
+/* IT HANGS FROM THE MARK, LIKE THE VOTE POPOVER (#2784).
+   It was a right-edge rail, then a dropdown centred under the header's title
+   chip — which was right while the chip was the trigger. The trigger moved to
+   the Homeroom mark at the far right of the bar, and the panel stayed in the
+   middle of the screen, dimming the page, a foot away from the button that
+   opened it on a wide display. A menu belongs under its trigger, so this one
+   now hangs off the mark the way the dev board's vote popover hangs off its
+   button: right edges aligned, 6px below, no dim.
+   THE POSITION IS MEASURED, not restated. features/app-context/index.tsx
+   reads the mark's rect when the menu opens (and on resize) through the same
+   lib/anchor-popover.ts arithmetic the vote popover uses, and writes the two
+   custom properties below. The fallbacks are only what a frame would show if
+   the mark were somehow missing: under the header, at its right content edge.
+   NO DIM, AND THE HEADER STAYS LIVE. The mini-app hosts this menu imitates
+   (Telegram Desktop/Web's ⋮, the kit's own `.un-popover`) drop an undimmed
+   menu under the control on desktop; the scrim is what made this read as a
+   dialog in the middle of the screen. The backdrop element stays mounted —
+   below `sm` it is still the bottom sheet's dismissal target — but here it
+   takes no pointer, so an outside click lands on whatever was clicked and the
+   island's capture listener closes the menu on the way (the bell opens in one
+   click, not two). lib/overlay-scrim.js paints nothing for it at this width.
+   The height cap comes with the shape: the popover sits over content, so it
+   stops above the fold and lets its own scroller (`#switcher-nav`, the one
+   `flex-1 min-h-0` child) take the rest. It never flips above the mark —
+   above the header is off the screen. */
 @media (min-width: 640px) {
   #apps-switcher-sheet {
-    /* THE HEADER'S HEIGHT, RESTATED ONCE. --platform-header-h is the 52px the
-       "Header height invariant" block above derives (pt-2/pb-4 around a 28px
-       content row, no hairline since the reskin); --platform-safe-top is the
-       status-bar inset the bar extends into via .un-safe-top-extend, and 0 in
-       a desktop browser. If the header's height ever moves, this moves with
-       it — tests/app-switcher-dropdown.test.js pins the pair.
-
-       AND THIS MENU IS THE ONE SURFACE THAT STILL HANGS FROM THE BAR. The
-       two rails cover it now; a dropdown cannot, because it is anchored to
-       the chip that opens it and a menu drawn over its own trigger has
-       nothing to point at. Its BACKDROP still dims the bar like every other
-       one — the chip is greyed with the rest of the page, and only the panel
-       itself starts below it.
-
-       FLUSH, NOT FLOATING. There were 0.5rem of daylight here, on the
-       argument that a gap makes the panel read as its own surface. It reads
-       better hanging off the bar: the chip that opens it is IN that bar, so
-       the two are one piece of chrome and a seam between them was a seam in
-       the middle of one object. The panel's own border and shadow do the
-       separating. That held when the wallpaper routes cleared the bar's
-       surface, and it still holds now that the Improve rail covers the bar
-       rather than starting beside this menu: flush is what makes a dropdown
-       part of the control it hangs off, and that argument never depended on
-       the rail. What did change is the hairline: the brand one (below), so
-       the menu ties to the chip's own ring rather than to a zinc bar it no
-       longer sits on. */
-    top: calc(var(--platform-header-h) + var(--platform-safe-top));
-    left: 50%;
+    top: var(--menu-anchor-top, calc(var(--platform-header-h) + var(--platform-safe-top)));
+    left: var(--menu-anchor-left, calc(100vw - 25rem));
     right: auto;
     bottom: auto;
-    /* THE WIDEST PANEL IN THE SHELL, ON PURPOSE. It was 20rem, then 24rem to
-       match #notifications-sheet and #messages-sheet — and that match is what
-       this gives up, so it is worth saying what was bought. The app strip is
-       the only part of this menu that uses width: four of nine tiles are
-       fully visible at 24rem and seven at 36rem. The rails it no longer
-       matches hold rows and nothing else, so width does nothing for them.
-       What it costs is on the destination rows below, which are an icon, a
-       word and a chevron pinned to the right edge: the run from the end of
-       "Home" to its chevron goes from 253px to 445px, on six rows. Measured,
-       chosen with those numbers in hand, and the reason a future edit should
-       not "restore consistency" without re-reading them.
-       max-width is load-bearing at this size in a way it was not at 20rem:
-       576px inside the 640px breakpoint leaves 32px a side, and the guard is
-       what keeps a narrow desktop window from a panel touching both edges. */
-    width: 36rem;
-    max-width: calc(100vw - 1.5rem);
-    max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 1.5rem);
+    /* 24rem, NARROWER than the 26rem notifications rail, on purpose. It was
+       36rem while the menu headed with a horizontal strip of app tiles — the
+       only part of it that used width. The strip retired, and what is left
+       is rows (an icon, a word and a chevron pinned right), where the extra
+       width was only a longer run from the label to its chevron. 24rem is a
+       menu's width, a little wider than the vote popover's 312px because the
+       rows carry longer labels ("Go to app discussion").
+       max-width keeps it inside a narrow window with the 8px the placement
+       clamps to on either side. */
+    width: 24rem;
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - var(--menu-anchor-top, calc(var(--platform-header-h) + var(--platform-safe-top))) - 0.75rem);
     border-width: 1px;
     border-color: var(--brand-line);
     /* The kit's own desktop menu radius (--un-radius-card, native.css), which
        is what this surface now is. */
     border-radius: 0.75rem;
+    /* It grows out of the corner under the mark, so a small drop reads as
+       coming from the button rather than from the header at large. */
+    transform-origin: top right;
     /* CLOSED IS OPACITY, NOT AN EDGE. A rail hides by sliding off the side it
-       is attached to; a dropdown's edge is the header, and the panel paints
-       ABOVE that (the bar is `z-10`, this is `z-50`), so sliding under it
-       would hide nothing. `visibility` is what takes the invisible panel out
-       of hit-testing — opacity alone leaves a 320px click-eater over the page
-       — and it is transitioned at 0s so it lands after the fade on the way
-       out and before it on the way in. */
+       is attached to; a popover has no edge to hide behind, and it paints
+       ABOVE the bar (the bar is `z-10`, this is `z-50`). `visibility` is what
+       takes the invisible panel out of hit-testing — opacity alone leaves a
+       384px click-eater over the page — and it is transitioned at 0s so it
+       lands after the fade on the way out and before it on the way in. */
     opacity: 0;
     visibility: hidden;
-    transform: translate(-50%, -0.5rem);
-    transition: transform 180ms ease-out, opacity 140ms ease-out,
-      visibility 0s linear 180ms;
+    transform: translateY(-0.25rem) scale(0.98);
+    transition: transform 140ms ease-out, opacity 120ms ease-out,
+      visibility 0s linear 140ms;
   }
   #apps-switcher-sheet[data-open] {
     opacity: 1;
     visibility: visible;
-    transform: translate(-50%, 0);
-    transition: transform 180ms ease-out, opacity 140ms ease-out,
+    transform: none;
+    transition: transform 140ms ease-out, opacity 120ms ease-out,
       visibility 0s linear 0s;
-  }
-  /* THE CHIP IS NOT ALWAYS IN THE MIDDLE, so neither is the panel.
-     #header-title is viewport-centred only while it fits without touching
-     either side group — features/header/use-header-layout.ts measures that
-     and toggles `.is-centered`, and a long app name in a narrow window fails
-     it, leaving the chip left-aligned in flex flow beside the back button.
-     Following the class keeps the menu under its trigger in BOTH modes,
-     rather than under it in one and adrift in the other. 1rem is the header's
-     own `px-4`, so the panel opens on the bar's content edge — where the chip
-     itself starts, give or take the lead group on the screens that show a
-     back arrow. */
-  body:has(#header-title:not(.is-centered)) #apps-switcher-sheet {
-    left: 1rem;
-    transform: translate(0, -0.5rem);
-  }
-  body:has(#header-title:not(.is-centered)) #apps-switcher-sheet[data-open] {
-    transform: translate(0, 0);
   }
 }
 /* The BOTTOM SHEET's motion, and only its: the dropdown states a transition of
@@ -10646,20 +10657,23 @@ a.drawer-ver--fork:hover {
   opacity: 1;
   pointer-events: auto;
 }
-/* THE BACKDROP DIMS, AT EVERY WIDTH, AND IT IS THE IMPROVE PANEL'S EXACTLY.
-   It went transparent on desktop for one round, on the argument that a 40%
-   scrim behind a panel hanging off a header control says "modal" and this is
-   the least modal thing in the shell — the kit draws its own desktop menus
-   with no backdrop at all (the .un-popover block in native.css). Overruled on
-   review, and the reason is worth more than the argument was: the two panels
-   in this bar are opened the same way and dismissed the same way, so one
-   dimming the page and the other not made them read as two different KINDS of
-   surface, which is a distinction the shell does not otherwise draw. Sameness
-   beat the popover precedent.
-   There is nothing to write here to achieve it — #notifications-sheet-overlay
-   and #apps-switcher-overlay ship the same `fixed inset-0 z-40 bg-black/40`
-   and share the opacity rules above, so deleting the override is the whole
-   change and the two cannot drift apart by construction. */
+/* THE BACKDROP DISMISSES THE BOTTOM SHEET, AND ONLY THE BOTTOM SHEET.
+   Below `sm` this is a sheet over the page and its backdrop is the tap
+   target that closes it, exactly like the bell's. At `sm`+ the menu is an
+   undimmed popover under the Homeroom mark (#2784, see the block above), and
+   a backdrop that caught the pointer there would make every click outside
+   the menu a dead click — the bell would take two presses. It stays mounted
+   and keeps its `data-open` state; it just lets the pointer through, and
+   features/app-context/index.tsx closes the menu on the outside click. This
+   is a later, separate block rather than a line in the one above because
+   the `[data-open]` rule it overrides has the same specificity, so source
+   order decides. The kit's own desktop menus have no backdrop at all (the
+   .un-popover block in native.css); this is that precedent, taken. */
+@media (min-width: 640px) {
+  #apps-switcher-overlay[data-open] {
+    pointer-events: none;
+  }
+}
 /* Below `sm` it is a bottom sheet, and these are its own geometry rather than
    overrides of the block above: the two media queries are disjoint now that
    the dropdown states its own, so nothing here is undoing anything. */
@@ -16984,40 +16998,91 @@ html.un-kb #platform-parked {
   box-shadow: inset 0 0 0 1px var(--brand-line);
 }
 
-/* WHAT STARTS SOMETHING, under the strip and answering to it. Two buttons
-   share the row under All and one takes it alone elsewhere, so both are
-   `flex: 1` — the split is even by construction rather than by a width
-   either of them carries. */
-.messages-compose {
-  display: flex;
+/* WHAT STARTS SOMETHING, at the strip's trailing end (#2778): one "+"
+   that opens a small popover of three choices rather than a row of buttons
+   under the strip. It sits on the track's own height and ground, so it reads
+   as part of the strip rather than as a second control beside it. */
+.messages-filters { align-items: center; gap: 8px; }
+/* Four segments and the "+" on one line inside the 22rem list pane: the
+   segments give up some of their side padding to make room for the disc. */
+.messages-filters .messages-filter { padding: 0 11px; }
+.messages-new-btn {
   flex: 0 0 auto;
-  gap: 8px;
-  padding: 0 16px 10px;
-}
-.messages-compose-btn {
-  flex: 1 1 0;
-  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 12px;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--brand-line);
-  border-radius: 999px;
+  border-radius: 9999px;
   background: var(--brand-tint);
   color: var(--brand-ink);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.messages-compose-btn > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.messages-new-btn svg { width: 18px; height: 18px; stroke-width: 2; }
+.messages-new-btn[aria-expanded="true"] { background: var(--brand-ink); color: var(--bg-primary); }
+/* The popover: the vote picker's frame (.dev-vote-pop) — body-mounted,
+   fixed, placed from the button's rect by lib/anchor-popover.ts. */
+.messages-new-pop {
+  position: fixed;
+  z-index: 2000;
+  width: 240px;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.messages-new-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.messages-new-option:hover, .messages-new-option:focus-visible { background: var(--bg-tertiary); outline: none; }
+.messages-new-option svg { flex: 0 0 auto; width: 20px; height: 20px; color: var(--brand-ink); }
+.messages-new-option-label { display: block; font-size: 14px; font-weight: 600; }
+.messages-new-option-hint { display: block; font-size: 12px; color: var(--text-muted); }
+
+/* THE SECTION HEADS (#2783): "Chats" over the people and agents, "Channels"
+   over #general and the apps — Discord's two headings, small and muted so
+   they divide the list without competing with its rows. */
+.messages-section-head {
+  margin: 0;
+  padding: 12px 16px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* A channel's tile is the `#` it is named with. */
+.messages-channel-tile {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 22px;
+  font-weight: 700;
+}
+.messages-thread-channel-tile { width: 36px; height: 36px; font-size: 18px; }
+/* An app channel's handle, muted after its name. */
+.messages-channel-handle {
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 /* THE KIND MARK. People get none — they are the overwhelming majority of an

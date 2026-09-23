@@ -1,4 +1,8 @@
-export type ConversationKind = 'direct' | 'group';
+/**
+ * `channel` is a room every user is in (#2783) — today only #general. It has
+ * no roster (just a count), no owner and no invitations.
+ */
+export type ConversationKind = 'direct' | 'group' | 'channel';
 export type MembershipStatus = 'invited' | 'member' | 'declined' | 'left' | 'removed';
 export type MemberRole = 'owner' | 'member';
 
@@ -98,6 +102,8 @@ export interface ConversationSummary {
   canInvite: boolean;
   canManage: boolean;
   archived?: boolean;
+  /** A channel's `#handle` (`general`); null for everything else. */
+  channelKey?: string | null;
 }
 
 export interface ConversationDetail extends ConversationSummary {
