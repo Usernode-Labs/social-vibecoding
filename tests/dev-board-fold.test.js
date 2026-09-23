@@ -1071,7 +1071,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // +2 (#2813): a dev session opens in the Messages pane beside the list on
   // a desktop, and that pane links to the session's full view. 744 leaves 26
   // slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 744);
+  //
+  // 744 → 748: the tallies above were computed on this branch against a
+  // shared 740, and main computed its own tally against the SAME shared 740:
+  // #2799 and #2806 — the platform's own Workshop shows no close button, and
+  // an app's Workshop is the platform surface its header frosts over (+2) —
+  // #2807 and #2812, the same dev-chat model-picker pair this branch counted
+  // above (+2), and #2803 — the Homeroom menu takes a dark app's palette,
+  // and a light app under the dark shell leaves it in the shell's own dark
+  // mode (+2) — landing main at 746. #2807/#2812 landed on both sides rather
+  // than one, so the two totals are not additive; what this merge adds
+  // beyond main's own 746 is #2813 alone, which main never had. The merged
+  // manifest holds main's 746 plus that one addition: 748.
+  assert.equal(DAPP.tests.length, 748);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

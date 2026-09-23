@@ -576,6 +576,16 @@
       "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
     },
     {
+      "name": "The platform's own Workshop is a plain Workshop panel, with no close button (#2799)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "body:has(#app-view:not(.hidden) #dev-body) #back-btn.hidden #back-icon-close.hidden"
+    },
+    {
+      "name": "An app's Workshop is the platform surface the header frosts over (#2806)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "body:has(#app-view:not(.hidden)[data-app-surface=\"platform\"] #dev-body) #platform-header"
+    },
+    {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"
@@ -1093,6 +1103,16 @@
       "name": "Inside a light app the bar takes the app's tone: cream ground under the dark shell (#1945)",
       "path": "/?shot=app-tone-light&theme=dark",
       "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
+      "name": "Inside a dark app the Homeroom menu takes the app's dark palette too, not the viewer's light mode (#2803)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet.dark.platform-app-tone-dark"
+    },
+    {
+      "name": "A light app under the dark shell leaves the Homeroom menu in the shell's own dark mode (#2803)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet:not(.platform-app-tone-dark)"
     },
     {
       "id": "app-tone.cover-ink-dark",
