@@ -397,9 +397,28 @@ export function syncChrome(): void {
     : 'Messages');
 }
 
+/**
+ * THE SIDE PANEL (desktop): while an app is running on its App tab, a
+ * conversation opened from outside the inbox — a notification, a saved
+ * message — goes to a panel beside the app instead of replacing it
+ * (frontend/src/features/side-panel/). False whenever that is not the moment,
+ * and the caller navigates as it always has.
+ */
+function sidePanelTakes(target: string): boolean {
+  const panel = (window as unknown as {
+    UsernodeReact?: { sidePanel?: { take?: (route: string) => boolean } };
+  }).UsernodeReact?.sidePanel;
+  try {
+    return !!panel?.take?.(target.replace(/^#/, ''));
+  } catch {
+    return false;
+  }
+}
+
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
+  if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(conversationId || null);
   else window.location.hash = target;
 }
@@ -410,6 +429,7 @@ export function openDiscussion(slug: string): void {
   const safe = validSlug(slug);
   if (!safe) return;
   const target = `#messages/app/${encodeURIComponent(safe)}`;
+  if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(null, safe);
   else window.location.hash = target;
 }

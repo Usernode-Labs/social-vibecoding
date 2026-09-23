@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import {
   A2HS_STEPS, detectMobileOs, installOffer, storeLabel,
   type InstallOffer, type StoreUrls,
@@ -92,7 +93,11 @@ export function MobileInstallBanner() {
   useEffect(() => {
     const nav = window.navigator;
     const onAPhone = detectMobileOs(nav.userAgent || '', nav.maxTouchPoints || 0) !== null;
-    if (!onAPhone || isNativeApp() || isStandalone() || readDismissed()) return undefined;
+    // Nor inside the side panel's document (`?panel=1`), which is framed
+    // beside a running app on a desktop window: the top window offers the
+    // install, if anyone does.
+    if (!onAPhone || isNativeApp() || isStandalone() || readDismissed()
+        || isEmbeddedPanel()) return undefined;
 
     let live = true;
     fetch('/api/public/mobile-app')

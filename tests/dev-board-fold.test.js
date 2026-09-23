@@ -1055,7 +1055,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check, landing beside #2760 rather than after it — both counted from
   // the same 730 base, so together they put the manifest at 732, not 731
   // twice. The ceiling already moved 750 → 770 above; 732 leaves 38 slots.
-  assert.equal(DAPP.tests.length, 732);
+  //
+  // +2 (the side panel beside a running app): its host ships hidden and
+  // frameless after the app view, and a `?panel=1` address opened in a window
+  // of its own is the ordinary platform. 734 leaves 36 slots against 770, 16
+  // above the 750 floor.
+  assert.equal(DAPP.tests.length, 734);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

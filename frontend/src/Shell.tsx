@@ -83,6 +83,7 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
 import { ParkedStrip, PlatformTabs } from './features/nav';
+import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
 import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
@@ -388,6 +389,22 @@ export function Shell() {
           #app-content write — see features/app-frame/app-frame.tsx.
       */}
       <Island name="AppViewIsland"><AppViewIsland /></Island>
+      {/*
+          #platform-side-panel — the panel BESIDE a running app, on a
+          desktop-width window (features/side-panel/). While an app runs on
+          its App tab, its Workshop, its discussion, a proposal, an issue, a
+          change and a conversation open here instead of replacing it, and the
+          app keeps running beside them.
+
+          Directly after #app-view because that is the one screen it belongs
+          to, and OUTSIDE it because #app-view is a column whose frame must
+          never be re-parented: the panel is `position: fixed` down the right
+          edge, and the app's box narrows by a margin keyed off
+          `<html data-side-panel>` (public/css/app.css) — a size change, never
+          a reload. Ships hidden and empty; the frame inside it exists only
+          while a panel is open.
+      */}
+      <Island name="SidePanel"><SidePanel /></Island>
       {/*
           #platform-tabs — the shell's five sections, as a permanent bar at
           the foot of the screen. New in this change; features/nav/tab-bar.tsx

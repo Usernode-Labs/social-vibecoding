@@ -967,9 +967,18 @@ const Improve = {
    */
   startSession() {
     Improve.close();
+    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
+    // THE SIDE PANEL (desktop): New change on a running app opens the unsent
+    // change in a panel BESIDE the app, which keeps running
+    // (frontend/src/features/side-panel/). The one-shot hint rides along to
+    // the panel's own document, where the screen is drawn. Declined whenever
+    // that is not the moment, and the change opens here as before.
+    const { slug } = improveStore.get();
+    const panel = window.UsernodeReact?.sidePanel;
+    if (slug && panel?.take?.(`app/${encodeURIComponent(slug)}/dev/sessions/${ref}`,
+      { proposalHint: true })) return;
     Improve._nextSessionOrigin = '#messages';
     if (window.AppView) window.AppView._proposalHint = true;
-    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
     Improve._withApp(null, { subTab: 'sessions', ref });
   },
 

@@ -45,6 +45,8 @@
  * of silently handing it to whatever is underneath.
  */
 
+import { isEmbeddedPanel } from './side-panel-mode';
+
 /** What a dismissible surface answers when back reaches it. */
 export type DismissResult = boolean | void;
 
@@ -160,7 +162,13 @@ export function pushDismissible(close: () => DismissResult): () => void {
   return shared.push(close);
 }
 
-if (typeof window !== 'undefined') {
+// NOT IN THE SIDE PANEL'S DOCUMENT (`?panel=1`, framed beside a running app).
+// A frame's history entries are the top window's, so a record pushed there is
+// a Back press the top window inherits, and the release's history.back() would
+// move the TOP document. The panel is a desktop surface with no device back
+// button to claim; its dialogs close by their own controls, and
+// `pushDismissible` is a no-op there.
+if (typeof window !== 'undefined' && !isEmbeddedPanel()) {
   shared = createBackStack(window);
   (window as unknown as { UsernodeBackStack?: BackStack }).UsernodeBackStack = shared;
   window.addEventListener('popstate', () => {

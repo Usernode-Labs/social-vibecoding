@@ -11,8 +11,13 @@
 import { headerTitleStore } from '../features/header/header-title-store.js';
 import { improveStore } from '../features/improve/improve-store.js';
 import { readShellSnapshot } from './shell-snapshot';
+import { isEmbeddedPanel } from './side-panel-mode';
 
 export function applyShellSnapshot(): void {
+  // The side panel's document draws no header at all, and the record is the
+  // TOP window's last title — applying it there would only put the running
+  // app's name into the panel's title for a moment.
+  if (isEmbeddedPanel()) return;
   const snap = readShellSnapshot();
   if (!snap) return;
 
