@@ -473,6 +473,14 @@ export function PlatformTabs() {
                 because the number has to mean "how many things to open".
                 Rendered only above zero, so the prerender (INITIAL is 0)
                 and the first client render agree with no badge at all.
+
+                AND IT IS THE QUIET ONE (#2912). Unread messages are counted
+                in the bell too, so this one is grey rather than the bell's
+                red: on the phone's bar a grey disc on the glyph's corner, on
+                the desktop rail a grey pill at the row's far end. It stays
+                HERE in the markup for both; app.css moves it on the rail by
+                dissolving this wrapper, so the phone keeps its anchor and a
+                declared check keeps finding it inside the Messages tab.
             */}
             {key === 'messages' ? <TabBadge count={messages} /> : null}
           </span>

@@ -1173,12 +1173,34 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // an app's chat in Messages draws no report/block text links in its rows.
   // 780 leaves 30 slots under the 810 ceiling.
   //
-  // 780 → 781: +1 (#2916). A topic's back control moved from the header into
-  // the pane as the "‹ Workshop" chip: the two checks that pinned the header
-  // arrow on an issue (Workshop and kanban layouts) were re-pointed at the
-  // chip, and one new check pins it above a proposal's hero. The dev
-  // session's header arrow is still #2770's check. 29 slots left.
-  assert.equal(DAPP.tests.length, 781);
+  // 780 → 781: +1 (#2916), on this branch. A topic's back control moved
+  // from the header into the pane as the "‹ Workshop" chip: the two checks
+  // that pinned the header arrow on an issue (Workshop and kanban layouts)
+  // were re-pointed at the chip, and one new check pins it above a
+  // proposal's hero. The dev session's header arrow is still #2770's check.
+  //
+  // 780 → 782: independently on main, +2 (#2915): an app's Workshop opened
+  // on Current status with an All items search in the URL still draws the
+  // whole dashboard and no "nothing matches" note, and the All items tab
+  // wears the dot that says its search is still on.
+  //
+  // 780 → 781: also independently on main, +1 (#2919): the desktop rail's
+  // Recents folds everything older than five days ago behind a collapsed
+  // "Show N older" button at its foot.
+  //
+  // 780 → 781: also independently on main, +1 (#2912): the demo's unread
+  // conversations show as the Messages tab's quiet count, still inside the
+  // Messages tab (the badge left the icon for the row's end on the desktop
+  // rail by CSS alone, so the check pins the markup that move depends on).
+  //
+  // 781 → 785, 782 → 785, 781 → 785 (twice over): the tallies above were
+  // computed on different sides of this merge against the same shared 780
+  // and cannot be read as one sequence. This branch took 780 → 781 alone,
+  // with #2916 above; main independently took the same 780 to 784, with
+  // #2915, #2919 and #2912 above. Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 780 + 1 + 2 + 1 + 1 = 785,
+  // leaving 25 slots under the 810 ceiling.
+  assert.equal(DAPP.tests.length, 785);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

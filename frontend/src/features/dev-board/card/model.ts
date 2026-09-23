@@ -413,7 +413,11 @@ export interface DevWorkshopView {
   canPost?: boolean;
   /** Who is reading, so a dismissal is per account on a shared device. */
   viewerId?: number | null;
-  /** The no-items note, with its load-failure prefix. */
+  /**
+   * The no-items note, with its load-failure prefix. About the whole board,
+   * so `filtered` is false since #2915: a search narrows All items alone,
+   * which says "Nothing here matches" from `meta.filtered` itself.
+   */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
   tab: 'status' | 'needs' | 'all' | null;
@@ -599,12 +603,15 @@ export interface DevWorkshopView {
      */
     summary: string | null;
   } | null;
-  /** One unclaimed open issue to suggest, as a row. Null while filtering. */
+  /**
+   * One unclaimed open issue to suggest, as a row. Null when there is none;
+   * All items' search and filters do not reach it (#2915).
+   */
   nextUp: ListRow | null;
   /**
    * #1934: the next unclaimed issues after `nextUp`, capped at
-   * WORKSHOP_LANE_MAX — shown under it behind "Show N more". Empty while
-   * filtering or when there is nothing past the first.
+   * WORKSHOP_LANE_MAX — shown under it behind "Show N more". Empty when
+   * there is nothing past the first.
    */
   nextMore: ListRow[];
   /** The app's general discussion, as a row — see AppView._discussionCardModel. */
@@ -633,7 +640,11 @@ export interface DevWorkshopView {
     coverage: { total: number; placed: number; unplaced: number; pending: number } | null;
     /** Cards on screen the server has themes for but has not placed yet. */
     placing: number;
-    /** The shared filter bar is narrowing what the themes hold. */
+    /**
+     * The shared filter bar is narrowing what the themes hold. It narrows
+     * All items alone (#2915): nothing on Current status or Needs you reads
+     * it, and the tab strip draws its dot on All items from it.
+     */
     filtered: boolean;
   };
   /**

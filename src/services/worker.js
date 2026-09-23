@@ -24,6 +24,8 @@ const WORKER_IMAGE = 'usernode-worker:latest';
 const WORKER_MEMORY = process.env.WORKER_MEMORY || '2g';
 const WORKER_CPUS = process.env.WORKER_CPUS || '2';
 const WARM_READY_TIMEOUT_MS = 5 * 60 * 1000;
+let accountDeletionGuard = async () => {};
+function setAccountDeletionGuard(guard) { accountDeletionGuard = guard; }
 
 function usesKubernetesWorkers() {
   const mode = process.env.WORKER_RUNTIME || process.env.APP_RUNTIME || 'docker';
@@ -2307,12 +2309,14 @@ async function ensureWorker(sessionId, {
   repoOwner, repoName, branchName,
   onProgress,
 } = {}) {
+  await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
 
   // Coalesce concurrent ensures — if one's already racing, await it.
   const existing = _registryGet(sessionId);
   if (existing?.bootstrap) {
     await existing.bootstrap;
+    await accountDeletionGuard(sessionId);
     return containerName;
   }
 
@@ -2383,6 +2387,7 @@ async function ensureWorker(sessionId, {
       const runtimeName = await _bootstrapWarmContainer(sessionId, {
         repoOwner, repoName, branchName, onProgress,
       });
+      await accountDeletionGuard(sessionId);
       _registryUpsert(sessionId, {
         containerName: runtimeName,
         bootstrap: null,
@@ -3828,6 +3833,24 @@ async function destroyWorker(containerName) {
   log.info('worker', 'Worker destroyed', { containerName });
 }
 
+// Account erasure must not use the best-effort archive helpers: a failed
+// runtime/volume removal remains a durable retry task.
+async function eraseAccountWorkspace(sessionId) {
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('invalid_session');
+  if (usesKubernetesWorkers()) {
+    await kubernetes.eraseWorker(kubernetesWorkerConfig(), sessionId);
+  } else {
+    const result = await docker.stopAndRemove(workerContainerName(sessionId));
+    if (!result.removed) throw new Error('worker_removal_failed');
+    try {
+      await docker.execFileAsync('docker', ['volume', 'rm', '-f', ccVolumeName(sessionId)], { timeout: 10000 });
+    } catch (err) {
+      if (!/no such volume/i.test(String(err.stderr || err.message))) throw new Error('volume_removal_failed');
+    }
+  }
+  _warmRegistry.delete(sessionId);
+}
+
 // Remove the named CC volume for a given chat session. Called when the
 // session is archived (permanent teardown). Safe to call even if the
 // volume was never created.
@@ -4074,6 +4097,8 @@ module.exports = {
   listOrphanWorkers,
   destroyWorker,
   destroyCcVolume,
+  eraseAccountWorkspace,
+  setAccountDeletionGuard,
   cloneCcVolume,
   parseClaudeResponse,
   // exposed for unit tests (watchdog strike policy + line parsing)

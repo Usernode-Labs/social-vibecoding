@@ -2387,6 +2387,17 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
+      "name": "Workshop: the All items search leaves Current status whole, with no 'nothing matches' note (#2915)",
+      "path": "/?demo=1&ws=status&q=nothing-matches-this#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"]:not(:has([data-ws-empty])) .dev-ws-tabbody > [data-ws-dashboard]",
+      "expectText": "Where the app is"
+    },
+    {
+      "name": "Workshop: a dot on the All items tab says its search is still on, seen from Current status (#2915)",
+      "path": "/?demo=1&ws=status&q=nothing-matches-this#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-tab-btn=\"all\"][aria-selected=\"false\"] > [data-ws-tab-filtered]"
+    },
+    {
       "name": "Dev board: the search reads issue bodies, not only titles (#2089)",
       "path": "/?demo=1&cards=open&q=viewport#app/usernode-2d5619/board",
       "expectSelector": "#dev-body [data-issue-row=\"900003\"]"
@@ -2880,6 +2891,11 @@
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] #platform-tabs-badge"
+    },
+    {
+      "name": "#2912: the demo's unread conversations show as the Messages tab's quiet count, still inside the Messages tab",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] > .platform-tab-mark > #platform-tabs-badge.platform-tab-badge[aria-label=\"Unread conversations\"]:not(.hidden)"
     },
     {
       "name": "#2824: the lit tab carries the sliding blue marker, measured behind it",
@@ -4996,6 +5012,11 @@
       "name": "#2800: Me is the rail's last row, straight after Recents, so the thin rule the rail draws above Me sits between them",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs > #platform-recents + a#platform-tab-me:last-child"
+    },
+    {
+      "name": "#2919: the desktop rail's Recents folds anything older than 5 days ago behind a collapsed Show N older button at its foot (the demo conversations are all from August)",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-recents:not(.hidden) > button.platform-recents-more[type=\"button\"][aria-expanded=\"false\"]:last-child"
     },
     {
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",

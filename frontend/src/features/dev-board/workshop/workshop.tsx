@@ -476,11 +476,11 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false }: {
  * not `shippedWeek` — see the model — because a quiet week on a busy app
  * zeroes the week count and would otherwise put this banner on it.
  *
- * `meta.filtered` is the third condition and it is not about the app at all:
- * `dashboard.open` counts the entries that survived the shared filter bar,
- * so a search matching nothing reads as "no open items" on a board that has
- * plenty. The prompt is a claim about the APP, so it stands down while the
- * viewer is looking through a filter rather than at everything.
+ * There was a third condition, `meta.filtered`, because `dashboard.open`
+ * used to count only the entries that survived the shared filter bar, so a
+ * search matching nothing read as "no open items" on a board with plenty.
+ * The search and filters narrow All items alone now (#2915) and the count is
+ * the whole app's, so the two conditions above are the whole claim.
  *
  * ── Why the button is not a second "New change" ─────────────────────────
  *
@@ -2490,6 +2490,11 @@ function useTabMarker(
     // leave the marker where the tabs used to be.
     const list = bar.querySelector<HTMLElement>('.dev-ws-tablist');
     if (list) ro.observe(list);
+    // ...AND EACH TAB, which can resize while the list does not (#2915). The
+    // All items dot comes and goes with the search: on a phone the list is
+    // the pill's fixed width and the three tabs share it out, so the dot
+    // re-divides the tabs inside a list and a bar that both kept their size.
+    for (const el of bar.querySelectorAll<HTMLElement>('[data-ws-tab-btn]')) ro.observe(el);
     return () => ro.disconnect();
   }, [bar, tab]);
   return box;
@@ -2675,10 +2680,11 @@ export function DevWorkshop(): ReactNode {
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
-  // #2573's start-here banner: nothing open, nothing ever shipped, and no
-  // filter narrowing the count. Named once because the empty note under it
-  // reads it too — see EmptyNote.
-  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped && !v.meta.filtered);
+  // #2573's start-here banner: nothing open and nothing ever shipped. (All
+  // items' search no longer narrows the count, so it is not a condition:
+  // #2915.) Named once because the empty note under it reads it too — see
+  // EmptyNote.
+  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
 
   /* ── The three destinations ──
      AT THE HEAD OF THE PAGE, AT EVERY WIDTH (#2767). Above 700px it is the
@@ -2797,6 +2803,20 @@ export function DevWorkshop(): ReactNode {
                   lives in app.css beside its neighbours. */}
               <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
               <span className="dev-ws-tab-label">{t.label}</span>
+              {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. They
+                  narrow that tab alone, so from the other two a search the
+                  viewer typed there is out of sight, and this dot is what
+                  says it is still on. Drawn on whichever tab is up, since it
+                  is about All items rather than about where you are.
+                  The dot is decoration; the words are for a screen reader,
+                  and they join the tab's name ("All items (filtered)") so
+                  the visible label still leads it. */}
+              {t.key === 'all' && v.meta.filtered ? (
+                <>
+                  <span className="dev-ws-tab-dot" data-ws-tab-filtered="" aria-hidden="true" />
+                  <span className="sr-only"> (filtered)</span>
+                </>
+              ) : null}
             </button>
           ))}
           </div>

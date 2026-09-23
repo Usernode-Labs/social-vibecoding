@@ -16,12 +16,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { loadTsx } = require('./lib/render-tsx');
+const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-const { buildRecents, RECENTS_LIMIT } = loadTsx('frontend/src/features/nav/recents.ts');
+const {
+  buildRecents, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS,
+} = loadTsx('frontend/src/features/nav/recents.ts');
 
 function conversation(id, kind, at, extra = {}) {
   return { id, kind, title: `Conversation ${id}`, lastActivityAt: at, unreadCount: 0, ...extra };
@@ -123,6 +125,147 @@ test('#2801: the Resume row has no background of its own in the rail', () => {
   const body = desktop.slice(at, desktop.indexOf('}', at));
   assert.match(body, /background: transparent;/);
   assert.match(body, /backdrop-filter: none;/);
+});
+
+// #2919: the list is cut into the viewer's own calendar days, and anything
+// older than five days ago folds behind one "Show N older" button.
+//
+// Local wall-clock times, built with the local Date constructor, so the day
+// boundaries are the ones the test's own zone draws, whatever it is.
+const local = (d, h, m = 0) => new Date(2026, 8, d, h, m).toISOString();
+const NOW = new Date(2026, 8, 23, 0, 5).getTime(); // 12:05am, Sep 23
+
+function byDayFixture() {
+  return buildRecents({
+    apps: [{ slug: 'notes', name: 'Notes', iconUrl: null, iconEmoji: '📝', at: local(21, 12) }],
+    conversations: [
+      conversation(1, 'direct', local(23, 0, 7), { peer: { id: 9, username: 'ahead' } }), // another clock, 2 min fast
+      conversation(2, 'direct', local(23, 0, 1), { peer: { id: 9, username: 'ana' } }),
+      conversation(3, 'group', local(22, 23, 50)), // 11:50pm last night
+      conversation(4, 'group', local(22, 0, 10)),
+      conversation(5, 'channel', local(18, 0, 0), { channelKey: 'five' }),
+      conversation(6, 'channel', local(17, 23, 59), { channelKey: 'six' }),
+      conversation(7, 'group', ''), // no clock at all
+    ],
+    discussions: [],
+    agents: [],
+  });
+}
+
+test('#2919: Today, Yesterday, then 2 to 5 days ago, by calendar day; empty days get no label', () => {
+  assert.equal(RECENT_DAYS, 6, 'today and the five days before it');
+  assert.deepEqual([0, 1, 2, 3, 4, 5].map(recentDayLabel),
+    ['Today', 'Yesterday', '2 days ago', '3 days ago', '4 days ago', '5 days ago']);
+
+  const items = byDayFixture();
+  const { days, older } = groupRecents(items, NOW);
+  assert.deepEqual(days.map((d) => [d.label, d.items.map((i) => i.key)]), [
+    ['Today', ['conversation:1', 'conversation:2']],
+    // 11:50pm is Yesterday at 12:05am: a calendar day, not the last 24 hours.
+    ['Yesterday', ['conversation:3', 'conversation:4']],
+    ['2 days ago', ['app:notes']],
+    // Nothing three or four days ago, so neither label is drawn.
+    ['5 days ago', ['conversation:5']],
+  ]);
+  assert.deepEqual(older.map((i) => i.key), ['conversation:6', 'conversation:7'],
+    'six days back, and a row with no clock, are older');
+
+  // Grouping only: read top to bottom it is buildRecents' own order and count.
+  assert.deepEqual([...days.flatMap((d) => d.items), ...older], items);
+  const full = Array.from({ length: RECENTS_LIMIT + 4 }, (_, i) => conversation(
+    i + 1, 'group', new Date(NOW - i * 7 * 3600e3).toISOString(),
+  ));
+  const capped = buildRecents({ apps: [], conversations: full, discussions: [], agents: [] });
+  const grouped = groupRecents(capped, NOW);
+  assert.deepEqual([...grouped.days.flatMap((d) => d.items), ...grouped.older], capped);
+  assert.equal(capped.length, RECENTS_LIMIT);
+});
+
+test('#2919: a daylight-saving day is still one day', () => {
+  const zone = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  try {
+    // 8 March 2026 is 23 hours long in New York: its midnight is 23 hours
+    // before the next one, which a plain division would call the same day.
+    const now = new Date(2026, 2, 9, 0, 30).getTime();
+    const items = buildRecents({
+      apps: [],
+      conversations: [
+        conversation(1, 'group', new Date(2026, 2, 8, 23, 0).toISOString()),
+        conversation(2, 'group', new Date(2026, 2, 3, 1, 0).toISOString()),
+      ],
+      discussions: [],
+      agents: [],
+    });
+    const { days, older } = groupRecents(items, now);
+    assert.deepEqual(days.map((d) => [d.label, d.items.length]), [['Yesterday', 1]]);
+    assert.equal(older.length, 1, 'six calendar days back across the change is older');
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+  }
+});
+
+test('#2919: small labels before each day, and "Show N older" folded until pressed', () => {
+  const { RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const items = byDayFixture();
+  const render = (showOlder) => renderToHtml(createElement(RecentsByDay, {
+    items, live: [], showOlder, onToggleOlder: () => {}, now: NOW,
+  }));
+  const labels = (html) => [...html.matchAll(/<div class="platform-recents-day">([^<]*)<\/div>/g)].map((m) => m[1]);
+  const keys = (html) => [...html.matchAll(/data-recent-key="([^"]*)"/g)].map((m) => m[1]);
+
+  const closed = render(false);
+  assert.deepEqual(labels(closed), ['Today', 'Yesterday', '2 days ago', '5 days ago']);
+  assert.doesNotMatch(closed, /<h\d/, 'the labels are not headings; Recents is the one heading');
+  assert.deepEqual(keys(closed), [
+    'conversation:1', 'conversation:2', 'conversation:3', 'conversation:4', 'app:notes', 'conversation:5',
+  ], 'the older rows are not rendered while folded');
+  assert.match(closed,
+    /<button type="button" class="platform-recents-more" aria-expanded="false"><svg class="platform-recents-more-icon"[^>]*><path[^>]*d="M19 9l-7 7-7-7"><\/path><\/svg><span>Show 2 older<\/span><\/button>$/,
+    'a real button at the foot of the list, with a chevron down, saying how many');
+  assert.ok(closed.indexOf('Today') < closed.indexOf('data-recent-key="conversation:1"'), 'a label comes before its rows');
+
+  const open = render(true);
+  assert.deepEqual(labels(open), ['Today', 'Yesterday', '2 days ago', '5 days ago', 'Older']);
+  assert.deepEqual(keys(open), items.map((i) => i.key), 'every row, in the list\'s own order');
+  assert.match(open,
+    /<div class="platform-recents-day">Older<\/div>[\s\S]*<button type="button" class="platform-recents-more" aria-expanded="true"><svg class="platform-recents-more-icon"[^>]*><path[^>]*d="M5 15l7-7 7 7"><\/path><\/svg><span>Show less<\/span><\/button>$/);
+
+  // Nothing older than five days: no fold at all.
+  const recent = renderToHtml(createElement(RecentsByDay, {
+    items: items.slice(0, 6), live: [], showOlder: false, onToggleOlder: () => {}, now: NOW,
+  }));
+  assert.doesNotMatch(recent, /<button/);
+  assert.equal(renderToHtml(createElement(RecentsByDay, {
+    items: [], live: [], showOlder: false, onToggleOlder: () => {},
+  })), '', 'an empty list renders nothing, so the prerender is unchanged');
+
+  // Closed on every load: the fold is component state, never stored.
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  assert.match(list, /const \[showOlder, setShowOlder\] = useState\(false\);/);
+  assert.match(list, /onToggleOlder=\{\(\) => setShowOlder\(\(open\) => !open\)\}/);
+  assert.doesNotMatch(list, /showOlder[^\n]*(localStorage|sessionStorage)/);
+});
+
+test('#2919: the day labels and the fold are drawn in the desktop block only', () => {
+  const css = read('public/css/app.css');
+  const desktop = css.indexOf('THE SAME FIVE TABS, STANDING UP');
+  const day = css.indexOf('  .platform-recents-day {');
+  const more = css.indexOf('  .platform-recents-more {');
+  assert.ok(day > desktop && more > desktop, 'inside the desktop block, so the phone never draws them');
+  assert.equal(css.indexOf('.platform-recents-day {'), day + 2, 'drawn once');
+  const dayBody = css.slice(day, css.indexOf('}', day));
+  assert.match(dayBody, /flex: none;/, 'never squeezed by the scrolling list');
+  assert.match(dayBody, /color: var\(--text-muted\);/);
+  assert.match(dayBody, /font-size: 11px;/);
+  assert.doesNotMatch(dayBody, /text-transform/, 'sentence case, unlike the RECENTS heading');
+  assert.match(css, /\.platform-recents-head \+ \.platform-recents-day \{\s*padding-top: 2px;\s*\}/);
+  const moreBody = css.slice(more, css.indexOf('}', more));
+  assert.match(moreBody, /flex: none;/);
+  assert.match(moreBody, /height: 30px;/);
+  assert.match(moreBody, /background: none;/);
+  assert.match(moreBody, /color: var\(--text-muted\);/);
 });
 
 test('unread shows on conversations; archived and silent channels stay out', () => {

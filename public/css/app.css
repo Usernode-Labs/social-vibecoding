@@ -14796,6 +14796,28 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    that is trying to fit squeezes itself, not the glyph. */
 .dev-ws-tab-glyph { width: 16px; height: 16px; flex: none; }
 .dev-ws-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* #2915: THE DOT ON ALL ITEMS, while its search or filters are on. They
+   narrow that tab alone, so from the other two this is the only sign a search
+   is still waiting there. The accent, not the tab's ink: it is a state of the
+   tab rather than part of its label, and it has to read on the selected tab's
+   tint as well as on the bare track.
+   ON A PHONE IT IS A BADGE ON THE GLYPH, AND TAKES NO WIDTH. The pill leaves
+   the three labels 8px to spare at 390px (see `.dev-ws-tab`), and a dot after
+   the label costs 10: every label lost its last letters to an ellipsis. So it
+   is moved to the head of the tab (`order`), its own width and the gap after
+   it are handed back (`margin-right`), which lays the glyph over it, and it is
+   drawn at the glyph's top-right corner. A transform, so none of that moves
+   anything else. Above 700px it goes back after the label, where the segment
+   hugs its content and has the room. */
+.dev-ws-tab-dot {
+  flex: none;
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  order: -1;
+  margin-right: -10px;
+  transform: translate(12px, -8px);
+}
 /* THE HEADER'S PERIWINKLE, not black. `--brand-ink` on `--brand-tint` with a
    hairline of `--brand-line` is how the bar above draws its own controls —
    the back glyph, the bell, the app chip — and these are the same kind of
@@ -15498,6 +15520,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     border-radius: 9999px; font-size: 14px;
   }
   .dev-ws-tab-glyph { width: 16px; height: 16px; }
+  /* #2915: the dot follows the label here, a little further off it than the
+     tab's own gap, and centred on it. */
+  .dev-ws-tab-dot { order: 0; margin: 0 0 0 6px; transform: none; }
   /* The tab list hugs its three segments inside the track, and the "+" is
      the track's last segment: a 32px round cell, the tabs' own height, so
      the pill ends on it — Current status · Needs you · All items · + — and
@@ -16850,7 +16875,9 @@ html.un-ios {
 /* The badge's anchor. `position: relative` on the glyph's wrapper rather
    than on the whole tab, so the count sits on the ICON's corner and not on
    the tab's — the tab is 56px tall and a badge pinned to its top-right
-   would float in the air above the glyph, away from the thing it is about. */
+   would float in the air above the glyph, away from the thing it is about.
+   That is the PHONE's bar; the desktop rail dissolves this wrapper and draws
+   the count at the row's end instead (#2912, in the desktop block below). */
 .platform-tab-mark {
   position: relative;
   display: inline-flex;
@@ -16874,13 +16901,18 @@ html.un-ios {
   line-height: 1.35;
 }
 
-/* The same red disc as #notifications-badge in the header, at the same size:
-   two counts on one screen that disagreed about what a count looks like
-   would read as two different kinds of thing. The fill is Tailwind's
-   `red-500`, which is what that badge's utility classes compile to; it is
-   spelled out because this bar's appearance lives here rather than in the
-   component, and `--danger` elsewhere in this file already falls back to the
-   same value. */
+/* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
+   red disc as #notifications-badge, on the argument that two counts on one
+   screen should look alike. But an unread message is ALSO counted in the
+   bell, so the same news arrived twice in the loudest colour on the screen,
+   and the second red drew the eye away from the one that is the alarm. The
+   bell keeps the red; this only says "there is something here".
+
+   Same size and place on the phone's bar, on the glyph's corner, with white
+   ink. The fill is `--text-faint`, the neutral ramp's lightest step, which
+   is #8e8e93 in BOTH themes: a mid grey that reads as a mark on the light
+   bar and on the dark one without competing with either. The desktop rail
+   moves the count off the glyph altogether (the desktop block below). */
 .platform-tab-badge {
   position: absolute;
   top: -3px;
@@ -16890,7 +16922,7 @@ html.un-ios {
   padding: 0 4px;
   box-sizing: border-box;
   border-radius: 999px;
-  background: var(--danger, #ef4444);
+  background: var(--text-faint, #8e8e93);
   color: #fff;
   font-size: 0.65rem;
   font-weight: 700;
@@ -17391,6 +17423,42 @@ html.un-kb #platform-parked {
     min-width: 0;
   }
 
+  /* THE UNREAD COUNT SITS AT THE ROW'S END (#2912), as a quiet pill rather
+     than a disc on the glyph's corner. Beside a 15px label there is room to
+     say the number without covering the icon, and the far end of the row is
+     the column Recents draws its unread dots in just below, so the rail
+     keeps its marks in one place.
+
+     THE MARKUP DOES NOT MOVE. The badge stays inside the glyph's wrapper
+     (the phone still pins it to the icon's corner) and inside
+     #platform-tab-messages (a declared check selects it there). The wrapper
+     dissolves instead (`display: contents`), so the glyph, the label and the
+     badge are all items of this row. `order: 1` takes the badge past the
+     label, and `margin-left: auto` pushes it to the end. It is back in the
+     flow (`position: static`), so the label can never run under it. The
+     peeked rail over an open app is this same element, so it gets the same
+     row. */
+  .platform-tab-mark {
+    display: contents;
+  }
+  .platform-tab-badge {
+    position: static;
+    order: 1;
+    flex: none;
+    margin-left: auto;
+    margin-right: 2px;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    /* The rail's own muted ink over a faint wash of it: quieter than the
+       phone's disc, because beside the label it no longer sits on a glyph
+       it has to stand out from. */
+    background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
   /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,
      so nothing said a row was a target until it was pressed. The hover is the
      same periwinkle as the lit tab at about half the strength, so the tab you
@@ -17500,6 +17568,65 @@ html.un-kb #platform-parked {
     border-radius: 999px;
     /* The unread count's own fill in Messages (`.messages-unread`). */
     background: var(--accent);
+  }
+
+  /* ── RECENTS BY DAY (#2919) ──────────────────────────────────────────
+     frontend/src/features/nav/recents.ts (groupRecents) carries the argument.
+     A small label before each day that has a row, quieter than the RECENTS
+     heading above it: sentence case, no caps or tracking, and the muted ink
+     taken down a step so the rows stay the thing you read. Less air above
+     the first one, which already sits under the heading. */
+  .platform-recents-day {
+    flex: none;
+    padding: 8px 12px 2px;
+    color: var(--text-muted);
+    opacity: .75;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .01em;
+    line-height: 1.5;
+  }
+  .platform-recents-head + .platform-recents-day {
+    padding-top: 2px;
+  }
+  /* "Show N older" / "Show less": a quiet row at the list's foot, in the
+     rows' own muted ink and hover, a little smaller than a row so it reads
+     as a control on the list rather than one more place to go. */
+  .platform-recents-more {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    margin-top: 4px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .platform-recents-more-icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
+  }
+  /* The ring is drawn inside the button: the list scrolls, and would clip
+     one drawn outside it. */
+  .platform-recents-more:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  @media (hover: hover) {
+    .platform-recents-more:hover {
+      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
+      color: var(--brand-ink);
+    }
   }
 
   /* THE RESUME STRIP GIVES WAY TO RECENTS ON THE DESKTOP (#2802). The apps

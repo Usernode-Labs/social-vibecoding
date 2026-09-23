@@ -733,16 +733,16 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "3474bc02c4800e84c12b",
+      "fingerprint": "14f151af81fb8a4ffe22",
       "count": 1,
-      "preview": "`SELECT pv.vote, pv.reason, u.username, pv.user_id, ${currentVotePredicateSql('pv', 'cs')} AS current FROM pr_votes pv JOIN users u ON pv.user_id = u.id JOIN ch"
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
     },
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "3bc40dc20b80ea9d7fcf",
+      "fingerprint": "3474bc02c4800e84c12b",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
+      "preview": "`SELECT pv.vote, pv.reason, u.username, pv.user_id, ${currentVotePredicateSql('pv', 'cs')} AS current FROM pr_votes pv JOIN users u ON pv.user_id = u.id JOIN ch"
     },
     {
       "source": "src/routes/votes.js",
@@ -785,6 +785,20 @@
       "fingerprint": "930ea21d49f9b0b9c5cb",
       "count": 1,
       "preview": "COUNTS_SQL"
+    },
+    {
+      "source": "src/services/account-deletion.js",
+      "kind": "runtime-expression",
+      "fingerprint": "4b27e9ec27ea24b432b7",
+      "count": 1,
+      "preview": "`DELETE FROM ${table} WHERE LOWER(email) = LOWER($1)` + (table === 'waitlist_signups' ? ' AND linked_user_id IS NULL' : '')"
+    },
+    {
+      "source": "src/services/account-deletion.js",
+      "kind": "structural-template",
+      "fingerprint": "746ec64bf1e3488f9fe5",
+      "count": 1,
+      "preview": "`DELETE FROM ${table} WHERE user_id = $1 AND message_id IS NULL`"
     },
     {
       "source": "src/services/admin-approval.js",
@@ -838,9 +852,9 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "2f402486160933b5a2d8",
+      "fingerprint": "1ed50d96de6aeca2b5eb",
       "count": 1,
-      "preview": "`SELECT c.id, c.kind, c.title, c.status AS conversation_status, c.created_by, c.created_at, c.updated_at, cm.role, cm.status AS membership_status, cm.invited_by"
+      "preview": "`SELECT c.id, c.kind, c.title, c.status AS conversation_status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, cm.role, cm.status AS membership_statu"
     },
     {
       "source": "src/services/conversations.js",
