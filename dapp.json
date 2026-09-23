@@ -4993,6 +4993,11 @@
       "expectSelector": "#platform-tabs > #platform-recents + a#platform-tab-me:last-child"
     },
     {
+      "name": "#2919: the desktop rail's Recents folds anything older than 5 days ago behind a collapsed Show N older button at its foot (the demo conversations are all from August)",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-recents:not(.hidden) > button.platform-recents-more[type=\"button\"][aria-expanded=\"false\"]:last-child"
+    },
+    {
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
       "path": "/?demo=1",
       "expectSelector": "#platform-header:has(#sidebar-toggle[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])) #notifications-btn[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])"

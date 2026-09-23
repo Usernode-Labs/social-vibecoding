@@ -151,3 +151,76 @@ function pick(items: RecentItem[], limit = RECENTS_LIMIT): RecentItem[] {
     })
     .slice(0, limit);
 }
+
+/* ── BY DAY (#2919) ────────────────────────────────────────────────────
+ *
+ * The list reads as one run of rows, so "when was that?" had no answer short
+ * of opening the row. It is cut into the viewer's own calendar days, each with
+ * a small label: Today, Yesterday, then "2 days ago" through "5 days ago".
+ * Anything before those six days, and a row with no clock at all, is folded
+ * behind one "Show N older" control, closed on every load.
+ *
+ * CALENDAR DAYS, NOT 24-HOUR SPANS, in the viewer's own zone: a DM from
+ * 11:50pm last night is "Yesterday" at 12:05am, which is what a person means
+ * by the word. Rounding the midnight-to-midnight gap absorbs the 23- and
+ * 25-hour days a daylight-saving change makes.
+ *
+ * GROUPING ONLY. The rows arrive in buildRecents' order and at its count, and
+ * reading the groups top to bottom, then the older tail, gives them back in
+ * exactly that order: no row moves and none is dropped. */
+
+/** Today and the five days before it each get a label; older is folded. */
+export const RECENT_DAYS = 6;
+
+export interface RecentDay {
+  /** 0 is today, 1 yesterday, and so on, in the viewer's calendar. */
+  daysAgo: number;
+  label: string;
+  items: RecentItem[];
+}
+
+export interface RecentGroups {
+  /** Only the days that have a row, newest first. */
+  days: RecentDay[];
+  /** Before the labelled days, or with no clock: behind "Show N older". */
+  older: RecentItem[];
+}
+
+export function recentDayLabel(daysAgo: number): string {
+  if (daysAgo <= 0) return 'Today';
+  if (daysAgo === 1) return 'Yesterday';
+  return `${daysAgo} days ago`;
+}
+
+function localMidnight(at: number): number {
+  const day = new Date(at);
+  day.setHours(0, 0, 0, 0);
+  return day.getTime();
+}
+
+/** Whole calendar days from `at` to `now` in the local zone. A clock a
+ *  little ahead of this one (another device's) counts as today. */
+export function daysAgo(at: number, now: number): number {
+  return Math.max(0, Math.round((localMidnight(now) - localMidnight(at)) / 86400000));
+}
+
+export function groupRecents(items: RecentItem[], now: number = Date.now()): RecentGroups {
+  const days: RecentDay[] = [];
+  const older: RecentItem[] = [];
+  for (const item of items) {
+    const at = stamp(item.at);
+    const ago = Number.isFinite(at) ? daysAgo(at, now) : Number.POSITIVE_INFINITY;
+    if (ago >= RECENT_DAYS) {
+      older.push(item);
+      continue;
+    }
+    let day = days.find((entry) => entry.daysAgo === ago);
+    if (!day) {
+      day = { daysAgo: ago, label: recentDayLabel(ago), items: [] };
+      days.push(day);
+    }
+    day.items.push(item);
+  }
+  days.sort((a, b) => a.daysAgo - b.daysAgo);
+  return { days, older };
+}
