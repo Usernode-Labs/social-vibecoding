@@ -116,11 +116,11 @@ export interface ComposerState {
     options: ModelOptionView[];
     selected: string;
     /**
-     * #2570: the selected model's full note — what it is good for and what
-     * a change on it is expected to cost, labelled an estimate. '' while
-     * the platform's note table has not landed, which renders nothing.
+     * #2812: `selected` is a pick made while a turn was running, staged
+     * for the next turn. The composer says so beside the control.
      */
-    note: string;
+    pendingNextTurn: boolean;
+    /** Only an in-flight switch locks the control (#2812), not a turn. */
     changeDisabled: boolean;
   } | null;
   /** #798's saved drafts. `busy` disables each row's Send. */

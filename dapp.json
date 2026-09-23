@@ -2423,8 +2423,18 @@
     {
       "name": "The in-composer selector is one flat list of models, with no provider headings (#2117, #2569)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)) option[value=\"anthropic:claude-opus-5\"]:checked",
-      "expectText": "Opus 5"
+      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)) option[value=\"anthropic:claude-opus-5-5\"]:checked",
+      "expectText": "Opus 5.5"
+    },
+    {
+      "name": "The model picker has no caption line under it (#2807)",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form.dc-card:not(:has(#dc-model-note)) select#dc-model-select"
+    },
+    {
+      "name": "Mid-turn, the model picker stays usable (#2812)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form:has(#dc-send-btn.dc-btn-stop) .dc-card-row select#dc-model-select:not(:disabled)"
     },
     {
       "name": "The flat list ends with the door to the full OpenRouter catalog (#2117, #2569)",
@@ -3646,7 +3656,7 @@
     {
       "name": "Model costs lists each model's note beside what its changes actually cost (#2570)",
       "path": "/#admin/model-costs",
-      "expectSelector": "#admin-model-costs-table tbody tr[data-model-cost=\"claude-opus-5\"]",
+      "expectSelector": "#admin-model-costs-table tbody tr[data-model-cost=\"claude-opus-5-5\"]",
       "expectText": "general coding work"
     },
     {

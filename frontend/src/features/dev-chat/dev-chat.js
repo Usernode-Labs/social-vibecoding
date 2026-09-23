@@ -82,7 +82,7 @@ const DevChat = {
   currentSession: null,
   messages: [],
   isStreaming: false,
-  selectedModel: loadStoredModel() || 'claude-opus-5',
+  selectedModel: loadStoredModel() || 'claude-opus-5-5',
   _staleTimer: null,
   _abortController: null,
   // Most recent event _seq we've processed across any channel (POST SSE,
@@ -208,8 +208,8 @@ const DevChat = {
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
       },
     },
-    'claude-opus-5': {
-      label: 'Opus 5',
+    'claude-opus-5-5': {
+      label: 'Opus 5.5',
       changeSize: {
         short: 'general coding work',
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
@@ -227,7 +227,7 @@ const DevChat = {
   // Default model id used when sanitization rejects a stale storage
   // value. Overwritten by GET /api/models with the server's authoritative
   // default so the two stay aligned.
-  _defaultModel: 'claude-opus-5',
+  _defaultModel: 'claude-opus-5-5',
 
   // The lightweight data behind the composer's unified picker. It is loaded
   // once per page rather than every time the composer republishes (which can
@@ -316,9 +316,11 @@ const DevChat = {
 
   /**
    * #2570: the note and the estimated cost for one model, as the picker
-   * states them. ONE helper, because the same two facts appear in three
-   * places — the compact text beside an option, the full line under the
-   * selected one, and (through the same call) any later surface.
+   * states them. ONE helper, so every surface that shows the two facts
+   * says them the same way. The picker renders `compact` beside each
+   * option; #2807 retired the caption that rendered `full` under the
+   * selected one, and `full` stays for any later surface that wants the
+   * labelled sentence.
    *
    * `catalogModel` is the user's own OpenRouter catalogue entry when there
    * is one. The server cannot read that catalogue (it holds no key), so a
@@ -556,21 +558,133 @@ const DevChat = {
       : (Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat._defaultModel)
         ? DevChat._defaultModel
         : (Object.keys(DevChat.MODELS)[0] || ''));
-    // #2570: one line UNDER the picker with the full note for whichever
-    // model is selected. A native closed select shows one line of text, so
-    // the compact form above has to fit beside a name; this is where the
-    // sentence gets to be a sentence.
-    const selectedNote = openRouterSelected
-      ? DevChat._modelCostNote(selectedOpenRouterId, byId.get(selectedOpenRouterId))
-      : DevChat._modelCostNote(directId, null);
+    // #2807: there is no caption under the picker any more. #2570 put the
+    // selected model's note and estimate there in full, but each option
+    // already carries both in compact form, so the line only repeated the
+    // closed control in longer words.
+    //
+    // #2812: a pick made while a turn is running is STAGED rather than
+    // applied (see _stageMidTurnPick). The control shows the staged value
+    // so it reads as what the next turn will use, and says so.
+    const staged = DevChat._stagedPickFor(DevChat.currentSession);
+    const liveSelected = openRouterSelected
+      ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
+      : `${ANTHROPIC_MODEL_PREFIX}${directId}`;
+    const selected = staged ? staged.value : liveSelected;
+    if (staged && !options.some((option) => option.value === selected)) {
+      // A staged catalog pick outside the shortlist still has to be the
+      // selected option, or the native select would show its first row.
+      const id = selected.slice(OPENROUTER_MODEL_PREFIX.length);
+      const model = byId.get(id);
+      options.splice(Math.max(options.length - 1, 0), 0, {
+        value: selected,
+        label: model?.name || id,
+        title: 'Runs on your OpenRouter key',
+      });
+    }
     return {
       options,
-      selected: openRouterSelected
-        ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
-        : `${ANTHROPIC_MODEL_PREFIX}${directId}`,
-      note: selectedNote.full || '',
-      changeDisabled: !!DevChat._composerBusy || DevChat._modelPickerChanging,
+      selected,
+      pendingNextTurn: !!staged,
+      // #2812: the picker stays usable while a turn runs; only an in-flight
+      // switch (a reset-agent-context round trip) locks it.
+      changeDisabled: !!DevChat._modelPickerChanging,
     };
+  },
+
+  // ── Mid-turn picks (#2812) ─────────────────────────────────────────
+  //
+  // Changing an OpenRouter session's model (or its backend) resets the
+  // agent context through POST reset-agent-context, which the server
+  // refuses with a 409 while a turn runs — and even an Anthropic pick,
+  // which only rides the NEXT send, cannot change the turn already under
+  // way. So a pick made mid-turn is recorded here, shown in the picker with
+  // an "applies next turn" hint, and applied when the turn ends (or, as a
+  // backstop, just before the next send).
+  //
+  // One record, keyed to the session it was made in, so switching sessions
+  // mid-turn can never carry a pick into a different change. `value` is the
+  // option value the picker shows; `choice` is the reset-agent-context body
+  // to send, or null when nothing has to reach the server (an Anthropic
+  // pick on a Claude session, which the next send already carries).
+  // `original` is what the picker showed before the first mid-turn pick,
+  // so picking it again un-stages rather than queueing a no-op switch.
+  _stagedPick: null,
+  _applyingStagedPick: null,
+
+  _stagedPickFor(session) {
+    const staged = DevChat._stagedPick;
+    if (!staged || !session || session.pending) return null;
+    return Number(staged.sessionId) === Number(session.id) ? staged : null;
+  },
+
+  _isMidTurn() {
+    return !!(DevChat.isStreaming && DevChat.currentSession && !DevChat.currentSession.pending);
+  },
+
+  _stageMidTurnPick(value, choice, { shownBefore = null } = {}) {
+    const session = DevChat.currentSession;
+    if (!session || session.pending) return;
+    const previous = DevChat._stagedPickFor(session);
+    const original = previous
+      ? previous.original
+      : (shownBefore || DevChat._modelPickerView()?.selected || '');
+    if (value === original) {
+      DevChat._stagedPick = null;
+    } else {
+      DevChat._stagedPick = { sessionId: session.id, value, choice: choice || null, original };
+    }
+    DevChat._publishComposer();
+  },
+
+  /**
+   * Apply the staged pick, if any, now that no turn is running. Resolves
+   * true when nothing is left staged. A busy answer (the server has not
+   * released the turn yet) is retried a few times before giving up; the
+   * pick then stays staged for the next send to try again.
+   */
+  async _applyStagedPick({ attempts = 4, delayMs = 750 } = {}) {
+    if (DevChat._applyingStagedPick) return DevChat._applyingStagedPick;
+    // A record for another session waits for that session's next send:
+    // only the open session's turn is known to have ended here.
+    const staged = DevChat._stagedPickFor(DevChat.currentSession);
+    if (!staged) return true;
+    if (DevChat.isStreaming) return false;
+    const run = (async () => {
+      if (!staged.choice) {
+        DevChat._stagedPick = null;
+        DevChat._publishComposer();
+        return true;
+      }
+      for (let i = 0; i < attempts; i++) {
+        if (DevChat._stagedPick !== staged) return true;
+        if (DevChat.isStreaming) return false;
+        DevChat._modelPickerChanging = true;
+        DevChat._publishComposer();
+        let outcome;
+        try {
+          outcome = await DevChat._switchCurrentCodingAgent(staged.choice, { quietBusy: true });
+        } finally {
+          DevChat._modelPickerChanging = false;
+        }
+        if (outcome !== 'busy') {
+          // Applied, already current, or refused for a reason the switch has
+          // already toasted — none of which a retry would change.
+          if (DevChat._stagedPick === staged) DevChat._stagedPick = null;
+          DevChat._publishComposer();
+          return outcome === 'applied' || outcome === 'same';
+        }
+        if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      DevChat._publishComposer();
+      return false;
+    })();
+    DevChat._applyingStagedPick = run;
+    try {
+      return await run;
+    } finally {
+      DevChat._applyingStagedPick = null;
+    }
   },
 
   /** Dispatch a grouped native-select value to its provider. */
@@ -583,10 +697,23 @@ const DevChat = {
     if (String(value).startsWith(ANTHROPIC_MODEL_PREFIX)) {
       const model = String(value).slice(ANTHROPIC_MODEL_PREFIX.length);
       if (!Object.prototype.hasOwnProperty.call(DevChat.MODELS, model)) return;
+      // Read before `selectedModel` moves: on a Claude session the picker's
+      // live value IS `selectedModel`.
+      const shownBefore = DevChat._isMidTurn() ? DevChat._modelPickerView()?.selected : null;
       DevChat.selectedModel = model;
       // Direct Anthropic selection is a global per-browser preference, as it
       // was before this control learned about OpenRouter.
       try { localStorage.setItem(MODEL_STORAGE_KEY, model); } catch {}
+      // #2812: mid-turn, the running turn keeps its model. `selectedModel`
+      // is only read at send, so on a Claude session that is already the
+      // whole change; an OpenRouter session also needs its backend switched
+      // back to Claude, which waits for the turn to end.
+      if (DevChat._isMidTurn()) {
+        DevChat._stageMidTurnPick(value, DevChat._isOpenRouterSession()
+          ? { backend: 'claude_code', model: null, reasoningEffort: null }
+          : null, { shownBefore });
+        return;
+      }
       // An unsent change has no session id yet. Its explicit provider choice
       // must be staged on the placeholder and carried into POST /sessions,
       // not sent to reset-agent-context with a null id. This branch also
@@ -634,6 +761,12 @@ const DevChat = {
     const reasoningEffort = meta && meta.supportsReasoning !== true
       ? null
       : (currentEffort || saved.reasoningEffort || null);
+    if (DevChat._isMidTurn()) {
+      DevChat._stageMidTurnPick(value, {
+        backend: 'codex_openrouter', model, reasoningEffort,
+      });
+      return;
+    }
     DevChat._modelPickerChanging = true;
     DevChat._publishComposer();
     try {
@@ -1646,9 +1779,17 @@ const DevChat = {
   // would be asking the same question twice. Omitted, this still opens the
   // detail chooser, which is what the unified select's "Add more" action
   // needs (a backend is not a complete answer: it wants a model and effort).
-  async _switchCurrentCodingAgent(explicit, { fixedBackend = null } = {}) {
+  //
+  // Resolves to what happened: 'applied', 'same', 'staged', 'busy' (the
+  // server refused because a turn is still running), 'failed' or
+  // 'cancelled'. `quietBusy` suppresses the busy toast for a caller that
+  // retries it (_applyStagedPick).
+  async _switchCurrentCodingAgent(explicit, { fixedBackend = null, quietBusy = false } = {}) {
     const session = DevChat.currentSession;
-    if (!session || DevChat.isStreaming) return;
+    if (!session) return 'cancelled';
+    // #2812: the catalog dialog may be opened mid-turn (the picker stays
+    // enabled); an explicit switch still may not POST over a running turn.
+    if (DevChat.isStreaming && explicit && !session.pending) return 'busy';
     const current = {
       backend: DevChat._agentBackend(session),
       model: session.agent_model || null,
@@ -1662,7 +1803,18 @@ const DevChat = {
     const stillCurrent = session.pending
       ? DevChat.currentSession === session
       : DevChat.currentSession?.id === session.id;
-    if (!choice || !stillCurrent) return;
+    if (!choice || !stillCurrent) return 'cancelled';
+
+    // #2812: a catalog pick made while a turn runs (or one that outlived
+    // the turn it was opened in the other way round) is staged for the
+    // turn's end rather than posted into a 409.
+    if (DevChat._isMidTurn()) {
+      const value = choice.backend === 'codex_openrouter'
+        ? `${OPENROUTER_MODEL_PREFIX}${choice.model || ''}`
+        : `${ANTHROPIC_MODEL_PREFIX}${DevChat.selectedModel}`;
+      DevChat._stageMidTurnPick(value, choice);
+      return 'staged';
+    }
 
     // /sessions/new is a client-only placeholder by design (#2241), so there
     // is no row reset-agent-context could update. Keep the explicit choice on
@@ -1685,15 +1837,17 @@ const DevChat = {
       session.agent_model = pendingChoice.model;
       session.agent_reasoning_effort = pendingChoice.reasoningEffort;
       DevChat._publishComposer();
-      return;
+      return 'applied';
     }
 
     const same = choice.backend === current.backend
       && (choice.model || null) === (current.model || null)
       && (choice.reasoningEffort || null) === (current.reasoningEffort || null);
     if (same) {
-      PlatformUI.toast(`${DevChat._agentName(choice.backend)} is already selected for this session.`);
-      return;
+      if (!quietBusy) {
+        PlatformUI.toast(`${DevChat._agentName(choice.backend)} is already selected for this session.`);
+      }
+      return 'same';
     }
 
     try {
@@ -1705,17 +1859,27 @@ const DevChat = {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        PlatformUI.toast(data.error || 'Could not switch coding agents.');
-        return;
+        const busy = response.status === 409 && /busy/i.test(String(data.error || ''));
+        if (!(busy && quietBusy)) {
+          PlatformUI.toast(data.error || 'Could not switch coding agents.');
+        }
+        return busy ? 'busy' : 'failed';
       }
-      Object.assign(DevChat.currentSession, data.session || {});
+      // The session may have changed while the request was in flight (a
+      // staged pick applies as a turn ends, when the user may already be
+      // navigating away). Update the cached row either way, and the open
+      // view only if it is still this session's.
       const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
       if (cached) Object.assign(cached, data.session || {});
+      if (DevChat.currentSession?.id !== session.id) return 'applied';
+      Object.assign(DevChat.currentSession, data.session || {});
       if (data.message) DevChat.messages.push(data.message);
       DevChat.renderChatView();
       PlatformUI.toast(`This session now uses ${DevChat._agentName(choice.backend)}.`);
+      return 'applied';
     } catch {
       PlatformUI.toast('Network error while switching coding agents.');
+      return 'failed';
     }
   },
 
@@ -1936,10 +2100,22 @@ const DevChat = {
   // the stale id — so the user would see "Haiku" on screen but send
   // some ancient slug on submit. Called right after module load and
   // again after loadModels() refreshes the allowlist.
+  //
+  // #2818: a RETIRED id resolves to its successor by name first (the same
+  // map as src/services/models.js RETIRED_MODELS), and the successor is
+  // written back so the saved preference stops naming a model that no
+  // longer exists.
+  RETIRED_MODELS: { 'claude-opus-5': 'claude-opus-5-5' },
+
   _sanitizeStoredModel() {
-    if (!DevChat.MODELS[DevChat.selectedModel]) {
-      DevChat.selectedModel = DevChat._defaultModel;
+    if (DevChat.MODELS[DevChat.selectedModel]) return;
+    const successor = DevChat.RETIRED_MODELS[DevChat.selectedModel];
+    if (successor && DevChat.MODELS[successor]) {
+      DevChat.selectedModel = successor;
+      try { localStorage.setItem(MODEL_STORAGE_KEY, successor); } catch {}
+      return;
     }
+    DevChat.selectedModel = DevChat._defaultModel;
   },
 
   // ── Model selector copy (#800) ────────────────────────────────
@@ -4792,6 +4968,17 @@ const DevChat = {
       DevAlerts._unlockAudio();
       DevAlerts.requestNotifyPermission();
     }
+    // #2812: the backstop for a mid-turn pick the turn's end could not
+    // apply (the server still held the turn). If it still cannot, the
+    // switch has said why and this send runs on the current model.
+    if (DevChat._stagedPickFor(DevChat.currentSession)) {
+      const session = DevChat.currentSession;
+      await DevChat._applyStagedPick({ attempts: 2 });
+      if (DevChat.currentSession !== session || DevChat.isStreaming) {
+        DevChat._restoreComposer(message, { onlyIfEmpty: true });
+        return;
+      }
+    }
     const model = DevChat.selectedModel;
     const openRouterSession = DevChat._isOpenRouterSession();
     DevChat.isStreaming = true;
@@ -6046,6 +6233,12 @@ const DevChat = {
 
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
     DevChat._composerBusy = !!streaming;
+    // #2812: a model picked mid-turn applies as the turn ends. Deferred a
+    // tick because the finish paths drop `isStreaming` around this call,
+    // not always before it.
+    if (!streaming && DevChat._stagedPick) {
+      setTimeout(() => { DevChat._applyStagedPick(); }, 0);
+    }
     if (streaming) DevChat._startSpendPolling();
     // #2118: an OpenRouter session keeps the turn's figure up after the
     // turn. There is no daily meter for it to be absorbed into, and the
