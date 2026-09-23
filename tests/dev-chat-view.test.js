@@ -433,8 +433,8 @@ test('the first-use capture renders the real explainer without changing saved pr
   assert.equal(view().returnHint, true, 'capture works even for a returning user');
   const out = html(view());
   assert.match(out, /You can leave this page and return anytime/);
-  assert.match(out, /<strong>Improve<\/strong>/);
-  assert.match(out, /session’s status/);
+  assert.match(out, /<strong>Messages<\/strong>/);
+  assert.match(out, /change’s status/);
   assert.match(out, /id="dc-return-hint-dismiss"[^>]*>Got it<\/button>/);
   assert.match(out,
     /id="dc-return-hint"[^>]*class="[^"]*flex flex-col items-stretch[^"]*sm:flex-row/,

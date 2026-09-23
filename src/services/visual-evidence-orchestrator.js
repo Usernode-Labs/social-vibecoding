@@ -431,6 +431,68 @@ function replayProgressEvent(event, pass) {
   };
 }
 
+const AGENT_DIAGNOSTIC_KINDS = new Set([
+  'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
+  'turn_start', 'turn_end', 'provider_dispatched', 'provider_init',
+  'first_stream', 'first_output', 'provider_result', 'provider_notice', 'provider_usage',
+  'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
+  'tool_start', 'tool_end', 'agent_deadline',
+  'worker_stop_requested', 'worker_stop_returned',
+]);
+const AGENT_DIAGNOSTIC_PHASES = new Set([
+  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
+  'evidence_mcp_ready', 'claude', 'agent', 'done',
+]);
+const AGENT_DIAGNOSTIC_TOOLS = new Set([
+  'evidence_get_context', 'evidence_reset_side', 'evidence_run_plan',
+  'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
+  'browser_take_screenshot', 'browser_click', 'browser_type',
+  'browser_fill_form', 'browser_press_key', 'browser_select_option',
+  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_console_messages', 'browser_network_requests', 'browser_tabs',
+  'browser_close', 'other',
+]);
+
+function recordAgentDiagnostic(metrics, raw) {
+  const kind = String(raw?.kind || '');
+  if (!AGENT_DIAGNOSTIC_KINDS.has(kind)) return;
+  const activity = metrics.agentActivity;
+  const event = { atMs: Math.max(0, Date.now() - metrics.startedAtMs), kind };
+  if (raw.backend === 'claude_code' || raw.backend === 'codex_openrouter') {
+    event.backend = raw.backend;
+  }
+  if (raw.requestMode === 'agent_new' || raw.requestMode === 'agent_resume') {
+    event.requestMode = raw.requestMode;
+  }
+  if (AGENT_DIAGNOSTIC_PHASES.has(raw.phase)) event.phase = raw.phase;
+  if (raw.outcome === 'ok' || raw.outcome === 'error') event.outcome = raw.outcome;
+  for (const key of ['mcpServerCount', 'toolDefinitionCount']) {
+    if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 1000) {
+      event[key] = raw[key];
+    }
+  }
+  for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable']) {
+    if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
+  if (kind === 'tool_start' || kind === 'tool_end') {
+    event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
+    if (raw.persona === 'member' || raw.persona === 'admin') event.persona = raw.persona;
+    if (Number.isSafeInteger(raw.sequence) && raw.sequence > 0 && raw.sequence <= 100000) {
+      event.sequence = raw.sequence;
+    }
+    if (kind === 'tool_start') {
+      activity.toolCounts[event.tool] = (activity.toolCounts[event.tool] || 0) + 1;
+    }
+    if (event.sequence) {
+      if (kind === 'tool_start') activity.pending.set(event.sequence, event);
+      else activity.pending.delete(event.sequence);
+    }
+  }
+  activity.counts[kind] = (activity.counts[kind] || 0) + 1;
+  activity.events.push(event);
+  if (activity.events.length > 64) activity.events.shift();
+}
+
 function newRunMetrics() {
   return {
     startedAtMs: Date.now(),
@@ -448,7 +510,9 @@ function newRunMetrics() {
     replayEvents: [],
     agentAttempts: 0,
     agentDispatches: [],
+    agentActivity: { events: [], counts: {}, toolCounts: {}, pending: new Map(), budgetMs: null },
     repairCount: 0,
+    repairTrigger: null,
     artifactBytes: 0,
     tokenUsage: {},
   };
@@ -487,7 +551,16 @@ function traceSummary(metrics, extra = {}) {
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
+    agentActivity: {
+      version: 1,
+      budgetMs: metrics.agentActivity.budgetMs,
+      counts: { ...metrics.agentActivity.counts },
+      toolCounts: { ...metrics.agentActivity.toolCounts },
+      events: metrics.agentActivity.events.slice(-64),
+      pendingTools: [...metrics.agentActivity.pending.values()].slice(-8),
+    },
     repairCount: metrics.repairCount,
+    ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
     artifactBytes: metrics.artifactBytes,
     planSource: metrics.planSource || null,
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
@@ -554,8 +627,9 @@ async function executeRun(config, options, injected = {}) {
   const metrics = newRunMetrics();
   metrics.replayRuntime = String(config.captureRuntime || process.env.CAPTURE_RUNTIME || config.appRuntime || 'docker').slice(0, 32);
   const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
-  let agentWindowStartedAt = null;
-  let agentWindowSuspendedAt = 0;
+  const repairAgentBudgetMs = config.visualEvidence?.maxRepairAgentMs || 120_000;
+  const agentWindows = new Map();
+  metrics.agentActivity.budgetMs = agentBudgetMs;
   let replayBudgetStartedAt = null;
   let replaySuspendedMs = 0;
   const suspendedMs = () => replaySuspendedMs
@@ -783,10 +857,11 @@ async function executeRun(config, options, injected = {}) {
       },
     });
 
-    const dispatchOnce = async (forceBackend = null) => {
-      if (agentWindowStartedAt == null) {
-        agentWindowStartedAt = Date.now();
-        agentWindowSuspendedAt = suspendedMs();
+    const dispatchOnce = async (forceBackend = null, repairAttempt = 0) => {
+      let window = agentWindows.get(repairAttempt);
+      if (!window) {
+        window = { startedAt: Date.now(), suspendedAt: suspendedMs() };
+        agentWindows.set(repairAttempt, window);
       }
       const dispatchStartedAt = Date.now();
       const suspendedAtStart = suspendedMs();
@@ -794,15 +869,18 @@ async function executeRun(config, options, injected = {}) {
       const dispatchTrace = {
         requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64),
         requestedModel: safeModelId(session.agent_model || session.model),
+        repairAttempt,
+        budgetMs: repairAttempt === 1 ? repairAgentBudgetMs : agentBudgetMs,
       };
       metrics.agentDispatches.push(dispatchTrace);
       try {
         // Provisioning and deterministic replay are platform work. Starting
         // this clock before the paired images/fixtures were ready spent the
         // agent's four minutes before it could even open its first page.
-        const remainingAgentMs = agentBudgetMs
-          - (Date.now() - agentWindowStartedAt
-            - (suspendedMs() - agentWindowSuspendedAt));
+        const remainingAgentMs = dispatchTrace.budgetMs
+          - (Date.now() - window.startedAt
+            - (suspendedMs() - window.suspendedAt));
+        dispatchTrace.timeoutMs = Math.max(0, remainingAgentMs);
         if (remainingAgentMs <= 0) {
           throw new VisualEvidenceOrchestrationError(
             'evidence_agent_timeout',
@@ -816,8 +894,10 @@ async function executeRun(config, options, injected = {}) {
           origins: exploration.origins,
           authTokens,
           onProgress: (line) => progress(`Evidence agent: ${line}`),
+          onEvidenceDiagnostic: (event) => recordAgentDiagnostic(metrics, event),
           resumeThreadId: agentThreadId,
           forceBackend,
+          repairAttempt,
           timeoutMs: remainingAgentMs,
           suspendedMs,
         }, injected.agentDependencies || {});
@@ -857,7 +937,49 @@ async function executeRun(config, options, injected = {}) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
       }
+      const replayFailure = registration.control.lastReplayFailure?.error;
+      if (!latestHardVerdict && registration.control.planCalls === 1
+          && ['pass_1', 'pass_2'].includes(failurePhase)
+          && errorCode(replayFailure) === 'ambiguous_locator') {
+        // A wrong role/name is a planner error, not a reason to publish
+        // partial captures or silently substitute another DOM element.
+        // The platform explicitly starts one correction turn with the exact
+        // failed plan and replay location; its replacement still has to pass
+        // both clean, provenance-fenced replay passes.
+        const failureDetail = boundedReplayDetail(replayFailure);
+        registration.control.allowRepair(
+          'The first replay found zero or multiple elements for a planned locator. Inspect the actual control on both revisions and correct the complete plan.',
+          {
+            code: 'ambiguous_locator',
+            message: visibleError(replayFailure),
+            detail: failureDetail,
+          }
+        );
+        metrics.repairTrigger = {
+          code: 'ambiguous_locator',
+          ...(Number.isInteger(metrics.lastReplayEvent?.pass)
+            ? { pass: metrics.lastReplayEvent.pass } : {}),
+          ...(['base', 'head'].includes(failureDetail?.side)
+            ? { side: failureDetail.side } : {}),
+          ...(/^[a-z0-9][a-z0-9_-]{0,95}$/.test(String(failureDetail?.actionId || ''))
+            ? { actionId: failureDetail.actionId } : {}),
+        };
+        // The failed pass may have changed its fixture. Restore the same
+        // pinned pair before the planner inspects the control again.
+        failurePhase = 'repair_reset';
+        const repairResetStartedAt = Date.now();
+        try { await registration.control.resetSide('base'); }
+        finally { replaySuspendedMs += Date.now() - repairResetStartedAt; }
+        metrics.repairCount = 1;
+        failurePhase = 'agent_repair';
+        progress('A planned control did not match the page; the evidence agent is inspecting and correcting it once…');
+        const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
+        agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, 1);
+      }
       if (agentOutcome.error && !latestHardVerdict) {
+        if (metrics.repairCount === 1 && registration.control.planCalls === 1) {
+          throw agentOutcome.error;
+        }
         throw registration.control.lastReplayFailure?.error
           || registration.control.lastToolFailure?.error || agentOutcome.error;
       }

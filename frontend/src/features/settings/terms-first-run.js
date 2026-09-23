@@ -108,6 +108,12 @@
           return;
         }
       } catch (_) { /* ignore */ }
+      // The side panel's document (`?panel=1`, beside a running app): the
+      // TOP window presents the terms, once.
+      if (document.documentElement?.classList?.contains('in-side-panel')) {
+        TermsFirstRun._resolve();
+        return;
+      }
 
       // A snapshot-derived offline boot can't reach the session-authed
       // endpoint; the fetch below would only burn a failed request.

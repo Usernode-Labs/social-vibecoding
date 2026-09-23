@@ -39,7 +39,7 @@ test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   assert.match(shell, /<GlobalChatScreen\s*\/>/);
   assert.match(screen, /id="global-chat-screen"/);
   assert.match(screen, /Chat\s*<span>\(experimental\)<\/span>/);
-  assert.match(screen, /Saved in Improve\./);
+  assert.match(screen, /Saved in Messages\./);
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'global-chat-screen', false\)/);
   assert.match(screen, /className="hidden flex flex-1 min-h-0 overflow-hidden"/);
   assert.match(appJs, /parts\[0\] === 'chat'/);
@@ -62,7 +62,10 @@ test('the inbox lists resumable chats, and is where one is deleted', () => {
   // invalidated in one place — so what the panel's copy is asserted for is
   // asserted of that row now.
   assert.match(inbox, /function AgentChatRow/);
-  assert.match(inbox, /href=\{`#chat\/\$\{encodeURIComponent\(chat\.id\)\}`\}/);
+  // #2813: the row's address is the inbox's own, so on a desktop the chat
+  // opens beside the list; a phone's router swaps it for `#chat/<id>`.
+  assert.match(inbox, /const thread: MessagesAgentThread = \{ kind: 'chat', id: chat\.id \};/);
+  assert.match(inbox, /href=\{href\}/);
   assert.match(inbox, /data-inbox-agent=\{chat\.id\}/);
   assert.match(inbox, /chat\.busy \? 'Working…'/);
   // The DELETE is the one thing that lived nowhere else, so it moved rather

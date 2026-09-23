@@ -39,10 +39,11 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
     'the retired row tag stays retired');
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
-  // five tabs are adjacent siblings with nothing between them.
+  // five tabs are adjacent siblings, with only the desktop rail's Recents
+  // (#2802) between Workshop and Me — it is never drawn on the phone's bar.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-tab-workshop + #platform-tab-me'),
+      + ' + #platform-tab-workshop + #platform-recents + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,
@@ -70,7 +71,8 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
   assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox owns the address');
   assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\]\)/);
-  assert.match(app, /navigateToMessages\(conversationId, appSlug\)/);
+  // #2813 added the agent thread as a third argument, last in precedence.
+  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent\)/);
   // The ROW points here, not at the app view.
   assert.match(screen, /href=\{`#messages\/app\/\$\{encodeURIComponent\(discussion\.slug\)\}`\}/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
@@ -82,7 +84,7 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   // …and it drops BOTH portals on the way out, the transcript's first.
   assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
   // The list collapses for a discussion exactly as it does for a thread.
-  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \? 'hidden md:flex' : 'flex'/);
+  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \|\| snap\.route\.agent \? 'hidden md:flex' : 'flex'/);
 });
 
 test('deep links validate ids and route list/thread without a client events socket send', () => {
@@ -210,7 +212,9 @@ test('composer and moderation payloads match the backend contracts', () => {
 });
 
 test('blocking and access-revocation purge an active direct thread locally', () => {
-  assert.match(screen, /await api\.setBlock\(peer\.id, true\); await finishDirectBlock\(conversationId\)/);
+  assert.match(screen, /await setUserBlocked\(peer\.id, true\)/);
+  assert.match(store, /await api\.setBlock\(userId, blocked\)/);
+  assert.match(store, /await finishDirectBlock\(active\.id\)/);
   const purge = store.slice(store.indexOf('export async function finishDirectBlock('),
     store.indexOf('export function draftFor('));
   assert.match(purge, /active: null/);

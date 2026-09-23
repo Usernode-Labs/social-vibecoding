@@ -12,6 +12,7 @@ const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
+const proposalDescription = require('../services/proposal-description');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const { claimIssueForUser } = require('../services/issue-claims');
@@ -26,6 +27,7 @@ const agentTurn = require('../services/agent-turn');
 const registry = require('../agents/registry');
 const agentPreferences = require('../services/agent-preferences');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
+const openRouterMayor = require('../services/openrouter-mayor');
 const codexOpenRouter = require('../agents/codex-openrouter');
 const { MIN_MAX_OUTPUT_TOKENS } = require('../../worker/build-codex-model-catalog');
 const workerProgress = require('../services/worker-progress');
@@ -33,7 +35,12 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
-const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
+const {
+  getAppConventions,
+  getSelfHostedRefuseList,
+  getDesignGuidance,
+  SPEC_DESIGN_BRIEF,
+} = require('../services/prompts');
 const {
   IN_LOOP_BROWSER_GUIDANCE,
   HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
@@ -5160,14 +5167,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           return;
         }
 
-        // OpenRouter is a complete, single-provider session path. The
-        // selected OpenRouter model receives the user's message directly
-        // and can either answer it or edit the repository; no Anthropic
-        // Mayor, wrap-up, or quick-reply generation runs around it. Its
-        // first name is minted without a model call (#1949, below); the
-        // turn-end refresh every in-platform session shares then sharpens
-        // it (#2500).
-        if (isOpenRouterSession) {
+        // OpenRouter is a complete, single-provider session path: no
+        // Anthropic key is read and no Anthropic billing path is resolved
+        // for it. Since #2809/#2810 its chat runs through the same Mayor
+        // loop as a Claude session's, on the session's own OpenRouter model
+        // and key (services/openrouter-mayor.js), so it gets the one-line
+        // plan before a coding run, the scout-written spec, and the
+        // wrap-up after.
+        //
+        // The DIRECT turn below is what these sessions had before, and it
+        // stays as the fallback: the selected OpenRouter model receives the
+        // user's message directly and can either answer it or edit the
+        // repository, with no Mayor around it. It runs when the Mayor is
+        // switched off (OPENROUTER_SESSION_MAYOR_ENABLED=false), when the
+        // session's Mayor cannot be set up (no usable key, a model without
+        // tool calling), and when the Mayor's first call fails before it has
+        // said anything. Its first name is minted without a model call
+        // (#1949, below); the turn-end refresh every in-platform session
+        // shares then sharpens it (#2500).
+        const runOpenRouterDirectTurn = async () => {
           // #1949: the Haiku titler used to be skipped for these sessions
           // entirely, so they kept their branch name ("dev/evan-1789…") for
           // life. It runs at their turn end now (#2500); this eager,
@@ -5363,8 +5381,59 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           send('done', {});
           res.end();
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
-          return;
+        };
+
+        // The Mayor's model, key and payer for this turn. On a Claude
+        // session they are the Anthropic Mayor's, exactly as before. On an
+        // OpenRouter session they are the session's own OpenRouter model
+        // and key, and spend follows #2571: the included key is platform
+        // money and joins the shared weekly pool, a personal key is the
+        // user's own and is neither blocked nor billed.
+        let sessionMayor = null;
+        if (isOpenRouterSession) {
+          try {
+            const resolved = await openRouterMayor.resolveForSession({
+              pool, config, session, userId: req.user.id,
+            });
+            if (resolved.error) {
+              log.info('sessions', 'OpenRouter Mayor unavailable; running the direct turn', {
+                sessionId: session.id, reason: resolved.error,
+              });
+            } else {
+              sessionMayor = resolved;
+            }
+          } catch (err) {
+            log.warn('sessions', 'OpenRouter Mayor setup failed; running the direct turn', {
+              sessionId: session.id, err: err.message,
+            });
+          }
+          if (!sessionMayor) {
+            await runOpenRouterDirectTurn();
+            return;
+          }
+          // Same payer-free first name the direct turn mints (#1949).
+          sessionTitles.titleFromFirstMessage({ pool, session, message: messageText, send });
         }
+        const mayorLlm = sessionMayor ? sessionMayor.client : llm;
+        const mayorModel = sessionMayor ? sessionMayor.modelLabel : selectedModel;
+        // Whether the platform records the Mayor's spend at all. userApiKey
+        // stays null on an OpenRouter session, so a recorded included-key
+        // call lands in the shared pool, as sharedPoolCodexSpend does.
+        const mayorSpendRecorded = !sessionMayor || sessionMayor.usesIncludedKey;
+        const mayorByok = () => (sessionMayor ? !sessionMayor.usesIncludedKey : !!userApiKey);
+        const recordMayorSpend = async (costCents) => {
+          if (mayorSpendRecorded) {
+            await limits.recordSpend(pool, req.user.id, costCents, { byok: !!userApiKey });
+          }
+        };
+        const resolveMayorBilling = async () => {
+          if (!sessionMayor) {
+            return limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
+          }
+          if (!sessionMayor.usesIncludedKey) return { apiKey: null };
+          const budget = await limits.checkBudget(pool, req.user.id);
+          return budget.error ? budget : { apiKey: null };
+        };
 
         // Fable 5 classifier fallback: every fallback-served Mayor call
         // gets an admin record (log.warn + events row), but the in-chat
@@ -5373,7 +5442,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         let fallbackNoticed = false;
         const noteModelFallback = async (result) => {
           if (!result || !result.fallbackServed) return;
-          const requested = selectedModel;
+          const requested = mayorModel;
           const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
           const category = (result.stopDetails && result.stopDetails.category) || null;
           await modelFallback.record(pool, {
@@ -5506,7 +5575,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock, prodDebugEligible, discussionBlock, canDraftIssues);
         const messages = buildMayorMessages(history, historyAttachments);
 
-        if (!llm.isEnabled()) {
+        if (!mayorLlm.isEnabled()) {
           send('error', { error: 'LLM not configured' });
           send('done', {});
           res.end();
@@ -5579,10 +5648,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         const inProcessResults = new Map();
         try {
           for (;;) {
-            mayor1 = await llm.streamChat({
+            mayor1 = await mayorLlm.streamChat({
               messages: mayorConvo,
               systemPrompt: mayorPrompt,
-              model: selectedModel,
+              model: mayorModel,
               tools,
               signal: stopHandle.abort.signal,
               onToken: (text) => send('token', { text }),
@@ -5641,12 +5710,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             // phase-1 accounting just below the loop.)
             // Price + attribute with the SERVED model — a fallback-served
             // call bills at (and displays) the fallback model's identity.
-            const servedModelIter = mayor1.servedModel || selectedModel;
+            const servedModelIter = mayor1.servedModel || mayorModel;
             let dataCost = 0;
             if (mayor1.usage) {
-              dataCost = llm.estimateCostCents(mayor1.usage, servedModelIter);
-              await limits.recordSpend(pool, req.user.id, dataCost, { byok: !!userApiKey });
-              send('usage', { costCents: dataCost, model: servedModelIter, byok: !!userApiKey });
+              dataCost = mayorLlm.estimateCostCents(mayor1.usage, servedModelIter);
+              await recordMayorSpend(dataCost);
+              send('usage', { costCents: dataCost, model: servedModelIter, byok: mayorByok() });
             }
 
             // Persist any preamble text this iteration produced ("Let me
@@ -5707,9 +5776,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             // platform-funded credit, so never reuse the turn-start payer.
             let continuationBilling = null;
             try {
-              continuationBilling = await limits.resolveBillingPath(
-                pool, config.dataEncryptionKey, req.user.id,
-              );
+              continuationBilling = await resolveMayorBilling();
             } catch (err) {
               log.warn('sessions', 'Data-tool continuation billing resolve failed', {
                 sessionId: session.id, err: err.message,
@@ -5755,6 +5822,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             setTimeout(() => sessionBus.clearSession(session.id), 30000);
             return;
           }
+          // An OpenRouter Mayor that fails before it has said anything
+          // (a provider refusing the request, a model whose tool calling
+          // or context cannot carry the Mayor's prompt) must not cost the
+          // user their turn: hand the message to the coding agent directly,
+          // exactly as these sessions ran before they had a Mayor.
+          if (sessionMayor && dataIters === 0) {
+            log.warn('sessions', 'OpenRouter Mayor call failed; running the direct turn', {
+              sessionId: session.id, code: err.code || null, status: err.status || null, err: err.message,
+            });
+            await sendStatus(`The Mayor could not reach ${safeAgentModelLabel(sessionMayor.model)}, so your message goes straight to the coding agent.`);
+            await runOpenRouterDirectTurn();
+            return;
+          }
           throw err;
         }
 
@@ -5777,11 +5857,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           await modelFallback.record(pool, {
             kind: events.EVENT_TYPES.MODEL_REFUSAL,
             userId: req.user.id, appId: session.app_id, sessionId: session.id,
-            requested: selectedModel, served: mayor1.servedModel || selectedModel,
+            requested: mayorModel, served: mayor1.servedModel || mayorModel,
             category: refusalCategory, source: 'mayor',
           });
-          await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
-            modelRefusal: { requested: selectedModel, category: refusalCategory },
+          await sendStatus(modelFallback.refusalText(mayorModel, refusalCategory), {
+            modelRefusal: { requested: mayorModel, category: refusalCategory },
             // #894: a refused turn ends here with no assistant row, so this
             // status line is the only thing left to hang pills off.
             quickReplies: turnPills('failed'),
@@ -5846,11 +5926,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // Bill the tool-only response now, like the intermediate
           // data-loop iterations — the phase-1 accounting below prices
           // mayor1.usage, which the retry's usage replaces on success.
-          const servedModelBase = mayor1.servedModel || selectedModel;
+          const servedModelBase = mayor1.servedModel || mayorModel;
           if (mayor1.usage) {
-            const baseCost = llm.estimateCostCents(mayor1.usage, servedModelBase);
-            await limits.recordSpend(pool, req.user.id, baseCost, { byok: !!userApiKey });
-            send('usage', { costCents: baseCost, model: servedModelBase, byok: !!userApiKey });
+            const baseCost = mayorLlm.estimateCostCents(mayor1.usage, servedModelBase);
+            await recordMayorSpend(baseCost);
+            send('usage', { costCents: baseCost, model: servedModelBase, byok: mayorByok() });
             // The ordinary phase-1 settlement below must only see the
             // retry's usage. If the retry is skipped or fails, the base
             // call has already been fully settled here.
@@ -5858,9 +5938,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
           let summaryBilling = null;
           try {
-            summaryBilling = await limits.resolveBillingPath(
-              pool, config.dataEncryptionKey, req.user.id,
-            );
+            summaryBilling = await resolveMayorBilling();
           } catch (err) {
             log.warn('sessions', 'Data-summary billing resolve failed', {
               sessionId: session.id, err: err.message,
@@ -5878,10 +5956,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             // one below the status line, mirroring the data-loop flow.
             send('assistant_message_end', {});
             await sendStatus('Writing up what the data showed...');
-            const retry = await llm.streamChat({
+            const retry = await mayorLlm.streamChat({
               messages: [...mayorConvo, ...buildDataSummaryReprompt(mayor1.rawContent, mayor1.toolUses)],
               systemPrompt: mayorPrompt,
-              model: selectedModel,
+              model: mayorModel,
               // Same tool defs (the convo carries tool_use blocks) but
               // hard-disabled: this call must produce text, not chips.
               tools,
@@ -5983,8 +6061,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // an empty assistant message would clutter the chat history.
         // Served-model attribution: a fallback-served turn is priced,
         // persisted, and displayed as the model that actually answered.
-        const servedModel1 = mayor1.servedModel || selectedModel;
-        const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
+        const servedModel1 = mayor1.servedModel || mayorModel;
+        const costCents1 = mayor1.usage ? mayorLlm.estimateCostCents(mayor1.usage, servedModel1) : 0;
         // Whether this reply will be followed by a dispatch — i.e. whether
         // the row about to be written is a PREAMBLE (phase 2 writes the
         // turn's final row) or the whole turn.
@@ -5995,8 +6073,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // Those helpers independently re-check billing and must see the
         // main call's real spend, not the pre-call balance.
         if (mayor1.usage) {
-          await limits.recordSpend(pool, req.user.id, costCents1, { byok: !!userApiKey });
-          send('usage', { costCents: costCents1, model: servedModel1, byok: !!userApiKey });
+          await recordMayorSpend(costCents1);
+          send('usage', { costCents: costCents1, model: servedModel1, byok: mayorByok() });
         }
 
         if (mayorText1.trim()) {
@@ -6022,12 +6100,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             // 'chat' either way: on a preamble the dispatch hasn't run yet,
             // so its outcome isn't knowable here — phase 2 writes the row
             // that reflects what actually landed.
+            // The ladder's extra rungs are Anthropic calls, which an
+            // OpenRouter session never makes: its Mayor's own pills or the
+            // static set.
             pills1 = await resolvePills('chat', {
               modelPills: quickReplies,
               model: servedModel1,
               replyText: mayorText1,
-              allowModelCalls: !modelDeclined,
-              allowGenerate: !modelDeclined,
+              allowModelCalls: !modelDeclined && !sessionMayor,
+              allowGenerate: !modelDeclined && !sessionMayor,
             });
             log.info('sessions', 'quick replies resolved', {
               sessionId: session.id, phase: willDispatch ? 'preamble' : 'reply',
@@ -6302,7 +6383,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // no post-dispatch model request is allowed to bypass the tier.
         let wrapUpBillingAvailable = false;
         try {
-          const rebill = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
+          const rebill = await resolveMayorBilling();
           if (!rebill.error) {
             userApiKey = rebill.apiKey;
             wrapUpBillingAvailable = true;
@@ -6413,10 +6494,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           recoveryFallback: true,
         };
         const invokeMayor2 = async () => wrapUpBillingAvailable
-          ? snapshotMayorResponse(await llm.streamChat({
+          ? snapshotMayorResponse(await mayorLlm.streamChat({
             messages: followUpMessages,
             systemPrompt: mayorPrompt,
-            model: selectedModel,
+            model: mayorModel,
             // Expose ONLY the quick-reply pills tool (#285) so the wrap-up can
             // suggest next steps but cannot dispatch again — the dispatch tools
             // are simply absent from the list, preserving the original
@@ -6480,7 +6561,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             await modelFallback.record(pool, {
               kind: events.EVENT_TYPES.MODEL_REFUSAL,
               userId: req.user.id, appId: session.app_id, sessionId: session.id,
-              requested: selectedModel, served: mayor2.servedModel || selectedModel,
+              requested: mayorModel, served: mayor2.servedModel || mayorModel,
               category: refusalCategory2, source: 'mayor',
             });
           }
@@ -6504,9 +6585,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
           send('token', { text: mayorText2 });
         }
-        const servedModel2 = mayor2.servedModel || selectedModel;
+        const servedModel2 = mayor2.servedModel || mayorModel;
         const costCents2 = mayor2.usage
-          ? llm.estimateCostCents(mayor2.usage, servedModel2)
+          ? mayorLlm.estimateCostCents(mayor2.usage, servedModel2)
           : 0;
         const tokenCount2 = mayor2.usage
           ? (mayor2.usage.input_tokens || 0) + (mayor2.usage.output_tokens || 0)
@@ -6515,7 +6596,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // generation. The pill ladder's fresh preflight must include this
         // call in the remaining-credit calculation.
         if (costCents2) {
-          if (toolResult.turnId) {
+          if (toolResult.turnId && mayorSpendRecorded) {
             await limits.settleTurnSpend(pool, req.user.id, costCents2, {
               turnByok: !!userApiKey,
               turnId: toolResult.turnId,
@@ -6523,9 +6604,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
             });
           } else {
-            await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
+            await recordMayorSpend(costCents2);
           }
-          send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
+          send('usage', { costCents: costCents2, model: servedModel2, byok: mayorByok() });
         }
         // #1001: the wrap-up is the row the user is left looking at after a
         // build or a spec, so this is where a generic pill set hurt most —
@@ -6545,8 +6626,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             modelPills: quickReplies2,
             model: servedModel2,
             replyText: mayorText2,
-            allowModelCalls: mayor2.stopReason !== 'refusal',
-            allowGenerate: mayor2.stopReason !== 'refusal',
+            allowModelCalls: mayor2.stopReason !== 'refusal' && !sessionMayor,
+            allowGenerate: mayor2.stopReason !== 'refusal' && !sessionMayor,
           });
         let wrapUpResolved;
         if (mayor2.recoveryFallback) {
@@ -7932,7 +8013,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const session = rows[0];
 
-      if (!['active', 'promoted'].includes(session.status)) {
+      // Pausing stops coding; explicit verification of existing work remains open.
+      if (!['active', 'paused', 'promoted'].includes(session.status)) {
         return res.status(409).json({
           error: 'proposal_closed',
           message: `This proposal is ${session.status || 'no longer open'}, so its checks cannot be re-run.`,
@@ -10264,6 +10346,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       }
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
+      testing.cleanedText = proposalDescription.extract(testing.cleanedText).cleanedText;
       const hasChanges = result.ahead > 0 && !!result.sha;
       // #170: a headless session only ever has spec_md if its own scout
       // wrote it this run — so spec_md present means this build was the
@@ -11998,6 +12081,16 @@ PERSONAL AGENT FILES: the user who dispatched this run has personal instruction 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
 `;
 
+  // Claude's scout reads with Read/Glob/Grep and run-cc.sh strips its edit
+  // tools. A Codex scout reads through shell commands and has no such switch,
+  // so it is told plainly, and the runner puts back anything it changes
+  // (worker/run-codex-agent.sh restore_scout_tree, #2810).
+  const scoutPlanModeLine = isCodexSession
+    ? 'You are running in PLAN MODE: read and search the repository with read-only shell commands (for example `rg`, `ls`, `sed -n`, `cat`), but do not edit, create, delete, commit, or push anything. Do not attempt to: anything this run changes in the repository is discarded when it ends.'
+    : 'You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.';
+  // #2817: every scout settles the design decisions in the spec.
+  const scoutDesignBrief = `\n- ${SPEC_DESIGN_BRIEF}`;
+
   // Scout-specific prompt. Deliberately omits the platform-conventions
   // block and commit/push instructions used in the build prompt — scout
   // never edits anything. The "final message is the spec" contract is
@@ -12008,7 +12101,7 @@ ${toolPromptArg}
 
 USER REQUEST: "${userMessage}"${attachmentsBlock}${discussionBlock}
 
-You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${personalFilesNote}${revisionBlock}
+${scoutPlanModeLine}${personalFilesNote}${revisionBlock}
 ${issueHelperNote}${prodDebug ? `
 ${debugAccess.promptBlock()}
 ` : ''}
@@ -12017,7 +12110,7 @@ Your job is to investigate this repo and produce a MARKDOWN SPEC for the change.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
 - Structured as TWO halves under these exact H2 headings, in this order: "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
-- If the planned change introduces data-dependent UI (lists, threads, leaderboards, anything that renders rows), the "Technical implementation" half should name the staging seed data the build will need (per the "Staging mock data" platform convention), so seeding is planned rather than improvised at build time.
+- If the planned change introduces data-dependent UI (lists, threads, leaderboards, anything that renders rows), the "Technical implementation" half should name the staging seed data the build will need (per the "Staging mock data" platform convention), so seeding is planned rather than improvised at build time.${scoutDesignBrief}
 
 The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
 
@@ -13373,6 +13466,30 @@ path: /another/changed/view
   - The block must be LAST in your final message. Skip it entirely for changes
     with nothing user-visible to test.`;
 
+// OpenRouter sessions never pay for a model call to write their proposal text
+// (pr-metadata.js deterministicPrMetadataDraft), so the description the group
+// votes on is whatever the coding agent writes here (#2820). Parsed by
+// services/proposal-description.js; each turn's block replaces the last.
+const OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE = `- Whenever you changed and committed files this turn, end your FINAL
+  message with a proposal description block. It becomes the description
+  people read before voting on this change:
+
+==== DESCRIPTION ====
+One or two short paragraphs, in plain language, describing what the WHOLE
+change on this branch does for someone using the app.
+==== END DESCRIPTION ====
+
+  Rules for the description block:
+  - Describe the ENTIRE change so far, including earlier turns on this
+    branch, not just this turn. It REPLACES the previous description, so
+    anything you leave out disappears from the proposal.
+  - Write it for the people voting on the change: what is different, what
+    they can now do, or what stops going wrong. Do not narrate your work
+    ("Done", "I updated…"), list files, quote commit hashes, or report
+    check results; that belongs in the rest of your message.
+  - Put it after the rest of your message and BEFORE the testing block,
+    which stays last. Skip it when you changed no files.`;
+
 function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   if (runLocally) return '';
   return `HOSTED WORKER LIFECYCLE (this invocation):
@@ -13416,17 +13533,24 @@ function buildCodingAgentBuildGuidance({ authoritativeSystemContext = false } = 
 // keep the legacy inline block until their transports have an equivalent,
 // independently verified system-context path.
 //
+// #2817: the UI design guidance (src/prompts/design-guidance.md) travels
+// the same way, right after the conventions, so every backend builds with
+// the same design brief and a hosted Claude session carries one copy of it
+// rather than another per dispatch.
+//
 // Pure and exported for deterministic transport tests.
 function buildCodingAgentConventionsContext({
   runLocally = false,
   isCodexSession = false,
   conventions = getAppConventions(),
+  designGuidance = '',
 } = {}) {
+  const designBlock = designGuidance ? `\n\n${designGuidance}` : '';
   const fullBlock = `==== PLATFORM CONVENTIONS (authoritative) ====
 
 ${conventions}
 
-==== END PLATFORM CONVENTIONS ====`;
+==== END PLATFORM CONVENTIONS ====${designBlock}`;
 
   if (runLocally || isCodexSession) {
     return { promptBlock: fullBlock, systemPrompt: null };
@@ -13437,7 +13561,7 @@ ${conventions}
 
 The complete platform conventions are supplied separately as authoritative
 system instructions for this invocation. They override conflicting personal
-or repository guidance on platform-wide rules.
+or repository guidance on platform-wide rules.${designGuidance ? ' The UI design guidance is supplied\nwith them.' : ''}
 
 ==== END PLATFORM CONVENTIONS ====`,
     systemPrompt: fullBlock,
@@ -13800,6 +13924,9 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
   const conventionsContext = buildCodingAgentConventionsContext({
     runLocally,
     isCodexSession,
+    // #2817: the same design guidance for every backend. Only its self-check
+    // differs: OpenRouter models read text, Claude reads screenshots.
+    designGuidance: getDesignGuidance({ readsImages: !isCodexSession }),
   });
   const buildGuidance = buildCodingAgentBuildGuidance({
     authoritativeSystemContext: Boolean(conventionsContext.systemPrompt),
@@ -13833,7 +13960,7 @@ INSTRUCTIONS:
 ${workflowGuidance}
 ${turnInstructions}
 ${buildGuidance.browserGuidance}
-${buildGuidance.testingGuidance}`;
+${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildGuidance.testingGuidance}`;
 
   const fullClaudePrompt = renderClaudePrompt(specContext.fullBlock);
   const claudePrompt = reuseHostedScoutSpec
@@ -14639,7 +14766,12 @@ ${buildGuidance.testingGuidance}`;
     // leak into chat history or prompts. The parsed guidance is persisted
     // onto the session below, on the has-changes success path.
     const testing = testingNotes.extract(result.lastResultText || '');
-    const ccText = testing.cleanedText;
+    // #2820: then peel the OpenRouter agent's "==== DESCRIPTION ====" block
+    // (the whole change so far, which becomes the proposal's description).
+    // A message that was nothing but the block still gets a chat card.
+    const described = proposalDescription.extract(testing.cleanedText);
+    const turnDescription = described.description;
+    const ccText = described.cleanedText || turnDescription || '';
     commitHash = result.sha;
     const hasChanges = result.ahead > 0 && !!commitHash;
 
@@ -14928,6 +15060,7 @@ ${buildGuidance.testingGuidance}`;
         prResult = await prMetadata.applyPrMetadata({
           pool, session, repoOwner, repoName,
           userMessage, ccSummary: ccText, username: req.user.username,
+          proposalDescription: turnDescription,
           broadcast: (event, data) => send(event, data),
           apiKey: prMetadataApiKey,
           userId: req.user.id,
@@ -15282,6 +15415,7 @@ ${buildGuidance.testingGuidance}`;
       const completionMeta = {
         ...executionAgentMeta,
         ccOutput: ccText,
+        ...(turnDescription ? { proposalDescription: turnDescription } : {}),
         ccOutcome,
         durationMs: Date.now() - turnStartedMs,
         ...(runLocally
@@ -15752,4 +15886,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

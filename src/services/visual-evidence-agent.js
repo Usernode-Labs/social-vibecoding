@@ -49,6 +49,13 @@ A target is exactly one of:
 testId. Never use an ephemeral accessibility ref. CSS may identify a stable
 component but may not be html, body, or *.
 
+Before submitting the plan, inspect both revisions in the states where each
+target will be used. Every interaction target and each checkpoint focus must
+identify exactly one visible element; a waitFor target only needs one or more
+visible matches. Check full accessible names instead of assuming a partial
+name is unique. If a target cannot be verified, report that instead of
+submitting a guessed locator.
+
 replay.checkpoint is { id, label, focus:{before,after},
 assertions:{before:[...],after:[...]}, animation }. Every assertion list is
 non-empty. Supported assertions are visible/hidden/attached/detached/checked/
@@ -78,13 +85,23 @@ evidence_run_plan. Ordinary platform code—not you—will reset both sides and
 replay it twice in fresh browser contexts. A passing replay makes the captured
 media available to human reviewers, who decide whether it proves the claim.
 You do not need image understanding or to issue a relevance verdict. If the
-replay fails, report its diagnostics. Do not merely narrate a plan in your
-final answer: submit it through the tool.`;
+replay fails, report its diagnostics unless the platform explicitly starts a
+correction turn. Do not merely narrate a plan in your final answer: submit it
+through the tool.`;
 
-function promptFor() {
-  return `Open the run context, explore the declared flow on both exact
+function promptFor({ repair = false } = {}) {
+  const task = repair
+    ? `The first submitted plan failed deterministic replay. Call
+evidence_get_context to read the rejected plan and the exact replay failure.
+Inspect the failed control in the live browser on BOTH exact revisions; use
+its observed role and accessible name or another stable unique locator.
+Do not guess a replacement from the error text alone. Submit one complete
+corrected plan through evidence_run_plan. The platform will reset both sides
+and run two fresh replay passes; the failed plan's media is not published.`
+    : `Open the run context, explore the declared flow on both exact
 revisions, and submit a replay plan. The implementing agent's semantic
-intent is already frozen in the context; preserve it exactly.
+intent is already frozen in the context; preserve it exactly.`;
+  return `${task}
 
 ${replayPlanGuide()}`;
 }
@@ -92,6 +109,11 @@ ${replayPlanGuide()}`;
 function resultThreadId(result, backend) {
   if (backend === 'codex_openrouter') return result?.agentThreadId || null;
   return result?.sessionId || result?.initSessionId || null;
+}
+
+function reportDiagnostic(options, event) {
+  try { options.onEvidenceDiagnostic?.(event); }
+  catch { /* Diagnostics must not change an evidence turn. */ }
 }
 
 async function withDispatchTimeout(promise, { timeoutMs, onTimeout, suspendedMs = () => 0 }) {
@@ -143,10 +165,12 @@ async function ensureEvidenceWorker(session, { onProgress = null, workerService 
 async function dispatchClaude(config, options, deps) {
   const { session, runId, origins, authTokens, onProgress, resumeThreadId } = options;
   const model = models.resolve(session.model || session.agent_model);
+  reportDiagnostic(options, { kind: 'backend_selected', backend: 'claude_code' });
+  reportDiagnostic(options, { kind: 'turn_start' });
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'evidence',
-    prompt: promptFor(),
+    prompt: promptFor({ repair: options.repairAttempt === 1 }),
     systemPrompt: SYSTEM_PROMPT,
     model,
     resumeSessionId: resumeThreadId === undefined
@@ -161,18 +185,31 @@ async function dispatchClaude(config, options, deps) {
     telemetryCorrelationId: runId,
     telemetryAttemptNumber: 1,
     onProgress,
+    onEvidenceDiagnostic: options.onEvidenceDiagnostic,
   }), {
     timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 240_000,
-    onTimeout: () => deps.workerService.stopTurn?.(session.id),
+    onTimeout: async () => {
+      reportDiagnostic(options, { kind: 'agent_deadline' });
+      reportDiagnostic(options, { kind: 'worker_stop_requested' });
+      try {
+        await deps.workerService.stopTurn?.(session.id);
+        reportDiagnostic(options, { kind: 'worker_stop_returned' });
+      } catch (error) {
+        reportDiagnostic(options, { kind: 'worker_stop_returned', outcome: 'error' });
+        throw error;
+      }
+    },
     suspendedMs: options.suspendedMs,
   }); }
   catch (error) {
+    reportDiagnostic(options, { kind: 'turn_end', outcome: 'error' });
     if (error && typeof error === 'object') {
       error.evidenceBackend = 'claude_code';
       error.evidenceModel = model;
     }
     throw error;
   }
+  reportDiagnostic(options, { kind: 'turn_end', outcome: failedResult(result) ? 'error' : 'ok' });
   if (failedResult(result)) {
     const error = new VisualEvidenceAgentError(
       'evidence_agent_failed',
@@ -193,6 +230,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
     ? (session.agent_thread_id || null)
     : resumeThreadId;
   let lastResult = null;
+  reportDiagnostic(options, { kind: 'backend_selected', backend: 'codex_openrouter' });
 
   for (let attemptNumber = 1; attemptNumber <= 2; attemptNumber += 1) {
     let attempt;
@@ -223,9 +261,10 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
     let result = null;
     let dispatchError = null;
     try {
+      reportDiagnostic(options, { kind: 'turn_start' });
       result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
         mode: 'evidence',
-        prompt: promptFor(),
+        prompt: promptFor({ repair: options.repairAttempt === 1 }),
         branchName: session.branch_name,
         agentBackend: 'codex_openrouter',
         agentModel: runtimeContext.agentModel,
@@ -243,9 +282,20 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
         journalPath: attempt.journal,
         telemetryComponent: 'visual_evidence_agent',
         onProgress,
+        onEvidenceDiagnostic: options.onEvidenceDiagnostic,
       }), {
         timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 240_000,
-        onTimeout: () => deps.workerService.stopTurn?.(session.id),
+        onTimeout: async () => {
+          reportDiagnostic(options, { kind: 'agent_deadline' });
+          reportDiagnostic(options, { kind: 'worker_stop_requested' });
+          try {
+            await deps.workerService.stopTurn?.(session.id);
+            reportDiagnostic(options, { kind: 'worker_stop_returned' });
+          } catch (error) {
+            reportDiagnostic(options, { kind: 'worker_stop_returned', outcome: 'error' });
+            throw error;
+          }
+        },
         suspendedMs: options.suspendedMs,
       });
       lastResult = result;
@@ -253,6 +303,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
       dispatchError = error;
       result = error?.turnResult || null;
     }
+    reportDiagnostic(options, { kind: 'turn_end', outcome: dispatchError || failedResult(result) ? 'error' : 'ok' });
 
     await deps.agentTurn.completeCodexAttempt({
       pool,
@@ -297,7 +348,9 @@ async function dispatch(config, options, injected = {}) {
   if (!pool || !session?.id || !options.runId) {
     throw new VisualEvidenceAgentError('invalid_evidence_dispatch', 'Evidence dispatch requires a session, pool, and run.');
   }
+  reportDiagnostic(options, { kind: 'worker_prepare_start' });
   await ensureEvidenceWorker(session, { onProgress: options.onProgress, workerService: deps.workerService });
+  reportDiagnostic(options, { kind: 'worker_prepare_end' });
 
   if (session.agent_backend === 'codex_openrouter' && options.forceBackend !== 'claude_code') {
     const runtime = await deps.agentTurn.resolveCodexRuntimeContext({

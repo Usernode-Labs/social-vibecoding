@@ -166,6 +166,11 @@ let loopConfig = null;
 // singleton on the leader, and a restart SHOULD retry immediately — a new
 // process is exactly the event most likely to have cleared the wedge.
 const appBackoff = new Map();
+// sessionId → when we last killed that session's container on a budget stop
+// (#2870). An issue dispatched into the same session while the kill lands
+// comes back with an empty reply that has nothing to do with the issue, and
+// used to be recorded as a permanent parse failure against it.
+const stoppedSessions = new Map();
 // What the last pass refused, for the dashboard's loop line. Refusals are
 // counted here instead of being written as verdict rows.
 let lastRefusals = [];
@@ -796,6 +801,12 @@ async function simulateCaps(pool, bot, appId, verdict) {
 // thirds of the first day's ledger became noise.
 const REFUSAL_ERRORS = new Set(['session_busy']);
 
+// How long after a budget stop an empty reply on the same session is read
+// as collateral from the kill rather than as the turn's own answer (#2870).
+// The two observed cases landed within one second of the stop; a minute
+// leaves room for a slower kill without swallowing a later genuine failure.
+const STOP_SETTLE_MS = 60 * 1000;
+
 /** Whether this app is inside a backoff window, and how long is left. */
 function backoffFor(appId, now = Date.now()) {
   const entry = appBackoff.get(Number(appId));
@@ -816,6 +827,53 @@ function noteRefusal(appId, error, now = Date.now()) {
 /** A turn got through for this app, so the next refusal starts from 2 min. */
 function clearRefusals(appId) {
   appBackoff.delete(Number(appId));
+}
+
+/** This session's container was just killed on a budget stop (#2870). */
+function noteStopped(sessionId, now = Date.now()) {
+  stoppedSessions.set(Number(sessionId), now);
+}
+
+/**
+ * Whether a stop on this session is recent enough to explain an empty reply.
+ *
+ * Deliberately generous: the window costs a requeue when it is wrong, and
+ * costs an issue its triage when it is too short. Entries older than the
+ * window are dropped on read, so the map cannot grow without bound.
+ */
+function wasStoppedRecently(sessionId, now = Date.now()) {
+  const id = Number(sessionId);
+  for (const [key, at] of stoppedSessions) {
+    if (now - at > STOP_SETTLE_MS) stoppedSessions.delete(key);
+  }
+  const at = stoppedSessions.get(id);
+  return at != null && now - at <= STOP_SETTLE_MS;
+}
+
+/**
+ * Why a turn came back with nothing (#2870).
+ *
+ * The worker's watch state is what `execInWorker` returns, and it already
+ * carries the provider's own account of how the turn ended. None of it was
+ * being recorded, so an empty reply reached the ledger as the bare string
+ * `(empty reply)` — 21 of the first 225 runs, with no way to tell a
+ * provider refusal from a rate limit from a container that died. Anything
+ * non-null here is worth more than the guess it replaces.
+ */
+function describeStop(result) {
+  const parts = [];
+  const add = (label, value) => {
+    if (value == null || value === '') return;
+    parts.push(`${label}=${clip(String(value), 120)}`);
+  };
+  add('subtype', result.resultSubtype);
+  add('stop', result.providerStopReason);
+  add('code', result.agentErrorCode);
+  add('markerless', result.markerlessCause);
+  if (result.agentExit != null && result.agentExit !== 0) add('agentExit', result.agentExit);
+  if (result.ccExit != null && result.ccExit !== 0) add('ccExit', result.ccExit);
+  add('err', result.agentError);
+  return parts.length ? `[${parts.join(' ')}]` : '[no reason reported]';
 }
 
 /**
@@ -987,6 +1045,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     log.warn('homeroom-bot', 'Triage turn stopped on its budget', {
       app: app.slug, issueNumber, kind, sessionId: session.id,
     });
+    // Recorded BEFORE the kill, not after it: the bystander dispatch this
+    // protects has already failed by the time stopTurn resolves (#2870).
+    noteStopped(session.id);
     Promise.resolve(worker.stopTurn(session.id)).catch((err) => {
       log.warn('homeroom-bot', 'Budget stop failed', { sessionId: session.id, err: err.message });
     });
@@ -1005,9 +1066,16 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
-        // The token half of the budget. `inputTokens` is the last usage
-        // event rather than a running sum, so this is a tripwire on a
-        // turn that has plainly run away, not an accounting limit.
+        // The token half of the budget: a tripwire on a turn that has
+        // plainly run away, not an accounting limit — `inputTokens` is the
+        // last usage event rather than a running sum.
+        //
+        // #2870: this hook reached no path the bot actually takes until
+        // worker.js was corrected, and even now it only STOPS a turn on an
+        // agent that reports usage while the turn runs. `codex-openrouter`
+        // reports once, at turn.completed, so on the model the bot runs
+        // today the wall-clock half is what bounds a turn and this one
+        // reports the breach after the fact (see the warning below).
         onUsage: (usage) => {
           const seen = Number(usage?.inputTokens);
           if (Number.isFinite(seen) && seen > turnInputTokens) spendBudget('input tokens');
@@ -1039,20 +1107,55 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     ).catch(() => {});
   }
 
+  // What the turn spent, read ONCE and read null-safely, because both the
+  // stopped path and the completed path below need it (#2870). The debit
+  // used to live only on the completed path, under a `return` the budget
+  // branch took first, so the turns that wasted the most were the only ones
+  // the weekly cap never saw.
+  const result = (routed && routed.result) || {};
+  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd)
+    ? routed.estimatedCostUsd
+    : null;
+  const usage = {
+    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : null,
+    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : null,
+  };
+
+  // #2571: an included (company-funded) key's spend joins the shared weekly
+  // pool the budget gate above measures; a personal key would be nobody's
+  // to debit, and the bot never has one.
+  if (costUsd > 0) {
+    try {
+      if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
+        await limits.recordSpend(pool, bot.id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
+      }
+    } catch (err) {
+      log.warn('homeroom-bot', 'Spend debit failed', { err: err.message });
+    }
+  }
+
+  // The token budget, observed rather than enforced (#2870). The agent the
+  // bot runs on reports usage once, when the turn is already over, so there
+  // is nothing left to stop by the time this is true — but a turn that ran
+  // away is worth saying out loud rather than leaving in a column nobody
+  // reads. The wall-clock half is what actually bounds these turns.
+  if (!budgetHit && usage.inputTokens != null && usage.inputTokens > turnInputTokens) {
+    log.warn('homeroom-bot', 'Triage turn finished over its token budget', {
+      app: app.slug, issueNumber, inputTokens: usage.inputTokens, budget: turnInputTokens,
+    });
+  }
+
   // A turn we stopped ourselves. Recorded as a failure so the ledger shows
   // what it cost, then requeued ONCE at the back — the runaway may have
   // been the issue rather than the bot, and retrying it forever is the loop
   // this whole change exists to end.
   if (budgetHit) {
     const retried = String(item.reason || '') === 'budget_retry';
-    const result = routed?.result || {};
     const id = await insertRun(pool, {
       appId: app.id, issueNumber, sessionId: session.id, mode, verdict: 'failed',
       error: `budget: ${budgetHit}`, budgetStop: budgetHit,
       threadSeenAt: item.thread_seen_at || null, model,
-      costUsd: Number.isFinite(routed?.estimatedCostUsd) ? routed.estimatedCostUsd : null,
-      inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : null,
-      outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : null,
+      costUsd, ...usage,
       durationMs: Date.now() - startedMs,
     });
     if (retried) {
@@ -1081,30 +1184,31 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     }
     return recordFailure(code, { sessionId: session.id }, { infra: INFRA_ERRORS.has(code) || code.startsWith('dispatch:') });
   }
-  const result = routed.result || {};
-  const costUsd = Number.isFinite(routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
-  const usage = {
-    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : null,
-    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : null,
-  };
-
-  // #2571: an included (company-funded) key's spend joins the shared weekly
-  // pool the budget gate above measures; a personal key would be nobody's
-  // to debit, and the bot never has one.
-  if (costUsd > 0) {
-    try {
-      if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
-        await limits.recordSpend(pool, bot.id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
-      }
-    } catch (err) {
-      log.warn('homeroom-bot', 'Spend debit failed', { err: err.message });
-    }
-  }
-
   const text = String(result.lastResultText || '');
   const parsed = parseVerdict(text);
   if (!parsed) {
-    return recordFailure(`unparseable: ${clip(text.slice(-300), 300) || '(empty reply)'}`, {
+    const body = clip(text.slice(-300), 300);
+    if (!body) {
+      // An empty reply right after a stop on this session is almost always
+      // collateral, not a verdict the bot failed to parse: stopTurn kills
+      // the session's container, and an issue dispatched into it
+      // concurrently dies with it. Two of the first three budget stops took
+      // a bystander issue down this way, each recorded as a permanent parse
+      // failure a second after the stop. Put that issue back on the queue
+      // instead of burning its triage on somebody else's timeout.
+      if (!budgetHit && wasStoppedRecently(session.id)) {
+        return recordFailure('collateral: the session was stopped mid-dispatch', {
+          sessionId: session.id, costUsd, ...usage,
+        }, { infra: true });
+      }
+      // Otherwise say WHY it was empty. The worker's watch state already
+      // knows — it was simply being thrown away, which left 21 of the first
+      // 225 runs recorded as `(empty reply)` and nothing else.
+      return recordFailure(`unparseable: (empty reply) ${describeStop(result)}`, {
+        sessionId: session.id, costUsd, ...usage,
+      });
+    }
+    return recordFailure(`unparseable: ${body}`, {
       sessionId: session.id, costUsd, ...usage,
     });
   }
@@ -1600,6 +1704,10 @@ module.exports = {
   noteRefusal,
   clearRefusals,
   clearStaleTurn,
+  noteStopped,
+  wasStoppedRecently,
+  describeStop,
+  STOP_SETTLE_MS,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,
   TRIPWIRE_VERDICTS,

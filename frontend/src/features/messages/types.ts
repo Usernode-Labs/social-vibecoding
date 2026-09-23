@@ -144,7 +144,25 @@ export interface MessagesRoute {
    * in this database and the other is an app.
    */
   appSlug: string | null;
+  /**
+   * #2813: an AGENT thread open beside the list on a desktop — a global
+   * agent chat (`#messages/agent/<id>`) or an app's dev session
+   * (`#messages/session/<slug>/<id>`). Both used to navigate away to a
+   * screen of their own (`#chat/<id>`, `#app/<slug>/dev/sessions/<id>`),
+   * which is still where a PHONE goes: the router swaps these addresses for
+   * those there, so the full-screen behaviour on a narrow viewport is the
+   * one it always was.
+   *
+   * Mutually exclusive with the other two, for the same reason they are
+   * with each other: one thread is open.
+   */
+  agent: MessagesAgentThread | null;
 }
+
+/** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */
+export type MessagesAgentThread =
+  | { kind: 'chat'; id: string }
+  | { kind: 'session'; slug: string; id: number };
 
 /** The app whose discussion is open, once its metadata has landed. */
 export interface DiscussionContext {

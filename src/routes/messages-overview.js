@@ -84,6 +84,10 @@ const DISCUSSIONS_SQL = `
       FROM chat_messages m
       JOIN mine ON mine.id = m.app_id
      WHERE m.thread_type IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM user_blocks blocked
+          WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = m.user_id
+       )
      ORDER BY m.app_id, m.created_at DESC, m.id DESC
   )
   SELECT mine.slug,

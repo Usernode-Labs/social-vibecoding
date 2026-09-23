@@ -292,7 +292,9 @@ test('the two kinds cannot collide on a React key', () => {
   // alone repeats across kinds and React reuses the wrong node.
   assert.match(CONTROLLER, /key: `s\$\{session\.id\}`/);
   assert.match(CONTROLLER, /key: `t\$\{task\.id\}`/);
-  assert.match(SHEET_TSX, /key=\{session\.key\}/);
+  // #2815: the sheet's entry key wraps the row's own key, so a session and a
+  // notification cannot collide either.
+  assert.match(SHEET_TSX, /key: `s:\$\{session\.key\}`/);
   assert.doesNotMatch(SHEET_TSX, /key=\{session\.id\}/);
 });
 

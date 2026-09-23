@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
+import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import type { AppDiscussion, InboxFilter } from './inbox';
@@ -9,6 +10,7 @@ import type {
   ConversationEvent,
   ConversationMessage,
   ConversationSummary,
+  MessagesAgentThread,
   MessagesSnapshot,
   SharedObjectReference,
 } from './types';
@@ -31,7 +33,7 @@ type Listener = () => void;
 
 const listeners = new Set<Listener>();
 let state: InternalState = {
-  route: { open: false, conversationId: null, appSlug: null },
+  route: { open: false, conversationId: null, appSlug: null, agent: null },
   conversations: [],
   active: null,
   messages: [],
@@ -72,6 +74,21 @@ function browserDemo(): boolean {
 function publish(next: Partial<InternalState>): void {
   state = { ...state, ...next, revision: state.revision + 1 };
   for (const listener of [...listeners]) listener();
+  if (next.conversations) syncTabBadge();
+}
+
+/**
+ * The Messages tab's badge (#2794): how many conversations have something
+ * unread, i.e. how many rows on this screen draw a count.
+ *
+ * Derived here, from every write to `conversations`, rather than from each
+ * caller, because every path that changes an unread count already ends in
+ * one: the boot load, a socket event's reload, markRead's local zeroing, a
+ * leave or a block. The nav store drops a patch that changes nothing, so the
+ * common case — a reload with the same unread rows — notifies no one.
+ */
+function syncTabBadge(): void {
+  navStore.set({ messages: state.conversations.filter((item) => item.unreadCount > 0).length });
 }
 
 function subscribe(listener: Listener): () => void {
@@ -336,15 +353,21 @@ function notifyConversationRead(conversationId: number): void {
   window.Notifications?.markConversationRead?.(conversationId);
 }
 
-export function route(conversationId?: number | null, appSlug?: string | null): void {
+export function route(
+  conversationId?: number | null,
+  appSlug?: string | null,
+  agent?: MessagesAgentThread | null,
+): void {
   const nextId = validId(conversationId) ? conversationId : null;
   // ONE THREAD IS OPEN (#2718 review). An app's discussion and a conversation
   // are both threads of this inbox, addressed differently because one is an
   // app and the other a row in this database — so naming one clears the
-  // other rather than leaving two panes' worth of state half-set.
+  // other rather than leaving two panes' worth of state half-set. #2813's
+  // agent threads join the same rule, last in precedence.
   const nextSlug = nextId ? null : validSlug(appSlug);
+  const nextAgent = nextId || nextSlug ? null : validAgentThread(agent);
   if (state.route.open && state.route.conversationId === nextId
-      && state.route.appSlug === nextSlug) {
+      && state.route.appSlug === nextSlug && sameAgentThread(state.route.agent, nextAgent)) {
     if (!state.listLoaded) void loadConversations();
     if (!state.discussionsLoaded) void loadAppDiscussions();
     if (nextId && (!state.active || state.active.id !== nextId)) void loadThread(nextId);
@@ -352,7 +375,7 @@ export function route(conversationId?: number | null, appSlug?: string | null): 
     return;
   }
   publish({
-    route: { open: true, conversationId: nextId, appSlug: nextSlug },
+    route: { open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent },
     threadError: null,
     discussionError: null,
     // The previous thread's app, if there was one. Held until the next one
@@ -369,6 +392,48 @@ export function route(conversationId?: number | null, appSlug?: string | null): 
   if (nextId) void loadThread(nextId);
   else publish({ active: null, messages: [], nextBefore: null, loadingThread: false });
   if (nextSlug) void loadDiscussion(nextSlug);
+}
+
+/**
+ * An agent thread out of the address bar (#2813). A global chat's id is a
+ * UUID and a session's a serial; anything else is not a thread this inbox
+ * can open, and the pane falls back to "choose a conversation".
+ */
+export function validAgentThread(agent?: MessagesAgentThread | null): MessagesAgentThread | null {
+  if (!agent || typeof agent !== 'object') return null;
+  if (agent.kind === 'chat') {
+    const id = typeof agent.id === 'string' ? agent.id.trim() : '';
+    return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id) ? { kind: 'chat', id } : null;
+  }
+  if (agent.kind === 'session') {
+    const slug = validSlug(agent.slug);
+    return slug && validId(agent.id) ? { kind: 'session', slug, id: agent.id } : null;
+  }
+  return null;
+}
+
+function sameAgentThread(a: MessagesAgentThread | null, b: MessagesAgentThread | null): boolean {
+  if (!a || !b) return a === b;
+  if (a.kind === 'chat' && b.kind === 'chat') return a.id === b.id;
+  if (a.kind === 'session' && b.kind === 'session') return a.slug === b.slug && a.id === b.id;
+  return false;
+}
+
+/**
+ * The inbox's own address for an agent thread (#2813). The rows link here on
+ * every viewport; on a phone the router swaps it for `fullScreenAddress`.
+ */
+export function agentThreadAddress(agent: MessagesAgentThread): string {
+  return agent.kind === 'chat'
+    ? `#messages/agent/${encodeURIComponent(agent.id)}`
+    : `#messages/session/${encodeURIComponent(agent.slug)}/${agent.id}`;
+}
+
+/** Where the same thread lives as a screen of its own — a phone's destination. */
+export function fullScreenAddress(agent: MessagesAgentThread): string {
+  return agent.kind === 'chat'
+    ? `#chat/${encodeURIComponent(agent.id)}`
+    : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`;
 }
 
 /**
@@ -424,7 +489,7 @@ export function close(): void {
   // in an unrelated conversation later.
   pendingShare = undefined;
   publish({
-    route: { open: false, conversationId: null, appSlug: null },
+    route: { open: false, conversationId: null, appSlug: null, agent: null },
     active: null, messages: [], loadingThread: false, threadError: null,
     discussionContext: null, discussionError: null,
   });
@@ -435,7 +500,7 @@ export function isOpen(): boolean {
 }
 
 export function handleBack(): boolean {
-  const onThread = !!state.route.conversationId || !!state.route.appSlug;
+  const onThread = !!state.route.conversationId || !!state.route.appSlug || !!state.route.agent;
   if (!state.route.open || !onThread || !isMobile()) return false;
   const current = typeof location !== 'undefined' ? location.hash : '';
   if (current.startsWith('#messages/') && typeof history !== 'undefined') {
@@ -459,7 +524,7 @@ export function syncChrome(): void {
   // where the list is still beside it. It used to be a route into #app-view,
   // which is why backing out of one landed wherever that screen's slot
   // pointed — the Workshop, when that is where the app had been opened from.
-  const thread = isMobile() && !!(state.route.conversationId || state.route.appSlug);
+  const thread = isMobile() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
   // 'none' ON THE INBOX (#2718 review). This is a second writer over the
   // slot App._BACK_SLOT already set for #messages-screen, and it was
   // publishing the house — so Messages was the one tab root still offering
@@ -469,13 +534,32 @@ export function syncChrome(): void {
   app.setHeaderTitle?.(thread
     ? (state.route.appSlug
       ? state.discussionContext?.name || 'Discussion'
-      : state.active?.title || 'Messages')
+      : state.route.agent ? 'Messages' : state.active?.title || 'Messages')
     : 'Messages');
+}
+
+/**
+ * THE SIDE PANEL (desktop): while an app is running on its App tab, a
+ * conversation opened from outside the inbox — a notification, a saved
+ * message — goes to a panel beside the app instead of replacing it
+ * (frontend/src/features/side-panel/). False whenever that is not the moment,
+ * and the caller navigates as it always has.
+ */
+function sidePanelTakes(target: string): boolean {
+  const panel = (window as unknown as {
+    UsernodeReact?: { sidePanel?: { take?: (route: string) => boolean } };
+  }).UsernodeReact?.sidePanel;
+  try {
+    return !!panel?.take?.(target.replace(/^#/, ''));
+  } catch {
+    return false;
+  }
 }
 
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
+  if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(conversationId || null);
   else window.location.hash = target;
 }
@@ -486,7 +570,22 @@ export function openDiscussion(slug: string): void {
   const safe = validSlug(slug);
   if (!safe) return;
   const target = `#messages/app/${encodeURIComponent(safe)}`;
+  if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(null, safe);
+  else window.location.hash = target;
+}
+
+/**
+ * The same, for an agent thread (#2813). The rows are ordinary links to
+ * `agentThreadAddress`; this is for the callers that are not a link — and
+ * for re-selecting the thread already open, which a link cannot do.
+ */
+export function openAgentThread(agent: MessagesAgentThread): void {
+  if (typeof window === 'undefined') return;
+  const safe = validAgentThread(agent);
+  if (!safe) return;
+  const target = agentThreadAddress(safe);
+  if (window.location.hash === target) route(null, null, safe);
   else window.location.hash = target;
 }
 
@@ -562,6 +661,30 @@ export async function finishDirectBlock(conversationId: number): Promise<void> {
   });
   open(null);
   await loadConversations(true);
+}
+
+/** Reconcile the open thread and inbox after changing a sender block. */
+export async function setUserBlocked(userId: number, blocked: boolean): Promise<void> {
+  await api.setBlock(userId, blocked);
+  await refreshBlockedView(userId, blocked);
+}
+
+async function refreshBlockedView(userId: number, blocked: boolean): Promise<void> {
+  void loadAppDiscussions();
+  (window as any).GroupChat?.refreshAfterBlock?.();
+  const active = state.active;
+  if (blocked && active?.kind === 'direct'
+      && (active.peer?.id === userId || active.requester?.id === userId
+        || active.members.some((member) => member.id === userId))) {
+    await finishDirectBlock(active.id);
+    return;
+  }
+  const conversationId = state.route.conversationId;
+  if (blocked) publish({ messages: [] });
+  await Promise.all([
+    loadConversations(true),
+    ...(conversationId ? [loadThread(conversationId, true)] : []),
+  ]);
 }
 
 export function draftFor(conversationId: number): string {
@@ -867,12 +990,14 @@ function paintSaved(messageId: number, saved: boolean): void {
 export const messagesController = {
   open,
   openDiscussion,
+  openAgentThread,
   route,
   close,
   isOpen,
   handleBack,
   syncChrome,
   handleEvent,
+  refreshBlockedView: (userId: number, blocked: boolean) => { void refreshBlockedView(userId, blocked); },
   share,
   paintSaved,
   // #2783: the channel directory, for the app chat's `#name` chips and its
@@ -897,9 +1022,10 @@ export function initializeMessagesStore(): () => void {
   // conversation list as soon as an already-resolved user exists, or wait for
   // the shell's one-shot authenticated boot event on an anonymous document.
   //
-  // This ran for the Messages unread badge, which is retired — it stays
-  // because the list is what the SCREEN renders, and a warm one is the
-  // difference between Messages opening populated and opening on a spinner.
+  // It also seeds the Messages tab's unread badge (#2794, see syncTabBadge),
+  // which is why it runs on every signed-in load and not only when the
+  // screen opens — and a warm list is the difference between Messages
+  // opening populated and opening on a spinner.
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   if (window.App?.user) void loadAppDiscussions();

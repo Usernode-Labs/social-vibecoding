@@ -721,6 +721,9 @@ const AppView = {
    * whole of the option.
    */
   async open(slug, { needsToken = true } = {}) {
+    // #2813: an app view is opening, so a session in the Messages pane must
+    // give up the ids it holds before this view renders its own.
+    AppView._retireEmbeddedSession();
     const openId = ++AppView._openId;
     const isCurrentOpen = () => openId === AppView._openId;
     // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
@@ -2797,7 +2800,125 @@ const AppView = {
   // falling back to #app-content (defensive — every call site should be
   // inside renderDevView these days).
   _devContainer() {
+    // #2813: a session open in the Messages pane owns the Dev container
+    // while no app view is up. `App.currentApp` is the guard: the moment an
+    // app is navigated to, the app view's own #app-content is the container
+    // again, whatever the pane's teardown has not caught up with yet.
+    const embedded = AppView._embeddedSessionHost;
+    if (embedded && !(typeof App !== 'undefined' && App.currentApp) && embedded.isConnected) {
+      return embedded.querySelector('#dev-section') || embedded;
+    }
     return document.getElementById('dev-section') || document.getElementById('app-content');
+  },
+
+  // ── A dev session in the Messages pane (#2813) ────────────────────
+  //
+  // On a desktop an agent thread of the Messages inbox opens BESIDE the list,
+  // as a conversation does. For a dev session that is the whole session view
+  // — the transcript, the composer, the header, the spec and staging slots —
+  // and all of it is DevChat's, which is one surface with one owner and
+  // fixed ids. So, like an app's discussion (`renderGroupChatTab({host})`),
+  // the pane renders a HOST and this fills it: the same `<DevSessionShell/>`
+  // the app view mounts, and the same `renderDevChatTab` into it.
+  //
+  // What makes that sound is that the two can never both be up. The pane
+  // exists only on the Messages screen, and the Messages screen and the app
+  // view are sibling screen roots — `App.currentApp` is null for as long as
+  // the pane is showing, and every path into an app sets it first. The
+  // container switch in `_devContainer` keys on exactly that.
+  //
+  // The app travels with the mount, as the discussion's does: AppView.appData
+  // is read throughout DevChat (the composer's budget and venue, the dev
+  // caches, readOnly), so it is loaded for this app when the app view has
+  // nothing open. Nothing here opens the app view, mints an iframe token or
+  // starts the app's activity tracking — this is not a visit to the app.
+  //
+  // THE SIDE PANES. The spec viewer and the staging preview are slots INSIDE
+  // #dc-view, so they open inside the pane, docked beside the transcript,
+  // exactly as they do in the app view — the pane is as wide as a laptop's
+  // app view less the list. Nothing is hidden or re-implemented for the pane.
+  _embeddedSessionHost: null,
+  _embeddedSessionSeq: 0,
+
+  /**
+   * Fill `host` with session `sessionId` of app `slug`. Resolves 'ready',
+   * 'unavailable' (no such session for this viewer, and no published chat to
+   * read instead) or 'stale' (a newer mount or an app navigation won).
+   */
+  async mountSessionInHost(host, { slug, sessionId } = {}) {
+    if (!host || !slug || !sessionId) return 'unavailable';
+    const seq = ++AppView._embeddedSessionSeq;
+    const inApp = () => typeof App !== 'undefined' && !!App.currentApp;
+    const live = () => seq === AppView._embeddedSessionSeq
+      && AppView._embeddedSessionHost === host && host.isConnected && !inApp();
+    if (inApp()) return 'stale';
+    // A full-screen session left behind in the hidden app view holds the
+    // same ids (#dev-section, #dc-view, #dc-messages…) DevChat looks up by
+    // `getElementById`. Retire it before the pane's copy exists.
+    const appContent = document.getElementById('app-content');
+    if (appContent && appContent.querySelector('#dev-section')) {
+      AppView._reactDevBoard()?.unmount?.(appContent);
+    }
+    AppView._embeddedSessionHost = host;
+    if (!AppView.appData || AppView.appData.slug !== slug) {
+      if (window.DevChat) DevChat.reset();
+      let app = null;
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
+        if (res.ok) app = ((await res.json()) || {}).app || null;
+      } catch (_) { app = null; }
+      if (!live()) return 'stale';
+      if (!app) return 'unavailable';
+      // The same per-app reset AppView.open makes on an app switch: another
+      // app's board caches are another board.
+      Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
+      AppView._govApplying = Object.create(null);
+      AppView._govDueSince = Object.create(null);
+      AppView._devDataReady = false;
+      AppView._resetMergedPagination();
+      AppView.appData = AppView._applyPendingAppStatus(app);
+    }
+    AppView._reactDevBoard()?.mountSessionShell(host);
+    const result = await AppView.renderDevChatTab(sessionId, { embedded: true });
+    if (!live()) return 'stale';
+    return result === 'unavailable' ? 'unavailable' : 'ready';
+  },
+
+  /**
+   * An app view is opening while the pane still holds a session (#2813):
+   * "Open full view", a link out of the transcript, a deep link. The pane's
+   * screen is only hidden at the END of that navigation's transition, and
+   * until then its #dev-section / #dc-view / #dc-messages would be the ones
+   * `getElementById` finds — the app view would render its session into the
+   * pane. So the pane's copy goes first. DevChat and AppView.appData are
+   * left alone: the app view's open is about to own them.
+   */
+  _retireEmbeddedSession() {
+    const host = AppView._embeddedSessionHost;
+    if (!host) return;
+    AppView._embeddedSessionSeq += 1;
+    AppView._embeddedSessionHost = null;
+    AppView._reactDevBoard()?.unmount?.(host);
+    PlatformUI.detachScreenFx('dev-chat');
+  },
+
+  /**
+   * The pane is going away. Drops the session and the app it loaded — but
+   * only while no app view has taken over: an app navigation from the pane
+   * sets App.currentApp before the Messages screen unmounts, and the app
+   * view's own open is then what owns DevChat and AppView.appData.
+   */
+  unmountSessionHost(host) {
+    if (!host || AppView._embeddedSessionHost !== host) return;
+    AppView._embeddedSessionSeq += 1;
+    AppView._embeddedSessionHost = null;
+    AppView._reactDevBoard()?.unmount?.(host);
+    if (typeof App !== 'undefined' && App.currentApp) return;
+    PlatformUI.detachScreenFx('dev-chat');
+    if (window.DevChat) DevChat.reset();
+    AppView.appData = null;
+    AppView._devDataReady = false;
+    AppView._resetMergedPagination();
   },
 
   // ── The React seam for the Dev surfaces (#1084 chunk G) ────────────
@@ -3087,6 +3208,18 @@ const AppView = {
     AppView._devBodyAbort = devBodyAc;
     const devBodySignal = devBodyAc.signal;
     const bodyEl = document.getElementById('dev-body');
+    // #2847: ANY click on a proposal card — unfolding it in the Workshop,
+    // a pill, the ⋯ menu, a vote button — means the viewer has seen it, so
+    // its "New proposal" nudge clears. Capture phase, because several card
+    // controls stop propagation and the bubbling handler below returns early
+    // for folds and controls. Only marks read; never changes what the click does.
+    bodyEl.addEventListener('click', (e) => {
+      const card = e.target.closest
+        && e.target.closest('[data-proposal-row], [data-shared-session-row], [data-session-chip]');
+      if (!card) return;
+      const id = card.dataset.proposalRow || card.dataset.sharedSessionRow || card.dataset.sessionChip;
+      window.Notifications?.markProposalSeen?.(parseInt(id, 10));
+    }, { capture: true, signal: devBodySignal });
     bodyEl.addEventListener('click', (e) => {
       // #313/#827: the card-level "Explore in dev chat" button is a
       // <button>, so the guard below would swallow it — handle it first,
@@ -3224,6 +3357,11 @@ const AppView = {
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // #2847: arriving at a proposal's page (card tap, deep link, notification
+    // row) is the viewer seeing it — clear its "New proposal" nudge.
+    if (ref.kind === 'proposal' || ref.kind === 'session') {
+      window.Notifications?.markProposalSeen?.(ref.id);
+    }
     // The roster is cached per proposal (see `_loadVoteRoster`, and why it
     // has to be). Arriving here is a fresh read, so mark the entry stale and
     // let the paint below re-read it once — returning to a topic shows the
@@ -12450,8 +12588,8 @@ const AppView = {
   _recheckAction(pr) {
     if (!pr) return null;
     if (AppView.readOnly) return null;
-    if (pr.status && !['active', 'promoted'].includes(pr.status)) return null;
-    if (pr.status === 'active' && !pr.check_state) return null;
+    if (pr.status && !['active', 'paused', 'promoted'].includes(pr.status)) return null;
+    if (['active', 'paused'].includes(pr.status) && !pr.check_state) return null;
     if (pr.check_state === 'passing') return null;
     const owner = !!(App.user && pr.user_id === App.user.id);
     // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
@@ -18717,9 +18855,17 @@ const AppView = {
   // missing/unopenable id bounces back to the card list. The App
   // secrets / display-name shortcuts that used to live here now sit
   // directly in the "+" menu (#645).
-  async renderDevChatTab(restoreSessionId) {
+  async renderDevChatTab(restoreSessionId, { embedded = false } = {}) {
     const content = AppView._devContainer();
     if (!content) return;
+    // #2813: in the Messages pane there is no Board to fall back to — the
+    // pane says the session could not be opened instead — and a redirect
+    // to another Dev surface goes through that surface's own address.
+    const unavailable = () => {
+      if (embedded) return 'unavailable';
+      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      return undefined;
+    };
     if (!restoreSessionId) {
       if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
       return;
@@ -18790,8 +18936,7 @@ const AppView = {
     // link) falls back to the forum rather than stranding an empty view.
     if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
       if (await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
-      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
-      return;
+      return unavailable();
     }
 
     // #846: an imported PR has NO dev chat — its code lives on GitHub and
@@ -18805,6 +18950,10 @@ const AppView = {
     if (DevChat.currentSession.source === 'imported') {
       const importedId = Number(restoreSessionId);
       DevChat.currentSession = null;
+      if (embedded) {
+        window.location.hash = `#app/${encodeURIComponent(AppView.appData.slug)}/dev/proposals/${importedId}`;
+        return 'unavailable';
+      }
       AppView.openTopic('proposal', importedId);
       return;
     }

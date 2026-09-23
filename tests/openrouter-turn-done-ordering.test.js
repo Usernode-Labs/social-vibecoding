@@ -33,11 +33,14 @@ function sliceBetween(start, end, what) {
   return SRC.slice(a, b);
 }
 
-// The direct OpenRouter branch of the chat route: from its opening guard to
-// the Claude-only code that follows it.
+// The direct OpenRouter turn of the chat route. Since #2809 it is a closure
+// the route runs when an OpenRouter session has no usable Mayor (and when
+// that Mayor's first call fails), so it spans from its definition to the
+// Mayor setup that follows it. Its last exit is the closure's end rather
+// than a `return;`, and the split below still yields it as its own exit.
 const BRANCH = sliceBetween(
-  '        if (isOpenRouterSession) {\n          // #1949',
-  '        // Fable 5 classifier fallback',
+  '        const runOpenRouterDirectTurn = async () => {\n          // #1949',
+  "        // The Mayor's model, key and payer for this turn.",
   'the direct OpenRouter branch',
 );
 

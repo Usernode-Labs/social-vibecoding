@@ -831,16 +831,16 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "2f402486160933b5a2d8",
+      "fingerprint": "13c2b3cb224c4420675a",
       "count": 1,
-      "preview": "`SELECT c.id, c.kind, c.title, c.status AS conversation_status, c.created_by, c.created_at, c.updated_at, cm.role, cm.status AS membership_status, cm.invited_by"
+      "preview": "`${MESSAGE_SELECT} WHERE m.conversation_id = $1 ${beforeSql} AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sende"
     },
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "3907c86d93b395e46a53",
+      "fingerprint": "2f402486160933b5a2d8",
       "count": 1,
-      "preview": "`${MESSAGE_SELECT} WHERE m.conversation_id = $1 ${beforeSql} ORDER BY m.id DESC LIMIT $${params.length}`"
+      "preview": "`SELECT c.id, c.kind, c.title, c.status AS conversation_status, c.created_by, c.created_at, c.updated_at, cm.role, cm.status AS membership_status, cm.invited_by"
     },
     {
       "source": "src/services/conversations.js",
@@ -978,30 +978,16 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "12ac99d6d1da59d26d13",
+      "fingerprint": "4b91f922756499412a0f",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "592f564165263f27f057",
+      "fingerprint": "acaf4bd6989cd08458d2",
       "count": 1,
-      "preview": "`INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind) VALUES ${values.join(', ')} RETURNING id, user_id, app_id, chat_message_id, "
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "7a3ba64c796575d8c931",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "a058fc859cf0f89a4abd",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL}`"
+      "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`"
     },
     {
       "source": "src/services/notifications.js",
@@ -1020,6 +1006,20 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "cf837b937e37a4415dce",
+      "count": 1,
+      "preview": "`INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind) SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind FROM"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "e62b89e44e4fa49ef857",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "eb68b3940172c1cd1033",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
@@ -1027,7 +1027,7 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "eb73622fc7896023a7f7",
+      "fingerprint": "ee4689e980fe324049b7",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
     },

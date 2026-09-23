@@ -77,6 +77,8 @@ function makeHarness() {
     busy: false,
     captureBusy: false,
     stagingGate: null,
+    stagingFailure: false,
+    failures: [],
     remoteHead: null,
     archiveOnAdvance: false,
     supersedeUploadOnAdvance: false,
@@ -220,7 +222,7 @@ function makeHarness() {
             && row.checks_commit_sha === params[0]
             && (row.handoff_head_sha || null) === (params[4] || null)
             && (row.handoff_upload_checked_sha || null) === (params[5] || null)
-          : row && row.status === 'active' && row.source === params[2]
+          : row && row.status === params[6] && row.source === params[2]
             && row.handoff_uploaded_sha === params[0]
             && (row.checks_commit_sha || null) === (params[3] || null)
             && (row.handoff_head_sha || null) === (params[4] || null)
@@ -268,9 +270,9 @@ function makeHarness() {
           'the pipeline must never stage over an imported mirror');
         const row = state.sessions.find((s) => s.id === Number(params[2]));
         const owned = row && row.source !== 'imported';
-        if (/status <> 'active'/.test(text)) {
+        if (/status NOT IN/.test(text)) {
           const matched = owned
-            && (row.status !== 'active' || row.checks_commit_sha === params[3]);
+            && (!['active', 'paused'].includes(row.status) || row.checks_commit_sha === params[3]);
           if (matched) {
             row.staging_container_id = params[0];
             row.staging_url = params[1];
@@ -278,7 +280,7 @@ function makeHarness() {
           return { rows: [], rowCount: matched ? 1 : 0 };
         }
         if (state.persistStagingError) throw new Error('staging persistence unavailable');
-        const matched = owned && row.checks_commit_sha === params[3] && row.status === 'active';
+        const matched = owned && row.checks_commit_sha === params[3] && row.status === params[4];
         if (matched) {
           row.staging_container_id = params[0];
           row.staging_url = params[1];
@@ -342,6 +344,7 @@ function makeHarness() {
     buildAndDeployStaging: async (_config, session, _app, sha) => {
       state.staging.push([session.id, sha]);
       if (state.stagingGate) await state.stagingGate;
+      if (state.stagingFailure) throw new Error('fixture build failure');
       return { containerId: 'container-1', stagingUrl: 'https://preview.example', hostname: 'preview' };
     },
     warmStagingCert: async () => {},
@@ -353,7 +356,7 @@ function makeHarness() {
     },
   });
   stubModule(ids.recovery, {
-    recordStagingBootFailure: async () => {},
+    recordStagingBootFailure: async (args) => { state.failures.push(args); },
     checkRunOverdue(session, { now = Date.now(), staleMs = 10 * 60 * 1000 } = {}) {
       if (session?.check_state != null && session.check_state !== 'pending') return false;
       if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
@@ -868,41 +871,44 @@ test('an accepted local pipeline is idempotent by head and blocks a competing re
   }
 });
 
-test('withdrawing while a detached handoff build runs discards its finished staging result', async () => {
-  const { router, state, restore } = makeHarness();
-  let releaseStaging;
-  state.stagingGate = new Promise((resolve) => { releaseStaging = resolve; });
-  try {
-    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
-    await start({
-      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
-      user: { id: 7, username: 'maker' },
-    }, mockRes());
-    markUploaded(state);
-    const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
-    const accepted = mockRes();
-    await build({
-      params: { id: '101' }, cliAuthenticated: true,
-      user: { id: 7, username: 'maker' },
-      body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
-    }, accepted);
-    assert.equal(accepted.statusCode, 202);
+for (const [initialStatus, endStatus] of [['active', 'archived'], ['paused', 'archived'], ['active', 'paused'], ['paused', 'active']]) {
+  test(`${initialStatus} to ${endStatus} during a build discards its finished staging result`, async () => {
+    const { router, state, restore } = makeHarness();
+    let releaseStaging;
+    state.stagingGate = new Promise((resolve) => { releaseStaging = resolve; });
+    try {
+      const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
+      await start({
+        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+        user: { id: 7, username: 'maker' },
+      }, mockRes());
+      state.sessions[0].status = initialStatus;
+      markUploaded(state);
+      const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
+      const accepted = mockRes();
+      await build({
+        params: { id: '101' }, cliAuthenticated: true,
+        user: { id: 7, username: 'maker' },
+        body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
+      }, accepted);
+      assert.equal(accepted.statusCode, 202);
 
-    state.sessions[0].status = 'archived';
-    releaseStaging();
-    for (let i = 0; i < 10 && state.teardowns.length === 0; i += 1) {
-      await new Promise((resolve) => setImmediate(resolve));
+      state.sessions[0].status = endStatus;
+      releaseStaging();
+      for (let i = 0; i < 10 && state.teardowns.length === 0; i += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.deepEqual(state.teardowns, [[101, 'container-1', 'https://preview.example']]);
+      assert.equal(state.sessions[0].staging_url, null,
+        'an archived row never regains a preview link from the detached build');
+      assert.equal(state.captures.length, 0,
+        'checks never run against a preview discarded after withdrawal');
+    } finally {
+      releaseStaging();
+      restore();
     }
-    assert.deepEqual(state.teardowns, [[101, 'container-1', 'https://preview.example']]);
-    assert.equal(state.sessions[0].staging_url, null,
-      'an archived row never regains a preview link from the detached build');
-    assert.equal(state.captures.length, 0,
-      'checks never run against a preview discarded after withdrawal');
-  } finally {
-    releaseStaging();
-    restore();
-  }
-});
+  });
+}
 
 test('a leaked preview remains discoverable when its first persistence write fails', async () => {
   const { router, state, restore } = makeHarness();
@@ -1735,3 +1741,119 @@ test('handoff endpoints are unavailable to browser-cookie requests', async () =>
     assert.equal(state.github.length, 0);
   } finally { restore(); }
 });
+
+
+test('paused handoffs can retry checks without resume but local revision guidance also works without resume', () => {
+  const { subject, restore } = makeHarness();
+  try {
+    const session = { status: 'paused', source: 'cli_handoff',
+      handoff_head_sha: HEAD, checks_commit_sha: HEAD,
+      staging_url: 'https://preview.example' };
+    const runtime = { inFlight: false, build: false, capture: false, session: false, pipeline: false };
+    for (const check_state of ['failing', 'error']) {
+      const status = subject.publicSessionStatus({ ...session, check_state }, { runtime });
+      assert.equal(status.state, 'paused');
+      assert.equal(status.revisionState, 'failed');
+      assert.match(status.nextStep, /proposal_recheck without resuming coding/);
+    }
+    const stalled = subject.publicSessionStatus({ ...session, check_state: 'pending', checks_checked_at: '2020-01-01' }, { runtime });
+    assert.equal(stalled.revisionState, 'stalled');
+    assert.match(stalled.nextStep, /proposal_recheck/);
+    const running = subject.publicSessionStatus({ ...session, check_state: 'pending' }, { runtime: { ...runtime, inFlight: true, capture: true } });
+    assert.match(running.nextStep, /poll proposal_status/);
+    assert.doesNotMatch(running.nextStep, /Resume/);
+    const draft = subject.publicSessionStatus({ status: 'paused' }, { runtime });
+    assert.match(draft.nextStep, /proposal_push_commit/);
+    assert.doesNotMatch(draft.nextStep, /Resume/);
+    const uploaded = subject.publicSessionStatus({ ...session, handoff_uploaded_sha: BOT_HEAD, handoff_upload_checked_sha: HEAD }, { runtime });
+    assert.match(uploaded.nextStep, /proposal_submit_build/);
+  } finally { restore(); }
+});
+
+
+test('paused local uploads and builds retain ownership, busy, lifecycle and idempotency guards', async () => {
+  const { router, state, subject, restore } = makeHarness();
+  try {
+    await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
+      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mockRes());
+    const session = state.sessions[0];
+    session.status = 'paused';
+    const push = routeHandler(router, '/api/sessions/:id/proposal-handoff/commits', 'post');
+    const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
+    const pushBody = { schemaVersion: 1, localCommitSha: HEAD, parentSha: BASE,
+      parentTreeSha: '5'.repeat(40), treeSha: TREE, message: 'Local paused revision',
+      authoredAt: '2026-09-23T01:00:00Z', committedAt: '2026-09-23T01:00:00Z',
+      files: [{ path: 'src/a.js', mode: '100644', contentBase64: 'YQ==' }] };
+    const buildBody = { schemaVersion: 1, headSha: BOT_HEAD, history: [], tests: [] };
+    const invoke = async (handler, body, userId = 7) => {
+      const res = mockRes();
+      await handler({ params: { id: '101' }, body, cliAuthenticated: true,
+        user: { id: userId, username: 'maker' } }, res);
+      return res;
+    };
+    for (const [handler, body] of [[push, pushBody], [build, buildBody]]) {
+      assert.equal((await invoke(handler, body, 8)).statusCode, 404);
+      state.busy = true;
+      assert.equal((await invoke(handler, body)).body.error, 'session_busy');
+      state.busy = false;
+      for (const closed of ['archived', 'merged', 'merging']) {
+        session.status = closed;
+        assert.equal((await invoke(handler, body)).body.error, 'proposal_closed');
+      }
+      session.status = 'paused';
+    }
+    assert.equal((await invoke(build, buildBody)).body.error, 'head_not_uploaded');
+    assert.equal((await invoke(push, pushBody)).statusCode, 201);
+    assert.equal(session.status, 'paused');
+    assert.equal(session.handoff_uploaded_sha, BOT_HEAD);
+    assert.equal((await invoke(build, { ...buildBody, headSha: HEAD })).body.error, 'head_not_uploaded');
+    const context = routeHandler(router, '/api/sessions/:id/proposal-handoff/context', 'post');
+    assert.equal((await invoke(context, { schemaVersion: 1, history: [
+      { id: 'paused-context', kind: 'summary', content: 'Local changes tested.' },
+    ] })).statusCode, 200);
+    assert.equal((await invoke(build, buildBody)).statusCode, 202);
+    for (let n = 0; n < 10 && subject.hasInFlightHandoffPipeline(session.id); n += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(session.status, 'paused');
+    assert.equal(session.staging_url, 'https://preview.example');
+    assert.deepEqual(state.captures, [[101, BOT_HEAD]]);
+    assert.equal(subject.publicSessionStatus(session).revisionState, 'ready');
+    assert.equal((await invoke(build, buildBody)).statusCode, 200);
+    assert.equal(state.staging.length, 1, 'ready paused retry does not rebuild');
+    assert.equal((await invoke(push, pushBody)).body.uploaded, false);
+    assert.equal(session.check_state, 'passing');
+  } finally { restore(); }
+});
+
+for (const changed of [false, true]) {
+  test(`paused build failures are recorded only while the same lifecycle owns them (changed=${changed})`, async () => {
+    const { router, state, subject, restore } = makeHarness();
+    let release;
+    state.stagingGate = new Promise((resolve) => { release = resolve; });
+    state.stagingFailure = true;
+    try {
+      await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
+        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true, user: { id: 7, username: 'maker' },
+      }, mockRes());
+      state.sessions[0].status = 'paused';
+      markUploaded(state);
+      const res = mockRes();
+      await routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post')({
+        params: { id: '101' }, cliAuthenticated: true, user: { id: 7 },
+        body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
+      }, res);
+      assert.equal(res.statusCode, 202);
+      if (changed) state.sessions[0].status = 'archived';
+      release();
+      for (let n = 0; n < 10 && subject.hasInFlightHandoffPipeline(101); n += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(state.failures.length, changed ? 0 : 1);
+      if (!changed) assert.equal(state.failures[0].commitHash, HEAD);
+      assert.equal(state.captures.length, 0);
+    } finally { release(); restore(); }
+  });
+}

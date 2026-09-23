@@ -366,6 +366,38 @@ function makeMockPool() {
       return { rows: [{ c: count }] };
     }
 
+    // ── standings.js's one-user variant (OWN_STANDING_SQL, #2777) ───────
+    // The same aggregate, ranked by the shared-rank rule and filtered to
+    // one user — so the mock derives it from the rows above rather than
+    // re-deriving the numbers. tests/topochain-own-standing.test.js pins
+    // the real SQL against STANDINGS_SQL on Postgres.
+    if (sql.includes('latest_at AS')) {
+      const [seasonId, userId] = params;
+      const all = computeStandingsRows(seasonId ?? null, sql);
+      let counter = 1;
+      const ranked = all.map((r) => {
+        const row = { ...r, rank: counter, total_participants: all.length };
+        if (!r.is_non_podium) counter += 1;
+        return row;
+      });
+      const own = ranked.find((r) => r.user_id === Number(userId));
+      return { rows: own ? [own] : [] };
+    }
+    if (sql.includes('AS total_participants FROM leaderboard_snapshots')) {
+      return { rows: [{ total_participants: computeStandingsRows(params[0] ?? null, sql).length }] };
+    }
+    // ── `season_id=active` resolution (#2777) ──────────────────────────
+    // No fixture season is flagged is_active, so the fallback — the oldest
+    // public season — answers. starts_at is absent from these fixtures, so
+    // id order stands in for it.
+    if (sql.includes('FROM seasons WHERE internal = FALSE AND is_active = TRUE ORDER BY starts_at DESC')) {
+      return { rows: SEASONS.filter((x) => !x.internal && x.is_active).slice(0, 1) };
+    }
+    if (sql.includes('FROM seasons WHERE internal = FALSE ORDER BY starts_at ASC, id ASC LIMIT 1')) {
+      const s = SEASONS.filter((x) => !x.internal).sort((a, b) => a.id - b.id)[0];
+      return { rows: s ? [{ id: s.id }] : [] };
+    }
+
     // ── standings.js's shared §4.10 aggregate (STANDINGS_SQL) ───────────
     if (sql.includes('last_event AS')) {
       return { rows: computeStandingsRows(params[0] ?? null, sql) };
@@ -639,6 +671,49 @@ test('me/ranking season scope: terms accepted -> real total_tokens from token_al
   });
 });
 
+test('me/ranking season_id=active resolves the season server-side (#2777)', async () => {
+  await withServer(async (base) => {
+    const [active, explicit] = await Promise.all([
+      getJson(base, '/api/v4/mobile/me/ranking?season_id=active', ALICE).then((r) => r.json()),
+      getJson(base, '/api/v4/mobile/me/ranking?season_id=10', ALICE).then((r) => r.json()),
+    ]);
+    // No season is flagged active in the fixtures, so the old client's
+    // fallback — the last entry of /seasons' list, i.e. the oldest public
+    // season — is what `active` names: season 10.
+    assert.deepEqual(active, explicit);
+  });
+});
+
+test('me/ranking season_id=active prefers the season flagged is_active', async () => {
+  await withServer(async (base) => {
+    const res = await getJson(base, '/api/v4/mobile/me/ranking?season_id=active', ALICE);
+    const body = await res.json();
+    assert.equal(body.data.scope, 'season');
+    assert.equal(body.data.season_id, 30);
+    assert.equal(body.data.season_name, 'Season Beta');
+  }, (pool) => ({
+    query: (sql, params) => (
+      /is_active = TRUE ORDER BY starts_at DESC/.test(sql.replace(/\s+/g, ' '))
+        ? Promise.resolve({ rows: [{ id: 30 }] })
+        : pool.query(sql, params)
+    ),
+  }));
+});
+
+test('me/ranking season_id=active with no public season falls back to global scope', async () => {
+  await withServer(async (base) => {
+    const res = await getJson(base, '/api/v4/mobile/me/ranking?season_id=active', ALICE);
+    const body = await res.json();
+    assert.equal(body.data.scope, 'global');
+  }, (pool) => ({
+    query: (sql, params) => (
+      /FROM seasons WHERE internal = FALSE (AND is_active = TRUE )?ORDER BY starts_at/.test(sql.replace(/\s+/g, ' '))
+        ? Promise.resolve({ rows: [] })
+        : pool.query(sql, params)
+    ),
+  }));
+});
+
 test('me/ranking season scope: terms NOT accepted -> total_tokens forced 0, rank/points unaffected', async () => {
   await withServer(async (base) => {
     const res = await getJson(base, '/api/v4/mobile/me/ranking?season_id=10', BOB);
@@ -752,6 +827,35 @@ test('me/breakdown: include_activity=false -> activities key entirely absent', a
     const body = await res.json();
     assert.ok(!('activities' in body.data), 'activities must be omitted, not an empty array');
     assert.ok(Array.isArray(body.data.challenge_progress), 'challenge_progress is unaffected by include_activity');
+  });
+});
+
+test('me/breakdown: include_progress=0 drops challenge_progress and its queries (#2777)', async () => {
+  const seen = [];
+  await withServer(async (base) => {
+    const res = await getJson(
+      base, '/api/v4/mobile/me/breakdown?season_id=active&include_activity=0&include_progress=0', ALICE);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.data.scope, 'season');
+    assert.equal(body.data.events.length, 1);
+    assert.equal(body.data.events[0].event.id, 100);
+    assert.equal(body.data.events[0].total_points, 200);
+    assert.ok(!('challenge_progress' in body.data.events[0]), 'omitted, not an empty array');
+    assert.ok(!('activities' in body.data.events[0]));
+  }, (pool) => ({
+    query: (sql, params) => { seen.push(sql.replace(/\s+/g, ' ')); return pool.query(sql, params); },
+  }));
+  assert.ok(!seen.some((q) => q.includes('ct.metric_target FROM challenges c')), 'no progress query ran');
+  assert.ok(!seen.some((q) => q.includes('ct.kind AS activity_kind')), 'no activity query ran');
+});
+
+test('me/breakdown: challenge_progress is still returned by default', async () => {
+  await withServer(async (base) => {
+    const res = await getJson(base, '/api/v4/mobile/me/breakdown?season_id=10', ALICE);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.data.events[0].challenge_progress));
+    assert.ok(Array.isArray(body.data.events[0].activities));
   });
 });
 
