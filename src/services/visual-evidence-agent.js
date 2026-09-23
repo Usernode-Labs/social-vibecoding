@@ -90,12 +90,12 @@ an alternate claim.
 
 When you understand a robust flow, submit the typed replays for every story with
 evidence_run_plan. Ordinary platform code—not you—will reset both sides and
-replay it twice in fresh browser contexts. A passing replay makes the captured
-media available to human reviewers, who decide whether it proves the claim.
-You do not need image understanding or to issue a relevance verdict. If the
-replay fails, report its diagnostics unless the platform explicitly starts a
-correction turn. Do not merely narrate the replays in your final answer: submit them
-through the tool.`;
+replay it twice in fresh browser contexts. The tool promptly acknowledges a
+validated submission; it does not wait for replay or return a verdict. After
+acceptance, finish your turn. The platform waits for replay, starts a separate
+correction turn if a locator fails, and makes passing media available to human
+reviewers. You do not need image understanding or a relevance verdict. Do not
+merely narrate the replays in your final answer: submit them through the tool.`;
 
 function promptFor({ repair = false } = {}) {
   const task = repair
@@ -106,8 +106,10 @@ its observed role and accessible name or another stable unique locator.
 Review the remaining actions, assertions, and focus targets for the same
 mistake before resubmitting. Do not guess a replacement from the error text
 alone. Submit one complete
-corrected set of replays through evidence_run_plan. The platform will reset both sides
-and run two fresh replay passes; the failed plan's media is not published.`
+corrected set of replays through evidence_run_plan. An accepted response means
+the platform is replaying in the background; finish your turn after acceptance.
+The platform starts another correction turn if that replay finds another
+repairable locator error. The failed plan's media is not published.`
     : `Open the run context, explore the declared flow on both exact
 revisions, and submit one replay per accepted story id. The implementing
 agent's semantic intent is frozen; the platform attaches it automatically.`;

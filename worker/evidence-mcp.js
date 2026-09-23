@@ -81,7 +81,7 @@ server.registerTool('evidence_reset_side', {
 });
 
 server.registerTool('evidence_run_plan', {
-  description: 'Submit exactly one executable replay per accepted story id, with {replays:[{id,replay}]}. Do not repeat or change the frozen claim, persona, viewport, or intent fields. Homeroom attaches those fields, validates the complete plan, and replays it twice from fresh paired state. People review the captured media.',
+  description: 'Submit exactly one executable replay per accepted story id, with {replays:[{id,replay}]}. Do not repeat or change the frozen claim, persona, viewport, or intent fields. Homeroom validates and acknowledges the plan immediately, then replays it twice in the background. Acceptance is not a replay verdict. Finish your turn after acceptance; the platform starts a correction turn if needed.',
   inputSchema: { replays: z.array(z.object({ id: z.string(), replay: z.record(z.unknown()) }).strict()).min(1).max(3) },
   annotations,
 }, async ({ replays }) => {
