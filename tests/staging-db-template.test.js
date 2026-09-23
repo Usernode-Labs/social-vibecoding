@@ -350,7 +350,8 @@ test('reused connection preserves bool/null discovery and unique private-column 
     await fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
     const updates = fixture.calls.filter((c) => c.cmd === 'pg' && /^UPDATE/.test(c.sql)).map((c) => c.sql);
     assert.deepEqual(updates, [
-      "UPDATE public.users SET token = left('__staging_redacted__' || ctid::text, 64)",
+      "UPDATE public.users SET token = left('__staging_redacted__' || replace(gen_random_uuid()::text, '-', ''), 64)" +
+        " WHERE NOT starts_with(token::text, '__staging_redacted__')",
       'UPDATE public.users SET password = NULL',
     ]);
   } finally { fixture.restore(); }

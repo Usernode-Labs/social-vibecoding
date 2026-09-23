@@ -4,13 +4,18 @@
 // '__staging_redacted__' constant into every row, so the second row's UPDATE
 // violated the UNIQUE constraint and the whole staging clone failed closed.
 //
-// The fix derives a per-row-unique placeholder from ctid, sized to the
-// column's max length. This test doesn't touch real docker/postgres — it
+// The fix derives a per-row-unique placeholder from a random UUID, sized to
+// the column's max length, and skips rows that already carry the sentinel —
+// data scrubbed once and then re-laid-out by pg_dump | pg_restore (a redacted
+// staging source, a fork of a scrubbed app) collided with its own earlier
+// '__staging_redacted__(page,item)' values on a second ctid pass.
+//
+// This test doesn't touch real docker/postgres — it
 // stubs child_process (same seam/pattern as tests/docker-init-flag.test.js)
 // and asserts the exact UPDATE SQL scrubPrivateColumns generates for a
 // NOT NULL UNIQUE VARCHAR(64) column and for an unbounded TEXT column.
 //
-// The SQL itself (ctid-uniqueness, left()-truncation to fit) was additionally
+// The SQL itself (uniqueness, left()-truncation to fit, idempotence) was additionally
 // verified by hand against a real Postgres instance during development.
 //
 // Run with: node --test tests/db-manager-scrub.test.js
@@ -75,7 +80,8 @@ test('scrubPrivateColumns writes a per-row-unique, length-capped placeholder for
     assert.equal(updateCalls.length, 1);
     assert.equal(
       updateCalls[0],
-      "UPDATE public.onchain_accounts SET registration_code = left('__staging_redacted__' || ctid::text, 64)"
+      "UPDATE public.onchain_accounts SET registration_code = left('__staging_redacted__' || replace(gen_random_uuid()::text, '-', ''), 64)" +
+        " WHERE NOT starts_with(registration_code::text, '__staging_redacted__')"
     );
     assert.deepEqual(result.scrubbed, ['public.onchain_accounts.registration_code']);
   } finally {
@@ -92,7 +98,8 @@ test('scrubPrivateColumns omits the length cap for an unbounded NOT NULL column'
     assert.equal(updateCalls.length, 1);
     assert.equal(
       updateCalls[0],
-      "UPDATE public.some_table SET some_col = '__staging_redacted__' || ctid::text"
+      "UPDATE public.some_table SET some_col = '__staging_redacted__' || replace(gen_random_uuid()::text, '-', '')" +
+        " WHERE NOT starts_with(some_col::text, '__staging_redacted__')"
     );
   } finally {
     restore();

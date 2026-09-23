@@ -1474,6 +1474,7 @@ SELECT n.nspname || '.' || c.relname,
       continue;
     }
     let value;
+    let where = '';
     if (!notNull) {
       value = 'NULL';
     } else if (maxLength != null && (!Number.isInteger(maxLength) || maxLength < 1)) {
@@ -1490,17 +1491,28 @@ SELECT n.nspname || '.' || c.relname,
       // production incident: onchain_accounts.registration_code is
       // NOT NULL UNIQUE, so writing '__staging_redacted__' into every
       // row failed the whole clone). Derive a per-row-unique value from
-      // ctid — unique within the table for the life of this single
-      // UPDATE — sized to the column's max length when it has one (e.g.
-      // VARCHAR(64)) so it never overflows. Auth code should never
-      // accept this literal in any code path — bcrypt.compare against
-      // it returns false for every plaintext, which is the only place
-      // today that meaningfully reads users.password.
-      const base = `'${STAGING_REDACTED_SENTINEL}' || ctid::text`;
+      // a random UUID, sized to the column's max length when it has one
+      // (e.g. VARCHAR(64)) so it never overflows.
+      //
+      // Not ctid, and rows already carrying the sentinel are left alone:
+      // the scrub must be safe over data that was scrubbed before and
+      // then re-laid-out by pg_dump | pg_restore (a staging source that
+      // is itself a redacted copy, a fork of a scrubbed app, the
+      // template built from either). The restore packs rows into new
+      // slots, so a ctid pass writes '…(1,1)' into one row while a row
+      // it has not reached yet still holds '…(1,1)' from the earlier
+      // scrub, and the UNIQUE index rejects the whole UPDATE.
+      //
+      // Auth code should never accept this literal in any code path —
+      // bcrypt.compare against it returns false for every plaintext,
+      // which is the only place today that meaningfully reads
+      // users.password.
+      const base = `'${STAGING_REDACTED_SENTINEL}' || replace(gen_random_uuid()::text, '-', '')`;
       value = maxLength != null ? `left(${base}, ${maxLength})` : base;
+      where = ` WHERE NOT starts_with(${column}::text, '${STAGING_REDACTED_SENTINEL}')`;
     }
     try {
-      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
+      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}${where}`);
       scrubbed.push(`${qualified}.${column}`);
     } catch (err) {
       log.error('db-manager', 'staging:private column UPDATE failed', {
