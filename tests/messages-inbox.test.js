@@ -252,7 +252,10 @@ test('the inbox initialises the global-chat bootstrap it reads', () => {
   // `removeGlobalChatThread` joined them when the Improve panel retired: its
   // list of these chats was the only surface that offered the delete, so the
   // delete came to this one rather than going away (#2718 review).
-  assert.match(SCREEN, /import \{ initializeGlobalChat, removeGlobalChatThread, useGlobalChatState \}/);
+  const imports = SCREEN.slice(0, SCREEN.indexOf("} from '../global-chat/store';"));
+  for (const name of ['initializeGlobalChat', 'removeGlobalChatThread', 'useGlobalChatState']) {
+    assert.match(imports.slice(imports.lastIndexOf('import {')), new RegExp(`\\b${name},`));
+  }
   const screen = SCREEN.slice(SCREEN.indexOf('export function MessagesScreen'));
   assert.match(screen, /void initializeGlobalChat\(\);/);
   // The same shape the button uses: a boot-time 401 is expected before
@@ -293,8 +296,13 @@ test('changes are read from the Improve store, drawn by SessionRow, and not gate
     'after mount only, so the first client render matches the prerender');
   assert.doesNotMatch(body.slice(body.indexOf('const sessions'), body.indexOf('const inbox')), /agentsOn/,
     'a change is not the experimental global chat');
-  assert.match(SCREEN, /dev\/sessions\/\$\{session\.id\}/, 'a row opens the conversation itself');
-  assert.match(SCREEN, /Improve\.enterSessionFrom\('#messages'\)/,
+  // #2813: the row's address is the inbox's own, so on a desktop the session
+  // opens beside the list. On a phone the router swaps it for the session
+  // itself and records Messages as where it hangs off.
+  assert.match(SCREEN, /href: agentThreadAddress\(\{ kind: 'session', slug: session\.appSlug, id: session\.id \}\)/,
+    'a row opens the conversation itself');
+  assert.match(STORE, /`#app\/\$\{encodeURIComponent\(agent\.slug\)\}\/dev\/sessions\/\$\{agent\.id\}`/);
+  assert.match(read('public/js/app.js'), /Improve\.enterSessionFrom\?\.\('#messages'\)/,
     'and records Messages as where it hangs off');
   assert.doesNotMatch(STORE, /sessions:/, 'and this store holds no second copy of that list');
 });

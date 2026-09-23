@@ -1353,6 +1353,32 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
 
+/* ── An agent thread, as a thread of this inbox (#2813) ─────────────────
+   A global agent chat is the chat's own panel drawn on the conversation
+   pane's sheet, so the panel adds no plane of its own. A dev session is
+   DevChat's whole session view in a host, which draws its own sheet — the
+   same arrangement as a discussion above, so the host only has to fill the
+   pane. The bar above it carries the one link the pane adds: the session's
+   own full-window address, for the spec and preview at full width. */
+.messages-thread-agent { overflow: hidden; }
+.global-chat-embedded { flex: 1 1 auto; }
+.messages-session-host { display: flex; flex-direction: column; min-height: 0; }
+.messages-session-host > * { flex: 1 1 auto; min-height: 0; }
+.messages-session-host[hidden] { display: none; }
+.messages-session-bar {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  padding: 0 4px 6px;
+}
+.messages-session-full {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.messages-session-full:hover { color: var(--text-primary); }
+.messages-inbox-session-active > a { background: var(--messages-selected); }
+
 /* Phone-width only. Each of these exists because a narrow column cannot lay
    the row out sideways; the thread pane on a desktop is up to ~59rem and can. */
 @media (max-width: 767px) {

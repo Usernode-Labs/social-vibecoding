@@ -70,7 +70,8 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
   assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox owns the address');
   assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\]\)/);
-  assert.match(app, /navigateToMessages\(conversationId, appSlug\)/);
+  // #2813 added the agent thread as a third argument, last in precedence.
+  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent\)/);
   // The ROW points here, not at the app view.
   assert.match(screen, /href=\{`#messages\/app\/\$\{encodeURIComponent\(discussion\.slug\)\}`\}/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
@@ -82,7 +83,7 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   // …and it drops BOTH portals on the way out, the transcript's first.
   assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
   // The list collapses for a discussion exactly as it does for a thread.
-  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \? 'hidden md:flex' : 'flex'/);
+  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \|\| snap\.route\.agent \? 'hidden md:flex' : 'flex'/);
 });
 
 test('deep links validate ids and route list/thread without a client events socket send', () => {

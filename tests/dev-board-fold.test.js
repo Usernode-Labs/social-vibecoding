@@ -1067,7 +1067,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // +2 (#2807, #2812): the dev-chat model picker has no caption line under
   // it, and stays usable while a turn runs. 742 leaves 28 slots under the
   // 770 ceiling.
-  assert.equal(DAPP.tests.length, 742);
+  //
+  // +2 (#2813): a dev session opens in the Messages pane beside the list on
+  // a desktop, and that pane links to the session's full view. 744 leaves 26
+  // slots under the 770 ceiling.
+  assert.equal(DAPP.tests.length, 744);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

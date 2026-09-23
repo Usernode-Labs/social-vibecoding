@@ -1073,6 +1073,18 @@ const DevChat = {
     });
   },
 
+  /**
+   * The app this session belongs to. `App.currentApp` names the app VIEW's
+   * app, and a session can be open in the Messages pane (#2813) where no app
+   * view is up — so the session's own app comes first, then the loaded app.
+   */
+  _appSlug() {
+    return (DevChat.currentSession && DevChat.currentSession.app_slug)
+      || (typeof App !== 'undefined' && App.currentApp)
+      || (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || null;
+  },
+
   _ownToolsGuideView() {
     if (DevChat._launchpadVenue() !== 'own-tools-pr') return null;
     const session = DevChat.currentSession || {};
@@ -1080,7 +1092,7 @@ const DevChat = {
     return {
       prompt: Launchpad.prefillText({
         ...resume,
-        slug: App.currentApp || '',
+        slug: DevChat._appSlug() || '',
         issueNumber: session.created_from_issue_number || null,
         sessionTitle: session.session_title || session.pr_title || '',
       }),
@@ -3661,7 +3673,7 @@ const DevChat = {
   // button and the tab-focus re-check.
   async _devFlowEnsureStatus(force) {
     const session = DevChat.currentSession;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     if (!session || !slug || !window.DevFlowSelect) return;
     const started = DevChat._devFlow;
     if (started.loading) return;
@@ -3856,7 +3868,7 @@ const DevChat = {
   // flow costs them no re-typing.
   async _devFlowPrepare() {
     const flow = DevChat._devFlow;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     // #1281: the walkthrough carries its own brief field, because in a
     // launchpad venue the composer is hidden and #dc-input is not something
     // the user can reach. The composer stays the fallback for the one place
@@ -3932,7 +3944,7 @@ const DevChat = {
   // was reaching for.
   async _devFlowDiscard() {
     const flow = DevChat._devFlow;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     if (!task) {
       flow.error = 'No work order to put away.';
@@ -3966,7 +3978,7 @@ const DevChat = {
   // credentials and imports it as an ordinary proposal, then we jump to it.
   async _devFlowSubmit() {
     const flow = DevChat._devFlow;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     if (!task) {
       flow.error = 'No work order to submit yet.';
@@ -4015,7 +4027,7 @@ const DevChat = {
   // idempotent re-press into a false "somebody else advanced it".
   async _devFlowSubmitUpdate() {
     const flow = DevChat._devFlow;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     const target = task && task.targetProposal;
     if (!task || !target || !target.id) {

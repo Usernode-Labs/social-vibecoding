@@ -3860,6 +3860,33 @@ const App = {
           App.navigateToMessages(null, parts[2]);
           return;
         }
+        // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
+        // a global agent chat at `#messages/agent/<id>`, an app's dev
+        // session at `#messages/session/<slug>/<id>`. A PHONE has one pane,
+        // and there these have always been screens of their own, so the
+        // address is swapped in place for that screen's (`#chat/<id>`,
+        // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
+        // Back from the chat still lands on the inbox it was opened from.
+        const agent = App._messagesAgentThread(parts);
+        if (agent) {
+          if (!window.matchMedia('(min-width: 768px)').matches) {
+            if (agent.kind === 'session' && typeof Improve !== 'undefined') {
+              Improve.enterSessionFrom?.('#messages');
+            }
+            // replaceState and route the new address in this same pass, the
+            // way the #topochain aliases heal: a `location.replace` from
+            // inside the router lost the app route to the pass it raced.
+            try {
+              history.replaceState(null, '', App._rootUrl(agent.kind === 'chat'
+                ? `#chat/${encodeURIComponent(agent.id)}`
+                : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
+            } catch (_) { return; }
+            App.restoreFromHash();
+            return;
+          }
+          App.navigateToMessages(null, null, agent);
+          return;
+        }
         // #2783: `#messages/channel/<handle>` is where a `#name` channel
         // reference in any chat links. It names the handle, not the place:
         // the inbox opens, and the store swaps this address for the
@@ -5282,7 +5309,7 @@ const App = {
   //
   // The `navigateToMessages` name is kept below because push handling and
   // notifications.js's conversation rows still say it.
-  navigateToMessages(conversationId, appSlug) {
+  navigateToMessages(conversationId, appSlug, agent) {
     const messages = window.UsernodeReact?.messages;
     // ALREADY HERE: route the island in place rather than replaying a screen
     // swap onto the screen you are on. The screen ITSELF is asked, not just
@@ -5291,7 +5318,7 @@ const App = {
     // in _showOnlyScreen is what keeps the flag honest; this is the belt to
     // its braces, and costs one condition.
     if (App._inMessages && App._isScreenVisible('messages-screen') && messages?.isOpen?.()) {
-      messages.route?.(conversationId || null, appSlug || null);
+      messages.route?.(conversationId || null, appSlug || null, agent || null);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -5307,7 +5334,7 @@ const App = {
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
     // effects resolve, and chrome remains suspended until the callback below.
-    messages?.route?.(conversationId || null, appSlug || null);
+    messages?.route?.(conversationId || null, appSlug || null, agent || null);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
@@ -5315,6 +5342,24 @@ const App = {
       App.setHeaderTitle('Messages');
       messages?.syncChrome?.();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // #2813: the agent thread a `#messages/agent/…` or `#messages/session/…`
+  // address names, or null. Raw segments, like the discussion's slug: the
+  // store validates the shape and the server decides whether it exists.
+  _messagesAgentThread(parts) {
+    if (parts[1] === 'agent' && parts[2]) {
+      let id = null;
+      try { id = decodeURIComponent(parts[2]); } catch (_) { return null; }
+      return { kind: 'chat', id };
+    }
+    if (parts[1] === 'session' && parts[2] && parts[3]) {
+      let slug = null;
+      try { slug = decodeURIComponent(parts[2]); } catch (_) { return null; }
+      const id = App._numericSegment(parts[3]);
+      return id != null && id <= 2147483647 ? { kind: 'session', slug, id } : null;
+    }
+    return null;
   },
 
   // State-only teardown; the incoming transition hides the root.
