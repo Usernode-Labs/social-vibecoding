@@ -40,6 +40,8 @@ const {
   REGISTER_RATE_PER_MINUTE,
   SERVER_NAME,
   SERVER_VERSION,
+  DELEGATED_TOKEN_PREFIX,
+  DELEGATED_CLIENT_NAMES,
 } = require('../services/mcp-connect-constants');
 const mcpOauth = require('../services/mcp-oauth');
 const mcpTools = require('../services/mcp-tools');
@@ -82,11 +84,23 @@ function mcpConnectGate(config) {
       return next();
     }
     if (staging || !config.cliAuthEnabled) {
+      // #2779: the one credential that survives here is a DELEGATED grant on
+      // POST /mcp — minted in-process by this same deployment for its own
+      // agents, so a staging preview can exercise agent sessions. Decided on
+      // the method, the path and the bearer's shape alone; the handler still
+      // refuses it unless it joins a live delegation.
+      if (mcpOauth.isDelegatedMcpRequest(req.method, req.path, req.rawHeaders)) return next();
       res.setHeader('Cache-Control', 'no-store');
       return res.status(404).json({ error: 'not_found' });
     }
     return next();
   };
+}
+
+// Is the consent-based connector surface switched off in this deployment?
+// The same condition the gate above 404s on, for the handler's second check.
+function connectorSurfaceClosed(config) {
+  return process.env.USERNODE_ENV === 'staging' || !config.cliAuthEnabled;
 }
 
 // Where the tool handlers' loopback calls go.
@@ -177,20 +191,61 @@ function bearerChallenge(config, res, error) {
 // the user from `users` (never trust anything carried on the token itself),
 // write the audit row BEFORE dispatching, and update last_used_at
 // monotonically as non-authoritative metadata.
+//
+// #2779: the same lookup serves a DELEGATED grant — the platform's own agent
+// acting for the user — and returns it as `delegation`. The token's shape
+// and its grant must agree: an `svmcd_…` token is honoured only with a live
+// mcp_delegations row behind it, and an `svmcp_…` token never with one. A
+// delegation is live while it is neither revoked nor expired and, when it
+// names a change, while that change is still the user's and still open —
+// so pausing or archiving the change ends a worker's token on its next call
+// without anything having to revoke it.
+const WORKER_LIVE_CHANGE_STATUSES = Object.freeze(['active', 'promoted']);
+const MAYOR_LIVE_CHANGE_STATUSES = Object.freeze(['active', 'paused', 'promoted', 'merging']);
+
+function delegationRefusal(row) {
+  if (row.d_revoked_at) return 'revoked_token';
+  if (new Date(row.now) >= new Date(row.d_expires_at)) return 'expired_token';
+  if (row.d_change_id != null) {
+    const live = row.d_kind === 'worker_read' ? WORKER_LIVE_CHANGE_STATUSES : MAYOR_LIVE_CHANGE_STATUSES;
+    if (row.change_user_id !== row.user_id || !live.includes(row.change_status)) return 'revoked_token';
+    if (row.d_app_id != null && row.change_app_id !== row.d_app_id) return 'revoked_token';
+  }
+  if (row.d_app_id != null && !row.app_slug) return 'revoked_token';
+  return null;
+}
+
 async function authenticateConnector(pool, token) {
   const { rows } = await pool.query(
     `SELECT t.id, t.user_id, t.client_id, t.grant_id, t.scopes,
             t.expires_at, t.revoked_at, c.client_name,
+            d.grant_id AS d_grant_id, d.kind AS d_kind,
+            d.agent_session_id AS d_agent_session_id, d.change_id AS d_change_id,
+            d.app_id AS d_app_id, d.expires_at AS d_expires_at,
+            d.revoked_at AS d_revoked_at,
+            a.slug AS app_slug,
+            cs.user_id AS change_user_id, cs.status AS change_status,
+            cs.app_id AS change_app_id,
             clock_timestamp() AS now
        FROM mcp_tokens t
        LEFT JOIN mcp_clients c ON c.client_id = t.client_id
+       LEFT JOIN mcp_delegations d ON d.grant_id = t.grant_id
+       LEFT JOIN apps a ON a.id = d.app_id
+       LEFT JOIN chat_sessions cs ON cs.id = d.change_id
       WHERE t.token_hash = $1 AND t.kind = 'access'`,
     [mcpOauth.hashSecret(token)]
   );
   if (!rows.length) return { error: 'invalid_token' };
   const row = rows[0];
+  const presentedDelegated = String(token).startsWith(DELEGATED_TOKEN_PREFIX);
+  if (presentedDelegated !== !!row.d_grant_id) return { error: 'invalid_token' };
   if (row.revoked_at) return { error: 'revoked_token' };
   if (new Date(row.now) >= new Date(row.expires_at)) return { error: 'expired_token' };
+  if (row.d_grant_id) {
+    if (row.d_kind !== 'agent_mayor' && row.d_kind !== 'worker_read') return { error: 'invalid_token' };
+    const refused = delegationRefusal(row);
+    if (refused) return { error: refused };
+  }
 
   const { rows: userRows } = await pool.query(
     `SELECT id, username, is_admin, admin_readonly, app_quota, locale
@@ -200,13 +255,28 @@ async function authenticateConnector(pool, token) {
   if (!userRows.length) return { error: 'invalid_token' };
   const user = userRows[0];
 
+  const delegation = row.d_grant_id
+    ? {
+      kind: row.d_kind,
+      grantId: row.d_grant_id,
+      agentSessionId: row.d_agent_session_id ?? null,
+      changeId: row.d_change_id ?? null,
+      appId: row.d_app_id ?? null,
+      appSlug: row.app_slug || null,
+      expiresAt: new Date(row.d_expires_at),
+    }
+    : null;
+
   return {
     tokenId: row.id,
     grantId: row.grant_id,
     clientId: row.client_id,
-    clientName: row.client_name || 'Unknown client',
+    clientName: delegation
+      ? DELEGATED_CLIENT_NAMES[delegation.kind]
+      : (row.client_name || 'Unknown client'),
     scopes: row.scopes,
     now: new Date(row.now),
+    delegation,
     user: {
       id: user.id,
       username: user.username,
@@ -528,6 +598,11 @@ function mcpPreAuthRoutes(config) {
       return res.status(503).json({ error: 'temporarily_unavailable' });
     }
     if (auth.error) return bearerChallenge(config, res, auth.error);
+    // Defence in depth behind the gate: where the consent surface is off, only
+    // a delegated grant may be served, whatever shape let the request in.
+    if (connectorSurfaceClosed(config) && !auth.delegation) {
+      return res.status(404).json({ error: 'not_found' });
+    }
 
     const tokenOk = await enforceBucket(pool, res, {
       namespace: 'mcp-token',
@@ -585,7 +660,10 @@ function mcpPreAuthRoutes(config) {
     // writes a row keyed on a grant, and an unauthenticated caller must not be
     // able to write one. Fire-and-forget for the same reason as last_used_at
     // above — an advisory tip must not delay or fail a working request.
-    if (isInitializeRequest(req.body) && !mcpTools.hintSuppressedForClient(auth.clientName)) {
+    // A delegated grant is the platform's own agent, with no human reading
+    // its permission prompts, so it never arms the tip.
+    if (isInitializeRequest(req.body) && !auth.delegation
+        && !mcpTools.hintSuppressedForClient(auth.clientName)) {
       require('../services/mcp-hint-throttle')
         .armHint(pool, { grantId: auth.grantId, userId: auth.user.id })
         .catch((err) => {
@@ -600,9 +678,13 @@ function mcpPreAuthRoutes(config) {
         StreamableHTTPServerTransport,
       } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 
+      // #2779: the instructions, like the tool list, follow the token's
+      // kind — a delegated agent is told what it is, not how a human-driven
+      // chat product relays a work order.
+      const kind = auth.delegation ? auth.delegation.kind : 'external';
       const server = new McpServer(
         { name: SERVER_NAME, version: SERVER_VERSION },
-        { instructions: mcpTools.SERVER_INSTRUCTIONS }
+        { instructions: mcpTools.instructionsFor(kind) }
       );
       mcpTools.registerTools(server, {
         accessToken: bearer.token,
@@ -610,6 +692,7 @@ function mcpPreAuthRoutes(config) {
         user: auth.user,
         clientName: auth.clientName,
         clientId: auth.clientId,
+        delegation: auth.delegation,
         // Both only for the setup-hint throttle in registerTools. The grant
         // is the durable stand-in for "this connection" — this transport is
         // stateless (sessionIdGenerator is undefined, a fresh McpServer per
@@ -618,7 +701,9 @@ function mcpPreAuthRoutes(config) {
         // it is the bug the arm-on-initialize above replaced.
         tokenId: auth.tokenId,
         grantId: auth.grantId,
-        origin: config.cliAuthOrigin,
+        // Unset where the consent surface is off (staging); links then stay
+        // relative, which is right for an agent running inside the platform.
+        origin: config.cliAuthOrigin || '',
         baseUrl: platformBaseUrl(config),
         pool,
         config,
@@ -799,6 +884,11 @@ function mcpBrowserRoutes(config) {
     try {
       // One row per GRANT (a consent), not per token: rotation mints a new
       // pair on every refresh, and a user does not think in tokens.
+      //
+      // Delegated grants (#2779) are left out: they are the platform's own
+      // agents for the length of one turn, not a chat product the user
+      // connected, and listing one would offer a Disconnect for something
+      // the user never connected and that is gone before they could press it.
       const { rows } = await pool.query(
         `SELECT t.grant_id,
                 MIN(t.created_at)  AS connected_at,
@@ -809,6 +899,7 @@ function mcpBrowserRoutes(config) {
            FROM mcp_tokens t
            LEFT JOIN mcp_clients c ON c.client_id = t.client_id
           WHERE t.user_id = $1
+            AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)
           GROUP BY t.grant_id
           ORDER BY MIN(t.created_at) DESC
           LIMIT 50`,
@@ -858,9 +949,13 @@ function mcpBrowserRoutes(config) {
     }
     try {
       const found = await mcpOauth.withTransaction(pool, async (dbClient) => {
+        // A delegated grant is not the user's to disconnect here: it is not
+        // listed, and its own turn revokes it (#2779).
         const { rows } = await dbClient.query(
-          `SELECT grant_id, client_id, scopes FROM mcp_tokens
-            WHERE grant_id = $1 AND user_id = $2 LIMIT 1`,
+          `SELECT t.grant_id, t.client_id, t.scopes FROM mcp_tokens t
+            WHERE t.grant_id = $1 AND t.user_id = $2
+              AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)
+            LIMIT 1`,
           [grantId, req.user.id]
         );
         if (!rows.length) return false;

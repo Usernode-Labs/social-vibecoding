@@ -3976,7 +3976,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 468,
+      "line": 530,
       "method": "GET",
       "path": "/cli/authorize",
       "expression": null,
@@ -3985,7 +3985,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 479,
+      "line": 541,
       "method": "POST",
       "path": "/api/cli/device/code",
       "expression": null,
@@ -3994,7 +3994,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 557,
+      "line": 619,
       "method": "POST",
       "path": "/api/cli/device/token",
       "expression": null,
@@ -4003,7 +4003,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 693,
+      "line": 755,
       "method": "GET",
       "path": "/api/cli/token/status",
       "expression": null,
@@ -4012,7 +4012,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 721,
+      "line": 783,
       "method": "DELETE",
       "path": "/api/cli/token/current",
       "expression": null,
@@ -4021,7 +4021,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 768,
+      "line": 830,
       "method": "GET",
       "path": "/api/cli/rpc/me",
       "expression": null,
@@ -4030,7 +4030,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 916,
+      "line": 978,
       "method": "GET",
       "path": "/api/me/cli-tokens",
       "expression": null,
@@ -4039,7 +4039,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 932,
+      "line": 994,
       "method": "GET",
       "path": "/api/cli/device/approval",
       "expression": null,
@@ -4058,7 +4058,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 966,
+      "line": 1028,
       "method": "POST",
       "path": "/api/cli/device/approve",
       "expression": null,
@@ -4077,7 +4077,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 1041,
+      "line": 1103,
       "method": "GET",
       "path": "/api/me/cli-tokens",
       "expression": null,
@@ -4102,7 +4102,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 1114,
+      "line": 1176,
       "method": "DELETE",
       "path": "/api/me/cli-tokens/:id",
       "expression": null,
@@ -4121,7 +4121,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 1166,
+      "line": 1228,
       "method": "GET",
       "path": "/api/me/local-agents",
       "expression": null,
@@ -4146,7 +4146,7 @@
     },
     {
       "source": "src/routes/cli-auth.js",
-      "line": 1195,
+      "line": 1257,
       "method": "DELETE",
       "path": "/api/me/local-agents/:leaseId",
       "expression": null,
@@ -5549,7 +5549,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 279,
+      "line": 282,
       "method": "GET",
       "path": "/api/apps/:slug/dev-flow/status",
       "expression": null,
@@ -5568,7 +5568,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 513,
+      "line": 516,
       "method": "POST",
       "path": "/api/apps/:slug/external-tasks",
       "expression": null,
@@ -5592,7 +5592,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 608,
+      "line": 611,
       "method": "POST",
       "path": "/api/apps/:slug/external-tasks/:id/submit",
       "expression": null,
@@ -5611,7 +5611,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 701,
+      "line": 704,
       "method": "POST",
       "path": "/api/apps/:slug/external-tasks/:id/discard",
       "expression": null,
@@ -5630,7 +5630,7 @@
     },
     {
       "source": "src/routes/dev-flow.js",
-      "line": 761,
+      "line": 764,
       "method": "POST",
       "path": "/api/apps/:slug/external-tasks/:id/submit-update",
       "expression": null,
@@ -6827,7 +6827,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 266,
+      "line": 336,
       "method": "GET",
       "path": "/.well-known/oauth-protected-resource",
       "expression": null,
@@ -6836,7 +6836,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 267,
+      "line": 337,
       "method": "GET",
       "path": "/.well-known/oauth-protected-resource:dynamic",
       "expression": null,
@@ -6845,7 +6845,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 272,
+      "line": 342,
       "method": "GET",
       "path": "/.well-known/oauth-authorization-server",
       "expression": null,
@@ -6854,7 +6854,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 295,
+      "line": 365,
       "method": "POST",
       "path": "/api/connect/oauth/register",
       "expression": null,
@@ -6863,7 +6863,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 347,
+      "line": 417,
       "method": "GET",
       "path": null,
       "expression": "CONSENT_PATH",
@@ -6872,7 +6872,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 357,
+      "line": 427,
       "method": "POST",
       "path": "/api/connect/oauth/token",
       "expression": null,
@@ -6881,7 +6881,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 462,
+      "line": 532,
       "method": "POST",
       "path": "/api/connect/oauth/revoke",
       "expression": null,
@@ -6890,7 +6890,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 511,
+      "line": 581,
       "method": "POST",
       "path": null,
       "expression": "MCP_PATH",
@@ -6899,7 +6899,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 688,
+      "line": 773,
       "method": "GET",
       "path": "/api/connect/authorization",
       "expression": null,
@@ -6918,7 +6918,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 719,
+      "line": 804,
       "method": "POST",
       "path": "/api/connect/oauth/authorize",
       "expression": null,
@@ -6937,7 +6937,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 780,
+      "line": 865,
       "method": "GET",
       "path": "/api/me/connectors",
       "expression": null,
@@ -6962,7 +6962,7 @@
     },
     {
       "source": "src/routes/mcp-remote.js",
-      "line": 852,
+      "line": 943,
       "method": "DELETE",
       "path": "/api/me/connectors/:id",
       "expression": null,

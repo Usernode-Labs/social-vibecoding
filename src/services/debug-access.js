@@ -90,6 +90,7 @@ const DENIED_TABLES = new Set([
   'mcp_clients',              // hosted-connector client registrations
   'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
   'mcp_tokens',               // hosted-connector bearer hashes and hints
+  'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers

@@ -36,6 +36,7 @@ const {
   assertNoDuplicateJsonKeys,
 } = require('../services/cli-auth');
 const { isCliApiPath } = require('../services/cli-api-policy');
+const { hasDelegatedBearer } = require('../services/mcp-oauth');
 const {
   READ_SCOPE: CONNECTOR_READ_SCOPE,
   WRITE_SCOPE: CONNECTOR_WRITE_SCOPE,
@@ -302,13 +303,15 @@ function bearerIpGuard(pool, namespace = 'rpc-ip') {
   };
 }
 
-// Is this request carrying a HOSTED CONNECTOR bearer (svmcp_…) rather than
-// a CLI one (svcli_…)? The two credentials live in different tables with
-// different policies, so the entry point routes on the token's shape.
+// Is this request carrying a HOSTED CONNECTOR bearer (svmcp_…, or a
+// delegated grant's svmcd_…, #2779) rather than a CLI one (svcli_…)? The
+// credentials live in different tables with different policies, so the entry
+// point routes on the token's shape.
 function looksLikeConnectorBearer(req) {
   for (let i = 0; i < req.rawHeaders.length; i += 2) {
     if (String(req.rawHeaders[i]).toLowerCase() !== 'authorization') continue;
-    if (/^Bearer svmcp_/i.test(String(req.rawHeaders[i + 1] || ''))) return true;
+    const value = String(req.rawHeaders[i + 1] || '');
+    if (/^Bearer svmcp_/i.test(value) || /^Bearer svmcd_/i.test(value)) return true;
   }
   return false;
 }
@@ -322,10 +325,42 @@ function looksLikeConnectorBearer(req) {
 // routes through here over loopback, replaying the caller's own token —
 // which is what makes "a connector can only do what this user can do" true
 // by construction rather than by review.
+//
+// #2779: a DELEGATED grant (the platform's own agent acting for the user)
+// arrives on the same chain and is held to its kind's own list instead
+// (services/cli-api-policy.js). A grant bound to an app is also held to that
+// app: every `:slug` must be it, and every `:id` a change in it — and a
+// Mayor's one-action token bound to a change may touch only that change.
 function connectorApiBearerChain(config) {
   const pool = getPool(config);
   const { authenticateConnector, readConnectorBearer } = require('./mcp-remote');
-  const { isConnectorApiRequest } = require('../services/cli-api-policy');
+  const {
+    isConnectorApiRequest, isDelegatedApiRequest, delegatedRouteBinding,
+  } = require('../services/cli-api-policy');
+  const { DELEGATION_KINDS } = require('../services/mcp-connect-constants');
+  const onAnyDelegatedList = (method, pathname) => DELEGATION_KINDS
+    .some((kind) => isDelegatedApiRequest(kind, method, pathname));
+
+  // null when the request stays inside the grant's binding, else the reason.
+  const bindingRefusal = async (delegation, method, pathname) => {
+    if (delegation.appId == null && delegation.changeId == null) return null;
+    const binding = delegatedRouteBinding(delegation.kind, method, pathname);
+    if (!binding) return 'outside_binding';
+    if (binding.slug !== null && delegation.appId != null && binding.slug !== delegation.appSlug) {
+      return 'outside_binding';
+    }
+    if (binding.sessionId === null) return null;
+    if (!Number.isSafeInteger(binding.sessionId)) return 'outside_binding';
+    if (delegation.kind === 'agent_mayor' && delegation.changeId != null) {
+      return binding.sessionId === delegation.changeId ? null : 'outside_binding';
+    }
+    if (delegation.appId == null) return null;
+    const { rows } = await pool.query(
+      'SELECT app_id FROM chat_sessions WHERE id = $1',
+      [binding.sessionId]
+    );
+    return rows.length && rows[0].app_id === delegation.appId ? null : 'outside_binding';
+  };
   // The tool handlers call these same routes over loopback, and every such
   // call arrives from the platform container's own address — so bucketing
   // them by IP would make one busy connector throttle every other one. Those
@@ -357,10 +392,16 @@ function connectorApiBearerChain(config) {
       });
       if (!allowed) return undefined;
     }
-    if (!isConnectorApiRequest(req.method, req.path)) {
+    const bearer = readConnectorBearer(req);
+    // The cheap refusal first, before any lookup: a route on no list this
+    // bearer's shape could ever reach.
+    if (bearer.delegated) {
+      if (!onAnyDelegatedList(req.method, req.path)) {
+        return res.status(403).json({ error: 'insufficient_scope' });
+      }
+    } else if (!isConnectorApiRequest(req.method, req.path)) {
       return res.status(403).json({ error: 'insufficient_scope' });
     }
-    const bearer = readConnectorBearer(req);
     if (bearer.error) {
       res.setHeader('WWW-Authenticate', `Bearer error="${bearer.error}"`);
       return res.status(401).json({ error: bearer.error });
@@ -375,6 +416,19 @@ function connectorApiBearerChain(config) {
     if (auth.error) {
       res.setHeader('WWW-Authenticate', `Bearer error="${auth.error}"`);
       return res.status(401).json({ error: auth.error });
+    }
+    if (auth.delegation) {
+      if (!isDelegatedApiRequest(auth.delegation.kind, req.method, req.path)) {
+        return res.status(403).json({ error: 'insufficient_scope' });
+      }
+      let refused;
+      try {
+        refused = await bindingRefusal(auth.delegation, req.method, req.path);
+      } catch (err) {
+        log.error('cli-auth', 'delegation binding check failed', { message: err.message });
+        return res.status(503).json({ error: 'temporarily_unavailable' });
+      }
+      if (refused) return res.status(403).json({ error: 'insufficient_scope' });
     }
     // Writes need the write scope; reads need only the read scope. The
     // per-token request budget is enforced once, at the /mcp edge — these
@@ -393,6 +447,9 @@ function connectorApiBearerChain(config) {
     // is exactly true here — so a connector inherits every one of them.
     req.cliAuthenticated = true;
     req.connectorClientId = auth.clientId;
+    // The grant behind a delegated call, for the routes that act on the
+    // agent session it belongs to (#2779). Null for every external client.
+    req.mcpDelegation = auth.delegation || null;
     return next();
   };
 }
@@ -420,7 +477,12 @@ function cliApiBearerAuth(config) {
         && String(value).toLowerCase() === 'authorization'
     );
     if (!hasAuthorization || !isCliApiPath(req.path)) return next();
-    if (!isCliSurfaceEnabled(config)) {
+    // #2779: a delegated grant is minted in-process by this deployment for
+    // its own agents, so it is the one bearer that works where the CLI and
+    // consent surfaces are off (a staging preview). Only on the connector
+    // chain, and only if it joins a live delegation there.
+    const delegated = hasDelegatedBearer(req.rawHeaders);
+    if (!isCliSurfaceEnabled(config) && !delegated) {
       res.setHeader('Cache-Control', 'no-store');
       return res.status(404).json({ error: 'not_found' });
     }
