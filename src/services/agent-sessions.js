@@ -94,6 +94,9 @@ function shapeChangeRow(row) {
     status: row.change_status || null,
     title: row.change_title || null,
     prNumber: row.change_pr_number || null,
+    // For the changes drawer: the owner's own preview and checks verdict.
+    stagingUrl: row.change_staging_url || null,
+    checkState: row.change_check_state || null,
   };
 }
 
@@ -146,6 +149,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
+            c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             ca.slug AS change_app_slug, ca.name AS change_app_name
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
@@ -174,6 +178,7 @@ async function getAgentSession(pool, { userId, id }) {
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
+            c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             ca.slug AS change_app_slug, ca.name AS change_app_name
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
@@ -189,6 +194,7 @@ async function getAgentSession(pool, { userId, id }) {
   const { rows: changes } = await pool.query(
     `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
+            c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             a.slug AS change_app_slug, a.name AS change_app_name
        FROM chat_sessions c JOIN apps a ON a.id = c.app_id
       WHERE c.agent_session_id = $1 AND c.user_id = $2

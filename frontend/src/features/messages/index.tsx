@@ -41,6 +41,17 @@ import {
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { GlobalChatPanel } from '../global-chat';
+import { AgentSessionPanel } from '../agent-session';
+import {
+  agentSessionsEnabled,
+  deactivateAgentSession,
+  getAgentSessionState,
+  loadAgentSessions,
+  openAgentSession,
+  startAgentSession,
+  useAgentSessionState,
+} from '../agent-session/store';
+import type { AgentSession as MayorSession } from '../agent-session/api';
 import {
   deactivateGlobalChat,
   getGlobalChatState,
@@ -475,11 +486,21 @@ const NEW_CHOICES = [
 ] as const;
 type NewChoice = typeof NEW_CHOICES[number]['key'];
 
+// #2779: with agent sessions on, the third choice is a conversation with the
+// Mayor that works on any app, so there is no app to pick first.
+function newChoices() {
+  if (!agentSessionsEnabled()) return NEW_CHOICES;
+  return NEW_CHOICES.map((item) => (item.key === 'agent'
+    ? { ...item, label: 'Agent session', hint: 'Plan and build a change on any app' }
+    : item));
+}
+
 function startNew(choice: NewChoice) {
   // DM and group are the create dialog, opened on the matching tab. Agent
-  // asks which app first (./agent-dialog.tsx), then opens a new dev session
-  // there — for now; a platform-wide agent session will take its place.
-  if (choice === 'agent') openDialog('messagesAgent');
+  // asks which app first (./agent-dialog.tsx) and opens a new dev session
+  // there, unless agent sessions are on: then it is one new conversation.
+  if (choice === 'agent' && agentSessionsEnabled()) void startAgentSession({ entry: 'messages' });
+  else if (choice === 'agent') openDialog('messagesAgent');
   else openDialog('messagesCreate', choice);
 }
 
@@ -510,7 +531,7 @@ function NewMessageButton() {
     const pu = (window as any).PlatformUI;
     if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
       pu.actionSheet({
-        actions: NEW_CHOICES.map((item) => ({ label: item.label, handler: () => startNew(item.key) })),
+        actions: newChoices().map((item) => ({ label: item.label, handler: () => startNew(item.key) })),
       });
       return;
     }
@@ -546,7 +567,7 @@ function NewMessageButton() {
           style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
           onClick={(event) => event.stopPropagation()}
         >
-          {NEW_CHOICES.map((item) => (
+          {newChoices().map((item) => (
             <button
               key={item.key}
               type="button"
@@ -663,16 +684,28 @@ function ConversationList() {
   };
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  // A change started from an agent session (#2779) is that conversation's:
+  // its row below says where it stands, so it is not listed twice.
   const sessions: SessionRowView[] = mounted
-    ? [...(improve.sessions || []), ...(improve.otherSessions || [])].map(inboxSessionView)
+    ? [...(improve.sessions || []), ...(improve.otherSessions || [])]
+      .filter((row) => !row.agentSessionId)
+      .map(inboxSessionView)
     : [];
+  // Agent sessions (#2779), from their own store and, like the sessions
+  // above, only after mount. Listed whatever the flag says: turning it off
+  // never hides a conversation that already exists.
+  const mayor = useAgentSessionState();
+  useEffect(() => { void loadAgentSessions(); }, []);
+  const mayors: MayorSession[] = mounted ? mayor.sessions : [];
   const inbox = buildInbox({
     conversations: snap.conversations,
     discussions: snap.discussions,
     agents,
     sessions,
+    mayors,
     filter: snap.filter,
   });
+  const byMayor = new Map(mayors.map((item) => [String(item.id), item]));
   const byConversation = new Map(snap.conversations.map((item) => [String(item.id), item]));
   const byApp = new Map(snap.discussions.map((item) => [item.slug, item]));
   const byAgent = new Map(agents.map((item) => [item.id, item]));
@@ -700,6 +733,11 @@ function ConversationList() {
     if (entry.kind === 'session') {
       const c = bySession.get(entry.key.slice('session:'.length));
       return !!c && (inboxMatches(c.title, q) || inboxMatches(c.appName, q));
+    }
+    if (entry.kind === 'mayor') {
+      const m = byMayor.get(entry.key.slice('mayor:'.length));
+      return !!m && (inboxMatches(m.title, q) || inboxMatches(m.focusApp?.name, q)
+        || inboxMatches(m.activeChange?.title, q));
     }
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
@@ -798,6 +836,13 @@ function ConversationList() {
       const open = snap.route.agent;
       return session
         ? <AgentSessionRow key={entry.key} session={session} active={open?.kind === 'session' && open.id === session.id} />
+        : null;
+    }
+    if (entry.kind === 'mayor') {
+      const session = byMayor.get(entry.key.slice('mayor:'.length));
+      const open = snap.route.agent;
+      return session
+        ? <MayorSessionRow key={entry.key} session={session} active={open?.kind === 'agent' && open.id === session.id} />
         : null;
     }
     const agent = byAgent.get(entry.key.slice('agent:'.length));
@@ -1072,6 +1117,76 @@ function AppDiscussionThread({ slug }: { slug: string }) {
  * following a `#chat/<id>` link from here reopens the store for the screen
  * before this unmounts, and that open is not this pane's to undo.
  */
+/**
+ * An agent session (#2779), as a thread of this inbox: the same panel its
+ * own screen draws (features/agent-session), told it is drawn here. Leaving
+ * the pane deactivates it only if the pane still owns it, as above.
+ */
+function MayorSessionThread({ id }: { id: number }) {
+  useEffect(() => {
+    void openAgentSession({ id, host: 'messages' });
+    return () => {
+      const current = getAgentSessionState();
+      if (current.open && current.host === 'messages') deactivateAgentSession();
+    };
+  }, [id]);
+  return (
+    <section
+      className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
+      aria-label="Agent session"
+      data-agent-session-thread={id}
+    >
+      <AgentSessionPanel embedded />
+    </section>
+  );
+}
+
+/**
+ * One agent session's row (#2779): its title, the app it is about, and
+ * where its active change stands. A link to the inbox's own address for it,
+ * which a phone's router swaps for the conversation's screen.
+ */
+function MayorSessionRow({ session, active }: { session: MayorSession; active: boolean }) {
+  const at = session.lastActivityAt || session.createdAt || null;
+  const activity = at ? agoStamp(at) : null;
+  const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
+  const href = agentThreadAddress(thread);
+  const change = session.activeChange;
+  const status = change
+    ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${
+      change.status === 'promoted' ? 'In vote' : change.status === 'paused' ? 'Parked' : change.status === 'merged' ? 'Merged' : 'In progress'}`
+    : 'No active change';
+  return (
+    <a
+      href={href}
+      data-inbox-agent-session={session.id}
+      className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
+      aria-current={active ? 'page' : undefined}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+        if (window.location.hash === href) { event.preventDefault(); openAgentThread(thread); }
+      }}
+    >
+      <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
+        <SparklesIcon className="w-5 h-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="messages-row-line">
+          <span className="messages-row-name">{session.title || 'New session'}</span>
+          {activity
+            ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
+            : null}
+        </div>
+        <div className="messages-row-line">
+          <span className="messages-row-preview">
+            {session.busy ? 'Working…' : `${session.focusApp?.name ? `${session.focusApp.name} · ` : ''}${status}`}
+          </span>
+        </div>
+      </div>
+    </a>
+  );
+}
+
 function AgentChatThread({ id }: { id: string }) {
   useEffect(() => {
     void openGlobalChat({ threadId: id, host: 'messages' });
@@ -1212,6 +1327,7 @@ function ConversationThread() {
 
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
   if (snap.route.agent?.kind === 'chat') return <AgentChatThread key={snap.route.agent.id} id={snap.route.agent.id} />;
+  if (snap.route.agent?.kind === 'agent') return <MayorSessionThread key={`agent/${snap.route.agent.id}`} id={snap.route.agent.id} />;
   if (snap.route.agent?.kind === 'session') {
     const { slug, id } = snap.route.agent;
     return <AgentSessionThread key={`${slug}/${id}`} slug={slug} id={id} />;

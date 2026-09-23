@@ -1854,6 +1854,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.check_state, cs.check_phase, cs.check_error_detail,
                 cs.test_results, cs.spec_md,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
+                -- #2779: a change started from an agent session is listed
+                -- under that conversation in Messages, not as a row of its own.
+                cs.agent_session_id,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 lt.role AS last_turn_role, lt.asks AS last_turn_asks,
                 a.slug AS app_slug, a.name AS app_name,
@@ -2273,6 +2276,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
                 created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
+                -- #2779: the agent session a change was started from, so the
+                -- owner's Build door can lead back to that conversation.
+                agent_session_id,
                 (spec_md IS NOT NULL AND spec_md <> '') AS has_spec,
                 -- The same derivation the shared-session list uses, so the
                 -- owner's own card and everyone else's card agree about

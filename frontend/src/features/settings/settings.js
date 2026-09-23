@@ -154,7 +154,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, agentSessionsEnabled: false, agentSessionsChoosable: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -519,6 +519,13 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
+      // #2779: agent sessions, same shape again. Where new work starts is
+      // read from App.user by the entry points, so it moves with the save.
+      const agentSessionsToggle = document.getElementById('agent-sessions-enabled');
+      if (agentSessionsToggle) {
+        agentSessionsToggle.addEventListener('change', (e) => this._saveAgentSessions(e.target.checked));
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -655,6 +662,8 @@
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
+        this.state.agentSessionsEnabled = !!j.user?.agentSessionsEnabled;
+        this.state.agentSessionsChoosable = !!j.user?.agentSessionsChoosable;
         this.state.locale = j.user?.locale || null;
         this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
@@ -676,6 +685,7 @@
         // all, and it lands here too — a cold-boot deep link paints before
         // this resolves. Same reasoning as the two rows above.
         this._renderLanguageSection();
+        this._renderAgentSessionsRow();
         this._renderNavIfOpen();
       } catch {}
     },
@@ -1442,7 +1452,20 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
+      this._renderAgentSessionsRow();
+      const agentStatus = document.getElementById('agent-sessions-status');
+      if (agentStatus) { agentStatus.classList.add('hidden'); agentStatus.textContent = ''; }
       this._renderLocalAgentsSection();
+    },
+
+    // #2779: offered only to a user the server lets choose. Painted again by
+    // refresh(), because a cold deep link to #settings/experimental paints
+    // the pane before /api/auth/me has answered.
+    _renderAgentSessionsRow() {
+      const agentRow = document.getElementById('settings-agent-sessions-row');
+      if (agentRow) agentRow.classList.toggle('hidden', !this.state.agentSessionsChoosable);
+      const agentToggle = document.getElementById('agent-sessions-enabled');
+      if (agentToggle) agentToggle.checked = !!this.state.agentSessionsEnabled;
     },
 
     // #907: the machines currently attached to one of this account's dev
@@ -2699,6 +2722,38 @@
         // object has to move with it or the next sheet opened in this same
         // page load would still be missing the row that was just enabled.
         if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
+    },
+
+    // #2779: where new work starts. The server decides who may choose (403
+    // otherwise) and answers with the effective value; a failed save puts
+    // the checkbox back, as the two toggles above do.
+    async _saveAgentSessions(enabled) {
+      const toggle = document.getElementById('agent-sessions-enabled');
+      const status = document.getElementById('agent-sessions-status');
+      const fail = (msg) => {
+        if (toggle) toggle.checked = !!this.state.agentSessionsEnabled;
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/agent-sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled: !!enabled }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return fail(j.error || 'Failed to save.');
+        this.state.agentSessionsEnabled = !!j.enabled;
+        if (toggle) toggle.checked = !!j.enabled;
+        if (typeof App !== 'undefined' && App.user) App.user.agentSessionsEnabled = !!j.enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
         fail(`Network error: ${err.message}`);

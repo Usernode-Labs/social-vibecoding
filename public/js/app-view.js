@@ -4513,6 +4513,11 @@ const AppView = {
   _buildDoorView(item) {
     if (!item || item.source === 'imported') return null;
     if (App.user && Number(item.user_id) === Number(App.user.id)) {
+      // #2779: a change started from an agent session is built from that
+      // conversation, so its owner's door leads back there.
+      if (item.agent_session_id) {
+        return { kind: 'owner', label: 'Continue in agent session', agentSessionId: Number(item.agent_session_id) };
+      }
       return { kind: 'owner', label: ['active', 'paused'].includes(item.status) ? 'Continue building' : 'Open build' };
     }
     return (item.transcript_shared || item.transcript_shared_at)
@@ -4528,6 +4533,14 @@ const AppView = {
   // card now send a reader to the same address. A reader who does not own
   // the session lands on its read-only published chat (`renderDevChatTab`).
   openChangeWorkspace(id) {
+    // #2779: the owner of a change started from an agent session goes back
+    // to that conversation; its own dev chat takes no new messages.
+    const item = typeof AppView._findItem === 'function' ? AppView._findItem('proposal', id) : null;
+    const door = item ? AppView._buildDoorView(item) : null;
+    if (door && door.agentSessionId) {
+      window.location.hash = `#messages/agent/${door.agentSessionId}`;
+      return;
+    }
     AppView.openProposalSession(id);
   },
 
@@ -5238,10 +5251,22 @@ const AppView = {
   // (_setDraft → _restoreDraft on render), exactly like createPrForIssue's
   // #609 flow. A composer that already holds text is never clobbered — the
   // seed is appended below it.
+  // #2779: hand a start to an agent session when the viewer has them on.
+  // True when taken; false leaves the caller to go on as before.
+  _startAgentSession(hint) {
+    const agent = window.UsernodeReact && window.UsernodeReact.agentSession;
+    if (!(App.user && App.user.agentSessionsEnabled === true) || !agent) return false;
+    agent.start(hint);
+    return true;
+  },
+
   async exploreProposalInDevChat(id, btnEl) {
     const pid = parseInt(id, 10);
     const slug = AppView.appData && AppView.appData.slug;
     if (!pid || !slug || typeof DevChat === 'undefined') return;
+    // #2779: with agent sessions on, a conversation with the Mayor opens
+    // focused on this proposal instead of a dev chat seeded with it.
+    if (AppView._startAgentSession({ slug, proposalId: pid, entry: 'proposal' })) return;
     const pr = (AppView._proposals || []).find((p) => p.id === pid)
       // Skip close-issue rows: issues.id can collide with a session id.
       || (AppView._merged || []).find((p) => p.id === pid && p.row_type !== 'close_issue');
@@ -16177,6 +16202,10 @@ const AppView = {
   async createPrForIssue(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug || typeof DevChat === 'undefined') return;
+    // #2779: with agent sessions on, the work starts in a conversation with
+    // the Mayor focused on this request; it links and claims the request
+    // when it starts the change (the user confirms that on a card).
+    if (AppView._startAgentSession({ slug, issueNumber, entry: 'issue' })) return;
     const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
 
     // #287: pass the issue number so the session is persistently linked

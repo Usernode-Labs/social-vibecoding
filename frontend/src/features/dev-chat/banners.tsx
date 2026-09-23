@@ -11,6 +11,7 @@ import {
   CheckLongIcon,
   ClockIcon,
   PlusThinIcon,
+  SparklesIcon,
   SpinnerArcIcon,
   UserCircleIcon,
   WarningTriangleIcon,
@@ -19,6 +20,7 @@ import {
 import { useStoreState } from '../../lib/use-store-state';
 import {
   bannersStore,
+  type AgentSessionBannerView,
   type CreditsBannerView,
   type NewChangeBannerView,
   type SyncBannerView,
@@ -197,10 +199,30 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
   );
 }
 
+// #2779: the owner of a change started from an agent session revises it in
+// that conversation. An anchor: it is a hash navigation.
+function AgentSessionBanner({ b }: { b: AgentSessionBannerView }): ReactNode {
+  return (
+    <div id="dc-agent-session-banner" className={SHELL.violet}>
+      <SparklesIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
+      <span className="text-violet-800 dark:text-violet-200 flex-1">
+        This change belongs to one of your agent sessions. Continue there to revise it.
+      </span>
+      <a
+        href={b.href}
+        className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-500"
+      >
+        Continue
+      </a>
+    </div>
+  );
+}
+
 export function DevChatBanners(): ReactNode {
   const s = useStoreState(bannersStore);
   return (
     <>
+      {s.agentSession ? <AgentSessionBanner b={s.agentSession} /> : null}
       {s.sync ? <SyncBanner b={s.sync} /> : null}
       {s.newChange ? <NewChangeBanner b={s.newChange} /> : null}
       {s.credits ? <CreditsBanner b={s.credits} /> : null}

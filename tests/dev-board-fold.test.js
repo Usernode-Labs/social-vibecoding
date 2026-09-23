@@ -1200,7 +1200,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // #2915, #2919 and #2912 above. Neither set overlaps the other, so the
   // merged manifest holds every one of them: 780 + 1 + 2 + 1 + 1 = 785,
   // leaving 25 slots under the 810 ceiling.
-  assert.equal(DAPP.tests.length, 785);
+  //
+  // 785 → 789: +4 (#2779): an agent session's confirmation card, the
+  // changes drawer, the desktop Messages pane beside its inbox row, and the
+  // Settings switch, on the staging-seeded conversation 990801. 21 slots
+  // left under the ceiling.
+  assert.equal(DAPP.tests.length, 789);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

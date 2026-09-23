@@ -236,6 +236,19 @@ declare global {
         paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
       };
+      /** features/agent-session/store.ts (#2779). */
+      agentSession?: {
+        open(id: number, options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
+        route(id: number, options?: { drawer?: boolean }): Promise<void> | void;
+        start(
+          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
+          options?: { message?: string | null },
+        ): Promise<unknown>;
+        deactivate(): void;
+        isOpen(): boolean;
+        currentId(): number | null;
+        refreshList(): Promise<void> | void;
+      };
       globalChat?: {
         open(options?: { threadId?: string | null }): Promise<void> | void;
         route(threadId?: string | null): Promise<void> | void;

@@ -525,7 +525,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 | 5 | Read-only MCP for the coding agent | `worker_read` minting, `homeroom-read-mcp.js`, Claude and Codex config, the prompt block | None visible | Small to medium |
 | later | Stage 3 and 4 | Flip `AGENT_SESSIONS_DEFAULT`; then remove the classic creation path. Global Chat is decided separately | Everyone | Separate decision |
 
-**Order.** 1 and 2 are independent and can be voted on in parallel. 3 needs both. 4 needs 3. 5 needs 2 and can land any time after it. Step 3 was split in two when it started (3a, then 3b), because the data layer is reviewable on its own and the Mayor turn is the riskiest part of the whole plan. 3b was split again the same way: 3b-i is a Mayor that reads and proposes, 3b-ii is the Mayor that builds.
+**Order.** 1 and 2 are independent and can be voted on in parallel. 3 needs both. 4 needs 3. 5 needs 2 and can land any time after it. Step 3 was split in two when it started (3a, then 3b), because the data layer is reviewable on its own and the Mayor turn is the riskiest part of the whole plan. 3b was split again the same way: 3b-i is a Mayor that reads and proposes, 3b-ii is the Mayor that builds. After 3b-i merged, 3b-ii, 4 and 5 were folded into one proposal, so that the Mayor that builds ships together with the screen that shows it and the reads the coding agent gains from it.
 
 **As built in 3a.**
 
@@ -552,6 +552,41 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - History replays the conversation's last 120 rows. The platform's own events (a change starting, closing, switching; a card's outcome) reach the Mayor as `[HOMEROOM]` notes in the assistant's voice, because the Messages API has no system turn.
 - An hourly sweeper deletes delegations a week after they expired or were revoked, and their token rows with them.
 - Not yet: dispatch, the follow-up turn after a confirmation (the Mayor reads the outcome on the next turn instead), compaction, and the Mayor-internal tools (`web_fetch`, `draft_issue_report`, `get_prod_status`, the reply pills). The prompt tells the Mayor that building from a conversation is not switched on yet.
+
+**As built in 3b-ii, 4 and 5 (one proposal).**
+
+*The Mayor builds (3b-ii).*
+
+- Dispatch is `services/mayor/agent-dispatch.js`. It has no worker of its own: it runs the classic `runScoutTool` and `runClaudeCodeTool` (exported from `routes/sessions.js` as `MAYOR_TURN_DEPS`) on the conversation's active change. The worker, the durable turn record, the PR, staging, checks, the vote revision and the coding agent's spend all stay the change's, exactly as for a classic build.
+- The two dispatch tools are offered only on a round where the active change can take one: it exists, it is not merged or archived, it has a repository, and nothing else is running on it. A parked change is reopened first, through the platform's own `POST /api/sessions/:id/resume` on a one-action `agent_mayor` write grant, so the caps and the LRU pause apply as they do in the browser. `dispatch_coding_agent` takes a prompt only; the model is the change's.
+- A dispatch ends the tool loop. At most one runs per turn, and when the model asks for both, the scout runs. The Mayor's reply so far is recorded before the dispatch starts, so a crash mid-build does not lose it.
+- The run's events reach the conversation (its SSE response and `agent:<id>`) and the change's own channels (its bus key and the global WebSocket), so the change page and the Dev board see a build started from a conversation like any other. `done` and `stopped` go to the change only; `token`, `usage` and `error` stay off the WebSocket, as in a classic turn.
+- The wrap-up is a second Mayor call (`mayor_phase_2`) offered only `suggest_replies`, and it cannot be stopped, as in a classic session. With no payer left, a plain fallback line is recorded instead. The change's durable turn is finished only after the wrap-up (`deferTurnCleanup`), so a restart during the wrap-up is recovered the classic way.
+- Stop: during the Mayor's own rounds, `POST /api/agent-sessions/:id/stop` stops the turn. During a dispatch it answers `{stopped: false, reason: 'dispatch_running', changeId}`, and the client calls the change's own `POST /api/sessions/:changeId/stop`, which keeps its kill confirmation and force escalation. During the wrap-up it answers `wrap_up_not_stoppable`.
+- The turn lease is renewed every minute (`active_turn.renewedAt`), so a build longer than 20 minutes is not taken over. The takeover test reads `COALESCE(renewedAt, startedAt)`.
+- After the user confirms a card, the Mayor takes a follow-up turn on its own. That turn records no user message: the card's outcome is already in the conversation.
+- Compaction (`services/mayor/agent-compaction.js`) runs after a turn when the replayed history passes about 60k tokens (characters / 4). It keeps the last 10 user turns word for word and folds everything older into `agent_sessions.summary_md` with one Mayor-model call. `summary_through_id` only moves forward, through a conditional `UPDATE`. The summary reaches the prompt inside an untrusted-content block.
+- Mayor-internal tools: `web_fetch`, `suggest_replies`, and `get_prod_status` when the active change is eligible for production debug access (an admin's change on the platform app), the same rule a classic session uses. `draft_issue_report` is left out: filing a request from a conversation is `create_request` behind a card.
+
+*The screen (4).*
+
+- `AgentSessionScreen` (`features/agent-session/`) is a React island at `#agent/<id>`. On a desktop the same panel opens in the Messages pane at `#messages/agent/<id>`, and on a phone that address swaps to the full screen. The drawer has its own deep link, `#agent/<id>/changes`. It has its own store, fed by the turn's SSE stream and the conversation's events stream (resumed after a reload), and it hosts no `dev-chat.js`. The transcript rules are one pure module, `transcript.ts`, pinned by `tests/agent-session-ui.test.js`.
+- Header: the focus-app chip, the active-change pill and a Changes button. Transcript: the user's and Mayor's messages, change dividers, confirmation cards with the exact input they will run with (Confirm and Not now), the coding agent's completion, and preview-ready rows. The composer is a plain text box.
+- The changes drawer shows the active change (status, preview, a link to its proposal page) and every earlier change with "Switch to" (`POST /api/agent-sessions/:id/active-change`).
+- Messages lists agent sessions under Agents on the one clock. A classic session row for a change that an agent session started is not listed twice. "+" → "Agent session" starts one, with the flag on.
+- Entry points: Improve's new change, Messages' "+", the dev chat's "New change" banner, a proposal's "Explore" and a request's "Create PR" start an agent session with a hint when the flag is on, and the classic session otherwise.
+- The change page: for the owner of a change an agent session started, the dev chat's composer is replaced by a "Continue in agent session" banner, and the change's door opens the conversation.
+- Settings → Experimental carries the switch, shown only to a user the server says may choose it.
+- Staging seeds one conversation (id 990801, the capture admin's, with a pending `promote_change` card on change 990802), so the `dapp.json` checks can load the card, the drawer, the Messages pane, the inbox row and the switch by address. The seed does not turn the flag on: reading a conversation needs ownership alone. Starting a session from Improve is not a declared check, because a check only loads an address.
+- Not in v1: the focus chip is a label, not a picker (the Mayor changes the focus with `set_focus_app`); the composer has no model picker and no attachments; the drawer links to the change page for the spec, checks and votes rather than embedding the spec viewer and `StagingOverlay`.
+
+*The coding agent reads the platform (5).*
+
+- The `worker_read` grant is minted in `execInWorker` for build and scout turns, not in `buildTurnSecretEnv`, which only carries it. It is bound to the change's owner, the change and its app, with a two-hour backstop expiry, and it is revoked on every exit of the turn. Minting is best effort: without a grant, the agent runs as before.
+- The token reaches the worker only as `HOMEROOM_MCP_TOKEN` in the turn's environment. The bridge's config, `/usr/local/share/usernode/homeroom-mcp.json`, is baked into the image and carries no secret.
+- `worker/homeroom-read-mcp.js` proxies the six `WORKER_READ_TOOLS` to `PLATFORM_URL/mcp`. It drops any other tool the server lists, and it offers no tools at all without an `svmcd_` token.
+- Claude Code: build gets the bridge next to the pinned browser (`--mcp-config` twice, `--strict-mcp-config`); scout gets the bridge alone. Codex: a `[mcp_servers.homeroom]` block, the token excluded from the shell environment policy, a leak guard and output redaction. Log redaction also covers `svmcp_` and `svmcd_` tokens.
+- The build and scout prompts carry a short note naming the six tools, when the turn runs on Homeroom (not on the user's own machine).
 
 **Process.** Each proposal:
 

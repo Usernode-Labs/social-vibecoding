@@ -91,6 +91,8 @@ const App = {
   // Experimental Global Chat (#2543), now a normal routed screen with one
   // stable address per durable session.
   _inGlobalChat: false,
+  // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
+  _inAgentSession: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -3807,6 +3809,7 @@ const App = {
         else if (App._inSettings) App.navigateHome();
         else if (App._inBrowse) App.navigateHome();
         else if (App._inGlobalChat) App.navigateHome();
+        else if (App._inAgentSession) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -3832,7 +3835,7 @@ const App = {
         App.setChromeless(false);
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings || App._inBrowse
-          || App._inGlobalChat) {
+          || App._inGlobalChat || App._inAgentSession) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -4015,7 +4018,9 @@ const App = {
             try {
               history.replaceState(null, '', App._rootUrl(agent.kind === 'chat'
                 ? `#chat/${encodeURIComponent(agent.id)}`
-                : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
+                : agent.kind === 'agent'
+                  ? `#agent/${agent.id}`
+                  : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
             } catch (_) { return; }
             App.restoreFromHash();
             return;
@@ -4048,6 +4053,21 @@ const App = {
         // resumes the most recent one (and creates the first when needed).
         App.setChromeless(false);
         App.navigateToGlobalChat(parts[1] || null);
+        return;
+      }
+      if (parts[0] === 'agent') {
+        // #2779: an agent session, one conversation with the Mayor that works
+        // on any app. Its own screen at #agent/<id> (a phone's surface; a
+        // desktop can also draw it beside the inbox at #messages/agent/<id>).
+        // A serial id, so the same signed-int32 bound as a conversation's.
+        App.setChromeless(false);
+        const agentSessionId = App._numericSegment(parts[1]);
+        if (agentSessionId == null || agentSessionId > 2147483647) {
+          App.navigateToMessages(null);
+          return;
+        }
+        // `#agent/<id>/changes` opens it with the changes drawer up.
+        App.navigateToAgentSession(agentSessionId, { drawer: parts[2] === 'changes' });
         return;
       }
       if (parts[0] === 'topochain') {
@@ -4464,7 +4484,8 @@ const App = {
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen', 'messages-screen', 'global-chat-screen'],
+    'settings-screen', 'messages-screen', 'global-chat-screen',
+    'agent-session-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and publish the incoming screen's default back slot.
@@ -4503,6 +4524,9 @@ const App = {
     App._revealedScreen = revealId;
     if (revealId !== 'global-chat-screen' && App._inGlobalChat) {
       App._exitGlobalChat();
+    }
+    if (revealId !== 'agent-session-screen' && App._inAgentSession) {
+      App._exitAgentSession();
     }
     // The ✕'s remembered origin (App._appReturn) ends with the app visit it
     // was about: every reveal of a screen that is not the app view. `app-view`
@@ -4942,6 +4966,9 @@ const App = {
     // Global Chat (#2543). It is a normal hash-routed screen now, so the
     // router publishes visibility through the same single-owner seam.
     'global-chat-screen',
+    // Agent sessions (#2779): features/agent-session/index.tsx takes
+    // useVisibilityHiddenClass from its first commit, same seam.
+    'agent-session-screen',
     // Workshop (#workshop). React-owned end to end from the day it shipped —
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
@@ -5787,6 +5814,12 @@ const App = {
     if (parts[1] === 'agent' && parts[2]) {
       let id = null;
       try { id = decodeURIComponent(parts[2]); } catch (_) { return null; }
+      // #2779: an agent session's id is a serial; a Global Chat thread's is
+      // a UUID, never all digits. So a number names an agent session.
+      const agentSessionId = App._numericSegment(id);
+      if (agentSessionId != null && agentSessionId <= 2147483647) {
+        return { kind: 'agent', id: agentSessionId };
+      }
       return { kind: 'chat', id };
     }
     if (parts[1] === 'session' && parts[2] && parts[3]) {
@@ -5841,6 +5874,43 @@ const App = {
   _exitGlobalChat() {
     App._inGlobalChat = false;
     window.UsernodeReact?.globalChat?.deactivate?.();
+  },
+
+  // #2779: an agent session's own screen. The same pair as Global Chat's:
+  // the React store (features/agent-session) loads the conversation, and
+  // this router owns the screen swap and chrome. The store retitles the bar
+  // with the conversation's title once it has it.
+  navigateToAgentSession(id, options = {}) {
+    const agentSession = window.UsernodeReact?.agentSession;
+    if (App._inAgentSession && agentSession?.isOpen?.() && agentSession?.currentId?.() === id) {
+      agentSession?.route?.(id, options);
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
+    if (App._inMessages) App._exitMessages();
+    const screen = document.getElementById('agent-session-screen');
+    App._inAgentSession = true;
+    agentSession?.route?.(id, options);
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('agent-session-screen');
+      App._enterScreenChrome();
+      if (typeof Home !== 'undefined') Home.publishImproveTarget();
+      App.setHeaderTitle('Agent session');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  _exitAgentSession() {
+    App._inAgentSession = false;
+    window.UsernodeReact?.agentSession?.deactivate?.();
   },
 
   // The Notifications SHEET's deep-link resolver (Streamlined Concept).
@@ -6500,6 +6570,7 @@ const App = {
     'profile-screen': ['none'],
     'app-view': ['close'],
     'global-chat-screen': ['arrow', '#messages'],
+    'agent-session-screen': ['arrow', '#messages'],
     'leaderboard-screen': ['arrow', '#profile'],
     'settings-screen': ['arrow', '#profile'],
     'admin-screen': ['arrow', '#profile'],
@@ -7108,6 +7179,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
     case 'chat': return 'global-chat-screen';
+    case 'agent': return 'agent-session-screen';
     case 'leaderboard': return 'leaderboard-screen';
     default: return null;                    // #notifications is a sheet over home
   }

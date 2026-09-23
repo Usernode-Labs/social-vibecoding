@@ -37,7 +37,10 @@
  * orders the app channels, and one nobody has spoken in sits at the end.
  */
 
-export type InboxKind = 'person' | 'channel' | 'app' | 'agent' | 'session';
+// `mayor` is an agent session (#2779): a conversation with the Mayor that
+// works on any app, as opposed to `agent` (a Global Chat thread) and
+// `session` (one change's classic dev chat).
+export type InboxKind = 'person' | 'channel' | 'app' | 'agent' | 'session' | 'mayor';
 
 /** Which part of the list an entry is drawn in. */
 export type InboxSection = 'chats' | 'channels';
@@ -108,8 +111,9 @@ export function admits(filter: InboxFilter, kind: InboxKind): boolean {
   if (filter === 'people') return kind === 'person';
   // #general and the app channels are one section, and one filter (#2783).
   if (filter === 'channels') return kind === 'channel' || kind === 'app';
-  // A session is an agent conversation (#2770), so Agents admits both.
-  return kind === 'agent' || kind === 'session';
+  // A session is an agent conversation (#2770), and so is a conversation
+  // with the Mayor (#2779): Agents admits all three.
+  return kind === 'agent' || kind === 'session' || kind === 'mayor';
 }
 
 function stamp(value: string | null | undefined): number {
@@ -141,6 +145,8 @@ export function buildInbox(input: {
   agents: AgentChat[];
   /** Optional so a caller with no Improve store still merges three kinds. */
   sessions?: AgentSession[];
+  /** Agent sessions (#2779), newest activity first like everything else. */
+  mayors?: Array<{ id: number; lastActivityAt: string | null }>;
   filter: InboxFilter;
 }): InboxEntry[] {
   const chats: InboxEntry[] = [];
@@ -173,6 +179,11 @@ export function buildInbox(input: {
   if (admits(input.filter, 'session')) {
     for (const item of input.sessions || []) {
       chats.push({ key: `session:${item.key}`, kind: 'session', section: 'chats', at: item.lastActivityAt || null });
+    }
+  }
+  if (admits(input.filter, 'mayor')) {
+    for (const item of input.mayors || []) {
+      chats.push({ key: `mayor:${item.id}`, kind: 'mayor', section: 'chats', at: item.lastActivityAt || null });
     }
   }
   // Stable within a timestamp: `sort` is stable in every engine this ships

@@ -93,15 +93,27 @@ export interface CreditsBannerView {
   blockedVenue: boolean;
 }
 
+/**
+ * #2779: this change was started from an agent session, and this is its
+ * owner. Its dev chat takes no new messages (the chat route answers 409); the
+ * conversation that started it is where it is revised, so the composer gives
+ * way to this strip.
+ */
+export interface AgentSessionBannerView {
+  /** The conversation's address: `#messages/agent/<id>`. */
+  href: string;
+}
+
 export interface BannersState {
   sync: SyncBannerView | null;
   newChange: NewChangeBannerView | null;
   credits: CreditsBannerView | null;
   creditsLow: CreditsBannerView | null;
+  agentSession?: AgentSessionBannerView | null;
 }
 
 export const NO_BANNERS: BannersState = {
-  sync: null, newChange: null, credits: null, creditsLow: null,
+  sync: null, newChange: null, credits: null, creditsLow: null, agentSession: null,
 };
 
 export const bannersStore = createStore<BannersState>(NO_BANNERS);

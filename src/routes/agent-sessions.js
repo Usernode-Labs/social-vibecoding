@@ -303,6 +303,24 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
+  // POST /api/agent-sessions/:id/active-change { changeId } — the changes
+  // drawer's "Switch to". The same move as the Mayor's switch_active_change
+  // (parks the current change, appends a change_switched note), without
+  // spending a model call on a button press.
+  router.post('/api/agent-sessions/:id/active-change', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Agent session not found' });
+    try {
+      await agentSessions.switchActiveChange(pool, {
+        agentSessionId: id, userId: req.user.id, changeId: (req.body || {}).changeId,
+      });
+      const session = await agentSessions.getAgentSession(pool, { userId: req.user.id, id });
+      return res.json({ session });
+    } catch (err) {
+      return sendError(res, err, 'Switch active change');
+    }
+  });
+
   // The confirmation cards: their state, and the owner's decision.
   router.get('/api/agent-sessions/:id/actions', requireUser, async (req, res) => {
     const id = positiveId(req.params.id);

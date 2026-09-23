@@ -433,3 +433,26 @@ test('stop answers what it stopped, and names the change during a dispatch', asy
     agentTurnMod.stopAgentTurn = saved;
   }
 });
+
+test('the changes drawer switches the active change without a model call', async () => {
+  const agentSessionsMod = require('../src/services/agent-sessions');
+  const saved = agentSessionsMod.switchActiveChange;
+  const switched = [];
+  agentSessionsMod.switchActiveChange = async (_pool, args) => {
+    switched.push(args);
+    if (args.changeId === 99) throw new agentSessionsMod.AgentSessionError(404, 'That change was not started from this conversation.');
+    return { changed: true, change: { id: args.changeId } };
+  };
+  try {
+    await withRoutes({ id: 7 }, { 'FROM agent_sessions s': () => ({ rows: [SESSION_ROW] }) }, async (call) => {
+      const ok = await call('POST', '/api/agent-sessions/5/active-change', { changeId: 50 });
+      assert.equal(ok.status, 200);
+      assert.equal(ok.body.session.id, 5);
+      assert.deepEqual(switched[0], { agentSessionId: 5, userId: 7, changeId: 50 });
+      const refused = await call('POST', '/api/agent-sessions/5/active-change', { changeId: 99 });
+      assert.equal(refused.status, 404);
+    });
+  } finally {
+    agentSessionsMod.switchActiveChange = saved;
+  }
+});
