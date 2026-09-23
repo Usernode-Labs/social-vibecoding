@@ -532,6 +532,31 @@ test('the bar and the rail meet as one surface, squared and ruled', () => {
   assert.match(block, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-folded\)\)/);
 });
 
+test('a hairline rules off Me at the foot of the desktop rail (#2800)', () => {
+  const at = css.indexOf('A HAIRLINE OVER THE FOOT (#2800)');
+  assert.ok(at > 0, 'the rule states its reason');
+  // Inside the desktop block and nowhere else: on a phone Me is the fifth
+  // cell of a row across the foot, and a line over it alone would be wrong.
+  const desktop = css.lastIndexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY', at);
+  assert.ok(desktop > 0, 'the rule lives in the desktop block');
+  assert.equal(css.slice(desktop, at).match(/^}$/m), null,
+    'with no top-level close between the desktop query and the rule');
+  const block = css.slice(at, css.indexOf('\n  }\n', css.indexOf('#platform-parked:not(.hidden)) #platform-tab-me::before', at)));
+  // The shell's own hairline token, so it tracks light and dark with the
+  // rail's border rather than being a new colour.
+  assert.match(block, /#platform-tab-me::before \{[^}]*background-color: var\(--app-sheet-line\);/,
+    'the line is the rail\'s hairline colour');
+  assert.match(block, /#platform-tab-me::before \{[^}]*height: 1px;/, 'and one pixel');
+  assert.match(block, /#platform-tab-me::before \{[^}]*left: -8px;\s*\n\s*right: -8px;/,
+    'across the rail\'s whole inner width, not just the pill');
+  assert.match(block, /#platform-tab-me \{\s*\n\s*position: relative;\s*\n\s*overflow: visible;/,
+    'the tab stops clipping so the line can reach past it');
+  assert.match(block, /body:has\(#platform-parked:not\(\.hidden\)\) #platform-tab-me::before \{\s*\n\s*display: none;/,
+    'and the parked strip, flush on the row with its own hairline, stands in for it');
+  // The label keeps its own clip, which is what still ellipsises a long name.
+  assert.match(css, /\.platform-tab-label \{\s*\n\s*max-width: none;\s*\n\s*min-width: 0;/);
+});
+
 test('the desktop band tokens are not outranked by the phone\'s', () => {
   // `:has()` takes the specificity of its most specific ARGUMENT, so the
   // phone rule — whose argument carries one class more — outranked the

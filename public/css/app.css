@@ -16773,6 +16773,43 @@ html.un-kb #platform-parked {
     bottom: calc(var(--platform-rail-foot-h) + var(--platform-safe-bottom, 0px));
   }
 
+  /* A HAIRLINE OVER THE FOOT (#2800). With Me pushed to the bottom, the
+     account row floated alone under a column of empty rail and read as one
+     more section that had drifted down. The line says what the auto margin
+     means: the places above, the reader below — Slack's and Linear's rails
+     rule off their account row the same way.
+
+     The rail's own hairline, `--app-sheet-line`, drawn across the rail's
+     whole inner width (the 8px padding either side) and 8px above the row,
+     which mirrors the 8px under it. A pseudo-element rather than a
+     `border-top` on the tab: the tab is a 12px-rounded pill, so its own
+     border would curl at both ends and sit flush against the lit tint. That
+     is why the tab gives up its `overflow: hidden` here — the label keeps
+     its own, so a long username still ends in "…".
+
+     NOT UNDER THE PARKED STRIP. That strip rests flush on this row and
+     carries its own hairline on top, so it is already the rule between the
+     sections and the foot; a second line would show through its frosted
+     fill a few pixels inside it. Inside the desktop query only, like the
+     rest of the rail, so the phone's bar is never touched. */
+  #platform-tab-me {
+    position: relative;
+    overflow: visible;
+  }
+  #platform-tab-me::before {
+    content: "";
+    position: absolute;
+    top: -8px;
+    left: -8px;
+    right: -8px;
+    height: 1px;
+    background-color: var(--app-sheet-line);
+    pointer-events: none;
+  }
+  body:has(#platform-parked:not(.hidden)) #platform-tab-me::before {
+    display: none;
+  }
+
   /* A ROW, not a stack: the glyph leads and the label sits beside it at
      reading size. Under a glyph at 11px the word is a caption on a target;
      beside it at 15px it is the name of a place, which is what a rail's
