@@ -719,9 +719,21 @@
       ]
     },
     {
-      "name": "Submit stays dead until a destination is picked (#2707)",
+      "name": "Submit stays pressable while no destination is picked (#2707, #2888)",
       "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)) #feedback-submit:disabled"
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)):has(#feedback-target:not([aria-invalid])) #feedback-submit:not(:disabled)"
+    },
+    {
+      "id": "feedback.destination-missed",
+      "name": "Submit with no destination turns the row red and says why (#2888)",
+      "path": "/?shot=feedback-choose-missed",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target[aria-invalid=\"true\"]):has(#feedback-target-app.\\!border-red-600[aria-checked=\"false\"]) #feedback-target-hint[role=\"alert\"]:not(.hidden)",
+      "expectText": "Choose where this feedback goes",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/dialogs/feedback.tsx",
+        "frontend/src/features/dialogs/feedback-controller.js"
+      ]
     },
     {
       "name": "With only one destination reachable it stays selected and Submit is live (#2707)",
