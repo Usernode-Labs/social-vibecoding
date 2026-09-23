@@ -439,7 +439,7 @@ exit 1
     '',
     '[mcp_servers.playwright]',
     'command = "npx"',
-    'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--config", "/home/node/.usernode-playwright.json"]',
+    'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "/home/node/.usernode-playwright.json"]',
     'startup_timeout_sec = 30',
     'tool_timeout_sec = 60',
     '',

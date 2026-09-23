@@ -2,8 +2,8 @@
 'use strict';
 
 // Image-build smoke test for the exact browser MCP command and flags used by
-// evidence turns. A Chromium launch alone cannot catch a missing MCP binary:
-// Claude and Codex would start without browser tools and fail much later.
+// evidence turns. Listing tools catches a missing MCP binary; calling a
+// browser tool also catches Chromium startup failures in the worker image.
 
 const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -19,12 +19,14 @@ const REQUIRED_TOOLS = [
   'browser_close',
 ];
 
-function listTools(server) {
+function verifyBrowser(server) {
   return new Promise((resolve, reject) => {
     const child = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let output = '';
     let errors = '';
     let settled = false;
+    let tools;
+    let phase = 'tools/list';
     const finish = (error, tools) => {
       if (settled) return;
       settled = true;
@@ -33,9 +35,9 @@ function listTools(server) {
       if (error) reject(error);
       else resolve(tools);
     };
-    const timeout = setTimeout(() => finish(new Error('Browser MCP did not list tools within 15 seconds.')), 15_000);
+    const timeout = setTimeout(() => finish(new Error(`Browser MCP ${phase} timed out after 30 seconds: ${errors.slice(-500)}`)), 30_000);
     child.on('error', (error) => finish(error));
-    child.on('exit', (code) => finish(new Error(`Browser MCP exited before listing tools (${code}): ${errors.slice(0, 500)}`)));
+    child.on('exit', (code, signal) => finish(new Error(`Browser MCP exited during ${phase} (${code ?? signal}): ${errors.slice(-1000)}`)));
     child.stdin.on('error', (error) => finish(error));
     child.stderr.on('data', (chunk) => { errors = (errors + chunk).slice(-2000); });
     child.stdout.on('data', (chunk) => {
@@ -47,9 +49,26 @@ function listTools(server) {
         output = output.slice(end + 1);
         let message;
         try { message = JSON.parse(line); } catch { continue; }
-        if (message.id !== 2) continue;
-        if (message.error) return finish(new Error(`Browser MCP tools/list failed: ${JSON.stringify(message.error).slice(0, 500)}`));
-        return finish(null, message.result?.tools || []);
+        if (message.id === 2) {
+          if (message.error) return finish(new Error(`Browser MCP tools/list failed: ${JSON.stringify(message.error).slice(0, 500)}`));
+          tools = message.result?.tools || [];
+          const names = new Set(tools.map((tool) => tool.name));
+          const missing = REQUIRED_TOOLS.filter((name) => !names.has(name));
+          if (missing.length) return finish(new Error(`Browser MCP is missing tools: ${missing.join(', ')}`));
+          phase = 'browser_tabs';
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: {
+            name: 'browser_tabs', arguments: { action: 'list' },
+          } })}\n`);
+        } else if (message.id === 3) {
+          if (message.error || message.result?.isError) {
+            return finish(new Error(`Browser MCP browser_tabs failed: ${JSON.stringify(message.error || message.result).slice(0, 1200)}; stderr: ${errors.slice(-500)}`));
+          }
+          const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+          if (!response.includes('Open tabs')) {
+            return finish(new Error(`Browser MCP browser_tabs returned no tab listing: ${response.slice(0, 500)}`));
+          }
+          return finish(null, tools);
+        }
       }
     });
     for (const message of [
@@ -83,11 +102,8 @@ async function main() {
     });
     const config = JSON.parse(fs.readFileSync(output, 'utf8'));
     for (const persona of ['browser_member', 'browser_admin']) {
-      const tools = await listTools(config.mcpServers[persona]);
-      const names = new Set(tools.map((tool) => tool.name));
-      const missing = REQUIRED_TOOLS.filter((name) => !names.has(name));
-      if (missing.length) throw new Error(`${persona} is missing browser tools: ${missing.join(', ')}`);
-      process.stdout.write(`${persona}: ${tools.length} MCP tools available\n`);
+      const tools = await verifyBrowser(config.mcpServers[persona]);
+      process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab\n`);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

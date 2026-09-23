@@ -239,7 +239,7 @@ TOML
 [mcp_servers.playwright]
 command = "npx"
 TOML
-    printf 'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
+    printf 'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
     cat <<'TOML'
 startup_timeout_sec = 30
 tool_timeout_sec = 60
@@ -271,7 +271,7 @@ tool_timeout_sec = 720
 [mcp_servers.browser_member]
 command = "mcp-server-playwright"
 TOML
-    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
+    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
     cat <<'TOML'
 enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
 startup_timeout_sec = 30
@@ -280,7 +280,7 @@ tool_timeout_sec = 60
 [mcp_servers.browser_admin]
 command = "mcp-server-playwright"
 TOML
-    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
+    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
     cat <<'TOML'
 enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
 startup_timeout_sec = 30
