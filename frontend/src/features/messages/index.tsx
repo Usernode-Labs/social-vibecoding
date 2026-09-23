@@ -944,8 +944,23 @@ function AppDiscussionThread({ slug }: { slug: string }) {
   const ready = !!context && context.slug === slug;
   const name = ready ? context.name : slug;
   const readOnly = ready ? context.readOnly : false;
-  // The channel's `#handle`, from the list row when the viewer is a member.
-  const handle = snap.discussions.find((item) => item.slug === slug)?.channel || null;
+  // The channel's list row, when the viewer is a member: its `#handle`, and
+  // the app's artwork for the header tile below.
+  const row = snap.discussions.find((item) => item.slug === slug) || null;
+  const handle = row?.channel || null;
+  // THE HEADER DRAWS THE TILE THE ROW DRAWS. It was built from `{ name }`
+  // alone, so `iconViewFor` could only ever fall through to the name's first
+  // letter — a "W" over the Whiteboard channel whose row, one column to the
+  // left, wears the palette emoji. The row's own two fields first, so the two
+  // tiles cannot disagree; the app record the pane fetched (`context`) when
+  // there is no row, as for a discussion opened from a link by a non-member.
+  // Both arrive after the first paint, so the tile starts as the letter it
+  // always was.
+  const iconRecord = {
+    name,
+    icon_url: row ? row.iconUrl : (ready ? context.iconUrl : null),
+    icon_emoji: row ? row.iconEmoji : (ready ? context.iconEmoji : null),
+  };
 
   useEffect(() => {
     const el = host.current;
@@ -998,11 +1013,11 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
         <span
-          data-icon={appIconKind({ name } as never)}
+          data-icon={appIconKind(iconRecord as never)}
           className="app-icon-tile messages-inbox-tile"
           aria-hidden="true"
         >
-          <AppIconContent app={{ name } as never} />
+          <AppIconContent app={iconRecord as never} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="messages-thread-name block">{name}</span>
