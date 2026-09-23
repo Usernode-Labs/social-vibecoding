@@ -356,7 +356,7 @@ function load() {
     // identity variable; nothing reads it, exactly as with
     // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
     // #2819 reviewed MiMo-V2.6-Pro as a replacement on 2026-09-23 and kept
-    // GLM 5.3 Flash; docs/openrouter-agent-defaults.md has the evidence and
+    // GLM 5.3 Flash; docs/coding-agent-defaults.md has the evidence and
     // what would change the answer.
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
     // The effort a coding turn runs at when the session carries no explicit

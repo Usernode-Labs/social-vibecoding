@@ -37,8 +37,8 @@ const { drainGuard } = require('../services/lifecycle');
 const {
   getAppConventions,
   getSelfHostedRefuseList,
-  getOpenRouterDesignGuidance,
-  OPENROUTER_SPEC_DESIGN_BRIEF,
+  getDesignGuidance,
+  SPEC_DESIGN_BRIEF,
 } = require('../services/prompts');
 const {
   IN_LOOP_BROWSER_GUIDANCE,
@@ -12085,8 +12085,8 @@ A read-only helper \`usernode-issues\` is available (run it via Bash) — it pri
   const scoutPlanModeLine = isCodexSession
     ? 'You are running in PLAN MODE: read and search the repository with read-only shell commands (for example `rg`, `ls`, `sed -n`, `cat`), but do not edit, create, delete, commit, or push anything. Do not attempt to: anything this run changes in the repository is discarded when it ends.'
     : 'You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.';
-  // #2817: an OpenRouter scout settles the design decisions in the spec.
-  const scoutDesignBrief = isCodexSession ? `\n- ${OPENROUTER_SPEC_DESIGN_BRIEF}` : '';
+  // #2817: every scout settles the design decisions in the spec.
+  const scoutDesignBrief = `\n- ${SPEC_DESIGN_BRIEF}`;
 
   // Scout-specific prompt. Deliberately omits the platform-conventions
   // block and commit/push instructions used in the build prompt — scout
@@ -13506,17 +13506,24 @@ function buildCodingAgentBuildGuidance({ authoritativeSystemContext = false } = 
 // keep the legacy inline block until their transports have an equivalent,
 // independently verified system-context path.
 //
+// #2817: the UI design guidance (src/prompts/design-guidance.md) travels
+// the same way, right after the conventions, so every backend builds with
+// the same design brief and a hosted Claude session carries one copy of it
+// rather than another per dispatch.
+//
 // Pure and exported for deterministic transport tests.
 function buildCodingAgentConventionsContext({
   runLocally = false,
   isCodexSession = false,
   conventions = getAppConventions(),
+  designGuidance = '',
 } = {}) {
+  const designBlock = designGuidance ? `\n\n${designGuidance}` : '';
   const fullBlock = `==== PLATFORM CONVENTIONS (authoritative) ====
 
 ${conventions}
 
-==== END PLATFORM CONVENTIONS ====`;
+==== END PLATFORM CONVENTIONS ====${designBlock}`;
 
   if (runLocally || isCodexSession) {
     return { promptBlock: fullBlock, systemPrompt: null };
@@ -13527,7 +13534,7 @@ ${conventions}
 
 The complete platform conventions are supplied separately as authoritative
 system instructions for this invocation. They override conflicting personal
-or repository guidance on platform-wide rules.
+or repository guidance on platform-wide rules.${designGuidance ? ' The UI design guidance is supplied\nwith them.' : ''}
 
 ==== END PLATFORM CONVENTIONS ====`,
     systemPrompt: fullBlock,
@@ -13864,11 +13871,6 @@ dispatching user's personal preferences: follow them wherever they don't
 conflict with the platform conventions supplied to this run (which always win)
 or the repo's own \`CLAUDE.md\` on app-specific matters.`
     : '';
-  // #2817: OpenRouter models get the written design brief Claude has never
-  // needed (src/prompts/openrouter-design-guidance.md). Claude prompts stay
-  // byte-identical.
-  const openRouterDesignGuidance = isCodexSession ? getOpenRouterDesignGuidance() : '';
-  const designGuidanceBlock = openRouterDesignGuidance ? `\n\n${openRouterDesignGuidance}` : '';
   const platformIssueHelperNote = isCodexSession
     ? 'The `usernode-report-platform-issue` helper is NOT available on this backend; do not call it.'
     : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the supplied platform conventions. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
@@ -13895,6 +13897,9 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
   const conventionsContext = buildCodingAgentConventionsContext({
     runLocally,
     isCodexSession,
+    // #2817: the same design guidance for every backend. Only its self-check
+    // differs: OpenRouter models read text, Claude reads screenshots.
+    designGuidance: getDesignGuidance({ readsImages: !isCodexSession }),
   });
   const buildGuidance = buildCodingAgentBuildGuidance({
     authoritativeSystemContext: Boolean(conventionsContext.systemPrompt),
@@ -13916,7 +13921,7 @@ The repo's \`CLAUDE.md\` may reference a hosted copy of the platform
 conventions at \`https://${process.env.USERNODE_DOMAIN || 'apps.example.invalid'}/claude.md\` —
 in dev-chat those rules are already supplied by the harness, so ignore
 that instruction here. It's for humans or coding-agent invocations that
-run against this repo outside the harness.${personalFilesNote}${designGuidanceBlock}
+run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
 

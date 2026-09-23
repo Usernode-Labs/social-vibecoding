@@ -1,9 +1,9 @@
-# OpenRouter agent defaults: model and design
+# Coding-agent defaults: OpenRouter model and design guidance
 
-This page records what the OpenRouter coding-agent defaults are and why, so
-the next person who wants to change one starts from what was already
-checked. It covers the default model (#2819) and the design guidance those
-agents are given (#2817).
+This page records two coding-agent defaults and why they are what they are,
+so the next person who wants to change one starts from what was already
+checked: the default OpenRouter model (#2819), and the design guidance every
+coding agent builds with (#2817).
 
 ## Default coding model: GLM 5.3 Flash stays (reviewed 2026-09-23)
 
@@ -60,17 +60,24 @@ $0.40 in `src/services/model-costs.js`. The live OpenRouter catalog is what a
 turn is priced with; the table only feeds estimates when no catalog is at
 hand.
 
-## Design guidance for OpenRouter agents (#2817)
+## Design guidance for every coding agent (#2817)
 
-OpenRouter coding agents receive `src/prompts/openrouter-design-guidance.md`
-in every build prompt, and an OpenRouter scout writes a plain-language
-`### Design` subsection into the spec for anything a person will see
-(`OPENROUTER_SPEC_DESIGN_BRIEF` in `src/services/prompts.js`). Claude prompts
-are unchanged.
+Every build carries `src/prompts/design-guidance.md`, and every scout writes
+a plain-language `### Design` subsection into the spec for anything a person
+will see (`SPEC_DESIGN_BRIEF` in `src/services/prompts.js`). #2817 asked for
+this on OpenRouter agents; Claude gets the same text so the two backends stay
+in parity and a difference in their output reflects the model, not the
+prompt. Hosted Claude receives it as system context next to the platform
+conventions; local Claude and OpenRouter receive it inline with them.
+
+The one line that differs is the self-check. Claude looks at screenshots of
+the changed screens; OpenRouter models are given text input only by the
+Codex runner, so they read the in-loop browser's accessibility snapshot
+instead.
 
 The rules were chosen because they are concrete and checkable in a review,
-which is what makes a written brief work for models that do not bring the
-taste themselves:
+which is what makes a written brief work across models of different
+strength:
 
 - **The app's own kit before anything invented.** Negative instructions
   ("don't use purple") move a model to another fixed palette; an explicit
@@ -85,14 +92,14 @@ taste themselves:
 - **Named tells to avoid** (emoji as icons, ALL-CAPS eyebrows, cards around
   everything, taglines inside an app), each with the kit alternative.
 - **Empty, loading, error and populated states for every data view.**
-- **A self-check that works without images.** The Codex runner gives
-  OpenRouter models text input only, so the check uses the in-loop browser's
-  accessibility snapshot instead of screenshots. Recent UI-generation
-  studies (seen here only as search-result summaries) report self-critique against a
-  written checklist beating the other prompting strategies they tried.
+- **A self-check against the same checklist before committing**, with
+  screenshots for Claude and the accessibility snapshot for text-only
+  OpenRouter models. Recent UI-generation studies (seen here only as
+  search-result summaries) report self-critique against a written checklist
+  beating the other prompting strategies they tried.
 
-Deliberately not changed: reasoning effort (the `xhigh` default from #2600
-still applies) and sampling temperature (Codex does not send one; no evidence
-tied it to design quality). A vision-capable reviewer that checks
-screenshots against the same checklist is the obvious next step, and it
-needs its own proposal.
+Deliberately not changed: reasoning effort (the OpenRouter `xhigh` default
+from #2600 still applies) and sampling temperature (Codex does not send one;
+no evidence tied it to design quality). For OpenRouter, a vision-capable
+reviewer that checks screenshots against the same checklist is the obvious
+next step, and it needs its own proposal.

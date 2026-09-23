@@ -25,6 +25,6 @@ Consistency pass before you commit: compare what you built with the screens arou
 
 Quality floor: works at 360px wide, visible keyboard focus, respects reduced motion, readable contrast. Animate only to show the result of something the user did.
 
-Checking your work: you read text, not images. When the in-loop browser is available, check the running app with its accessibility snapshot (`browser_snapshot`) rather than screenshots. Walk each changed screen at a phone width and a desktop width, including its empty and error states, and confirm: one primary action; headings make sense on their own; no new colours or fonts; nothing boxed in a card that could be plain layout; the same words as the rest of the app. Fix what fails and check again, at most three rounds.
+{{DESIGN_SELF_CHECK}}
 
 ==== END UI DESIGN ====
