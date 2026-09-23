@@ -25,6 +25,7 @@ import './admin-codes.tsx';
 import './admin-featured-apps.tsx';
 import './admin-db-export.tsx';
 import './admin-storage.tsx';
+import './admin-databases.tsx';
 import './admin-model-costs.tsx';
 import './admin-homeroom-bot.tsx';
 import './admin-features.tsx';

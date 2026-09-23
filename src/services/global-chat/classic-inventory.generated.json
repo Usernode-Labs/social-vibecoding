@@ -512,6 +512,48 @@
       "clientReferences": []
     },
     {
+      "source": "src/routes/admin-databases.js",
+      "method": "GET",
+      "path": "/api/admin/database-clusters",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.database.clusters.65fd81bc",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-databases.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin-databases.js",
+      "method": "POST",
+      "path": "/api/admin/database-clusters",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.database.clusters.eb621b9d",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-databases.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
       "source": "src/routes/admin-support.js",
       "method": "GET",
       "path": "/api/admin/support/search",

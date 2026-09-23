@@ -29,6 +29,8 @@ Mayor / Claude Code pipeline that produces real PRs.
 
 Kubernetes operators: start with [Kubernetes operations](docs/kubernetes-operations.md)
 for runtime inventory, logs, failure reporting and release ownership.
+The optional [database control plane](docs/database-control-plane.md) adds a
+separate worker and admin surface for Crossplane-managed preview clusters.
 
 This code supports these deployment paths:
 

@@ -1,0 +1,102 @@
+{{- if and .Values.enabled .Values.databaseControlPlane.enabled }}
+{{- include "social-vibecoding-platform.validate" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.databaseControlPlane.serviceAccountName }}
+automountServiceAccountToken: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-database-worker
+  labels:
+    {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database-worker
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database-worker
+  template:
+    metadata:
+      labels:
+        {{- include "social-vibecoding-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: database-worker
+      annotations:
+        social.usernode.io/source-revision: {{ .Values.release.sourceRevision | quote }}
+    spec:
+      serviceAccountName: {{ .Values.databaseControlPlane.serviceAccountName }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: database-worker
+          image: {{ include "social-vibecoding-platform.image" .Values.platform.image | quote }}
+          command: [node, src/workers/database-worker.js]
+          securityContext:
+            {{- include "social-vibecoding-platform.containerSecurityContext" . | nindent 12 }}
+          env:
+            - {name: NODE_ENV, value: production}
+            - {name: SV_DATABASE_CONTROL_PLANE_ENABLED, value: 'true'}
+            - {name: SV_DATABASE_POLICY_FILE, value: /etc/sv-database/policy.json}
+          ports: [{name: health, containerPort: 3001}]
+          readinessProbe:
+            httpGet: {path: /ready, port: health}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: health}
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.databaseControlPlane.resources | nindent 12 }}
+          volumeMounts:
+            - {name: policy, mountPath: /etc/sv-database, readOnly: true}
+      volumes:
+        - name: policy
+          configMap:
+            name: {{ .Values.databaseControlPlane.policyConfigMap }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-database-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database-worker
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-database-worker-api
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database-worker
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports: [{port: '443', protocol: TCP}, {port: '6443', protocol: TCP}]
+{{- end }}

@@ -10,6 +10,7 @@
   "scripts": {
     "prestart": "node scripts/ensure-shell-artifacts.js --runtime",
     "start": "node server.js",
+    "start:database-worker": "node src/workers/database-worker.js",
     "predev": "node scripts/ensure-shell-artifacts.js --runtime",
     "dev": "node --watch server.js",
     "pretest": "node scripts/ensure-shell-artifacts.js --html-only",
