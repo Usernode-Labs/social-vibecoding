@@ -2385,6 +2385,101 @@ function recoveredAgentIdentity(session, activeTurn = null) {
   };
 }
 
+// Codex owns a durable per-attempt ledger row in addition to active_turn.
+// Once the latter is cleared there is no remaining pointer from recovery to
+// the running attempt, so terminalize it first. A transient ledger failure
+// retains the turn for retry; a missing attempt quarantines it through the
+// same policy used by the stale-turn watchdog.
+async function abandonCodexAttempt(pool, sessionId, turn, { label, errorDetail }) {
+  if (turn?.backend !== 'codex_openrouter' || !turn?.turnUuid) return;
+  const agentTurn = require('./src/services/agent-turn');
+  try {
+    await agentTurn.completeCodexAttempt({
+      pool,
+      turnUuid: turn.turnUuid,
+      status: 'failed',
+      errorCode: 'recovery_abandoned',
+      errorDetail,
+      telemetryComponent: turnLifecycle.phaseOf(turn) === turnLifecycle.PHASE_DISPATCH_PENDING
+        ? null
+        : turn.telemetryComponent || null,
+      telemetryMetrics: {
+        requestMode: turn.telemetryRequestMode || null,
+        requestMessageCount: turn.telemetryRequestTextCharacters == null ? null : 1,
+        requestUserMessageCount: turn.telemetryRequestTextCharacters == null ? null : 1,
+        requestContentBlockCount: turn.telemetryRequestTextCharacters == null ? null : 1,
+        requestTextCharacters: turn.telemetryRequestTextCharacters ?? null,
+        requestUserTextCharacters: turn.telemetryRequestTextCharacters ?? null,
+        requestPayloadCharacters: turn.telemetryRequestTextCharacters ?? null,
+        modelContextWindowTokens: turn.telemetryModelContextWindowTokens ?? null,
+        modelMaxOutputTokens: turn.telemetryModelMaxOutputTokens ?? null,
+      },
+    });
+  } catch (ledgerErr) {
+    const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+      pool,
+      sessionId,
+      activeTurn: turn,
+      error: ledgerErr,
+    });
+    log.error('server', disposition.action === 'retry'
+      ? `${label} Codex turn retained because ledger terminalization failed`
+      : `${label} Codex turn quarantined because its ledger attempt is missing`, {
+      sessionId, err: ledgerErr.message,
+    });
+    throw ledgerErr;
+  }
+}
+
+// A visual-evidence turn cannot outlive the process that dispatched it: its
+// MCP bridge calls back to that process's pod address, and the run it
+// answers to exists only in that process's control registry. Resumed, the
+// agent retries tool calls that can no longer succeed, holding the session
+// busy and spending the user's model credit with no bound. End it instead,
+// without chat narration — evidence turns never write chat rows, and the
+// visual-evidence GC fails the run itself with a retryable reason once the
+// run goes idle.
+async function abandonOrphanEvidenceTurn({
+  pool, sessionId, containerName, activeTurn, containerRunning, retryRuntimeRecovery,
+}) {
+  // A follower promoted to leader recovers its own workers too, and one of
+  // them may be executing an evidence run this process dispatched and still
+  // bounds.
+  if (worker.getActiveTurnMode(sessionId) === 'evidence') {
+    log.info('server', 'Evidence turn is live in this process; leaving it to its run', {
+      containerName, sessionId,
+    });
+    return;
+  }
+  const args = turnCleanupArgs(activeTurn);
+  if (containerRunning) {
+    worker.adoptWarmWorker(sessionId, containerName);
+    await worker.stopTurn(sessionId);
+    // The stop targeted the orphan. Left pending, it would make the next
+    // dispatch — the user's preview retry — skip as stopped during spin-up.
+    worker.clearPendingStop(sessionId);
+    if (await worker.isWorkerExecuting(containerName) !== false) {
+      throw retryRuntimeRecovery('Orphaned visual-evidence turn is not confirmed stopped');
+    }
+  }
+  await abandonCodexAttempt(pool, sessionId, activeTurn, {
+    label: 'Orphaned visual-evidence',
+    errorDetail: 'Visual-evidence turn was abandoned after the platform process that dispatched it exited.',
+  });
+  recoveryRetry.requireDurableTurnCleanup(
+    containerRunning
+      ? await worker.finishTurn(sessionId, args)
+      : await worker.clearActiveTurn(sessionId, args),
+    args,
+  );
+  log.warn('server', 'Abandoned orphaned visual-evidence turn after restart', {
+    containerName, sessionId,
+    turnId: turnLifecycle.turnIdentity(activeTurn),
+    backend: activeTurn.backend || null,
+  });
+  if (!containerRunning) await worker.destroyWorker(containerName);
+}
+
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
   const { name: containerName, sessionId } = orphan;
   let containerState = orphan.state;
@@ -2471,6 +2566,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     if (!['running', 'not_found'].includes(containerState)) {
       throw retryRuntimeRecovery('Kubernetes worker is not ready for recovery');
     }
+  }
+
+  if (session.active_turn?.mode === 'evidence') {
+    await abandonOrphanEvidenceTurn({
+      pool, sessionId, containerName,
+      activeTurn: session.active_turn,
+      containerRunning: containerState === 'running',
+      retryRuntimeRecovery,
+    });
+    return;
   }
 
   // Long-lived worker reality check: a *running* container could be
@@ -2598,50 +2703,10 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // GitHub, and resending buys a duplicate run (see
     // buildCodeLandedBreadcrumb). Say what landed and repair the preview.
     const codeLanded = !!goneTail.sha && goneTail.pushOk === true;
-    // Codex owns a durable per-attempt ledger row in addition to active_turn.
-    // Once the latter is cleared there is no remaining pointer from this
-    // recovery path to the running attempt, so terminalize it first. A
-    // transient ledger failure retains the turn for retry; a missing attempt
-    // quarantines it through the same policy used by the stale-turn watchdog.
-    if (goneTurn?.backend === 'codex_openrouter' && goneTurn?.turnUuid) {
-      const agentTurn = require('./src/services/agent-turn');
-      try {
-        await agentTurn.completeCodexAttempt({
-          pool,
-          turnUuid: goneTurn.turnUuid,
-          status: 'failed',
-          errorCode: 'recovery_abandoned',
-          errorDetail: 'Durable turn was abandoned after its worker container disappeared.',
-          telemetryComponent: turnLifecycle.phaseOf(goneTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
-            ? null
-            : goneTurn.telemetryComponent || null,
-          telemetryMetrics: {
-            requestMode: goneTurn.telemetryRequestMode || null,
-            requestMessageCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
-            requestUserMessageCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
-            requestContentBlockCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
-            requestTextCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
-            requestUserTextCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
-            requestPayloadCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
-            modelContextWindowTokens: goneTurn.telemetryModelContextWindowTokens ?? null,
-            modelMaxOutputTokens: goneTurn.telemetryModelMaxOutputTokens ?? null,
-          },
-        });
-      } catch (ledgerErr) {
-        const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
-          pool,
-          sessionId,
-          activeTurn: goneTurn,
-          error: ledgerErr,
-        });
-        log.error('server', disposition.action === 'retry'
-          ? 'Gone Codex turn retained because ledger terminalization failed'
-          : 'Gone Codex turn quarantined because its ledger attempt is missing', {
-          sessionId, err: ledgerErr.message,
-        });
-        throw ledgerErr;
-      }
-    }
+    await abandonCodexAttempt(pool, sessionId, goneTurn, {
+      label: 'Gone',
+      errorDetail: 'Durable turn was abandoned after its worker container disappeared.',
+    });
     recoveryRetry.requireDurableTurnCleanup(
       await worker.clearActiveTurn(sessionId, turnCleanupArgs(goneTurn)),
       turnCleanupArgs(goneTurn),
