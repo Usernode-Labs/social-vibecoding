@@ -7,17 +7,18 @@
 // iframe's content is included. Two mapping branches, chosen by the
 // surface the browser actually granted:
 //
-//   - 'browser' (tab self-capture; Chromium desktop): the frame IS the
-//     tab viewport at device resolution, so the selection rect maps by a
-//     measured per-axis scale with zero offset.
+//   - 'browser' (tab self-capture; Chromium desktop, which offers it only
+//     when the request carries preferCurrentTab — see displayMediaOptions):
+//     the frame IS the tab viewport at device resolution, so the selection
+//     rect maps by a measured per-axis scale with zero offset.
 //   - 'window' / 'monitor' (all Firefox and desktop Safari can offer):
 //     the frame contains browser chrome / other windows at an unknown
 //     offset+scale. Four QR-finder-style fiducial markers rendered in
 //     the viewport corners are located in a registration frame and an
 //     axis-aligned scale+offset mapping is solved from them; a second,
 //     clean frame (overlay hidden) is then cropped with that mapping.
-//     The registration frame is shot with the page blacked out behind
-//     the markers, so nothing the page draws can pass for one; what the
+//     The registration frame is shot with the page darkened behind the
+//     markers, so nothing the page draws can pass for one; what the
 //     share includes AROUND the page (a tab strip's favicons, toolbar
 //     icons, the dock, another window) can, so the solve accepts extra
 //     candidates and picks the one set of four that agrees with the
@@ -448,6 +449,38 @@
     return seen >= 2;
   }
 
+  // The getDisplayMedia request. `preferCurrentTab`, `selfBrowserSurface`,
+  // `surfaceSwitching` and `monitorTypeSurfaces` are OPTIONS of the call,
+  // not constraints of its video track — they sit beside `video`, never in
+  // it. Nested inside `video` (as they were until #2885) Chromium ignores
+  // them all: instead of the one-click "share this tab" prompt it shows the
+  // full picker, which leaves the current tab out by default, so every
+  // Chrome user had to share a window or the whole screen. That put them on
+  // the marker-registration path below — the page blacked out while it
+  // searched, and "couldn't locate this page" whenever it lost — for a
+  // capture the direct tab mapping takes exactly. Only `displaySurface` is
+  // a track constraint. Browsers without these options ignore them.
+  function displayMediaOptions() {
+    return {
+      video: { displaySurface: 'browser' },
+      audio: false,
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+      surfaceSwitching: 'exclude',
+      monitorTypeSurfaces: 'exclude',
+    };
+  }
+
+  // How dark the page goes behind the markers while a window / screen
+  // share is registered. Not opaque (#2885): at 80% the brightest thing the
+  // page can draw is ~20% luminance, well under the dark/light threshold a
+  // frame with a marker in it binarizes at (its black core and white quiet
+  // zone span the full range), so nothing on the page can form a marker's
+  // light rings — which is all the old solid black bought — while the page
+  // stays visibly there instead of the screen "going black" for the
+  // seconds a slow capturer takes to deliver a frame.
+  const REGISTRATION_VEIL_ALPHA = 0.8;
+
   const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
   const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
 
@@ -478,6 +511,8 @@
 
   const pure = {
     MARKER,
+    REGISTRATION_VEIL_ALPHA,
+    displayMediaOptions,
     MAX_UPLOAD_BYTES,
     markerCssCenters,
     directMapping,
@@ -675,17 +710,7 @@
     // await, preserving the transient user activation.
     let stream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: 'browser',
-          // Chromium hints — safely ignored elsewhere.
-          preferCurrentTab: true,
-          selfBrowserSurface: 'include',
-          surfaceSwitching: 'exclude',
-          monitorTypeSurfaces: 'exclude',
-        },
-        audio: false,
-      });
+      stream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions());
     } catch (err) {
       void err;
       throw fail('denied', 'Screen capture was declined');
@@ -867,17 +892,18 @@
       let regFrameW = null;
       let regFrameH = null;
       if (!tabMode) {
-        // Registration frame: the markers over a blacked-out page. The
+        // Registration frame: the markers over a darkened page. The
         // selection's cut-out showed the page at full brightness here
         // before, and anything it framed with a finder pattern's
         // cross-section — a radio button, a ring icon, a QR code — became
-        // a fifth "marker". With the veil opaque the page contributes
-        // nothing; only the markers, and whatever the share includes
-        // around the page, are left for detection to see.
+        // a fifth "marker". Under the veil the page binarizes as solid
+        // dark and contributes nothing (see REGISTRATION_VEIL_ALPHA); only
+        // the markers, and whatever the share includes around the page,
+        // are left for detection to see.
         selection.style.display = 'none';
         controls.style.display = 'none';
         hint.style.display = 'none';
-        veil.style.background = '#000';
+        veil.style.background = `rgba(0,0,0,${REGISTRATION_VEIL_ALPHA})`;
         await waitFrames(video, 2);
         // One frame is not enough — see registerFromFrames. The first read
         // takes the frame two frames after the veil; each retry waits for the
@@ -891,6 +917,9 @@
           return reg && reg.ctx.getImageData(0, 0, reg.width, reg.height);
         }, markerCssCenters(viewportW, viewportH));
         if (!solved.ok) {
+          // The notice the user sees is one sentence for every reason; the
+          // reason itself is what a bug report needs.
+          console.warn('[screenshot] registration failed:', solved.reason);
           throw fail(solved.reason === 'No video frame available' ? 'capture_failed' : 'register_failed', solved.reason);
         }
         regFrameW = solved.width;

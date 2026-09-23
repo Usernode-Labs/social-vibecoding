@@ -95,6 +95,15 @@
   --dc-strip-fill: rgba(244, 242, 228, 0.38);
   --dc-sheet-fill: rgba(255, 255, 255, 0.50);
   --dc-frost: blur(24px) saturate(1.6);
+  /* FLOATING surfaces are denser (#2887). A pane is glass over the
+     wallpaper, which the platform draws and keeps soft; a dialog or a menu
+     floats over WHATEVER is under it — an app's dark UI, a code block, a
+     photo — and at the pane's alpha that showed through as shapes behind
+     the form's own text. Mostly opaque, still frosted: the blur stays, so
+     the surface keeps its material, and the words stay legible over dark
+     content in both themes. Used by the kit's modal (Send Feedback and
+     every other dialog) and the platform mark's menu. */
+  --dc-float-fill: rgba(255, 255, 255, 0.95);
 
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
@@ -2013,6 +2022,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      differ because the grounds do. */
   --dc-strip-fill: rgba(11, 13, 27, 0.55);
   --dc-sheet-fill: rgba(28, 28, 30, 0.72);
+  --dc-float-fill: rgba(28, 28, 30, 0.95);
   --bg-code: #141416;
   --bg-code-header: #1c1c1e;
   --bg-card: rgba(90, 169, 255, 0.10);
@@ -9148,7 +9158,7 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: transparent;
 }
 .un-modal {
-  background-color: var(--dc-sheet-fill);
+  background-color: var(--dc-float-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
   box-shadow: var(--dc-lift-shadow);
@@ -9184,10 +9194,21 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* The platform mark's menu floats over the app, like a dialog (#2887): the
+   desktop dropdown is the panel itself, and below `sm` the kit's sheet it is
+   adopted into is the surface. Ids / `:has()` outrank `.dc-lift-panel` and
+   `.un-sheet` above; the blur they set is kept. */
+#apps-switcher-sheet,
+.un-sheet:has(#apps-switcher-sheet),
+.un-sheet:has(#apps-switcher-sheet)::after {
+  background-color: var(--dc-float-fill);
+}
 /* NO BLUR, NO GLASS: the kit's opaque surface comes back, in the shell's
    own sheet colour. The scrim is a shadow, not a filter, so it survives. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after {
+  .un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
+  #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
+  .un-sheet:has(#apps-switcher-sheet)::after {
     background-color: var(--dc-sheet);
   }
 }

@@ -1106,7 +1106,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // This branch counted them against an older shared base; main reached 751
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 753);
+  //
+  // 753 → 754: +1 (#2888): Send Feedback pressed with no destination turns
+  // the App/Platform row red. 36 slots left under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 754);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
