@@ -28,6 +28,8 @@
  * console error on any route fails proposal checks. Keep it that way.
  */
 
+import { isEmbeddedPanel } from '../../lib/side-panel-mode';
+
 const KEY = 'usernode_app_mru_v1';
 
 // Long enough that a heavy account's strip is fully ordered, short enough that
@@ -60,7 +62,10 @@ function read(): string[] {
  * happen to go through this menu.
  */
 export function recordAppUse(slug: string): void {
-  if (!slug) return;
+  // Not from the side panel's document (`?panel=1`): showing an app's Workshop
+  // beside another app is not opening it, and this list is the TOP window's
+  // record of which apps this device opens.
+  if (!slug || isEmbeddedPanel()) return;
   try {
     const next = [slug, ...read().filter((s) => s !== slug)].slice(0, CAP);
     window.localStorage.setItem(KEY, JSON.stringify(next));

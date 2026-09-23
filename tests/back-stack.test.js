@@ -191,3 +191,88 @@ test('a history that refuses to be written does not throw into the caller', () =
   assert.equal(stack.size, 0);
   assert.equal(closed, 0);
 });
+
+// ── #2811: a dialog's own traversal must not re-run the page's router ─────
+//
+// Every record here is pushed at the SAME address, so popping one — the
+// release path's history.back() when a dialog closes by ✕ / Cancel / its own
+// timer, or a back press the dialog consumes — lands where the page already
+// is. Letting that popstate through re-ran `App._routeFromHash`, which on a
+// dev session page rebuilds `#dev-section` from scratch: the transcript
+// blanked for a few hundred ms every time the Send feedback dialog closed
+// after filing an issue. `handlePopstate` is what the capture-phase listener
+// asks before stopping the event.
+
+/** The fixture above, plus an address a test can move. */
+function fixtureAt(href) {
+  const f = fixture();
+  f.win.location = { href };
+  return f;
+}
+
+test('#2811: a release spending its own record is reported as in place', () => {
+  const f = fixtureAt('https://x.test/app/demo/dev/sessions/1');
+  const release = f.stack.push(() => {});
+  let verdict;
+  // The browser fires popstate for the release's history.back(); route it
+  // through handlePopstate, as the shell's listener does.
+  f.win.history.back = () => {
+    f.pushes.pop();
+    verdict = f.stack.handlePopstate();
+  };
+
+  release();
+
+  assert.equal(verdict, true,
+    'closing a dialog must not re-run the router at the address it is already on');
+  assert.equal(f.stack.size, 0);
+});
+
+test('#2811: a back press a surface consumes is reported as in place', () => {
+  const f = fixtureAt('https://x.test/app/demo/dev/sessions/1');
+  let closed = 0;
+  f.stack.push(() => { closed += 1; });
+  f.pushes.pop();
+
+  assert.equal(f.stack.handlePopstate(), true);
+  assert.equal(closed, 1, 'the press still closes the surface');
+});
+
+test('#2811: an unclaimed press still reaches the router', () => {
+  const f = fixtureAt('https://x.test/app/demo/workshop');
+  assert.equal(f.stack.handlePopstate(), false,
+    'with nothing open, back is navigation and the page must see it');
+});
+
+test('#2811: a traversal that moved the address is passed on', () => {
+  // Something navigated while the dialog was open, so the release's
+  // history.back() lands on a different address — there IS a route to
+  // restore, and swallowing it would leave the screen out of step with the URL.
+  const f = fixtureAt('https://x.test/app/demo/dev/sessions/1');
+  const release = f.stack.push(() => {});
+  let verdict;
+  f.win.history.back = () => {
+    f.pushes.pop();
+    f.win.location.href = 'https://x.test/app/demo/workshop';
+    verdict = f.stack.handlePopstate();
+  };
+
+  release();
+
+  assert.equal(verdict, false);
+});
+
+test('#2811: a host with no address never swallows a popstate', () => {
+  const { stack } = fixture();
+  stack.push(() => {});
+  assert.equal(stack.handlePopstate(), false);
+});
+
+test('#2811: the shell listener runs first and stops an in-place traversal', () => {
+  // Capture phase, so it precedes App's bubble-phase popstate listener on
+  // window regardless of which script registered first.
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'frontend/src/lib/back-stack.ts'), 'utf8');
+  assert.match(src,
+    /addEventListener\('popstate', \(event\) => \{\s*if \(shared\?\.handlePopstate\(\)\) event\.stopImmediatePropagation\(\);\s*\}, true\);/);
+});

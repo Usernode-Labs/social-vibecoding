@@ -1112,6 +1112,16 @@
       "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
     },
     {
+      "name": "Inside a dark app the Homeroom menu takes the app's dark palette too, not the viewer's light mode (#2803)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet.dark.platform-app-tone-dark"
+    },
+    {
+      "name": "A light app under the dark shell leaves the Homeroom menu in the shell's own dark mode (#2803)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet:not(.platform-app-tone-dark)"
+    },
+    {
       "id": "app-tone.cover-ink-dark",
       "name": "Inside a dark app the launch cover is inked for the ground it sits on, not for the shell's theme (#2704)",
       "path": "/?shot=app-tone-dark",
@@ -2780,12 +2790,17 @@
     {
       "name": "The menu's destination order: platform, then you (#1443)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop + #platform-recents + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] #platform-tabs-badge"
+    },
+    {
+      "name": "#2824: the lit tab carries the sliding blue marker, measured behind it",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs:has(> .platform-tabs-marker[data-marker-at][aria-hidden=\"true\"] + #platform-tab-home) #platform-tab-home[aria-current=\"page\"]"
     },
     {
       "name": "#2760: the fifth tab is named after the signed-in user instead of \"Me\", on the phone bar and the desktop rail alike",
@@ -3765,10 +3780,10 @@
       "expectText": "Resets Monday 00:00 UTC"
     },
     {
-      "name": "First-use dev chat explains how to leave and return through Improve (#1595)",
+      "name": "First-use dev chat explains how to leave and return through Messages (#1595, #2718)",
       "path": "/?shot=dev-chat-first-use#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-return-hint #dc-return-hint-dismiss",
-      "expectText": "You can leave this page and return anytime. Open Improve"
+      "expectText": "You can leave this page and return anytime. Open Messages"
     },
     {
       "name": "Out of weekly credits: the chat offers every way to keep building (#967, #1049, #1086)",
@@ -4797,6 +4812,26 @@
       "name": "Folded-sidebar peek (#2764): the sidebar toggle sits in the header's left corner above the rail it controls, starting open, with the edge hot zone absent until the rail is folded",
       "path": "/?demo=1",
       "expectSelector": "body:has(#platform-tabs[aria-label=\"Sections\"]:not(.platform-tabs-folded)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-controls=\"platform-tabs\"][aria-pressed=\"true\"]"
+    },
+    {
+      "name": "Side panel beside a running app: its host ships hidden and frameless right after the app view, its header row carrying Expand and Close",
+      "path": "/?demo=1",
+      "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden:not(:has(iframe)) > .side-panel-head > #side-panel-expand[aria-label=\"Open full width, leaving the app\"] + #side-panel-close[aria-label=\"Close panel\"]"
+    },
+    {
+      "name": "Side panel: a panel=1 address opened in a window of its own is the ordinary platform, with its header, its sidebar and the screen it names",
+      "path": "/?demo=1&panel=1#messages",
+      "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
+    },
+    {
+      "name": "#2802: the desktop rail's Recents sits between Workshop and Me, labelled by its heading",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
+    },
+    {
+      "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-header:has(#sidebar-toggle[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])) #notifications-btn[class*=\"hover:bg-[color:var(--brand-tint)]\"]:not([class~=\"bg-[color:var(--brand-tint)]\"])"
     }
   ],
   "governance": {

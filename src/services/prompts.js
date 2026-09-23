@@ -288,7 +288,7 @@ function getLaunchpadInstructions({ appName, slug, targetProposalId } = {}) {
   // USERNODE_DOMAIN getAppConventions() resolves, falling back to the hosted
   // platform where it is unset (local dev, tests) because a chat cannot use
   // a relative path.
-  const origin = platformOrigin() || 'https://my.onhomeroom.com';
+  const origin = platformOrigin() || 'https://app.onhomeroom.com';
   const continuing = Number.isInteger(Number(targetProposalId)) && Number(targetProposalId) > 0;
   return [
     `You are making a change to "${name}" on Homeroom (app \`${slug}\`).`,

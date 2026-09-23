@@ -287,7 +287,11 @@
 // what names them in its <head>: a client serving the v34 copy would keep
 // linking a favicon and touch icon the server no longer has. Per v10 the
 // retirement ships with the change, and it drops the old pictures too.
-const SW_VERSION = 'v35';
+//
+// v36 (home-screen icon on black): the same mark, now cream on a black tile
+// after feedback, so it moves again, /icons/v2/ to /icons/v3/, for the
+// reason v35 gives — and the cached /index.html names the v2 favicon.
+const SW_VERSION = 'v36';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -610,9 +614,9 @@ const SHELL_ASSETS = [
   // too, and moved in the same chunk. Only the shared event RULES they read
   // (topochain-events.js, above) are still a classic script.
   '/manifest.webmanifest',
-  '/icons/v2/icon-192.png',
-  '/icons/v2/icon-512.png',
-  '/icons/v2/icon-maskable-512.png',
+  '/icons/v3/icon-192.png',
+  '/icons/v3/icon-512.png',
+  '/icons/v3/icon-maskable-512.png',
   // The signed-out landing's illustration. Unlike the challenge artwork that
   // deliberately stays on the network (see the classify tests), this one has no
   // fallback to draw in its place, and it is the first thing a visitor who has

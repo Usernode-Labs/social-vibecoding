@@ -537,6 +537,7 @@ function load() {
         enforce: false,
         maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 720_000, 60_000),
         maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 240_000, 30_000),
+        maxRepairAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_REPAIR_AGENT_MS', 120_000, 30_000),
         failedMetadataRetentionDays: boundedInt('VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),
         failedArtifactRetentionHours: boundedInt('VISUAL_EVIDENCE_FAILED_ARTIFACT_RETENTION_HOURS', 24, 1),
       };

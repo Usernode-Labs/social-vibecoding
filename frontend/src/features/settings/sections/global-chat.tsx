@@ -186,7 +186,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
                 Enable experimental Global Chat
               </span>
               <span id={`${idPrefix}-enabled-description`} className="mt-1 block text-sm text-zinc-600 dark:text-zinc-400">
-                Show the New chat entry in Improve. Classic remains the default experience.
+                Show your Global Chat conversations in Messages. Classic remains the default experience.
               </span>
             </span>
             <Switch

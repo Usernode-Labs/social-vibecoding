@@ -25,7 +25,7 @@ function harness(globals = {}) {
   const backdrop = { getAnimations: () => [] }, paint = { style: {} };
   class Observer {
     constructor(fn) { this.fn = fn; observers.push(this); }
-    observe() {}
+    observe(target, opts) { this.target = target; this.opts = opts; }
     disconnect() { this.disconnected = true; }
   }
   const sandbox = {
@@ -101,6 +101,43 @@ test('without a document the paint height is innerHeight, as before', () => {
   h.style.visibility = 'visible';
   h.observers[0].fn(); h.frame();
   assert.match(h.paint.style.background, /0px 0px \/ 80px 800px no-repeat/);
+  h.detach();
+});
+
+test('the cutout is placed relative to the paint layer\'s own box (#2822)', () => {
+  // The layer reaches a viewport above and below its fixed box (app.css), and
+  // with the keyboard up iOS can report both rects shifted: measuring the
+  // layer too keeps the hole on the dialog whatever the offset is.
+  const h = harness();
+  h.paint.getBoundingClientRect = () => ({ left: 0, top: -800, right: 400, bottom: 1600, width: 400, height: 2400 });
+  h.style.visibility = 'visible';
+  h.surface.getBoundingClientRect = () => ({ left: 16, top: 300, right: 384, bottom: 600, width: 368, height: 300 });
+  h.observers[0].fn(); h.frame();
+  const paint = h.paint.style.background;
+  assert.match(paint, /0px 0px \/ 400px 1100px no-repeat/, 'dim from the layer\'s top down to the dialog');
+  assert.match(paint, /0px 1400px \/ 400px 1000px no-repeat/, 'and from under it to the layer\'s foot');
+  assert.match(paint, /0px 1100px \/ 16px 300px no-repeat/, 'the gutter beside it, in layer coordinates');
+  h.detach();
+});
+
+test('a keyboard change on <html> re-measures an open dialog (#2822)', () => {
+  // --un-kb-inset and --platform-vv-top MOVE the dialog without resizing it.
+  const root = { clientHeight: 800 };
+  const h = harness({ document: { documentElement: root } });
+  const rootObserver = h.observers[2];
+  assert.equal(rootObserver.target, root);
+  assert.deepEqual([...rootObserver.opts.attributeFilter], ['style', 'class']);
+  rootObserver.fn();
+  assert.equal(h.callbacks.size, 0, 'nothing while closed');
+  h.style.visibility = 'visible';
+  h.observers[0].fn(); h.frame();
+  let moved = 0;
+  h.surface.getBoundingClientRect = () => { moved++; return { left: 80, top: 200, right: 400, bottom: 800, width: 320, height: 600 }; };
+  rootObserver.fn(); h.frame();
+  assert.equal(moved, 1);
+  assert.match(h.paint.style.background, /0px 0px \/ 400px 200px no-repeat/, 'the hole moved with the dialog');
+  h.events.get('window:scroll')(); h.frame();
+  assert.equal(moved, 2, 'a page scroll while it is open re-measures too');
   h.detach();
 });
 

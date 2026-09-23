@@ -61,9 +61,22 @@ const Profile = {
   _loading: false,
   _targetUsername: null,
   _loadToken: 0,
-  // { ranking, breakdown, completed, season } — kept across open/close so
-  // re-entering the screen paints instantly, then refreshes.
+  // What the screen is showing: { ranking, breakdown, completed, season, … }
+  // for the viewer's own profile, or one of the public/signed-out/error
+  // shapes. Reset on every open() — see _ownCache for what survives.
   _data: null,
+
+  // The viewer's OWN last loaded profile, kept across open/close so going
+  // back to the Me tab paints it at once and refreshes underneath (#2777).
+  // The comment on `_data` used to promise exactly this, but open() nulled
+  // `_data` first, so every visit showed the skeleton until four requests
+  // came back. Keyed by username: a cache for someone else — after a sign-out
+  // and a different sign-in in the same page — is never shown. Only the own
+  // screen is cached; a public #profile/<name> page always loads fresh, so it
+  // can never flash one person's figures under another's name. Rank, points
+  // and tokens may be stale for the length of one refresh; that is the trade.
+  // { username, data } | null
+  _ownCache: null,
 
   // The token figure stays blurred until the user taps "Reveal" once;
   // mirrors the native TokenAllocationReveal acknowledgement.
@@ -123,15 +136,34 @@ const Profile = {
   },
 
   async open(targetUsername = null) {
+    // One entry into #profile reaches here TWICE: popstate and hashchange both
+    // run restoreFromHash, and the second run finds the screen mounted and
+    // goes through App._routeMountedProfile, which opens it again. That used
+    // to start a second full load while the first was still in flight —
+    // every request of the screen twice per visit, the two all-user ranking
+    // queries slowing each other down (#2777). Same target, load already
+    // running: that load is the answer.
+    if (Profile._open && Profile._loading
+        && (targetUsername || null) === Profile._targetUsername) {
+      return;
+    }
     Profile._open = true;
     Profile._targetUsername = targetUsername || null;
-    Profile._data = null;
+    Profile._data = Profile._targetUsername ? null : Profile._cachedOwnData();
     Profile._render();
     const token = ++Profile._loadToken;
     await Profile._load(token);
     if (Profile._open && token === Profile._loadToken && !Profile._targetUsername) {
       Profile._maybeOpenShot();
     }
+  },
+
+  // The cached own profile, only if it belongs to whoever is signed in now.
+  _cachedOwnData() {
+    const cache = Profile._ownCache;
+    const username = Profile._user().username;
+    if (!cache || !username || cache.username !== username) return null;
+    return cache.data;
   },
 
   close() {
@@ -189,27 +221,30 @@ const Profile = {
       // The 401 branch below still covers a session that expired while
       // the screen was open.
       if (window.App && !App.user) {
+        Profile._ownCache = null;
         Profile._data = { signedOut: true };
         return;
       }
+      // The username this load is FOR, captured before any await: the cache
+      // entry is written under it, so a sign-in that changes mid-flight can
+      // never file one person's figures under another's name.
+      const username = Profile._user().username || null;
       // Scope the score header to the active season, like the challenges
       // screen. (The completed list resolves its own season SERVER-side —
       // see fetchProfileSeason — because the strict "running right now"
       // rule would return nothing between seasons.)
-      const seasonsRaw = await Profile._fetchJson('/challenges-api/seasons');
-      const seasons = Array.isArray(seasonsRaw)
-        ? seasonsRaw
-        : (seasonsRaw && seasonsRaw.seasons) || [];
-      const active = seasons.find((s) => s.is_active) ||
-        seasons[seasons.length - 1] || null;
-      const seasonId = active ? (active.season_id ?? active.id) : null;
-      const seasonQS = seasonId != null ? `?season_id=${seasonId}` : '';
-
+      //
+      // `season_id=active` has the server pick that season (#2777). This
+      // used to be a separate first round: await all of /challenges-api/
+      // seasons — every season's events, challenges and onboarding — to
+      // read one id off it, and only then start the four requests below.
+      // The breakdown asks for neither activities nor challenge progress:
+      // this screen draws one row per event from its name and points.
       const [ranking, breakdown, completed, ownerPublicProfile] = await Promise.all([
-        Profile._fetchJson(`/challenges-api/me/ranking${seasonQS}`),
+        Profile._fetchJson('/challenges-api/me/ranking?season_id=active'),
         Profile._fetchJson(
-          '/challenges-api/me/breakdown?include_activity=1' +
-          (seasonId != null ? `&season_id=${seasonId}` : ''))
+          '/challenges-api/me/breakdown?season_id=active'
+          + '&include_activity=0&include_progress=0')
           .catch(() => null),
         // The viewer's OWN completions. Non-fatal: a failure leaves the
         // rest of the screen intact and the section shows its empty state.
@@ -217,15 +252,27 @@ const Profile = {
         Profile._fetchJson('/api/me/public-profile').catch(() => null),
       ]);
 
-      if (token !== Profile._loadToken || Profile._targetUsername) return;
-      Profile._data = {
-        season: active,
+      // Written before the staleness check: a load that finished after the
+      // screen was left, or overtaken by a public profile, is still the
+      // freshest copy of this user's own profile for the next visit.
+      const data = {
+        // Only the season's name is read from this (as a fallback for the
+        // header); the ranking already carries the season it scoped to.
+        season: ranking && ranking.scope === 'season'
+          ? { season_id: ranking.season_id, name: ranking.season_name }
+          : null,
         ranking,
         breakdown,
         completed,
         ownerPublicProfile,
       };
+      if (username) Profile._ownCache = { username, data };
+      if (token !== Profile._loadToken || Profile._targetUsername) return;
+      Profile._data = data;
     } catch (err) {
+      // A 401 means the session is gone whichever load noticed it, so the
+      // cached copy goes even when this load has been overtaken.
+      if (err && err.status === 401) Profile._ownCache = null;
       if (token !== Profile._loadToken) return;
       if (err && err.status === 401) {
         // Not signed in (or the session lapsed) — a normal state, not a
