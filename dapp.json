@@ -1158,16 +1158,16 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "The Create app section sits below the grid and opens the create flow",
+      "name": "Create an app is the launcher grid's last tile, not a section below Challenges (re-pointed: Create moved into the grid)",
       "path": "/?demo=1&shot=create-enabled",
-      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"flex-row\"]",
-      "expectText": "Create app"
+      "expectSelector": "#home-body:not(:has(#home-create-section)) #home-apps-section #app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
+      "expectText": "Create an app"
     },
     {
-      "name": "The Create app widget is present but locked without app quota",
+      "name": "The Create an app tile is present but locked without app quota, still last in the grid (re-pointed: Create moved into the grid)",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn:not([disabled])",
-      "expectText": "Create app"
+      "expectSelector": "#app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"false\"]:last-child:not([disabled])",
+      "expectText": "Create an app"
     },
     {
       "name": "Discover is one flat lane: curated cards then popular, with no sub-group label",

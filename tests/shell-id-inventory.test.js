@@ -58,6 +58,11 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Create moves into the launcher grid (the prototype's scrHome) ─
+  // Never in the frozen baseline — THE UI OVERHAUL added it through
+  // ADDED_IDS — so it leaves that map and is recorded here instead, which
+  // also puts it under the dereference guard at the bottom of this file.
+  'home-create-section': 'Home\'s fourth area, a full-width "Create app" card in a section of its own below Challenges. Create is the launcher grid\'s trailing tile now (#home-create-tile, features/home/create-tile.tsx), rendered inside #app-list on the first grid paint, so it is not in the prerendered shell. It keeps `data-panel-slot="create"` and `data-create-enabled`, the hooks the declared checks select on; the welcome tour\'s create step points at the tile.',
   // ── #2568: the included key is not claimed, it is created ────────
   // Every account is created with its included OpenRouter key, so the
   // three ids that existed to ASK for one have nothing left to do. The
@@ -694,11 +699,12 @@ const ADDED_IDS = {
   // The last three were draggable widgets on the launcher canvas; each is a
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
-  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the other three.',
+  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
   'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
   'home-discover-section': 'Area 2: featured tiles, the Popular lane and the way into the app directory.',
   'home-challenges-section': 'Area 3: the season\'s open challenges, and under them the leaderboard standings the retired #drawer-row-leaderboard used to point at.',
-  'home-create-section': 'Area 4: the create-an-app block, on every home screen regardless of quota.',
+  // #home-create-section (area 4) left this map when Create moved into the
+  // launcher grid; it is recorded in RETIRED_IDS.
   // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
   // running page: admin-console.js._renderShell() has always created them, by
   // writing #admin-root.innerHTML on every open. They are new to

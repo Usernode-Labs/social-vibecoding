@@ -122,7 +122,8 @@ const OWNED = [
   { sel: '#home-widget-strip-section' },     // features/home/widget-strip.tsx
   { sel: '#home-discover-section' },         // features/home/panels/sections.tsx
   { sel: '#home-challenges-section' },       // ditto
-  { sel: '#home-create-section' },           // ditto
+  // #home-create-section is gone: Create is #app-list's trailing tile now
+  // (features/home/create-tile.tsx), inside the host already listed above.
   // The Challenges pane (features/leaderboard/challenges-pane.tsx). Scoped to
   // its route: #challenges-root is only mounted — and only React's — while the
   // Leaderboard screen's Challenges tab is the section on screen.
