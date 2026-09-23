@@ -120,6 +120,10 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'cli_auth_rate_limits',
   'mcp_clients',
   'mcp_auth_audit_events',
+  // Delegated connector grants (#2779): who holds a grant, of which kind, for
+  // which change, and until when. The bearer itself lives in mcp_tokens,
+  // whose hash and hint stay masked.
+  'mcp_delegations',
   'user_agent_files',
   'profile_reports',
   // Lifecycle rows without bearer/envelope material. Opaque ids, public

@@ -188,6 +188,8 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
 
 The model can never confirm its own write, and text like "yes" in the chat is not a confirmation.
 
+As built in proposal 2, the storage-independent half is `services/confirmations`: token minting, normalization, sealing and the expiry bounds. Global Chat's `actions.js` now uses it and keeps its own table and thread check. Proposal 3 adds an agent-session table the same way, so every statement stays static. The tools that need a card are listed in `MAYOR_CONFIRMED_TOOLS` (`mcp-audiences.js`).
+
 ### Prompt
 
 A new `getAgentMayorPrompt`, with shared blocks moved out of the classic prompt:
@@ -243,8 +245,15 @@ The hosted Homeroom connector becomes the single toolset (D2). It gains a few na
 | Tool | Backed by | Notes |
 | --- | --- | --- |
 | `get_change {changeId}` | New JSON projection of a `chat_sessions` row: status, PR, staging, checks, `nextStep` | The in-platform twin of the CLI's `proposal_status` |
-| `start_change {slug, title, linkedIssues?}` | Session creation, pulled out of `POST /api/apps/:slug/sessions` into a service | `agent_mayor` only. Sets `agent_session_id`, parks the previous active change, enforces caps. |
+| `start_change {slug, title, linkedIssues?}` | A loopback to `POST /api/apps/:slug/sessions`, then `PATCH …/title` and `PATCH …/linked-issues` | `agent_mayor` only. The route keeps its caps and its claim of the first request. Proposal 3 has the route read `req.mcpDelegation` to set `agent_session_id` and park the previous active change. |
 | `promote_change`, `recheck_change`, `sync_change`, `withdraw_change` | Existing `/promote`, `/recheck`, `/sync-main`, `/archive` routes | `recheck` is safe for `external`; the rest are `agent_mayor` only in v1 |
+
+**As built in proposal 2.**
+
+- Every tool is a loopback to the route the change page's own buttons call, like the rest of `mcp-tools.js`, so ownership, caps and state checks stay in the routes. This replaces the earlier plan to pull session creation out into a service.
+- `get_change` reads `GET /api/sessions/:id` plus the live half of `GET /api/sessions/:id/status` (whether a turn or a sync is running).
+- Its `nextStep` is worded for the caller. The Mayor is told to dispatch the coding agent or call the change tools. The worker is told what to fix in its own turn. An external client is pointed at the change's page.
+- `recheck_change` joins the external route allowlist (`POST /api/sessions/:id/recheck`) and `ACTING_TOOLS`.
 
 `dispatch_scout` and `dispatch_coding_agent` stay Mayor-internal instead of MCP tools. They stream a long SSE turn into the conversation, spend credits, and have no use outside the Mayor. Making them MCP tools would need a new non-streaming "dispatch, then poll" route, which v1 does not need.
 
@@ -257,11 +266,24 @@ The hosted Homeroom connector becomes the single toolset (D2). It gains a few na
 - Delegated grants are left out of `/api/me/connectors` and the dev-flow connector count.
 - Lifetimes: `agent_mayor` read tokens last one turn (at most 15 min). Write tokens are one-shot, minted when the user confirms and revoked right after. `worker_read` lasts one build turn.
 
+**As built in proposal 2.**
+
+- Delegated tokens have their own prefix, `svmcd_`, where consented tokens use `svmcp_`. The gates decide on the shape before any lookup. `authenticateConnector` then refuses a token whose shape and grant disagree, in either direction.
+- The synthetic client ids are `homeroom:agent_mayor` and `homeroom:worker_read`.
+- Liveness means:
+  - the token row and the delegation are both unrevoked and unexpired;
+  - when the delegation names a change, the change is still the user's and still in the named app;
+  - the change's status is `active` or `promoted` for a worker, or `active`, `paused`, `promoted` or `merging` for the Mayor.
+- `agent_session_id` has no foreign key yet. Proposal 3 adds the constraint with the `agent_sessions` table, and adds agent-session liveness to the same join.
+- A grant bound to an app is held to it. Every `:slug` must be that app, and every `:id` must be a change in it. A Mayor grant bound to one change may touch only that change. The bearer chain sets `req.mcpDelegation` for the routes.
+- Nothing issues a delegation in proposal 2. Proposal 3 starts issuing them, and adds a sweeper for expired delegation and token rows at the same time.
+
 ### How the Mayor calls it
 
 - The Mayor calls the MCP inside the server process, over the SDK's `InMemoryTransport` (SDK 1.30.0; `tests/connector-setup-hint.test.js` already wires it up). Each turn it builds `registerTools(server, ctx)` with the delegated token and `baseUrl = http://127.0.0.1:<port>`, as Global Chat does. Loopback calls then land on the same pod instead of the k8s Service.
 - The in-process path repeats the two edge duties it skips: the `token_used` audit row, and a rate bucket per agent session.
 - MCP tool definitions are translated into Anthropic and OpenRouter tool schemas for the Mayor loop.
+- Found while testing proposal 2: the SDK's `Client.callTool` checks `structuredContent` against the tool's output schema even on an error result. `toolError` results never match that schema, so the in-process client must send `tools/call` through `client.request` with `CallToolResultSchema` and read `isError` itself.
 
 ### Charter variants
 
@@ -269,10 +291,13 @@ The hosted Homeroom connector becomes the single toolset (D2). It gains a few na
 - The `agent_mayor` and `worker_read` variants drop the text written for a human-driven client: fork checkouts, relaying work orders, the 2048-character cap and setup tips.
 - The conventions preamble flips for workers: the “don't `git push`” and “in-loop browser” sections *do* apply to them.
 - The existing character-budget test covers every variant.
+- As built: the external charter, its instructions and its section list are unchanged. Four existing sections are tagged for every kind: what Homeroom is, the conventions pointer, and the two safety clauses. Each delegated kind adds its own sections: the Mayor's role, its confirmation rule and its change lifecycle; the worker's read-only role. `mcp-audiences.js` holds which tools each kind sees. An unknown kind sees no tools and reads no charter.
 
 ### Environment gates
 
 `/mcp` and the loopback chain return 404 on staging and when `cliAuthEnabled` is off. Delegated tokens must work in both cases. Without that, the platform's own staging previews could not exercise agent sessions, and proposal checks run there. The external OAuth surface keeps its gates.
+
+As built, the gate lets exactly two things through, both decided on the bearer's shape: `POST /mcp` with an `svmcd_` bearer, and an `svmcd_` bearer on the loopback API chain. Metadata, registration, consent, token, revocation and the Settings list all stay off. Behind the gate, the `/mcp` handler also refuses anything that did not authenticate as a live delegation.
 
 ## Coding agent
 

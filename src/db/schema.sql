@@ -6155,6 +6155,48 @@ ALTER TABLE mcp_connector_hints ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ;
 ALTER TABLE mcp_connector_hints
   ADD COLUMN IF NOT EXISTS window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- Delegated connector grants (#2779). The platform's own agents reach the
+-- same tool registry an external chat product does, on the user's behalf:
+-- the Mayor of an agent session (`agent_mayor`) and the coding agent inside
+-- one change's worker (`worker_read`). One row per grant; the access token
+-- itself is an ordinary mcp_tokens row with the same grant_id, minted by
+-- services/mcp-oauth.js issueDelegatedAccess with no refresh token and a
+-- synthetic client id that no consent or token endpoint accepts.
+--
+-- The KIND is set by the server when it issues the grant and is what decides
+-- which tools and routes the token may reach (services/mcp-audiences.js,
+-- services/cli-api-policy.js). Liveness is checked on EVERY request by
+-- joining this table, so revoking the row, expiring it, or closing the
+-- change it names ends the token with no hook having to run.
+--
+-- agent_session_id carries no foreign key yet: agent_sessions arrives in the
+-- next step of #2779, which adds the constraint with the table. change_id and
+-- app_id bind a worker token to one change and that change's app.
+CREATE TABLE IF NOT EXISTS mcp_delegations (
+  grant_id         TEXT PRIMARY KEY CHECK (grant_id ~ '^[A-Za-z0-9_-]{22}$'),
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind             TEXT NOT NULL CHECK (kind IN ('agent_mayor', 'worker_read')),
+  agent_session_id INTEGER,
+  change_id        INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  app_id           INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at       TIMESTAMPTZ NOT NULL,
+  revoked_at       TIMESTAMPTZ,
+  CHECK (expires_at > created_at),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at),
+  CHECK (kind <> 'worker_read' OR (change_id IS NOT NULL AND app_id IS NOT NULL))
+);
+COMMENT ON TABLE mcp_delegations IS 'staging:private';
+
+CREATE INDEX IF NOT EXISTS mcp_delegations_user_idx
+  ON mcp_delegations (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS mcp_delegations_change_idx
+  ON mcp_delegations (change_id) WHERE change_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS mcp_delegations_agent_session_idx
+  ON mcp_delegations (agent_session_id) WHERE agent_session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS mcp_delegations_expiry_idx
+  ON mcp_delegations (expires_at);
+
 -- ── Verified GitHub account link (IDENTITY ONLY) ────────────────────────
 -- Distinct from the self-declared `users.github` profile string above,
 -- which is unverified display text and must NEVER be used for
