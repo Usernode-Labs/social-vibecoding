@@ -3093,7 +3093,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
         if (detail.source === 'cli_handoff') {
           const { rows: handoffs } = await pool.query(`SELECT handoff_head_sha, handoff_uploaded_sha, handoff_upload_checked_sha, handoff_base_sha FROM chat_sessions WHERE id = $1`, [session.id]);
-          detail.proposal_state = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] }).state;
+          const proposal = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] });
+          detail.proposal_state = proposal.revisionState || proposal.state;
         }
         detail.visualEvidence = config.visualEvidence?.present
           ? await require('../services/visual-evidence-view')
@@ -3293,8 +3294,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // action before a doomed request. Ordinary Dev sessions deliberately do
       // not get this field: their promote path may still build on demand.
       if (session.source === 'cli_handoff') {
-        session.proposal_state = require('./proposal-handoff')
-          .publicSessionStatus(session).state;
+        const proposal = require('./proposal-handoff').publicSessionStatus(session);
+        session.proposal_state = proposal.revisionState || proposal.state;
       }
       try {
         session.visuals = await visuals.getForSession(
