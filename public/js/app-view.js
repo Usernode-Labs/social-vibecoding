@@ -10156,6 +10156,10 @@ const AppView = {
 
   _sessionCardMeta(s, subtitle) {
     const meta = [{ t: 'text', s: subtitle }];
+    if (s?.pr_url && s?.pr_number) meta.push({
+      t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
+      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
+    });
     const f = s && s.failing_checks;
     if (!f || !f.total || !Array.isArray(f.rows) || !f.rows.length) return meta;
     const shown = f.rows.slice(0, 2).map((r) => r.name).filter(Boolean);
@@ -10302,6 +10306,10 @@ const AppView = {
     }
 
     const menu = imported ? AppView._importedUnderwayMenuItems(s) : [];
+    if (!imported && s.pr_url) menu.push({
+      label: 'View PR on GitHub', icon: 'github', title: s.pr_url,
+      act: () => window.open(s.pr_url, '_blank', 'noopener'),
+    });
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
     if (shared && !imported) {
@@ -10419,6 +10427,10 @@ const AppView = {
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
     const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
+    if (!imported && s.pr_url) menu.push({
+      label: 'View PR on GitHub', icon: 'github', title: s.pr_url,
+      act: () => window.open(s.pr_url, '_blank', 'noopener'),
+    });
     menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
@@ -10448,7 +10460,10 @@ const AppView = {
         s: imported
           ? `Imported pull request by ${author} · imported by ${owner}`
           : `${owner} is working on this`,
-      }],
+      }, ...(s.pr_url && s.pr_number ? [{
+        t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
+        cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
+      }] : [])],
       pill: null,
       linked: [],
       badges: [
@@ -10464,8 +10479,7 @@ const AppView = {
       // dense band renders reserved-and-empty.
       actions: [],
       actionPreview: null,
-      // Ordinary shared sessions keep the chevron-only rail. Imported PRs
-      // add their proposal attribute editors / GitHub destination.
+      // A shared session with a PR exposes its GitHub destination here.
       rail: {
         menuKey: AppView._registerCardMenu(`session:${s.id}`, menu),
         chevron: !noNav,

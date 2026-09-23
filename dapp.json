@@ -1561,6 +1561,18 @@
       "expectText": "Share chat"
     },
     {
+      "name": "A draft PR is linked on its owner's Underway card (#2866)",
+      "path": "/?demo=1&shot=card-menu&card=session:990103&cards=open#app/usernode-2d5619/board",
+      "expectSelector": ".dev-card-menu [data-menu-idx][title=\"https://github.com/Usernode-Labs/social-vibecoding/pull/990103\"]",
+      "expectText": "View PR on GitHub"
+    },
+    {
+      "name": "A shared Underway card exposes its draft PR link (#2866)",
+      "path": "/?demo=1&shot=card-menu&card=session:990002&cards=open#app/usernode-2d5619/board",
+      "expectSelector": ".dev-card-menu [data-menu-idx][title=\"https://github.com/Usernode-Labs/social-vibecoding/pull/990002\"]",
+      "expectText": "View PR on GitHub"
+    },
+    {
       "name": "A chat-shared own session flips its ⋯ row to \"Chat shared — stop sharing\"",
       "path": "/?demo=1&shot=card-menu&card=session:990104&cards=open#app/usernode-2d5619/board",
       "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Stop others reading this chat\"]",
@@ -2482,6 +2494,12 @@
       "name": "Shared demo session renders in the In progress area",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Staging demo shared session"
+    },
+    {
+      "name": "Shared Underway card shows a direct PR link before review (#2866)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "[data-shared-session-row=\"990002\"] .dev-card-meta a[href=\"https://github.com/Usernode-Labs/social-vibecoding/pull/990002\"]",
+      "expectText": "PR#990002"
     },
     {
       "name": "Dev session start screen leads with the open-issues starter suggestion (#785)",

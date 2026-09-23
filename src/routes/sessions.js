@@ -549,7 +549,9 @@ function stagingMockSharedSessions() {
           },
           {
             id: 990002, session_title: '[Mock] Paused shared session with a preview',
-            pr_title: null, branch_name: 'mock/shared-preview', status: 'paused',
+            pr_title: null, pr_number: 990002,
+            pr_url: 'https://github.com/Usernode-Labs/social-vibecoding/pull/990002',
+            branch_name: 'mock/shared-preview', status: 'paused',
             linked_issues: [],
             staging_url: 'https://example.invalid', can_preview: true, user_id: 0, username: 'staging-demo-user',
             shared_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
@@ -1966,7 +1968,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // "visible, chat still private" half of the chip pair.
           {
             id: 990103, branch_name: 'mock/my-session-visible', pr_number: 990103,
-            pr_url: null, pr_title: null,
+            pr_url: 'https://github.com/Usernode-Labs/social-vibecoding/pull/990103', pr_title: null,
             session_title: '[Mock] Your visible session',
             status: 'active', linked_issues: [],
             shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
@@ -2342,8 +2344,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   plus a derived can_preview boolean — "the branch has pushed
   //   changes" — so the card can offer an on-demand rebuild via
   //   ensure-staging even after the idle staging GC has nulled staging_url.
-  //   pr_number itself stays withheld for ordinary sessions; imported rows
-  //   receive it only in the id-scoped proposal enrichment.
+  //   PR number and URL are public GitHub metadata once the author shares a
+  //   session. Keep the dev-chat transcript and private work details scoped.
   //
   //   That boolean was `pr_number IS NOT NULL` (#689), which was a fine
   //   proxy while every shared session was a proposal in waiting. It is
@@ -2391,7 +2393,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
+        `SELECT cs.id, cs.session_title, cs.pr_title, cs.pr_number, cs.pr_url,
+                cs.branch_name, cs.status,
                 cs.staging_url,
                 -- #2069, as above: a shared draft has neither a pull request
                 -- nor a checks run, and shared_at is the session's own
@@ -2971,9 +2974,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // was created to continue.
       const branchName = branchNames.devBranchName(req.user.username);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
         try {
           await github.createBranch(repoOwner, repoName, branchName, src.branch_name || 'main');
+          inheritedCodeBranch = !!src.branch_name;
         } catch (err) {
           log.warn('sessions', 'Branch fork off auto session failed — falling back to main', { err: err.message, from: src.branch_name });
           try {
@@ -3039,6 +3044,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          FROM chat_session_specs WHERE session_id = $2`,
         [session.id, src.id]
       ).catch((err) => log.warn('sessions', 'Spec history copy failed (continuing)', { err: err.message }));
+
+      // The unattended source remains PR-free. Once someone clones its code
+      // into their own session, the inherited pushed diff belongs to a human
+      // change and can be reviewed on a draft PR immediately.
+      if (inheritedCodeBranch && ['code', 'spec_code'].includes(src.headless_outcome)) {
+        try {
+          await prMetadata.applyPrMetadata({
+            pool, session, repoOwner, repoName,
+            userMessage: '', ccSummary: '', username: req.user.username,
+            userId: req.user.id, allowModelGeneration: false,
+            preferredTitle: cloneTitle || null,
+          });
+        } catch (err) {
+          log.warn('sessions', 'Draft PR creation deferred after headless clone', {
+            sessionId: session.id, code: err.code || null, err: err.message,
+          });
+        }
+      }
 
       // Best-effort: clone the auto session's CC memory volume so --resume
       // continues its conversation. On failure the clone simply starts with
@@ -3106,7 +3129,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           model: null,
           modelPills: null,
           outcome: src.headless_outcome === 'spec' ? 'spec_done' : 'build_done',
-          hasPr: false,
+          hasPr: !!session.pr_number,
           hasSpec: !!(src.spec_md || '').trim(),
           staticFallback: staticFollowUpPills,
           replyText: followUp,
@@ -12072,9 +12095,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
       // pushed by run-cc.sh inside the worker. Persist testing guidance so
       // it carries into cloned sessions, then deliberately build a staging
       // preview so reviewers can try the change before (or without)
-      // cloning — while still skipping PR creation. The PR is opened
-      // lazily on a CLONE's branch when its owner hits "Propose to group"
-      // (routes/votes.js); the auto branch itself never gets a PR.
+      // cloning — while still skipping PR creation. A code-bearing clone
+      // opens a draft PR on its own branch; the auto branch stays PR-free.
       // pushOk is guaranteed here — a failed push (after the platform-
       // side heal) takes the terminal error branch above instead.
       summaryParts.push(`Commit ${commitHash.substring(0, 8)} pushed to ${session.branch_name}.`);
@@ -12180,7 +12202,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
 
       summaryParts.push(
         'Headless mode: no PR was opened. A user can start a dev-chat session from this auto session '
-        + 'to review the change and propose it to the group — the PR is created on their cloned branch at propose time.'
+        + 'to review the change and propose it to the group — a draft PR opens on their cloned branch when it carries code.'
       );
     } else {
       // pushOk is guaranteed here — a failed push (after the platform-
