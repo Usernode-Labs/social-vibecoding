@@ -43,7 +43,7 @@ const {
 // route into services/mayor/*, so "the Mayor's source" is all of them.
 const SESSIONS_SRC = [
   path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-  ...['tools', 'pills', 'replies', 'data-tools', 'messages', 'prompt']
+  ...['turn', 'tools', 'pills', 'replies', 'data-tools', 'messages', 'prompt']
     .map((name) => path.join(__dirname, '..', 'src', 'services', 'mayor', `${name}.js`)),
 ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const DEVCHAT_SRC = fs.readFileSync(

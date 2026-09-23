@@ -157,6 +157,7 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
 - What stays in `POST /api/sessions/:id/chat` (\~300 lines): auth, row load, attachments, branch mint, the user-message insert and opening the SSE stream. Its conversation adapter wraps the change's own transcript, so classic behaviour is unchanged.
 - `runScoutTool` and `runClaudeCodeTool` keep the whole per-change tail: PR metadata, staging, checks, visual evidence and vote revision. Their only edit is taking `actor` and `heartbeat` instead of `req` and `res`.
 - The headless auto-session keeps its own copy of the loop in v1. Folding it into the service is a follow-up.
+- Staging: proposal 1 moves the turn as it is, `runMayorTurn(ctx, deps)` taking the route's own inputs, pinned byte-for-byte by `tests/mayor-turn-golden.test.js`. Proposal 3 splits `ctx` into the `conversation`, `change` and `transport` above.
 
 ### Turn shape, unchanged
 
