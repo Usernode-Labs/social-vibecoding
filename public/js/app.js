@@ -3860,6 +3860,16 @@ const App = {
           App.navigateToMessages(null, parts[2]);
           return;
         }
+        // #2783: `#messages/channel/<handle>` is where a `#name` channel
+        // reference in any chat links. It names the handle, not the place:
+        // the inbox opens, and the store swaps this address for the
+        // channel's own (#general's conversation, or an app's discussion)
+        // once it knows which one the handle means.
+        if (parts[1] === 'channel') {
+          App.navigateToMessages(null);
+          window.UsernodeReact?.messages?.openChannel?.(parts[2] || '');
+          return;
+        }
         // Conversations use SERIAL ids, so keep their signed-int32 bound
         // local to this route.
         const conversationId = App._numericSegment(parts[1]);

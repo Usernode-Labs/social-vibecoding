@@ -331,7 +331,9 @@ test('#1808: the app chat view model carries both forms to the row', () => {
 
 test('#1808: the DM rows use the shared rule rather than a fourth copy', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /import \{ messageStamp \} from '\.\.\/\.\.\/lib\/timestamp';/);
+  // #2783: `timeOfDay` beside it, from the same module, for the gutter of a
+  // grouped continuation line — still the shared rule, not a local copy.
+  assert.match(row, /import \{ messageStamp, timeOfDay \} from '\.\.\/\.\.\/lib\/timestamp';/);
   assert.match(row, /messageStamp\(message\.createdAt, \{ hour: 'numeric' \}\)\.text/);
   assert.doesNotMatch(row, /toLocaleTimeString/, 'the local formatter is gone');
   // fullTime is the same instant with nothing elided, and it is what the

@@ -2787,9 +2787,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-conversation-row .messages-row-line .messages-row-name + .messages-row-time-unread"
     },
     {
-      "name": "A direct conversation is a bubble transcript on the frosted sheet, with your own turn tinted on the right",
+      "name": "A direct conversation is the same Discord-style named-row transcript as every chat: your own turn has your avatar, name and time, and no bubble (#2783)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct .messages-message-bubble.messages-message-self .messages-bubble-wrap .messages-bubble"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) #messages-message-9100102.messages-message-self > span[aria-hidden] + .min-w-0 > .messages-message-head time"
     },
     {
       "name": "...and the sheet carries the conversation's own title row",
@@ -2800,6 +2800,53 @@
       "name": "A group conversation is a named-row transcript",
       "path": "/?demo=1#messages/910002",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-message:not(.messages-message-bubble) .messages-message-head time"
+    },
+    {
+      "id": "messages.channels",
+      "name": "#2783: the Messages list is sectioned Discord-style — chats on top, then a Channels heading led by #general",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + a.messages-channel-row[data-inbox-channel=\"general\"][href=\"#messages/910004\"]",
+      "expectText": "Channels",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/messages/**",
+        "src/routes/messages-overview.js",
+        "src/routes/conversations.js",
+        "src/services/conversations.js"
+      ]
+    },
+    {
+      "name": "#2783: the filter strip reads All, People, Channels, Agents — Apps is Channels now",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-filters .messages-filter-track > #messages-filter-all + #messages-filter-people + #messages-filter-channels + #messages-filter-agents",
+      "expectText": "Channels"
+    },
+    {
+      "name": "#2778: new message is a plus to the right of the filters, and it opens a menu rather than a dialog",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) #messages-filters > .messages-filter-track + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
+    },
+    {
+      "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-channel #messages-message-9100401:not(.messages-message-grouped) + #messages-message-9100402.messages-message-grouped > time.messages-message-gutter + .min-w-0"
+    },
+    {
+      "name": "#2783: the #general thread names itself as a channel everyone is in",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-thread-header .messages-thread-name",
+      "expectText": "#general"
+    },
+    {
+      "name": "#2783: #name in a message is a link to that channel",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-message-9100404 .messages-markdown a.gc-channel-ref[href=\"#messages/channel/general\"]",
+      "expectText": "#general"
+    },
+    {
+      "name": "#2783: ...while #123 in a message still reads as an issue reference, not a channel",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-message-9100403 .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
     },
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name (#2113)",
@@ -4393,9 +4440,9 @@
       "expectText": "went live with 1/1 votes"
     },
     {
-      "name": "General chat: a person's message sits in a bubble under their name and stamp, the Messages screen's own bubble, with their reactions beneath it, and that bubble stays its own box inside the row a hover or tap highlights (#2464)",
+      "name": "An app's channel draws a person's message as a Discord-style named row, flat text under their name and stamp with no bubble (#2783)",
       "path": "/app/usernode-2d5619/dev/chat",
-      "expectSelector": "#gc-messages > .gc-msg:not(.gc-msg-self) .gc-bubble:not(.gc-bubble-self) > .gc-msg-content"
+      "expectSelector": "#gc-messages:not(:has(.gc-bubble)) > .gc-msg:not(.gc-msg-self) > .min-w-0 > div > .gc-msg-content"
     },
     {
       "name": "General chat: with no message from a person on screen, the transcript ends with the quiet card, after the open proposal and above the composer",
@@ -4421,7 +4468,7 @@
     {
       "name": "#1808: a DM from an earlier year is stamped with that year, not a bare time of day",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen .messages-message-meta time[title]",
+      "expectSelector": "#messages-screen #messages-message-9100100 .messages-message-head time[title]",
       "expectText": "2024"
     },
     {
@@ -4488,9 +4535,9 @@
       "expectText": "Change overview"
     },
     {
-      "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message in a bubble under their name, a platform notice as a message from the app with one box",
+      "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message as a named row with no bubble (#2783), a platform notice as a message from the app with one box",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "[data-change-conversation] > .dev-topic-h + .dev-topic-note + [data-change-discussion]:has([data-language=\"chat\"] > .gc-msg:not(.gc-msg-self) .gc-bubble):has(.gc-event[data-event=\"notice\"][data-here] .gc-event-box > .gc-event-text) #gc-thread-input",
+      "expectSelector": "[data-change-conversation] [data-change-discussion]:has([data-language=\"chat\"] > .gc-msg:not(.gc-msg-self) .gc-msg-content):not(:has(.gc-bubble)):has(.gc-event[data-event=\"notice\"][data-here] .gc-event-text) #gc-thread-input",
       "expectText": "Visible to the group"
     },
     {

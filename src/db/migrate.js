@@ -132,6 +132,7 @@ async function migrate(config) {
   await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingRestartRecoveredPills(pool, config);
+  await seedStagingGeneralChannel(pool);
   await seedStagingQuickReplyFallback(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
@@ -1125,6 +1126,59 @@ async function seedStagingDemoUser(pool) {
     log.info('db', 'Staging demo user seeded', { id: 900001 });
   } catch (err) {
     log.warn('db', 'Staging demo user seeding failed', { message: err.message });
+  }
+}
+
+// #2783: a few obviously-fake lines in #general, so the staging preview of
+// the Messages channels section opens on a room with something in it.
+//
+// `conversations` and its message table are staging:private, so a clone
+// starts with the room (schema.sql recreates it on every boot) and no
+// history. Two fake speakers of their own, never the viewer: the checks read
+// the room as the view-only check user, and seeding THAT user's words would
+// fabricate the thing being checked. Idempotent through the messages'
+// idempotency keys; strictly a no-op outside staging.
+async function seedStagingGeneralChannel(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (902783, 'staging-demo-general-ada', 'staging-demo-not-a-login'),
+              (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    const room = await pool.query(
+      `SELECT id FROM conversations WHERE channel_key = 'general' AND kind = 'channel'`
+    );
+    const roomId = room.rows[0]?.id;
+    if (!roomId) return;
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN (902783, 902784)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [roomId]
+    );
+    const lines = [
+      [902783, 'staging-general-1', 'Staging demo: welcome to #general, the room everybody is in.', '3 hours'],
+      [902783, 'staging-general-2', 'Staging demo: consecutive lines from one person group under one name.', '2 hours 59 minutes'],
+      [902784, 'staging-general-3', 'Staging demo: and a reference to issue #1 still reads as an issue.', '2 hours'],
+    ];
+    for (const [sender, key, content, ago] of lines) {
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - $5::interval)
+         ON CONFLICT (conversation_id, sender_id, idempotency_key)
+           WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+         DO NOTHING`,
+        [roomId, sender, content, key, ago]
+      );
+    }
+    log.info('db', 'Staging #general fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging #general seeding failed', { message: err.message });
   }
 }
 
