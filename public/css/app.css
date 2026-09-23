@@ -1109,6 +1109,10 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-attachment-view { color: var(--accent); font-size: 13px; font-weight: 600; }
 .messages-object-card:hover { background: var(--messages-surface-2); }
 .messages-object-unavailable { opacity: .6; }
+/* #2884: under the first card of a folded run, in the column the message
+   writes in (16px inset + 36px avatar + 12px gap). The pill is shared with
+   the app channel's `.gc-card-run-more`. */
+.messages-card-run { padding: 0 16px 6px 64px; }
 
 .messages-typing {
   flex: 0 0 auto;
@@ -1167,6 +1171,16 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      `max-height` above is what stops it. Past that ceiling the extra lines
      have to be reachable, so the box scrolls rather than clipping them. */
   overflow-y: auto;
+  /* #2882: ONE OUTLINE, THE CARD'S. The ring above goes around the whole
+     composer; the field inside it must draw no edge of its own in any
+     engine. `outline: none` covers the focus ring, but WebKit on iOS also
+     paints a native textarea box (a hairline and an inset shade) until the
+     appearance is reset, and a tap flashes its highlight over the field —
+     both read as a second, inner outline around just the text area. */
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
 }
 .messages-composer-input::placeholder { color: var(--text-faint); }
 .messages-composer-action {
@@ -1317,6 +1331,23 @@ html.un-kb .platform-kb-column .un-kb-avoid {
     margin: 14px 12px 0 8px;
   }
   .messages-thread-pane.messages-no-selection { margin: 0; }
+}
+
+/* #2883: THE TRANSCRIPT READS ONE STEP DOWN ON A DESKTOP. 17px is the phone's
+   reading size, and the phone keeps it; beside a 22rem list whose previews
+   and cards are already at 15px, a 17px body and a 17px bold name were the
+   largest text on the screen. So from 768px up a message reads at the size
+   the list's preview line and the shared-item cards use — 15px, with the
+   header's name at 15 and its time at 13, the next step on the same scale —
+   and the composer and the inline editor come down with it, so what you type
+   is the size it will be drawn at. Nothing new on the scale: 17 → 15 → 13. */
+@media (min-width: 768px) {
+  .messages-message-head { min-height: 20px; font-size: 15px; }
+  .messages-message-head time,
+  .messages-message-head time ~ span { font-size: 13px; }
+  .messages-markdown.gc-msg-content { font-size: 15px; line-height: 1.4; }
+  .messages-composer-input { font-size: 15px; }
+  .messages-edit textarea { font-size: 15px; }
 }
 
 /* ── An app's discussion, as a thread of this inbox (#2718 review) ──────
@@ -7837,6 +7868,30 @@ span.gc-vote-btn-icon { cursor: default; }
   text-decoration: none;
 }
 a.gc-event-box { cursor: pointer; }
+
+/* #2884: the folded rest of a run of cards — "… 4 more" under the first
+   card, in the column its box writes in (16px row inset + the 44px avatar +
+   the 12px gap), and a tap draws the rest in place. The pill is the
+   Messages sheet's "Load earlier messages" control, at the event box's
+   13px. The Messages conversation's version is `.messages-card-run`. */
+.gc-card-run { padding: 0 16px 6px 72px; }
+.gc-card-run-more,
+.messages-card-run-more {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 150ms, color 150ms;
+}
+.gc-card-run-more:hover,
+.messages-card-run-more:hover { color: var(--text-primary); background: var(--messages-surface-2, var(--bg-tertiary)); }
+.gc-card-run-more:focus-visible,
+.messages-card-run-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 a.gc-event-box:hover { text-decoration: none; }
 a.gc-event-box:hover > .gc-event-text { color: var(--text-primary); }
 /* #1688: after a named merge's sentence, the number and the tally, quieter. */
@@ -8976,6 +9031,12 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .gc-composer-card .gc-composer-input {
   min-height: 40px;
   max-height: 140px;
+  /* #2882: the card is the one edge; the field draws none — see
+     `.messages-composer-input`, the same field in the conversation composer. */
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
 }
 .gc-composer-card .gc-composer-input::placeholder { color: var(--text-faint); }
 .gc-composer-glyph {

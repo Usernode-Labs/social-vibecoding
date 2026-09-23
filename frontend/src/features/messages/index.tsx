@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
+import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -892,6 +893,16 @@ function ThreadHeader() {
 }
 
 /** The day a message was sent, in the viewer's zone, for the separators. */
+/**
+ * A message that is only a card (#2884): one or more shared items and nothing
+ * a person wrote — no words, no file, no reply. A sending or unsent one is
+ * never folded: it carries a status the sender is watching.
+ */
+function isCardMessage(message: ConversationMessage): boolean {
+  return message.objects.length > 0 && !message.content && !message.attachments.length
+    && !message.reply && !message.pending && !message.failed;
+}
+
 function dayKey(message: ConversationMessage): string {
   const date = new Date(message.createdAt);
   return Number.isNaN(date.getTime()) ? '' : date.toDateString();
@@ -1153,6 +1164,8 @@ function ConversationThread() {
   const initialScroll = useRef<number | null>(null);
   const conversationId = snap.route.conversationId;
   const typing = conversationId ? typingUsers(conversationId) : [];
+  // #2884: the runs of cards the viewer has opened, by their first message.
+  const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
     if (!conversationId) return;
@@ -1194,7 +1207,12 @@ function ConversationThread() {
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
-  for (const message of snap.messages) {
+  // #2884: three or more cards in a row — messages that are only a shared
+  // item — draw as the first and a "… N more" row (../../lib/card-runs.ts).
+  // A day divider breaks a run, so folding never hides one.
+  const runs = cardRunStarts(snap.messages, isCardMessage, (a, b) => dayKey(a) === dayKey(b));
+  for (let index = 0; index < snap.messages.length; index += 1) {
+    const message = snap.messages[index];
     const day = dayKey(message);
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
@@ -1208,6 +1226,27 @@ function ConversationThread() {
       );
     rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversationId} grouped={grouped} channels={channels} />);
     previous = message;
+    const length = runs.get(index);
+    const runKey = String(message.clientKey || message.id);
+    if (length && !expandedRuns.has(runKey)) {
+      const hidden = length - 1;
+      rows.push(
+        <div key={`more-${runKey}`} className="messages-card-run">
+          <button
+            type="button"
+            className="messages-card-run-more"
+            data-card-run-more={hidden}
+            aria-expanded="false"
+            aria-label={`Show ${hidden} more ${hidden === 1 ? 'card' : 'cards'}`}
+            onClick={() => setExpandedRuns((open) => new Set(open).add(runKey))}
+          >{cardRunLabel(hidden)}</button>
+        </div>,
+      );
+      // The row after the fold always carries its own name: drawn as a
+      // continuation under "… N more", it would read as part of the fold.
+      previous = null;
+      index += hidden;
+    }
   }
   return (
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}`} aria-label={snap.active?.title || 'Conversation'}>

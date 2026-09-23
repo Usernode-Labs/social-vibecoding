@@ -1118,7 +1118,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // above it). Neither set overlaps the other, so the merged manifest holds
   // every one of them: 753 + 1 + 1 + 1 = 756, leaving 34 slots under the 790
   // ceiling.
-  assert.equal(DAPP.tests.length, 756);
+  //
+  // 756 → 759: +3 (#2884): a run of four shared cards in #general draws as
+  // the first card and "… 3 more"; the plain message before it is not folded
+  // in; an app's channel in Messages folds its run of proposal cards the same
+  // way. Counted on a branch that already held main's Me-row check; main
+  // reached 756 without these three, so the merged manifest holds 756 + 3 =
+  // 759, leaving 31 slots under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 759);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
