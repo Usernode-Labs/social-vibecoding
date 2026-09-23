@@ -350,6 +350,7 @@ const OWNED = [
   // card's host, filled by admin-topochain.js, and #1120 slice 35 made that
   // card a child component. The whole section is React's, exemption included.
   { sel: '#admin-section-content', when: '#admin/users' }, // features/admin/admin-users.tsx
+  { sel: '#admin-section-content', when: '#admin/reports' }, // features/admin/admin-reports.tsx
 ];
 
 const ROUTES = [
@@ -373,7 +374,7 @@ const ROUTES = [
   // than dropping the route.
   '#app/recipebot/dev/issues/900001',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
-  '#admin/model-costs',
+  '#admin/model-costs', '#admin/reports',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/challenge-scoring', '#admin/seasons', '#admin/season-events',
 ];

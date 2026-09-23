@@ -85,6 +85,8 @@ const DENIED_TABLES = new Set([
   'chat_session_spec_conversation_shares', // private spec access grants
   'user_blocks',          // private user safety relationships
   'conversation_message_reports', // private abuse evidence and reporter identity
+  'app_reports',             // private mini-app report details and reporter identity
+  'chat_message_reports',    // private Workshop post evidence and reporter identity
   'mcp_clients',              // hosted-connector client registrations
   'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
   'mcp_tokens',               // hosted-connector bearer hashes and hints

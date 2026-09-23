@@ -1107,9 +1107,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
   //
-  // 753 → 754: +1 (#2888): Send Feedback pressed with no destination turns
-  // the App/Platform row red. 36 slots left under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 754);
+  // 753 → 755: the tallies above were computed on either side of this merge
+  // against the same shared 753 and do not reconcile through the comment
+  // trail alone. This branch took 753 → 754 alone, with #2888 above (Send
+  // Feedback pressed with no destination turns the App/Platform row red);
+  // main independently took the same 753 to 754, with #2800/#2878 above (Me
+  // is the rail's last row, straight after Recents, which is what places the
+  // thin rule drawn above it). Neither set overlaps the other, so the merged
+  // manifest holds both: 753 + 1 + 1 = 755, leaving 35 slots under the 790
+  // ceiling.
+  assert.equal(DAPP.tests.length, 755);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
