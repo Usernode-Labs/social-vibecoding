@@ -171,3 +171,31 @@ Do not mistake binding reconstruction for data recovery.
 Targets may have an optional `displayName` (up to 80 characters) for the admin
 screen. It is presentation only: requests still use the immutable target ID,
 and changing the label does not change placement, Kubernetes names or identity.
+
+## Full-data copy rehearsal
+
+`scripts/copy-app-database.js` is an operator-created Job entrypoint. It is not
+wired to app placement or the migration worker yet. Unlike preview cloning, it
+preserves private rows and schema comments. The infra staging adapter creates a
+new `app_copy_*` scratch database using native CNPG Database/DatabaseRole objects
+and app-owner credentials; the Job has no Kubernetes token or PostgreSQL admin
+credential. Source and destination connections require their CNPG CA and hostname
+verification. Credentials enter through a temporary Secret, not arguments/logs.
+
+The copy uses one exported read-only snapshot, streams pg_dump into a transactional
+pg_restore, then compares schema, per-table row hashes and sequence state. A failed
+or interrupted restore cannot be reported as verified; a populated destination
+cannot be retried blindly. Role ownership is mapped to the destination app owner;
+existing ACLs and tablespace assignments are deliberately not imported.
+
+This increment supports databases up to 256 MiB and 100,000 rows per table on the
+same PostgreSQL major version, encoding and collation. Extensions beyond plpgsql,
+RLS, large objects, foreign tables and logical replication are rejected. Database
+settings/global objects and external writers need separate handling before real
+cutover. Sequence changes during copying fail verification. This is a snapshot
+rehearsal while the app remains live, not a claim that later writes were migrated.
+
+Run `npm run test:changed -- --base <pre-change-sha>` for focused tests. The infra
+runbook covers the synthetic private-data fixture, live Stockroom rehearsal,
+terminal-result collection and scratch cleanup. Backups, source fencing, durable
+migration state transitions and placement cutover remain separate work.
