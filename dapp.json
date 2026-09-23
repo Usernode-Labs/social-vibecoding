@@ -4123,8 +4123,8 @@
     },
     {
       "name": "#2916: a proposal page leads with the same Workshop chip above its hero, and the header draws no arrow",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000202",
-      "expectSelector": "body:has(#platform-header a#back-btn.hidden) .dev-change-overview .dev-topic > a.dev-topic-back:first-child[href=\"#app/usernode-2d5619/workshop\"] ~ .dev-topic-hero"
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #gc-thread-head .dev-topic > a.dev-topic-back:first-child[href=\"#app/usernode-2d5619/workshop\"] + .dev-topic-hero"
     },
     {
       "name": "The bar's two edges: nothing to leave by on Home, and the bell left of the mark",
