@@ -58,6 +58,11 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Create moves into the launcher grid (the prototype's scrHome) ─
+  // Never in the frozen baseline — THE UI OVERHAUL added it through
+  // ADDED_IDS — so it leaves that map and is recorded here instead, which
+  // also puts it under the dereference guard at the bottom of this file.
+  'home-create-section': 'Home\'s fourth area, a full-width "Create app" card in a section of its own below Challenges. Create is the launcher grid\'s trailing tile now (#home-create-tile, features/home/create-tile.tsx), rendered inside #app-list on the first grid paint, so it is not in the prerendered shell. It keeps `data-panel-slot="create"` and `data-create-enabled`, the hooks the declared checks select on; the welcome tour\'s create step points at the tile.',
   // ── #2568: the included key is not claimed, it is created ────────
   // Every account is created with its included OpenRouter key, so the
   // three ids that existed to ASK for one have nothing left to do. The
@@ -694,11 +699,12 @@ const ADDED_IDS = {
   // The last three were draggable widgets on the launcher canvas; each is a
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
-  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the other three.',
+  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
   'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
   'home-discover-section': 'Area 2: featured tiles, the Popular lane and the way into the app directory.',
   'home-challenges-section': 'Area 3: the season\'s open challenges, and under them the leaderboard standings the retired #drawer-row-leaderboard used to point at.',
-  'home-create-section': 'Area 4: the create-an-app block, on every home screen regardless of quota.',
+  // #home-create-section (area 4) left this map when Create moved into the
+  // launcher grid; it is recorded in RETIRED_IDS.
   // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
   // running page: admin-console.js._renderShell() has always created them, by
   // writing #admin-root.innerHTML on every open. They are new to
@@ -883,6 +889,10 @@ const ADDED_IDS = {
   'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
   'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
   'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
+  // ── Discover's filter chips (the prototype's scrDiscover) ──────────
+  'browse-filter-chips': 'The All / Featured / Your apps / New chip row in the directory\'s sticky head, between the search and Sort. A chip picks which apps the list holds (Browse.filterApps); ships with All pressed, the store\'s prerender value.',
+  // ── The prototype's Challenges page: a History segment ──────────────
+  'leaderboard-history-root': 'The Leaderboard screen\'s fourth pane, the History tab (#leaderboard/seasons): the seasons that have ended, who won each, each event\'s winner and where the viewer finished — the navigation prototype\'s History segment. Ships EMPTY and hidden like the two other non-default pane roots, and Leaderboard._applySection toggles its `hidden` on a constant className; features/leaderboard/history-pane.tsx is the only writer below it.',
   'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
 };
 

@@ -559,11 +559,11 @@ test('coming back from an app re-reveals the screen', () => {
   assert.match(beforeTransition, /App\._inWorkshop = true;/);
   assert.match(beforeTransition, /App\.currentApp = null;/);
   // The other half of the same fact: nothing on the way into an app clears
-  // the flag, which is what leaves the breadcrumb readable on the lander.
+  // the flag, so the pair above is what tells "here" from "came from here".
   const enter = appJs.slice(appJs.indexOf('  async navigateToApp('));
   const chain = enter.slice(0, enter.indexOf('PlatformUI.transition('));
   assert.doesNotMatch(chain, /_exitWorkshop/,
-    'entering an app must not clear _inWorkshop — navigateToApp reads it');
+    'entering an app must not clear _inWorkshop — the way back reads it');
 });
 
 test('#workshop is a route of its own', () => {
@@ -588,27 +588,38 @@ test('#workshop is a route of its own', () => {
   assert.ok(!/AppViewTabs/.test(sheetTsx), 'and not as a toggle segment');
 });
 
-test('the app-entry breadcrumb has one writer and one clearer', () => {
-  // Read by AppView._repaintDevBody to turn the Dev lander's house into a
-  // real ← back to #workshop. Anything that can set it from a second place,
-  // or fail to clear it, leaves an arrow pointing at a screen the viewer
-  // never came from.
-  const writes = appJs.match(/App\._appBackHref = /g) || [];
-  assert.equal(writes.length, 2,
-    'navigateToApp\'s write and _showOnlyScreen\'s clear — no more');
-  assert.match(appJs, /^ {2}_appBackHref: null,$/m,
-    'and the slot is declared on App with the prose that says who owns it');
-  assert.match(appJs, /App\._appBackHref = App\._inWorkshop \? '#workshop' : null;/,
-    'a BARE fragment: #back-btn\'s handler follows its href only when it '
-    + 'startsWith("#"), and anything else falls through to navigateHome');
-  assert.match(appJs, /if \(href && href\.startsWith\('#'\) && href\.length > 1\) \{/,
-    'and that is still the rule the handler applies');
-  // The mixed address the fragment produces — /app/<slug>/workshop#workshop —
-  // is healed to /#workshop by restoreFromHash, which is what makes a
-  // middle-click into a new tab land on the screen rather than the app.
+test('the ✕ knows the page the app was opened from, and forgets it with the visit', () => {
+  // The breadcrumb this replaced said '#workshop' when the Workshop screen was
+  // the origin and nothing otherwise, so the ✕ went Home from every other
+  // page — a thread, Discover, Me. The ✕ now goes back to whichever page it
+  // was (App.closeApp, driven for real in tests/app-close-origin.test.js);
+  // what is pinned here is who writes that memory and who clears it.
+  assert.ok(!/_appBackHref/.test(appJs), 'the Workshop-only breadcrumb is retired');
+  assert.match(appJs, /^ {2}_appReturn: null,$/m,
+    'the slot is declared on App with the prose that says who owns it');
+  // Written as an app's App tab is about to come on screen, BEFORE its
+  // entry is pushed over the page it was opened from — by navigateToApp…
+  const enter = appJs.slice(appJs.indexOf('  async navigateToApp('));
+  const noted = enter.indexOf("if (initialRoute.tab === 'app') App._noteAppReturn(slug);");
+  const pushed = enter.indexOf('App.updateHash({ ref: initialRoute.ref });');
+  assert.ok(noted > 0 && pushed > noted, 'noted before the app\'s own address is written');
+  assert.ok(enter.indexOf('App._pinAppReturn();') > pushed, 'and pinned once it has been');
+  // …and by switchTab, when the app's own Workshop hands over to the app.
+  const sw = appJs.slice(appJs.indexOf('  async switchTab('));
+  assert.match(sw, /if \(tab === 'app' && App\.currentTab !== 'app' && !options\?\.replaceRoute\) \{\s*App\._noteAppReturn\(App\.currentApp\);/);
+  // One clearer: revealing any other screen ends the visit it was about.
+  assert.match(appJs, /if \(revealId !== 'app-view'\) App\._appReturn = null;/,
+    'revealing any other screen ends the app visit it was about');
+  // The ✕ is App.closeApp's, ahead of the handler's own href-following rule —
+  // which still serves every ARROW: the href IS the answer, and home is the
+  // fallback for a screen that named no parent.
+  const handler = appJs.slice(appJs.indexOf("document.getElementById('back-btn').addEventListener('click'"));
+  const close = handler.indexOf("if (App.currentApp && App.currentTab === 'app' && App.closeApp()) return;");
+  const follow = handler.indexOf("if (href && href.startsWith('#') && href.length > 1) {");
+  assert.ok(close > 0 && follow > close, 'the ✕ is claimed before the href is followed');
+  // The mixed address a fragment produces — /app/<slug>/workshop#workshop —
+  // is still healed to /#workshop by restoreFromHash.
   assert.match(appJs, /if \(rawHash && pathRoute && !rawHash\.startsWith\('app\/'\)\) \{/);
-  assert.match(appJs, /if \(revealId !== 'app-view'\) App\._appBackHref = null;/,
-    'revealing any other screen ends the app visit the breadcrumb was about');
 });
 
 test('the Dev lander needs no back arrow, because the rail is beside it', () => {
@@ -636,9 +647,8 @@ test('the Dev lander needs no back arrow, because the rail is beside it', () => 
   const sessionBranch = appViewJs.slice(session, appViewJs.indexOf('\n    }', session));
   assert.match(sessionBranch, /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
     'and a session leads with a real ← up to Messages (#2770)');
-  // `_appBackHref` is not retired: the ✕ on the app tab still lands wherever
-  // the visit began.
-  assert.match(read('public/js/app.js'), /App\.setBackIcon\('close', App\._appBackHref \|\| undefined\);/);
+  // The ✕ is the app TAB's alone, and it lands wherever the visit began.
+  assert.match(read('public/js/app.js'), /App\.setBackIcon\('close', App\._closeAppHref\(\)\);/);
   // An arrow WITH an href is what turns the phone's back gesture on — still
   // true, and still what the session sub-view relies on.
   assert.match(read('frontend/src/features/header/native-back-navigation.ts'),

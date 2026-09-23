@@ -108,7 +108,12 @@ export const TOUR_STEPS: readonly TourStep[] = [
     id: 'create',
     title: 'Create a new app',
     body: 'Create a new app here. Describe it and an AI builds the first version.',
-    targets: ['#home-create-section'],
+    // The launcher grid's trailing tile (../create-tile.tsx). It draws with
+    // the first grid paint, so on the rare tour that starts before the apps
+    // have loaded, the Your apps area it will end is the next best thing to
+    // point at. It was `#home-create-section`, a section of its own, until
+    // Create moved into the grid.
+    targets: ['#home-create-tile', '#home-apps-section'],
   },
   {
     // ONE STEP, WHERE THERE WERE TWO (#2718 review). The arc was "press the

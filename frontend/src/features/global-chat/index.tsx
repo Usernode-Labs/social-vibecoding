@@ -267,7 +267,15 @@ function Composer({ id }: { id: string }) {
   }
 
   return (
-    <form className="global-chat-composer" onSubmit={submit}>
+    // `platform-safe-bar` (app.css, the safe-area contract at the top of the
+    // file): this form is the bottom of a column that reaches the viewport,
+    // and on a phone #global-chat-screen keeps the platform tab bar up — so
+    // the bar has to clear whichever of the tab bar and the home-indicator
+    // strip is taller. It cleared the strip alone, and "Ask Homeroom…" sat
+    // under the tab bar. The transcript above no longer reserves that band:
+    // the composer is always below it, so the band is the composer's to
+    // clear, once (the rule Messages' thread follows for its own composer).
+    <form className="global-chat-composer platform-safe-bar" onSubmit={submit}>
       <textarea
         id={id}
         ref={textarea}
@@ -374,7 +382,12 @@ export function GlobalChatPanel({ embedded = false }: { embedded?: boolean }) {
         </button>
       </header>
 
-      <div ref={scroll} className="global-chat-transcript platform-safe-scroll" aria-live="polite">
+      {/* No `platform-safe-scroll`: the composer below clears the tab bar and
+          the home-indicator strip (see Composer), so reserving the band here
+          too put it on the wrong element — a blank band at the end of the
+          transcript — and, on a desktop, zeroed the transcript's own 18px of
+          bottom padding with the class's `!important` 0px. */}
+      <div ref={scroll} className="global-chat-transcript" aria-live="polite">
         {snapshot.hasMoreHistory ? (
           <button type="button" className="global-chat-history" onClick={() => void loadOlderGlobalChatMessages()}>
             Earlier messages

@@ -122,8 +122,10 @@ test('the placeholders borrow the REAL row classes, so they cannot drift', () =>
     'standings: the table’s own container');
   assert.match(STANDINGS, /bg-zinc-50 dark:bg-zinc-900/,
     'and the <thead>’s own ground for the header strip');
-  assert.match(PROFILE, /rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5/,
+  assert.match(PROFILE, /rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-3/,
     'profile: the identity card’s face, verbatim');
+  assert.match(PROFILE, /rounded-2xl bg-white dark:bg-zinc-900 px-2 py-3/,
+    'and the stat cards’ face');
 });
 
 test('each stands in for what that screen actually renders', () => {
@@ -137,10 +139,14 @@ test('each stands in for what that screen actually renders', () => {
   assert.match(KUDOS, /shape="block" className="w-12 h-6 rounded-full"/,
     'and the kudos pill — a row whose right edge is empty and then suddenly '
     + 'is not is the jump this avoids');
-  // Profile is three things stacked, and all three are stood in for.
-  assert.match(PROFILE, /shape="block" className="w-24 h-9"/, 'profile: the points figure');
+  // Profile is the prototype's Me: the card, three stat cards, then two lists
+  // of rows with a tile — and all of them are stood in for.
+  assert.match(PROFILE, /shape="circle" className="w-14 h-14"/, 'profile: the card’s 56px avatar');
   assert.match(PROFILE, /shape="block" className="w-24 h-8 rounded-full"/,
     'and the Edit button, which is the widest thing in the identity row');
+  assert.match(PROFILE, /grid grid-cols-3 gap-2/, 'the three stat cards, in their own grid');
+  assert.match(PROFILE, /shape="block" className="w-11 h-11 rounded-xl"/,
+    'and the rows’ leading tile, the 44px IconTile the More and contributions rows draw');
 });
 
 // ── The fourth: the Challenges pane (#2440) ────────────────────────────

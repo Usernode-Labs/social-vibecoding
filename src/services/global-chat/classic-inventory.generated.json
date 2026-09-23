@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 663,
-    "mappedRoutes": 525,
+    "totalRoutes": 666,
+    "mappedRoutes": 528,
     "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 371,
+    "clientApiReferences": 372,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -268,7 +268,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 265,
+      "line": 266,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -277,7 +277,7 @@
     },
     {
       "source": "server.js",
-      "line": 301,
+      "line": 302,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -292,6 +292,7 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
@@ -304,7 +305,7 @@
     },
     {
       "source": "server.js",
-      "line": 331,
+      "line": 332,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -313,7 +314,7 @@
     },
     {
       "source": "server.js",
-      "line": 371,
+      "line": 372,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -339,7 +340,7 @@
     },
     {
       "source": "server.js",
-      "line": 376,
+      "line": 377,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -358,7 +359,7 @@
     },
     {
       "source": "server.js",
-      "line": 398,
+      "line": 399,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -367,7 +368,7 @@
     },
     {
       "source": "server.js",
-      "line": 682,
+      "line": 687,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +377,7 @@
     },
     {
       "source": "server.js",
-      "line": 864,
+      "line": 869,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +386,7 @@
     },
     {
       "source": "server.js",
-      "line": 868,
+      "line": 873,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +395,7 @@
     },
     {
       "source": "server.js",
-      "line": 872,
+      "line": 877,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +404,7 @@
     },
     {
       "source": "server.js",
-      "line": 876,
+      "line": 881,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +413,7 @@
     },
     {
       "source": "server.js",
-      "line": 880,
+      "line": 885,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,7 +422,7 @@
     },
     {
       "source": "server.js",
-      "line": 884,
+      "line": 889,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -1485,6 +1486,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -1566,6 +1568,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1589,6 +1592,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1612,6 +1616,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1635,6 +1640,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1658,6 +1664,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1746,6 +1753,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -1770,6 +1778,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -1795,6 +1804,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -1901,6 +1911,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1924,6 +1935,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2070,6 +2082,7 @@
         "frontend/src/features/dialogs/app-allowance-store.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -2139,6 +2152,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/fork-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2162,6 +2176,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/creation-progress-store.js",
@@ -2186,6 +2201,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2208,6 +2224,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2270,6 +2287,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2293,6 +2311,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2317,6 +2336,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2340,6 +2360,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/rename-app.tsx",
@@ -2363,6 +2384,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2405,6 +2427,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2428,6 +2451,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2450,6 +2474,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2472,6 +2497,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2495,6 +2521,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2527,6 +2554,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/creation-progress-store.js",
@@ -2551,6 +2579,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/create-app.tsx",
         "frontend/src/features/dialogs/fork-app.tsx",
@@ -2577,6 +2606,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2618,6 +2648,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2868,6 +2899,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -2892,6 +2924,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -2917,6 +2950,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -2942,6 +2976,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -2967,6 +3002,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -2992,6 +3028,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3018,6 +3055,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3043,6 +3081,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3068,6 +3107,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3112,6 +3152,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3239,6 +3280,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3311,6 +3353,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3333,6 +3376,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3576,6 +3620,7 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -3601,6 +3646,7 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -3666,6 +3712,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3726,6 +3773,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/mention-typeahead.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
@@ -3935,6 +3983,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -3978,6 +4027,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -4041,6 +4091,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -4064,6 +4115,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -4142,6 +4194,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse-detail.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -4664,6 +4717,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/messages/api.ts",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -4902,6 +4956,7 @@
         "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -4929,6 +4984,7 @@
         "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -5279,6 +5335,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -5301,6 +5358,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -5414,6 +5472,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6052,6 +6111,7 @@
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
         "frontend/src/features/admin/admin-campaigns.tsx",
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
@@ -6115,6 +6175,7 @@
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
         "frontend/src/features/admin/admin-campaigns.tsx",
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
@@ -6158,6 +6219,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -6181,6 +6243,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6446,6 +6509,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/leaderboard/kudos.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -6471,6 +6535,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/leaderboard/leaderboard.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -6552,6 +6617,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6578,6 +6644,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6640,6 +6707,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -6775,6 +6843,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -6837,6 +6906,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -6862,6 +6932,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6887,6 +6958,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6910,6 +6982,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6934,6 +7007,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6960,6 +7034,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6985,6 +7060,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -7008,6 +7084,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -7086,6 +7163,25 @@
       ]
     },
     {
+      "source": "src/routes/platform-about.js",
+      "line": 150,
+      "method": "GET",
+      "path": "/api/platform/about",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.platform.about.a5222435",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js"
+      ]
+    },
+    {
       "source": "src/routes/pm-order.js",
       "line": 111,
       "method": "GET",
@@ -7101,6 +7197,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7123,6 +7220,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7131,7 +7229,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 259,
+      "line": 438,
       "method": "GET",
       "path": "/api/me/email",
       "expression": null,
@@ -7147,6 +7245,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7155,7 +7254,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 276,
+      "line": 455,
       "method": "POST",
       "path": "/api/me/email/:dynamic",
       "expression": null,
@@ -7173,7 +7272,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 311,
+      "line": 490,
       "method": "PATCH",
       "path": "/api/me/profile",
       "expression": null,
@@ -7190,6 +7289,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7198,7 +7298,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 361,
+      "line": 540,
       "method": "POST",
       "path": "/api/me/username",
       "expression": null,
@@ -7214,6 +7314,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -7223,7 +7324,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 465,
+      "line": 644,
       "method": "GET",
       "path": "/api/me/username/suggestion",
       "expression": null,
@@ -7242,7 +7343,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 521,
+      "line": 700,
       "method": "POST",
       "path": "/api/me/username/choose",
       "expression": null,
@@ -7261,7 +7362,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 588,
+      "line": 767,
       "method": "POST",
       "path": "/api/me/avatar",
       "expression": null,
@@ -7278,6 +7379,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7286,7 +7388,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 633,
+      "line": 812,
       "method": "DELETE",
       "path": "/api/me/avatar",
       "expression": null,
@@ -7303,6 +7405,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7311,11 +7414,12 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 664,
+      "line": 843,
       "method": "GET",
       "path": "/api/me/challenges/completed",
       "expression": null,
       "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "leaderboards.get.me.challenges.completed.91de9ba6",
       "domain": "leaderboards",
       "risk": "read",
@@ -7324,8 +7428,31 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#leaderboard/challenges",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/profile.js",
+      "line": 925,
+      "method": "GET",
+      "path": "/api/me/summary",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.get.me.summary.50873369",
+      "domain": "profile",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile",
       "clientReferences": [
-        "frontend/src/features/profile/profile.js"
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
       ]
     },
     {
@@ -7356,6 +7483,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7380,6 +7508,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -7554,6 +7683,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7743,6 +7873,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7783,6 +7914,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7805,6 +7937,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7935,6 +8068,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7959,6 +8093,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7981,6 +8116,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -8004,6 +8140,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -8026,6 +8163,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -8814,6 +8952,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -8838,6 +8977,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -9016,6 +9156,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -9169,6 +9310,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -11617,7 +11759,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 213,
+      "line": 216,
       "method": "GET",
       "path": "/api/v4/public/__ping",
       "expression": null,
@@ -11626,7 +11768,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 216,
+      "line": 219,
       "method": "GET",
       "path": "/api/v4/leaderboard",
       "expression": null,
@@ -11640,12 +11782,13 @@
       "mobileSupported": true,
       "classicPath": "#leaderboard/challenges",
       "clientReferences": [
+        "frontend/src/features/leaderboard/history.js",
         "frontend/src/features/leaderboard/topochain-leaderboard.js"
       ]
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 316,
+      "line": 319,
       "method": "GET",
       "path": "/api/v4/leaderboard/global",
       "expression": null,
@@ -11654,7 +11797,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 356,
+      "line": 359,
       "method": "GET",
       "path": "/api/v4/leaderboard/epoch-breakdown",
       "expression": null,
@@ -11673,7 +11816,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 445,
+      "line": 448,
       "method": "GET",
       "path": "/api/v4/leaderboard/user-activities",
       "expression": null,
@@ -11692,7 +11835,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 571,
+      "line": 574,
       "method": "GET",
       "path": "/api/v4/season-events",
       "expression": null,
@@ -11706,12 +11849,32 @@
       "mobileSupported": true,
       "classicPath": "#leaderboard/challenges",
       "clientReferences": [
+        "frontend/src/features/leaderboard/history.js",
         "frontend/src/features/leaderboard/topochain-event-context.js"
       ]
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 622,
+      "line": 630,
+      "method": "GET",
+      "path": "/api/v4/season-history",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "leaderboards.get.v4.season.history.267a8d4f",
+      "domain": "leaderboards",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "leaderboard",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#leaderboard/challenges",
+      "clientReferences": [
+        "frontend/src/features/leaderboard/history.js"
+      ]
+    },
+    {
+      "source": "src/routes/topochain/public.js",
+      "line": 646,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId",
       "expression": null,
@@ -11730,7 +11893,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 665,
+      "line": 689,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId/challenges",
       "expression": null,
@@ -11750,7 +11913,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 802,
+      "line": 826,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId/challenges/:challengeId/breakdown",
       "expression": null,
@@ -11769,7 +11932,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 903,
+      "line": 927,
       "method": "GET",
       "path": "/api/v4/users/:userId/profile",
       "expression": null,
@@ -11789,7 +11952,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 1078,
+      "line": 1102,
       "method": "POST",
       "path": "/api/v4/app-version/check",
       "expression": null,
@@ -11814,6 +11977,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -11858,6 +12022,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -11883,6 +12048,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -12074,6 +12240,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/import-pr.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -12150,6 +12317,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -12172,6 +12340,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -12197,6 +12366,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -12367,6 +12537,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
