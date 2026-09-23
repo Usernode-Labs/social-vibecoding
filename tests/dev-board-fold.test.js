@@ -1125,7 +1125,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // way. Counted on a branch that already held main's Me-row check; main
   // reached 756 without these three, so the merged manifest holds 756 + 3 =
   // 759, leaving 31 slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 759);
+  //
+  // 759 → 760: +1 (#2894): a Your-apps tile dragged over the open Homeroom
+  // widget strip lights the strip up as its drop target (?shot=widget-drop).
+  // 30 slots left under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 760);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

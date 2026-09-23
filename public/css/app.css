@@ -3290,7 +3290,29 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 /* ── App cards ─────────────────────────────────────────── */
 
 .app-card { transition: background-color 150ms; }
-.app-card:hover { background-color: var(--bg-card); }
+/* A pointer that can actually hover only (#2892). On a touch screen WebKit
+   emulates :hover from the last tap and keeps it until the next tap lands
+   somewhere else — so a tile held for its menu kept this fill as a stuck
+   "selected" look, most visibly after "Add to Homeroom widget", the one menu
+   action that leaves you on the home screen with the tile still in view. */
+@media (hover: hover) {
+  .app-card:hover { background-color: var(--bg-card); }
+}
+
+/* The widget strip as a DROP TARGET (#2894): a "Your apps" tile dragged over
+   it. home.js (_markWidgetDrop) sets `data-drop` for the span of the hover —
+   an attribute because the strip's className is React's. `ok` is the same
+   tint as the grid's own target cells (.home-grid-cell--on); `refused` (already pinned, or the widget is
+   full) is a muted outline that says "not here" without shouting. */
+#widget-strip[data-drop="ok"] {
+  border-style: solid;
+  border-color: rgba(31, 134, 255, 0.75);
+  background-color: rgba(31, 134, 255, 0.14);
+}
+#widget-strip[data-drop="refused"] {
+  border-color: rgb(161 161 170);
+  opacity: 0.7;
+}
 
 /* THE TILE LABEL — iOS-homescreen sized (#951).
    11px on a 13px line, TWO lines, ellipsised on overflow. The old label
