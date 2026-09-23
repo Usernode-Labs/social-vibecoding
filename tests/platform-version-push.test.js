@@ -44,7 +44,7 @@ const fakePool = {
         rows: [{ ...USER, expires_at: new Date(Date.now() + 3600e3).toISOString() }],
       };
     }
-    if (/SELECT id, collab_visibility, view_visibility FROM apps WHERE slug/.test(sql)) {
+    if (/SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
       if (params[0] === 'chatapp') {
         return { rows: [{ id: 1, collab_visibility: 'public', view_visibility: 'public' }] };
       }

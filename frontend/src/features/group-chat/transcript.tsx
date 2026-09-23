@@ -1,3 +1,4 @@
+import { openReport } from '../dialogs/report';
 /**
  * `#gc-messages` — the group chat transcript, as the only React writer below
  * that host.
@@ -64,7 +65,6 @@ import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { setUserBlocked } from '../messages/store';
-import { ReportForm, submitReport } from '../reports/report-form';
 import {
   transcriptStore,
   type Attachment,
@@ -538,16 +538,6 @@ function SpecSnippet({ html }: { html: string }) {
  * thread's tint key off.
  */
 export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; grouped?: boolean }) {
-  const [reporting, setReporting] = useState<'message' | 'user' | null>(null);
-  const report = async (reason: string, detail: string) => {
-    if (reporting === 'user') {
-      await submitReport(`/api/users/${encodeURIComponent(msg.username)}/report`, reason, detail);
-      return;
-    }
-    const slug = controller()?.appSlug;
-    if (!slug || !msg.id) throw new Error('This message is unavailable for reporting.');
-    await submitReport(`/api/apps/${encodeURIComponent(slug)}/messages/${msg.id}/report`, reason, detail);
-  };
   return (
     <ChatMessageRow
       className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
@@ -578,8 +568,8 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
           ) : null}
         </>
       )}
-      actions={<RowActions msg={msg} onReportMessage={msg.id ? () => setReporting('message') : undefined}
-        onReportUser={() => setReporting('user')} />}
+      actions={<RowActions msg={msg} onReportMessage={msg.id ? () => openReport({ targetType: 'app_message', target: msg.id!, label: `Message from @${msg.username}`, userId: msg.senderId! }) : undefined}
+        onReportUser={() => openReport({ targetType: 'user', target: msg.username, label: `@${msg.username}`, userId: msg.senderId! })} />}
     >
       {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
       <Body html={msg.bodyHtml} />
@@ -588,8 +578,6 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
         <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
       ) : null}
       <Reactions msg={msg} />
-      {reporting ? <ReportForm key={reporting} kind={reporting} onSubmit={report}
-        onCancel={() => setReporting(null)} /> : null}
     </ChatMessageRow>
   );
 }

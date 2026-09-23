@@ -71,7 +71,8 @@ const DDL = `
     idempotency_key VARCHAR(64),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    edited_at TIMESTAMPTZ
+    edited_at TIMESTAMPTZ,
+    moderation_hidden_at TIMESTAMPTZ
   );
   CREATE UNIQUE INDEX conversation_message_idempotency
     ON conversation_messages (conversation_id, sender_id, idempotency_key)

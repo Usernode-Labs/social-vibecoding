@@ -284,7 +284,7 @@ const AdminConsole = {
     // users card (enrolment, podium/log settings, CSV import/export) —
     // one menu entry, merged. See features/admin/admin-users.tsx.
     { key: 'users', label: 'Users', group: 'People' },
-    { key: 'reports', label: 'Reports', group: 'People' },
+    { key: 'reports', label: 'Moderation', group: 'People' },
     { key: 'codes', label: 'Activation codes', group: 'People' },
     { key: 'limits', label: 'Spend limits', group: 'People' },
     // Programme people screens, promoted by the same #1179 reshuffle.

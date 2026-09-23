@@ -93,6 +93,14 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       AGENT_SCOPE,
       (req) => `/api/cli/agent${(req.route && req.route.path) || req.path}`
     ),
+    async (req, res, next) => {
+      try {
+        if (await require('../services/moderation').isRestricted(pool, req.user.id)) {
+          return res.status(403).json({ error: 'participation_restricted' });
+        }
+        next();
+      } catch (err) { next(err); }
+    },
   ];
 
   // Load the lease named in the body/query and prove the caller owns it.

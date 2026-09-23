@@ -528,6 +528,8 @@ app.use(topochainMobileRoutes(config));
 // can never be confused for one of those distinct credentials.
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
+app.use(require('./src/middleware/moderation').moderationGuard(config));
+app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(cliBrowserRoutes(config));
 // Social identity proofs are a platform account surface, independent of
 // the hosted MCP connector. They remain reviewable (with fixtures only) in
@@ -4355,6 +4357,7 @@ function startConversationAttachmentSweeper(config) {
             AND created_at < NOW() - INTERVAL '24 hours'`
       );
       if (rowCount) log.info('server', 'GC\'d orphaned conversation attachments', { count: rowCount });
+      await require('./src/services/moderation').purgeExpired(pool);
     } catch (err) {
       log.warn('server', 'Orphaned conversation attachment sweep failed', { err: err.message });
     }

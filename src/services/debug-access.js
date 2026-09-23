@@ -74,6 +74,12 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'moderation_cases',
+  'moderation_reports',
+  'moderation_evidence_files',
+  'moderation_report_files',
+  'moderation_actions',
+  'moderation_message_originals',
   'profile_reports',      // private abuse reports and reporter identities
   'conversations',        // private platform messaging metadata
   'conversation_direct_pairs', // private messaging relationships

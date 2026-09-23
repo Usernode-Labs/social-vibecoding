@@ -493,6 +493,11 @@ const GroupChat = {
         GroupChat._updateMessageReactions(msg.messageId, msg.reactions || []);
         break;
       }
+      case 'moderation_changed': {
+        void GroupChat.loadHistory();
+        GroupChat.loadThreadHistoryForOpen();
+        break;
+      }
       case 'chat_edit': {
         // Author edited a message — patch content + the "edited" marker in
         // place (preserves scroll, reactions, and the row's quote block).
@@ -1742,6 +1747,12 @@ const GroupChat = {
         if (id) GroupChat._startEdit(id);
         return;
       }
+      if (e.target.closest('.gc-react-bar-report')) {
+        const id = parseInt(bar.dataset.msgId || '', 10);
+        GroupChat._closeReactionBar();
+        if (id) window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app_message', target: id, label: 'Selected message' });
+        return;
+      }
       if (e.target.closest('.gc-react-bar-more')) {
         GroupChat._reactBarGridOpen = !GroupChat._reactBarGridOpen;
         GroupChat._publishReactBar();
@@ -1764,11 +1775,13 @@ const GroupChat = {
     window.UsernodeReact?.groupChat?.publishReactionBar?.({
       gridOpen: !!GroupChat._reactBarGridOpen,
       editable: !!GroupChat._reactBarEditable,
+      reportable: !!GroupChat._reactBarReportable,
+      readOnly: GroupChat._readOnly(),
     });
   },
 
   _openReactionBar(row) {
-    if (GroupChat._readOnly()) return; // #621: long-press bar is write-only
+    if (!App.user) return;
     const id = row && parseInt(row.dataset.msgId || '', 10);
     if (!id) return;
     const bar = GroupChat._ensureReactionBar();
@@ -1778,7 +1791,8 @@ const GroupChat = {
     // (features/group-chat/mount.ts), so the pencil is in or out of the DOM
     // before the measurement below decides where the bar fits.
     GroupChat._reactBarGridOpen = false;
-    GroupChat._reactBarEditable = row.classList.contains('gc-msg')
+    GroupChat._reactBarReportable = row.classList.contains('gc-msg') && !row.classList.contains('gc-msg-self');
+    GroupChat._reactBarEditable = !GroupChat._readOnly() && row.classList.contains('gc-msg')
       && row.classList.contains('gc-msg-self');
     GroupChat._publishReactBar();
     bar.classList.remove('hidden');

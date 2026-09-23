@@ -1,14 +1,13 @@
+import { openReport } from '../dialogs/report';
 import { useRef, useState, type ReactNode } from 'react';
 
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
-import * as api from './api';
 import { edit, react, setReply, setUserBlocked, toggleSaved } from './store';
 import type { ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { messageStamp, timeOfDay } from '../../lib/timestamp';
-import { ReportForm, submitReport } from '../reports/report-form';
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢', '🙏', '🔥'];
 
@@ -51,8 +50,6 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
   const [editValue, setEditValue] = useState(message.content);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  const [reporting, setReporting] = useState(false);
-  const [userReporting, setUserReporting] = useState(false);
   const longPress = useRef<number | null>(null);
   // #1408: the edit box grows with the message being edited, same as the
   // composer it visually replaces.
@@ -79,6 +76,8 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
     try { await toggleSaved(message.id); }
     catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t update your saved messages.'); }
   }
+
+
 
   async function blockSender() {
     if (mine || !message.sender.id
@@ -123,11 +122,8 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users?.join(', ')} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
-      {reporting ? <ReportForm kind="message" onCancel={() => setReporting(false)}
-        onSubmit={(reason, detail) => api.reportMessage(conversationId, message.id, reason as Parameters<typeof api.reportMessage>[2], detail)} /> : null}
-      {userReporting ? <ReportForm kind="user" onCancel={() => setUserReporting(false)}
-        onSubmit={(reason, detail) => submitReport(`/api/users/${encodeURIComponent(message.sender.username)}/report`, reason, detail)} /> : null}
-      {notice ? <p role="status" className="mt-1 text-sm text-red-700 dark:text-red-400">{notice}</p> : null}
+
+      {notice ? <p role="status" className={`mt-1 text-sm ${notice === 'Report submitted.' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>{notice}</p> : null}
     </>
   );
 
@@ -161,13 +157,17 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
       title={message.saved ? 'Saved. Click to unsave' : 'Save to your notifications'}
       aria-label={message.saved ? 'Unsave message' : 'Save message'}
     >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}</button>
-    {mine && message.content ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
-    {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setUserReporting(false); setNotice(''); }} title="Report message" aria-label="Report message">!</button> : null}
-    {!mine && message.sender.id ? <button type="button" onClick={() => { setUserReporting((open) => !open); setReporting(false); }} title={`Report @${message.sender.username}`} aria-label={`Report @${message.sender.username}`}>⚑</button> : null}
+    {mine && message.content && !message.moderated ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
+    {!mine ? <button type="button" onClick={() => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from @${message.sender.username}`, userId: message.sender.id })} title="Report message" aria-label="Report message">!</button> : null}
+    {!mine && message.sender.id ? <button type="button" onClick={() => openReport({ targetType: 'user', target: message.sender.username, label: `@${message.sender.username}`, userId: message.sender.id })} title="Report user" aria-label="Report user">⚑</button> : null}
     {!mine && message.sender.id ? <button type="button" disabled={busy} onClick={() => void blockSender()} title={`Block @${message.sender.username}`} aria-label={`Block @${message.sender.username}`}>⊘</button> : null}
   </div> : null;
 
-  const pickerNode = picker ? <div className="messages-reaction-picker" role="menu" aria-label="Choose a reaction">{REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" onClick={() => void toggle(emoji)}>{emoji}</button>)}</div> : null;
+  const pickerNode = picker ? <div className="messages-reaction-picker messages-report-picker" role="menu" aria-label="Message actions">
+    {!mine ? <button type="button" role="menuitem" data-report-action="message" onClick={() => { setPicker(false); openReport({ targetType: 'conversation_message', target: message.id, label: `Message from @${message.sender.username}`, userId: message.sender.id }); }}>Report message</button> : null}
+    {!mine && message.sender.id ? <button type="button" role="menuitem" data-report-action="user" onClick={() => { setPicker(false); openReport({ targetType: 'user', target: message.sender.username, label: `@${message.sender.username}`, userId: message.sender.id }); }}>Report user</button> : null}
+    {REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" onClick={() => void toggle(emoji)}>{emoji}</button>)}
+  </div> : null;
 
   const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''}`;
   const pointerProps = { onPointerDown: startLongPress, onPointerUp: cancelLongPress, onPointerCancel: cancelLongPress, onPointerMove: cancelLongPress };

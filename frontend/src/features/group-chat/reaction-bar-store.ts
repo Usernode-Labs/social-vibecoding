@@ -29,6 +29,8 @@ import { createStore } from '../../lib/plain-store.js';
 export interface ReactionBarState {
   gridOpen: boolean;
   editable: boolean;
+  reportable?: boolean;
+  readOnly?: boolean;
 }
 
 /** How every open starts: quick row only, Edit withheld until a row says so. */

@@ -262,6 +262,7 @@ function internalRoutes(_config) {
 
       const vis = await appAccess.getHostVisibility(pool, slug);
       if (!vis) return res.status(404).send('Not found');
+      if (vis.suspended) return res.status(403).send('App suspended by moderation');
       if (!vis.viewPrivate) return res.status(200).send('ok');
 
       const query = parseUriQuery(uri);

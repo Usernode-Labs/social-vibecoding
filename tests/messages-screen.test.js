@@ -19,7 +19,6 @@ const store = read('frontend/src/features/messages/store.ts');
 const screen = read('frontend/src/features/messages/index.tsx');
 const composer = read('frontend/src/features/messages/composer.tsx');
 const row = read('frontend/src/features/messages/message-row.tsx');
-const reportForm = read('frontend/src/features/reports/report-form.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
 const dapp = JSON.parse(read('dapp.json'));
@@ -202,15 +201,12 @@ test('composer and moderation payloads match the backend contracts', () => {
     'mention completion and insertion support hyphenated and other valid usernames');
   assert.match(api, /query\.trim\(\)\.slice\(0, 255\)[\s\S]{0,80}scope=messages/,
     'recipient search excludes users blocked in either direction');
-  for (const reason of ['harassment', 'spam', 'threats', 'hate', 'sexual_content', 'other']) {
-    assert.match(reportForm, new RegExp(`'${reason}'`));
-  }
-  assert.match(row, /<ReportForm kind="message"/);
-  assert.match(row, /<ReportForm kind="user"/);
-  assert.match(reportForm, /maxLength=\{500\}/);
-  assert.match(api, /detail: detail\.slice\(0, 500\)/,
-    'report context matches the backend and schema retention limit');
-  assert.match(api, /JSON\.stringify\(\{ reason, \.\.\.\(detail \? \{ detail:/);
+  const sharedReport = fs.readFileSync(path.join(ROOT, 'frontend/src/features/dialogs/report.tsx'), 'utf8');
+  assert.match(row, /openReport\(\{ targetType: 'conversation_message'/);
+  for (const reason of ['harassment', 'spam', 'threats', 'hate', 'sexual_content', 'other']) assert.ok(sharedReport.includes(`['${reason}',`));
+  assert.match(sharedReport, /maxLength=\{1000\}/);
+  assert.match(sharedReport, /fetch\('\/api\/reports'/);
+
 });
 
 test('blocking and access-revocation purge an active direct thread locally', () => {

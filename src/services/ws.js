@@ -296,7 +296,7 @@ function parseCookies(header) {
 
 async function resolveAppForAccess(pool, slug) {
   const { rows } = await pool.query(
-    'SELECT id, collab_visibility, view_visibility FROM apps WHERE slug = $1',
+    'SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1',
     [slug]
   );
   return rows[0] || null;
@@ -322,6 +322,10 @@ function leaveRoom(appId, client) {
 function deliverToRoom(appId, data, excludeWs = null, audience = {}) {
   const room = rooms.get(appId);
   if (!room) return;
+  if (data.type === 'app_suspended') {
+    for (const client of room) client.ws.close(4004, 'App suspended by moderation');
+    return;
+  }
   const payload = JSON.stringify(data);
   const hidden = new Set(audience.blockedUserIds || []);
   const quoteHidden = new Set(audience.quoteHiddenUserIds || []);
@@ -476,8 +480,9 @@ async function validateThread(pool, appId, thread) {
 const WRITE_MSG_TYPES = new Set(['chat', 'edit', 'react', 'typing']);
 
 async function canWriteChat(pool, client) {
+  if (await require('./moderation').isRestricted(pool, client.user.id)) return false;
   const { rows } = await pool.query(
-    'SELECT id, collab_visibility, view_visibility FROM apps WHERE id = $1',
+    'SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE id = $1',
     [client.appId]
   );
   if (!rows.length) return false;
@@ -568,7 +573,7 @@ async function handleMessage(pool, client, msg) {
             }
           } else if (['message', 'event', 'spec'].includes(q.source) && Number.isInteger(q.refMsgId)) {
             const { rows: refRows } = await pool.query(
-              `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, u.username
+              `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, m.moderation_hidden_at, u.username
                FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
                WHERE m.id = $1 AND m.app_id = $2`,
               [q.refMsgId, client.appId]
@@ -844,7 +849,7 @@ async function handleMessage(pool, client, msg) {
       // row): the row must exist in this app, belong to the editor, and be
       // an ordinary 'message'.
       const { rows } = await pool.query(
-        `SELECT user_id, msg_type, thread_type, thread_ref
+        `SELECT user_id, msg_type, thread_type, thread_ref, moderation_hidden_at
            FROM chat_messages WHERE id = $1 AND app_id = $2`,
         [messageId, client.appId]
       );
@@ -855,7 +860,7 @@ async function handleMessage(pool, client, msg) {
         return;
       }
       const row = rows[0];
-      if (row.user_id !== client.user.id || row.msg_type !== 'message') {
+      if (row.moderation_hidden_at || row.user_id !== client.user.id || row.msg_type !== 'message') {
         log.warn('ws', 'edit rejected: not author or not an editable message', {
           appId: client.appId, userId: client.user.id, messageId, msgType: row.msg_type,
         });
@@ -866,9 +871,10 @@ async function handleMessage(pool, client, msg) {
       // at what it replied to, and reactions (keyed on message id) survive.
       const { rows: upd } = await pool.query(
         `UPDATE chat_messages SET content = $1, edited_at = NOW()
-          WHERE id = $2 RETURNING edited_at`,
+          WHERE id = $2 AND moderation_hidden_at IS NULL RETURNING edited_at`,
         [content, messageId]
       );
+      if (!upd.length) return;
       const editedAt = upd[0].edited_at;
 
       // NOTE: we intentionally do NOT re-fire createMentionNotifications for
@@ -1107,7 +1113,7 @@ function deliverGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
   }
   appAccess.getWsVisibility(_pool, { appId, appSlug })
     .then((info) => {
-      if (!info) return; // app gone — nothing to broadcast
+      if (!info || info.suspended) return; // no ordinary activity from a suspended app
       if (!info.viewPrivate) {
         deliverGlobal(payload);
         return;

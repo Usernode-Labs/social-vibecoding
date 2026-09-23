@@ -812,7 +812,7 @@ function appRoutes(config) {
           WHERE status = 'open'
           GROUP BY app_id
         ) iss ON iss.app_id = a.id
-        WHERE (NOT a.self_hosted OR $1::boolean)
+        WHERE a.moderation_suspended_at IS NULL AND (NOT a.self_hosted OR $1::boolean)
           AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
       `, [showSelfHosted, userId, isAdmin]);

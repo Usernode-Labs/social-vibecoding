@@ -32,12 +32,12 @@ const ADMIN_ID = 50;
 // ── pool stub ──────────────────────────────────────────────────────────
 const fakePool = {
   async query(sql, params = []) {
-    if (/SELECT id, view_visibility FROM apps WHERE slug/.test(sql)) {
+    if (/SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
       if (params[0] === 'pubapp') return { rows: [{ id: 1, view_visibility: 'public' }] };
       if (params[0] === 'privapp') return { rows: [{ id: PRIV_APP_ID, view_visibility: 'private' }] };
       return { rows: [] };
     }
-    if (/SELECT view_visibility FROM apps WHERE id/.test(sql)) {
+    if (/SELECT view_visibility, moderation_suspended_at FROM apps WHERE id/.test(sql)) {
       if (params[0] === PRIV_APP_ID) return { rows: [{ view_visibility: 'private' }] };
       if (params[0] === 1) return { rows: [{ view_visibility: 'public' }] };
       return { rows: [] };

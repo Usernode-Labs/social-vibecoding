@@ -674,7 +674,8 @@ function conversationRoutes(config) {
     const { rows } = await pool.query(
       `SELECT id, kind, filename, content_type, data, message_id, user_id
          FROM conversation_message_attachments
-        WHERE id = $1 AND conversation_id = $2`,
+        WHERE id = $1 AND conversation_id = $2
+            AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden WHERE hidden.id = conversation_message_attachments.message_id AND hidden.moderation_hidden_at IS NOT NULL)`,
       [attachmentId, id]
     );
     const row = rows[0];

@@ -63,6 +63,7 @@ export interface ConversationMessage {
   content: string;
   createdAt: string;
   editedAt?: string | null;
+  moderated?: boolean;
   reply?: {
     id: number;
     sender: ConversationUser;

@@ -3366,6 +3366,10 @@ const Home = {
     if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
       items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
+    if (App.user && app.slug && !app.demo && Number(app.created_by) !== Number(App.user.id)) items.push({
+      key: 'report', label: 'Report app',
+      run: () => window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: app.slug, label: app.name || app.slug }),
+    });
     return items;
   },
 

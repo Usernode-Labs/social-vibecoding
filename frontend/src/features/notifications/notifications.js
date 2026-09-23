@@ -1717,6 +1717,11 @@ function rowView(n) {
     };
   }
 
+  if (n.kind === 'moderation_report' || n.kind === 'moderation_action') {
+    return { ...base, appLine: 'Account', wrap: true, icon: '⚑',
+      ...headline(n.kind === 'moderation_report' ? 'Report update' : 'Moderation action', n.detail || '') };
+  }
+
   if (n.kind === 'app_quota_changed') {
     const [before, after] = String(n.detail || '').split(':');
     const detail = /^\d+$/.test(before) && /^\d+$/.test(after)

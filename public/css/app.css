@@ -1017,6 +1017,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-message-self .messages-bubble-wrap > .messages-reaction-picker { left: auto; right: 0; }
 .messages-reaction-picker button { width: 36px; height: 36px; border-radius: 9999px; font-size: 20px; }
 .messages-reaction-picker button:hover { background: var(--messages-surface-2); transform: scale(1.1); }
+/* Reports need readable rows in the touch menu, beside the emoji choices. */
+.messages-reaction-picker.messages-report-picker {
+  flex-wrap: wrap;
+  width: 304px;
+  max-width: calc(100vw - 32px);
+  border-radius: 16px;
+  z-index: 50;
+}
+.messages-report-picker button[data-report-action] {
+  width: 100%; height: 44px; padding: 0 12px;
+  border-radius: 8px; font-size: 14px; text-align: left;
+}
+.messages-report-picker button[data-report-action]:hover { transform: none; }
+
 
 .messages-edit textarea {
   width: 100%;

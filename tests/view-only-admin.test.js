@@ -64,7 +64,7 @@ function defaultHandler(sql, params = []) {
     return { rows: [{ id: params[0], username: 'target', app_quota: 2 }] };
   }
   // Role-setter: existing-row lookup inside the demotion/transaction path.
-  if (/SELECT id, is_admin, admin_readonly FROM users WHERE id = \$1/.test(sql)) {
+  if (/SELECT id, is_admin, admin_readonly, participation_restricted_at FROM users WHERE id = \$1/.test(sql)) {
     return { rows: scenario.targetRow ? [scenario.targetRow] : [] };
   }
   // Last-full-admin count — MUST now filter admin_readonly = FALSE.

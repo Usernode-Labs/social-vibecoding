@@ -179,7 +179,7 @@ test('html via the plain route serves as text/plain + attachment (never text/htm
     assert.match(res.headers.get('content-type'), /^text\/plain/);
     assert.match(res.headers.get('content-disposition'), /^attachment/);
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(res.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+    assert.equal(res.headers.get('cache-control'), 'private, no-store');
   } finally {
     server.close();
   }

@@ -8843,3 +8843,75 @@ CREATE TABLE IF NOT EXISTS preview_operations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE preview_operations IS 'staging:private';
+
+-- #2721. Private, durable moderation records; target IDs intentionally have
+-- no cascading FK: removing a target must not remove evidence or the audit.
+ALTER TABLE notifications ALTER COLUMN detail TYPE VARCHAR(1200);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS participation_restricted_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS moderation_suspended_at TIMESTAMPTZ;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS moderation_hidden_at TIMESTAMPTZ;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS moderation_hidden_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS moderation_cases (
+  id BIGSERIAL PRIMARY KEY,
+  target_type VARCHAR(32) NOT NULL CHECK (target_type IN ('app','user','app_message','conversation_message')),
+  target_id BIGINT NOT NULL,
+  target_label TEXT NOT NULL,
+  target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'new' CHECK (status IN ('new','in_review','resolved','dismissed')),
+  cycle INTEGER NOT NULL DEFAULT 1,
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  UNIQUE(target_type, target_id)
+);
+CREATE INDEX IF NOT EXISTS moderation_cases_queue ON moderation_cases(status, updated_at, id);
+CREATE TABLE IF NOT EXISTS moderation_reports (
+  id BIGSERIAL PRIMARY KEY,
+  case_id BIGINT NOT NULL REFERENCES moderation_cases(id) ON DELETE CASCADE,
+  cycle INTEGER NOT NULL,
+  reporter_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reason VARCHAR(32) NOT NULL,
+  detail VARCHAR(1000),
+  evidence JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  legacy_type VARCHAR(32), legacy_id BIGINT,
+  UNIQUE(legacy_type, legacy_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_evidence_files (
+  id BIGSERIAL PRIMARY KEY,
+  source_type VARCHAR(32) NOT NULL,
+  source_id VARCHAR(32) NOT NULL,
+  filename TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  data BYTEA NOT NULL,
+  UNIQUE(source_type, source_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_report_files (
+  report_id BIGINT NOT NULL REFERENCES moderation_reports(id) ON DELETE CASCADE,
+  file_id BIGINT NOT NULL REFERENCES moderation_evidence_files(id) ON DELETE CASCADE,
+  PRIMARY KEY(report_id, file_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_actions (
+  id BIGSERIAL PRIMARY KEY,
+  case_id BIGINT NOT NULL REFERENCES moderation_cases(id) ON DELETE CASCADE,
+  actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action VARCHAR(32) NOT NULL,
+  reason VARCHAR(1000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS moderation_message_originals (
+  target_type VARCHAR(32) NOT NULL,
+  target_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  metadata JSONB,
+  PRIMARY KEY(target_type, target_id)
+);
+COMMENT ON TABLE moderation_cases IS 'staging:private';
+COMMENT ON TABLE moderation_reports IS 'staging:private';
+COMMENT ON TABLE moderation_evidence_files IS 'staging:private';
+COMMENT ON TABLE moderation_report_files IS 'staging:private';
+COMMENT ON TABLE moderation_actions IS 'staging:private';
+COMMENT ON TABLE moderation_message_originals IS 'staging:private';
+
+CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;

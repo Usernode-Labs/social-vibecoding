@@ -43,7 +43,7 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
         id int PRIMARY KEY, app_id int NOT NULL, user_id int, content text NOT NULL,
         msg_type text NOT NULL DEFAULT 'message', metadata jsonb NOT NULL DEFAULT '{}',
         thread_type text, thread_ref int, created_at timestamptz NOT NULL DEFAULT now(),
-        edited_at timestamptz, posted_via text
+        moderation_hidden_at timestamptz, edited_at timestamptz, posted_via text
       );
       INSERT INTO users VALUES (1, 'reader'), (2, 'blocked'), (3, 'visible');
       INSERT INTO apps (id, slug, name) VALUES (7, 'demo', 'Demo');

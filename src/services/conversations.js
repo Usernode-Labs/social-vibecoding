@@ -317,6 +317,7 @@ async function hydrateMessages(db, user, rows) {
       avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
     },
     content: row.content,
+    moderated: !!row.moderation_hidden_at,
     createdAt: row.created_at,
     editedAt: row.edited_at,
     reply: row.reply_id && !blockedIds.has(row.reply_sender_id) ? {
@@ -329,14 +330,14 @@ async function hydrateMessages(db, user, rows) {
       content: row.reply_content || '',
     } : null,
     reactions: reactions.get(row.id) || [],
-    attachments: attachments.get(row.id) || [],
-    objects: objects.get(row.id) || [],
+    attachments: row.moderation_hidden_at ? [] : (attachments.get(row.id) || []),
+    objects: row.moderation_hidden_at ? [] : (objects.get(row.id) || []),
     saved: savedIds.has(row.id),
   }));
 }
 
 const MESSAGE_SELECT = `
-  SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at,
+  SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at, m.moderation_hidden_at,
          su.username AS sender_username, sua.id AS sender_avatar_id,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
          ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id
@@ -1062,7 +1063,7 @@ async function editMessage(pool, user, conversationId, messageId, rawContent) {
     if (!membership) return null;
     const { rows } = await db.query(
       `UPDATE conversation_messages SET content = $1, edited_at = NOW()
-        WHERE id = $2 AND conversation_id = $3 AND sender_id = $4
+        WHERE id = $2 AND conversation_id = $3 AND sender_id = $4 AND moderation_hidden_at IS NULL
         RETURNING id`,
       [content, messageId, conversationId, user.id]
     );

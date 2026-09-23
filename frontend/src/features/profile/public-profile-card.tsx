@@ -1,3 +1,4 @@
+import { openReport } from '../dialogs/report';
 /**
  * The opt-in public profile card (#582) and its report form, as React
  * (#1191 slice 6, conversion 1).
@@ -19,16 +20,6 @@
 import { useState, type ReactNode } from 'react';
 
 import { publicAvatarView, verifiedSocialLinksView } from './profile-store.js';
-import { Profile } from './profile.js';
-
-const REPORT_REASONS: Array<[string, string]> = [
-  ['impersonation', 'Impersonation'],
-  ['harassment', 'Harassment'],
-  ['spam', 'Spam'],
-  ['unsafe_avatar', 'Unsafe avatar'],
-  ['other', 'Other'],
-];
-
 function PublicAvatar({ profile }: { profile: any }): ReactNode {
   const { initial, url } = publicAvatarView(profile);
   const [failed, setFailed] = useState(false);
@@ -56,65 +47,7 @@ function PublicAvatar({ profile }: { profile: any }): ReactNode {
 }
 
 function ReportForm({ username }: { username: string }): ReactNode {
-  const [reason, setReason] = useState('impersonation');
-  const [detail, setDetail] = useState('');
-  const [status, setStatus] = useState('');
-  const [sending, setSending] = useState(false);
-
-  const send = async (): Promise<void> => {
-    setSending(true);
-    setStatus('Sending…');
-    const result = await Profile.sendReport(username, reason, detail);
-    setStatus(result.status);
-    if (!result.ok) setSending(false);
-  };
-
-  return (
-    <details id="public-profile-report" className="mt-4 text-sm">
-      <summary className="cursor-pointer text-zinc-500 dark:text-zinc-400">Report user</summary>
-      <label className="block mt-3 text-xs font-medium">
-        Reason
-        <select
-          className={
-            'mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 '
-            + 'bg-transparent p-2 min-h-[44px]'
-          }
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        >
-          {REPORT_REASONS.map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
-        </select>
-      </label>
-      <label className="block mt-3 text-xs font-medium">
-        Details (optional)
-        <textarea
-          className={
-            'mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 '
-            + 'bg-transparent p-2'
-          }
-          maxLength={500}
-          rows={3}
-          value={detail}
-          onChange={(e) => setDetail(e.target.value)}
-        >
-        </textarea>
-      </label>
-      <button
-        type="button"
-        className={
-          'mt-3 px-3 min-h-[44px] rounded-lg border border-zinc-300 '
-          + 'dark:border-zinc-700 font-medium'
-        }
-        disabled={sending}
-        onClick={() => { void send(); }}
-      >
-        Send report
-      </button>
-      <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400" role="status" aria-live="polite">{status}</div>
-    </details>
-  );
+  return <div id="public-profile-report" className="mt-4 text-sm"><button type="button" className="min-h-[44px] text-red-700 dark:text-red-400" onClick={() => openReport({ targetType: 'user', target: username, label: `@${username}` })}>Report user</button></div>;
 }
 
 export function PublicProfileCard({

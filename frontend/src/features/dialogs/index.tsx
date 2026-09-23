@@ -22,6 +22,7 @@
  * header gives the reason.
  */
 
+import { ReportDialog } from './report';
 import { AppSettingsDialog } from './app-settings';
 import { AppNotificationsDialog } from './app-notifications';
 import { CreateAppDialog } from './create-app';
@@ -62,6 +63,7 @@ export function Dialogs() {
       <WalletRecoveryDialog />
       <AppSettingsDialog />
       <AppNotificationsDialog />
+      <ReportDialog />
     </>
   );
 }

@@ -422,7 +422,7 @@ const keys = (items) => Array.from(items, (i) => i.key);
 test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'nothing admin-gated leaks');
   assert.equal(items[2].label, 'Add to Your apps');
 });
@@ -584,7 +584,7 @@ test('menu: full admin on a running repo app gets check-updates, lock and safe a
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings']);
+    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings', 'report']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
@@ -643,7 +643,7 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
   // App details is navigation, not a mutation, so it survives the gate.
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'no retry/check/lock/delete');
 });
 
@@ -718,7 +718,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen']);
+    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen', 'report']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'

@@ -699,6 +699,8 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
 
   // Local-dev mock namespace and short-lived credentials.
   if (p.startsWith('/__mock/')) return 'bypass';
+  // Private evidence and decisions must never fall back to an offline copy.
+  if (/^\/api\/admin\/moderation(?:\/|$)/i.test(p)) return 'bypass';
   if (p === '/api/iframe-token') return 'bypass';
   if (p.startsWith('/api/cli/')) return 'bypass';
   if (p === '/api/me/cli-tokens' || p.startsWith('/api/me/cli-tokens/')) {

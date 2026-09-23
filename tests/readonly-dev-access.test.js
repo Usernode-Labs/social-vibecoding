@@ -109,7 +109,7 @@ function wsStubPool() {
     queries,
     async query(sql, params = []) {
       queries.push(sql);
-      if (/SELECT id, collab_visibility, view_visibility FROM apps WHERE id/.test(sql)) {
+      if (/SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE id/.test(sql)) {
         return { rows: [{ id: 10, collab_visibility: 'private', view_visibility: 'public' }] };
       }
       if (/FROM app_collaborators/.test(sql)) {

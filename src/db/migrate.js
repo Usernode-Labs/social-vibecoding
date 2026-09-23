@@ -40,6 +40,8 @@ async function migrate(config) {
 
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool, schema);
+  await require('../services/moderation-migration').importLegacyReports(pool);
+  await require('../services/moderation').purgeExpired(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
