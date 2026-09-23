@@ -1653,7 +1653,7 @@ test('every sibling screen hides #browse-screen and exits the flag', () => {
       `${fn} hides every other root through _showOnlyScreen`);
   }
   // navigateHome must exit it too, or the grid stays mounted.
-  const home = APP_SRC.slice(APP_SRC.indexOf('navigateHome() {'));
+  const home = APP_SRC.slice(APP_SRC.indexOf('navigateHome(opts) {'));
   assert.match(home.slice(0, 1200), /App\._inBrowse\) App\._exitBrowse\(\)/);
   assert.match(home.slice(0, 2600), /App\._showOnlyScreen\('home-screen', \['app-view'\]\)/,
     'going home reveals home and hides every root but the shrinking app card');

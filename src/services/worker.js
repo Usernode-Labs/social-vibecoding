@@ -486,6 +486,32 @@ function evidenceToolAvailable(tools, toolName) {
   return names.some((name) => name === toolName || name === `mcp__evidence__${toolName}`);
 }
 
+function mcpToolCount(tools, serverName) {
+  if (collectionCount(tools) == null) return null;
+  const names = Array.isArray(tools)
+    ? tools.map((item) => typeof item === 'string' ? item : item?.name)
+    : Object.keys(tools);
+  return names.filter((name) => typeof name === 'string'
+    && name.startsWith(`mcp__${serverName}__`)).length;
+}
+
+function evidenceContextResultShape(content) {
+  const text = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.find((item) => item?.type === 'text')?.text : null;
+  const responseCharacters = typeof text === 'string' ? text.length : 0;
+  let value = null;
+  try { value = JSON.parse(text); } catch { /* A malformed response is diagnostic data. */ }
+  const object = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  return {
+    responseCharacters,
+    jsonValid: !!object,
+    acceptedIntentPresent: !!object?.acceptedIntent,
+    originsPresent: !!(object?.origins?.base && object?.origins?.head),
+    revisionsPresent: !!(object?.revisions?.baseSha && object?.revisions?.headSha),
+    storyCount: Array.isArray(object?.acceptedIntent?.stories) ? object.acceptedIntent.stories.length : null,
+  };
+}
+
 function addObservedValue(set, value) {
   if (!(set instanceof Set) || typeof value !== 'string' || !value) return;
   set.add(value);
@@ -623,6 +649,8 @@ function applyStreamEvent(event, onProgress, state) {
       toolDefinitionCount: collectionCount(systemEvent.tools),
       evidenceGetContextAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_get_context'),
       evidenceRunPlanAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_run_plan'),
+      browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
+      browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {
@@ -694,6 +722,15 @@ function applyStreamEvent(event, onProgress, state) {
     // the user see CC is progressing through its plan.
     for (const block of event.message.content) {
       if (block.type !== 'tool_result') continue;
+      const diagnosticStart = block.tool_use_id == null ? null
+        : state.evidenceDiagnosticStarts?.get(String(block.tool_use_id));
+      if (diagnosticStart?.tool === 'evidence_get_context') {
+        emitEvidenceDiagnostic(state, {
+          kind: 'context_result',
+          outcome: block.is_error === true ? 'error' : 'ok',
+          ...evidenceContextResultShape(block.content),
+        });
+      }
       observeEvidenceTool(state, {
         phase: 'end', id: block.tool_use_id,
         name: state.toolUses.get(block.tool_use_id)?.name,
@@ -718,13 +755,15 @@ function applyStreamEvent(event, onProgress, state) {
       }
     }
   } else if (event.type === 'result') {
-    emitEvidenceDiagnostic(state, {
-      kind: 'provider_result', outcome: event.is_error ? 'error' : 'ok',
-    });
     state.lastResultText = event.result || state.lastResultText;
     applyClaudeResultUsage(event.usage, state);
     state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
     state.providerStopReason = safeResultSubtype(event.stop_reason) || state.providerStopReason;
+    emitEvidenceDiagnostic(state, {
+      kind: 'provider_result', outcome: event.is_error ? 'error' : 'ok',
+      resultSubtype: state.resultSubtype,
+      providerStopReason: state.providerStopReason,
+    });
     const reportedDuration = observeDiagnostics ? resultMetric(event.duration_ms) : null;
     const providerDuration = observeDiagnostics ? resultMetric(event.duration_api_ms) : null;
     const turns = observeDiagnostics ? usageToken(event.num_turns) : null;

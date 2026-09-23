@@ -276,7 +276,7 @@ test('every message kind carries the save button', () => {
     const start = tsx.indexOf(`function ${row}(`);
     assert.ok(start > 0, `located ${row}`);
     const body = tsx.slice(start, tsx.indexOf('\n}', start));
-    assert.match(body, /<RowActions msg=\{msg\} \/>/,
+    assert.match(body, /<RowActions msg=\{msg\}(?:\s|\/)/,
       `${row} renders the row's header controls`);
   }
   // …and the save button is inside it, gated on a signed-in viewer.

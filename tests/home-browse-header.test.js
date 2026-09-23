@@ -365,7 +365,8 @@ test('Home and Discover are reachable from the bar, on every platform screen', (
   // its href stays a real path so a modified click opens a tab.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /key: 'home' as const[\s\S]{0,400}href: '\/'/);
-  assert.match(bar, /App\?\.navigateHome\?\.\(\)/);
+  // A press on the tab says so, and swaps like any other tab's (#2881).
+  assert.match(bar, /\.App\?\.navigateHome\?\.\(\{ viaTab: true \}\)/);
   assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
   // …and the menu they left carries no platform destination at all.
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');

@@ -1501,6 +1501,7 @@ const App = {
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
         && shot !== 'feedback-capture-failed'
         && shot !== 'feedback-required' && shot !== 'feedback-choose'
+        && shot !== 'feedback-choose-missed'
         && shot !== 'feedback-first') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
@@ -1526,13 +1527,19 @@ const App = {
     // before any fetch, so this posts nothing either.
     const requiredError = shot === 'feedback-required';
     // #2707: the dialog as somebody with an app open meets it — two real
-    // destinations, neither chosen, Submit dead and the row saying why. The
+    // destinations, neither chosen, and the row asking which. The
     // shot routes cannot reach that state on their own: `/` has no app open,
     // and this app's own dev screen is self-hosted, which is the one case
     // that forces the Platform target. So it pins the label the way
     // ?shot=feedback-spent pins the kudos budget, and drives the shipped
     // branch through the controller's own hook. Files nothing.
     const chooseTarget = shot === 'feedback-choose';
+    // #2888: that same dialog after Submit was pressed with neither
+    // destination chosen — the row red, the hint red, focus on the row. A
+    // description is assigned first (not typed: no live title call) so the
+    // only refusal on screen is the one this state is about. The hook presses
+    // the real Submit, whose refusal returns before any fetch. Files nothing.
+    const missedTarget = shot === 'feedback-choose-missed';
     // ONCE PER DOCUMENT. _applyRouteShots dedupes on the hash, not on the
     // applier, so a fragment that changes after boot re-runs this one — and
     // this shot is not idempotent the way the others are. Its
@@ -1648,6 +1655,18 @@ const App = {
             if (--chooseTries > 0) setTimeout(poseChoice, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(poseChoice, 50);
+        }
+        if (missedTarget) {
+          let missTries = App.IMPROVE_SHOT_TRIES;
+          const pressWithoutChoice = () => {
+            const row = document.getElementById('feedback-target');
+            if (row && row.getAttribute('aria-invalid') === 'true') return;
+            const text = document.getElementById('feedback-text');
+            if (text && !text.value) text.value = 'Dragging a card scrolls the board back to the top.';
+            try { App._simulateFeedbackTargetMissed?.('Example App'); } catch (e) { /* ignore */ }
+            if (--missTries > 0) setTimeout(pressWithoutChoice, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(pressWithoutChoice, 50);
         }
         if (requiredError) {
           // Same retry shape, and for the same reason, as captureFailed
@@ -2094,6 +2113,13 @@ const App = {
   refreshActiveScreen() {
     try {
       if (document.hidden) return;
+      // A correction's re-pull is a REFRESH, not a boot. Without this the
+      // worker answered it from the zero-deadline boot lane again, found the
+      // late answer different again, and corrected again: on a board whose
+      // /promoted list carries live check progress that never settled, and
+      // every visible Workshop re-pulled its whole board about once a second
+      // until Chrome refused new requests (net::ERR_INSUFFICIENT_RESOURCES).
+      App._announceRefreshIntent();
 
       const visible = (id) => {
         const el = document.getElementById(id);
@@ -4311,11 +4337,47 @@ const App = {
   // phone's bottom bar keeps its slide (it is being reworked separately,
   // #2766), and every other entry — a drill-in, an app's zoom — keeps its
   // motion, because there the page really does go somewhere.
-  _entryTransition(preferred, screenEl) {
-    if (App._isRailSwitch(preferred, screenEl)) preferred = 'none';
+  //
+  // …AND A TAB PRESS INTO OR OUT OF AN APP'S WORKSHOP IS A TAB SWITCH TOO
+  // (#2880, #2881). The Workshop tab returns to the app Workshop you left
+  // (#2776), which is #app-view, not #workshop-screen — so the press went
+  // through navigateToApp and asked for 'zoom-in'. From Home that expanded
+  // the app's tile when it had one (the animation #2881 reports); from every
+  // other tab, and for the platform's own row, which has no tile anywhere,
+  // the kit fell back to its 'push' — the very fade-through #2797 took off
+  // the five roots, with the header and the rail swapped for snapshot images
+  // for its length. That is the flicker #2880 reports going to the Workshop
+  // from any tab. Home pressed from an app's Workshop ran navigateHome's
+  // zoom-out, shrinking the page into its tile. A press is marked `viaTab`
+  // by the one caller that knows it is one (the tab bar's Home click, and
+  // resumeWorkshopView for the Workshop's), and resolves exactly as a press
+  // on any other tab does: a cut on the desktop rail, and on the phone the
+  // same push or pop its other tabs run.
+  _entryTransition(preferred, screenEl, viaTab) {
+    if (viaTab) preferred = App._tabSwitchType(preferred === 'zoom-out' ? 'pop' : 'push');
+    else if (App._isRailSwitch(preferred, screenEl)) preferred = 'none';
     if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', preferred);
     return preferred;
   },
+
+  // What a press on a tab runs: a cut on the desktop layout, where the bar is
+  // the rail beside the page; `phoneType` on the phone's bottom bar, which is
+  // what every other tab there runs (a push into a tab, navigateHome's pop).
+  _tabSwitchType(phoneType) {
+    try {
+      if (window.matchMedia && window.matchMedia('(min-width: 768px)').matches) return 'none';
+    } catch (_) { /* unreadable: the phone's own motion */ }
+    return phoneType;
+  },
+
+  // Set for the length of one tab press's synchronous navigation (see
+  // resumeWorkshopView). Never left set: a later navigation into the same
+  // app — its tile on Home, a notification — is not a press and keeps its zoom.
+  _tabPress: false,
+
+  // How long a tab press into an app's Workshop holds the outgoing screen
+  // for the app's record before revealing the view anyway (navigateToApp).
+  _TAB_REVEAL_WAIT_MS: 250,
 
   // The rail's own places: the roots its five tabs navigate to.
   _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
@@ -4636,7 +4698,11 @@ const App = {
       App._resumingWorkshop = null;
       return false;
     }
-    App.restoreFromHash();
+    // A PRESS ON THE WORKSHOP TAB, and it swaps like one (#2880, #2881).
+    // navigateToApp reads the flag before its first await, which is where it
+    // starts its transition; restoreFromHash reaches it synchronously.
+    App._tabPress = true;
+    try { App.restoreFromHash(); } finally { App._tabPress = false; }
     return true;
   },
 
@@ -6094,7 +6160,27 @@ const App = {
     // link opens the source app), so the zoom goes through the same
     // single-motion gate — 'none' still runs fn + after as one mutation.
     const appViewEl = document.getElementById('app-view');
-    PlatformUI.transition(() => {
+    // The Workshop tab returning to this app's Workshop (resumeWorkshopView)
+    // is a tab switch, not an app opening: no tile to grow out of (#2881),
+    // and no full-page fallback over the rail and header (#2880).
+    const viaTab = App._tabPress === true;
+    // THE LAST VISIT'S BOARD IS NOT THIS ONE'S FIRST FRAME (#2880). Leaving
+    // an app's Workshop for another tab hides #app-view with its Dev surfaces
+    // still mounted, and AppView.close() marks their data stale. Revealed
+    // as-is, coming back painted that old board for a frame, then the
+    // Workshop's loading skeleton once the stale data was noticed, then the
+    // board again: the page blinking out and back in. Retiring those roots as
+    // the view is revealed makes the skeleton the first frame, and
+    // renderDevView mounts the frame afresh. Only onto a Dev route and only
+    // from another screen: the App tab owns its own surface, and a view that
+    // is on screen is not stale.
+    //
+    // BEFORE the transition, not inside its callback: a View Transition (the
+    // phone's push) runs the callback frames later, by when switchTab may
+    // already have mounted this visit's board — which the callback would then
+    // tear down. The view is still hidden here, so nothing painted changes.
+    const staleDev = initialRoute.tab === 'dev' && !App._isScreenVisible('app-view');
+    const enter = () => PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
       // The bar leaves WITH the app arriving, not after it. `after` below
       // runs _showOnlyScreen, which would sync it a transition later — and
@@ -6110,7 +6196,7 @@ const App = {
       // demo cards, non-running apps, an explicit non-app tab, offline.
       try { AppView.beginLaunch(slug, tab); } catch (err) { /* fall back to the plain path */ }
     }, {
-      type: App._entryTransition('zoom-in', appViewEl),
+      type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
       fromEl: () => App._tileFor(slug),
       // The outgoing screen: the kit hides it while measuring the
@@ -6123,6 +6209,11 @@ const App = {
       // this app would otherwise stay painted behind it.
       after: () => { App._showOnlyScreen('app-view'); },
     });
+    const reveal = () => {
+      if (staleDev) AppView._teardownDevRoots();
+      enter();
+    };
+    if (!viaTab) reveal();
     // Intentionally NOT setting the header to `slug` here. Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
     // slug-as-placeholder shows up to users as something like
@@ -6147,6 +6238,27 @@ const App = {
     };
     App._appLoad = load;
     try {
+      // A TAB PRESS REVEALS A PAINTED PAGE (#2880). Revealed at once, as an
+      // app launch is, #app-view went on screen EMPTY: nothing draws into
+      // #app-content until this record lands and switchTab mounts the Dev
+      // frame, so the press cut from the tab you were on to a bare page and
+      // only then to the Workshop. The outgoing screen stays up instead while
+      // the record loads — a service-worker hit on the boot fast lane, a few
+      // milliseconds — and the reveal runs in the same task as the mount
+      // below (the awaits between them are microtasks, and the frame mounts
+      // under flushSync), so no frame is painted between them. Bounded: a
+      // record that is slow to come is not a reason for the press to seem
+      // ignored, and past the bound the view is revealed as it always was.
+      if (viaTab) {
+        await Promise.race([
+          load.promise,
+          new Promise((resolve) => setTimeout(resolve, App._TAB_REVEAL_WAIT_MS)),
+        ]);
+        // Somewhere else was asked for while this waited; that navigation
+        // owns the screen, and this one never showed.
+        if (App.currentApp !== slug || generation !== App._appNavigationGeneration) return false;
+        reveal();
+      }
       await load.promise;
     } finally {
       if (App._appLoad === load) App._appLoad = null;
@@ -6203,7 +6315,13 @@ const App = {
     });
   },
 
-  navigateHome() {
+  // `opts.viaTab`: the Home TAB was pressed (features/nav/tab-bar.tsx), which
+  // swaps like any other tab press (#2881) — see _entryTransition. Every
+  // other caller (Back, an app's ✕, the logo) passes nothing and keeps the
+  // zoom back into the app's tile. Read strictly, because some callers are
+  // event listeners and hand an Event through.
+  navigateHome(opts) {
+    const viaTab = !!(opts && opts.viaTab === true);
     // Home is never shown in the side panel: it is the top window's, and
     // going there leaves the app.
     if (App.embeddedPanel && window.UsernodeReact?.sidePanelEmbed?.forward?.('')) return;
@@ -6254,7 +6372,7 @@ const App = {
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
       App.setHeaderTitle('Homeroom');
     }, {
-      type: App._entryTransition('zoom-out', av),
+      type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
       fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
       fallback: fallbackType,

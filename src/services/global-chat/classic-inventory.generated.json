@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 658,
-    "mappedRoutes": 520,
+    "totalRoutes": 666,
+    "mappedRoutes": 528,
     "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 366,
+    "clientApiReferences": 372,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 21,
     "navigationSurfaces": 10
@@ -268,7 +268,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 265,
+      "line": 266,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -277,7 +277,7 @@
     },
     {
       "source": "server.js",
-      "line": 301,
+      "line": 302,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -305,7 +305,7 @@
     },
     {
       "source": "server.js",
-      "line": 331,
+      "line": 332,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -314,7 +314,7 @@
     },
     {
       "source": "server.js",
-      "line": 371,
+      "line": 372,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -340,7 +340,7 @@
     },
     {
       "source": "server.js",
-      "line": 376,
+      "line": 377,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -359,7 +359,7 @@
     },
     {
       "source": "server.js",
-      "line": 398,
+      "line": 399,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -368,7 +368,7 @@
     },
     {
       "source": "server.js",
-      "line": 685,
+      "line": 687,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -377,7 +377,7 @@
     },
     {
       "source": "server.js",
-      "line": 867,
+      "line": 869,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -386,7 +386,7 @@
     },
     {
       "source": "server.js",
-      "line": 871,
+      "line": 873,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -395,7 +395,7 @@
     },
     {
       "source": "server.js",
-      "line": 875,
+      "line": 877,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -404,7 +404,7 @@
     },
     {
       "source": "server.js",
-      "line": 879,
+      "line": 881,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -413,7 +413,7 @@
     },
     {
       "source": "server.js",
-      "line": 883,
+      "line": 885,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -422,7 +422,7 @@
     },
     {
       "source": "server.js",
-      "line": 887,
+      "line": 889,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -4179,8 +4179,131 @@
       ]
     },
     {
+      "source": "src/routes/content-reports.js",
+      "line": 47,
+      "method": "POST",
+      "path": "/api/apps/:slug/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.report.4b79bdfc",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/apps/browse-detail.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 72,
+      "method": "POST",
+      "path": "/api/apps/:slug/messages/:id/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "messages.post.apps.item.messages.item.report.63a3f5e8",
+      "domain": "messages",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "conversation",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#messages",
+      "clientReferences": [
+        "frontend/src/features/group-chat/transcript.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 130,
+      "method": "GET",
+      "path": "/api/admin/app-reports",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.app.reports.1e0b3e1d",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-reports.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 152,
+      "method": "GET",
+      "path": "/api/admin/app-message-reports",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.app.message.reports.79c5cb1b",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-reports.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 205,
+      "method": "POST",
+      "path": "/api/admin/app-reports/:id/:action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.app.reports.item.item.59512283",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 206,
+      "method": "POST",
+      "path": "/api/admin/app-message-reports/:id/:action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.app.message.reports.item.item.f506fefb",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
       "source": "src/routes/conversations.js",
-      "line": 245,
+      "line": 261,
       "method": "GET",
       "path": "/api/conversations",
       "expression": null,
@@ -4207,7 +4330,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 255,
+      "line": 271,
       "method": "POST",
       "path": "/api/conversations",
       "expression": null,
@@ -4234,7 +4357,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 273,
+      "line": 289,
       "method": "GET",
       "path": "/api/conversations/:id",
       "expression": null,
@@ -4253,7 +4376,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 289,
+      "line": 305,
       "method": "PATCH",
       "path": "/api/conversations/:id",
       "expression": null,
@@ -4272,7 +4395,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 304,
+      "line": 320,
       "method": "POST",
       "path": "/api/conversations/:id/respond",
       "expression": null,
@@ -4291,7 +4414,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 318,
+      "line": 334,
       "method": "POST",
       "path": "/api/conversations/:id/members",
       "expression": null,
@@ -4310,7 +4433,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 333,
+      "line": 349,
       "method": "DELETE",
       "path": "/api/conversations/:id/members/:userId",
       "expression": null,
@@ -4329,7 +4452,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 348,
+      "line": 364,
       "method": "POST",
       "path": "/api/conversations/:id/leave",
       "expression": null,
@@ -4348,7 +4471,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 362,
+      "line": 378,
       "method": "GET",
       "path": "/api/conversations/:id/messages",
       "expression": null,
@@ -4367,7 +4490,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 379,
+      "line": 395,
       "method": "POST",
       "path": "/api/conversations/:id/messages",
       "expression": null,
@@ -4386,7 +4509,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 404,
+      "line": 420,
       "method": "PATCH",
       "path": "/api/conversations/:id/messages/:messageId",
       "expression": null,
@@ -4405,7 +4528,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 423,
+      "line": 439,
       "method": "POST",
       "path": "/api/conversations/:id/messages/:messageId/reactions",
       "expression": null,
@@ -4424,7 +4547,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 470,
+      "line": 486,
       "method": "PUT",
       "path": "/api/conversations/:id/messages/:messageId/bookmark",
       "expression": null,
@@ -4444,7 +4567,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 488,
+      "line": 504,
       "method": "DELETE",
       "path": "/api/conversations/:id/messages/:messageId/bookmark",
       "expression": null,
@@ -4464,7 +4587,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 508,
+      "line": 524,
       "method": "POST",
       "path": "/api/conversations/:id/read",
       "expression": null,
@@ -4483,7 +4606,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 543,
+      "line": 559,
       "method": "POST",
       "path": "/api/conversations/:id/typing",
       "expression": null,
@@ -4502,7 +4625,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 561,
+      "line": 577,
       "method": "POST",
       "path": "/api/conversations/:id/messages/:messageId/report",
       "expression": null,
@@ -4521,7 +4644,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 576,
+      "line": 592,
       "method": "POST",
       "path": "/api/conversations/:id/attachments",
       "expression": null,
@@ -4540,7 +4663,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 694,
+      "line": 710,
       "method": "GET",
       "path": "/api/conversations/:id/attachments/:attachmentId",
       "expression": null,
@@ -4559,7 +4682,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 719,
+      "line": 735,
       "method": "GET",
       "path": "/api/conversations/:id/attachments/:attachmentId/view",
       "expression": null,
@@ -4577,7 +4700,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 734,
+      "line": 750,
       "method": "GET",
       "path": "/api/me/blocks",
       "expression": null,
@@ -4603,7 +4726,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 743,
+      "line": 759,
       "method": "PUT",
       "path": "/api/me/blocks/:userId",
       "expression": null,
@@ -4622,7 +4745,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 767,
+      "line": 783,
       "method": "DELETE",
       "path": "/api/me/blocks/:userId",
       "expression": null,
@@ -4641,7 +4764,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 812,
+      "line": 828,
       "method": "GET",
       "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId",
       "expression": null,
@@ -4659,7 +4782,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 832,
+      "line": 848,
       "method": "GET",
       "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId/view",
       "expression": null,
@@ -4677,7 +4800,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 851,
+      "line": 867,
       "method": "GET",
       "path": "/api/admin/conversation-reports",
       "expression": null,
@@ -4692,13 +4815,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 878,
+      "line": 894,
       "method": "POST",
       "path": "/api/admin/conversation-reports/:id/:action",
       "expression": null,
@@ -7394,11 +7518,12 @@
     },
     {
       "source": "src/routes/profiles.js",
-      "line": 212,
+      "line": 264,
       "method": "POST",
       "path": "/api/profiles/:username/report",
       "expression": null,
       "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "profile.post.profiles.item.report.35a49e8b",
       "domain": "profile",
       "risk": "external_write",
@@ -7407,13 +7532,50 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#profile",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/profiles.js",
+      "line": 265,
+      "method": "POST",
+      "path": "/api/users/:username/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.post.users.item.report.5a9ed2c7",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile",
       "clientReferences": [
+        "frontend/src/features/group-chat/transcript.tsx",
+        "frontend/src/features/messages/message-row.tsx",
         "frontend/src/features/profile/profile.js"
       ]
     },
     {
       "source": "src/routes/profiles.js",
-      "line": 273,
+      "line": 267,
+      "method": "POST",
+      "path": "/api/admin/profile-reports/:id/resolve",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.profile.reports.item.resolve.9d2a5b3d",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/profiles.js",
+      "line": 294,
       "method": "GET",
       "path": "/api/admin/profile-reports",
       "expression": null,
@@ -7428,13 +7590,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/profiles.js",
-      "line": 302,
+      "line": 323,
       "method": "POST",
       "path": "/api/admin/profile-reports/:id/dismiss",
       "expression": null,
@@ -7452,7 +7615,7 @@
     },
     {
       "source": "src/routes/profiles.js",
-      "line": 334,
+      "line": 355,
       "method": "POST",
       "path": "/api/admin/profiles/:username/moderation",
       "expression": null,
@@ -11922,7 +12085,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 209,
+      "line": 210,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/:artifactId",
       "expression": null,
@@ -11941,7 +12104,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 271,
+      "line": 272,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/plan",
       "expression": null,
@@ -11959,7 +12122,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 345,
+      "line": 346,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/rerun",
       "expression": null,
@@ -11978,7 +12141,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 385,
+      "line": 386,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/override",
       "expression": null,

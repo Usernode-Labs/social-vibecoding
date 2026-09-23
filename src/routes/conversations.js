@@ -227,6 +227,22 @@ function demoMessages(user, conversationId) {
         content: 'Yes, from here.', createdAt: '2026-08-13T13:12:00Z', editedAt: null,
         reply: null, reactions: [], attachments: [], objects: [],
       },
+      // #2884: four cards in a row and nothing said between them — the run
+      // the transcript draws as its first card and "… 3 more".
+      ...[
+        [9100406, 3327, 'Platform Messages'],
+        [9100407, 3328, 'Collapse runs of cards in a channel'],
+        [9100408, 3329, 'One outline on the message box'],
+        [9100409, 3330, 'Messages at the list’s reading size'],
+      ].map(([id, sessionId, title], index) => ({
+        id, conversationId, sender: lin, content: '',
+        createdAt: `2026-08-13T13:${String(14 + index).padStart(2, '0')}:00Z`, editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [{
+          type: 'proposal', appId: 1, appSlug: 'usernode', available: true,
+          sessionId, title, subtitle: 'Homeroom', state: 'active',
+          author: 'lin', href: `#app/usernode/dev/proposals/${sessionId}`,
+        }],
+      })),
     ];
   }
   return [];

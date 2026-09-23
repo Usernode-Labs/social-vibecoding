@@ -20,6 +20,7 @@ const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/cha
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
+const { contentReportRoutes } = require('./src/routes/content-reports');
 const { sessionRoutes } = require('./src/routes/sessions');
 const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
@@ -548,6 +549,7 @@ app.use(illustrationRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(conversationRoutes(config));
+app.use(contentReportRoutes(config));
 app.use(proposalHandoffRoutes(config));
 app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,

@@ -1107,7 +1107,26 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
   //
-  // 753 → 768: the prototype-gaps proposal (Homeroom task 598), which merges
+  // 753 → 756: the tallies above were computed on either side of this merge
+  // against the same shared 753 and do not reconcile through the comment
+  // trail alone. This branch took 753 → 754 alone, with #2886 above (the
+  // divider between a running app and its side panel ships as a vertical
+  // separator on the panel's edge); main independently took the same 753 to
+  // 755, with #2888 above (Send Feedback pressed with no destination turns
+  // the App/Platform row red) and #2800/#2878 above (Me is the rail's last
+  // row, straight after Recents, which is what places the thin rule drawn
+  // above it). Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 753 + 1 + 1 + 1 = 756, leaving 34 slots under the 790
+  // ceiling.
+  //
+  // 756 → 759: +3 (#2884): a run of four shared cards in #general draws as
+  // the first card and "… 3 more"; the plain message before it is not folded
+  // in; an app's channel in Messages folds its run of proposal cards the same
+  // way. Counted on a branch that already held main's Me-row check; main
+  // reached 756 without these three, so the merged manifest holds 756 + 3 =
+  // 759, leaving 31 slots under the 790 ceiling.
+  //
+  // 759 → 774: the prototype-gaps proposal (Homeroom task 598), which merges
   // five streams of work into one change. What each adds, net of the checks
   // it RE-POINTED rather than added (those do not count):
   //   +3  About is the app's page (Open, Add to your apps, its builders with
@@ -1129,8 +1148,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //       wears the safe-bar contract, so on a phone it sits above the tab
   //       bar. The four checks that pinned the "+" in All items' actions row
   //       were re-pointed.
-  // 768 leaves 22 slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 768);
+  // Its streams were counted against main's 753; main reached 759 without
+  // them, so the merged manifest holds 759 + 15 = 774, leaving 16 slots under
+  // the 790 ceiling.
+  assert.equal(DAPP.tests.length, 774);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

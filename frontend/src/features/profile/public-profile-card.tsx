@@ -76,7 +76,7 @@ function ReportForm({ username }: { username: string }): ReactNode {
 
   return (
     <details id="public-profile-report" className="mt-4 text-sm">
-      <summary className="cursor-pointer text-zinc-500 dark:text-zinc-400">Report profile</summary>
+      <summary className="cursor-pointer text-zinc-500 dark:text-zinc-400">Report user</summary>
       <label className="block mt-3 text-xs font-medium">
         Reason
         <select

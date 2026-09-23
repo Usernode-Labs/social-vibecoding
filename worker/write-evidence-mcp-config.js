@@ -13,7 +13,7 @@ if (!output || !stateDir || !proxy || new Set(origins).size !== 2) {
   throw new Error('Evidence MCP config inputs are incomplete.');
 }
 const browserArgs = (persona) => [
-  '--browser', 'chromium', '--headless', '--isolated',
+  '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox',
   '--storage-state', path.join(stateDir, `${persona}.json`),
   '--allowed-origins', origins.join(';'),
   '--block-service-workers', '--image-responses', 'allow',
@@ -23,8 +23,8 @@ const browserArgs = (persona) => [
 const config = {
   mcpServers: {
     evidence: { command: 'node', args: ['/usr/local/bin/evidence-mcp.js'] },
-    browser_member: { command: 'playwright-mcp', args: browserArgs('member') },
-    browser_admin: { command: 'playwright-mcp', args: browserArgs('read_only_admin') },
+    browser_member: { command: 'mcp-server-playwright', args: browserArgs('member') },
+    browser_admin: { command: 'mcp-server-playwright', args: browserArgs('read_only_admin') },
   },
 };
 fs.writeFileSync(output, `${JSON.stringify(config)}\n`, { mode: 0o600 });

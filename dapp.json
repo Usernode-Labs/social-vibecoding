@@ -742,9 +742,21 @@
       ]
     },
     {
-      "name": "Submit stays dead until a destination is picked (#2707)",
+      "name": "Submit stays pressable while no destination is picked (#2707, #2888)",
       "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)) #feedback-submit:disabled"
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)):has(#feedback-target:not([aria-invalid])) #feedback-submit:not(:disabled)"
+    },
+    {
+      "id": "feedback.destination-missed",
+      "name": "Submit with no destination turns the row red and says why (#2888)",
+      "path": "/?shot=feedback-choose-missed",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target[aria-invalid=\"true\"]):has(#feedback-target-app.\\!border-red-600[aria-checked=\"false\"]) #feedback-target-hint[role=\"alert\"]:not(.hidden)",
+      "expectText": "Choose where this feedback goes",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/dialogs/feedback.tsx",
+        "frontend/src/features/dialogs/feedback-controller.js"
+      ]
     },
     {
       "name": "With only one destination reachable it stays selected and Submit is live (#2707)",
@@ -2941,6 +2953,23 @@
       "expectSelector": "#messages-message-9100403 .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
     },
     {
+      "name": "#2884: four shared cards in a row in #general draw as the first card and a \u201c\u2026 3 more\u201d row, the rest folded",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel:not(:has(#messages-message-9100407)) #messages-message-9100406:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
+      "expectText": "\u2026 3 more"
+    },
+    {
+      "name": "#2884: a plain message before the run is not folded into it",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100405 + #messages-message-9100406 + .messages-card-run"
+    },
+    {
+      "name": "#2884: an app's channel in Messages folds its run of proposal cards into the first and \u201c\u2026 N more\u201d",
+      "path": "/?demo=1#messages/app/staging-demo-quiet",
+      "expectSelector": "#messages-screen:not(.hidden) #gc-messages:not(:has(.gc-event[data-msg-id=\"900117\"])) > .gc-event[data-msg-id=\"900111\"] + .gc-card-run > button.gc-card-run-more[data-card-run-more=\"4\"]",
+      "expectText": "\u2026 4 more"
+    },
+    {
       "name": "A group conversation renders an attached screenshot with a macOS-style name (#2113)",
       "path": "/?demo=1#messages/910002",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
@@ -4899,6 +4928,11 @@
       "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden:not(:has(iframe)) > .side-panel-head > #side-panel-expand[aria-label=\"Open full width, leaving the app\"] + #side-panel-close[aria-label=\"Close panel\"]"
     },
     {
+      "name": "#2886: the divider between a running app and its side panel is a focusable vertical separator on the panel's left edge, shipping with no width chosen",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-side-panel.hidden > #side-panel-divider.side-panel-divider:first-child[role=\"separator\"][aria-orientation=\"vertical\"][aria-controls=\"platform-side-panel\"][aria-label=\"Resize panel\"][tabindex=\"0\"]:not([aria-valuenow]) + .side-panel-head"
+    },
+    {
       "name": "Side panel: a panel=1 address opened in a window of its own is the ordinary platform, with its header, its sidebar and the screen it names",
       "path": "/?demo=1&panel=1#messages",
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
@@ -4907,6 +4941,11 @@
       "name": "#2802: the desktop rail's Recents sits between Workshop and Me, labelled by its heading",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
+    },
+    {
+      "name": "#2800: Me is the rail's last row, straight after Recents, so the thin rule the rail draws above Me sits between them",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs > #platform-recents + a#platform-tab-me:last-child"
     },
     {
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",

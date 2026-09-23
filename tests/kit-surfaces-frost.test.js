@@ -25,7 +25,10 @@ const SURFACES = ['.un-modal', '.un-sheet', '.un-panel'];
 test('the kit modal, sheet and panel wear the pane glass in the shell', () => {
   for (const sel of SURFACES) {
     const body = rule(sel);
-    assert.match(body, /background-color: var\(--dc-sheet-fill\)/, `${sel} takes the translucent fill`);
+    // The modal floats over arbitrary content, so it takes the denser
+    // floating fill (#2887); the sheet and panel keep the pane's.
+    const fill = sel === '.un-modal' ? '--dc-float-fill' : '--dc-sheet-fill';
+    assert.match(body, new RegExp(`background-color: var\\(${fill}\\)`), `${sel} takes the ${fill} fill`);
     assert.match(body, /backdrop-filter: var\(--dc-frost\)/, `${sel} frosts`);
     assert.match(body, /-webkit-backdrop-filter: var\(--dc-frost\)/, `${sel} frosts in Safari`);
   }
@@ -56,11 +59,13 @@ test('native.css is NOT restyled — the frost is the shell\'s alone', () => {
 });
 
 test('without backdrop-filter the surfaces go opaque and keep the dim', () => {
-  const fallback = APP_CSS.slice(
-    APP_CSS.indexOf('.un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after {'),
-  ).slice(0, 200);
+  const FALLBACK = '.un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,\n'
+    + '  #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),\n'
+    + '  .un-sheet:has(#apps-switcher-sheet)::after {';
+  assert.ok(APP_CSS.includes(FALLBACK), 'the fallback covers the kit surfaces and the mark\'s menu');
+  const fallback = APP_CSS.slice(APP_CSS.indexOf(FALLBACK)).slice(0, 300);
   assert.match(fallback, /background-color: var\(--dc-sheet\)/, 'the opaque sheet colour');
-  const before = APP_CSS.slice(0, APP_CSS.indexOf('.un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after {'));
+  const before = APP_CSS.slice(0, APP_CSS.indexOf(FALLBACK));
   assert.match(before.slice(-200), /@supports not \(\(backdrop-filter: blur\(1px\)\)/,
     'inside the no-backdrop-filter block');
 });
@@ -74,6 +79,34 @@ test('content adopted into a kit surface does not frost a second time (#2825)', 
   assert.match(body, /-webkit-backdrop-filter: none !important;/);
   assert.match(rule('.dc-lift-panel'), /backdrop-filter: var\(--dc-frost\)/,
     'the panel still frosts on its own, outside a kit sheet');
+});
+
+// ── #2887: floating surfaces are mostly opaque, still frosted ──────────
+
+test('the floating fill is ~95% opaque in both themes', () => {
+  const decls = [...APP_CSS.matchAll(/--dc-float-fill: rgba\((\d+), (\d+), (\d+), ([\d.]+)\);/g)];
+  assert.equal(decls.length, 2, 'declared once for light and once for dark');
+  const [light, dark] = decls;
+  assert.equal(Number(light[4]), 0.95);
+  assert.equal(Number(dark[4]), 0.95);
+  assert.deepEqual(light.slice(1, 4).map(Number), [255, 255, 255], 'light is white');
+  assert.deepEqual(dark.slice(1, 4).map(Number), [28, 28, 30], 'dark is the dark sheet colour');
+  // Denser than the pane glass it replaces on these surfaces.
+  const sheetAlphas = [...APP_CSS.matchAll(/--dc-sheet-fill: rgba\([^)]*, ([\d.]+)\);/g)].map((m) => Number(m[1]));
+  for (const a of sheetAlphas) assert.ok(a < 0.95);
+});
+
+test('Send Feedback (a kit modal) and the Homeroom menu take the floating fill and keep the blur', () => {
+  assert.match(rule('.un-modal'), /backdrop-filter: var\(--dc-frost\)/);
+  const menu = rule('#apps-switcher-sheet,\n.un-sheet:has(#apps-switcher-sheet),\n.un-sheet:has(#apps-switcher-sheet)::after');
+  assert.match(menu, /background-color: var\(--dc-float-fill\)/);
+  // The blur comes from `.dc-lift-panel` (desktop dropdown) and `.un-sheet`
+  // (the kit sheet it is adopted into below `sm`); neither is cleared here.
+  assert.doesNotMatch(menu, /backdrop-filter/);
+  assert.match(rule('.dc-lift-panel'), /backdrop-filter: var\(--dc-frost\)/);
+  assert.match(rule('.un-sheet'), /backdrop-filter: var\(--dc-frost\)/);
+  // The Feedback dialog is presented through the kit modal.
+  assert.match(read('frontend/src/features/dialogs/feedback.tsx'), /id="feedback-modal"/);
 });
 
 // ── The dim ────────────────────────────────────────────────────────────

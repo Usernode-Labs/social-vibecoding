@@ -51,12 +51,13 @@
  * it the next time anything else about the message changed.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
+import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
@@ -64,6 +65,7 @@ import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { setUserBlocked } from '../messages/store';
+import { ReportForm, submitReport } from '../reports/report-form';
 import {
   transcriptStore,
   type Attachment,
@@ -309,7 +311,11 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
  * every message in the group chat quietly lost all three. Found by seeding a
  * chat and counting the buttons, not by a test.
  */
-function RowActions({ msg }: { msg: TranscriptMessage }) {
+function RowActions({ msg, onReportMessage, onReportUser }: {
+  msg: TranscriptMessage;
+  onReportMessage?: () => void;
+  onReportUser?: () => void;
+}) {
   if (!(msg.showEdit || msg.showBookmark || msg.showReact || (msg.senderId && !msg.mine && msg.kind === 'message'))) return null;
   const saved = msg.bookmarked;
   async function blockSender() {
@@ -344,10 +350,16 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
         </button>
       ) : null}
       {msg.kind === 'message' && !msg.mine && msg.senderId ? (
-        <button type="button" className="text-[11px] text-red-600 hover:underline" onClick={() => { void blockSender(); }}
-          title={`Block @${msg.username}`} aria-label={`Block @${msg.username}`}>
-          Block
-        </button>
+        <>
+          {onReportMessage ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
+            onClick={onReportMessage} aria-label="Report message">Report message</button> : null}
+          {onReportUser ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
+            onClick={onReportUser} aria-label={`Report @${msg.username}`}>Report user</button> : null}
+          <button type="button" className="text-[11px] text-red-600 hover:underline" onClick={() => { void blockSender(); }}
+            title={`Block @${msg.username}`} aria-label={`Block @${msg.username}`}>
+            Block
+          </button>
+        </>
       ) : null}
     </>
   );
@@ -527,6 +539,16 @@ function SpecSnippet({ html }: { html: string }) {
  * thread's tint key off.
  */
 export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; grouped?: boolean }) {
+  const [reporting, setReporting] = useState<'message' | 'user' | null>(null);
+  const report = async (reason: string, detail: string) => {
+    if (reporting === 'user') {
+      await submitReport(`/api/users/${encodeURIComponent(msg.username)}/report`, reason, detail);
+      return;
+    }
+    const slug = controller()?.appSlug;
+    if (!slug || !msg.id) throw new Error('This message is unavailable for reporting.');
+    await submitReport(`/api/apps/${encodeURIComponent(slug)}/messages/${msg.id}/report`, reason, detail);
+  };
   return (
     <ChatMessageRow
       className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
@@ -557,7 +579,8 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
           ) : null}
         </>
       )}
-      actions={<RowActions msg={msg} />}
+      actions={<RowActions msg={msg} onReportMessage={msg.id ? () => setReporting('message') : undefined}
+        onReportUser={() => setReporting('user')} />}
     >
       {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
       <Body html={msg.bodyHtml} />
@@ -566,6 +589,8 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
         <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
       ) : null}
       <Reactions msg={msg} />
+      {reporting ? <ReportForm key={reporting} kind={reporting} onSubmit={report}
+        onCancel={() => setReporting(null)} /> : null}
     </ChatMessageRow>
   );
 }
@@ -576,7 +601,7 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
  * same rows in different containers, and the differences (a "Load earlier"
  * control, an empty/loading line) are data.
  */
-export function Transcript({ source = 'main' }: { source?: string }) {
+export function Transcript({ source = 'main', foldCards = false }: { source?: string; foldCards?: boolean }) {
   const state = useStoreState(transcriptStore);
   const view = state.byKey[source];
 
@@ -604,7 +629,7 @@ export function Transcript({ source = 'main' }: { source?: string }) {
   }, [voteRows]);
 
   if (!state.ready || !view) return null;
-  return <TranscriptRows view={view} source={source} />;
+  return <TranscriptRows view={view} source={source} foldCards={foldCards} />;
 }
 
 /**
@@ -645,6 +670,34 @@ export function drawnInGeneralChat(m: TranscriptMessage): boolean {
   return m.kind === 'message' || m.kind === 'spec_share' || !!m.event;
 }
 
+/** A card in the general chat: a proposal event, which is never a person's message. */
+function isCardRow(m: TranscriptMessage): boolean {
+  return m.kind !== 'message' && m.kind !== 'spec_share' && !!m.event;
+}
+
+/**
+ * The folded rest of a run of cards (#2884): "… 4 more", in the column the
+ * cards' boxes write in, and a tap draws them in place. Its class is neither
+ * `gc-msg` nor `gc-event`, so the module's long-press and tap-to-quote
+ * handlers pass it by.
+ */
+function CardRunMore({ hidden, onExpand }: { hidden: number; onExpand: () => void }) {
+  return (
+    <div className="gc-card-run">
+      <button
+        type="button"
+        className="gc-card-run-more"
+        data-card-run-more={hidden}
+        aria-expanded="false"
+        aria-label={`Show ${hidden} more ${hidden === 1 ? 'card' : 'cards'}`}
+        onClick={onExpand}
+      >
+        {cardRunLabel(hidden)}
+      </button>
+    </div>
+  );
+}
+
 /**
  * The rows of one transcript, given its view: the lead, the rows, and for the
  * general chat the two things that make a quiet app's Discussion readable.
@@ -666,7 +719,12 @@ export function drawnInGeneralChat(m: TranscriptMessage): boolean {
  * without the store, which is how tests/group-chat-proposal-events.test.js
  * checks it.
  */
-export function TranscriptRows({ view, source }: { view: TranscriptView; source: string }) {
+export function TranscriptRows({ view, source, foldCards = false }: {
+  view: TranscriptView;
+  source: string;
+  /** Fold runs of cards (#2884): the general chat, opened as a Messages channel. */
+  foldCards?: boolean;
+}) {
   const main = source === 'main';
   // A change page's Discussion (`lead.language === 'chat'`) keeps every row,
   // as a thread does, and draws each in the general chat's language — and
@@ -677,6 +735,30 @@ export function TranscriptRows({ view, source }: { view: TranscriptView; source:
   const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
     ? view.lead.quiet
     : null;
+  // #2884: in the general chat opened as a Messages channel, three or more
+  // cards in a row draw as the first and a "… N more" row
+  // (../../lib/card-runs.ts). A run is keyed by its first row, which a card
+  // landing live on the end of it does not move, so an expanded run stays
+  // expanded as it grows. The app's own Discussion page (`foldCards` false)
+  // still draws every card: it is the proposal history, read on purpose.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const runs = main && foldCards ? cardRunStarts(rows, isCardRow) : new Map<number, number>();
+  const drawn: ReactNode[] = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    drawn.push(renderRow(rows[i], `i${i}`, main, chat, i > 0 ? rows[i - 1] : null));
+    const length = runs.get(i);
+    if (!length) continue;
+    const key = rows[i].id != null ? `m${rows[i].id}` : `i${i}`;
+    if (expanded.has(key)) continue;
+    drawn.push(
+      <CardRunMore
+        key={`more-${key}`}
+        hidden={length - 1}
+        onExpand={() => setExpanded((open) => new Set(open).add(key))}
+      />,
+    );
+    i += length - 1;
+  }
   return (
     <>
       {view.lead.earlier ? (
@@ -700,7 +782,7 @@ export function TranscriptRows({ view, source }: { view: TranscriptView; source:
       {view.lead.placeholder && !rows.length ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
-      {rows.map((msg, i) => renderRow(msg, `i${i}`, main, chat, i > 0 ? rows[i - 1] : null))}
+      {drawn}
       {quiet ? <QuietCard {...quiet} /> : null}
     </>
   );

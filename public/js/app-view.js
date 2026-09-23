@@ -5728,6 +5728,11 @@ const AppView = {
   // screen to refresh), so castVote can tell when its post-vote read landed.
   refreshDevData(kind) {
     if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
+    // Every caller here (a session/vote/checks event over the WS, the 20s
+    // checks poll, a late-answer correction) is refreshing a board already
+    // on screen, so the service worker must fetch rather than answer from
+    // its boot lane — see App.refreshActiveScreen for the loop that caused.
+    App._announceRefreshIntent?.();
     // #2782: a vote refresh must read data written AFTER the vote. Joining a
     // load already in flight — the 20s checks poll, another voter's WS
     // refresh — hands it a snapshot taken before the vote was recorded, and

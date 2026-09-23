@@ -300,8 +300,10 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // inside its own `max-content` row, which is no movement at all.
   assert.match(block, /display: flex;\s*\n\s*flex-direction: column;/,
     'and stops being five equal columns');
-  assert.match(block, /#platform-tab-me \{\s*\n\s*margin-top: auto;/,
+  // The auto margin is on the rule drawn above Me (#2800), which Me follows.
+  assert.match(block, /\.platform-tabs::after \{[^}]*order: 1;[^}]*margin: auto 4px 6px;/,
     'Me is the rail\'s foot: the four above are places, this is the reader');
+  assert.match(block, /#platform-tab-me \{\s*\n\s*order: 2;/, 'and Me comes after the rule');
   // A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review). The
   // rail's hairline was the content's left margin, so a card began where the
   // rail ended while the page had air on the right and none on the left — a

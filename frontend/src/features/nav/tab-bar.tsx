@@ -159,7 +159,10 @@ function onHomeClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
   if (nav?.isNativeClick?.(event)) return;
   event.preventDefault();
-  (window as unknown as { App?: { navigateHome?: () => void } }).App?.navigateHome?.();
+  // `viaTab`: a press on a tab swaps like one, even out of an app's Workshop,
+  // where navigateHome otherwise shrinks the page into the app's tile (#2881).
+  (window as unknown as { App?: { navigateHome?: (opts?: { viaTab?: boolean }) => void } })
+    .App?.navigateHome?.({ viaTab: true });
 }
 
 /**

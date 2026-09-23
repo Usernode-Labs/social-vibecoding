@@ -893,6 +893,7 @@ const ADDED_IDS = {
   'browse-filter-chips': 'The All / Featured / Your apps / New chip row in the directory\'s sticky head, between the search and Sort. A chip picks which apps the list holds (Browse.filterApps); ships with All pressed, the store\'s prerender value.',
   // ── The prototype's Challenges page: a History segment ──────────────
   'leaderboard-history-root': 'The Leaderboard screen\'s fourth pane, the History tab (#leaderboard/seasons): the seasons that have ended, who won each, each event\'s winner and where the viewer finished — the navigation prototype\'s History segment. Ships EMPTY and hidden like the two other non-default pane roots, and Leaderboard._applySection toggles its `hidden` on a constant className; features/leaderboard/history-pane.tsx is the only writer below it.',
+  'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

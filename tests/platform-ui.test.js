@@ -477,7 +477,7 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
   // 4. navigateHome still CLEARS the app's target first, then republishes
   //    home's — in that order, so nothing inherits the closed app's facts.
-  const navStart = src.indexOf('navigateHome() {');
+  const navStart = src.indexOf('navigateHome(opts) {');
   const nav = src.slice(navStart, src.indexOf('after: () => {', navStart));
   assert.ok(/App\.ImproveStatus\.setAppOpen\(false\);[\s\S]{0,900}Home\.publishImproveTarget\(\)/.test(nav),
     'navigateHome must clear the app target before republishing home\'s');
