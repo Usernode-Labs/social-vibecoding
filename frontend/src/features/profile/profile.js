@@ -370,12 +370,12 @@ const Profile = {
     }
   },
 
-  // The report form on someone else's public card. Returns the status line
+  // The account report form on someone else's public card. Returns the status line
   // rather than writing it, so the component owns its own field state.
   async sendReport(username, reason, detail) {
     try {
       const res = await fetch(
-        `/api/profiles/${encodeURIComponent(username)}/report`,
+        `/api/users/${encodeURIComponent(username)}/report`,
         {
           method: 'POST',
           credentials: 'same-origin',

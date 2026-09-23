@@ -19,6 +19,7 @@ const store = read('frontend/src/features/messages/store.ts');
 const screen = read('frontend/src/features/messages/index.tsx');
 const composer = read('frontend/src/features/messages/composer.tsx');
 const row = read('frontend/src/features/messages/message-row.tsx');
+const reportForm = read('frontend/src/features/reports/report-form.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
 const dapp = JSON.parse(read('dapp.json'));
@@ -202,10 +203,11 @@ test('composer and moderation payloads match the backend contracts', () => {
   assert.match(api, /query\.trim\(\)\.slice\(0, 255\)[\s\S]{0,80}scope=messages/,
     'recipient search excludes users blocked in either direction');
   for (const reason of ['harassment', 'spam', 'threats', 'hate', 'sexual_content', 'other']) {
-    assert.match(row, new RegExp(`value="${reason}"`));
+    assert.match(reportForm, new RegExp(`'${reason}'`));
   }
-  assert.match(row, /setReportDetail\(event\.target\.value\.slice\(0, 500\)\)/);
-  assert.match(row, /maxLength=\{500\}/);
+  assert.match(row, /<ReportForm kind="message"/);
+  assert.match(row, /<ReportForm kind="user"/);
+  assert.match(reportForm, /maxLength=\{500\}/);
   assert.match(api, /detail: detail\.slice\(0, 500\)/,
     'report context matches the backend and schema retention limit');
   assert.match(api, /JSON\.stringify\(\{ reason, \.\.\.\(detail \? \{ detail:/);
