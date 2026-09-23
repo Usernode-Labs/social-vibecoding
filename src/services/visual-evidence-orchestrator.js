@@ -1021,6 +1021,12 @@ async function executeRun(config, options, injected = {}) {
       }
     };
 
+    const awaitSubmittedReplay = async () => {
+      if (!registration.control.planCalls) return;
+      try { await registration.control.waitForPlan(); }
+      catch { /* The control retains the exact replay error for repair or failure. */ }
+    };
+
     failurePhase = 'agent_exploration';
     stage(failurePhase);
     let agentOutcome = null;
@@ -1038,6 +1044,11 @@ async function executeRun(config, options, injected = {}) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
       }
+      // The hosted tool acknowledges an accepted plan immediately. Its HTTP
+      // request must never wait through a full paired browser replay, which
+      // can exceed ingress and MCP idle timeouts. The platform owns and awaits
+      // the replay here, even if the planning agent has already exited.
+      await awaitSubmittedReplay();
       while (!latestHardVerdict
           && registration.control.planCalls === metrics.repairCount + 1
           && metrics.repairCount < MAX_REPAIR_ATTEMPTS
@@ -1081,6 +1092,7 @@ async function executeRun(config, options, injected = {}) {
         progress('A planned control did not match the page; the evidence agent is inspecting and correcting it…');
         const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
         agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, metrics.repairCount);
+        await awaitSubmittedReplay();
         if (registration.control.planCalls === metrics.repairCount) break;
       }
       if (agentOutcome.error && !latestHardVerdict) {

@@ -2219,10 +2219,10 @@ function voteRoutes(config) {
         }
       }
 
-      // #183 lazy PR creation: sessions cloned from a headless auto run
-      // arrive here without a PR (the headless contract defers it). Create
-      // it now on THIS session's branch — the clone's, never the auto
-      // branch — so the vote has something to merge. applyPrMetadata reads
+      // Lazy PR recovery: older clones and sessions whose earlier draft
+      // creation failed can arrive here without a PR. Create it on THIS
+      // session's branch — never the unattended auto branch — so the vote
+      // has something to merge. applyPrMetadata reads
       // the clone's copied history via gatherSessionContext, so the PR
       // title/body get the full auto-session context.
       //
@@ -2329,6 +2329,8 @@ function voteRoutes(config) {
       // head), refuse the promote with an actionable error instead of
       // minting a doomed proposal.
       let promotedHeadSha = null;
+      let nativePrForReview = null;
+      let nativePrRepo = null;
       if (github.isEnabled() && session.repo_url && session.pr_number) {
         const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
         if (!owner || !repo) {
@@ -2400,24 +2402,12 @@ function voteRoutes(config) {
             });
           }
 
-          // Native proposals are platform-owned drafts, so crossing the local
-          // review boundary also marks them ready on GitHub. Imported PRs are
-          // externally owned: promotion changes only Homeroom's local state
-          // and must not publish an external author's draft.
+          // Defer GitHub's draft transition until the status CAS succeeds.
+          // Otherwise a concurrent pause/archive could leave a ready PR on
+          // an Underway session that never entered review.
           if (!imported) {
-            try {
-              // octokit.request rather than .rest.pulls.update —
-              // @octokit/app's installation Octokit is a bare core
-              // instance without the rest-endpoint-methods plugin, so
-              // .rest is undefined.
-              const octokit = await github.getInstallationOctokit(owner);
-              await octokit.request(
-                'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
-                { owner, repo, pull_number: session.pr_number, draft: false }
-              );
-            } catch (err) {
-              log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
-            }
+            nativePrForReview = pr;
+            nativePrRepo = { owner, repo };
           }
         }
       }
@@ -2438,6 +2428,42 @@ function voteRoutes(config) {
       );
       if (!promoted.rowCount) {
         return res.status(409).json({ error: 'session_state_changed' });
+      }
+      // Imported PRs retain the external author's GitHub state. For native
+      // drafts, confirm GitHub's supported ready-for-review mutation before
+      // announcing the vote. On failure, restore the pre-review row so a
+      // retry can complete the same transition.
+      if (nativePrRepo) {
+        try {
+          await github.markPrReadyForReview(
+            nativePrRepo.owner, nativePrRepo.repo, session.pr_number, nativePrForReview
+          );
+        } catch (err) {
+          const rolledBack = await pool.query(
+            `UPDATE chat_sessions SET status = $1, promoted_at = $2,
+                    stale_notified_at = $3, reviewed_head_sha = $4
+              WHERE id = $5 AND status = 'promoted' AND reviewed_head_sha IS NOT DISTINCT FROM $6`,
+            [session.status, session.promoted_at || null, session.stale_notified_at || null,
+              session.reviewed_head_sha || null, session.id, promotedHeadSha]
+          ).catch((rollbackErr) => {
+            log.error('votes', 'Failed to restore session after GitHub draft transition', {
+              sessionId: session.id, err: rollbackErr.message,
+            });
+            return null;
+          });
+          log.warn('votes', 'Failed to mark PR ready on GitHub', {
+            sessionId: session.id, pr: session.pr_number, err: err.message,
+            restored: !!rolledBack?.rowCount,
+          });
+          if (!rolledBack?.rowCount) {
+            return res.status(503).json({
+              error: 'GitHub could not mark the pull request ready, and Homeroom could not restore the change to Underway. Check its current status before retrying.',
+            });
+          }
+          return res.status(503).json({
+            error: 'GitHub could not mark the draft pull request ready for review. The change is still underway; try promoting it again shortly.',
+          });
+        }
       }
       if (promotedHeadSha) {
         if (imported) session.imported_pr_head_sha = promotedHeadSha;

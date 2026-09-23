@@ -899,6 +899,7 @@ async function applyPrMetadata({
         branch: session.branch_name,
         title: prTitle,
         body: prBody,
+        draft: session.status === 'active' || session.status === 'paused',
       });
       session.pr_number = pr.number;
       session.pr_url = pr.html_url;

@@ -194,12 +194,12 @@ function internalRoutes(_config) {
     } catch (err) { return evidenceError(res, err); }
   });
 
-  router.post('/api/internal/evidence/:runId/run-plan', evidenceAuth, evidenceLimiter, async (req, res) => {
+  router.post('/api/internal/evidence/:runId/run-plan', evidenceAuth, evidenceLimiter, (req, res) => {
     try {
       const control = evidenceControlForRequest(req);
       const result = Object.hasOwn(req.body || {}, 'replays')
-        ? await control.runReplays(req.body.replays)
-        : await control.runPlan(req.body?.plan);
+        ? control.submitReplays(req.body.replays)
+        : control.submitPlan(req.body?.plan);
       return res.json({ ok: true, result });
     } catch (err) { return evidenceError(res, err); }
   });

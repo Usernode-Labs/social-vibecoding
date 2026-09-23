@@ -56,6 +56,7 @@ class RunControl {
     this.repairFailure = null;
     this.rejectedPlan = null;
     this.lastSubmittedPlan = null;
+    this.planTask = null;
     this.waiters = new Set();
     this.busy = null;
   }
@@ -98,7 +99,8 @@ class RunControl {
     }
   }
 
-  async runPlan(rawPlan) {
+  queuePlan(rawPlan) {
+    let plan;
     try {
       this.assertLive();
       if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
@@ -106,7 +108,7 @@ class RunControl {
         throw new EvidenceControlError('evidence_plan_attempt_exhausted', 'No additional replay-plan attempt is available.');
       }
       if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
-      const plan = planContract.parseReplayPlan(rawPlan);
+      plan = planContract.parseReplayPlan(rawPlan);
       const projected = planContract.semanticIntentFromPlan(plan);
       if (planContract.canonicalJson(projected) !== planContract.canonicalJson(this.intent)) {
         throw new EvidenceControlError(
@@ -123,36 +125,78 @@ class RunControl {
           400
         );
       }
-      // Reserve the attempt before awaiting so concurrent calls cannot execute
-      // multiple expensive paired replays.
-      this.lastSubmittedPlan = cloneJson(plan);
-      this.planCalls += 1;
-      this.busy = 'replaying the submitted plan';
-      const replayStartedAt = Date.now();
-      try {
-        const result = await this.runPlanCallback(plan, { attempt: this.planCalls });
-        this.lastToolFailure = null;
-        this.lastReplayFailure = null;
-        this.latestHard = result?.hardVerdict?.passed === true
-          ? { passed: true, planHash: result.planHash, attempt: this.planCalls }
-          : null;
-        return result;
-      } catch (error) {
-        // A corrected replay may supersede an earlier failed replay. Keep the
-        // latest execution failure, separate from validation/quota errors.
-        this.lastReplayFailure = { operation: 'run-plan', error };
-        throw error;
-      } finally {
-        // Each deterministic replay pass has its own container deadline. Do
-        // not expire the agent's control window while that bounded platform
-        // work is running; it still needs to inspect the media and finish.
-        this.expiresAt += Date.now() - replayStartedAt;
-        this.busy = null;
-      }
     } catch (error) {
       this.lastToolFailure = { operation: 'run-plan', error };
       throw error;
     }
+    // Reserve before starting the asynchronous replay. The MCP request can
+    // acknowledge this immutable plan without holding an HTTP connection
+    // open through every browser case and both passes.
+    this.lastSubmittedPlan = cloneJson(plan);
+    const attempt = ++this.planCalls;
+    const planHash = planContract.planHash(plan);
+    this.busy = 'replaying the submitted plan';
+    const replayStartedAt = Date.now();
+    const completion = Promise.resolve().then(() => this.runPlanCallback(plan, { attempt }))
+      .then((result) => {
+        this.lastToolFailure = null;
+        this.lastReplayFailure = null;
+        this.latestHard = result?.hardVerdict?.passed === true
+          ? { passed: true, planHash: result.planHash, attempt }
+          : null;
+        return result;
+      }, (error) => {
+        // A corrected replay may supersede an earlier failure. Keep the
+        // browser error even if the model submits a duplicate afterward.
+        this.lastReplayFailure = { operation: 'run-plan', error };
+        this.lastToolFailure = { operation: 'run-plan', error };
+        throw error;
+      }).finally(() => {
+        // Each deterministic replay pass has its own container deadline. Do
+        // not expire the run's control window while that bounded platform
+        // work is running; a locator failure may need a new correction turn.
+        this.expiresAt += Date.now() - replayStartedAt;
+        this.busy = null;
+      });
+    // The hosted agent may exit after receiving the acknowledgement. The
+    // orchestrator still awaits this promise; attach a handler immediately so
+    // a replay that fails first cannot become an unhandled rejection.
+    completion.catch(() => {});
+    this.planTask = completion;
+    return { attempt, planHash, completion };
+  }
+
+  async runPlan(rawPlan) {
+    return this.queuePlan(rawPlan).completion;
+  }
+
+  submitPlan(rawPlan) {
+    try {
+      this.assertLive();
+      const candidate = planContract.parseReplayPlan(rawPlan);
+      const planHash = planContract.planHash(candidate);
+      if (!this.finished && this.planCalls === this.maxPlanCalls && this.lastSubmittedPlan
+          && planHash === planContract.planHash(this.lastSubmittedPlan)) {
+        return { accepted: true, attempt: this.planCalls, planHash, duplicate: true };
+      }
+      const queued = this.queuePlan(candidate);
+      return { accepted: true, attempt: queued.attempt, planHash: queued.planHash, duplicate: false };
+    } catch (error) {
+      this.lastToolFailure = { operation: 'run-plan', error };
+      throw error;
+    }
+  }
+
+  submitReplays(rawReplays) {
+    try { return this.submitPlan(planContract.replayPlanFromIntent(this.intent, rawReplays)); }
+    catch (error) {
+      this.lastToolFailure = { operation: 'run-plan', error };
+      throw error;
+    }
+  }
+
+  waitForPlan() {
+    return this.planTask || Promise.resolve(null);
   }
 
   async runReplays(rawReplays) {
