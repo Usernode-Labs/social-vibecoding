@@ -327,6 +327,41 @@ function usageToken(value) {
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
 }
 
+/**
+ * #2737, corrected in #2870: tell a watching caller what the turn has spent.
+ *
+ * This is the ONLY seam a caller has for watching usage while a turn is
+ * still running — everything else about usage is terminal, written to the
+ * ledger once the turn ends. It must therefore be reachable from EVERY path
+ * that learns a token count, not just one: the hook first shipped called
+ * only from `applyClaudeResultUsage`, on the Claude `result` event, and the
+ * Codex/OpenRouter agent reports usage through a different branch entirely.
+ * A budget built on it was silently inert on that agent for its whole first
+ * day in production.
+ *
+ * Note what this does and does not buy, because the two paths differ. Claude
+ * emits `result` usage more than once in a turn, so a caller can act on it.
+ * `codex-openrouter` emits usage exactly once, at `turn.completed`: there
+ * the hook is terminal by construction, and a caller can REPORT that a turn
+ * breached its token budget but cannot stop one. Giving that agent a
+ * mid-turn signal is an upstream change, not something this seam can fake.
+ *
+ * Optional and best-effort by construction: a throwing hook must never take
+ * down the parse of a provider event.
+ */
+function notifyUsage(state) {
+  if (!state || typeof state.onUsage !== 'function') return;
+  try {
+    state.onUsage({
+      inputTokens: state.inputTokens,
+      cachedInputTokens: state.cachedInputTokens,
+      outputTokens: state.outputTokens,
+    });
+  } catch (err) {
+    log.warn('worker', 'onUsage hook threw (ignored)', { err: err.message });
+  }
+}
+
 function applyClaudeResultUsage(usage, state) {
   if (!usage || typeof usage !== 'object') return;
   const values = {
@@ -355,22 +390,7 @@ function applyClaudeResultUsage(usage, state) {
   for (const [key, value] of Object.entries(values)) {
     if (value != null) state[key] = value;
   }
-  // #2737: the one place a caller can watch usage WHILE the turn runs.
-  // Everything else about usage is terminal — the ledger row is written
-  // when the turn ends — so a caller that needs to stop a turn on its token
-  // spend has no other seam. Optional and best-effort by construction: a
-  // throwing hook must never take down the parse of a provider event.
-  if (typeof state.onUsage === 'function') {
-    try {
-      state.onUsage({
-        inputTokens: state.inputTokens,
-        cachedInputTokens: state.cachedInputTokens,
-        outputTokens: state.outputTokens,
-      });
-    } catch (err) {
-      log.warn('worker', 'onUsage hook threw (ignored)', { err: err.message });
-    }
-  }
+  notifyUsage(state);
   if (typeof usage.service_tier === 'string') state.serviceTier = usage.service_tier;
   if (typeof usage.inference_geo === 'string') state.inferenceRegion = usage.inference_geo;
 }
@@ -780,6 +800,9 @@ function parseLine(line, onProgress, state) {
           if (u.cacheWriteInputTokens != null) state.cacheWriteInputTokens = u.cacheWriteInputTokens;
           if (u.outputTokens != null) state.outputTokens = u.outputTokens;
           if (u.reasoningOutputTokens != null) state.reasoningOutputTokens = u.reasoningOutputTokens;
+          // #2870: the Codex/OpenRouter half of the usage seam. Without
+          // this the watcher above never hears from this agent at all.
+          notifyUsage(state);
         }
         if (ev.kind === 'error' && ev.errorMessage != null) {
           state.ccIsError = true;

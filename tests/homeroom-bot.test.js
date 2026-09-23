@@ -412,6 +412,148 @@ test('the runs query filters to budget stops on one static statement', () => {
   assert.match(SRC, /'error', 'budget_stop', 'thread_seen_at',/, 'the export carries it beside the error');
 });
 
+// ── What the first day of budget data exposed (#2870) ────────────────────
+
+test('a turn stopped on its budget is still debited against the weekly cap', async () => {
+  // The three stops in the first day's ledger all recorded $0.0000, because
+  // the branch that writes the stop returned above the debit. That is the
+  // wrong way round: a twenty-minute turn nobody was ever going to use is
+  // exactly the spend a weekly cap exists to notice.
+  const stopped = [];
+  const { pool, deps, calls } = triageHarness({ verdictText: 'never gets here', sessionId: 611 });
+  deps.worker.stopTurn = async (id) => { stopped.push(id); };
+  deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce }) => {
+    await dispatchOnce({ openrouterApiKey: 'k' });
+    await new Promise((resolve) => {
+      const wait = setInterval(() => { if (stopped.length) { clearInterval(wait); resolve(); } }, 2);
+    });
+    return { result: { lastResultText: '', inputTokens: 5000, outputTokens: 10 }, error: null, estimatedCostUsd: 0.4 };
+  };
+  const out = await bot.runTriage(pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
+    settings: { turnSeconds: 30, turnInputTokens: 10_000_000 }, deps,
+  });
+  assert.equal(out.budget, 'wall clock');
+  assert.deepEqual(calls.spend, [{ userId: 77, cents: 40, opts: { byok: false } }],
+    'what the killed turn spent joins the same pool a completed one does');
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.ok(insert.params.includes(0.4), 'and the ledger row carries the cost instead of a zero');
+  assert.ok(insert.params.includes(5000) && insert.params.includes(10),
+    'along with whatever usage the dispatch managed to report');
+}, { timeout: 20000 });
+
+test('an empty reply moments after a stop on the same session is the stop, not the issue', async () => {
+  // Two of the first three budget stops wrote an `(empty reply)` row in the
+  // SAME SECOND, on a different issue: stopTurn kills the session's
+  // container and an issue dispatched into it concurrently dies with it.
+  // That issue had done nothing wrong and lost its triage anyway.
+  bot.noteStopped(733);
+  const { pool, deps, calls } = triageHarness({ verdictText: '', sessionId: 733 });
+  const out = await bot.runTriage(pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
+    settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
+  });
+  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'infra' });
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(insert.params[18], /collateral: the session was stopped mid-dispatch/,
+    'the row says what happened rather than blaming the issue');
+  assert.ok(calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s)),
+    'and the issue goes back on the queue');
+  assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)),
+    'never dropped for a timeout that was not its own');
+});
+
+test('an empty reply with no stop behind it records WHY it was empty', async () => {
+  // 21 of the first 225 runs recorded `(empty reply)` and nothing else,
+  // which is not enough to tell a provider refusal from a rate limit from a
+  // container that died. The worker already knew; it was being discarded.
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 744,
+    result: {
+      lastResultText: '',
+      resultSubtype: 'error_during_execution',
+      providerStopReason: 'rate_limit',
+      agentErrorCode: 'provider_overloaded',
+      agentError: '429 Too Many Requests',
+      agentExit: 1,
+      inputTokens: 4242,
+      outputTokens: 0,
+    },
+  });
+  const out = await bot.runTriage(pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
+    settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
+  });
+  assert.equal(out.verdict, 'failed');
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(insert.params[18], /\(empty reply\)/, 'the old text is still there to search for');
+  assert.match(insert.params[18], /rate_limit/);
+  assert.match(insert.params[18], /provider_overloaded/);
+  assert.match(insert.params[18], /429 Too Many Requests/);
+});
+
+test('describeStop reports what is known and admits when nothing is', () => {
+  assert.equal(bot.describeStop({}), '[no reason reported]',
+    'an honest blank beats an invented cause');
+  const line = bot.describeStop({
+    resultSubtype: 'error', providerStopReason: 'max_tokens', agentErrorCode: 'ctx',
+    markerlessCause: 'exit', agentExit: 2, ccExit: 0, agentError: 'context window',
+  });
+  assert.match(line, /subtype=error/);
+  assert.match(line, /stop=max_tokens/);
+  assert.match(line, /markerless=exit/);
+  assert.match(line, /agentExit=2/);
+  assert.ok(!/ccExit/.test(line), 'a clean exit code is not a reason and is left out');
+});
+
+test('the stop window forgets, so a later failure is still the turn own doing', () => {
+  bot.noteStopped(9001, 1_000_000);
+  assert.equal(bot.wasStoppedRecently(9001, 1_000_000 + bot.STOP_SETTLE_MS - 1), true);
+  assert.equal(bot.wasStoppedRecently(9001, 1_000_000 + bot.STOP_SETTLE_MS + 1), false,
+    'past the window it is an ordinary empty reply again');
+  assert.equal(bot.wasStoppedRecently(9002, 1_000_000), false, 'and it is per session');
+});
+
+test('the usage hook reaches BOTH of the worker usage paths', () => {
+  // The bug this fixes: the hook was called from applyClaudeResultUsage
+  // only — the Claude `result` event — while the bot runs on the
+  // Codex/OpenRouter agent, whose usage arrives through a different branch.
+  // The token budget was inert in production for its whole first day.
+  const w = read('src/services/worker.js');
+  assert.match(w, /function notifyUsage\(state\)/, 'one implementation, not two');
+  assert.equal((w.match(/\bnotifyUsage\(state\)/g) || []).length, 3,
+    'declared once and called from both usage paths');
+  const codexBranch = w.slice(w.indexOf("} else if (ev.kind === 'usage')"));
+  assert.match(codexBranch.slice(0, 1400), /notifyUsage\(state\)/,
+    'the Codex/OpenRouter branch notifies too');
+  assert.match(w, /applyClaudeResultUsage[\s\S]{0,1800}?notifyUsage\(state\)/,
+    'and so does the Claude result path it always did');
+
+  // And be honest about what that buys on the agent the bot actually runs:
+  // this one reports usage once, when the turn is already over.
+  const agent = read('src/agents/codex-openrouter.js');
+  assert.equal((agent.match(/kind: 'usage'/g) || []).length, 1, 'exactly one usage emission');
+  const at = agent.indexOf("kind: 'usage'");
+  const guard = agent.lastIndexOf("ev.type === 'turn.completed'", at);
+  assert.ok(guard > 0 && guard < at, 'the emission sits under a turn.completed guard');
+  assert.ok(!/ev\.type ===/.test(agent.slice(guard + 30, at)),
+    'with no other event check between, so it is terminal: on this agent the '
+    + 'token limit reports a breach after the fact rather than stopping a turn');
+});
+
+test('a turn that finishes over its token budget says so', () => {
+  assert.match(SRC, /Triage turn finished over its token budget/,
+    'not silently dropped just because it was too late to stop it');
+  assert.match(SRC, /!budgetHit && usage\.inputTokens != null && usage\.inputTokens > turnInputTokens/,
+    'and only when we did not already stop it ourselves');
+});
+
+test('the dashboard says where the token limit actually binds', () => {
+  const ui = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(ui, /id="admin-homeroom-bot-turn-tokens-note"/);
+  assert.match(ui, /reports once, at the end/,
+    'a setting that cannot stop a turn should not look like one that can');
+});
 // ── Refusals and backoff (#2737) ─────────────────────────────────────────
 
 test('runTriage: a busy session is a refusal — no ledger row, no lost queue row, an app that backs off', async () => {
@@ -561,8 +703,9 @@ test('the triage turn is a read-only scout: no build mode, no push, no posting, 
   const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('// ── The work loop'));
   assert.match(dispatch, /mode: 'scout'/, 'the ledger loop runs in scout mode');
   // The container exec carries the token half of the budget between the
-  // mode and the prompt now (#2737), so the pin allows what sits between.
-  assert.match(dispatch, /mode: 'scout',[\s\S]{0,600}?\n\s*prompt,/, 'so does the container exec');
+  // mode and the prompt now (#2737), and #2870's note on where that limit
+  // actually binds sits with it, so the pin allows what sits between.
+  assert.match(dispatch, /mode: 'scout',[\s\S]{0,1200}?\n\s*prompt,/, 'so does the container exec');
   assert.ok(!/mode: 'build'/.test(dispatch), 'never a build turn');
   assert.ok(!/telemetryComponent: 'coding_agent_build'/.test(dispatch));
   for (const forbidden of ['createIssueComment', 'claimIssueForUser', 'sendSystemMessage', 'createNotification', '/promote', 'clone-headless', 'linked_issues = ']) {
@@ -623,14 +766,14 @@ test('the triage prompt ends with the JSON contract parseVerdict reads', () => {
 
 // ── runTriage with every dependency injected ─────────────────────────────
 
-function triageHarness({ verdictText, routed = null, budgetError = null } = {}) {
+function triageHarness({ verdictText, routed = null, budgetError = null, sessionId = 501, result = null } = {}) {
   const calls = { queries: [], exec: [], spend: [], ensured: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
       calls.queries.push({ s, params });
       if (/SELECT \* FROM chat_sessions/.test(s)) {
-        return { rows: [{ id: 501, user_id: 77, app_id: 9, branch_name: 'main', agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' }] };
+        return { rows: [{ id: sessionId, user_id: 77, app_id: 9, branch_name: 'main', agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' }] };
       }
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 900 }] };
       if (/COUNT\(\*\)::int AS cnt FROM chat_sessions/.test(s)) return { rows: [{ cnt: 0 }] };
@@ -647,8 +790,8 @@ function triageHarness({ verdictText, routed = null, budgetError = null } = {}) 
     },
     worker: {
       async ensureWorkerImage() {},
-      async ensureWorker(id, opts) { calls.ensured.push({ id, opts }); return 'usernode-worker-501'; },
-      async execInWorker(id, opts) { calls.exec.push({ id, opts }); return { lastResultText: verdictText, inputTokens: 1000, outputTokens: 50 }; },
+      async ensureWorker(id, opts) { calls.ensured.push({ id, opts }); return `usernode-worker-${sessionId}`; },
+      async execInWorker(id, opts) { calls.exec.push({ id, opts }); return result || { lastResultText: verdictText, inputTokens: 1000, outputTokens: 50 }; },
       isInFlight: () => false,
       async clearActiveTurn() {},
     },
