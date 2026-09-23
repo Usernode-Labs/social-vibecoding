@@ -1666,7 +1666,7 @@ async function runCheckJob(config, {
   const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
   const resources = {
     requests: {
-      cpu: checkResourceRequest('1', cpuLimit, 'CPU'),
+      cpu: checkResourceRequest('4', cpuLimit, 'CPU'),
       memory: checkResourceRequest(unitSuite ? '1Gi' : '3Gi', memoryLimit, 'memory'),
       'ephemeral-storage': '1Gi',
     },
@@ -1712,9 +1712,26 @@ async function runCheckJob(config, {
       secret: { secretName: inputSecretName, items: [{ key: 'tests.json', path: 'tests.json' }] },
     });
   }
-  const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: {
+  // Count all check kinds and sessions together, excluding resident workers.
+  const checkSelector = {
+    'app.kubernetes.io/managed-by': MANAGED_BY,
+    'app.kubernetes.io/part-of': PART_OF,
+    'social.usernode.io/workload': 'check',
+  };
+  const checkLabels = { ...labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }), ...checkSelector };
+  const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: { ...checkLabels } }, spec: {
     backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: 3600,
-    template: { metadata: { labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: { restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount, automountServiceAccountToken: false, securityContext: nodePodSecurityContext(), containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}) } },
+    template: { metadata: { labels: { ...checkLabels } }, spec: {
+      restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
+      automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
+      // Prefer spare hosts without stranding checks when only one host fits.
+      topologySpreadConstraints: [{
+        maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
+        nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
+        labelSelector: { matchLabels: checkSelector },
+      }],
+      containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}),
+    } },
   } };
   const { batch, core } = getClients();
   if (previewRunId) {
