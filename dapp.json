@@ -1153,6 +1153,23 @@
       "expectText": "staging-demo-lead"
     },
     {
+      "name": "Discover leads its list with filter chips, All / Featured / Your apps / New, with All pressed (the prototype's scrDiscover)",
+      "path": "/#apps",
+      "expectSelector": "#browse-screen:not(.hidden) #browse-search-bar > #browse-filter-chips[role=\"group\"] > [data-filter=\"all\"][aria-pressed=\"true\"] + [data-filter=\"featured\"][aria-pressed=\"false\"] + [data-filter=\"yours\"] + [data-filter=\"new\"]",
+      "expectText": "Featured"
+    },
+    {
+      "name": "The Featured chip narrows Discover to the admin's featured apps (?filter=featured)",
+      "path": "/?demo=1&filter=featured#apps",
+      "expectSelector": "#browse-screen:has(#browse-filter-chips > [data-filter=\"featured\"][aria-pressed=\"true\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
+    },
+    {
+      "name": "An app's page offers Share, first in its action list (the prototype's About sheet)",
+      "path": "/#apps/staging-demo-forkable",
+      "expectSelector": "#browse-detail #browse-detail-share:first-child",
+      "expectText": "Share"
+    },
+    {
       "name": "Bare #leaderboard renders all three tabs and opens on Challenges (#962, #2374)",
       "path": "/#leaderboard",
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"

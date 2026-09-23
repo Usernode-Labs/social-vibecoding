@@ -889,6 +889,8 @@ const ADDED_IDS = {
   'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
   'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
   'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
+  // ── Discover's filter chips (the prototype's scrDiscover) ──────────
+  'browse-filter-chips': 'The All / Featured / Your apps / New chip row in the directory\'s sticky head, between the search and Sort. A chip picks which apps the list holds (Browse.filterApps); ships with All pressed, the store\'s prerender value.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {
