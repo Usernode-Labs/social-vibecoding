@@ -338,6 +338,12 @@ function load() {
     // user has a usable key; Claude remains the safe fallback for accounts
     // that have not configured or claimed one.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
+    // #2809/#2810: an OpenRouter session's chat runs through the Mayor, on the
+    // session's own OpenRouter model and key (services/openrouter-mayor.js),
+    // so it gets the same plan, spec and wrap-up flow as a Claude session.
+    // False restores the direct path, where the coding agent answers alone.
+    openrouterSessionMayorEnabled:
+      String(process.env.OPENROUTER_SESSION_MAYOR_ENABLED || 'true') === 'true',
     // #717: collection-only emergency switch. Reporting remains readable so
     // operators can inspect already-recorded aggregates after disabling new
     // writes. This never changes provider/model/routing behaviour.
@@ -349,6 +355,9 @@ function load() {
     // one emergency switch. The deploy workflow still writes the verified-
     // identity variable; nothing reads it, exactly as with
     // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
+    // #2819 reviewed MiMo-V2.6-Pro as a replacement on 2026-09-23 and kept
+    // GLM 5.3 Flash; docs/openrouter-agent-defaults.md has the evidence and
+    // what would change the answer.
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
     // The effort a coding turn runs at when the session carries no explicit
     // choice. A user's Settings choice is stored on the session and still

@@ -38,6 +38,35 @@ function getAppConventions() {
   return cached;
 }
 
+// #2817: design guidance for OpenRouter coding agents. Claude sessions have
+// never needed a written design brief to produce coherent screens; the
+// open-weight models OpenRouter sessions run do, and they build without
+// seeing images (the Codex runner gives them text input only). The block
+// asks for the platform's own kit before anything invented, one primary
+// action and one word per concept, the four data states, and a text-only
+// self-check through the browser's accessibility snapshot. A separate file
+// so it can be tuned without touching the 150 KB conventions document every
+// backend reads.
+const OPENROUTER_DESIGN_GUIDANCE_PATH = path.join(__dirname, '..', 'prompts', 'openrouter-design-guidance.md');
+
+let cachedDesignGuidance = null;
+
+function getOpenRouterDesignGuidance() {
+  if (cachedDesignGuidance !== null) return cachedDesignGuidance;
+  try {
+    cachedDesignGuidance = fs.readFileSync(OPENROUTER_DESIGN_GUIDANCE_PATH, 'utf-8').trim();
+  } catch (err) {
+    log.error('prompts', 'Failed to read openrouter-design-guidance.md', { err: err.message });
+    cachedDesignGuidance = '';
+  }
+  return cachedDesignGuidance;
+}
+
+// The same decisions, made once at spec time so the build inherits them
+// instead of improvising: an OpenRouter scout writes them into the spec as
+// a plain-language "### Design" subsection a non-developer can review.
+const OPENROUTER_SPEC_DESIGN_BRIEF = `DESIGN BRIEF: when the change adds or alters something a person sees, end the "User-facing changes" half (before any "### Questions") with a short "### Design" subsection in plain language: the screen's one job, its one primary action, which existing screen of this app it should look and behave like, and the exact word it uses for each thing on it, matching the words the app already uses. Prefer the app's existing components and styling to anything new, and say so when nothing existing fits. The build follows this subsection, so decide here rather than leaving it to the build. Omit it for changes nobody sees.`;
+
 // The offline excerpt carried inside a connector work order.
 //
 // Every app's notes tell a coding agent to fetch these conventions from the
@@ -295,6 +324,8 @@ function getLaunchpadInstructions({ appName, slug, targetProposalId } = {}) {
 
 module.exports = {
   getAppConventions,
+  getOpenRouterDesignGuidance,
+  OPENROUTER_SPEC_DESIGN_BRIEF,
   getLaunchpadInstructions,
   getWorkOrderEssentials,
   getConventionSections,

@@ -377,6 +377,13 @@
       "description": "Emergency availability switch for the OpenRouter coding-agent backend. When true, OpenRouter is preferred for users with a usable key while Claude remains available and is the fallback for users without one. Set false to hide/refuse OpenRouter without affecting Claude."
     },
     {
+      "key": "OPENROUTER_SESSION_MAYOR_ENABLED",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "true",
+      "description": "When true, an OpenRouter session's chat runs through the Mayor on the session's own OpenRouter model and key: a short plan before the coding agent starts, a spec before a build, and a plain-English wrap-up after, as on a Claude session. Set false to send each message straight to the coding agent instead. Never uses an Anthropic key."
+    },
+    {
       "key": "OPENROUTER_MANAGEMENT_API_KEY",
       "group": "AI & coding agents",
       "required": false,
