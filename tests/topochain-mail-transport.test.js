@@ -167,17 +167,13 @@ test('a first join carries the stage-2 profile link; a re-join carries none', as
   assert.match(seen[0].url, new RegExp(`#more/${token}$`));
   assert.equal(seen[1].url, null);
 
-  // ...and the transport copy actually includes it. The invitation reads
-  // "increase your chances of getting into an earlier group" since Andrea's
-  // 27 Aug 2026 copy pass; it used to say "Want in sooner?".
+  // ...but since #2908 the mail no longer prints it: the closing "increase
+  // your chances of getting into an earlier group" paragraph is gone, with
+  // or without a link to put in it.
   const withLink = transport.buildMessage('waitlist_joined', { url: seen[0].url });
-  assert.ok(withLink.text.includes(seen[0].url));
-  assert.match(withLink.text, /increase your chances of getting into an earlier group/i);
-  const withoutLink = transport.buildMessage('waitlist_joined', { url: null });
-  assert.equal(
-    /increase your chances of getting into an earlier group/i.test(withoutLink.text),
-    false,
-  );
+  assert.ok(!withLink.text.includes(seen[0].url));
+  assert.doesNotMatch(withLink.text, /increase your chances of getting into an earlier group/i);
+  assert.doesNotMatch(withLink.html, /increase your chances/i);
 });
 
 test('sendWaitlistCodeMail passes kind:"waitlist_code" through the shim', async () => {

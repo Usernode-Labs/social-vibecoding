@@ -62,19 +62,24 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
 import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { TileSkeleton } from '../apps/tile-skeleton';
-import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
+import { CreateTile } from './create-tile';
+import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-function cellStyle(item: GridItem): string | undefined {
-  const p = item.placement;
+function placementStyle(p: GridPlacement | null): string | undefined {
   if (!p) return undefined;
   return `grid-column:${p.col + 1}/span ${p.w};grid-row:${p.row + 1}/span ${p.h}`;
+}
+
+function cellStyle(item: GridItem): string | undefined {
+  return placementStyle(item.placement);
 }
 
 function AppIcon({ icon }: { icon: IconView }) {
@@ -131,7 +136,9 @@ const wired = new WeakSet<Element>();
  */
 const SKELETON_TILES = 8;
 
-function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; yours: boolean }) {
+function AppCardTile({ app, style, yours, live }: {
+  app: HomeAppView; style?: string; yours: boolean; live: boolean;
+}) {
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -176,11 +183,12 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={app.name}
+      aria-label={live ? `${app.name}, ${LIVE_APP_LABEL}` : app.name}
       aria-haspopup="menu"
       title={`${app.name}. Hold or right-click for app actions`}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
+      {...(live ? { 'data-live': 'true' } : null)}
       onPointerDownCapture={(e) => {
         if ((e.target as HTMLElement).closest('.retry-btn')) { e.stopPropagation(); return; }
         const N = controller();
@@ -270,6 +278,8 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
             ⑂
           </span>
         ) : null}
+        {/* #2902: still loaded — opening it resumes it as it was left. */}
+        {live ? <LiveAppDot className="app-card-live-dot" /> : null}
       </div>
       <div className="w-full min-w-0">
         <div className="app-card-title" title={app.name}>{app.name}</div>
@@ -324,6 +334,7 @@ export function AppsEmptyNote() {
 
 export function AppGrid() {
   const state = useStoreState(gridStore);
+  const live = useLiveAppSlugs();
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // `grid-template-rows` is written to the ELEMENT rather than rendered as a
@@ -384,6 +395,8 @@ export function AppGrid() {
     // before this commit is no longer a rendering of a lift. It finds the rail
     // itself — a repaint of the grid is not one of the panels.
     N?._maybeShowShotIncoming?.();
+    // And the one for the drop into the Homeroom widget strip (#2894).
+    if (el) N?._maybeShowShotWidgetDrop?.(el);
   });
 
   return (
@@ -429,8 +442,18 @@ export function AppGrid() {
           app={item.app}
           style={cellStyle(item)}
           yours={state.view === 'grid'}
+          live={live.includes(item.app.slug)}
         />
       ))}
+      {/*
+          "Create an app", the grid's LAST child (./create-tile.tsx). Null
+          until Home.render() has painted the launcher — the store's initial
+          value — so the prerender and the first client render agree on this
+          node's children. Its cell comes from the same paint as the tiles'.
+      */}
+      {state.create ? (
+        <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
+      ) : null}
     </div>
   );
 }

@@ -78,8 +78,12 @@ const NEUTRAL_PAGE_BG = '#f5f5f7'; // zinc-50
 const NEUTRAL_HAIRLINE = '#e3e3e6'; // zinc-200
 const NEUTRAL_INK = '#1c1c1e'; // zinc-900
 const NEUTRAL_SECONDARY_INK = '#68686c'; // zinc-500
-const LOGO_URL = `${PRODUCTION_ORIGIN}/brand/homeroom-logo-black.png`;
-const LOGO_ALT = 'Homeroom in black';
+// #2908: the product's own script logotype (frontend/@/components/ui/
+// wordmark.tsx), rasterized, replacing #2673's pixel-font "HOMEROOM". A NEW
+// file name rather than new bytes under the old one: mail clients and image
+// proxies cache by URL, and the old file stays in place for mail already sent.
+const LOGO_URL = `${PRODUCTION_ORIGIN}/brand/homeroom-logotype-black.png`;
+const LOGO_ALT = 'Homeroom';
 const BODY_STYLE =
   `margin:0;padding:24px 12px;background:${NEUTRAL_PAGE_BG};font-family:-apple-system,`
   + 'Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;'
@@ -95,7 +99,7 @@ const FOOTER_STYLE =
 const HTML_SHELL = (body) =>
   '<!doctype html><html><body style="' + BODY_STYLE + '">'
   + '<div style="' + CARD_STYLE + '">'
-  + `<img src="${LOGO_URL}" width="147" height="27" alt="${esc(LOGO_ALT)}" `
+  + `<img src="${LOGO_URL}" width="140" height="37" alt="${esc(LOGO_ALT)}" `
   + `style="${LOGO_STYLE}">`
   + body
   + '<div style="' + FOOTER_STYLE + '">'
@@ -153,16 +157,16 @@ function otp(payload) {
   };
 }
 
-// Waitlist join confirmation. Two optional links, independent of each
-// other:
+// Waitlist join confirmation. One optional link:
 //   - payload.confirmUrl — the one-click "confirm this address" link.
 //     Following it stamps waitlist_signups.confirmed_at and lands on the
 //     stage-2 survey, so confirming and answering are one motion.
-//   - payload.url — the durable stage-2 survey link (#more/<token>). The
-//     join response shows it once; the email is its lasting home.
-// Either may be absent (an idempotent re-join carries neither), and the
-// copy must not grow an empty paragraph or the string "undefined" when
-// that happens.
+// It may be absent (an idempotent re-join carries none), and the copy must
+// not grow an empty paragraph or the string "undefined" when that happens.
+//
+// #2908 removed the closing "Want to increase your chances of getting into
+// an earlier group?" paragraph and its #more/<token> survey link. Callers
+// still pass payload.url; this template no longer prints it.
 //
 // The shape follows Andrea's copy (doc comment, 27 Aug 2026): thank, set
 // the expectation, confirm, and only then offer the optional questions.
@@ -176,7 +180,6 @@ function otp(payload) {
 // with the rest.
 function waitlistJoined(payload) {
   const confirmUrl = payload.confirmUrl || null;
-  const surveyUrl = payload.url || null;
 
   let text = '';
   let html = '';
@@ -213,14 +216,6 @@ function waitlistJoined(payload) {
   if (confirmUrl) {
     text += '\n\nOr confirm in one tap:\n' + confirmUrl;
     html += button(confirmUrl, 'Confirm my email');
-  }
-  if (surveyUrl) {
-    text += '\n\nWant to increase your chances of getting into an earlier group? '
-      + 'Answer a few optional questions, invite someone you would build with, '
-      + `and follow along: ${surveyUrl}`;
-    html += p('Want to increase your chances of getting into an earlier group? '
-      + 'Answer a few optional questions, invite someone you would build with, '
-      + `and follow along: ${link(surveyUrl)}`);
   }
 
   return { subject: "You're on the Homeroom waitlist 🎉", text, html };

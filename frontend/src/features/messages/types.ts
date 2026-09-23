@@ -170,6 +170,13 @@ export interface DiscussionContext {
   name: string;
   /** `can_collaborate === false` — the composer does not render. */
   readOnly: boolean;
+  /**
+   * The app's artwork, for the pane header's tile when the inbox has no row
+   * to take it from (a discussion opened from a link by a non-member). The
+   * row's own `iconUrl` / `iconEmoji` win when there is one.
+   */
+  iconUrl: string | null;
+  iconEmoji: string | null;
 }
 
 import type { AppDiscussion, InboxFilter } from './inbox';

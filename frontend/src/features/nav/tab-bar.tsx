@@ -354,6 +354,14 @@ export function PlatformTabs() {
   // the class it renders is the OR of the two and the overlay treatment is a
   // second class app.css keys the peeking case off.
   useHiddenClass(barRef, !visible && !peek);
+  // …AND THE ROUTE'S OWN ANSWER RIDES BESIDE IT, because `hidden` alone can
+  // no longer carry it. app.css decides whether the header's sidebar toggle
+  // exists from `#platform-tabs:not(.hidden)`, and a peek over a running app
+  // takes `hidden` off: pointing at the window's edge inside an app drew the
+  // toggle into the app's strip, shoved ✕, the tile and the name 34px right,
+  // and a press on it folded the docked rail behind the app. A rail that only
+  // the peek is showing is not the route's, so there is nothing to fold.
+  useClassToggle(barRef, 'platform-tabs-route-hidden', !visible);
   useClassToggle(barRef, 'platform-tabs-peek', collapsed && peek);
   // THE FADE OUT (#2795). The peek stays up for the length of the fade and
   // this class is what app.css turns into it; ./rail-peek.ts times both.

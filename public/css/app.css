@@ -2000,7 +2000,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   flex: 0 0 auto;
   width: min(calc(100% - 24px), 52rem);
   margin: 0 auto;
-  padding: 10px 12px calc(10px + var(--platform-safe-bottom, 0px));
+  /* THE BOTTOM IS THE SAFE BAR'S. The form wears `.platform-safe-bar` (top of
+     this file): its 8px base gap plus the larger of the tab bar's band and
+     the home-indicator strip, since #global-chat-screen keeps the platform
+     tab bar up on a phone. This rule cleared the strip alone — `calc(10px +
+     var(--platform-safe-bottom))` — so the field sat under the tab bar. The
+     8px declared here is the value the class computes with no bar and no
+     inset, so the two cannot disagree on a desktop. */
+  padding: 10px 12px 8px;
   border-radius: 22px 22px 0 0;
   background: var(--dc-sheet-fill);
   box-shadow: 0 -5px 18px rgba(0, 0, 0, .06);
@@ -2379,6 +2386,18 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .un-sheet:has(#apps-switcher-sheet),
 .un-sheet:has([data-staking-sheet]) {
   touch-action: pan-x;
+}
+/* …EXCEPT ON ITS ABOUT PANE, WHICH IS A PAGE. The app's facts, its builders
+   and its MORE rows run past the sheet's 80% cap on a phone, and `pan-x`
+   above leaves #switcher-nav's overflow unreachable by touch — the pane would
+   end where the sheet does, with Share and Fork below the fold and no gesture
+   to reach them. So while About is showing the sheet takes the notifications
+   sheet's trade instead (the `pan-y` block above): a vertical drag in the
+   pane scrolls it, and the grabber still dismisses. Same specificity as the
+   rule above, so this one wins by coming after it; the menu pane keeps the
+   drag-to-dismiss it has always had. */
+.un-sheet:has(#app-about-pane) {
+  touch-action: pan-y;
 }
 
 /* THE HOME-INDICATOR INSET IS THE KIT'S JOB INSIDE AN ADOPTED SURFACE.
@@ -3337,7 +3356,29 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 /* ── App cards ─────────────────────────────────────────── */
 
 .app-card { transition: background-color 150ms; }
-.app-card:hover { background-color: var(--bg-card); }
+/* A pointer that can actually hover only (#2892). On a touch screen WebKit
+   emulates :hover from the last tap and keeps it until the next tap lands
+   somewhere else — so a tile held for its menu kept this fill as a stuck
+   "selected" look, most visibly after "Add to Homeroom widget", the one menu
+   action that leaves you on the home screen with the tile still in view. */
+@media (hover: hover) {
+  .app-card:hover { background-color: var(--bg-card); }
+}
+
+/* The widget strip as a DROP TARGET (#2894): a "Your apps" tile dragged over
+   it. home.js (_markWidgetDrop) sets `data-drop` for the span of the hover —
+   an attribute because the strip's className is React's. `ok` is the same
+   tint as the grid's own target cells (.home-grid-cell--on); `refused` (already pinned, or the widget is
+   full) is a muted outline that says "not here" without shouting. */
+#widget-strip[data-drop="ok"] {
+  border-style: solid;
+  border-color: rgba(31, 134, 255, 0.75);
+  background-color: rgba(31, 134, 255, 0.14);
+}
+#widget-strip[data-drop="refused"] {
+  border-color: rgb(161 161 170);
+  opacity: 0.7;
+}
 
 /* THE TILE LABEL — iOS-homescreen sized (#951).
    11px on a 13px line, TWO lines, ellipsised on overflow. The old label
@@ -4230,19 +4271,32 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    count capsule and the category well that lived here are retired with the
    design they drew. */
 
-/* ── Create-app widget ──────────────────────────────────────
-   The whole block is one button, drawn entirely in utilities in
-   frontend/src/features/home/panels/create.tsx: the dashed placeholder card
-   the Challenges area's locked slot uses, in the blue accent while creation is
-   available and in that card's neutrals at the limit. The SVG dashed outlines
-   that lived here (a data-URL rect per colour, per hover, per theme) and the
-   two-line clamp on the label are retired with the tile they drew.
-   `.home-create-tile`, `.home-create-label` and `.home-create-widget--disabled`
-   stay in the markup as hooks the declared checks and tests select on. */
-.home-create-widget {
-  min-width: 0;
+/* ── The Create tile: the launcher grid's last cell ─────────────
+   "Create an app" is the grid's trailing tile (the prototype's scrHome), drawn
+   entirely in utilities in frontend/src/features/home/create-tile.tsx: an app
+   card's cell with a dashed, unfilled face and a muted label. It replaced the
+   full-width Create section that sat below Challenges, and the
+   `.home-create-widget` wrapper went with that section.
+
+   Here are only the three things a utility cannot say, and each mirrors a rule
+   the app cards already carry (the `#app-list > .app-card` rules): the tile
+   sits ABOVE the drag overlay, at the top of its row, and it is transparent to
+   hit-testing for the span of a lift. That last one is load-bearing for the
+   same reason it is on the cards — the overlay cell under the tile has to stay
+   a drop target, and a drop there is an ordinary drop into an empty cell (the
+   tile is not in the layout; the next paint moves it along). It also fades
+   while a drag is live: it is the one thing on the canvas that does not move
+   with the preview, and at full strength it read as a tile being displaced. */
+#app-list > .home-create-tile {
+  position: relative;
+  z-index: 1;
+  align-self: start;
 }
-/* Keyboard focus draws the ring the challenge cards above it draw
+#app-list.un-reordering > .home-create-tile {
+  pointer-events: none;
+  opacity: 0.4;
+}
+/* Keyboard focus draws the ring the challenge cards draw
    (`.home-challenge-card[role="button"]:focus-visible`). */
 .home-create-btn:focus-visible {
   outline: 2px solid var(--accent);
@@ -4646,6 +4700,51 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   top: 0; left: 0; width: 100%; height: 100%;
   border: 0;
   background: var(--bg-primary);
+}
+
+/* THE GREEN "STILL OPEN" DOT (#2902), on an app kept loaded — its tile on
+   Home, its row in the rail's Recents (features/app-frame/live-apps.tsx).
+   Green because it says the app is RUNNING, the one colour every status
+   surface here already reads that way; ringed in the page ground so it
+   stays a dot on any icon behind it. */
+.app-live-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 2px var(--bg-primary);
+}
+/* On a launcher tile: the icon's top-right corner, where the fork tag's
+   bottom-left one leaves room. */
+.app-card-live-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+}
+/* In a Recents row: before the unread dot, beside the label. */
+.platform-recent-live {
+  width: 8px;
+  height: 8px;
+  box-shadow: none;
+}
+
+/* ── APPS KEPT ALIVE BEHIND THE ONE ON SCREEN (#2902) ──────────────────
+   The last few apps you opened stay loaded, each in its own frame beside
+   #app-iframe (features/app-frame/app-frame.tsx), so resuming one shows it
+   exactly as you left it. A kept frame keeps #app-iframe's box — the same
+   absolute inset — so the app inside never sees a resize while it waits, and
+   is hidden by `visibility`, not `display`: nothing paints and nothing can be
+   hit, but its layout (and so its scroll position) is untouched. `inert` and
+   `aria-hidden` on the element take it out of the keyboard and screen-reader
+   order; this only takes it off the screen. */
+.app-launch-host > iframe[data-kept] {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  border: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* ── THE APP SHEET, and why the corner lives HERE (#1571) ──────────────
@@ -14602,11 +14701,17 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-tab {
   /* CONTENT-WEIGHTED, not equal thirds: "Current status" is twice "All
      items", and three equal cells ellipsized it at 390px while the other two
-     sat in air. The spare width is still shared out, so the pill stays full. */
+     sat in air. The spare width is still shared out, so the pill stays full.
+     THE "+" TAKES A 40px CELL AT THE PILL'S END, and the tabs pay for it out
+     of their own padding (8px to 4px a side) and glyph gap (5px to 4px), not
+     out of their labels: at 390px, measured in the headless harness's
+     DejaVu Sans — wider than SF Pro or Roboto — the three labels need 316px
+     at rest and the pill leaves them 324, so "Current status" is still whole
+     beside the "+" and the spare 8px is shared back out. */
   flex: 1 1 auto; min-width: 0;
   display: inline-flex; flex-direction: row;
-  align-items: center; justify-content: center; gap: 5px;
-  height: 40px; padding: 0 8px;
+  align-items: center; justify-content: center; gap: 4px;
+  height: 40px; padding: 0 4px;
   border: 0; border-radius: 999px;
   background: transparent;
   color: var(--text-muted);
@@ -14616,9 +14721,45 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 /* THE TRACK IS INERT ON A PHONE. `.dev-ws-tabs` is itself the pill there,
    full width, so the wrapper the desktop layout needs must not introduce a
-   box. `display: contents` removes it from the layout entirely and the
-   buttons stay direct flex items of the nav. */
+   box. `display: contents` removes it from the layout entirely and its two
+   children — the tab list and the "+" — are the nav's flex items. */
 .dev-ws-tabtrack { display: contents; }
+/* THE TAB LIST takes the pill's width less the "+" cell. A real box at both
+   widths (the `tablist` role lives here, and a role on a `display: contents`
+   node is one some screen readers drop), and not positioned: the tabs'
+   `offsetLeft` must keep resolving against the nav, where the marker is.
+   2px between segments, the desktop track's own step. */
+.dev-ws-tablist { flex: 1 1 auto; min-width: 0; display: flex; gap: 2px; }
+/* ── The "+", closing the strip ──────────────────────────────────────
+   The prototype's `.tplus`: the last item of the tab row, a bare glyph in the
+   selected tab's ink with no ground of its own, so it reads as part of the
+   bar rather than as a floating action (it was a violet filled square at the
+   end of All items' search row). The tab's own height and radius, so it sits
+   in the pill as one more cell; the MARKER's tint and ring when its menu is
+   open, which is how the strip already says "this one is active".
+   The wrapper is the dropdown's containing block (actions-row.tsx hangs
+   `#dev-plus-menu` off its right edge). */
+.dev-ws-plus { position: relative; flex: none; display: flex; }
+.dev-ws-plus-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; padding: 0;
+  border: 0; border-radius: 999px;
+  background: transparent;
+  color: var(--brand-ink);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Hover only where there IS hover: on touch a tapped button keeps `:hover`
+   until the next tap elsewhere, which would leave the "+" tinted after the
+   action sheet closes. */
+@media (hover: hover) {
+  .dev-ws-plus-btn:hover { background: var(--brand-tint); }
+}
+.dev-ws-plus-btn[aria-expanded="true"] {
+  background: var(--brand-tint);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+}
+.dev-ws-plus-glyph { width: 20px; height: 20px; stroke-width: 2.2; flex: none; }
 /* Size lives here, not on the component: icons.tsx has no size variant by
    design, so every call site passes its own class. `flex: none` so a label
    that is trying to fit squeezes itself, not the glyph. */
@@ -14644,6 +14785,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    coming later in paint order for positioned elements, would cover the
    labels. */
 .dev-ws-tab { position: relative; z-index: 1; }
+/* WHILE THE "+" MENU IS OPEN the strip outranks the pane head below it. The
+   dropdown hangs out of the strip over the tab body, and the strip is a
+   stacking context (sticky above 700px, frosted below it), so the menu's own
+   `z-30` counts only inside it — and the pane head, which pins at `z-index:
+   31` wide and 20 narrow, painted over the menu's rows on All items. Only
+   while it is open: at rest the ear, which hangs into the strip's band from
+   the head, has to stay on top of the strip or its two tabs cannot be
+   clicked (see "the ear outranks the nav"). A click there while the menu is
+   up lands on the strip and dismisses the menu, like any outside click. */
+.dev-ws-tabs:has(#dev-plus-menu:not(.hidden)) { z-index: 32; }
 /* THE MARKER. Every number it uses is measured off the live tab (see
    workshop.tsx), so this rule carries no geometry — which is what lets it
    serve the phone's 58px equal-width pill and the desktop strip's 32px
@@ -15200,10 +15351,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      surface the cards already use — the same reason tabs.tsx's track is white
      rather than the recessed grey a control gets on a card. */
 
-  /* EVERYTHING PINS UP HERE, as one band: the tab strip, the ear hanging off
-     the head's top edge, and the head itself with the search, the filters and
-     the "+". The controls belong WITH the list you are narrowing, so they
-     stay reachable however far down it you are.
+  /* EVERYTHING PINS UP HERE, as one band: the tab strip with the "+" at its
+     end, the ear hanging off the head's top edge, and the head itself with
+     the search and the filters. The controls belong WITH the list you are
+     narrowing, so they stay reachable however far down it you are.
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
@@ -15316,6 +15467,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     border-radius: 9999px; font-size: 14px;
   }
   .dev-ws-tab-glyph { width: 16px; height: 16px; }
+  /* The tab list hugs its three segments inside the track, and the "+" is
+     the track's last segment: a 32px round cell, the tabs' own height, so
+     the pill ends on it — Current status · Needs you · All items · + — and
+     the ear's measured inset, read off the track's right edge, clears it. */
+  .dev-ws-tablist { flex: 0 0 auto; }
+  .dev-ws-plus-btn { width: 32px; height: 32px; }
+  .dev-ws-plus-glyph { width: 18px; height: 18px; }
 
   /* ── THE FEED ON A WIDE WINDOW: THE STAGE ──
      Above 700px the lander is a ROW: the feed as a 720px card at the centre,
@@ -15711,13 +15869,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
    It does NOT pin. The pane head is sticky and this is not in it: scroll the
    board and the ear leaves with the tab pill it sits beside, which is the
-   row it now belongs to. The head keeps the search, the filters and the "+",
-   which are the controls you reach for mid-scroll. */
+   row it now belongs to. The head keeps the search and the filters, which
+   are the controls you reach for mid-scroll; the "+" closes the tab strip,
+   which pins on its own. */
 @media (min-width: 768px) {
-  /* Scoped by `:has()` so a pane without an ear is untouched. The "+" menu
-     and the vote sheet are absolutely positioned against their own local
-     wrappers (actions-row.tsx's `relative ml-auto`, and `.dev-ws-row`), so
-     this containing block takes nothing away from them. */
+  /* Scoped by `:has()` so a pane without an ear is untouched. The vote
+     sheet is absolutely positioned against its own local wrapper
+     (`.dev-ws-row`), and the "+" menu is not in the pane at all any more (it
+     hangs off `.dev-ws-plus`, in the tab strip), so this containing block
+     takes nothing away from either. */
   .dev-ws-pane:has(.dev-ws-ear) { position: relative; }
   /* NO LINE BETWEEN THE EAR AND THE PANE. The pane's ring is one inset
      shadow, so its top side used to run the full width — straight under the
@@ -15834,10 +15994,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    the page reads as a stack of panes rather than a pane, two loose control
    rows and a list.
 
-   `overflow: visible` is load-bearing: the "+" menu is absolutely positioned
-   inside this subtree and the sticky head below depends on no ancestor
-   clipping. A `overflow: hidden` here to clip the radius would do both kinds
-   of damage at once. */
+   `overflow: visible` is load-bearing: the vote sheet is absolutely
+   positioned inside this subtree and the sticky head below depends on no
+   ancestor clipping. A `overflow: hidden` here to clip the radius would do
+   both kinds of damage at once. (The "+" menu used to be the other thing
+   escaping; it hangs off the tab strip now.) */
 .dev-ws-pane {
   display: flex; flex-direction: column;
   border-radius: 22px;
@@ -15860,9 +16021,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    The head's frost still does its job: the body is its SIBLING, so the rows
    scrolling inside the body pass through the head's backdrop and smear.
 
-   `overflow: visible` on the pane is load-bearing: the "+" menu is absolutely
-   positioned in this subtree, and sticky does not work under a clipping
-   ancestor. */
+   `overflow: visible` on the pane is load-bearing: the vote sheet is
+   absolutely positioned in this subtree, and sticky does not work under a
+   clipping ancestor. */
 .dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -16897,7 +17058,9 @@ html.un-kb #platform-parked {
    All three questions are CSS's now, and none of them is part of hydration:
 
      does the rail exist   → `#platform-tabs.hidden`, which the island
-                             publishes through useHiddenClass
+                             publishes through useHiddenClass — and not
+                             `.platform-tabs-route-hidden`, which says the
+                             ROUTE has none and only the peek is showing it
      is there room for it  → the media query
      has the group anything→ `:has(> #back-btn.hidden)` plus the two above
 
@@ -16913,7 +17076,7 @@ html.un-kb #platform-parked {
 }
 @media (min-width: 768px) {
   /* …unless the toggle is in it, which needs both a rail and the width. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) #platform-header
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header
     .platform-header-left:has(> #back-btn.hidden) {
     display: flex;
   }
@@ -16930,8 +17093,18 @@ html.un-kb #platform-parked {
 
      `body:has(...)` is what replaces the `return null` this component used
      to do for itself: a route with no rail has no fold to offer, and a dead
-     control is worse than none. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) .platform-sidebar-toggle {
+     control is worse than none.
+
+     A PEEK IS NOT A RAIL THE ROUTE HAS. Over a running app the peek takes
+     `hidden` off the bar, and this rule used to answer that alone: pointing
+     at the window's left edge inside an app put the toggle into the app's
+     own strip, pushed ✕, the tile and the name 34px right, and pressing it
+     folded the docked rail behind the app. `.platform-tabs-route-hidden` is
+     the route's answer published beside the peek's (features/nav/
+     tab-bar.tsx), so the toggle stays out of the app layer and the peek
+     still works. A rail the viewer FOLDED is still the route's, so its
+     toggle stays — it is how the fold comes undone. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) .platform-sidebar-toggle {
     display: inline-flex;
     transition: background-color 140ms ease, color 140ms ease,
                 border-color 140ms ease;
@@ -17244,7 +17417,11 @@ html.un-kb #platform-parked {
     height: 34px;
     padding: 0 12px;
     border-radius: 10px;
-    color: var(--text-primary);
+    /* THE RAIL'S OWN INK (#2890): the muted grey `.platform-tab` draws its
+       sections in, not the page's near-black, so the history reads as more
+       of the same rail rather than louder than it. The hover above lifts it
+       to periwinkle exactly as it lifts a tab. */
+    color: var(--text-muted);
     font-size: 14px;
     font-weight: 500;
     text-decoration: none;

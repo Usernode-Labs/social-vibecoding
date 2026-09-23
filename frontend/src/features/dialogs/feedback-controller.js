@@ -843,6 +843,11 @@ export function init() {
         // is afraid of losing — the screenshot they can retake (#1284).
         if (err && err.code === 'denied') {
           showFeedbackNotice('Screen capture was declined. Nothing was attached, and your feedback is safe.', false);
+        } else if (err && err.code === 'capture_blank') {
+          // The share arrived with nothing in it — on a Mac, what window
+          // capture hands over when the browser's screen-recording
+          // permission is off or has lapsed. Retrying the same way can't help.
+          showFeedbackNotice("The shared window came through blank. On a Mac, allow your browser under System Settings, Privacy & Security, Screen & System Audio Recording, then try again. Your feedback is safe.", true);
         } else if (err && err.code === 'register_failed') {
           showFeedbackNotice("Couldn't locate this page in the shared window. Keep it fully visible and try again. Your feedback is safe.", true);
         } else if (err && err.code === 'too-large') {

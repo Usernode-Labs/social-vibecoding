@@ -74,6 +74,17 @@
  * session user. Everything that decides what a value MEANS — the byte budget,
  * the downscale, the save order, the per-field server messages — is in
  * ./profile.js.
+ *
+ * ── "Public page" is here now ─────────────────────────────────────────
+ *
+ * The opt-in public profile's controls (#582) were a card of their own on the
+ * Me screen, second only to the identity card. The prototype's Me has no room
+ * for them — its card carries one action, Edit — and they are about exactly
+ * what this sheet edits: whether the name, photo and bio above are visible to
+ * people who are not signed in. So they are a group of this sheet, with the
+ * same four actions and the same status line. They act IMMEDIATELY, as they
+ * always did (Publish is a PATCH of its own, not part of Save), and the
+ * group's footnote says so.
  */
 
 import { useRef, useState, type ReactNode } from 'react';
@@ -85,6 +96,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { Profile } from './profile.js';
+import { PublicProfileCard } from './public-profile-card';
 
 /**
  * The no-kit card chrome, on the node the kit flags rather than the node it
@@ -156,12 +168,92 @@ function FieldError({ message }: { message?: string | null }): ReactNode {
   );
 }
 
+/**
+ * The public page's controls (#582), as a group of this sheet: where the page
+ * stands, then Publish / Preview / Open / Copy link, then the status line the
+ * writes report into. `controls` is ./profile-store.js's publicControlsView;
+ * null while GET /api/me/public-profile has not answered, and then the group
+ * is not drawn at all rather than drawn wrong.
+ */
+function PublicPage({ controls, status, publishing, previewOpen }: {
+  controls: any;
+  status: string;
+  publishing: boolean;
+  previewOpen: boolean;
+}): ReactNode {
+  return (
+    <section id="public-profile-controls" className="mb-4">
+      <Group title="Public page">
+        <div className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
+          <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>Visibility</span>
+          <span id="public-profile-visibility" className={`text-sm font-medium ${controls.visibilityClass}`}>
+            {controls.visibility}
+          </span>
+        </div>
+        <button
+          id="public-profile-publish"
+          type="button"
+          className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400 disabled:opacity-60`}
+          disabled={publishing}
+          onClick={() => { void Profile._setPublished(!controls.published); }}
+        >
+          {controls.publishLabel}
+        </button>
+        <button
+          type="button"
+          className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+          onClick={() => Profile.togglePreview()}
+        >
+          {previewOpen ? 'Hide preview' : 'Preview'}
+        </button>
+        <a
+          href={controls.openHref}
+          className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+          onClick={() => Profile._dismissSheet()}
+        >
+          Open public page
+        </a>
+        <button
+          type="button"
+          className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+          onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
+        >
+          Copy public link
+        </button>
+      </Group>
+      {controls.moderationDisabled ? (
+        <p className="px-4 mt-1.5 text-xs text-red-700 dark:text-red-400">
+          You can keep editing or unpublish, but the public page remains unavailable.
+        </p>
+      ) : null}
+      <p className={FOOTNOTE_CLASS}>
+        Private by default, and publishing takes effect at once. The public page
+        includes only your username, display name, bio, Homeroom-hosted photo
+        and verified social accounts, not unverified handles, wallet, email,
+        roles, memberships or private activity.
+      </p>
+      <p className={FOOTNOTE_CLASS} role="status" aria-live="polite">{status}</p>
+      <div id="public-profile-preview" className={previewOpen ? 'mt-3' : 'hidden mt-3'}>
+        {previewOpen ? <PublicProfileCard profile={controls.profile} allowReport={false} /> : null}
+      </div>
+    </section>
+  );
+}
+
 export function ProfileEditSheet({
   avatarUrl,
   initial,
+  publicControls = null,
+  publicStatus = '',
+  publishing = false,
+  previewOpen = false,
 }: {
   avatarUrl: string | null;
   initial: string;
+  publicControls?: any;
+  publicStatus?: string;
+  publishing?: boolean;
+  previewOpen?: boolean;
 }): ReactNode {
   const user = (Profile as unknown as { _user(): Record<string, unknown> })._user();
   const links = (user.links || {}) as Record<string, string>;
@@ -352,6 +444,15 @@ export function ProfileEditSheet({
           </Group>
           <FieldError message={fieldErrors.bio} />
         </section>
+
+        {publicControls ? (
+          <PublicPage
+            controls={publicControls}
+            status={publicStatus}
+            publishing={publishing}
+            previewOpen={previewOpen}
+          />
+        ) : null}
 
         <section className="mb-4">
           <Group title="Verified social accounts">

@@ -1126,11 +1126,53 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // reached 756 without these three, so the merged manifest holds 756 + 3 =
   // 759, leaving 31 slots under the 790 ceiling.
   //
-  // 759 → 761: +2 (#2905): a follow-up message in #general carries one ⋯
-  // disc for report and block instead of three, and an app's chat in
-  // Messages draws no report/block text links in its rows. 761 leaves 29
+  // 759 → 763: the tallies above were computed on either side of this merge
+  // against the same shared 759 and cannot be read as one sequence. This
+  // branch took 759 → 762 alone, +3 (#2902): an app kept loaded in the
+  // background carries a green dot on its Home tile; its hidden frame is
+  // inert, out of the tab order and the accessibility tree, and not
+  // #app-iframe; and an app nobody has opened carries no dot. Main
+  // independently took the same 759 to 760, +1 (#2894): a Your-apps tile
+  // dragged over the open Homeroom widget strip lights the strip up as its
+  // drop target (?shot=widget-drop). Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 759 + 3 + 1 = 763, leaving 27
   // slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 761);
+  //
+  // 763 → 778: independently on main, on top of the same #2894 already
+  // folded into the 763 above, the prototype-gaps proposal (Homeroom task
+  // 598) merges five streams of work into one change. What each adds, net of
+  // the checks it RE-POINTED rather than added (those do not count):
+  //   +3  About is the app's page (Open, Add to your apps, its builders with
+  //       what each has merged); About Homeroom carries the platform's own
+  //       figures; a cold load of any platform tab but Home points the mark's
+  //       menu at Homeroom.
+  //   +3  Discover's filter chips, the Featured chip's filtering
+  //       (?filter=featured), and Share on an app's page. The two Create
+  //       checks were re-pointed at the launcher grid's trailing tile.
+  //   +4  Me's "More" rows, Me's Your contributions, the Challenges page's
+  //       History tab, and the Message button on a person's page. Five more
+  //       were re-pointed (Me's card and stat cards, and the Admin, Node and
+  //       two staking rows that moved into Settings).
+  //   +3  An app's own Workshop has no back control; the app discussion's old
+  //       full-screen address climbs to Messages; a peek over a running app
+  //       never brings the sidebar toggle into the app's strip.
+  //   +2  An app's Workshop ends its view-tab strip with the "+" on Current
+  //       status too (prototype wsTabs), and the global chat's composer
+  //       wears the safe-bar contract, so on a phone it sits above the tab
+  //       bar. The four checks that pinned the "+" in All items' actions row
+  //       were re-pointed.
+  // Its streams were counted against main's own 760 (759 + the #2894 above),
+  // reaching 775; this branch's #2902 checks are not in that count, so the
+  // merged manifest holds 763 + 15 = 778. That is past the 20-slot floor
+  // under the 790 ceiling, so the ceiling moved to 810 with it
+  // (services/app-manifest.js), leaving 32 slots.
+  //
+  // 778 → 780: +2 (#2905), counted on this branch against the shared 759
+  // above and not yet folded into main's own count: a follow-up message in
+  // #general carries one ⋯ disc for report and block instead of three, and
+  // an app's chat in Messages draws no report/block text links in its rows.
+  // 780 leaves 30 slots under the 810 ceiling.
+  assert.equal(DAPP.tests.length, 780);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

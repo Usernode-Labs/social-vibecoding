@@ -47,6 +47,8 @@ function harness() {
     close() { closes++; AppView.appData = null; },
     _teardownDevRoots() {},
     _unmountAppFrame() { frameMounted = false; },
+    // #2902: Home retires the frame (kept loaded, hidden) — off screen either way.
+    _retireAppFrame() { frameMounted = false; },
   };
   const context = vm.createContext({
     location, history, URL, URLSearchParams, console,
@@ -94,8 +96,16 @@ function harness() {
   };
 }
 
+// THE ✕ RETURNS TO THE PAGE THE APP WAS OPENED FROM (App.closeApp): the
+// directory's detail page, its list, or Home. It used to go Home from all
+// three. What this file was written to catch still holds — the directory the
+// app was opened from is HIDDEN while the app runs, and its Browse.handleBack
+// must not claim the ✕ on the way out: the ✕ leaves the app and the router
+// reveals the directory, as a screen entry, rather than the hidden detail
+// quietly answering "up to the list" behind the app.
+const ORIGIN = { detail: '/#apps/coffee', list: '/#apps', home: '/' };
 for (const origin of ['detail', 'list', 'home']) {
-  test(`Home exits an app opened from ${origin}`, async () => {
+  test(`the ✕ closes an app opened from ${origin} back to ${origin}`, async () => {
     const h = harness();
     if (origin !== 'home') h.enterDirectory(origin === 'detail' ? 'coffee' : null);
     const opening = h.App.navigateToApp('coffee');
@@ -103,12 +113,18 @@ for (const origin of ['detail', 'list', 'home']) {
     await opening;
     assert.equal(h.visible('app-view'), true);
     h.clickBack();
-    assert.equal(h.location.pathname + h.location.hash, '/', 'Home does not route into the hidden directory');
-    assert.equal(h.visible('home-screen'), true);
+    assert.equal(h.location.pathname + h.location.hash, ORIGIN[origin],
+      'the page the app was opened from, not Home and not a level of the hidden directory');
+    assert.equal(h.visible(origin === 'home' ? 'home-screen' : 'browse-screen'), true);
     assert.equal(h.visible('app-view'), false);
-    assert.equal(h.frameMounted, false);
+    // The ✕ LEAVES the app the way every exit does, and leaving parks it: back
+    // to the directory the frame stays mounted behind the hidden app view,
+    // exactly as the Discover tab leaves it; Home's zoom-out is the one exit
+    // that drops the frame, as it always has.
+    assert.equal(h.frameMounted, origin !== 'home');
     assert.equal(h.App.currentApp, null);
-    assert.equal(h.Browse.isOpen(), false);
+    assert.equal(h.Browse.isOpen(), origin !== 'home');
+    if (origin === 'detail') assert.equal(h.Browse._slug, 'coffee', 'the detail page itself, not the list');
   });
 }
 
@@ -133,16 +149,17 @@ for (const slug of [null, 'coffee']) {
   });
 }
 
-test('Home during a pending app load cannot be intercepted or undone by its completion', async () => {
+test('the ✕ during a pending app load cannot be intercepted or undone by its completion', async () => {
   const h = harness();
   h.enterDirectory('coffee');
   const opening = h.App.navigateToApp('coffee');
   h.clickBack();
   h.finishOpen();
   await opening;
-  assert.equal(h.location.pathname + h.location.hash, '/');
-  assert.equal(h.visible('home-screen'), true);
+  assert.equal(h.location.pathname + h.location.hash, '/#apps/coffee',
+    'back on the detail page the app was opened from');
+  assert.equal(h.visible('browse-screen'), true);
   assert.equal(h.visible('app-view'), false);
-  assert.equal(h.frameMounted, false);
+  assert.equal(h.App.currentApp, null);
   assert.equal(h.tabRenders, 0, 'the old async router tail must not reopen the app');
 });

@@ -641,6 +641,8 @@ const App = {
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // #2902: the apps kept loaded were the signed-out viewer's.
+    if (typeof AppView !== 'undefined') AppView.evictAllAppFrames?.();
     // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
     // top window is gone or refused. The top window is the one that shows the
     // sign-in screen, so it reloads — onto that screen if the session really
@@ -1012,6 +1014,7 @@ const App = {
     App._applyPlatformUpdateShot();
     App._applyAppUpdateShot();
     App._applyLaunchShot();
+    App._applyKeptAppsShot();
     App._applyOfflineAppShot();
     App._applyFeedbackShot();
     App._applyAppContextShot();
@@ -1423,6 +1426,31 @@ const App = {
         },
       });
     }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=apps-kept` (#2902): Home with the first
+  // two apps on the launcher marked as still loaded — the green dot on their
+  // tiles, and their hidden, inert frames behind the (hidden) app view. A real
+  // kept app exists only after opening apps and coming back, which neither a
+  // still frame nor a declared check can do. The frames are the fully
+  // restricted pending frame with no document at all (the same synthetic
+  // frame the app-tone shots use), so nothing loads and nothing can resume:
+  // tapping a tile launches the app the ordinary way. Pure UI state.
+  _applyKeptAppsShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'apps-kept') return;
+    let tries = 0;
+    const attempt = () => {
+      const slugs = Array.from(document.querySelectorAll('#app-list .app-card[data-slug]'))
+        .map((el) => el.getAttribute('data-slug'))
+        .filter(Boolean)
+        .slice(0, 2);
+      // The launcher's list is still loading; bounded, like the launch shot.
+      if (!slugs.length && tries++ < 50) { setTimeout(attempt, 100); return; }
+      try { AppView.showKeptAppsShot(slugs); } catch (err) { /* ignore */ }
+    };
+    setTimeout(attempt, 50);
   },
 
   // Screenshot-state deep link `?shot=app-launching` (#931): paint the app
@@ -2346,6 +2374,14 @@ const App = {
       }
     }
 
+    // #2902: an app kept loaded in the background is running the build before
+    // this one. Let it go, so the next open loads what just landed. The app in
+    // view keeps its frame — the Improve panel below offers that reload.
+    if (!data.deploying && !data.failed && slug !== App.currentApp
+        && typeof AppView !== 'undefined') {
+      AppView.evictKeptApp?.(slug);
+    }
+
     // The app tab, for the app in view. Its Improve button spins while the
     // build rolls out and offers the reload once it has landed. Nothing here
     // touches the frame: it keeps showing the build before this one on
@@ -2671,6 +2707,12 @@ const App = {
     // `_rememberPendingAppStatus` also treats a later `creating` phase as a
     // retry boundary and clears an older terminal fact for the same slug.
     AppView._rememberPendingAppStatus?.(data);
+
+    // #2902: an app that stopped running has nothing worth keeping loaded.
+    if (data.status && data.status !== 'running' && data.slug !== App.currentApp
+        && typeof AppView !== 'undefined') {
+      AppView.evictKeptApp?.(data.slug);
+    }
 
     // Update home screen card if visible
     const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
@@ -3479,6 +3521,8 @@ const App = {
       if (App._inBrowse && window.Browse?.handleBack?.()) return;
       // A challenge's detail page claims it as "up to the grid".
       if (App._inLeaderboard && window.TopochainChallenges?.handleBack?.()) return;
+      // A running app's ✕: back to the page it was opened from (closeApp).
+      if (App.currentApp && App.currentTab === 'app' && App.closeApp()) return;
       // A dev SESSION claims it as "back to the Board" (Streamlined
       // Concept); declines when no session is open.
       if (App.currentApp && window.DevChat?.handleBack?.()) return;
@@ -4331,10 +4375,19 @@ const App = {
   // the way Messages already did. The page changes in place and the bars
   // never stop being the live elements they are at rest.
   //
-  // DESKTOP ONLY, where the rail is the navigation beside the page. The
-  // phone's bottom bar keeps its slide (it is being reworked separately,
-  // #2766), and every other entry — a drill-in, an app's zoom — keeps its
-  // motion, because there the page really does go somewhere.
+  // On the desktop, where the rail is the navigation beside the page, every
+  // other entry — a drill-in, an app's zoom — keeps its motion, because there
+  // the page really does go somewhere.
+  //
+  // …AND ON THE PHONE NOTHING SLIDES AT ALL (#2896, #2775). Its bottom bar
+  // kept the push/pop, and which way a tab or a page slid was never
+  // consistent — the same press came in from the right one time and the left
+  // the next, depending on which caller asked and what it guessed about
+  // depth. So below the breakpoint every push and pop is a cut: tabs AND
+  // pages swap in place, as the desktop rail does. The rule itself is
+  // PlatformUI.phoneMotion, which every transition goes through; it is
+  // applied here too only so that `data-entered` names what actually runs.
+  // The zooms stay — an app growing out of its tile is not a page sliding.
   //
   // …AND A TAB PRESS INTO OR OUT OF AN APP'S WORKSHOP IS A TAB SWITCH TOO
   // (#2880, #2881). The Workshop tab returns to the app Workshop you left
@@ -4349,23 +4402,23 @@ const App = {
   // zoom-out, shrinking the page into its tile. A press is marked `viaTab`
   // by the one caller that knows it is one (the tab bar's Home click, and
   // resumeWorkshopView for the Workshop's), and resolves exactly as a press
-  // on any other tab does: a cut on the desktop rail, and on the phone the
-  // same push or pop its other tabs run.
+  // on any other tab does: a cut, on the rail and on the phone's bar alike.
   _entryTransition(preferred, screenEl, viaTab) {
-    if (viaTab) preferred = App._tabSwitchType(preferred === 'zoom-out' ? 'pop' : 'push');
-    else if (App._isRailSwitch(preferred, screenEl)) preferred = 'none';
+    if (viaTab || App._isRailSwitch(preferred, screenEl)) preferred = 'none';
+    else if ((preferred === 'push' || preferred === 'pop') && App._isPhoneLayout()) preferred = 'none';
     if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', preferred);
     return preferred;
   },
 
-  // What a press on a tab runs: a cut on the desktop layout, where the bar is
-  // the rail beside the page; `phoneType` on the phone's bottom bar, which is
-  // what every other tab there runs (a push into a tab, navigateHome's pop).
-  _tabSwitchType(phoneType) {
+  // Below the 768px breakpoint — PlatformUI.isPhoneLayout's question, asked
+  // here directly so the gate reads the same answer wherever PlatformUI is
+  // stubbed. Unreadable answers false: the desktop's motion.
+  _isPhoneLayout() {
     try {
-      if (window.matchMedia && window.matchMedia('(min-width: 768px)').matches) return 'none';
-    } catch (_) { /* unreadable: the phone's own motion */ }
-    return phoneType;
+      return !!(window.matchMedia && !window.matchMedia('(min-width: 768px)').matches);
+    } catch (_) {
+      return false;
+    }
   },
 
   // Set for the length of one tab press's synchronous navigation (see
@@ -4451,12 +4504,12 @@ const App = {
     if (revealId !== 'global-chat-screen' && App._inGlobalChat) {
       App._exitGlobalChat();
     }
-    // The app-entry breadcrumb's single clearer (see App._appBackHref): every
-    // reveal of a screen that is not the app view ends the visit it was about.
-    // `app-view` is excluded because navigateToApp does not come through here
-    // at all — it reveals #app-view itself — but a `keepAlso` reveal during a
+    // The ✕'s remembered origin (App._appReturn) ends with the app visit it
+    // was about: every reveal of a screen that is not the app view. `app-view`
+    // is excluded because navigateToApp does not come through here to reveal
+    // it — it reveals #app-view itself — but a `keepAlso` reveal during a
     // zoom-out would, and clearing on the way OUT of an app is right anyway.
-    if (revealId !== 'app-view') App._appBackHref = null;
+    if (revealId !== 'app-view') App._appReturn = null;
     // AND THE INBOX VISIT ENDS THE SAME WAY (#2718 review), for the same
     // reason and at the same single choke point.
     //
@@ -4491,9 +4544,8 @@ const App = {
     // off. An APP shows a close button, because leaving an app is not going
     // up a level — you are stepping out of somebody's program back to the
     // platform, and every mini-app host in the study draws that as an ✕
-    // rather than a chevron. `_appBackHref` still decides WHERE the ✕ lands
-    // (the Workshop, when that is where you came from), which is what
-    // _backSlotFor resolves.
+    // rather than a chevron. WHERE the ✕ lands is the page the app was opened
+    // from (App.closeApp), which is what _backSlotFor resolves as its href.
     App.setBackIcon(...App._backSlotFor(revealId));
     // ...and the tab bar, in the same callback and for the same reason the
     // comment above gives for the title and the back slot: they are all part
@@ -5121,16 +5173,31 @@ const App = {
       somebody rather than a tab of this screen — it is what the address
       `#leaderboard/<section>/<user>` is carrying, and the name is the
       answer to "where am I".
+
+      THE WORDS ARE THE TAB'S OWN LABELS (bug f of the navigation audit).
+      This table said "Topochain" for the tab labelled Leaderboard, so a cold
+      #leaderboard/topochain named a tab the strip did not have, and the three
+      Kudos sub-views (#leaderboard/prs, /users, /history) fell through to
+      "Leaderboard". It is one entry per ADDRESS now, each the label of the
+      tab that address shows (frontend/src/features/leaderboard/index.tsx's
+      SECTION_TABS); `seasons` is the History tab. And it is no longer only
+      the ENTRY's title: a tab press rewrites the address with replaceState
+      and never comes back through here, so Leaderboard._syncTitle asks this
+      same method on every section change. One table, both paths.
   */
   LEADERBOARD_TITLES: {
     challenges: 'Challenges',
     kudos: 'Kudos',
-    topochain: 'Topochain',
+    prs: 'Kudos',
+    users: 'Kudos',
+    history: 'Kudos',
+    topochain: 'Standings',
+    seasons: 'History',
   },
 
   _leaderboardTitle(sub, profileUser) {
     if (profileUser) return `@${profileUser}`;
-    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard';
+    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Challenges';
   },
 
   _routeLeaderboard(sub, profileUser, challengeTarget) {
@@ -5143,7 +5210,8 @@ const App = {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
       Leaderboard._setSection('challenges');
-    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges'
+                || sub === 'seasons')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
       // Selecting the event first means the pane's very first fetch is
@@ -5361,20 +5429,184 @@ const App = {
     window.UsernodeReact?.workshop?.close?.();
   },
 
-  // Where an app view was entered FROM, when that origin is a screen with a
-  // level of its own to go back to. Null everywhere else, which is every
-  // route the platform had before #workshop: an app reached from Home, a
-  // notification or a cold deep link has no level above it but home, and the
-  // house is the honest glyph for that (see features/header/back-button-store.js).
+  // ── The ✕: back to the page the app was opened from ─────────────────
   //
-  // Exactly one writer (navigateToApp, below) and exactly one clearer
-  // (_showOnlyScreen, which runs on every reveal of a NON-app-view root and so
-  // ends the app visit this breadcrumb was about). AppView._repaintDevBody
-  // reads it on the Dev lander and turns it into `setBackIcon('arrow', href)`,
-  // which is also what enables the native back gesture — see
-  // features/header/native-back-navigation.ts, whose predicate is exactly
-  // "arrow, with an href, and not the App tab".
-  _appBackHref: null,
+  // The prototype keeps the platform drawn UNDER a running app, and its close
+  // button takes the app away to reveal that page exactly as it was (leaveApp
+  // and renderDesktop in the nav prototype; spec §9: "the platform stays as it
+  // was underneath, and closing dissolves the layer"). The ✕ here went Home
+  // instead — or to #workshop when that screen was the origin — so a reader
+  // who opened an app from a message thread through Recents or the parked
+  // strip was dropped on Home, and the thread they were in was a tab and a
+  // row away.
+  //
+  // HERE, THE PAGE UNDERNEATH IS A HISTORY ENTRY. Opening an app pushes its
+  // address (navigateToApp, or switchTab from the app's own Workshop), so the
+  // page it was opened from is the entry below it, and the ✕ TRAVERSES back to
+  // it. That is what makes the return exact: the router restores the address
+  // the viewer was on — a thread, Discover's app page, the app's Workshop or
+  // one of its cards, Me, a Settings section — through the same path Back
+  // takes, onto screens that are kept-alive singletons, so the page comes
+  // back as it was, scroll included wherever the shell keeps it. The app's
+  // entry is left as a FORWARD entry, which is the other half of the point:
+  // Back from the page you returned to goes where it went before you opened
+  // the app, rather than straight back into the app you just closed. (The ✕
+  // used to PUSH home, stranding the app's entry under it, so Back from Home
+  // reopened the app.)
+  //
+  // THE ENTRY BELOW IS FOUND, NOT ASSUMED. An app's frame writes history of
+  // its own — a framed document's navigations are joint-session-history
+  // entries of this window — so `history.back()` can rewind the FRAME instead
+  // of closing the app. The Navigation API lists this document's own entries
+  // only, and traverseTo() crosses whatever the frame added. Entries that are
+  // an app's App tab are passed over: an app opened from inside another app
+  // closes to the page under both, as the prototype's layer does. With no
+  // such entry — a cold deep link, which has nowhere to return — the ✕ goes
+  // Home IN PLACE of the app's entry.
+  //
+  // WITHOUT THE NAVIGATION API (older Safari and WebViews) `_appReturn` is
+  // what knows the way: the address the app was opened from, captured before
+  // the app's entry was pushed, and how long history was once it had been.
+  // Back is taken only while nothing has been added since; otherwise the ✕
+  // goes to that address directly.
+  //
+  // Where the ✕ lands decides its ANIMATION too, without a second rule: the
+  // app zooms back into its tile only when the page it returns to is Home,
+  // the one screen with a tile for it (navigateHome); every other page takes
+  // the ordinary way back that Back takes there.
+  _appReturn: null,
+
+  // Whether `url` is an app's App tab — the running app itself, chromeless
+  // included — rather than a platform page (its Workshop, a card, a thread).
+  // A legacy `#app/…` hash outranks the pathname, as it does in the router.
+  _isRunningAppUrl(url) {
+    let parsed;
+    try { parsed = new URL(String(url || ''), location.origin); } catch (_) { return false; }
+    if (parsed.origin !== location.origin) return false;
+    const route = parsed.hash
+      ? parsed.hash.replace(/^#/, '').split('?')[0]
+      : App._appRouteFromPath(parsed.pathname);
+    const segs = String(route || '').split('/');
+    return segs[0] === 'app' && !!segs[1]
+      && (!segs[2] || segs[2] === 'app' || segs[2] === 'full');
+  },
+
+  // Called as an app's App tab is about to come on screen from somewhere
+  // else, BEFORE its entry is pushed. Nothing is captured while the router is
+  // restoring an address (Back, Forward, a cold link — the entry below is
+  // whatever history holds) or from an address that is itself an app's App
+  // tab (an app opened from inside another closes to the page under both).
+  _noteAppReturn(slug) {
+    const here = `${location.pathname}${location.search}${location.hash}`;
+    const fromApp = App._isRunningAppUrl(here);
+    if (App._isRestoring || App.embeddedPanel || fromApp) {
+      App._appReturn = !App._isRestoring && fromApp && App._appReturn
+        ? { ...App._appReturn, slug, depth: null, pushes: null }
+        : null;
+      return;
+    }
+    App._appReturn = { slug, url: here, depth: null, pushes: App._historyPushes };
+  },
+
+  // …and right after updateHash has written it: the history length that
+  // makes "the entry below is the origin" checkable later. Only a PUSH counts
+  // — a replace left nothing of ours below.
+  _pinAppReturn() {
+    const noted = App._appReturn;
+    if (!noted || noted.depth != null) return;
+    if (noted.pushes != null && App._historyPushes === noted.pushes + 1) {
+      noted.depth = history.length;
+    }
+    noted.pushes = null;
+  },
+
+  // Pushes made by updateHash, counted so _pinAppReturn can tell a push from
+  // a replace.
+  _historyPushes: 0,
+
+  // The Navigation API, when this browser has the parts the ✕ uses.
+  _navigationApi() {
+    try {
+      const nav = typeof window !== 'undefined' ? window.navigation : null;
+      return nav && typeof nav.entries === 'function' && nav.currentEntry
+        && typeof nav.traverseTo === 'function' ? nav : null;
+    } catch (_) { return null; }
+  },
+
+  // Where the ✕ goes, and how: { how, url, key }.
+  //   'traverse'  back to this document's own entry `key` (the Navigation API)
+  //   'route'     the address on screen already names the page underneath —
+  //               switchTab publishes the ✕ a moment before its updateHash
+  //               writes the app's own — so going there is routing it
+  //   'back'      history.back() — the entry below is the origin, nothing since
+  //   'push'      a new entry at `url`, the origin we know but cannot go back to
+  //   'home'      nowhere to return: Home, replacing the app's entry
+  _closeAppTarget() {
+    const nav = App._navigationApi();
+    if (nav) {
+      const entries = nav.entries();
+      const at = nav.currentEntry.index;
+      for (let i = at; i >= 0; i -= 1) {
+        const entry = entries[i];
+        // THIS DOCUMENT'S entries only: one from a previous load is a full
+        // navigation away, and a cold deep link has nowhere to return.
+        if (!entry || entry.sameDocument === false || !entry.url) continue;
+        if (App._isRunningAppUrl(entry.url)) continue;
+        return i === at
+          ? { how: 'route', url: entry.url, key: null }
+          : { how: 'traverse', key: entry.key, url: entry.url };
+      }
+      return { how: 'home', url: null, key: null };
+    }
+    const noted = App._appReturn;
+    if (noted && noted.slug === App.currentApp && noted.url) {
+      return noted.depth != null && noted.depth === history.length
+        ? { how: 'back', url: noted.url, key: null }
+        : { how: 'push', url: noted.url, key: null };
+    }
+    return { how: 'home', url: null, key: null };
+  },
+
+  // The ✕'s href: the same place a plain click goes, so a modified click
+  // opens that page in a new tab. Home when there is nowhere to return.
+  _closeAppHref() {
+    const target = App._closeAppTarget();
+    if (target.url) {
+      try {
+        const parsed = new URL(target.url, location.origin);
+        return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      } catch (_) { /* fall through to home */ }
+    }
+    return window.NavLink ? NavLink.homeHref() : App._rootUrl();
+  },
+
+  // The ✕ in a running app's strip (#back-btn's click handler).
+  closeApp() {
+    if (App.embeddedPanel || !App.currentApp) return false;
+    const target = App._closeAppTarget();
+    if (target.how === 'traverse') {
+      try {
+        const result = App._navigationApi().traverseTo(target.key);
+        // A traversal the browser gives up on (another navigation overtook
+        // it) rejects both promises; unobserved, that is a console error.
+        result?.committed?.catch?.(() => {});
+        result?.finished?.catch?.(() => {});
+        return true;
+      } catch (_) { /* go there directly, below */ }
+    } else if (target.how === 'back') {
+      history.back();
+      return true;
+    } else if (target.how === 'route') {
+      App._routeFromHash();
+      return true;
+    }
+    try {
+      if (target.url) history.pushState(null, '', target.url);
+      else history.replaceState(null, '', App._rootUrl());
+    } catch (_) { /* the router still routes whatever the address says */ }
+    App._routeFromHash();
+    return true;
+  },
 
   // Sections of the admin console that were PUBLIC pages before #860
   // folded them in (/status and /node-status). A signed-in non-admin who
@@ -5771,6 +6003,7 @@ const App = {
       history.replaceState(null, '', newUrl);
     } else {
       history.pushState(null, '', newUrl);
+      App._historyPushes += 1;
     }
   },
 
@@ -5937,26 +6170,17 @@ const App = {
     App.currentTab = initialRoute.tab;
     App.currentSubTab = initialRoute.tab === 'dev'
       ? (initialRoute.subTab || 'forum') : null;
+    // THE PAGE THIS APP IS OPENED FROM, captured before the app's own entry
+    // is pushed over it: that page is where the ✕ returns (App.closeApp).
+    // Only the App tab has a ✕ — an app's Workshop and its cards are
+    // platform screens with the rail beside them (#2740 review).
+    if (initialRoute.tab === 'app') App._noteAppReturn(slug);
+    else App._appReturn = null;
     App.updateHash({ ref: initialRoute.ref });
+    App._pinAppReturn();
     // Resolved BEFORE the _exitX flags are cleared — _departingScreen
     // reads them to name whichever screen root is actually on screen.
     const departing = App._departingScreen();
-    // Resolved here for the same reason `departing` is: the _exitX flags below
-    // are what says which screen the viewer is coming FROM. The Workshop
-    // screen is the one origin with a level of its own to return to, so
-    // entering an app from it leaves the Dev lander a real ← rather than the
-    // house (AppView._repaintDevBody reads this). `_inWorkshop` is left set:
-    // the next screen entry clears it, and _showOnlyScreen
-    // clears this the moment any non-app root is revealed.
-    //
-    // A BARE FRAGMENT, not a resolved URL. #back-btn's click handler follows
-    // its own href only when it `startsWith('#')` — anything else falls
-    // through to navigateHome, which is the fallback for a screen that named
-    // no parent, and an arrow that went home would be a lie. Set as the
-    // anchor's href it reads as `/app/<slug>/workshop#workshop`, which
-    // restoreFromHash's mixed-address healing rewrites to `/#workshop`, so a
-    // middle-click into a new tab lands on the screen too.
-    App._appBackHref = App._inWorkshop ? '#workshop' : null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
@@ -6209,12 +6433,14 @@ const App = {
         // root on #app-content, so clear that root before blanking the node —
         // otherwise its store subscription and effects outlive the screen.
         AppView._teardownDevRoots();
-        // #1085 chunk H: and drop the React-owned app frame, for the same
-        // reason and at the same moment. It is unmounted HERE rather than in
+        // #1085 chunk H: and retire the React-owned app frame, for the same
+        // reason and at the same moment. It is retired HERE rather than in
         // AppView.close() (which runs in `fn`, at the START of the zoom)
         // precisely so the shrinking card keeps showing the app until it
         // lands — the same reason #app-content is blanked here and not there.
-        AppView._unmountAppFrame();
+        // Retired, not dropped (#2902): the app stays loaded, hidden, so
+        // opening it again shows it exactly as it was left.
+        AppView._retireAppFrame();
         const content = document.getElementById('app-content');
         if (content) content.innerHTML = '';
       },
@@ -6309,20 +6535,29 @@ const App = {
       // header resolves its destination from the session's captured origin
       // first (features/header/platform-header.tsx), and Messages otherwise.
       if (App._isMessagesThread()) return ['arrow', '#messages'];
-      // THE PLATFORM'S OWN WORKSHOP IS NOT AN APP TO STEP OUT OF (#2799).
-      // Homeroom's tile on "Your apps" is a self-hosted row: it has no App
-      // tab (switchTab coerces one to the Workshop), so the ✕ that leaves a
-      // running program had nothing to leave. It is the Workshop panel, and a
-      // Workshop panel's corner is empty like the Workshop screen's —
-      // _repaintDevBody publishes the same 'none', and the two writers have
-      // to agree (see above).
-      if (App._selfHostedRoute()) return ['none'];
-      // The ✕'s DESTINATION is the breadcrumb navigateToApp recorded — the
-      // Workshop, when that is where this app was opened from — and home on
-      // every other route, which is what setBackIcon falls back to. The table
-      // holds the glyph; this holds the cases where the address is not the
-      // glyph's default.
-      if (App._appBackHref) return ['close', App._appBackHref];
+      // AN APP'S WORKSHOP IS NOT AN APP TO STEP OUT OF — any app's (#2740
+      // review), not only the platform's own (#2799). The ✕ is the RUNNING
+      // app's control; on the `dev` tab #app-view is the platform's Workshop
+      // for the app, a platform screen with the rail beside it and the
+      // Workshop tab lit, and its corner is empty like the Workshop screen's.
+      // The way back into the app from there is the parked strip and the
+      // rail's Recents (#2761). This used to publish the ✕ for every
+      // non-thread route, so the Workshop reached from the Workshop tab wore
+      // a "Close app" ✕ that OPENED the app, and the same Workshop reached
+      // from the mark's menu wore a ‹ to it (the header's up-link). A card
+      // opened in the Workshop still gets its ‹ back to the Workshop, from the
+      // header's own derivation (features/header/platform-header.tsx).
+      //
+      // Homeroom's own row has no App tab at all — switchTab coerces one to
+      // the Workshop — so it is never the running app. _repaintDevBody
+      // publishes the same 'none', and the two writers have to agree (see
+      // above).
+      if (App.currentTab !== 'app' || App._selfHostedRoute()) return ['none'];
+      // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
+      // traverses back to it; this is the href a modified click follows), and
+      // Home when there is none. The table holds the glyph; this holds the
+      // address.
+      return ['close', App._closeAppHref()];
     }
     return slot;
   },
@@ -6547,6 +6782,14 @@ const App = {
       if (typeof DevChat !== 'undefined' && DevChat.stagingPanel) DevChat.stagingPanel.open = false;
       AppView.closeStagingOverlay();
     }
+    // THE APP'S WORKSHOP HANDING OVER TO THE RUNNING APP — the parked strip's
+    // Resume, a Recents row, About's Open. The Workshop page on screen (the
+    // board, a card, a thread) is what the ✕ returns to, so it is noted before
+    // this switch writes the app's own address. navigateToApp's tail
+    // (`replaceRoute`) is the same arrival it already noted.
+    if (tab === 'app' && App.currentTab !== 'app' && !options?.replaceRoute) {
+      App._noteAppReturn(App.currentApp);
+    }
     // #621: the Dev mode is visible to non-collaborators too, read-only
     // (see AppView.readOnly).
     App.currentTab = tab;
@@ -6595,8 +6838,9 @@ const App = {
       // THE ✕, not the house: this is still inside the app, and the slot an
       // app shows is the close button (#2718). It said 'home' because that was
       // the default for everything that was not Home, and the reset was
-      // written before an app had a slot of its own.
-      App.setBackIcon('close', App._appBackHref || undefined);
+      // written before an app had a slot of its own. Its href is where
+      // App.closeApp goes: the page the app was opened from.
+      App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);
@@ -6615,6 +6859,7 @@ const App = {
     if (AppView.scheduleSafeAreaBroadcast) AppView.scheduleSafeAreaBroadcast();
 
     App.updateHash({ replace: !!options?.replaceRoute, ref });
+    if (tab === 'app') App._pinAppReturn();
   },
 
   // The side-panel route for an app-tab request, or null for the App tab

@@ -517,6 +517,12 @@ export async function loadDiscussion(slug: string): Promise<void> {
         slug: app.slug,
         name: app.name || app.slug,
         readOnly: app.can_collaborate === false,
+        // The header tile's artwork when the inbox has no row for this app.
+        // `/api/apps/:slug` sends the raw row, so the image is its
+        // `icon_image_id` at the platform's own `/app-icons/<id>` address —
+        // the one spelling src/routes/messages-overview.js uses for the row.
+        iconUrl: app.icon_url || (app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null),
+        iconEmoji: app.icon_emoji || null,
       },
       discussionError: null,
     });
