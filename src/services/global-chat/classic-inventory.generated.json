@@ -3,9 +3,9 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 679,
+    "totalRoutes": 685,
     "mappedRoutes": 534,
-    "exemptRoutes": 145,
+    "exemptRoutes": 151,
     "reviewRequiredRoutes": 0,
     "clientApiReferences": 376,
     "unmatchedClientApiReferences": 0,
@@ -1526,7 +1526,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 39,
+      "line": 51,
       "method": "POST",
       "path": "/api/agent-sessions",
       "expression": null,
@@ -1535,7 +1535,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 58,
+      "line": 70,
       "method": "GET",
       "path": "/api/agent-sessions",
       "expression": null,
@@ -1544,7 +1544,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 72,
+      "line": 84,
       "method": "GET",
       "path": "/api/agent-sessions/:id",
       "expression": null,
@@ -1553,7 +1553,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 83,
+      "line": 95,
       "method": "GET",
       "path": "/api/agent-sessions/:id/messages",
       "expression": null,
@@ -1562,7 +1562,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 98,
+      "line": 110,
       "method": "PATCH",
       "path": "/api/agent-sessions/:id/title",
       "expression": null,
@@ -1571,7 +1571,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 110,
+      "line": 122,
       "method": "POST",
       "path": "/api/agent-sessions/:id/archive",
       "expression": null,
@@ -1580,9 +1580,63 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 120,
+      "line": 132,
       "method": "POST",
       "path": "/api/agent-sessions/:id/unarchive",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/agent-sessions.js",
+      "line": 149,
+      "method": "POST",
+      "path": "/api/agent-sessions/:id/turns",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/agent-sessions.js",
+      "line": 208,
+      "method": "GET",
+      "path": "/api/agent-sessions/:id/events",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/agent-sessions.js",
+      "line": 245,
+      "method": "POST",
+      "path": "/api/agent-sessions/:id/stop",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/agent-sessions.js",
+      "line": 260,
+      "method": "GET",
+      "path": "/api/agent-sessions/:id/actions",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/agent-sessions.js",
+      "line": 274,
+      "method": "POST",
+      "path": "/api/agent-sessions/:id/actions/:actionId/confirm",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/agent-sessions.js",
+      "line": 287,
+      "method": "POST",
+      "path": "/api/agent-sessions/:id/actions/:actionId/dismiss",
       "expression": null,
       "status": "exempt",
       "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"

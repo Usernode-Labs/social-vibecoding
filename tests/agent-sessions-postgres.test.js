@@ -15,30 +15,33 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { Client } = require('pg');
+const { Client, Pool } = require('pg');
 
 const agentSessions = require('../src/services/agent-sessions');
+const actions = require('../src/services/agent-session-actions');
+const mcpOauth = require('../src/services/mcp-oauth');
+
+const DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+const CONFIG = { dataEncryptionKey: crypto.randomBytes(32).toString('hex') };
 
 const SCHEMA = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
 
-// The block as shipped: from its banner to the delegation foreign key.
+// The block as shipped: from its banner to the confirmation cards' table
+// (step 3b), which follows the delegation foreign key.
 function agentSessionsMigration() {
   const start = SCHEMA.indexOf('-- Agent sessions (#2779, spec: docs/agent-sessions.md)');
   assert.ok(start > 0, 'the agent-sessions block must be findable in schema.sql');
-  const marker = 'ON DELETE CASCADE\n      NOT VALID;\n  END IF;\nEND $$;';
+  const marker = "COMMENT ON TABLE agent_session_actions IS 'staging:private';";
   const end = SCHEMA.indexOf(marker, start);
   assert.ok(end > start, 'and its end');
   return SCHEMA.slice(start, end + marker.length);
 }
 
 async function connect(t, { beforeMigration = null } = {}) {
-  const client = new Client({
-    connectionString: process.env.TEST_DATABASE_URL
-      || 'postgres://postgres:postgres@127.0.0.1:5432/postgres',
-    connectionTimeoutMillis: 1500,
-  });
+  const client = new Client({ connectionString: DATABASE_URL, connectionTimeoutMillis: 1500 });
   try { await client.connect(); } catch {
     await client.end().catch(() => {});
     if (process.env.TEST_DATABASE_URL) throw new Error('TEST_DATABASE_URL is not reachable');
@@ -74,9 +77,29 @@ async function connect(t, { beforeMigration = null } = {}) {
   return client;
 }
 
-async function done(client) {
+async function done(client, pool = null) {
+  if (pool) await pool.end().catch(() => {});
   await client.query('DROP SCHEMA IF EXISTS agent_sessions_test CASCADE').catch(() => {});
   await client.end();
+}
+
+// A pool on the test schema, for statements that must really run on separate
+// connections at once (the claim a card's Confirm makes) or that check a
+// client out themselves (the delegation sweeper).
+function schemaPool() {
+  return new Pool({ connectionString: DATABASE_URL, options: '-c search_path=agent_sessions_test', max: 6 });
+}
+
+// A stand-in for the MCP shim: what a confirmed action would have run.
+function fakeShim(calls, result = { isError: false, structured: { message: 'Filed request #12.' }, text: '' }) {
+  return async (args) => ({
+    call: async (name, input) => {
+      calls.push({ name, input, args });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return result;
+    },
+    close: async () => {},
+  });
 }
 
 test('a grant written before the table existed cannot stop the schema applying', async (t) => {
@@ -260,5 +283,201 @@ test('the constraints hold', async (t) => {
     );
   } finally {
     await done(client);
+  }
+});
+
+test('a card runs once, however many Confirm presses race for it', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  const pool = schemaPool();
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const input = { slug: 'recipe-box', title: 'Dark mode', body: 'Please.' };
+    const card = await actions.prepareAction(client, {
+      config: CONFIG, userId: 7, agentSessionId: session.id, toolName: 'create_request', input,
+    });
+    const { rows: [stored] } = await client.query('SELECT * FROM agent_session_actions WHERE id = $1', [card.id]);
+    assert.equal(stored.status, 'pending');
+    assert.ok(!JSON.stringify(stored.sealed_input).includes('Dark mode'), 'the input is stored sealed');
+
+    const calls = [];
+    const presses = await Promise.allSettled(Array.from({ length: 5 }, () => actions.confirmAction(pool, {
+      config: CONFIG, user: { id: 7 }, agentSessionId: session.id, actionId: card.id,
+      deps: { openMayorMcp: fakeShim(calls) },
+    })));
+    assert.equal(calls.length, 1, 'the tool ran once');
+    assert.deepEqual(calls[0].input, input, 'with exactly the input the card showed');
+    assert.equal(calls[0].args.appId, 3, 'on a grant bound to the app it names');
+    assert.equal(calls[0].args.changeId, null);
+    assert.equal(presses.filter((p) => p.status === 'fulfilled').length, 1);
+    for (const refused of presses.filter((p) => p.status === 'rejected')) {
+      assert.equal(refused.reason.code, 'action_used');
+    }
+
+    const { rows: [after] } = await client.query('SELECT status, result, decided_at FROM agent_session_actions WHERE id = $1', [card.id]);
+    assert.equal(after.status, 'done');
+    assert.equal(after.result.ok, true);
+    assert.ok(after.decided_at);
+    const { messages } = await agentSessions.listMessages(client, { userId: 7, id: session.id });
+    assert.equal(messages.at(-1).content, 'Confirmed: File a request. Filed request #12.');
+    assert.equal(messages.at(-1).metadata.agentSessionEvent, 'action_result');
+  } finally {
+    await done(client, pool);
+  }
+});
+
+test('an expired, dismissed, foreign or archived card is refused, and the listing says which', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const prepare = (overrides = {}) => actions.prepareAction(client, {
+      config: CONFIG, userId: 7, agentSessionId: session.id, toolName: 'claim_request',
+      input: { slug: 'recipe-box', number: 4 }, ...overrides,
+    });
+    const confirm = (actionId, user = { id: 7 }) => actions.confirmAction(client, {
+      config: CONFIG, user, agentSessionId: session.id, actionId,
+      deps: { openMayorMcp: async () => { throw new Error('must not open a grant'); } },
+    });
+
+    const stale = await prepare({ now: new Date(Date.now() - actions.ACTION_TTL_MS - 60_000) });
+    await assert.rejects(confirm(stale.id), (err) => err.status === 410 && err.code === 'action_expired');
+
+    const dismissed = await prepare();
+    assert.equal(await actions.dismissAction(client, { user: { id: 7 }, agentSessionId: session.id, actionId: dismissed.id }), true);
+    assert.equal(await actions.dismissAction(client, { user: { id: 7 }, agentSessionId: session.id, actionId: dismissed.id }), false,
+      'a card is dismissed once');
+    await assert.rejects(confirm(dismissed.id), (err) => err.status === 409 && err.code === 'action_used');
+
+    const fresh = await prepare();
+    await assert.rejects(confirm(fresh.id, { id: 8 }), (err) => err.status === 404, 'another user cannot see it');
+    assert.equal(await actions.dismissAction(client, { user: { id: 8 }, agentSessionId: session.id, actionId: fresh.id }), false);
+    assert.deepEqual(await actions.listActions(client, { userId: 8, agentSessionId: session.id }), []);
+
+    await agentSessions.archiveAgentSession(client, { userId: 7, id: session.id });
+    await assert.rejects(confirm(fresh.id), (err) => err.status === 409 && err.code === 'session_archived');
+    await assert.rejects(prepare(), (err) => err.status === 404, 'an archived conversation takes no new cards');
+
+    const listed = await actions.listActions(client, { userId: 7, agentSessionId: session.id });
+    assert.deepEqual(listed.map((a) => a.status).sort(), ['dismissed', 'expired', 'pending']);
+    assert.ok(listed.every((a) => !('sealedInput' in a) && !('input' in a)), 'the listing never carries the input');
+    const { messages } = await agentSessions.listMessages(client, { userId: 7, id: session.id });
+    assert.equal(messages.at(-1).content, 'Dismissed: Claim the request. Nothing was changed.');
+
+    await assert.rejects(client.query(
+      `INSERT INTO agent_session_actions (id, agent_session_id, user_id, tool_name, sealed_input, input_hash, status, expires_at)
+       VALUES (gen_random_uuid(), $1, 7, 'claim_request', '{}', $2, 'confirmed', NOW() + interval '1 minute')`,
+      [session.id, 'a'.repeat(64)]
+    ), /agent_session_actions_status_check/);
+    await assert.rejects(client.query(
+      `INSERT INTO agent_session_actions (id, agent_session_id, user_id, tool_name, sealed_input, input_hash, expires_at)
+       VALUES (gen_random_uuid(), $1, 7, 'claim_request', '{}', 'not-a-hash', NOW() + interval '1 minute')`,
+      [session.id]
+    ), /agent_session_actions_hash_check/);
+  } finally {
+    await done(client);
+  }
+});
+
+test('one Mayor turn at a time, and a dead turn\'s lease is taken over', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const acquire = (turnId, userId = 7) => agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId, turnId });
+    const release = (turnId) => agentSessions.releaseTurnLease(client, { agentSessionId: session.id, turnId });
+
+    assert.equal(await acquire('turn-a'), true);
+    assert.equal(await acquire('turn-b'), false, 'a second turn waits');
+    assert.equal(await acquire('turn-c', 8), false, 'another user never takes it');
+    await release('turn-b');
+    assert.equal(await acquire('turn-b'), false, 'only the turn holding the lease releases it');
+    await release('turn-a');
+    assert.equal(await acquire('turn-b'), true);
+
+    await client.query(
+      `UPDATE agent_sessions
+          SET active_turn = jsonb_build_object('id', 'turn-b', 'startedAt', NOW() - make_interval(mins => $2))
+        WHERE id = $1`,
+      [session.id, agentSessions.TURN_LEASE_STALE_MINUTES + 1]
+    );
+    assert.equal(await acquire('turn-d'), true, 'a lease its process never released goes stale');
+    const { rows: [row] } = await client.query('SELECT active_turn FROM agent_sessions WHERE id = $1', [session.id]);
+    assert.equal(row.active_turn.id, 'turn-d');
+    await release('turn-b');
+    assert.equal((await client.query('SELECT active_turn FROM agent_sessions WHERE id = $1', [session.id])).rows[0].active_turn.id,
+      'turn-d', 'the turn that lost its lease cannot release its successor\'s');
+    await release('turn-d');
+
+    await agentSessions.archiveAgentSession(client, { userId: 7, id: session.id });
+    assert.equal(await acquire('turn-e'), false, 'an archived conversation takes no turns');
+  } finally {
+    await done(client);
+  }
+});
+
+test('the Mayor switches between its own open changes only', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const { rows: [first] } = await client.query(
+      "INSERT INTO chat_sessions (app_id, user_id, pr_number) VALUES (3, 7, 910) RETURNING *"
+    );
+    await agentSessions.linkChange(client, { agentSessionId: session.id, userId: 7, change: first });
+    // Nothing is active, so the switch parks nothing.
+    await client.query('UPDATE agent_sessions SET active_change_id = NULL, focus_app_id = NULL WHERE id = $1', [session.id]);
+
+    const switched = await agentSessions.switchActiveChange(client, { agentSessionId: session.id, userId: 7, changeId: first.id });
+    assert.equal(switched.changed, true);
+    const detail = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    assert.equal(detail.activeChange.id, first.id);
+    assert.equal(detail.focusApp.slug, 'recipe-box', 'the focus follows the change');
+    const { messages } = await agentSessions.listMessages(client, { userId: 7, id: session.id });
+    assert.equal(messages.at(-1).content, `Switched to PR #910 (change ${first.id}).`);
+    assert.equal(messages.at(-1).metadata.agentSessionEvent, 'change_switched');
+
+    assert.equal((await agentSessions.switchActiveChange(client, { agentSessionId: session.id, userId: 7, changeId: first.id })).changed, false);
+    await assert.rejects(agentSessions.switchActiveChange(client, { agentSessionId: session.id, userId: 8, changeId: first.id }),
+      (err) => err.status === 404, 'another user cannot move it');
+
+    const { rows: [loose] } = await client.query("INSERT INTO chat_sessions (app_id, user_id) VALUES (3, 7) RETURNING id");
+    await assert.rejects(agentSessions.switchActiveChange(client, { agentSessionId: session.id, userId: 7, changeId: loose.id }),
+      (err) => err.status === 404, 'a change this conversation did not start');
+    await client.query("UPDATE chat_sessions SET status = 'merged' WHERE id = $1", [first.id]);
+    await client.query('UPDATE agent_sessions SET active_change_id = NULL WHERE id = $1', [session.id]);
+    await assert.rejects(agentSessions.switchActiveChange(client, { agentSessionId: session.id, userId: 7, changeId: first.id }),
+      (err) => err.status === 409, 'a merged change stays closed');
+  } finally {
+    await done(client);
+  }
+});
+
+test('the sweeper drops delegations a week after they ended, with their tokens', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  const pool = schemaPool();
+  try {
+    await client.query(`
+      ALTER TABLE mcp_delegations ADD COLUMN expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                                  ADD COLUMN revoked_at TIMESTAMPTZ;
+      CREATE TABLE mcp_tokens (id SERIAL PRIMARY KEY, grant_id TEXT NOT NULL);
+      INSERT INTO mcp_delegations (grant_id, expires_at, revoked_at) VALUES
+        ('expired-long-ago', NOW() - interval '8 days', NULL),
+        ('revoked-long-ago', NOW() + interval '1 day', NOW() - interval '8 days'),
+        ('expired-recently', NOW() - interval '6 days', NULL),
+        ('live', NOW() + interval '1 hour', NULL);
+      INSERT INTO mcp_tokens (grant_id) VALUES
+        ('expired-long-ago'), ('revoked-long-ago'), ('expired-recently'), ('live');
+    `);
+    assert.equal(await mcpOauth.pruneDelegations(pool), 2);
+    const { rows: grants } = await client.query('SELECT grant_id FROM mcp_delegations ORDER BY grant_id');
+    assert.deepEqual(grants.map((r) => r.grant_id), ['expired-recently', 'live'],
+      'a recent grant stays, for the audit trail and the refusal message');
+    const { rows: tokens } = await client.query('SELECT grant_id FROM mcp_tokens ORDER BY grant_id');
+    assert.deepEqual(tokens.map((r) => r.grant_id), ['expired-recently', 'live']);
+    assert.equal(await mcpOauth.pruneDelegations(pool), 0, 'and a second sweep finds nothing');
+  } finally {
+    await done(client, pool);
   }
 });

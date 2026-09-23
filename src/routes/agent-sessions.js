@@ -8,19 +8,31 @@
 // flag off keeps their existing conversations, the same way turning it on
 // leaves their classic sessions alone.
 //
-// The Mayor's turn, its stream and its confirmation cards arrive in the next
-// step of #2779; this is the conversation's data: create, list, read, rename,
-// archive, and its transcript.
+// The conversation's data (create, list, read, rename, archive, its
+// transcript), and since step 3b its Mayor: a turn streamed over SSE, its
+// resumable event stream, stop, and the confirmation cards the Mayor's
+// writes wait on.
 
 const express = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { agentSessionCreateLimiter } = require('../middleware/rate-limits');
+const { agentSessionCreateLimiter, chatLimiter } = require('../middleware/rate-limits');
+const { drainGuard } = require('../services/lifecycle');
 const agentSessions = require('../services/agent-sessions');
+const actions = require('../services/agent-session-actions');
+const agentTurn = require('../services/mayor/agent-turn');
+
+const MAX_MESSAGE_CHARS = 20000;
+
+const positiveId = (value) => (/^[1-9]\d{0,9}$/.test(String(value || '')) && Number(value) <= 2147483647
+  ? Number(value) : null);
 
 function sendError(res, err, what) {
   if (err instanceof agentSessions.AgentSessionError) {
     return res.status(err.status).json({ error: err.message });
+  }
+  if (err instanceof actions.ActionError) {
+    return res.status(err.status).json({ error: err.message, code: err.code });
   }
   log.error('agent-sessions', `${what} failed`, { message: err.message });
   return res.status(500).json({ error: 'Internal server error' });
@@ -124,6 +136,165 @@ function agentSessionRoutes(config) {
       return res.json({ session });
     } catch (err) {
       return sendError(res, err, 'Unarchive agent session');
+    }
+  });
+
+  // ── The Mayor (#2779 step 3b) ─────────────────────────────────────────
+
+  // POST /api/agent-sessions/:id/turns { message, model? } — one Mayor turn,
+  // streamed as server-sent events. One turn at a time per conversation: a
+  // second one answers 409 while the first holds the lease. Everything that
+  // can refuse the turn (the lease, the payer, the model) is decided before
+  // the stream opens, so a refusal is an ordinary JSON answer.
+  router.post('/api/agent-sessions/:id/turns', requireUser, chatLimiter, drainGuard, async (req, res) => {
+    const id = positiveId(req.params.id);
+    const body = req.body || {};
+    const unknown = Object.keys(body).filter((key) => !['message', 'model'].includes(key));
+    if (unknown.length) return res.status(400).json({ error: `Unsupported field: ${unknown[0]}` });
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    if (!message) return res.status(400).json({ error: 'Message required' });
+    if (message.length > MAX_MESSAGE_CHARS) {
+      return res.status(400).json({ error: `Message too long (max ${MAX_MESSAGE_CHARS} characters)` });
+    }
+    const turnId = agentTurn.newTurnId();
+    try {
+      const session = id ? await agentSessions.getAgentSession(pool, { userId: req.user.id, id }) : null;
+      if (!session) return res.status(404).json({ error: 'Agent session not found' });
+      if (session.status !== 'open') return res.status(409).json({ error: 'This agent session is archived.' });
+      const leased = await agentSessions.acquireTurnLease(pool, { agentSessionId: id, userId: req.user.id, turnId });
+      if (!leased) {
+        return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
+      }
+      let mayor;
+      try {
+        mayor = await agentTurn.resolveAgentMayor({
+          pool, config, userId: req.user.id, agentSessionId: id, requestedModel: body.model,
+        });
+      } catch (err) {
+        await agentSessions.releaseTurnLease(pool, { agentSessionId: id, turnId }).catch(() => {});
+        throw err;
+      }
+      if (!mayor.ok) {
+        await agentSessions.releaseTurnLease(pool, { agentSessionId: id, turnId }).catch(() => {});
+        return res.status(mayor.status).json({
+          error: mayor.error,
+          code: mayor.code,
+          ...(mayor.reason ? { reason: mayor.reason } : {}),
+          ...(mayor.verificationRequired ? { verificationRequired: true } : {}),
+        });
+      }
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      await agentTurn.runAgentTurn({
+        pool, config, user: req.user, agentSessionId: id, turnId, messageText: message, mayor, res,
+      });
+      return undefined;
+    } catch (err) {
+      if (res.headersSent) {
+        log.error('agent-sessions', 'Agent turn crashed after the stream opened', { message: err.message });
+        try { res.end(); } catch { /* already closed */ }
+        return undefined;
+      }
+      return sendError(res, err, 'Agent turn');
+    }
+  });
+
+  // GET /api/agent-sessions/:id/events — resume a turn's stream. Replays what
+  // the conversation's bus still holds after Last-Event-Id, then follows it.
+  router.get('/api/agent-sessions/:id/events', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    try {
+      const { rows } = id
+        ? await pool.query('SELECT id FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
+        : { rows: [] };
+      if (!rows.length) return res.status(404).end();
+    } catch {
+      return res.status(500).end();
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    try { res.write(':ok\n\n'); } catch { /* client gone */ }
+    const sinceSeq = req.headers['last-event-id'] || req.query.since || null;
+    const sessionBus = require('../services/session-bus');
+    const unsubscribe = sessionBus.subscribe(agentTurn.busKey(id), (event) => {
+      try {
+        res.write(`id: ${event._seq}\n`);
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      } catch { /* client gone */ }
+    }, sinceSeq);
+    const heartbeat = setInterval(() => {
+      try { res.write(':heartbeat\n\n'); } catch { /* client gone */ }
+    }, 15000);
+    const close = () => {
+      clearInterval(heartbeat);
+      try { unsubscribe(); } catch { /* already gone */ }
+    };
+    req.on('close', close);
+    req.on('error', close);
+    return undefined;
+  });
+
+  router.post('/api/agent-sessions/:id/stop', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    try {
+      const { rows } = id
+        ? await pool.query('SELECT active_turn FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
+        : { rows: [] };
+      if (!rows.length) return res.status(404).json({ error: 'Agent session not found' });
+      const stopped = agentTurn.stopAgentTurn(id, { by: req.user.username });
+      return res.json({ ok: true, stopped, ...(stopped ? {} : { reason: 'no active turn' }) });
+    } catch (err) {
+      return sendError(res, err, 'Stop agent turn');
+    }
+  });
+
+  // The confirmation cards: their state, and the owner's decision.
+  router.get('/api/agent-sessions/:id/actions', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    try {
+      const { rows } = id
+        ? await pool.query('SELECT id FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
+        : { rows: [] };
+      if (!rows.length) return res.status(404).json({ error: 'Agent session not found' });
+      const list = await actions.listActions(pool, { userId: req.user.id, agentSessionId: id, limit: req.query.limit });
+      return res.json({ actions: list });
+    } catch (err) {
+      return sendError(res, err, 'List agent session actions');
+    }
+  });
+
+  router.post('/api/agent-sessions/:id/actions/:actionId/confirm', requireUser, drainGuard, async (req, res) => {
+    const id = positiveId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Agent session not found' });
+    try {
+      const outcome = await actions.confirmAction(pool, {
+        config, user: req.user, agentSessionId: id, actionId: req.params.actionId,
+      });
+      return res.json(outcome);
+    } catch (err) {
+      return sendError(res, err, 'Confirm agent session action');
+    }
+  });
+
+  router.post('/api/agent-sessions/:id/actions/:actionId/dismiss', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Agent session not found' });
+    try {
+      const dismissed = await actions.dismissAction(pool, {
+        user: req.user, agentSessionId: id, actionId: req.params.actionId,
+      });
+      if (!dismissed) return res.status(404).json({ error: 'No pending confirmation with that id' });
+      return res.json({ ok: true });
+    } catch (err) {
+      return sendError(res, err, 'Dismiss agent session action');
     }
   });
 

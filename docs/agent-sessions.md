@@ -188,7 +188,7 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
 
 The model can never confirm its own write, and text like "yes" in the chat is not a confirmation.
 
-As built in proposal 2, the storage-independent half is `services/confirmations`: token minting, normalization, sealing and the expiry bounds. Global Chat's `actions.js` now uses it and keeps its own table and thread check. Proposal 3 adds an agent-session table the same way, so every statement stays static. The tools that need a card are listed in `MAYOR_CONFIRMED_TOOLS` (`mcp-audiences.js`).
+As built in proposal 2, the storage-independent half is `services/confirmations`: token minting, normalization, sealing and the expiry bounds. Global Chat's `actions.js` now uses it and keeps its own table and thread check. Proposal 3 adds an agent-session table the same way, so every statement stays static. The tools that need a card are listed in `MAYOR_CONFIRMED_TOOLS` (`mcp-audiences.js`). 3b-i adds that table, `agent_session_actions`; see "As built in 3b-i" under the implementation plan for how a card is claimed and run.
 
 ### Prompt
 
@@ -519,12 +519,13 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 | 1 | Extract the Mayor | Golden parity tests first, then `src/services/mayor/*`. The classic route calls the service. This spec is committed as `docs/agent-sessions.md`. | None | \~2.5k lines moved. **Highest risk.** |
 | 2 | Delegated MCP and native-change tools | `mcp_delegations` and `issueDelegatedAccess`, allowlists per kind, charter variants, `get_change`/`start_change`/`promote_change`/`recheck_change`/`sync_change`/`withdraw_change`, the staging gate fix, the confirmations service moved out of Global Chat | `external` clients gain `get_change` and `recheck_change` | Medium |
 | 3a | Agent sessions data | The flag column and route, `agent_sessions`, the new columns and trigger, `/api/agent-sessions/*` (create with a hint, list, read, rename, archive, the transcript), linking a Mayor's `start_change` to its session and parking the previous change, the close hooks, agent-session liveness for delegations | None (API only, behind the flag) | Medium |
-| 3b | The agent-session Mayor | The turn route and its stream, the in-process MCP shim, the global Mayor prompt, confirmation cards and their table, dispatch to the active change, `switch_active_change` and `set_focus_app`, compaction, issuing delegations and sweeping expired ones | None (API only, behind the flag) | High |
+| 3b-i | The agent-session Mayor, talking | The turn route and its stream, the turn lease, stop, the in-process MCP shim, the global Mayor prompt, confirmation cards and their table, `switch_active_change` and `set_focus_app`, issuing delegations and sweeping expired ones | None (API only, behind the flag) | High |
+| 3b-ii | The agent-session Mayor, building | Dispatch to the active change (`dispatch_scout`, `dispatch_coding_agent`), forwarding the change's events to the conversation, the wrap-up, the follow-up turn after a confirmation, compaction, the Mayor-internal tools | None (API only, behind the flag) | High |
 | 4 | Agent sessions UI | `AgentSessionScreen`, the changes drawer, Messages rows, entry-point routing with hints, the owner view of the change page, the Settings switch, `dapp.json` checks | Only for users with the flag on | Medium |
 | 5 | Read-only MCP for the coding agent | `worker_read` minting, `homeroom-read-mcp.js`, Claude and Codex config, the prompt block | None visible | Small to medium |
 | later | Stage 3 and 4 | Flip `AGENT_SESSIONS_DEFAULT`; then remove the classic creation path. Global Chat is decided separately | Everyone | Separate decision |
 
-**Order.** 1 and 2 are independent and can be voted on in parallel. 3 needs both. 4 needs 3. 5 needs 2 and can land any time after it. Step 3 was split in two when it started (3a, then 3b), because the data layer is reviewable on its own and the Mayor turn is the riskiest part of the whole plan.
+**Order.** 1 and 2 are independent and can be voted on in parallel. 3 needs both. 4 needs 3. 5 needs 2 and can land any time after it. Step 3 was split in two when it started (3a, then 3b), because the data layer is reviewable on its own and the Mayor turn is the riskiest part of the whole plan. 3b was split again the same way: 3b-i is a Mayor that reads and proposes, 3b-ii is the Mayor that builds.
 
 **As built in 3a.**
 
@@ -537,6 +538,20 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - Account deletion removes those rows before the user row, because `chat_session_messages.agent_session_id` is `SET NULL`, not `CASCADE`, so that a change's own rows outlive their parent.
 - Global Chat's route inventory exempts `/api/agent-sessions/*`: one assistant does not drive another.
 - The confirmation-token table and the delegation sweeper moved to 3b, where the first confirmations and delegations are created.
+
+**As built in 3b-i.**
+
+- The agent turn is its own module, `services/mayor/agent-turn.js`, not a generalized `turn.js`. The classic turn is untouched, and so is its golden test. A turn is one loop of at most six model rounds; the last round cannot call tools. There is no dispatch and no mayor2 yet, so there is nothing to wrap up.
+- `POST /api/agent-sessions/:id/turns {message, model?}` streams the same event protocol as a change's chat, on bus key `agent:<id>`; `GET /api/agent-sessions/:id/events` resumes it and `POST /api/agent-sessions/:id/stop` stops it. The user's message lands on the active change's transcript when there is one, and on the conversation's otherwise. An untitled conversation takes its title from the first message.
+- The lease is a row write on `agent_sessions.active_turn`, taken with one conditional `UPDATE`, so two tabs or two pods cannot both start a turn. A lease older than 20 minutes belongs to a turn whose process died, and is taken over. Only the turn holding the lease releases it.
+- The Mayor follows the user's default coding backend, as the spec says. OpenRouter users get `openrouter-mayor.js` keyed `homeroom-agent-<id>`; everyone else gets Anthropic with today's budget and BYOK resolution. `mayor_model` is not read yet: the model is the request's, or the default.
+- Each turn issues an `agent_mayor` delegation with read scope, bound to the conversation, and serves the Mayor's tools through `services/mayor/mcp-shim.js`: an `McpServer` and a `Client` over `InMemoryTransport`. The shim writes the `token_used` audit row and spends from an `agent-mayor-mcp` bucket of 120 calls a minute per conversation before every call, and revokes the grant when the turn ends, however it ends. Results are cut at 24k characters.
+- A confirmed tool never runs from the model. The turn seals its exact input into `agent_session_actions` (the shared core in `services/confirmations`) and the model reads back `pending_confirmation`. The card's own id is the handle: `POST /api/agent-sessions/:id/actions/:actionId/confirm` claims the row in one statement (pending, unexpired, the owner's, in an open conversation), so a card runs at most once however many presses race. It then opens the sealed input against its fingerprint and runs it on a one-action write grant bound to the change or app the input names, revoked when the call returns. The outcome is stored on the card and appended to the conversation as an `action_result` event. Cards expire after 15 minutes; expiry is read from `expires_at`, so nothing sweeps it. A delegated bearer cannot reach these routes, because they are on no delegation allowlist.
+- `recheck_change` is the one write that runs at once, on its own one-action write grant bound to the change, because it changes nothing a user could regret.
+- `switch_active_change` and `set_focus_app` are the Mayor's own moves: they change the conversation, not the platform, so they need no card. Switching accepts only an unmerged, unarchived change this conversation started, parks the previous one and appends a `change_switched` event. The focus is resolved with the user's own access.
+- History replays the conversation's last 120 rows. The platform's own events (a change starting, closing, switching; a card's outcome) reach the Mayor as `[HOMEROOM]` notes in the assistant's voice, because the Messages API has no system turn.
+- An hourly sweeper deletes delegations a week after they expired or were revoked, and their token rows with them.
+- Not yet: dispatch, the follow-up turn after a confirmation (the Mayor reads the outcome on the next turn instead), compaction, and the Mayor-internal tools (`web_fetch`, `draft_issue_report`, `get_prod_status`, the reply pills). The prompt tells the Mayor that building from a conversation is not switched on yet.
 
 **Process.** Each proposal:
 

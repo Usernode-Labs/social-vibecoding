@@ -243,6 +243,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // exact action payload. This mirrors debug-access.js explicitly so adding a
   // new whole-table denial always has a reviewed console-side decision.
   global_chat_action_tokens: ['token_hash', 'input_hash', 'normalized_input'],
+  // The agent-session Mayor's confirmation cards (#2779): the lifecycle
+  // columns stay readable for diagnosis; the sealed input and its
+  // fingerprint do not.
+  agent_session_actions: ['input_hash', 'sealed_input'],
 };
 
 // Columns denied per table: the prod-debug list, the topochain export's
