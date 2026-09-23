@@ -5901,7 +5901,7 @@
         heading: 'Homeroom app: device permissions',
         description: isAndroid
           ? 'Block production needs the app to wake your device at exact slot times.'
-          : 'Notifications let Homeroom alert you about node and account activity.',
+          : 'Notifications tell you about messages, mentions, replies, finished builds and proposal votes.',
         // The row IS the control. It used to be an inert div whose only
         // affordance was a chip below, rendered only when the (iOS-meaningless)
         // exactAlarmGranted boolean said "not granted" — so on a build

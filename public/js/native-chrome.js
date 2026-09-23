@@ -900,11 +900,14 @@
       // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
         isAndroid
-          ? 'Your node can produce blocks while the app is in the ' +
-            'background. That needs permission to wake your device at ' +
-            'exact slot times and freedom from battery optimization.'
-          : 'Allow notifications so Homeroom can alert you about node ' +
-            'and account activity.'));
+          ? 'Your node can produce blocks while Homeroom is in the ' +
+            'background. To do that it must wake your phone at exact slot ' +
+            'times, without battery optimization delaying it. You will also ' +
+            'be asked to allow notifications, which show your node\'s ' +
+            'status and tell you about messages, mentions and replies.'
+          : 'Allow notifications so Homeroom can tell you when someone ' +
+            'messages, mentions or replies to you, when your build is ' +
+            'ready, and when your proposals get votes or merge.'));
 
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
@@ -933,7 +936,7 @@
         const batteryOk = p.batteryOptDisabled === true;
         body.appendChild(statusRow(
           isAndroid ? 'Exact alarms' : 'Notifications', alarmOk));
-        if (isAndroid) body.appendChild(statusRow('Battery optimization', batteryOk));
+        if (isAndroid) body.appendChild(statusRow('Unrestricted battery use', batteryOk));
 
         const btns = el('div', 'mt-4 space-y-2');
         if (!alarmOk) {
