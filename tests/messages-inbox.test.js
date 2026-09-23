@@ -286,7 +286,7 @@ test('a change sorts on the same clock and files under Agents', () => {
 
 test('changes are read from the Improve store, drawn by SessionRow, and not gated on the chat flags', () => {
   assert.match(SCREEN, /useStoreState\(improveStore\)/, 'one list, the Improve store’s');
-  assert.match(SCREEN, /<SessionRow\b/, 'drawn by the same row the bell’s Agents tab uses');
+  assert.match(SCREEN, /<SessionRow\b/, 'drawn by the same row the bell’s Messages tab uses for agents');
   const list = SCREEN.slice(SCREEN.indexOf('function ConversationList'));
   const body = list.slice(0, list.indexOf('\n}\n'));
   assert.match(body, /const sessions: SessionRowView\[\] = mounted\s*\?/,

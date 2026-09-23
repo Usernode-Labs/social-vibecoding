@@ -233,7 +233,14 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 650s TESTS_DEADLINE_MS clears the 2x margin by ~274s. The deadline and
 // RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 18
 // slots over the 732 declared here.
-const MAX_DECLARED_TESTS = 770;
+//
+// 770 → 790 (#2802, #2798): the sidebar recents proposal's two checks put
+// the merged manifest at 751 against the 750 floor. Eleventh crossing, same
+// arithmetic: 790 checks at ~3.9s over the pool of 16 is ~193s, and the
+// unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~264s, so
+// neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 39 slots over
+// the 751 declared here.
+const MAX_DECLARED_TESTS = 790;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

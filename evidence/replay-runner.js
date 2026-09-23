@@ -286,6 +286,31 @@ async function resolveOne(page, spec, description, {
   return locator;
 }
 
+// A readiness wait only asks whether any matching element is visible. Keep
+// interactions and checkpoint assertions strict, but do not reject a page
+// because it has two headings or controls with the same accessible name.
+async function waitForAnyVisible(page, spec, description, timeoutMs) {
+  const locator = locatorFor(page, spec).filter({ visible: true });
+  try {
+    await locator.first().waitFor({ state: 'visible', timeout: timeoutMs });
+  } catch (error) {
+    // The element may have appeared between Playwright's timeout and this
+    // diagnostic read. A visible match satisfies the wait even in that race.
+    if (await locator.count().catch(() => 0)) return;
+    const snapshot = await locatorSnapshot(page, spec, { includeCandidates: true });
+    if (!Number.isInteger(snapshot.attachedCount)
+        && !Number.isInteger(snapshot.matchedCount)) throw error;
+    const present = Number(snapshot.attachedCount) > 0;
+    throw new ReplayFailure(
+      present ? 'locator_not_visible' : 'locator_not_found',
+      present
+        ? `${description} did not become visible within ${timeoutMs} ms.`
+        : `${description} did not match an element within ${timeoutMs} ms.`,
+      { ...snapshot, waitState: 'visible', timeoutMs }
+    );
+  }
+}
+
 function joinedUrl(origin, relativePath) {
   const url = new URL(relativePath, `${origin}/`);
   if (url.origin !== origin) throw new ReplayFailure('cross_origin_navigation', 'The replay plan attempted to leave its evidence origin.');
@@ -503,7 +528,7 @@ async function executeAction(page, action, origin, network, authToken = '') {
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
     case 'waitFor':
-      if (action.target) await resolveOne(page, action.target, action.id, { state: 'visible', timeoutMs: action.timeoutMs });
+      if (action.target) await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
       else if (action.text) await page.getByText(action.text, { exact: true }).first().waitFor({ state: 'visible', timeout: action.timeoutMs });
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
@@ -1275,6 +1300,7 @@ module.exports = {
   locatorFor,
   locatorSnapshot,
   resolveOne,
+  waitForAnyVisible,
   authorizedUrl,
   publicRelativePath,
   redactedUrl,

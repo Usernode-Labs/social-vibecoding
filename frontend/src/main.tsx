@@ -103,6 +103,14 @@ import './features/header/mount';
 // PlatformUI.transition's reveal callback on every screen swap, the earliest
 // of which is App.init()'s first restoreFromHash on DOMContentLoaded.
 import './features/nav/mount';
+// The side panel beside a running app (desktop): publishes
+// window.UsernodeReact.sidePanel, which App._syncPlatformTabs reports to from
+// inside the same transition callbacks as the bar's bridge above, and which
+// App.openAppTab consults on App.init's first navigation. In the panel's OWN
+// document (`?panel=1`) it installs that document's runtime instead —
+// window.UsernodeReact.sidePanelEmbed, which App.restoreFromHash asks before
+// it routes — so it has to be in place before DOMContentLoaded too.
+import './features/side-panel/mount';
 
 // The wallpaper's star follows the visible screen's scroll offset (the
 // washes stay put). A side effect on a custom property, not an island:
@@ -113,6 +121,9 @@ import './lib/wallpaper-scroll';
 // …and where the on-screen keyboard has panned the screen to, so a centred
 // dialog stays inside what is visible above the keys (#2765).
 import './lib/visual-viewport';
+// …and a sheet, dialog or menu opened over a dark app takes the app's tone
+// rather than the viewer's light mode (#2803).
+import './lib/surface-tone';
 // …and the same wallpaper is copied under a screen's view transition, so the
 // pinned, translucent header and rail keep their ground mid-fade (#2758).
 import './lib/transition-ground';

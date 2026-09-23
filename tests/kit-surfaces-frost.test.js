@@ -65,6 +65,17 @@ test('without backdrop-filter the surfaces go opaque and keep the dim', () => {
     'inside the no-backdrop-filter block');
 });
 
+test('content adopted into a kit surface does not frost a second time (#2825)', () => {
+  // The Homeroom menu and the notifications sheet wear `.dc-lift-panel`,
+  // which frosts. Inside the kit's already-frosted sheet that drew a second,
+  // whiter box inset by the sheet's padding: the "extra white box".
+  const body = rule('.platform-sheet-adopted,\n.platform-panel-adopted,\n.un-modal .platform-modal-card');
+  assert.match(body, /\n  backdrop-filter: none !important;/);
+  assert.match(body, /-webkit-backdrop-filter: none !important;/);
+  assert.match(rule('.dc-lift-panel'), /backdrop-filter: var\(--dc-frost\)/,
+    'the panel still frosts on its own, outside a kit sheet');
+});
+
 // ── The dim ────────────────────────────────────────────────────────────
 
 test('the kit backdrop goes transparent only where a frosted surface follows it', () => {
@@ -172,6 +183,30 @@ test('the platform header wears the same glass as the tab bar', () => {
   // both are `body:has(…) #platform-header` and carry the same specificity.
   assert.ok(APP_CSS.indexOf('background-color: transparent;', APP_CSS.indexOf(':not(.hidden)) #platform-header'))
     < at, 'the glass is declared after the rule it overrides');
+});
+
+test('an app\'s own Workshop wears the glass; the running app keeps its clear bar (#2806)', () => {
+  // The Workshop tab of an app — its board, its sessions, its discussion — is
+  // the platform's page ABOUT the app, not the app: AppView._setSurface marks
+  // it `data-app-surface="platform"` and the frame is parked (no app tone).
+  // It was the one place the bar went bare. A SEPARATE rule keeps the one
+  // above free of #app-view, so the running app (`data-app-surface="app"`)
+  // stays clear and takes the app's tone.
+  const at = APP_CSS.indexOf('AND OVER AN APP\'S OWN WORKSHOP (#2806)');
+  assert.ok(at > 0, 'the rule states its reason');
+  const sel = 'body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {';
+  const start = APP_CSS.indexOf(sel, at);
+  assert.ok(start > at, 'keyed on the platform surface of a visible app view');
+  const block = APP_CSS.slice(start, APP_CSS.indexOf('\n}', start));
+  assert.match(block, /background-color: var\(--dc-sheet-fill\);/);
+  assert.match(block, /backdrop-filter: var\(--dc-frost\);/);
+  assert.match(block, /-webkit-backdrop-filter: var\(--dc-frost\);/);
+  assert.ok(!APP_CSS.includes('[data-app-surface="app"]) #platform-header'),
+    'nothing frosts the bar over a running app');
+  // After the clearing rule, which has the same specificity class and would
+  // otherwise win.
+  assert.ok(APP_CSS.indexOf('background-color: transparent;', APP_CSS.indexOf(':not(.hidden)) #platform-header'))
+    < start, 'declared after the rule that clears the bar');
 });
 
 test('a sticky header over a scrolling document keeps that glass too', () => {

@@ -8,7 +8,9 @@
 // modes (see the route comment in public.js for what "mode" means here),
 // and the `global` scope of mobile `GET /me/ranking` (Task 9). All three
 // get their numbers from `computeStandings()` below — never a second copy
-// of this SQL.
+// of this SQL. The one exception lives in this same file and is pinned to
+// it: `computeOwnStanding()` answers "where does ONE user sit" for
+// `/me/ranking` without materialising everyone else's row (#2777).
 //
 // The §4.10 aggregate itself is exactly four columns per user: SUM
 // total_points, SUM extra_points, COUNT DISTINCT season_event_id, SUM
@@ -120,4 +122,107 @@ async function computeStandings(pool, { seasonId = null } = {}) {
   return assignSharedRanks(cast);
 }
 
-module.exports = { computeStandings, assignSharedRanks, STANDINGS_SQL };
+// ─── One user's row of the same aggregate (#2777) ───────────────────────
+//
+// `GET /me/ranking` needs exactly one row of the standings — the caller's —
+// plus the participant count. It used to call computeStandings() and
+// `.find()` its own user, which pulled every participant's row (with their
+// identity columns and the `last_event` window it never reads) into Node to
+// throw all but one away. That was the slowest request behind the Profile tab.
+//
+// This is the SAME §4.10 aggregate, ranked by the SAME shared-rank rule, in
+// SQL, filtered to one user at the end:
+//   - "latest snapshot per (user, event)" is resolved with MAX(snapshot_at)
+//     and a join back, rather than DISTINCT ON … ORDER BY snapshot_at DESC,
+//     id DESC. The two pick the same row because (season_event_id, user_id,
+//     snapshot_at) is UNIQUE on leaderboard_snapshots, so the id tie-break
+//     never decides anything — and a hash aggregate does not have to sort
+//     the whole scope (the DISTINCT ON sort spilled to disk on a seeded
+//     576k-snapshot table).
+//   - rank = 1 + the number of NON-podium-excluded users ordered strictly
+//     ahead (points DESC, user_id ASC), which is what assignSharedRanks()
+//     computes walking the list: only a normal user bumps the counter.
+//     `exclude_podium` NULL counts as a normal user, as `!!` does there.
+//   - total_participants = every ranked row, as `standings.length` was.
+// tests/topochain-own-standing.test.js pins it against computeStandings().
+const OWN_STANDING_SQL = `
+  WITH latest_at AS (
+    SELECT ls.season_event_id, ls.user_id, MAX(ls.snapshot_at) AS snapshot_at
+      FROM leaderboard_snapshots ls
+      JOIN season_events se ON se.id = ls.season_event_id
+     WHERE se.internal = FALSE
+       AND ($1::bigint IS NULL OR se.season_id = $1)
+     GROUP BY ls.season_event_id, ls.user_id
+  ),
+  totals AS (
+    SELECT ls.user_id,
+           SUM(ls.total_points)                AS total_points,
+           SUM(ls.extra_points)                AS extra_points,
+           COUNT(DISTINCT ls.season_event_id)  AS events_participated,
+           SUM(ls.event_total_produced_blocks) AS total_produced_blocks
+      FROM latest_at la
+      JOIN leaderboard_snapshots ls
+        ON ls.season_event_id = la.season_event_id
+       AND ls.user_id = la.user_id
+       AND ls.snapshot_at = la.snapshot_at
+     GROUP BY ls.user_id
+  ),
+  ranked AS (
+    SELECT t.user_id, t.total_points, t.extra_points, t.events_participated,
+           t.total_produced_blocks,
+           COUNT(*) OVER () AS total_participants,
+           1 + COALESCE(SUM(CASE WHEN u.exclude_podium THEN 0 ELSE 1 END) OVER (
+                 ORDER BY t.total_points DESC, t.user_id ASC
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+               ), 0) AS rank
+      FROM totals t
+      JOIN users u ON u.id = t.user_id
+  )
+  SELECT user_id, total_points, extra_points, events_participated,
+         total_produced_blocks, total_participants, rank
+    FROM ranked
+   WHERE user_id = $2
+`;
+
+// Participant count when the user has no row of their own (so the query
+// above returns nothing): the same scope, counted.
+const PARTICIPANT_COUNT_SQL = `
+  SELECT COUNT(DISTINCT ls.user_id)::int AS total_participants
+    FROM leaderboard_snapshots ls
+    JOIN season_events se ON se.id = ls.season_event_id
+    JOIN users u ON u.id = ls.user_id
+   WHERE se.internal = FALSE
+     AND ($1::bigint IS NULL OR se.season_id = $1)
+`;
+
+// computeOwnStanding(pool, { seasonId, userId })
+//   -> { own: <row as computeStandings would have found it> | null,
+//        totalParticipants: <what standings.length was> }
+async function computeOwnStanding(pool, { seasonId = null, userId } = {}) {
+  const { rows } = await pool.query(OWN_STANDING_SQL, [seasonId, userId]);
+  const r = rows[0];
+  if (r) {
+    return {
+      own: {
+        user_id: Number(r.user_id),
+        rank: Number(r.rank),
+        total_points: num(r.total_points) ?? 0,
+        extra_points: num(r.extra_points) ?? 0,
+        events_participated: Number(r.events_participated) || 0,
+        total_produced_blocks: Number(r.total_produced_blocks) || 0,
+      },
+      totalParticipants: Number(r.total_participants) || 0,
+    };
+  }
+  const { rows: countRows } = await pool.query(PARTICIPANT_COUNT_SQL, [seasonId]);
+  return { own: null, totalParticipants: Number(countRows[0] && countRows[0].total_participants) || 0 };
+}
+
+module.exports = {
+  computeStandings,
+  computeOwnStanding,
+  assignSharedRanks,
+  STANDINGS_SQL,
+  OWN_STANDING_SQL,
+  PARTICIPANT_COUNT_SQL,
+};

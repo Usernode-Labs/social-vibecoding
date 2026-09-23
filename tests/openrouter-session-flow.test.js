@@ -1,9 +1,10 @@
 'use strict';
 
 // Coherence guards for the OpenRouter session flow. These deliberately pin
-// the provider boundaries in the route source: OpenRouter must branch before
-// any Anthropic gate, call its selected model directly, and remain direct in
-// unattended/recovery paths as well as the ordinary chat UI.
+// the provider boundaries in the route source. An OpenRouter session never
+// reads an Anthropic key or resolves Anthropic billing. Its interactive chat
+// runs the Mayor on its own OpenRouter model (#2809/#2810), keeps the direct
+// turn as the fallback, and stays direct in unattended/recovery paths.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -35,7 +36,7 @@ function between(source, start, end) {
   return source.slice(from, to);
 }
 
-test('interactive OpenRouter chat bypasses Claude billing and the Mayor', () => {
+test('interactive OpenRouter chat bypasses Claude billing', () => {
   const route = between(
     sessions,
     "router.post('/api/sessions/:id/chat'",
@@ -52,8 +53,8 @@ test('interactive OpenRouter chat bypasses Claude billing and the Mayor', () => 
 
   const direct = between(
     route,
-    '// OpenRouter is a complete, single-provider session path.',
-    '// Fable 5 classifier fallback',
+    'const runOpenRouterDirectTurn = async () => {',
+    "// The Mayor's model, key and payer for this turn.",
   );
   assert.match(direct, /runClaudeCodeTool\(\{/);
   assert.match(direct, /directSessionTurn: true/);
@@ -64,11 +65,6 @@ test('interactive OpenRouter chat bypasses Claude billing and the Mayor', () => 
   // payer-free trim — never by the Haiku titler the Claude path uses.
   assert.match(direct, /sessionTitles\.titleFromFirstMessage\(/);
   assert.doesNotMatch(direct, /sessionTitles\.(?:maybeTitleFirstMessage|refreshFromHistory|generateAndApply)/);
-  assert.ok(
-    route.indexOf('// OpenRouter is a complete, single-provider session path.')
-      < route.indexOf('if (!llm.isEnabled())'),
-    'OpenRouter branches before the Anthropic availability gate',
-  );
 
   // #2118: the direct reply carries the ledger's estimate of what the turn
   // cost, flagged as one, and its usage receipt follows the reply it belongs
@@ -79,6 +75,47 @@ test('interactive OpenRouter chat bypasses Claude billing and the Mayor', () => 
   const receipt = direct.indexOf("send('usage', { costCents: directCostCents");
   assert.ok(reply !== -1 && receipt > reply, 'the usage receipt follows the reply');
   assert.match(direct, /estimated: true/);
+});
+
+test('an OpenRouter session runs the Mayor on its own OpenRouter model (#2809/#2810)', () => {
+  const route = between(
+    sessions,
+    "router.post('/api/sessions/:id/chat'",
+    '// ===== Spec stage endpoints',
+  );
+  const setup = between(
+    route,
+    "// The Mayor's model, key and payer for this turn.",
+    '// Fable 5 classifier fallback',
+  );
+  assert.match(setup, /openRouterMayor\.resolveForSession\(\{/);
+  // Anything that stops the Mayor being set up keeps the direct turn.
+  assert.match(setup, /if \(!sessionMayor\) \{\s*await runOpenRouterDirectTurn\(\);\s*return;/);
+  assert.match(setup, /const mayorLlm = sessionMayor \? sessionMayor\.client : llm;/);
+  // Spend follows #2571: the included key joins the shared pool, a personal
+  // key is neither blocked nor billed, and no Anthropic payer is resolved.
+  assert.match(setup, /const mayorSpendRecorded = !sessionMayor \|\| sessionMayor\.usesIncludedKey;/);
+  assert.match(setup, /if \(!sessionMayor\) \{\s*return limits\.resolveBillingPath/);
+  assert.match(setup, /const budget = await limits\.checkBudget\(pool, req\.user\.id\);/);
+  assert.ok(
+    route.indexOf('await runOpenRouterDirectTurn();') < route.indexOf('if (!mayorLlm.isEnabled())'),
+    'a session without a usable OpenRouter Mayor branches before the Mayor availability gate',
+  );
+
+  // Every Mayor call, price, payer check and receipt goes through the
+  // session's Mayor, so an OpenRouter session can never reach Anthropic.
+  const mayorPath = route.slice(route.indexOf('// Fable 5 classifier fallback'));
+  assert.doesNotMatch(mayorPath, /\bllm\.(?:streamChat|estimateCostCents|isEnabled)\(/);
+  assert.doesNotMatch(mayorPath, /limits\.resolveBillingPath\(/);
+  assert.doesNotMatch(mayorPath, /limits\.recordSpend\(/);
+  assert.match(mayorPath, /mayor1 = await mayorLlm\.streamChat\(\{/);
+  assert.match(mayorPath, /snapshotMayorResponse\(await mayorLlm\.streamChat\(\{/);
+  assert.match(mayorPath, /toolResult\.turnId && mayorSpendRecorded/);
+  // The pill ladder's extra rungs are Anthropic calls.
+  assert.match(mayorPath, /allowModelCalls: !modelDeclined && !sessionMayor/);
+  assert.match(mayorPath, /allowModelCalls: mayor2\.stopReason !== 'refusal' && !sessionMayor/);
+  // A Mayor that fails before saying anything hands the turn to the agent.
+  assert.match(mayorPath, /if \(sessionMayor && dataIters === 0\) \{[\s\S]*?await runOpenRouterDirectTurn\(\);\s*return;/);
 });
 
 test('direct OpenRouter prompt supports chat replies as well as repository changes', () => {

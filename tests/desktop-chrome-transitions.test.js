@@ -92,24 +92,46 @@ test('the ground is installed at the browser entry and painted by app.css on des
 // ── #2764: the folded rail peeks from the toggle ────────────────────────
 
 function loadPeek() {
-  let state = { peek: false, railOpen: false };
+  let state = { peek: false, peekOut: false, railOpen: false };
   const navStore = { get: () => state, set: (patch) => { state = { ...state, ...patch }; } };
   const mod = loadTsx('frontend/src/features/nav/rail-peek.ts', {
     stubs: { './nav-store.js': { navStore } },
   });
-  return { mod, peek: () => state.peek };
+  return { mod, peek: () => state.peek, peekOut: () => state.peekOut };
 }
 
-test('entering a peek target shows the rail, leaving puts it away after the grace period', (t) => {
+test('entering a peek target shows the rail, leaving fades it away after the grace period', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { mod, peek } = loadPeek();
+  const { mod, peek, peekOut } = loadPeek();
   mod.enterPeek();
   assert.equal(peek(), true);
   mod.leavePeek();
   t.mock.timers.tick(mod.PEEK_GRACE_MS - 1);
   assert.equal(peek(), true, 'the pointer is still crossing the gap');
+  assert.equal(peekOut(), false);
+  // #2795: the grace period ends in a FADE, not a snap. The peek stays up
+  // for the fade so the element is still there to fade.
   t.mock.timers.tick(1);
+  assert.equal(peek(), true, 'the rail is still drawn while it fades');
+  assert.equal(peekOut(), true, 'and the fade has started');
+  assert.equal(mod.PEEK_FADE_MS, 200);
+  t.mock.timers.tick(mod.PEEK_FADE_MS);
   assert.equal(peek(), false);
+  assert.equal(peekOut(), false, 'a finished fade leaves nothing set');
+});
+
+test('pointing back at the rail during its fade cancels the fade (#2795)', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { mod, peek, peekOut } = loadPeek();
+  mod.enterPeek();
+  mod.leavePeek();
+  t.mock.timers.tick(mod.PEEK_GRACE_MS + 80);
+  assert.equal(peekOut(), true, 'mid-fade');
+  mod.enterPeek();
+  assert.equal(peek(), true);
+  assert.equal(peekOut(), false, 'the fade is undone at once');
+  t.mock.timers.tick(mod.PEEK_FADE_MS * 3);
+  assert.equal(peek(), true, 'and the pending removal never lands');
 });
 
 test('leaving the toggle and reaching the rail is ONE timer, not two', (t) => {
@@ -131,7 +153,7 @@ test('the toggle peeks only a FOLDED rail, and its markup does not change to do 
   assert.match(toggle, /import \{ clearPeekTimer, enterPeek, leavePeek \} from '\.\/rail-peek';/);
   // A press ends the peek, or folding the rail again under the same pointer
   // would bring it straight back as an overlay.
-  assert.match(toggle, /clearPeekTimer\(\);\s*navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false \}\);/);
+  assert.match(toggle, /clearPeekTimer\(\);\s*navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false, peekOut: false \}\);/);
   // An open rail has nothing to bring back, and the press that follows the
   // hover is about to fold it.
   assert.match(toggle, /onMouseEnter=\{railOpen \? undefined : enterPeek\}/);
