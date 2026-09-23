@@ -72,6 +72,10 @@ spec:
             - secretRef:
                 name: {{ include "social-vibecoding-platform.secretName" . }}
           env:
+            - {name: SV_DATABASE_CONTROL_PLANE_ENABLED, value: {{ .Values.databaseControlPlane.enabled | quote }}}
+            {{- if .Values.databaseControlPlane.enabled }}
+            - {name: SV_DATABASE_POLICY_FILE, value: /etc/sv-database/policy.json}
+            {{- end }}
             - name: PLATFORM_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - name: POD_IP
@@ -152,8 +156,16 @@ spec:
           resources:
             {{- toYaml .Values.platform.resources | nindent 12 }}
           volumeMounts:
+            {{- if .Values.databaseControlPlane.enabled }}
+            - {name: database-policy, mountPath: /etc/sv-database, readOnly: true}
+            {{- end }}
             - {name: tmp, mountPath: /tmp}
       volumes:
+        {{- if .Values.databaseControlPlane.enabled }}
+        - name: database-policy
+          configMap:
+            name: {{ .Values.databaseControlPlane.policyConfigMap }}
+        {{- end }}
         - name: tmp
           emptyDir:
             sizeLimit: {{ .Values.platform.tmpSizeLimit | quote }}

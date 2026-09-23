@@ -9,6 +9,15 @@ imagePullSecrets: []
 # with the Kubernetes cluster's configured cluster domain.
 clusterDomain: cluster.local
 
+# Enable only after infra installs the CRDs, profile, policy and scoped RBAC.
+databaseControlPlane:
+  enabled: false
+  serviceAccountName: social-database-worker
+  policyConfigMap: social-database-policy
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
 # Populated in values.release.yaml by the image build workflow before the
 # immutable OCI chart is packaged. Cluster values must not override it.
 release:

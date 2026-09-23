@@ -65,7 +65,7 @@ app.kubernetes.io/component: postgresql
 
 {{- define "social-vibecoding-platform.validate" -}}
 {{- if .Values.enabled -}}
-  {{- if or .Values.platform.enabled .Values.migration.enabled -}}
+  {{- if or .Values.platform.enabled .Values.migration.enabled .Values.databaseControlPlane.enabled -}}
     {{- if not (regexMatch "^[a-f0-9]{40}$" .Values.release.sourceRevision) -}}
       {{- fail "release.sourceRevision must be the full Git commit SHA when platform or migration is enabled" -}}
     {{- end -}}

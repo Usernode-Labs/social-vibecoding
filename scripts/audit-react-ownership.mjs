@@ -324,6 +324,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/overview' }, // features/admin/admin-overview.tsx
   { sel: '#admin-section-content', when: '#admin/codes' },   // features/admin/admin-codes.tsx
   { sel: '#admin-section-content', when: '#admin/featured-apps' }, // features/admin/admin-featured-apps.tsx
+  { sel: '#admin-section-content', when: '#admin/databases' },
   { sel: '#admin-section-content', when: '#admin/db-export' }, // features/admin/admin-db-export.tsx
   { sel: '#admin-section-content', when: '#admin/features' }, // features/admin/admin-features.tsx
   { sel: '#admin-section-content', when: '#admin/limits' },  // features/admin/admin-limits.tsx
@@ -372,7 +373,7 @@ const ROUTES = [
   // issue (scripts/seed-checks-db.js); if the seed changes, re-point it rather
   // than dropping the route.
   '#app/recipebot/dev/issues/900001',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/databases', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
   '#admin/model-costs',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/challenge-scoring', '#admin/seasons', '#admin/season-events',

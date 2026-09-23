@@ -77,7 +77,11 @@ function generatePassword() {
 // a connection has to come up with the right credential, instead of
 // silently falling back to the superuser. See SELF-HOSTING.md
 // "Per-app postgres roles".
-function connectionUrl(dbName, password) {
+function connectionUrl(dbName, password, binding) {
+  if (binding) {
+    if (binding.database !== dbName) throw new Error('Database binding does not match requested database');
+    return require('./database-binding').bindingConnectionUrl(binding, password);
+  }
   if (!dbName || !SAFE_IDENT.test(dbName)) {
     throw new Error(`connectionUrl: unsafe dbName ${JSON.stringify(dbName)}`);
   }

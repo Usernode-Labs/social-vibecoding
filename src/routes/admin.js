@@ -52,6 +52,7 @@ function adminRoutes(config) {
   const pool = getPool(config);
 
   router.use('/api/admin', adminMiddleware);
+  require('./admin-databases').registerDatabaseRoutes(router, { requireAdminWrite });
 
   // #717: content-free usage baseline across Mayor/helper calls and coding
   // agents. Read-only and aggregate-only; view-only admins may inspect it.
