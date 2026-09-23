@@ -12467,8 +12467,8 @@ const AppView = {
   _recheckAction(pr) {
     if (!pr) return null;
     if (AppView.readOnly) return null;
-    if (pr.status && !['active', 'promoted'].includes(pr.status)) return null;
-    if (pr.status === 'active' && !pr.check_state) return null;
+    if (pr.status && !['active', 'paused', 'promoted'].includes(pr.status)) return null;
+    if (['active', 'paused'].includes(pr.status) && !pr.check_state) return null;
     if (pr.check_state === 'passing') return null;
     const owner = !!(App.user && pr.user_id === App.user.id);
     // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the

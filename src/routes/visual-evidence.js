@@ -279,7 +279,7 @@ function visualEvidenceRoutes(config) {
         if (!ctx || ctx.session.user_id !== req.user?.id) {
           return res.status(404).json({ error: 'Proposal not found' });
         }
-        if (!['active', 'promoted'].includes(ctx.session.status)) {
+        if (!['active', 'paused', 'promoted'].includes(ctx.session.status)) {
           return res.status(409).json({ error: 'proposal_not_open' });
         }
         const currentHead = visualHeadForSession(ctx.session);

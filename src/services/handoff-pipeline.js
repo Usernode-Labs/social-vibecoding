@@ -101,7 +101,7 @@ async function discardHandoffStaging(pool, session, app, result, expectedHeadSha
         `UPDATE chat_sessions
             SET staging_container_id = $1, staging_url = $2
           WHERE id = $3 AND ${OWNED_SOURCE_SQL}
-            AND (status <> 'active'
+            AND (status NOT IN ('active', 'paused')
                  OR checks_commit_sha IS NOT DISTINCT FROM $4)`,
         [result.containerId, result.stagingUrl, session.id, expectedHeadSha]
       ).catch((err) => log.warn('handoff-pipeline', 'Failed to retain leaked staging pointer', {
@@ -116,6 +116,9 @@ async function discardHandoffStaging(pool, session, app, result, expectedHeadSha
 }
 
 async function runStaging(config, pool, session, app, headSha, trigger = 'commit-push') {
+  // Explicit paused submissions are allowed; a later lifecycle change still
+  // cancels this run's right to publish. Never resume coding here.
+  const expectedStatus = session.status === 'paused' ? 'paused' : 'active';
   let result;
   try {
     result = await staging.buildAndDeployStaging(config, session, app, headSha);
@@ -127,7 +130,7 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
       `SELECT status, checks_commit_sha FROM chat_sessions WHERE id = $1`,
       [session.id]
     ).catch(() => ({ rows: [] }));
-    if (rows[0]?.status !== 'active' || rows[0]?.checks_commit_sha !== headSha) {
+    if (rows[0]?.status !== expectedStatus || rows[0]?.checks_commit_sha !== headSha) {
       log.info('handoff-pipeline', 'Ignoring stale staging failure', {
         sessionId: session.id, headSha,
       });
@@ -149,8 +152,8 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
       `UPDATE chat_sessions
           SET staging_container_id = $1, staging_url = $2, last_activity_at = NOW()
         WHERE id = $3 AND checks_commit_sha = $4
-          AND status = 'active' AND ${OWNED_SOURCE_SQL}`,
-      [result.containerId, result.stagingUrl, session.id, headSha]
+          AND status = $5 AND ${OWNED_SOURCE_SQL}`,
+      [result.containerId, result.stagingUrl, session.id, headSha, expectedStatus]
     );
     // A newer accepted head now owns the session. Its serialized build will
     // replace this container; do not let the stale capture overwrite the
@@ -161,7 +164,7 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
         [session.id]
       ).catch(() => ({ rows: [] }));
       const current = rows[0];
-      if (!current || current.status !== 'active') {
+      if (!current || current.status !== expectedStatus) {
         await discardHandoffStaging(pool, session, app, result, headSha);
       }
       return;
