@@ -27,6 +27,7 @@ import {
   messagesController,
   open as openConversation,
   respond,
+  setUserBlocked,
   selectConversation,
   syncChrome,
   setFilter,
@@ -828,11 +829,11 @@ function ThreadHeader() {
   const peer = active ? conversationPeer(active) : null;
   if (!active) return null;
   async function blockPeer() {
-    if (!peer || !window.confirm(`Block @${peer.username}? They won’t be able to start or send direct messages to you.`)) return;
+    if (!peer || !window.confirm(`Block @${peer.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
     const conversationId = active?.id;
     if (!conversationId) return;
     setBusy(true);
-    try { await api.setBlock(peer.id, true); await finishDirectBlock(conversationId); }
+    try { await setUserBlocked(peer.id, true); }
     catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : 'Couldn’t block this user.'); }
     finally { setBusy(false); setMenu(false); }
   }

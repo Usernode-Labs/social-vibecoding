@@ -210,7 +210,9 @@ test('composer and moderation payloads match the backend contracts', () => {
 });
 
 test('blocking and access-revocation purge an active direct thread locally', () => {
-  assert.match(screen, /await api\.setBlock\(peer\.id, true\); await finishDirectBlock\(conversationId\)/);
+  assert.match(screen, /await setUserBlocked\(peer\.id, true\)/);
+  assert.match(store, /await api\.setBlock\(userId, blocked\)/);
+  assert.match(store, /await finishDirectBlock\(active\.id\)/);
   const purge = store.slice(store.indexOf('export async function finishDirectBlock('),
     store.indexOf('export function draftFor('));
   assert.match(purge, /active: null/);

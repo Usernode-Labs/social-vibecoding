@@ -584,6 +584,30 @@ export async function finishDirectBlock(conversationId: number): Promise<void> {
   await loadConversations(true);
 }
 
+/** Reconcile the open thread and inbox after changing a sender block. */
+export async function setUserBlocked(userId: number, blocked: boolean): Promise<void> {
+  await api.setBlock(userId, blocked);
+  await refreshBlockedView(userId, blocked);
+}
+
+async function refreshBlockedView(userId: number, blocked: boolean): Promise<void> {
+  void loadAppDiscussions();
+  (window as any).GroupChat?.refreshAfterBlock?.();
+  const active = state.active;
+  if (blocked && active?.kind === 'direct'
+      && (active.peer?.id === userId || active.requester?.id === userId
+        || active.members.some((member) => member.id === userId))) {
+    await finishDirectBlock(active.id);
+    return;
+  }
+  const conversationId = state.route.conversationId;
+  if (blocked) publish({ messages: [] });
+  await Promise.all([
+    loadConversations(true),
+    ...(conversationId ? [loadThread(conversationId, true)] : []),
+  ]);
+}
+
 export function draftFor(conversationId: number): string {
   if (drafts.has(conversationId)) return drafts.get(conversationId) || '';
   try {
@@ -893,6 +917,7 @@ export const messagesController = {
   handleBack,
   syncChrome,
   handleEvent,
+  refreshBlockedView: (userId: number, blocked: boolean) => { void refreshBlockedView(userId, blocked); },
   share,
   paintSaved,
   // #2783: the channel directory, for the app chat's `#name` chips and its

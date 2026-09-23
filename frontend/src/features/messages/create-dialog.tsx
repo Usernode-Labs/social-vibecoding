@@ -6,7 +6,7 @@ import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
-import { createDirect, createGroup } from './store';
+import { createDirect, createGroup, setUserBlocked } from './store';
 import type { ConversationUser } from './types';
 import { UserAvatar } from './format';
 
@@ -81,9 +81,20 @@ export function CreateConversationDialog() {
 
   async function unblock(user: ConversationUser) {
     try {
-      await api.setBlock(user.id, false);
+      await setUserBlocked(user.id, false);
       setBlocked((current) => current.filter((item) => item.id !== user.id));
     } catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t unblock this user.'); }
+  }
+
+  async function block(user: ConversationUser) {
+    if (!window.confirm(`Block @${user.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
+    setSubmitting(true); setError('');
+    try {
+      await setUserBlocked(user.id, true);
+      setBlocked((current) => [...current.filter((item) => item.id !== user.id), user]);
+      setQuery('');
+    } catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t block this person.'); }
+    finally { setSubmitting(false); }
   }
 
   return (
@@ -122,11 +133,14 @@ export function CreateConversationDialog() {
         <div className="mt-2 min-h-12 max-h-52 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800">
           {loadingRow(search.loading, query, results.length)}
           {results.map((user) => (
-            <button key={user.id} type="button" disabled={submitting} onClick={() => void choose(user)} className="w-full flex items-center gap-3 px-2 py-2 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded-lg disabled:opacity-50">
-              <UserAvatar user={user} size="sm" />
-              <span className="text-sm font-medium truncate">@{user.username}</span>
-              <span className="ml-auto text-xs text-violet-700 dark:text-violet-400">{mode === 'group' ? 'Add' : 'Message'}</span>
-            </button>
+            <div key={user.id} className="flex items-center gap-1 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800">
+              <button type="button" disabled={submitting} onClick={() => void choose(user)} className="min-w-0 flex-1 flex items-center gap-3 px-2 py-2 text-left disabled:opacity-50">
+                <UserAvatar user={user} size="sm" />
+                <span className="text-sm font-medium truncate">@{user.username}</span>
+                <span className="ml-auto text-xs text-violet-700 dark:text-violet-400">{mode === 'group' ? 'Add' : 'Message'}</span>
+              </button>
+              <button type="button" disabled={submitting} onClick={() => void block(user)} aria-label={`Block @${user.username}`} className="px-2 py-2 text-xs text-red-700 dark:text-red-400 disabled:opacity-50">Block</button>
+            </div>
           ))}
         </div>
         {error ? <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">{error}</p> : null}

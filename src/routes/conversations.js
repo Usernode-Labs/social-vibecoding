@@ -680,6 +680,14 @@ function conversationRoutes(config) {
     const row = rows[0];
     if (!row || (htmlOnly && row.kind !== 'html')) return null;
     if (row.message_id == null && row.user_id !== req.user.id) return null;
+    if (row.message_id != null && row.user_id !== req.user.id) {
+      const { rows: blocks } = await pool.query(
+        `SELECT 1 FROM user_blocks
+          WHERE blocker_id = $1 AND blocked_user_id = $2 LIMIT 1`,
+        [req.user.id, row.user_id]
+      );
+      if (blocks.length) return null;
+    }
     return row;
   }
 
@@ -743,8 +751,12 @@ function conversationRoutes(config) {
           type: 'conversation_membership_changed', conversationId: audience.conversationId,
         });
       }
+      for (const conversationId of result.privateRefreshConversationIds || []) {
+        pushAudience([req.user.id], { type: 'conversation_membership_changed', conversationId });
+      }
       const { pushToUser } = require('../services/ws');
       for (const userId of result.memberIds) pushToUser(userId, { type: 'notifications_changed' });
+      pushToUser(req.user.id, { type: 'user_blocks_changed', userId: targetId, blocked: true });
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'block failed', { targetId, err: err.message });
@@ -763,8 +775,12 @@ function conversationRoutes(config) {
           type: 'conversation_membership_changed', conversationId: audience.conversationId,
         });
       }
+      for (const conversationId of result.privateRefreshConversationIds || []) {
+        pushAudience([req.user.id], { type: 'conversation_membership_changed', conversationId });
+      }
       const { pushToUser } = require('../services/ws');
       for (const userId of result.memberIds) pushToUser(userId, { type: 'notifications_changed' });
+      pushToUser(req.user.id, { type: 'user_blocks_changed', userId: targetId, blocked: false });
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'unblock failed', { targetId, err: err.message });

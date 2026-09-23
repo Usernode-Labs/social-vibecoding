@@ -194,6 +194,7 @@ export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
+  senderId?: number | null;
   /**
    * Rendered stamp — formatted by the module, whose locale rules these are.
    * The time of day alone for today's messages, prefixed with the date once

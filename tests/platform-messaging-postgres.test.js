@@ -268,6 +268,38 @@ test('postgres serializes conversation consent, retries, and revocation', async 
     assert.ok(await conversations.removeMember(pool, erin, group.conversationId, frank.id));
     assert.equal(await conversations.listMessages(pool, frank, group.conversationId), null,
       'removal immediately revokes retained history');
+
+    const grace = await addUser(pool, 'grace');
+    const shared = await conversations.createGroup(pool, erin, 'Shared room', [frank.id, grace.id]);
+    assert.ok(await conversations.respond(pool, frank, shared.conversationId, 'accept'));
+    assert.ok(await conversations.respond(pool, grace, shared.conversationId, 'accept'));
+    const firstShared = await conversations.sendMessage(pool, erin, shared.conversationId, {
+      content: 'before block', idempotency_key: 'shared-before-block',
+    });
+    assert.equal((await conversations.listMessages(pool, frank, shared.conversationId)).messages.length, 1);
+    await conversations.setBlock(pool, frank.id, erin.id, true);
+    assert.deepEqual((await conversations.listMessages(pool, frank, shared.conversationId)).messages, [],
+      'a block removes retained messages from the blocker’s shared-room view');
+    assert.equal(await conversations.getMessage(pool, frank, shared.conversationId, firstShared.messageId), null);
+    assert.equal((await conversations.listMessages(pool, grace, shared.conversationId)).messages.length, 1,
+      'other group members keep the conversation history');
+    assert.equal((await conversations.getConversation(pool, frank, shared.conversationId)).unreadCount, 0,
+      'blocked messages do not contribute to unread count');
+    const secondShared = await conversations.sendMessage(pool, erin, shared.conversationId, {
+      content: 'after block', idempotency_key: 'shared-after-block',
+    });
+    assert.ok(secondShared);
+    assert.equal((await conversations.listMessages(pool, frank, shared.conversationId)).messages.length, 0);
+    assert.equal(Number((await pool.query(
+      `SELECT COUNT(*) AS n FROM notifications
+        WHERE user_id = $1 AND source_user_id = $2`, [frank.id, erin.id]
+    )).rows[0].n), 0, 'the block removes old alerts and prevents new ones');
+    assert.equal(await conversations.toggleReaction(pool, frank, shared.conversationId,
+      firstShared.messageId, '👍'), null, 'a hidden message cannot be reacted to by id');
+    await conversations.setBlock(pool, frank.id, erin.id, false);
+    assert.deepEqual((await conversations.listMessages(pool, frank, shared.conversationId)).messages
+      .map((message) => message.content), ['before block', 'after block'],
+    'unblocking restores retained shared-room history');
   } finally {
     if (pool) await pool.end().catch(() => {});
     await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
