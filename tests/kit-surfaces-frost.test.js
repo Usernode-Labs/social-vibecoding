@@ -65,6 +65,17 @@ test('without backdrop-filter the surfaces go opaque and keep the dim', () => {
     'inside the no-backdrop-filter block');
 });
 
+test('content adopted into a kit surface does not frost a second time (#2825)', () => {
+  // The Homeroom menu and the notifications sheet wear `.dc-lift-panel`,
+  // which frosts. Inside the kit's already-frosted sheet that drew a second,
+  // whiter box inset by the sheet's padding: the "extra white box".
+  const body = rule('.platform-sheet-adopted,\n.platform-panel-adopted,\n.un-modal .platform-modal-card');
+  assert.match(body, /\n  backdrop-filter: none !important;/);
+  assert.match(body, /-webkit-backdrop-filter: none !important;/);
+  assert.match(rule('.dc-lift-panel'), /backdrop-filter: var\(--dc-frost\)/,
+    'the panel still frosts on its own, outside a kit sheet');
+});
+
 // ── The dim ────────────────────────────────────────────────────────────
 
 test('the kit backdrop goes transparent only where a frosted surface follows it', () => {

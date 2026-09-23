@@ -2164,6 +2164,22 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   display: flex !important;
 }
 
+/* ONE PANE OF GLASS, NOT TWO (#2825). The kit's sheet, panel and modal are
+   already frosted in the shell (`--dc-frost`, the "Shell-only frosted kit
+   surfaces" block). The panels that ride inside them — the Homeroom menu and
+   the notifications sheet wear `.dc-lift-panel` — kept their OWN
+   `backdrop-filter` when adopted: `background: transparent` above cleared the
+   fill but not the filter, so the panel re-frosted the already-frosted sheet
+   behind it and read as a second, whiter box inset by the sheet's padding —
+   the "extra white box around pop up dialogs". The kit shell is the only
+   surface; the content sits straight on it. */
+.platform-sheet-adopted,
+.platform-panel-adopted,
+.un-modal .platform-modal-card {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 /* ── The nav surfaces grow further, and keep their scroller ────────────
    The 70vh above is right for a kit sheet that is a DIALOG — a form, a
    confirm, a short list. The four navigation surfaces are not: the Improve
@@ -2999,9 +3015,10 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 
    SCOPED TO THE BAR AND THE SHEET, deliberately, rather than to <html>.
    The theme is still the shell's: `.dark` on <html> is the theme module's
-   alone, every `dark:` utility keeps reading it, and a sheet or dialog
-   opened from the bar over a dark app is still drawn in the viewer's own
-   mode — the tone is the STRIP's, not the page's. Custom properties
+   alone and every `dark:` utility keeps reading it. The sheets, dialogs and
+   menus opened over a dark app follow its tone too since #2803, but by
+   carrying `.dark` themselves (lib/surface-tone.ts, and the
+   `.platform-app-tone-dark` rule below), not through these tokens. Custom properties
    inherit, so setting them on the two elements reaches every control and
    edge inside them and nothing outside. The chip's subtitle is the one
    control drawn with a `dark:` utility rather than a brand token, so it is
@@ -3032,10 +3049,9 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
    carried anyway, so the ramp is complete and a later divergence cannot
    quietly reopen the split.
 
-   STILL SCOPED TO THE BAR AND THE SHEET, and still never to <html>. A sheet
-   or dialog opened from the bar is drawn in the viewer's own mode exactly as
-   before, because the tone is the STRIP's and not the page's. This widens
-   what the strip repaints; it does not widen what the strip is. */
+   STILL SCOPED TO THE BAR AND THE SHEET, and still never to <html>. This
+   widens what the strip repaints; it does not widen what the strip is. The
+   floating surfaces are the next block's job. */
 [data-app-tone="dark"]:not(.dark) #platform-header,
 [data-app-tone="dark"]:not(.dark) #app-frame-host {
   color: #eaeaea; /* zinc-100, the body's dark ink */
@@ -3097,6 +3113,30 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 }
 .dark[data-app-tone="light"] #platform-header #app-switcher-subtitle {
   color: #68686c; /* zinc-500 */
+}
+/* AND WHAT OPENS OVER A DARK APP IS DARK TOO (#2803). This used to be the
+   one thing the tone left alone: every sheet, dialog and menu kept the
+   viewer's own mode, so Send feedback and the Homeroom menu opened as cream
+   cards over a night-black app under a bar that had already gone dark. They
+   follow the app now. lib/surface-tone.ts puts `.dark` on each kit shell
+   (modal, sheet, panel, action sheet, popover, alert) and on the two in-tree
+   sheets while `data-app-tone="dark"` holds under the light shell, marked
+   with this class so it only removes its own. `.dark` is all the palette
+   needs — the token blocks here and in native.css are plain `.dark { … }`
+   and `dark:` utilities compile to `.dark .dark\:…` — so a toned surface is
+   drawn exactly as it is under the dark shell.
+
+   The one thing `.dark` on the surface cannot carry is the INK: the body's is
+   `text-zinc-900 dark:text-zinc-100`, keyed on <html>, and these shells
+   inherit it from <body>. So it is set here, the same literal the bar's tone
+   uses. `:where()` keeps this at zero specificity: a kit rule that inks its
+   own surface from a token still wins, and reads the dark token anyway.
+
+   A light app under the dark shell is out of scope, as the request says:
+   that direction would need `.dark` taken AWAY below a dark <html>. */
+:where(.platform-app-tone-dark) {
+  color: #eaeaea; /* zinc-100, the body's dark ink */
+  color-scheme: dark;
 }
 /* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
    set inline in the head (frontend/src/head.html) so the first paint is
@@ -9036,9 +9076,16 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   transition: transform 200ms ease-out, box-shadow 200ms ease-out,
     opacity 0s linear 200ms, visibility 0s linear 200ms;
 }
+/* A VIEWPORT OF OVERSCAN above and below (#2822). With the on-screen keyboard
+   up, iOS pans the visual viewport inside the layout one, and the band on
+   screen is not reliably inside this fixed box: the dim stopped short of it —
+   the bottom once (#2765), the top after that. lib/overlay-scrim.js measures
+   this layer and cuts the hole relative to it, so however far it reaches, the
+   cutout still lands on the dialog; the extra reach only guarantees there is
+   dim wherever the screen has been panned to. Nothing hit-tests it. */
 .overlay-scrim {
   position: fixed;
-  inset: 0;
+  inset: -100vh 0;
   pointer-events: none;
   visibility: hidden;
   background: var(--pane-scrim);
