@@ -458,6 +458,14 @@ function collectionCount(value) {
   return null;
 }
 
+function evidenceToolAvailable(tools, toolName) {
+  if (collectionCount(tools) == null) return null;
+  const names = Array.isArray(tools)
+    ? tools.map((item) => typeof item === 'string' ? item : item?.name)
+    : Object.keys(tools);
+  return names.some((name) => name === toolName || name === `mcp__evidence__${toolName}`);
+}
+
 function addObservedValue(set, value) {
   if (!(set instanceof Set) || typeof value !== 'string' || !value) return;
   set.add(value);
@@ -593,6 +601,8 @@ function applyStreamEvent(event, onProgress, state) {
       kind: 'provider_init',
       mcpServerCount: collectionCount(systemEvent.mcp_servers ?? systemEvent.mcpServers),
       toolDefinitionCount: collectionCount(systemEvent.tools),
+      evidenceGetContextAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_get_context'),
+      evidenceRunPlanAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_run_plan'),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {

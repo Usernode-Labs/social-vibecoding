@@ -1,4 +1,4 @@
-# Visual evidence production failures, 22 September 2026
+# Visual evidence production failures, 22–23 September 2026
 
 ## What the existing runs establish
 
@@ -15,6 +15,13 @@
   worker or browser tool timeline, so it cannot establish whether the time
   went to worker startup, model startup, a model response, browser navigation,
   or repeated exploration.
+- After the database scrub fix was deployed on 23 September, proposal 4550
+  run `e3910e50d0e70857949dc34bb840f00a` passed the paired fixture reset.
+  Its Claude turn then completed in about 51 seconds without an evidence-tool
+  call or a submitted plan, and the run failed with `missing_evidence_replay`.
+  The existing trace does not say whether the required tools were available
+  to the model or whether the turn resumed an old agent context. Neither a
+  model-behavior cause nor an MCP loading cause is established yet.
 - Proposals 4649 and 4656 also report `evidence_agent_timeout`. Their detailed
   diagnostics are no longer available through the owner diagnostics route.
   They cannot establish the same cause as proposal 4550.
@@ -28,7 +35,8 @@ For each normal hosted evidence run, the owner-only failed-run diagnostics now
 retain a bounded timeline of worker preparation, browser authentication
 bootstrap, model startup, model output, evidence/browser tool calls and
 results, and the deadline/stop. The provider init event includes tool and MCP
-server counts when supplied by the model runner. A tool start without a
+server counts and availability of the two required evidence tools when supplied
+by the model runner. A tool start without a
 matching result is reported as pending. The trace records fixed tool names,
 event kinds,
 persona, and elapsed milliseconds. It never stores prompts, reasoning, page
@@ -37,9 +45,10 @@ responses. The worker emits the events directly while consuming its normal
 journal, and the orchestrator persists them on failure, including when the
 model turn times out before returning a result.
 
-This patch is **diagnostics only**. It does not claim to repair either failure.
-The timeout cause cannot be identified to high confidence from the old runs;
-a normal hosted rerun with this code must supply the missing event sequence.
+This patch is **diagnostics only**. It does not claim to repair the older
+timeout or the newer no-tool completion. Their causes cannot be identified
+to high confidence from the old traces; a normal hosted rerun with this code
+must supply the missing event sequence.
 
 ## Next normal-flow check after deployment
 
@@ -54,6 +63,8 @@ a normal hosted rerun with this code must supply the missing event sequence.
    - pending browser tool: the named browser operation;
    - many completed browser calls but no `evidence_run_plan`: exploration or
      plan-generation budget/strategy.
+   - `provider_result` with zero tool calls: inspect the fixed availability
+     flags and `requestMode` before attributing the result to model behavior.
 3. Fix the identified boundary, then rerun the same historical case and the
    4676 locator case through the hosted agent. Require a plan submitted by
    that agent, two clean platform replays, stored media, and human review.

@@ -471,6 +471,9 @@ function recordAgentDiagnostic(metrics, raw) {
       event[key] = raw[key];
     }
   }
+  for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable']) {
+    if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
   if (kind === 'tool_start' || kind === 'tool_end') {
     event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
     if (raw.persona === 'member' || raw.persona === 'admin') event.persona = raw.persona;
