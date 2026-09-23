@@ -4553,7 +4553,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 559,
+      "line": 563,
       "method": "POST",
       "path": "/api/conversations/:id/typing",
       "expression": null,
@@ -4572,7 +4572,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 577,
+      "line": 581,
       "method": "POST",
       "path": "/api/conversations/:id/messages/:messageId/report",
       "expression": null,
@@ -4591,7 +4591,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 592,
+      "line": 596,
       "method": "POST",
       "path": "/api/conversations/:id/attachments",
       "expression": null,
@@ -4610,7 +4610,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 710,
+      "line": 714,
       "method": "GET",
       "path": "/api/conversations/:id/attachments/:attachmentId",
       "expression": null,
@@ -4629,7 +4629,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 735,
+      "line": 739,
       "method": "GET",
       "path": "/api/conversations/:id/attachments/:attachmentId/view",
       "expression": null,
@@ -4647,7 +4647,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 750,
+      "line": 754,
       "method": "GET",
       "path": "/api/me/blocks",
       "expression": null,
@@ -4672,7 +4672,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 759,
+      "line": 763,
       "method": "PUT",
       "path": "/api/me/blocks/:userId",
       "expression": null,
@@ -4691,7 +4691,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 783,
+      "line": 787,
       "method": "DELETE",
       "path": "/api/me/blocks/:userId",
       "expression": null,
@@ -4710,7 +4710,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 828,
+      "line": 832,
       "method": "GET",
       "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId",
       "expression": null,
@@ -4728,7 +4728,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 848,
+      "line": 852,
       "method": "GET",
       "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId/view",
       "expression": null,
@@ -4746,7 +4746,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 867,
+      "line": 871,
       "method": "GET",
       "path": "/api/admin/conversation-reports",
       "expression": null,
@@ -4768,7 +4768,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 894,
+      "line": 898,
       "method": "POST",
       "path": "/api/admin/conversation-reports/:id/:action",
       "expression": null,
