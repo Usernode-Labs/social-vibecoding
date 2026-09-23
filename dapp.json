@@ -3535,6 +3535,12 @@
       "expectText": "of 7 answered"
     },
     {
+      "name": "Admin Waitlist has an Analytics button just before Export CSV (#2748)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-wl-analytics",
+      "expectText": "Analytics"
+    },
+    {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",
       "path": "/#admin/seasons/sql-console",
       "expectSelector": "#admin-topo-sql-schema-filter"
