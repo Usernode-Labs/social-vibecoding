@@ -81,10 +81,6 @@ export function ImproveQuickActions(): ReactNode {
         label="Give feedback"
         onClick={() => Improve.giveFeedback()}
       />
-      {state.slug ? <QuickAction id="improve-row-report" label="Report app" onClick={async () => {
-        await Improve.close();
-        openReport({ targetType: 'app', target: state.slug!, label: state.name || state.slug! });
-      }} /> : null}
       {state.readOnly ? null : (
         <QuickAction
           id="improve-row-new-session"
@@ -92,6 +88,10 @@ export function ImproveQuickActions(): ReactNode {
           onClick={() => Improve.startSession()}
         />
       )}
+      {state.slug ? <QuickAction id="improve-row-report" label="Report app" onClick={async () => {
+        await Improve.close();
+        openReport({ targetType: 'app', target: state.slug!, label: state.name || state.slug! });
+      }} /> : null}
     </div>
   );
 }

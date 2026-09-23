@@ -8825,25 +8825,6 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_paused_apps', '[]')
 ON CONFLICT (key) DO NOTHING;
 
--- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
---
--- Keep this the LAST block in the file: tests/preview-lifecycle.test.js
--- applies schema.sql from this CREATE TABLE to the end of the file into a
--- scratch schema that holds nothing else, so anything appended after it has
--- to stand on its own there — an ALTER TABLE on users or apps does not.
-CREATE TABLE IF NOT EXISTS preview_operations (
-  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
-  desired_revision TEXT NOT NULL,
-  run_id UUID,
-  revision TEXT,
-  phase TEXT,
-  state TEXT NOT NULL DEFAULT 'queued',
-  result JSONB,
-  finished_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE preview_operations IS 'staging:private';
-
 -- #2721. Private, durable moderation records; target IDs intentionally have
 -- no cascading FK: removing a target must not remove evidence or the audit.
 ALTER TABLE notifications ALTER COLUMN detail TYPE VARCHAR(1200);
@@ -8915,3 +8896,23 @@ COMMENT ON TABLE moderation_actions IS 'staging:private';
 COMMENT ON TABLE moderation_message_originals IS 'staging:private';
 
 CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;
+
+-- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
+--
+-- Keep this the LAST block in the file: tests/preview-lifecycle.test.js
+-- applies schema.sql from this CREATE TABLE to the end of the file into a
+-- scratch schema that holds nothing else, so anything appended after it has
+-- to stand on its own there — an ALTER TABLE on users or apps does not.
+CREATE TABLE IF NOT EXISTS preview_operations (
+  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  desired_revision TEXT NOT NULL,
+  run_id UUID,
+  revision TEXT,
+  phase TEXT,
+  state TEXT NOT NULL DEFAULT 'queued',
+  result JSONB,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE preview_operations IS 'staging:private';
+
