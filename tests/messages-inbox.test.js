@@ -148,13 +148,13 @@ test('the "+" is back at the strip\'s trailing end, and opens a choice rather th
   // THE VOTE POPUP'S MECHANICS, shared rather than copied: placement from
   // the button's rect, dismissal on outside click / Escape / scroll / resize.
   assert.match(fn, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
-  assert.match(fn, /anchoredPopoverPosition\(rect, /);
+  assert.match(fn, /placeUnderAnchor\(rect, \{ width: 240, height: 164 \}/);
   assert.match(fn, /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');
   assert.match(fn, /role="menu"/);
   assert.match(fn, /pu\.actionSheet\(\{/, 'a phone gets the kit\'s action sheet');
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(card, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/, 'the vote picker reads the same helper');
-  assert.match(card, /anchoredPopoverPosition\(rect, w, h\)/);
+  assert.match(card, /placeUnderAnchor\(rect, \{ width: w, height: h \}/);
 
   assert.match(SCREEN, /\{ key: 'direct', label: 'Direct message'/);
   assert.match(SCREEN, /\{ key: 'group', label: 'Group chat'/);

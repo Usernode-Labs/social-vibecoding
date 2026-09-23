@@ -6,7 +6,8 @@ import {
   ChatIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
-import { anchorRectOf, anchoredPopoverPosition, useAnchoredDismiss, type AnchorRect } from '../../lib/anchored-popover';
+import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
+import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -457,7 +458,8 @@ function startNew(choice: NewChoice) {
  * The "+" and its popover (#2778).
  *
  * The popover is placed and dismissed exactly as the vote picker's desktop
- * home is — lib/anchored-popover.ts is that code, shared — and portalled to
+ * home is — lib/anchor-popover.ts and lib/popover-dismiss.ts are that code,
+ * shared — and portalled to
  * the body so the list's own scroller cannot clip it. On touch it is the
  * kit's action sheet instead, which is what a three-row menu is on a phone.
  *
@@ -486,7 +488,9 @@ function NewMessageButton() {
     setRect(anchorRectOf(event.currentTarget));
   };
   const choose = (choice: NewChoice) => { shut(); startNew(choice); };
-  const pos = rect ? anchoredPopoverPosition(rect, 240, 164) : null;
+  const pos = rect
+    ? placeUnderAnchor(rect, { width: 240, height: 164 }, { width: window.innerWidth, height: window.innerHeight })
+    : null;
 
   return (
     <>

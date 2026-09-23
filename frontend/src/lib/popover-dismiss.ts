@@ -1,49 +1,21 @@
 import { useEffect, useRef, type RefObject } from 'react';
 
 /**
- * A small popover anchored to the button that opened it — the vote picker's
- * desktop home (features/dev-board/card/dev-card.tsx), shared (#2778).
+ * Taking down a small popover anchored to the button that opened it — the
+ * vote picker's desktop home (features/dev-board/card/dev-card.tsx) and
+ * Messages' "+" (#2778).
  *
- * The vote popup was the first of these and carried both halves inline: where
- * the panel goes, and what takes it down. Messages' "+" (DM / group / agent)
- * is the second, so the two halves live here and both read them, rather than
- * a second copy drifting from the first. What each popover SHOWS stays its
- * own: this is placement and dismissal, not a component.
- *
- * Body-mounted and `position: fixed`, which is why the caller portals the
- * panel to `document.body`: a scrolling list or a sideways-scrolling kanban
- * would clip anything drawn inside it.
+ * Where such a popover GOES is ./anchor-popover.ts (`placeUnderAnchor`);
+ * this is the other half, what makes it go away, which the vote picker
+ * carried inline. What each popover shows stays its own.
  */
 
-export interface AnchorRect {
-  top: number;
-  bottom: number;
-  right: number;
-}
+import type { AnchorRect } from './anchor-popover';
 
-/** The part of a DOMRect a popover is placed from. */
+/** The part of a DOMRect `placeUnderAnchor` places from. */
 export function anchorRectOf(el: Element): AnchorRect {
   const r = el.getBoundingClientRect();
   return { top: r.top, bottom: r.bottom, right: r.right };
-}
-
-/**
- * Where a `width` × `height` panel goes: right-aligned under the anchor,
- * kept 8px inside the window, and flipped above the anchor when there is no
- * room below it.
- */
-export function anchoredPopoverPosition(
-  rect: AnchorRect,
-  width: number,
-  height: number,
-  view: { width: number; height: number } = typeof window === 'undefined'
-    ? { width: 1024, height: 768 }
-    : { width: window.innerWidth, height: window.innerHeight },
-): { top: number; left: number } {
-  const left = Math.min(Math.max(8, rect.right - width), view.width - width - 8);
-  let top = rect.bottom + 6;
-  if (top + height > view.height - 8) top = Math.max(8, rect.top - height - 6);
-  return { top: Math.round(top), left: Math.round(left) };
 }
 
 /**

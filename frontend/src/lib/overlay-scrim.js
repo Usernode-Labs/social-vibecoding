@@ -73,6 +73,11 @@ export function attachOverlayScrim(surface, backdrop, paint) {
       const style = getComputedStyle(surface);
       if (style.visibility === 'hidden' || style.display === 'none'
           || surface.classList.contains('platform-sheet-adopted')) return null;
+      // The Homeroom menu's desktop presentation is a POPOVER anchored under
+      // the mark (#2784) — the kit's own desktop menu idiom, which has no
+      // backdrop (.un-popover in native.css). Below `sm` it is a bottom sheet
+      // and dims like every other one.
+      if (surface.id === 'apps-switcher-sheet' && matchMedia('(min-width: 640px)').matches) return null;
       const rect = surface.getBoundingClientRect();
       const width = surface.offsetWidth || 1;
       const height = surface.offsetHeight || 1;
@@ -106,8 +111,7 @@ export function attachOverlayScrim(surface, backdrop, paint) {
         if (surface.dataset.unSide === 'left') box.left = Math.min(box.left, 0);
         else box.right = Math.max(box.right, innerWidth);
       }
-      const cardFade = surface.classList.contains('un-modal')
-        || (surface.id === 'apps-switcher-sheet' && matchMedia('(min-width: 640px)').matches);
+      const cardFade = surface.classList.contains('un-modal');
       const opacity = cardFade ? style.opacity : getComputedStyle(backdrop).opacity;
       return {
         background: scrimBackground(box, radii, innerWidth, layoutViewportHeight(), window.devicePixelRatio || 1),

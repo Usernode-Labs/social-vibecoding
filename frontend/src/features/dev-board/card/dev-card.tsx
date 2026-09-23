@@ -53,8 +53,9 @@ import { createPortal } from 'react-dom';
 
 import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
-import { anchorRectOf, anchoredPopoverPosition, useAnchoredDismiss } from '../../../lib/anchored-popover';
 import { useStoreState } from '../../../lib/use-store-state';
+import { placeUnderAnchor } from '../../../lib/anchor-popover';
+import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
 import { cardTintClass } from '../../home/panels/ui';
 import { aiEnabledStore, cardNowStore } from './cards-store';
 import type {
@@ -586,7 +587,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     setRect(anchorRectOf(e.currentTarget));
     setOpen(true);
   };
-  // Outside click, Escape, scroll, resize — lib/anchored-popover.ts, shared
+  // Outside click, Escape, scroll, resize — lib/popover-dismiss.ts, shared
   // with Messages' "+" popover (#2778).
   useAnchoredDismiss(open, [btnRef, popRef], shut);
   // A card that goes away under an open sheet (a repaint that replaces it)
@@ -614,11 +615,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       ? `You said yes to an earlier version. One tap carries it onto this one.`
       : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
   // The popover's frame: the switch, the box and the buttons (no box on a
-  // governance vote). Placed from the button's rect each render, exactly as
+  // governance vote). Placed from the button's rect each render by
+  // lib/anchor-popover.ts — the helper the Homeroom menu shares — exactly as
   // `_toggleCardMenu` places the ⋯ menu.
   const w = 312;
   const h = isVote ? 190 : 100;
-  const pos = rect ? anchoredPopoverPosition(rect, w, h) : null;
+  const pos = rect
+    ? placeUnderAnchor(rect, { width: w, height: h }, { width: window.innerWidth, height: window.innerHeight })
+    : null;
   const spec = side === 'yes' ? yes : no;
   const trimmed = line.replace(/\s+/g, ' ').trim();
   // A No needs its line; a Yes may go without one.
