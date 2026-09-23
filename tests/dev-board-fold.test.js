@@ -1063,7 +1063,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Channels filter, the "+" at the strip's end, #general's grouped rows and
   // its title row, and a `#name` channel link beside a `#123` issue ref in a
   // message. 740 leaves 30 slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 740);
+  //
+  // +1 (#2824): the lit tab's sliding marker on the phone's bar, 741 — 29
+  // slots left under the 770 ceiling.
+  assert.equal(DAPP.tests.length, 741);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

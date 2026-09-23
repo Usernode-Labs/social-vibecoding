@@ -2761,6 +2761,11 @@
       "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] #platform-tabs-badge"
     },
     {
+      "name": "#2824: the lit tab carries the sliding blue marker, measured behind it",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs:has(> .platform-tabs-marker[data-marker-at][aria-hidden=\"true\"] + #platform-tab-home) #platform-tab-home[aria-current=\"page\"]"
+    },
+    {
       "name": "#2760: the fifth tab is named after the signed-in user instead of \"Me\", on the phone bar and the desktop rail alike",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs a#platform-tab-me[href=\"#profile\"][aria-label$=\", your profile\"]"
