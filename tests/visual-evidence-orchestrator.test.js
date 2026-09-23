@@ -2,6 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const contract = require('../src/services/visual-evidence-plan');
 const controlPlane = require('../src/services/visual-evidence-control');
 const orchestrator = require('../src/services/visual-evidence-orchestrator');
@@ -20,7 +23,7 @@ const provenance = {
 
 function setup({ dispatch, storeArtifacts } = {}) {
   const transitions = [];
-  const calls = { resets: 0, passes: [], stored: 0, cleaned: 0, dispatches: 0 };
+  const calls = { resets: 0, passes: [], stored: 0, cleaned: 0, dispatches: 0, stopClears: 0 };
   let currentState = 'planned';
   const pool = {
     query: async (sql) => {
@@ -95,7 +98,10 @@ function setup({ dispatch, storeArtifacts } = {}) {
       },
     },
     evidenceControl: controlPlane,
-    worker: { isInFlight: () => false },
+    worker: {
+      isInFlight: () => false,
+      clearPendingStop: () => { calls.stopClears += 1; },
+    },
   };
   dependencies.replay.runPassCases = async (config, sessionId, input, options) => {
     const deployment = await options.prepareCase({ storyId: 'invite-suggestions', viewport: 'desktop' });
@@ -142,6 +148,7 @@ test('first hosted evidence turn does not resume the proposal coding thread', as
   const fixture = setup({
     dispatch: async (options) => {
       assert.equal(options.resumeThreadId, null);
+      assert.equal(fixture.calls.stopClears, 1, 'a new run retires the previous stop before dispatch');
       const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
       await control.runPlan(fixtures.plan());
       return { backend: 'claude_code', threadId: 'evidence-thread' };
@@ -152,6 +159,31 @@ test('first hosted evidence turn does not resume the proposal coding thread', as
   const result = await execute(fixture);
   assert.equal(result.state, 'verified');
   assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.calls.stopClears, 1);
+});
+
+test('evidence context includes a relevant check beyond the first 80 manifest entries', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-checks-'));
+  try {
+    const tests = Array.from({ length: 100 }, (_, index) => ({
+      name: `Generic screen ${index}`, path: `/screen-${index}`,
+    }));
+    tests.push({
+      name: 'Workshop plus button closes the view tab strip',
+      path: '/workshop', expectSelector: '.dev-ws-plus',
+    });
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests }));
+    const intent = { stories: [{
+      claim: 'The Workshop plus button sits below the tab strip.',
+      intent: { steps: ['Open the Workshop'] },
+    }] };
+    const selected = orchestrator.declaredCheckSummary(checkout, intent);
+    assert.equal(selected.length, 80);
+    assert.equal(selected[0].path, '/workshop');
+    assert.equal(orchestrator.declaredCheckSummary(checkout)[0].path, '/screen-0');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
 });
 
 test('platform waits for a background replay after the hosted planner receives its acknowledgement', async () => {
@@ -568,7 +600,8 @@ test('a planner timeout keeps a bounded, content-free record of its last active 
       options.onEvidenceDiagnostic({ kind: 'worker_prepare_end' });
       options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
       options.onEvidenceDiagnostic({ kind: 'tool_start', sequence: 1,
-        tool: 'browser_navigate', persona: 'member', url: 'https://private.invalid/?token=secret' });
+        tool: 'browser_navigate', persona: 'member', side: 'base', routeOrdinal: 2,
+        url: 'https://private.invalid/?token=secret' });
       options.onEvidenceDiagnostic({ kind: 'agent_deadline' });
       throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
     },
@@ -579,6 +612,8 @@ test('a planner timeout keeps a bounded, content-free record of its last active 
   assert.equal(trace.agentActivity.counts.tool_start, 1);
   assert.equal(trace.agentActivity.toolCounts.browser_navigate, 1);
   assert.equal(trace.agentActivity.pendingTools[0].tool, 'browser_navigate');
+  assert.equal(trace.agentActivity.pendingTools[0].side, 'base');
+  assert.equal(trace.agentActivity.pendingTools[0].routeOrdinal, 2);
   assert.equal(trace.agentActivity.events.at(-1).kind, 'agent_deadline');
   assert.doesNotMatch(JSON.stringify(trace.agentActivity), /private|token|secret|url/i);
 });
@@ -793,6 +828,8 @@ test('an agent opinion cannot veto replay-checked captures meant for human revie
 test('a Codex model that fails before submitting a plan falls back to the platform planner', async () => {
   const fixture = setup({
     dispatch: async (options, attempt) => {
+      assert.equal(fixture.calls.stopClears, 1,
+        'fallback is part of the same run and must not erase a newly requested stop');
       if (attempt === 1) throw Object.assign(new Error('model cannot use browser tools'), { code: 'evidence_agent_failed' });
       assert.equal(options.forceBackend, 'claude_code');
       const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
@@ -805,6 +842,23 @@ test('a Codex model that fails before submitting a plan falls back to the platfo
   assert.equal(result.state, 'verified');
   assert.equal(fixture.calls.dispatches, 2);
   assert.deepEqual(fixture.calls.passes, [1, 2]);
+});
+
+test('a Codex planner that already explored does not launch a second model after timing out', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'codex_openrouter',
+        requestMode: 'agent_new' });
+      options.onEvidenceDiagnostic({ kind: 'tool_start', sequence: 1,
+        tool: 'browser_navigate', side: 'base', routeOrdinal: 1 });
+      throw Object.assign(new Error('The planner timed out.'), { code: 'evidence_agent_timeout' });
+    },
+  });
+  fixture.session.agent_backend = 'codex_openrouter';
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.equal(fixture.calls.stopClears, 1);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.agentDispatches.length, 1);
 });
 
 test('a stale artifact fence cannot publish or transition the superseded run to verified', async () => {

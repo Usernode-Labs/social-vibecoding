@@ -253,9 +253,47 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
   };
 }
 
-function declaredCheckSummary(checkout) {
+function evidenceWords(value) {
+  return new Set(String(value || '').toLowerCase().replace(/\+/g, ' plus ')
+    .match(/[a-z0-9]{4,}/g) || []);
+}
+
+function declaredCheckSummary(checkout, intent = null) {
   try {
-    return appManifest.readTests(appManifest.read(checkout)).slice(0, 80).map((test) => ({
+    const checks = appManifest.readTests(appManifest.read(checkout));
+    // A large manifest's first 80 checks can omit the changed screen
+    // entirely. Put checks whose names, paths, or readiness selectors match
+    // the accepted story first; retain declaration order for equal scores.
+    const storyText = (intent?.stories || []).map((story) => [
+      story.claim, story.intent?.startPath, story.intent?.checkpoint,
+      story.intent?.focus, ...(story.intent?.steps || []),
+    ].join(' ')).join(' ');
+    const words = evidenceWords(storyText);
+    const navigationWords = evidenceWords((intent?.stories || []).map((story) => [
+      story.intent?.startPath, ...(story.intent?.steps || []),
+    ].join(' ')).join(' '));
+    const frequencies = new Map();
+    const indexed = checks.map((test, index) => {
+      const nameWords = evidenceWords(test.name);
+      const pathWords = evidenceWords(test.path);
+      const selectorWords = evidenceWords(test.expectSelector);
+      for (const word of new Set([...nameWords, ...pathWords, ...selectorWords])) {
+        if (words.has(word)) frequencies.set(word, (frequencies.get(word) || 0) + 1);
+      }
+      return { test, index, nameWords, pathWords, selectorWords };
+    });
+    const ranked = indexed.map(({ test, index, nameWords, pathWords, selectorWords }) => {
+      let score = 0;
+      for (const word of words) {
+        const weight = Math.log2(1 + checks.length / (frequencies.get(word) || 1))
+          * (navigationWords.has(word) ? 3 : 1);
+        if (nameWords.has(word)) score += 3 * weight;
+        if (pathWords.has(word)) score += 2 * weight;
+        if (selectorWords.has(word)) score += weight;
+      }
+      return { test, index, score };
+    }).sort((a, b) => b.score - a.score || a.index - b.index);
+    return ranked.slice(0, 80).map(({ test }) => ({
       name: String(test.name || '').slice(0, 120),
       path: String(test.path || '').slice(0, 512),
       ...(test.id ? { visualScenarioId: test.id } : {}),
@@ -292,7 +330,7 @@ function evidenceContext({ run, session, revision, pair, deployment, intent }) {
       diff: revision.diffSummary,
       untrusted: true,
     },
-    declaredChecks: declaredCheckSummary(pair.sides.head.checkout),
+    declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent),
     provenance: {
       fixtureFingerprint: pair.fixtureFingerprint,
       baseImageDigest: pair.sides.base.imageDigest,
@@ -557,6 +595,9 @@ function recordAgentDiagnostic(metrics, raw) {
   if (kind === 'tool_start' || kind === 'tool_end') {
     event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
     if (raw.persona === 'member' || raw.persona === 'admin') event.persona = raw.persona;
+    if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
+    if (Number.isSafeInteger(raw.routeOrdinal) && raw.routeOrdinal > 0
+        && raw.routeOrdinal <= 1000) event.routeOrdinal = raw.routeOrdinal;
     if (Number.isSafeInteger(raw.sequence) && raw.sequence > 0 && raw.sequence <= 100000) {
       event.sequence = raw.sequence;
     }
@@ -771,6 +812,14 @@ async function executeRun(config, options, injected = {}) {
       workerService: deps.worker,
     });
     addTiming(metrics, 'idleWait', idleStartedAt);
+    if (!authorPlan) {
+      // A timeout stops the prior hosted turn and leaves its worker stop
+      // marker intact. This is a new evidence run, so retire that marker
+      // once, after the prior turn is idle and before this run provisions.
+      // Do not clear it in dispatchOnce: a stop during this run's setup must
+      // still prevent its first dispatch, fallback, and repair turns.
+      deps.worker.clearPendingStop(session.id);
+    }
     progress('Preparing exact base and head revisions for visual evidence…');
     failurePhase = 'prepare_pair';
     stage(failurePhase);
@@ -1042,7 +1091,8 @@ async function executeRun(config, options, injected = {}) {
       agentOutcome = await dispatchOnce();
       if (agentOutcome.error && !latestHardVerdict
           && registration.control.planCalls === 0
-          && session.agent_backend === 'codex_openrouter') {
+          && session.agent_backend === 'codex_openrouter'
+          && !metrics.agentActivity.counts.provider_dispatched) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
       }
