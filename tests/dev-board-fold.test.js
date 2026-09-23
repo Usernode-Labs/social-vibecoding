@@ -1149,8 +1149,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //       bar. The four checks that pinned the "+" in All items' actions row
   //       were re-pointed.
   // Its streams were counted against main's 753; main reached 759 without
-  // them, so the merged manifest holds 759 + 15 = 774, leaving 16 slots under
-  // the 790 ceiling.
+  // them, so the merged manifest holds 759 + 15 = 774. That is past the
+  // 20-slot floor under the 790 ceiling, so the ceiling moved to 810 with it
+  // (services/app-manifest.js), leaving 36 slots.
   assert.equal(DAPP.tests.length, 774);
 });
 
