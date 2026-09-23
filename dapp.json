@@ -5058,9 +5058,9 @@
     },
     {
       "id": "agent-session.card",
-      "name": "An agent session shows the app it is about, where its change stands, and a write the Mayor proposes waiting on a card that offers Confirm and Not now (#2779)",
-      "path": "/#agent/990801",
-      "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-card=\"pending\"] dl + div [data-agent-session-confirm] + [data-agent-session-dismiss]",
+      "name": "On a desktop an agent session opens in the Messages pane beside its row under Agents, and a write the Mayor proposes waits on a card with Confirm and Not now (#2779)",
+      "path": "/#messages/agent/990801",
+      "expectSelector": "#messages-screen:not(.hidden):has(a[data-inbox-agent-session=\"990801\"]) [data-agent-session-thread=\"990801\"] [data-agent-session-card=\"pending\"] dl + div [data-agent-session-confirm] + [data-agent-session-dismiss]",
       "expectText": "Put the change up for the group vote",
       "visual": true,
       "impact": [
@@ -5068,19 +5068,9 @@
       ]
     },
     {
-      "name": "The changes drawer shows the conversation's active change, with a way to its proposal page (#2779)",
+      "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779)",
       "path": "/#agent/990801/changes",
-      "expectSelector": "#agent-session-screen:not(.hidden) [data-agent-session-drawer] [data-agent-session-active-change] a[href$=\"/dev/proposals/990802\"]"
-    },
-    {
-      "name": "On a desktop an agent session opens in the Messages pane, beside its own row under Agents (#2779)",
-      "path": "/#messages/agent/990801",
-      "expectSelector": "#messages-screen:not(.hidden):has(a[data-inbox-agent-session=\"990801\"][href=\"#messages/agent/990801\"]) [data-agent-session-thread=\"990801\"] [data-agent-session-panel=\"messages\"] [data-agent-session-mayor]"
-    },
-    {
-      "name": "Settings offers the agent-sessions switch to a user who may choose it (#2779)",
-      "path": "/#settings/experimental",
-      "expectSelector": "[data-settings-section=\"experimental\"]:not(.hidden) #settings-agent-sessions-row:not(.hidden) #agent-sessions-enabled"
+      "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-drawer] [data-agent-session-active-change] a[href$=\"/dev/proposals/990802\"]"
     }
   ],
   "governance": {

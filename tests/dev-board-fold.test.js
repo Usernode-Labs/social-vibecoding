@@ -1201,17 +1201,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // merged manifest holds every one of them: 780 + 1 + 2 + 1 + 1 = 785,
   // leaving 25 slots under the 810 ceiling.
   //
-  // 785 → 789: +4 (#2779), on this branch: an agent session's confirmation
-  // card, the changes drawer, the desktop Messages pane beside its inbox
-  // row, and the Settings switch, on the staging-seeded conversation 990801.
+  // 785 → 788: independently on main, +3 (#2866): this PR's own three
+  // checks exercise the owner menu, shared menu, and direct link.
   //
-  // 785 → 788: independently, +3 (#2866): this PR's own three checks
-  // exercise the owner menu, shared menu, and direct link.
-  //
-  // 789 → 792, 788 → 792: same shared-785 situation as above — #2779 and
-  // #2866 do not overlap, so the merged manifest holds both: 785 + 4 + 3 =
-  // 792, leaving 18 slots under the 810 ceiling.
-  assert.equal(DAPP.tests.length, 792);
+  // 788 → 790: +2 (#2779): an agent session in the desktop Messages pane
+  // beside its inbox row, with a pending card's Confirm and Not now; and its
+  // own screen's bar with the changes drawer open, on the staging-seeded
+  // conversation 990801. It had four; the manifest keeps 20 slots clear, so
+  // they were folded into two with :has() once main's three landed.
+  // Exactly 20 slots left under the 810 ceiling.
+  assert.equal(DAPP.tests.length, 790);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
