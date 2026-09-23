@@ -87,6 +87,8 @@ function makeBrowse(opts = {}) {
 
   const fetchCalls = [];
   const storage = opts.storage || {};
+  // What the Share row said, for the tests that assert on it.
+  const toasts = [];
   const sandbox = {
     console,
     App: {
@@ -97,11 +99,18 @@ function makeBrowse(opts = {}) {
       navigateHome: () => { chrome.wentHome = (chrome.wentHome || 0) + 1; },
     },
     PlatformUI: {
-      toast: () => {},
+      toast: (message) => { toasts.push(message); },
+      // The shell's clipboard helper; resolves true unless a test says not.
+      copyText: opts.copyText || (async () => true),
       // The kit wrapper runs fn directly when the kit is absent; do the
       // same and record the animation type the level change asked for.
       transition: (fn, o) => { chrome.transitions.push(o?.type); fn(); },
     },
+    // Only when a test hands one in: the default is a browser with no Web
+    // Share API, which is what most desktops are.
+    ...(opts.navigator ? { navigator: opts.navigator } : {}),
+    // public/js/dev-host.js's global, when a test wants the rewrite.
+    ...(opts.resolveDevHost ? { resolveDevHost: opts.resolveDevHost } : {}),
     document: {
       getElementById: (id) => nodes[id] || null,
       querySelector: () => null,
@@ -169,7 +178,7 @@ function makeBrowse(opts = {}) {
   vm.runInContext(BROWSE_SRC, sandbox);
   // The store ./mount.ts plants, with the same initial value browse-store.js
   // ships (which is also the shell's prerendered empty state).
-  const state = { level: 'list', rows: null, empty: null, error: false, detail: null, sort: 'recommended' };
+  const state = { level: 'list', rows: null, empty: null, error: false, detail: null, sort: 'recommended', filter: 'all' };
   sandbox.Browse._store = {
     get: () => state,
     set: (patch) => Object.assign(state, patch),
@@ -185,7 +194,7 @@ function makeBrowse(opts = {}) {
   return {
     Browse: sandbox.Browse, Home: sandbox.__Home, AppCard: sandbox.AppCard,
     state, nodes, fetchCalls, chrome, history, location: sandbox.location,
-    storage, renders,
+    storage, renders, toasts,
   };
 }
 
@@ -567,6 +576,151 @@ test("the screen's <option> list is a faithful copy of Browse.SORTS", () => {
     'the <option> list and the comparators must name the same five orders');
 });
 
+// ── Filter chips: All / Featured / Your apps / New (the prototype's scrDiscover) ──
+
+const DAY = 24 * 60 * 60 * 1000;
+const NOW = Date.parse('2026-09-23T12:00:00Z');
+const ago = (days) => new Date(NOW - days * DAY).toISOString();
+
+test("the chip row is a faithful copy of Browse.FILTERS, in the prototype's order", () => {
+  const { Browse } = makeBrowse();
+  assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label), ['All', 'Featured', 'Your apps', 'New']);
+  // Same reason SORT_OPTIONS is a copy: window.Browse does not exist in the
+  // SSG pass, so the chips carry their own labels.
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const block = src.match(/const FILTER_CHIPS[\s\S]*?\n\];/);
+  assert.ok(block, 'FILTER_CHIPS is still declared in browse-screen.tsx');
+  const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
+    .map((m) => ({ key: m[1], label: m[2] }));
+  assert.deepEqual(copied, Array.from(Browse.FILTERS, (f) => ({ key: f.key, label: f.label })));
+});
+
+test('resolveFilter: anything unrecognised is All, never an empty screen', () => {
+  const { Browse } = makeBrowse();
+  for (const key of ['all', 'featured', 'yours', 'new']) assert.equal(Browse.resolveFilter(key), key);
+  assert.equal(Browse.resolveFilter(' Featured '), 'featured');
+  for (const bad of ['mine', '', null, undefined, 42, 'drop-tables']) {
+    assert.equal(Browse.resolveFilter(bad), 'all', String(bad));
+  }
+});
+
+test('filterApps: each chip admits the set its name promises', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'plain', created_at: ago(90) }),
+    app({ slug: 'curated', featured: true, featured_order: 0, created_at: ago(60) }),
+    app({ slug: 'curated-mine', featured: true, is_favorited: true, created_at: ago(40) }),
+    app({ slug: 'member', is_collaborator: true, created_at: ago(30) }),
+    app({ slug: 'member-hidden', is_collaborator: true, your_apps_hidden: true, created_at: ago(20) }),
+    app({ slug: 'fresh', created_at: ago(3) }),
+  ];
+  const keys = (list) => Array.from(list, (a) => a.slug);
+  assert.deepEqual(keys(Browse.filterApps(apps, 'all', NOW)), keys(apps), 'All is everything');
+  // Featured is the admin's `featured` flag — the one Home's featured lane
+  // reads — and the directory shows the WHOLE set, apps you have included.
+  assert.deepEqual(keys(Browse.filterApps(apps, 'featured', NOW)), ['curated', 'curated-mine']);
+  // Your apps is Home.isYours: added, or a member who has not taken it off
+  // Home — the same predicate as the rows' "Added" state.
+  assert.deepEqual(keys(Browse.filterApps(apps, 'yours', NOW)), ['curated-mine', 'member']);
+  assert.deepEqual(keys(Browse.filterApps(apps, 'new', NOW)), ['fresh'], 'created in the last 14 days');
+  // Pure: the input is untouched and the default key is the current chip.
+  assert.equal(apps.length, 6);
+  Browse._filter = 'featured';
+  assert.deepEqual(keys(Browse.filterApps(apps)), ['curated', 'curated-mine']);
+});
+
+test('New is the last 14 days, or the newest six when nothing is that young', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.NEW_WINDOW_DAYS, 14);
+  assert.equal(Browse.NEW_FALLBACK_COUNT, 6);
+  const keys = (list) => Array.from(list, (a) => a.slug);
+  // The window is inclusive at 14 days and excludes the day after.
+  const edge = [app({ slug: 'd14', created_at: ago(14) }), app({ slug: 'd15', created_at: ago(15) })];
+  assert.deepEqual(keys(Browse.newApps(edge, NOW)), ['d14']);
+  // A quiet fortnight: the chip still answers, with what arrived last, newest
+  // first and capped. Undated rows carry no information and never lead.
+  const old = Array.from({ length: 9 }, (_, i) => app({ slug: `old-${i}`, created_at: ago(30 + i * 10) }))
+    .concat([app({ slug: 'undated', created_at: null })]);
+  assert.deepEqual(keys(Browse.newApps(old, NOW)),
+    ['old-0', 'old-1', 'old-2', 'old-3', 'old-4', 'old-5']);
+  assert.deepEqual(keys(Browse.newApps([], NOW)), [], 'an empty directory is still empty');
+});
+
+test('the chip picks the set, Sort orders it, and the search narrows it', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'f-few', name: 'Chess Few', featured: true, featured_order: 0, active_users: 1 }),
+    app({ slug: 'f-many', name: 'Chess Many', featured: true, featured_order: 1, active_users: 50 }),
+    app({ slug: 'loud', name: 'Chess Loud', active_users: 999 }),
+  ];
+  Browse.setFilter('featured');
+  assert.equal(state.filter, 'featured', 'the chips and #browse-list[data-filter] read the store');
+  assert.deepEqual(slugs(state), ['f-few', 'f-many'], 'Recommended keeps the curated order');
+  Browse.setSort('users');
+  assert.deepEqual(slugs(state), ['f-many', 'f-few'], 'Sort works WITHIN the chip');
+  Browse.setQuery('many', { immediate: true });
+  assert.deepEqual(slugs(state), ['f-many'], 'and the search narrows it further');
+  Browse.setQuery('', { immediate: true });
+  Browse.setFilter('all');
+  assert.deepEqual(slugs(state), ['loud', 'f-many', 'f-few'], 'All brings the rest back, still sorted');
+  assert.equal(state.sort, 'users', 'and switching chips never lost the order');
+});
+
+test('an empty chip says which set is empty', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'plain', name: 'Plain' })];
+  Browse.setFilter('featured');
+  assert.equal(state.empty, 'No featured apps yet.');
+  Browse.setFilter('yours');
+  assert.equal(state.empty, 'Nothing in Your apps yet. Add apps from All.');
+  Browse.setQuery('zzz', { immediate: true });
+  assert.equal(state.empty, 'None of your apps match “zzz”.');
+  Browse.setFilter('featured');
+  assert.equal(state.empty, 'No featured apps match “zzz”.');
+  Browse.setFilter('new');
+  assert.equal(state.empty, 'No new apps match “zzz”.');
+  Browse.setFilter('all');
+  assert.equal(state.empty, 'No apps match “zzz”.', 'All keeps the sentence it always had');
+});
+
+test('the chip is remembered for the session only, and ?filter= seeds the first entry', () => {
+  const { Browse, state, storage } = makeBrowse({ search: '?filter=new' });
+  Browse._load = () => {};
+  Browse.open(null);
+  assert.equal(state.filter, 'new', 'a link lands on its chip');
+  Browse.setFilter('featured');
+  Browse.close();
+  Browse.open(null);
+  assert.equal(state.filter, 'featured',
+    'the choice survives leaving Discover, and the spent link does not override it');
+  assert.equal(Object.keys(storage).some((k) => /filter/i.test(k)), false,
+    'nothing is stored: a reload starts on All');
+  const fresh = makeBrowse();
+  fresh.Browse._load = () => {};
+  fresh.Browse.open(null);
+  assert.equal(fresh.state.filter, 'all');
+  const junk = makeBrowse({ search: '?filter=bananas' });
+  junk.Browse._load = () => {};
+  junk.Browse.open(null);
+  assert.equal(junk.state.filter, 'all');
+});
+
+test('the chips prerender with All pressed, from the store\'s initial value', () => {
+  const src = read('frontend/src/features/apps/browse-store.js');
+  assert.match(src, /filter: 'all',/);
+  // Applied on ENTRY, never during render: location.search does not exist in
+  // the SSG pass.
+  assert.match(BROWSE_SRC, /Browse\._applyInitialSort\(\);\n\s+Browse\._applyInitialFilter\(\);/);
+  const bar = INDEX.slice(INDEX.indexOf('id="browse-search-bar"'), INDEX.indexOf('id="browse-sort-bar"'));
+  const chips = [...bar.matchAll(/<button[^>]*aria-pressed="(true|false)"[^>]*data-filter="([a-z]+)"[^>]*>([^<]+)</g)]
+    .map((m) => `${m[2]}:${m[1]}:${m[3]}`);
+  assert.deepEqual(chips, ['all:true:All', 'featured:false:Featured', 'yours:false:Your apps', 'new:false:New']);
+  assert.match(bar, /id="browse-filter-chips" role="group" aria-label="Filter apps"/);
+  assert.match(INDEX, /id="browse-list"[^>]*data-filter="all"/);
+  // The language's own filter chip, not a hand-rolled one.
+  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /from '@\/components\/ui\/chip'/);
+});
+
 // ── Search covers EVERY visible app (home's is scoped to yours) ────
 
 test('visibleApps: filters on Home.matchesQuery over the whole list', () => {
@@ -926,6 +1080,100 @@ test('the detail page keeps its action closures off the store, reachable by inde
   assert.equal(ran[1][1], btn, 'the clicked element reaches the item');
   Browse._runDetailAction(99, btn);
   assert.equal(ran.length, 2, 'a stale index is inert, never a crash');
+});
+
+// ── Share on the app's page (the prototype's About sheet: More, then Share) ──
+
+test("shareUrlFor: the app's public link, behind the same gate as the menu's Share app", () => {
+  const { Browse } = makeBrowse();
+  const url = 'https://chess-1a2b.apps.example';
+  // The link the mark menu's About > "Share app" hands out is the running
+  // app's own `url` (features/dialogs/share.tsx reads AppView.appData.url),
+  // and it is drawn only on `canShare`: running, with a URL, never the
+  // platform itself. The directory reads the same field off the row.
+  assert.equal(Browse.shareUrlFor(app({ url })), url);
+  assert.equal(Browse.shareUrlFor(app({ url, status: 'error' })), null, 'not running');
+  assert.equal(Browse.shareUrlFor(app({ url, status: 'creating' })), null);
+  assert.equal(Browse.shareUrlFor(app({ url: null })), null, 'no public link to give');
+  assert.equal(Browse.shareUrlFor(app({ url, self_hosted: true })), null,
+    'the platform row has no per-slug app URL');
+  assert.equal(Browse.shareUrlFor(null), null);
+  // Through the same dev-host rewrite the share dialog applies, so a phone on
+  // the LAN is handed a link it can open.
+  const lan = makeBrowse({ resolveDevHost: (u) => u.replace('localhost', '192.168.1.7') });
+  assert.equal(lan.Browse.shareUrlFor(app({ url: 'http://localhost:4100' })), 'http://192.168.1.7:4100');
+});
+
+test('the page describes a Share row only when there is a link to share', () => {
+  const { Browse, Home, state } = makeBrowse();
+  Home.menuItemsFor = () => [{ key: 'fork', label: 'Fork this app', run: () => {} }];
+  Browse._apps = [app({ slug: 'live', url: 'https://live.apps.example' }), app({ slug: 'down', status: 'error', url: null })];
+  Browse.showDetail('live');
+  assert.equal(state.detail.canShare, true);
+  assert.deepEqual(state.detail.actions.map((a) => a.label), ['Fork this app'],
+    'Share is its own row, not one of the home card menu\'s items');
+  assert.equal(JSON.stringify(state.detail).includes('live.apps.example'), true, 'the app record rides along');
+  Browse.showDetail('down');
+  assert.equal(state.detail.canShare, false);
+  // …and the component leads the action card with it, as its own button.
+  const detailSrc = read('frontend/src/features/apps/browse-detail.tsx');
+  assert.match(detailSrc, /\{view\.actions\.length \|\| view\.canShare \? \(/);
+  assert.match(detailSrc, /id="browse-detail-share"[\s\S]{0,600}title="Share"[\s\S]{0,120}onClick=\{\(\) => controller\(\)\?\.shareDetailApp\(view\.app\)\}/);
+  assert.ok(detailSrc.indexOf('id="browse-detail-share"') < detailSrc.indexOf('view.actions.map('),
+    'Share comes first, as in the prototype\'s More list');
+});
+
+test('Share uses the Web Share API where there is one', async () => {
+  const shared = [];
+  const copied = [];
+  const { Browse, toasts } = makeBrowse({
+    navigator: { share: async (data) => { shared.push(data); }, canShare: () => true },
+    copyText: async (text) => { copied.push(text); return true; },
+  });
+  await Browse.shareDetailApp(app({ slug: 'chess', name: 'Chess Arena', url: 'https://chess.apps.example' }));
+  assert.deepEqual(JSON.parse(JSON.stringify(shared)),
+    [{ title: 'Chess Arena', url: 'https://chess.apps.example' }]);
+  assert.deepEqual(copied, [], 'the share sheet is the whole answer');
+  assert.deepEqual(toasts, []);
+});
+
+test('a dismissed share sheet is an answer, not a failure: no copy, no toast', async () => {
+  const copied = [];
+  const { Browse, toasts } = makeBrowse({
+    navigator: { share: async () => { const e = new Error('dismissed'); e.name = 'AbortError'; throw e; } },
+    copyText: async (text) => { copied.push(text); return true; },
+  });
+  await Browse.shareDetailApp(app({ url: 'https://x.apps.example' }));
+  assert.deepEqual(copied, []);
+  assert.deepEqual(toasts, []);
+});
+
+test('without the Web Share API it copies the link and says so', async () => {
+  const copied = [];
+  const { Browse, toasts } = makeBrowse({
+    copyText: async (text) => { copied.push(text); return true; },
+  });
+  await Browse.shareDetailApp(app({ url: 'https://x.apps.example' }));
+  assert.deepEqual(copied, ['https://x.apps.example']);
+  assert.deepEqual(toasts, ['Link copied']);
+
+  // A share target that refuses (not a dismissal) falls through to the copy.
+  const refused = makeBrowse({
+    navigator: { share: async () => { throw new Error('NotAllowedError'); } },
+    copyText: async () => true,
+  });
+  await refused.Browse.shareDetailApp(app({ url: 'https://x.apps.example' }));
+  assert.deepEqual(refused.toasts, ['Link copied']);
+
+  // …and a clipboard that refuses says THAT, rather than claiming a copy.
+  const noClip = makeBrowse({ copyText: async () => false });
+  await noClip.Browse.shareDetailApp(app({ url: 'https://x.apps.example' }));
+  assert.deepEqual(noClip.toasts, ['Couldn’t copy the link']);
+
+  // Nothing to share, nothing happens.
+  const none = makeBrowse({ copyText: async () => { throw new Error('should not copy'); } });
+  await none.Browse.shareDetailApp(app({ url: null }));
+  assert.deepEqual(none.toasts, []);
 });
 
 test('showDetail / showList publish the level, which drives both containers', () => {

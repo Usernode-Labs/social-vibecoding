@@ -4,9 +4,12 @@
 //
 // THE UI OVERHAUL narrowed what this canvas holds. Discover, Challenges and
 // Create app used to be draggable WIDGETS placed on it alongside the app
-// tiles; they are fixed sections below the grid now (see
+// tiles; Discover and Challenges are fixed sections below the grid now (see
 // features/home/index.tsx), so every item here is a 1x1 app tile, there is one
 // column count instead of two, and the drag applies to app tiles alone.
+// Create came back INTO the grid as its trailing tile (the prototype's
+// scrHome), but not as an item: its cell is derived per paint, never stored
+// or dragged — see the note at the end of render().
 //
 // Moved verbatim from public/js/home.js into the bundle by #1083 chunk F step 4
 // (see features/home/index.tsx). Two things changed and nothing else:
@@ -43,9 +46,9 @@ const Home = {
   // keep their ordinary quota because they cannot use the create route's
   // full-admin bypass.
   //
-  // It gates the create WIDGET's appearance only, never whether the widget
-  // exists: the widget is on every home screen, in the layout, for every
-  // account (see HomePanels.renderCreatePanel for why).
+  // It gates the Create TILE's treatment only, never whether the tile
+  // exists: the tile ends the launcher grid on every home screen, for every
+  // account (see the note at the end of render() and ./create-tile.tsx).
   //
   // ?shot=create-enabled and ?shot=create-disabled pin the two treatments.
   // Proposal checks run as a zero-quota, view-only admin, so neither state
@@ -152,7 +155,7 @@ const Home = {
         } else {
           gridStore.set({
             ready: true, view: 'grid', rowTemplate: '', items: [],
-            resultsHeading: null, emptyQuery: null,
+            resultsHeading: null, emptyQuery: null, create: null,
             notice: {
               text: "You're offline. Apps you've opened before will appear here once this "
                 + 'device has loaded them.',
@@ -165,7 +168,9 @@ const Home = {
       }
       gridStore.set({
         ready: true, view: 'grid', rowTemplate: '', items: [],
-        resultsHeading: null, emptyQuery: null,
+        // No Create tile beside a load notice: the notice is the grid's whole
+        // answer (offline, or the error card and its Retry) until apps load.
+        resultsHeading: null, emptyQuery: null, create: null,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
         notice: { text: "Couldn't load your apps", tone: 'error' },
@@ -420,9 +425,9 @@ const Home = {
   // ── How much of the screen the launcher may take ───────────────────
   //
   // The collapsed grid used to be two rows at every viewport, full stop. Two
-  // is the right FLOOR — a phone has three fixed sections under this grid and
-  // an eight-row canvas would push Discover, Challenges and Create app off the
-  // bottom, which is the failure the four-area design exists to prevent — but
+  // is the right FLOOR — a phone has two fixed sections under this grid and
+  // an eight-row canvas would push Discover and Challenges off the bottom,
+  // which is the failure the fixed-area design exists to prevent — but
   // it was also the ceiling, so a tall desktop window drew two rows of tiles,
   // a "Show all" button, and then a lot of nothing before the next section.
   //
@@ -550,8 +555,9 @@ const Home = {
   // reconciles a stored layout against.
   //
   // It used to include the widgets they had not hidden. THE UI OVERHAUL made
-  // those three fixed sections below the grid, so they are not items — and
-  // repair() drops any that a pre-overhaul stored layout still carries.
+  // those fixed sections below the grid (and Create, later, the grid's
+  // derived trailing tile), so they are not items — and repair() drops any
+  // that a pre-overhaul stored layout still carries.
   presentIds() {
     const { yours } = Home.partitionApps(Home._apps || []);
     const ids = yours.map((a) => `app:${a.slug}`);
@@ -718,13 +724,17 @@ const Home = {
     // Non-zero only when the collapsed grid is holding tiles back; the count
     // is every app the viewer has, which is what the button offers to show.
     let moreCount = 0;
+    // The trailing "Create an app" tile — null in the search view, which is a
+    // transient list of matches rather than the launcher.
+    let create = null;
 
     if (query) {
       // Active search over YOUR apps: one flat grid of matches. Section
       // header, widget strip and drag affordance all step aside until
       // the query clears — reorder is only meaningful against the
-      // canonical ordering. The three fixed sections below the grid are
-      // untouched by a search: they are outside #app-list.
+      // canonical ordering. The two fixed sections below the grid are
+      // untouched by a search: they are outside #app-list. The Create tile
+      // steps aside with the rest: it ends the launcher, not a result list.
       //
       view = 'search';
       const matches = Home.filterApps(yours, query);
@@ -747,10 +757,10 @@ const Home = {
       // is still eight rows, a drag can still place a tile on any of them, and
       // "Show all" below reveals the rest for the rest of the visit.
       //
-      // A cap exists at all because the home screen has three fixed sections
-      // under this grid. An eight-row canvas would push Discover, Challenges
-      // and Create app off the bottom of a phone for anyone with a lot of apps
-      // — which is the failure the whole four-area design is meant to prevent.
+      // A cap exists at all because the home screen has two fixed sections
+      // under this grid. An eight-row canvas would push Discover and
+      // Challenges off the bottom of a phone for anyone with a lot of apps —
+      // which is the failure the whole fixed-area design is meant to prevent.
       // Reserving the bottom THIRD is what protects them; two flat rows both
       // over-protected a tall window (two rows of tiles and then a gulf) and
       // said nothing about a short one. See Home.visibleRowBudget.
@@ -761,7 +771,12 @@ const Home = {
       // — see HomeLayout.defaultRowBound. On a packed canvas the two are the
       // same number; on one with a hole on row 1 the old form collapsed the
       // two-row default down to a single visible row of tiles.
-      const rowBound = HomeLayout.defaultRowBound(layout, cols, rowBudget);
+      //
+      // …with the trailing Create tile counted in (HomeLayout.
+      // collapsedRowBound): when a collapsed grid's last shown row is full,
+      // the tile would start a row past the budget, so the window comes in
+      // by a row of apps and the tile takes the row that frees.
+      const rowBound = HomeLayout.collapsedRowBound(layout, cols, rowBudget);
       // AN ADD THAT LANDS BELOW THE FOLD OPENS THE GRID (#1567). The whole
       // point of repainting on add is that the viewer SEES the app arrive;
       // a collapsed grid that holds it back turns the tick into the only
@@ -793,6 +808,30 @@ const Home = {
       moreCount = hiddenRows ? (canvas.length + HomeLayout.overflowItems(layout).length) : 0;
       // One-shot: it described this paint.
       Home._revealSlug = null;
+      // THE GRID ENDS WITH "CREATE AN APP" (the prototype's scrHome, whose
+      // Your apps grid closes on a dashed Create tile). It replaced the
+      // separate trailing "Create app" section: a launcher's own last cell is
+      // where "make something" lives, one tap away without scrolling past
+      // Discover and Challenges.
+      //
+      // Its cell is DERIVED from what this paint draws — the one straight
+      // after the last tile (HomeLayout.trailingCell) — so it ends the
+      // collapsed grid and, after "Show all N apps", the expanded one. It is
+      // not in the layout, so it is never dragged, stored or displaced; a drop
+      // onto its cell lands in an empty cell and the next paint moves it on.
+      // It FLOWS instead (no placement) when there is no cell to follow: an
+      // empty launcher, where it comes after the "No apps added yet" note, and
+      // overflow tiles, which have no cell of their own either.
+      //
+      // Present for EVERY account: `canCreate` decides its treatment, never
+      // its presence — the locked tile opens the dialog that prints the quota.
+      const placed = items.filter((it) => it.placement).map((it) => it.placement);
+      const flows = !placed.length || items.some((it) => !it.placement);
+      create = {
+        enabled: canCreate,
+        hint: Home.CREATE_DISABLED_HINT,
+        placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
+      };
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -804,7 +843,7 @@ const Home = {
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null });
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
     // its own section, because a full-width flow item cannot coexist with the
@@ -812,7 +851,7 @@ const Home = {
     // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
     // that function attaches listeners, it writes no markup.
     Home._renderAppsMore(moreCount);
-    // Discover / Challenges / Create app, painted from the widgets cache
+    // Discover / Challenges, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
     // this call is here so a first paint fills them at the same moment.
@@ -950,9 +989,9 @@ const Home = {
     const [w, h] = HomeLayout.sizeOf(item, cols);
     const placement = overflow ? null : { col: item.col, row: item.row, w, h };
     // The `item.type === 'widget'` branch that planted a `[data-panel-slot]`
-    // host is gone with the UI overhaul: Discover, Challenges and Create app
-    // are fixed sections below the grid now, so every item on this canvas is
-    // an app tile.
+    // host is gone with the UI overhaul: Discover and Challenges are fixed
+    // sections below the grid now, and Create is a derived trailing tile
+    // (render()), so every ITEM on this canvas is an app tile.
     const app = (Home._apps || []).find((a) => a.slug === item.slug);
     if (!app) return null;
     return { kind: 'card', placement, app: Home.appView(app) };
@@ -1301,7 +1340,7 @@ const Home = {
 
   // Per-visit only, like the widgets' own expand flag: a viewer who opened
   // the full grid once should not have every later visit start scrolled past
-  // three sections, and a preference this cheap is not worth a write.
+  // two sections, and a preference this cheap is not worth a write.
   // Whether "Show all N apps" has been pressed this visit. Per-visit state,
   // deliberately not persisted: the collapsed grid is the contract, and an
   // expansion the viewer forgot about would quietly eat the fold forever —
@@ -1338,7 +1377,7 @@ const Home = {
   // Every row is one app-grid cell EXCEPT one kind: a row with NOTHING in it
   // is half a cell. It is still exactly where the viewer left it and still a
   // cell they can drop into — it just stops reserving a whole tile to be
-  // empty, which is what keeps the three fixed sections below the grid from
+  // empty, which is what keeps the two fixed sections below the grid from
   // being pushed down by a viewer's deliberate gaps.
   //
   // A second kind used to qualify: a row a FIT widget owned outright sized to
@@ -2160,13 +2199,15 @@ const Home = {
     `;
   },
 
-  // NOTE: renderCreateTile() is gone. "Create an app" is a fixed SECTION now
-  // (features/home/panels/create.tsx), present on every home screen for every
-  // account — dimmed and self-explaining where the viewer has no app quota,
-  // rather than swapped for a hint paragraph in a trailing section. Its button
-  // carries its own handler; CREATE_DISABLED_HINT below is still the one
-  // wording of the locked case, shared by the tooltip and the ⋮ menu's inert
-  // note. A tap opens the create dialog, where the exact quota is shown.
+  // NOTE: renderCreateTile() is gone. "Create an app" is the launcher grid's
+  // trailing TILE now (./create-tile.tsx, placed by render() — the prototype's
+  // scrHome), present on every home screen for every account — in quieter
+  // ink, and self-explaining, where the viewer has no app quota. It was a fixed section
+  // below Challenges for a while; the tile is the same button at the end of
+  // the grid it belongs to. It carries its own handler; CREATE_DISABLED_HINT
+  // below is still the one wording of the locked case, which render() hands
+  // the tile for its label. A tap opens the create dialog, where the exact
+  // quota is shown.
 
   // ── Homeroom widget section (iOS in-app only) ──────────────────────
   //
@@ -4526,10 +4567,10 @@ const Home = {
   // without. Toggle the CTA button on/off in place rather than
   // rebuilding the static DOM, so the surrounding "No apps yet"
   // copy stays put.
-  // The one wording of "you can't create apps right now". The create WIDGET
+  // The one wording of "you can't create apps right now". The Create tile
   // is on every home screen regardless of quota, so this string is what the
-  // disabled tile shows in its tooltip and the inert note in its ⋮ menu. The
-  // dialog it opens carries the exact used-of-limit numbers.
+  // locked tile announces in its tooltip and label. The dialog it opens
+  // carries the exact used-of-limit numbers.
   CREATE_DISABLED_HINT: 'View your app allowance or request more slots.',
 
   // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
@@ -4537,7 +4578,7 @@ const Home = {
   // not leave two listeners on it, then a click handler bound to the clone.
   //
   // Its one caller was `HomePanels._wire`, and its one matching element is now
-  // rendered by features/home/panels/create.tsx. Both halves of what it did
+  // rendered by features/home/create-tile.tsx. Both halves of what it did
   // stop applying there: React keeps the element across paints, so there are
   // no stale listeners to clear, and the clone-and-replace is a structural DOM
   // write inside a subtree React owns — the exact failure the ownership rule

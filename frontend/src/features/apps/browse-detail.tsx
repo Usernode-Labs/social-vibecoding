@@ -21,6 +21,11 @@
  *    flip its label in place exactly as it does inside the home card's
  *    popover.
  *
+ * SHARE leads that card (the prototype's About sheet lists "More": Share,
+ * Add to home screen, Fork this app). It is not one of Home.menuItemsFor's
+ * items, so it is its own row: a flag on the descriptor (`canShare`, the same
+ * gate the mark menu's "Share app" uses) and Browse.shareDetailApp behind it.
+ *
  * INITIAL RENDER: `detail === null` until the detail level is entered, and
  * that renders nothing — the empty, hidden #browse-detail the hand-written
  * shell shipped and the SSG prerender has to reproduce.
@@ -74,6 +79,8 @@ export type DetailView =
     openLabel: string;
     isAdded: boolean;
     favLabel: string;
+    /** The app has a public link to share (Browse.shareUrlFor). */
+    canShare?: boolean;
     actions: ActionView[];
     contributors: ContributorsView;
   };
@@ -278,8 +285,22 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
         >{view.favLabel}</button>
       </div>
 
-      {view.actions.length ? (
+      {view.actions.length || view.canShare ? (
         <GroupedList className={CARD_SPACING}>
+          {view.canShare ? (
+            <ListRow
+              as="button"
+              id="browse-detail-share"
+              inset="text"
+              className="browse-detail-share transition-colors hover:bg-zinc-500/5"
+              // The action rows' own weight and ink (see them just below):
+              // Share is one more entry in the same list, not a headline.
+              titleClassName="font-normal text-zinc-700 dark:text-zinc-200"
+              tooltip="Share a link to this app"
+              title="Share"
+              onClick={() => controller()?.shareDetailApp(view.app)}
+            />
+          ) : null}
           {view.actions.map((a) => (
             <ListRow
               key={a.index}

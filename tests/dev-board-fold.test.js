@@ -1106,7 +1106,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // This branch counted them against an older shared base; main reached 751
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 753);
+  //
+  // 753 → 756: +3 (the prototype-gaps proposal, stream E): Discover's filter
+  // chips, the Featured chip's filtering (?filter=featured), and Share on an
+  // app's page. The two Create checks were RE-POINTED at the launcher grid's
+  // trailing tile rather than added, so they do not count. 756 leaves 34
+  // slots under the 790 ceiling. The other streams of the same proposal add
+  // their own; the merge reconciles the sum.
+  assert.equal(DAPP.tests.length, 756);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

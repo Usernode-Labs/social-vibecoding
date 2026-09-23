@@ -4142,19 +4142,32 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    count capsule and the category well that lived here are retired with the
    design they drew. */
 
-/* ── Create-app widget ──────────────────────────────────────
-   The whole block is one button, drawn entirely in utilities in
-   frontend/src/features/home/panels/create.tsx: the dashed placeholder card
-   the Challenges area's locked slot uses, in the blue accent while creation is
-   available and in that card's neutrals at the limit. The SVG dashed outlines
-   that lived here (a data-URL rect per colour, per hover, per theme) and the
-   two-line clamp on the label are retired with the tile they drew.
-   `.home-create-tile`, `.home-create-label` and `.home-create-widget--disabled`
-   stay in the markup as hooks the declared checks and tests select on. */
-.home-create-widget {
-  min-width: 0;
+/* ── The Create tile: the launcher grid's last cell ─────────────
+   "Create an app" is the grid's trailing tile (the prototype's scrHome), drawn
+   entirely in utilities in frontend/src/features/home/create-tile.tsx: an app
+   card's cell with a dashed, unfilled face and a muted label. It replaced the
+   full-width Create section that sat below Challenges, and the
+   `.home-create-widget` wrapper went with that section.
+
+   Here are only the three things a utility cannot say, and each mirrors a rule
+   the app cards already carry (the `#app-list > .app-card` rules): the tile
+   sits ABOVE the drag overlay, at the top of its row, and it is transparent to
+   hit-testing for the span of a lift. That last one is load-bearing for the
+   same reason it is on the cards — the overlay cell under the tile has to stay
+   a drop target, and a drop there is an ordinary drop into an empty cell (the
+   tile is not in the layout; the next paint moves it along). It also fades
+   while a drag is live: it is the one thing on the canvas that does not move
+   with the preview, and at full strength it read as a tile being displaced. */
+#app-list > .home-create-tile {
+  position: relative;
+  z-index: 1;
+  align-self: start;
 }
-/* Keyboard focus draws the ring the challenge cards above it draw
+#app-list.un-reordering > .home-create-tile {
+  pointer-events: none;
+  opacity: 0.4;
+}
+/* Keyboard focus draws the ring the challenge cards draw
    (`.home-challenge-card[role="button"]:focus-visible`). */
 .home-create-btn:focus-visible {
   outline: 2px solid var(--accent);
