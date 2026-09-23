@@ -55,6 +55,7 @@ test('run diagnostics are private to the author or app manager, available live, 
     trace_summary: {
       replayPasses: [{ pass: 1, durationMs: 20 }], replayRuntime: 'kubernetes', agentAttempts: 1,
       agentDispatches: [{ requestedBackend: 'codex_openrouter', requestedModel: 'glm-4', backend: 'claude_code', model: 'claude-sonnet', fallbackReason: 'model_without_tools', outcome: 'completed' }],
+      agentActivity: { budgetMs: 240000, events: [{ atMs: 1200, kind: 'agent_deadline' }] },
       lastReplayEvent: { pass: 2, type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' },
       replayEvents: [{ pass: 2, type: 'action_started', actionId: 'open-settings', side: 'head' }],
       planSource: 'hosted_planner', tokenUsage: { inputTokens: 123 }, artifactBytes: 345,
@@ -110,6 +111,7 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.deepEqual(diagnostics.trace.replayPasses, [{ pass: 1, durationMs: 20 }]);
   assert.equal(diagnostics.trace.agentDispatches[0].backend, 'claude_code');
   assert.equal(diagnostics.trace.agentDispatches[0].fallbackReason, 'model_without_tools');
+  assert.equal(diagnostics.trace.agentActivity.events[0].kind, 'agent_deadline');
   assert.equal(diagnostics.trace.lastReplayEvent.pass, 2);
   assert.equal(diagnostics.trace.replayEvents[0].actionId, 'open-settings');
   assert.equal(diagnostics.trace.replayRuntime, 'kubernetes');

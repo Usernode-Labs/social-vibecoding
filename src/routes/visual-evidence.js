@@ -187,6 +187,7 @@ function visualEvidenceRoutes(config) {
           replayEvents: trace.replayEvents || [],
           agentAttempts: trace.agentAttempts || 0,
           agentDispatches: trace.agentDispatches || [],
+          agentActivity: trace.agentActivity || null,
           repairCount: trace.repairCount || 0,
           planSource: trace.planSource || null,
           tokenUsage: trace.tokenUsage || null,

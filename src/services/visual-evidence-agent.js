@@ -111,6 +111,11 @@ function resultThreadId(result, backend) {
   return result?.sessionId || result?.initSessionId || null;
 }
 
+function reportDiagnostic(options, event) {
+  try { options.onEvidenceDiagnostic?.(event); }
+  catch { /* Diagnostics must not change an evidence turn. */ }
+}
+
 async function withDispatchTimeout(promise, { timeoutMs, onTimeout, suspendedMs = () => 0 }) {
   const bounded = Math.max(1, Number(timeoutMs) || 1);
   const startedAt = Date.now();
@@ -160,6 +165,8 @@ async function ensureEvidenceWorker(session, { onProgress = null, workerService 
 async function dispatchClaude(config, options, deps) {
   const { session, runId, origins, authTokens, onProgress, resumeThreadId } = options;
   const model = models.resolve(session.model || session.agent_model);
+  reportDiagnostic(options, { kind: 'backend_selected', backend: 'claude_code' });
+  reportDiagnostic(options, { kind: 'turn_start' });
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'evidence',
@@ -178,18 +185,31 @@ async function dispatchClaude(config, options, deps) {
     telemetryCorrelationId: runId,
     telemetryAttemptNumber: 1,
     onProgress,
+    onEvidenceDiagnostic: options.onEvidenceDiagnostic,
   }), {
     timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 240_000,
-    onTimeout: () => deps.workerService.stopTurn?.(session.id),
+    onTimeout: async () => {
+      reportDiagnostic(options, { kind: 'agent_deadline' });
+      reportDiagnostic(options, { kind: 'worker_stop_requested' });
+      try {
+        await deps.workerService.stopTurn?.(session.id);
+        reportDiagnostic(options, { kind: 'worker_stop_returned' });
+      } catch (error) {
+        reportDiagnostic(options, { kind: 'worker_stop_returned', outcome: 'error' });
+        throw error;
+      }
+    },
     suspendedMs: options.suspendedMs,
   }); }
   catch (error) {
+    reportDiagnostic(options, { kind: 'turn_end', outcome: 'error' });
     if (error && typeof error === 'object') {
       error.evidenceBackend = 'claude_code';
       error.evidenceModel = model;
     }
     throw error;
   }
+  reportDiagnostic(options, { kind: 'turn_end', outcome: failedResult(result) ? 'error' : 'ok' });
   if (failedResult(result)) {
     const error = new VisualEvidenceAgentError(
       'evidence_agent_failed',
@@ -210,6 +230,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
     ? (session.agent_thread_id || null)
     : resumeThreadId;
   let lastResult = null;
+  reportDiagnostic(options, { kind: 'backend_selected', backend: 'codex_openrouter' });
 
   for (let attemptNumber = 1; attemptNumber <= 2; attemptNumber += 1) {
     let attempt;
@@ -240,6 +261,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
     let result = null;
     let dispatchError = null;
     try {
+      reportDiagnostic(options, { kind: 'turn_start' });
       result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
         mode: 'evidence',
         prompt: promptFor({ repair: options.repairAttempt === 1 }),
@@ -260,9 +282,20 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
         journalPath: attempt.journal,
         telemetryComponent: 'visual_evidence_agent',
         onProgress,
+        onEvidenceDiagnostic: options.onEvidenceDiagnostic,
       }), {
         timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 240_000,
-        onTimeout: () => deps.workerService.stopTurn?.(session.id),
+        onTimeout: async () => {
+          reportDiagnostic(options, { kind: 'agent_deadline' });
+          reportDiagnostic(options, { kind: 'worker_stop_requested' });
+          try {
+            await deps.workerService.stopTurn?.(session.id);
+            reportDiagnostic(options, { kind: 'worker_stop_returned' });
+          } catch (error) {
+            reportDiagnostic(options, { kind: 'worker_stop_returned', outcome: 'error' });
+            throw error;
+          }
+        },
         suspendedMs: options.suspendedMs,
       });
       lastResult = result;
@@ -270,6 +303,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
       dispatchError = error;
       result = error?.turnResult || null;
     }
+    reportDiagnostic(options, { kind: 'turn_end', outcome: dispatchError || failedResult(result) ? 'error' : 'ok' });
 
     await deps.agentTurn.completeCodexAttempt({
       pool,
@@ -314,7 +348,9 @@ async function dispatch(config, options, injected = {}) {
   if (!pool || !session?.id || !options.runId) {
     throw new VisualEvidenceAgentError('invalid_evidence_dispatch', 'Evidence dispatch requires a session, pool, and run.');
   }
+  reportDiagnostic(options, { kind: 'worker_prepare_start' });
   await ensureEvidenceWorker(session, { onProgress: options.onProgress, workerService: deps.workerService });
+  reportDiagnostic(options, { kind: 'worker_prepare_end' });
 
   if (session.agent_backend === 'codex_openrouter' && options.forceBackend !== 'claude_code') {
     const runtime = await deps.agentTurn.resolveCodexRuntimeContext({

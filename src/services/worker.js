@@ -401,6 +401,65 @@ function safeResultSubtype(value) {
   return /^[a-z][a-z0-9_]{0,63}$/.test(subtype) ? subtype : null;
 }
 
+// Evidence diagnostics deliberately record only a fixed vocabulary. Page
+// text, tool arguments/results, URLs, provider messages and journal lines can
+// contain private app data or credentials and must never enter a run trace.
+const EVIDENCE_DIAGNOSTIC_TOOLS = new Set([
+  'evidence_get_context', 'evidence_reset_side', 'evidence_run_plan',
+  'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
+  'browser_take_screenshot', 'browser_click', 'browser_type',
+  'browser_fill_form', 'browser_press_key', 'browser_select_option',
+  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_console_messages', 'browser_network_requests', 'browser_tabs',
+  'browser_close',
+]);
+const EVIDENCE_DIAGNOSTIC_PHASES = new Set([
+  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
+  'evidence_mcp_ready', 'claude', 'agent', 'done',
+]);
+
+function evidenceDiagnosticTool(name) {
+  const parts = String(name || '').split(/__|[./]/);
+  const tool = parts.at(-1);
+  if (!EVIDENCE_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
+  const server = parts.includes('browser_member') ? 'member'
+    : parts.includes('browser_admin') ? 'admin' : null;
+  return { tool, ...(server ? { persona: server } : {}) };
+}
+
+function emitEvidenceDiagnostic(state, event) {
+  if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
+  try { state.evidenceDiagnosticObserver(event); }
+  catch { /* Diagnostics must never affect the worker turn. */ }
+}
+
+function observeEvidenceTool(state, { phase, id, name, failed = false }) {
+  if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
+  const key = id == null ? null : String(id);
+  const starts = state.evidenceDiagnosticStarts || (state.evidenceDiagnosticStarts = new Map());
+  const completed = state.evidenceDiagnosticCompleted || (state.evidenceDiagnosticCompleted = new Set());
+  if (phase === 'start') {
+    if (key && starts.has(key)) return;
+    const sequence = (state.evidenceDiagnosticSequence || 0) + 1;
+    state.evidenceDiagnosticSequence = sequence;
+    const safeTool = evidenceDiagnosticTool(name);
+    if (key) starts.set(key, { sequence, ...safeTool });
+    emitEvidenceDiagnostic(state, { kind: 'tool_start', sequence, ...safeTool });
+    return;
+  }
+  if (key && completed.has(key)) return;
+  if (key) completed.add(key);
+  const prior = key ? starts.get(key) : null;
+  if (key) starts.delete(key);
+  emitEvidenceDiagnostic(state, {
+    kind: 'tool_end',
+    sequence: prior?.sequence || null,
+    ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}) }
+      : evidenceDiagnosticTool(name)),
+    outcome: failed ? 'error' : 'ok',
+  });
+}
+
 function noteFirstAgentOutput(state) {
   if (!state || state.timeToFirstOutputMs != null) return;
   if (Number.isFinite(state.providerStartedMs)) {
@@ -417,6 +476,14 @@ function collectionCount(value) {
   if (Array.isArray(value)) return value.length;
   if (value && typeof value === 'object') return Object.keys(value).length;
   return null;
+}
+
+function evidenceToolAvailable(tools, toolName) {
+  if (collectionCount(tools) == null) return null;
+  const names = Array.isArray(tools)
+    ? tools.map((item) => typeof item === 'string' ? item : item?.name)
+    : Object.keys(tools);
+  return names.some((name) => name === toolName || name === `mcp__evidence__${toolName}`);
 }
 
 function addObservedValue(set, value) {
@@ -501,6 +568,10 @@ function noteCodexToolCompletion(state, event) {
 
 function applyStreamEvent(event, onProgress, state) {
   liveAgentSpend.observe(state.liveSpend, event);
+  if (event?.type === 'stream_event' && !state.evidenceFirstStreamSeen) {
+    state.evidenceFirstStreamSeen = true;
+    emitEvidenceDiagnostic(state, { kind: 'first_stream' });
+  }
   if (state.hostSessionId && state.liveSpendEnabled) {
     workerProgress.setSpend(state.hostSessionId, liveAgentSpend.snapshot(state.liveSpend));
   }
@@ -543,7 +614,22 @@ function applyStreamEvent(event, onProgress, state) {
     state.initSessionId = event.session_id;
     state.sessionId = state.sessionId || event.session_id;
   }
+  if (systemEvent?.type === 'system' && systemEvent.subtype === 'init'
+      && !state.evidenceProviderInitSeen) {
+    state.evidenceProviderInitSeen = true;
+    emitEvidenceDiagnostic(state, {
+      kind: 'provider_init',
+      mcpServerCount: collectionCount(systemEvent.mcp_servers ?? systemEvent.mcpServers),
+      toolDefinitionCount: collectionCount(systemEvent.tools),
+      evidenceGetContextAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_get_context'),
+      evidenceRunPlanAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_run_plan'),
+    });
+  }
   if (event.type === 'assistant' && event.message?.content) {
+    if (!state.evidenceFirstOutputSeen) {
+      state.evidenceFirstOutputSeen = true;
+      emitEvidenceDiagnostic(state, { kind: 'first_output' });
+    }
     if (observeDiagnostics) {
       noteFirstAgentOutput(state);
       state.providerTurnCount = (state.providerTurnCount || 0) + 1;
@@ -577,8 +663,10 @@ function applyStreamEvent(event, onProgress, state) {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name });
       } else if (block.type === 'tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name });
         const input = block.input || {};
         // Track id → label mapping so the matching tool_result can
         // display "⎿ <label>: <summary>" instead of just "⎿ done".
@@ -606,6 +694,11 @@ function applyStreamEvent(event, onProgress, state) {
     // the user see CC is progressing through its plan.
     for (const block of event.message.content) {
       if (block.type !== 'tool_result') continue;
+      observeEvidenceTool(state, {
+        phase: 'end', id: block.tool_use_id,
+        name: state.toolUses.get(block.tool_use_id)?.name,
+        failed: block.is_error === true,
+      });
       if (observeDiagnostics) {
         const resultKey = block.tool_use_id ? `claude:${block.tool_use_id}` : null;
         const firstResult = !resultKey || !state.telemetryCompletedItemIds.has(resultKey);
@@ -625,6 +718,9 @@ function applyStreamEvent(event, onProgress, state) {
       }
     }
   } else if (event.type === 'result') {
+    emitEvidenceDiagnostic(state, {
+      kind: 'provider_result', outcome: event.is_error ? 'error' : 'ok',
+    });
     state.lastResultText = event.result || state.lastResultText;
     applyClaudeResultUsage(event.usage, state);
     state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
@@ -674,6 +770,10 @@ function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
   if (line.startsWith('__USERNODE_PHASE__')) {
     state.phase = line.replace('__USERNODE_PHASE__', '').trim();
+    const phase = state.phase.split(/[\s(]/, 1)[0];
+    if (EVIDENCE_DIAGNOSTIC_PHASES.has(phase)) {
+      emitEvidenceDiagnostic(state, { kind: 'runner_phase', phase });
+    }
     onProgress(`[${state.phase}]`);
     return;
   }
@@ -707,6 +807,10 @@ function parseLine(line, onProgress, state) {
       else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
     }
     state.resultSeen = true;
+    const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
+    emitEvidenceDiagnostic(state, {
+      kind: 'runner_result', outcome: terminalExit === 0 ? 'ok' : 'error',
+    });
     return;
   }
   if (line.startsWith('__USERNODE_ERROR__')) {
@@ -720,6 +824,7 @@ function parseLine(line, onProgress, state) {
     const code = parseInt(line.replace('__USERNODE_EXIT__', '').trim(), 10);
     state.exitCode = Number.isFinite(code) ? code : -1;
     state.execExitSeen = true;
+    emitEvidenceDiagnostic(state, { kind: 'runner_exit', outcome: code === 0 ? 'ok' : 'error' });
     return;
   }
   if (line.startsWith('__USERNODE_WARN__')) {
@@ -735,6 +840,7 @@ function parseLine(line, onProgress, state) {
     if (state.telemetryDiagnosticsEnabled === true
         && /^resume failed \(exit -?\d+\); retrying fresh$/.test(msg)) {
       state.providerRetryCount = (state.providerRetryCount || 0) + 1;
+      emitEvidenceDiagnostic(state, { kind: 'resume_retry' });
     }
     // Surface runner warnings ("resume failed (exit N); retrying fresh",
     // "push failed", …) in the session's progress log too — both the
@@ -765,6 +871,29 @@ function parseLine(line, onProgress, state) {
           || (ev.kind === 'file_changed' && ev.lifecycle === 'started');
         const isToolCompletion = ['command_completed', 'file_read_completed', 'mcp_completed'].includes(ev.kind)
           || (ev.kind === 'file_changed' && ev.lifecycle === 'completed');
+        if (ev.kind === 'phase' && ev.lifecycle === 'turn_started') {
+          emitEvidenceDiagnostic(state, { kind: 'provider_init' });
+        }
+        if ((ev.kind === 'agent_message' || isToolStart) && !state.evidenceFirstOutputSeen) {
+          state.evidenceFirstOutputSeen = true;
+          emitEvidenceDiagnostic(state, { kind: 'first_output' });
+        }
+        if (isToolStart) {
+          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName });
+        }
+        if (isToolCompletion) {
+          observeEvidenceTool(state, {
+            phase: 'end', id: ev.itemId, name: ev.toolName,
+            failed: (ev.exitCode != null && Number(ev.exitCode) !== 0)
+              || ['failed', 'error', 'cancelled'].includes(String(ev.status || '').toLowerCase()),
+          });
+        }
+        if (ev.kind === 'error') {
+          emitEvidenceDiagnostic(state, { kind: 'provider_notice' });
+        }
+        if (ev.kind === 'usage') {
+          emitEvidenceDiagnostic(state, { kind: 'provider_usage' });
+        }
         if (observeDiagnostics && isToolStart) noteCodexToolStart(state, ev);
         if (observeDiagnostics && isToolCompletion) {
           // A future CLI may omit item.started for a completed item. Infer the
@@ -2299,6 +2428,9 @@ async function execInWorker(sessionId, {
   // transaction; ordinary callers leave it null.
   journalPath = null,
   onProgress,
+  // Content-free lifecycle events for the owner-only visual-evidence trace.
+  // Never pass journal text, tool arguments/results, URLs or model output.
+  onEvidenceDiagnostic = null,
   // #616: when true (admin-owned session on the self-edit app — the
   // caller checks via debug-access.isEligible), the turn env gains
   // PROD_DEBUG_JWT so the usernode-debug CLI can call the platform's
@@ -2726,6 +2858,14 @@ async function execInWorker(sessionId, {
     // agent_backend in __USERNODE_RESULT__ (too late for the events), so
     // we seed it from the dispatch param up front.
     state.agentBackend = agentBackend;
+    if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
+      state.evidenceDiagnosticObserver = onEvidenceDiagnostic;
+      emitEvidenceDiagnostic(state, {
+        kind: 'provider_dispatched',
+        backend: isCodex ? 'codex_openrouter' : 'claude_code',
+        requestMode: resumeSessionId ? 'agent_resume' : 'agent_new',
+      });
+    }
     state.telemetryDiagnosticsEnabled = !!measuredTelemetryComponent;
     if (isClaude) {
       state.providerRateLimitEventCount = 0;
