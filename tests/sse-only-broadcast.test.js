@@ -28,10 +28,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-  'utf8'
-);
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+const SRC = [['src', 'services', 'mayor', 'turn.js'], ['src', 'routes', 'sessions.js']]
+  .map((p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')).join('\n');
 
 function extractSseOnly() {
   const m = SRC.match(/const\s+SSE_ONLY\s*=\s*new\s+Set\(\s*(\[[^\]]*\])\s*\)/);
@@ -135,7 +134,9 @@ test('stopping is NOT SSE-only, so every tab watching the session sees it', () =
 test('the turn hands its send() closure to the stop handle', () => {
   // The registration literal must carry `send`, or handle.send?.() below is
   // a silent no-op and the whole cross-tab half of #889 disappears.
-  const m = SRC.match(/const\s+stopHandle\s*=\s*\{[\s\S]*?\n\s{6}\};/);
+  // The literal closes at the turn body's indentation (two spaces since it
+  // moved into runMayorTurn, #2779).
+  const m = SRC.match(/const\s+stopHandle\s*=\s*\{[\s\S]*?\n {2}\};/);
   assert.ok(m, 'found the stopHandle registration literal');
   assert.match(m[0], /(^|\n)\s*send,/, 'stopHandle carries the turn send() closure');
 });
