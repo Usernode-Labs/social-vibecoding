@@ -1408,6 +1408,18 @@ if (typeof module !== 'undefined' && module.exports) {
   // trips on a pathological session, and dropping it wholesale is harmless —
   // the worst an empty set costs is one extra correction lap.
   const CORRECTING_MAX = 200;
+  // When each URL last told the page it was wrong. The lane guard above does
+  // not cover a slow answer on the ordinary deadline, and that is a loop too
+  // once the endpoint is BOTH slow and never the same twice: the Workshop's
+  // /promoted list carries every running check's live progress (ran, passed,
+  // updatedAt), so under load it lost the race and differed on every lap,
+  // and each correction re-pulled the whole board — about nine requests a
+  // second, per visible tab, until Chrome refused new requests
+  // (net::ERR_INSUFFICIENT_RESOURCES). One correction per URL per cooldown
+  // still repaints a genuinely stale screen promptly; the WebSocket and the
+  // next navigation carry anything finer than that.
+  const lastCorrectionAt = new Map();
+  const CORRECTION_COOLDOWN_MS = 10000;
 
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
@@ -1449,6 +1461,11 @@ if (typeof module !== 'undefined' && module.exports) {
                 if (correcting.size >= CORRECTING_MAX) correcting.clear();
                 correcting.add(event.request.url);
               }
+              const now = Date.now();
+              const last = lastCorrectionAt.get(event.request.url) || 0;
+              if (now - last < CORRECTION_COOLDOWN_MS) return;
+              if (lastCorrectionAt.size >= CORRECTING_MAX) lastCorrectionAt.clear();
+              lastCorrectionAt.set(event.request.url, now);
               await notifyClients({ type: 'api-updated', url: event.request.url });
             }
           })());
