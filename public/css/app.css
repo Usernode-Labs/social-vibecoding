@@ -14443,11 +14443,17 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-tab {
   /* CONTENT-WEIGHTED, not equal thirds: "Current status" is twice "All
      items", and three equal cells ellipsized it at 390px while the other two
-     sat in air. The spare width is still shared out, so the pill stays full. */
+     sat in air. The spare width is still shared out, so the pill stays full.
+     THE "+" TAKES A 40px CELL AT THE PILL'S END, and the tabs pay for it out
+     of their own padding (8px to 4px a side) and glyph gap (5px to 4px), not
+     out of their labels: at 390px, measured in the headless harness's
+     DejaVu Sans — wider than SF Pro or Roboto — the three labels need 316px
+     at rest and the pill leaves them 324, so "Current status" is still whole
+     beside the "+" and the spare 8px is shared back out. */
   flex: 1 1 auto; min-width: 0;
   display: inline-flex; flex-direction: row;
-  align-items: center; justify-content: center; gap: 5px;
-  height: 40px; padding: 0 8px;
+  align-items: center; justify-content: center; gap: 4px;
+  height: 40px; padding: 0 4px;
   border: 0; border-radius: 999px;
   background: transparent;
   color: var(--text-muted);
@@ -14457,9 +14463,45 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 /* THE TRACK IS INERT ON A PHONE. `.dev-ws-tabs` is itself the pill there,
    full width, so the wrapper the desktop layout needs must not introduce a
-   box. `display: contents` removes it from the layout entirely and the
-   buttons stay direct flex items of the nav. */
+   box. `display: contents` removes it from the layout entirely and its two
+   children — the tab list and the "+" — are the nav's flex items. */
 .dev-ws-tabtrack { display: contents; }
+/* THE TAB LIST takes the pill's width less the "+" cell. A real box at both
+   widths (the `tablist` role lives here, and a role on a `display: contents`
+   node is one some screen readers drop), and not positioned: the tabs'
+   `offsetLeft` must keep resolving against the nav, where the marker is.
+   2px between segments, the desktop track's own step. */
+.dev-ws-tablist { flex: 1 1 auto; min-width: 0; display: flex; gap: 2px; }
+/* ── The "+", closing the strip ──────────────────────────────────────
+   The prototype's `.tplus`: the last item of the tab row, a bare glyph in the
+   selected tab's ink with no ground of its own, so it reads as part of the
+   bar rather than as a floating action (it was a violet filled square at the
+   end of All items' search row). The tab's own height and radius, so it sits
+   in the pill as one more cell; the MARKER's tint and ring when its menu is
+   open, which is how the strip already says "this one is active".
+   The wrapper is the dropdown's containing block (actions-row.tsx hangs
+   `#dev-plus-menu` off its right edge). */
+.dev-ws-plus { position: relative; flex: none; display: flex; }
+.dev-ws-plus-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; padding: 0;
+  border: 0; border-radius: 999px;
+  background: transparent;
+  color: var(--brand-ink);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Hover only where there IS hover: on touch a tapped button keeps `:hover`
+   until the next tap elsewhere, which would leave the "+" tinted after the
+   action sheet closes. */
+@media (hover: hover) {
+  .dev-ws-plus-btn:hover { background: var(--brand-tint); }
+}
+.dev-ws-plus-btn[aria-expanded="true"] {
+  background: var(--brand-tint);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+}
+.dev-ws-plus-glyph { width: 20px; height: 20px; stroke-width: 2.2; flex: none; }
 /* Size lives here, not on the component: icons.tsx has no size variant by
    design, so every call site passes its own class. `flex: none` so a label
    that is trying to fit squeezes itself, not the glyph. */
@@ -14485,6 +14527,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    coming later in paint order for positioned elements, would cover the
    labels. */
 .dev-ws-tab { position: relative; z-index: 1; }
+/* WHILE THE "+" MENU IS OPEN the strip outranks the pane head below it. The
+   dropdown hangs out of the strip over the tab body, and the strip is a
+   stacking context (sticky above 700px, frosted below it), so the menu's own
+   `z-30` counts only inside it — and the pane head, which pins at `z-index:
+   31` wide and 20 narrow, painted over the menu's rows on All items. Only
+   while it is open: at rest the ear, which hangs into the strip's band from
+   the head, has to stay on top of the strip or its two tabs cannot be
+   clicked (see "the ear outranks the nav"). A click there while the menu is
+   up lands on the strip and dismisses the menu, like any outside click. */
+.dev-ws-tabs:has(#dev-plus-menu:not(.hidden)) { z-index: 32; }
 /* THE MARKER. Every number it uses is measured off the live tab (see
    workshop.tsx), so this rule carries no geometry — which is what lets it
    serve the phone's 58px equal-width pill and the desktop strip's 32px
@@ -15041,10 +15093,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      surface the cards already use — the same reason tabs.tsx's track is white
      rather than the recessed grey a control gets on a card. */
 
-  /* EVERYTHING PINS UP HERE, as one band: the tab strip, the ear hanging off
-     the head's top edge, and the head itself with the search, the filters and
-     the "+". The controls belong WITH the list you are narrowing, so they
-     stay reachable however far down it you are.
+  /* EVERYTHING PINS UP HERE, as one band: the tab strip with the "+" at its
+     end, the ear hanging off the head's top edge, and the head itself with
+     the search and the filters. The controls belong WITH the list you are
+     narrowing, so they stay reachable however far down it you are.
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
@@ -15157,6 +15209,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     border-radius: 9999px; font-size: 14px;
   }
   .dev-ws-tab-glyph { width: 16px; height: 16px; }
+  /* The tab list hugs its three segments inside the track, and the "+" is
+     the track's last segment: a 32px round cell, the tabs' own height, so
+     the pill ends on it — Current status · Needs you · All items · + — and
+     the ear's measured inset, read off the track's right edge, clears it. */
+  .dev-ws-tablist { flex: 0 0 auto; }
+  .dev-ws-plus-btn { width: 32px; height: 32px; }
+  .dev-ws-plus-glyph { width: 18px; height: 18px; }
 
   /* ── THE FEED ON A WIDE WINDOW: THE STAGE ──
      Above 700px the lander is a ROW: the feed as a 720px card at the centre,
@@ -15552,13 +15611,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
    It does NOT pin. The pane head is sticky and this is not in it: scroll the
    board and the ear leaves with the tab pill it sits beside, which is the
-   row it now belongs to. The head keeps the search, the filters and the "+",
-   which are the controls you reach for mid-scroll. */
+   row it now belongs to. The head keeps the search and the filters, which
+   are the controls you reach for mid-scroll; the "+" closes the tab strip,
+   which pins on its own. */
 @media (min-width: 768px) {
-  /* Scoped by `:has()` so a pane without an ear is untouched. The "+" menu
-     and the vote sheet are absolutely positioned against their own local
-     wrappers (actions-row.tsx's `relative ml-auto`, and `.dev-ws-row`), so
-     this containing block takes nothing away from them. */
+  /* Scoped by `:has()` so a pane without an ear is untouched. The vote
+     sheet is absolutely positioned against its own local wrapper
+     (`.dev-ws-row`), and the "+" menu is not in the pane at all any more (it
+     hangs off `.dev-ws-plus`, in the tab strip), so this containing block
+     takes nothing away from either. */
   .dev-ws-pane:has(.dev-ws-ear) { position: relative; }
   /* NO LINE BETWEEN THE EAR AND THE PANE. The pane's ring is one inset
      shadow, so its top side used to run the full width — straight under the
@@ -15675,10 +15736,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    the page reads as a stack of panes rather than a pane, two loose control
    rows and a list.
 
-   `overflow: visible` is load-bearing: the "+" menu is absolutely positioned
-   inside this subtree and the sticky head below depends on no ancestor
-   clipping. A `overflow: hidden` here to clip the radius would do both kinds
-   of damage at once. */
+   `overflow: visible` is load-bearing: the vote sheet is absolutely
+   positioned inside this subtree and the sticky head below depends on no
+   ancestor clipping. A `overflow: hidden` here to clip the radius would do
+   both kinds of damage at once. (The "+" menu used to be the other thing
+   escaping; it hangs off the tab strip now.) */
 .dev-ws-pane {
   display: flex; flex-direction: column;
   border-radius: 22px;
@@ -15701,9 +15763,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    The head's frost still does its job: the body is its SIBLING, so the rows
    scrolling inside the body pass through the head's backdrop and smear.
 
-   `overflow: visible` on the pane is load-bearing: the "+" menu is absolutely
-   positioned in this subtree, and sticky does not work under a clipping
-   ancestor. */
+   `overflow: visible` on the pane is load-bearing: the vote sheet is
+   absolutely positioned in this subtree, and sticky does not work under a
+   clipping ancestor. */
 .dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);

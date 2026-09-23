@@ -2218,9 +2218,14 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "The + button shares the actions row with the filter host",
+      "name": "Re-pointed: the + closes the Workshop's view-tab strip (prototype wsTabs), not the actions row",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions #dev-plus-btn"
+      "expectSelector": "#dev-workshop:has(#dev-actions > #dev-kanban-filterbar:last-child) [data-ws-tabs] > .dev-ws-tabtrack > .dev-ws-tablist[role=\"tablist\"] + .dev-ws-plus > #dev-plus-btn"
+    },
+    {
+      "name": "An app's Workshop ends its tab strip with the + on Current status too (prototype wsTabs)",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"] > [data-ws-tabs] .dev-ws-tablist:has(> [data-ws-tab-btn=\"status\"] + [data-ws-tab-btn=\"needs\"] + [data-ws-tab-btn=\"all\"]:last-child) + .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu"
     },
     {
       "name": "The Dev screen says Workshop once, with no subtitle beside it (#2718 review)",
@@ -4190,14 +4195,14 @@
       "expectText": "staging fixture"
     },
     {
-      "name": "The Filters button is a chip sharing a row with the + button (Streamlined Concept)",
+      "name": "The Filters button is a chip in the actions row (Streamlined Concept); the + moved to the tab strip",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-filters-btn.rounded-full"
     },
     {
-      "name": "The filter chips and the + button are siblings in one row",
+      "name": "Re-pointed: the filter chips hold the actions row alone; the + closes the tab strip above the pane",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar + div > #dev-plus-btn"
+      "expectSelector": "#dev-workshop:has([data-ws-tabs] .dev-ws-plus > #dev-plus-btn) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:last-child"
     },
     {
       "name": "The Filters dialog offers the priority select (Streamlined Concept)",
@@ -4205,14 +4210,14 @@
       "expectSelector": "#board-filters-modal #board-filters-priority"
     },
     {
-      "name": "On the Workshop the + button stays right-aligned with its menu anchored on-screen",
+      "name": "Re-pointed: the + is the tab strip's last item, its menu hung off its right edge so it opens on-screen",
       "path": "/?demo=1&ws=all&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
+      "expectSelector": "#dev-workshop [data-ws-tabs] > .dev-ws-tabtrack > .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu.absolute.right-0.top-full"
     },
     {
-      "name": "The Workshop shows the filter bar beside the +, not the + alone",
+      "name": "Re-pointed: the Workshop's actions row shows the filled filter bar, and the + it sat beside is in the tab strip",
       "path": "/?demo=1&ws=all&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar:not(:empty) + div > #dev-plus-btn"
+      "expectSelector": "#dev-workshop:has([data-ws-tabs] #dev-plus-btn) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:not(:empty):last-child"
     },
     {
       "name": "The Notifications sheet shows read rows on the All tab (Streamlined Concept)",

@@ -1106,7 +1106,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // This branch counted them against an older shared base; main reached 751
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 753);
+  //
+  // 753 → 754: +1 (task 598): an app's Workshop ends its view-tab strip with
+  // the "+" on Current status too (prototype wsTabs). The four checks that
+  // pinned the "+" in All items' actions row were re-pointed, not added.
+  assert.equal(DAPP.tests.length, 754);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
