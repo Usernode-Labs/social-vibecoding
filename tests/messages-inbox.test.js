@@ -252,7 +252,10 @@ test('the inbox initialises the global-chat bootstrap it reads', () => {
   // `removeGlobalChatThread` joined them when the Improve panel retired: its
   // list of these chats was the only surface that offered the delete, so the
   // delete came to this one rather than going away (#2718 review).
-  assert.match(SCREEN, /import \{ initializeGlobalChat, removeGlobalChatThread, useGlobalChatState \}/);
+  const imports = SCREEN.slice(0, SCREEN.indexOf("} from '../global-chat/store';"));
+  for (const name of ['initializeGlobalChat', 'removeGlobalChatThread', 'useGlobalChatState']) {
+    assert.match(imports.slice(imports.lastIndexOf('import {')), new RegExp(`\\b${name},`));
+  }
   const screen = SCREEN.slice(SCREEN.indexOf('export function MessagesScreen'));
   assert.match(screen, /void initializeGlobalChat\(\);/);
   // The same shape the button uses: a boot-time 401 is expected before
@@ -286,15 +289,20 @@ test('a change sorts on the same clock and files under Agents', () => {
 
 test('changes are read from the Improve store, drawn by SessionRow, and not gated on the chat flags', () => {
   assert.match(SCREEN, /useStoreState\(improveStore\)/, 'one list, the Improve store’s');
-  assert.match(SCREEN, /<SessionRow\b/, 'drawn by the same row the bell’s Agents tab uses');
+  assert.match(SCREEN, /<SessionRow\b/, 'drawn by the same row the bell’s Messages tab uses for agents');
   const list = SCREEN.slice(SCREEN.indexOf('function ConversationList'));
   const body = list.slice(0, list.indexOf('\n}\n'));
   assert.match(body, /const sessions: SessionRowView\[\] = mounted\s*\?/,
     'after mount only, so the first client render matches the prerender');
   assert.doesNotMatch(body.slice(body.indexOf('const sessions'), body.indexOf('const inbox')), /agentsOn/,
     'a change is not the experimental global chat');
-  assert.match(SCREEN, /dev\/sessions\/\$\{session\.id\}/, 'a row opens the conversation itself');
-  assert.match(SCREEN, /Improve\.enterSessionFrom\('#messages'\)/,
+  // #2813: the row's address is the inbox's own, so on a desktop the session
+  // opens beside the list. On a phone the router swaps it for the session
+  // itself and records Messages as where it hangs off.
+  assert.match(SCREEN, /href: agentThreadAddress\(\{ kind: 'session', slug: session\.appSlug, id: session\.id \}\)/,
+    'a row opens the conversation itself');
+  assert.match(STORE, /`#app\/\$\{encodeURIComponent\(agent\.slug\)\}\/dev\/sessions\/\$\{agent\.id\}`/);
+  assert.match(read('public/js/app.js'), /Improve\.enterSessionFrom\?\.\('#messages'\)/,
     'and records Messages as where it hangs off');
   assert.doesNotMatch(STORE, /sessions:/, 'and this store holds no second copy of that list');
 });
@@ -363,4 +371,85 @@ test('an app channel opened in Messages mounts its chat after React commits, so 
   const body = thread.slice(0, thread.indexOf('\n}\n'));
   assert.match(body, /const timer = window\.setTimeout\(\(\) => \{\s*if \(live\) view\?\.renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly \}\);\s*\}, 0\);/);
   assert.match(body, /live = false;\s*window\.clearTimeout\(timer\);/);
+});
+
+// ── Bug h: the discussion pane's header tile is the app's own ────────────
+//
+// The pane header built its tile from `{ name }` alone, so `iconViewFor`
+// could only ever fall through to the name's first letter: a "W" over the
+// Whiteboard channel whose inbox row, one column to the left, wears the
+// palette emoji. The header now draws the ROW's icon fields, and the app
+// record the pane fetches when there is no row.
+
+test('bug h: the discussion header draws the tile the inbox row draws', () => {
+  const thread = SCREEN.slice(SCREEN.indexOf('function AppDiscussionThread'));
+  const body = thread.slice(0, thread.indexOf('\n}\n'));
+  // The row, once, feeding both the #handle and the artwork.
+  assert.match(body, /const row = snap\.discussions\.find\(\(item\) => item\.slug === slug\) \|\| null;/);
+  assert.match(body, /const handle = row\?\.channel \|\| null;/);
+  // The row's own two fields first — the same pair AppChannelRow hands the
+  // tile — and the fetched app record when there is no row.
+  assert.match(body, /icon_url: row \? row\.iconUrl : \(ready \? context\.iconUrl : null\),/);
+  assert.match(body, /icon_emoji: row \? row\.iconEmoji : \(ready \? context\.iconEmoji : null\),/);
+  const header = body.slice(body.indexOf('<header className="messages-thread-header">'));
+  assert.match(header, /data-icon=\{appIconKind\(iconRecord as never\)\}/);
+  assert.match(header, /<AppIconContent app=\{iconRecord as never\} \/>/);
+  assert.doesNotMatch(header, /\{ name \} as never/, 'never the name alone again');
+  // ...which is what the row itself does, so the two tiles are one recipe.
+  const rowFn = SCREEN.slice(SCREEN.indexOf('function AppChannelRow'));
+  assert.match(rowFn.slice(0, rowFn.indexOf('\n}\n')),
+    /icon_url: discussion\.iconUrl,\s*icon_emoji: discussion\.iconEmoji,/);
+});
+
+test('bug h: the discussion context carries the app artwork, for a header with no inbox row', async () => {
+  // EXECUTED against the store, with `fetch` stubbed: a discussion opened by
+  // address for an app the viewer has no channel row for (a non-member
+  // following a link), whose record has an emoji, and one with an uploaded
+  // icon — which `/api/apps/:slug` sends as the raw row's `icon_image_id`,
+  // so the store spells the platform's own `/app-icons/<id>` address, as
+  // src/routes/messages-overview.js does for the row.
+  const { navStore } = loadTsx('frontend/src/features/nav/nav-store.js');
+  const api = {
+    MessagesApiError: class MessagesApiError extends Error {},
+    strictId: (value) => (Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : null),
+    listConversations: async () => [],
+  };
+  const store = loadTsx('frontend/src/features/messages/store.ts', {
+    stubs: { './api': api, '../nav/nav-store.js': { navStore } },
+  });
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const APPS = {
+    'karaoke-77aa': { slug: 'karaoke-77aa', name: 'Karaoke Night', icon_emoji: '🎤', icon_image_id: null, can_collaborate: false },
+    'garden-12ab': { slug: 'garden-12ab', name: 'Pixel Garden', icon_emoji: null, icon_image_id: 31, can_collaborate: true },
+  };
+  const saved = { window: globalThis.window, fetch: globalThis.fetch };
+  globalThis.window = { location: { search: '', hash: '' }, App: { user: { id: 7 } } };
+  globalThis.fetch = async (url) => {
+    const m = /^\/api\/apps\/([^/?]+)$/.exec(url);
+    if (m && APPS[m[1]]) return { ok: true, json: async () => ({ app: APPS[m[1]] }) };
+    if (String(url).startsWith('/api/messages/app-discussions')) return { ok: true, json: async () => ({ discussions: [] }) };
+    return { ok: false, json: async () => null };
+  };
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  // The snapshot, read the way the pane reads it.
+  const context = () => {
+    let out = null;
+    renderToHtml(createElement(() => { out = store.useMessagesSnapshot().discussionContext; return null; }));
+    return out;
+  };
+  try {
+    store.route(null, 'karaoke-77aa');
+    await settle(); await settle(); await settle();
+    assert.deepEqual({ ...context() }, {
+      slug: 'karaoke-77aa', name: 'Karaoke Night', readOnly: true, iconUrl: null, iconEmoji: '🎤',
+    });
+    store.route(null, 'garden-12ab');
+    await settle(); await settle(); await settle();
+    assert.deepEqual({ ...context() }, {
+      slug: 'garden-12ab', name: 'Pixel Garden', readOnly: false, iconUrl: '/app-icons/31', iconEmoji: null,
+    });
+  } finally {
+    globalThis.window = saved.window;
+    globalThis.fetch = saved.fetch;
+  }
 });

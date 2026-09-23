@@ -66,6 +66,9 @@ const {
   loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
 } = require('../../services/topochain/challenge-onboarding');
 const events = require('../../services/events');
+const seasonHistory = require('../../services/topochain/season-history');
+
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // Fire-and-forget tally behind POST /app-version/check, so the admin screen
 // can report whether the release gate is being exercised. `events.record`
@@ -614,6 +617,27 @@ function topochainPublicRoutes(config) {
       return ok(res, { data, viewer });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET /season-history (the Leaderboard screen's History segment) ──
+  //
+  // Past seasons newest first, each with its winner, every ended event's
+  // winner and — for a signed-in viewer — where they finished. See
+  // src/services/topochain/season-history.js for the rules and the cache.
+  // Optional auth like the rest of this group: signed out, `you` is null.
+  router.get('/api/v4/season-history', async (req, res) => {
+    try {
+      let seasons = await seasonHistory.seasonHistory(pool, { viewerId: req.user?.id ?? null });
+      let demo = false;
+      if (IS_STAGING && req.query.demo === '1' && !seasons.length) {
+        seasons = seasonHistory.demoSeasonHistory();
+        demo = true;
+      }
+      return ok(res, { data: { seasons }, ...(demo ? { demo: true } : {}) });
+    } catch (err) {
+      log.error('topochain-public', 'GET /season-history failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

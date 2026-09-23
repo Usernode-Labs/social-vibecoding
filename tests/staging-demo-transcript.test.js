@@ -90,6 +90,7 @@ test('every other thread keeps the empty-transcript rule: a genuine transcript w
 
 async function withServer(fn) {
   const app = express();
+  app.use((req, _res, next) => { req.user = { id: 42 }; next(); });
   app.use(chatRoutes({}));
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));

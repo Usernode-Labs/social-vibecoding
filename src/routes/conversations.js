@@ -227,6 +227,22 @@ function demoMessages(user, conversationId) {
         content: 'Yes, from here.', createdAt: '2026-08-13T13:12:00Z', editedAt: null,
         reply: null, reactions: [], attachments: [], objects: [],
       },
+      // #2884: four cards in a row and nothing said between them — the run
+      // the transcript draws as its first card and "… 3 more".
+      ...[
+        [9100406, 3327, 'Platform Messages'],
+        [9100407, 3328, 'Collapse runs of cards in a channel'],
+        [9100408, 3329, 'One outline on the message box'],
+        [9100409, 3330, 'Messages at the list’s reading size'],
+      ].map(([id, sessionId, title], index) => ({
+        id, conversationId, sender: lin, content: '',
+        createdAt: `2026-08-13T13:${String(14 + index).padStart(2, '0')}:00Z`, editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [{
+          type: 'proposal', appId: 1, appSlug: 'usernode', available: true,
+          sessionId, title, subtitle: 'Homeroom', state: 'active',
+          author: 'lin', href: `#app/usernode/dev/proposals/${sessionId}`,
+        }],
+      })),
     ];
   }
   return [];
@@ -533,6 +549,10 @@ function conversationRoutes(config) {
           userId: req.user.id, messageId: result.messageId,
         });
       });
+      // #2904: reading a conversation clears its message notifications, but
+      // announces itself as `conversation_read`, not `notifications_changed`
+      // — so re-badge the reader's iPhone here explicitly.
+      try { require('../services/mobile-push').scheduleBadgeSync(req.user.id); } catch {}
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'mark read failed', { id, err: err.message });
@@ -680,6 +700,14 @@ function conversationRoutes(config) {
     const row = rows[0];
     if (!row || (htmlOnly && row.kind !== 'html')) return null;
     if (row.message_id == null && row.user_id !== req.user.id) return null;
+    if (row.message_id != null && row.user_id !== req.user.id) {
+      const { rows: blocks } = await pool.query(
+        `SELECT 1 FROM user_blocks
+          WHERE blocker_id = $1 AND blocked_user_id = $2 LIMIT 1`,
+        [req.user.id, row.user_id]
+      );
+      if (blocks.length) return null;
+    }
     return row;
   }
 
@@ -743,8 +771,12 @@ function conversationRoutes(config) {
           type: 'conversation_membership_changed', conversationId: audience.conversationId,
         });
       }
+      for (const conversationId of result.privateRefreshConversationIds || []) {
+        pushAudience([req.user.id], { type: 'conversation_membership_changed', conversationId });
+      }
       const { pushToUser } = require('../services/ws');
       for (const userId of result.memberIds) pushToUser(userId, { type: 'notifications_changed' });
+      pushToUser(req.user.id, { type: 'user_blocks_changed', userId: targetId, blocked: true });
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'block failed', { targetId, err: err.message });
@@ -763,8 +795,12 @@ function conversationRoutes(config) {
           type: 'conversation_membership_changed', conversationId: audience.conversationId,
         });
       }
+      for (const conversationId of result.privateRefreshConversationIds || []) {
+        pushAudience([req.user.id], { type: 'conversation_membership_changed', conversationId });
+      }
       const { pushToUser } = require('../services/ws');
       for (const userId of result.memberIds) pushToUser(userId, { type: 'notifications_changed' });
+      pushToUser(req.user.id, { type: 'user_blocks_changed', userId: targetId, blocked: false });
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'unblock failed', { targetId, err: err.message });

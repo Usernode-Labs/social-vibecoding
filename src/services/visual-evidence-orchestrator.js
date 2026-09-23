@@ -9,6 +9,7 @@
 const appManifest = require('./app-manifest');
 const github = require('./github');
 const log = require('./logger');
+const logRedaction = require('./log-redaction');
 const evidenceAgent = require('./visual-evidence-agent');
 const evidenceControl = require('./visual-evidence-control');
 const environment = require('./visual-evidence-environment');
@@ -46,6 +47,9 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
   let lastReplayEvent = null;
   const replayEvents = [];
   let lastReplayFlushAt = 0;
+  let agentActivity = null;
+  let agentFinalResponse = null;
+  let lastAgentFlushAt = 0;
   const flush = () => {
     if (stopped || typeof stateService.heartbeatRun !== 'function') return;
     if (writing) { pending = true; return; }
@@ -53,8 +57,13 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
     Promise.resolve().then(async () => {
       do {
         pending = false;
+        const patch = {
+          ...(lastReplayEvent ? { lastReplayEvent, replayEvents: replayEvents.slice(-MAX_REPLAY_EVENTS) } : {}),
+          ...(agentActivity ? { agentActivity } : {}),
+          ...(agentFinalResponse ? { agentFinalResponse } : {}),
+        };
         await stateService.heartbeatRun(pool, runId, phase,
-          lastReplayEvent ? { lastReplayEvent, replayEvents: replayEvents.slice(-MAX_REPLAY_EVENTS) } : null);
+          Object.keys(patch).length ? patch : null);
       } while (pending && !stopped);
     }).catch((error) => {
       log.warn('visual-evidence', 'Evidence heartbeat failed', { runId, error: error.message });
@@ -67,6 +76,20 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
   timer.unref?.();
   flush();
   return {
+    onAgentDiagnostic(activity, kind) {
+      if (stopped || !activity || typeof activity !== 'object') return;
+      agentActivity = activity;
+      if (['tool_start', 'tool_end', 'context_result', 'provider_result', 'runner_exit', 'turn_end', 'agent_deadline'].includes(kind)
+          || Date.now() - lastAgentFlushAt >= 5000) {
+        lastAgentFlushAt = Date.now();
+        flush();
+      }
+    },
+    onAgentFinalResponse(summary) {
+      if (stopped || !summary || typeof summary !== 'object') return;
+      agentFinalResponse = summary;
+      flush();
+    },
     onReplayEvent(event) {
       if (stopped || !event || typeof event !== 'object') return;
       lastReplayEvent = event;
@@ -337,6 +360,35 @@ function redactDiagnosticText(value, max = 240) {
     .slice(0, max);
 }
 
+// The worker deletes a normal-turn journal after it exits. Keep the model's
+// final words only for a turn that did not produce evidence, in the private
+// owner diagnostics. The runtime has seeded fixture data; mask known run
+// credentials and internal origins before storing this bounded excerpt.
+function agentFinalResponseSummary(result, authTokens, origins) {
+  const raw = typeof result?.lastResultText === 'string' ? result.lastResultText.trim() : '';
+  const knownValues = [...Object.values(authTokens || {}), ...Object.values(origins || {})];
+  const scrubbed = redactDiagnosticText(
+    logRedaction.redactValues(logRedaction.redactString(raw), knownValues), 3000
+  );
+  const safeEnum = (value) => /^[a-z0-9_:-]{1,80}$/i.test(String(value || '')) ? String(value) : null;
+  return {
+    workerResultPresent: !!result && typeof result === 'object',
+    characters: raw.length,
+    excerpt: scrubbed || null,
+    truncated: raw.length > 3000,
+    resultSubtype: safeEnum(result?.resultSubtype),
+    stopReason: safeEnum(result?.providerStopReason),
+    exitCode: Number.isInteger(result?.exitCode) ? result.exitCode : null,
+    permissionDenialCount: Number.isInteger(result?.permissionDenialCount)
+      ? result.permissionDenialCount : null,
+    toolErrorCount: Number.isInteger(result?.toolErrorCount) ? result.toolErrorCount : null,
+    responseTextBlockCount: Number.isInteger(result?.responseTextBlockCount)
+      ? result.responseTextBlockCount : null,
+    providerTurnCount: Number.isInteger(result?.providerTurnCount)
+      ? result.providerTurnCount : null,
+  };
+}
+
 function visibleError(error) {
   const message = String(error?.message || 'The visual change preview could not be produced.').trim();
   return redactDiagnosticText(message, 2000) || 'The visual change preview could not be produced.';
@@ -431,6 +483,80 @@ function replayProgressEvent(event, pass) {
   };
 }
 
+const AGENT_DIAGNOSTIC_KINDS = new Set([
+  'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
+  'turn_start', 'turn_end', 'provider_dispatched', 'provider_init',
+  'first_stream', 'first_output', 'provider_result', 'provider_notice', 'provider_usage',
+  'context_result',
+  'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
+  'tool_start', 'tool_end', 'agent_deadline',
+  'worker_stop_requested', 'worker_stop_returned',
+]);
+const AGENT_DIAGNOSTIC_PHASES = new Set([
+  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
+  'evidence_mcp_ready', 'claude', 'agent', 'done',
+]);
+const AGENT_DIAGNOSTIC_TOOLS = new Set([
+  'evidence_get_context', 'evidence_reset_side', 'evidence_run_plan',
+  'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
+  'browser_take_screenshot', 'browser_click', 'browser_type',
+  'browser_fill_form', 'browser_press_key', 'browser_select_option',
+  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_console_messages', 'browser_network_requests', 'browser_tabs',
+  'browser_close', 'other',
+]);
+
+function recordAgentDiagnostic(metrics, raw) {
+  const kind = String(raw?.kind || '');
+  if (!AGENT_DIAGNOSTIC_KINDS.has(kind)) return;
+  const activity = metrics.agentActivity;
+  const event = { atMs: Math.max(0, Date.now() - metrics.startedAtMs), kind };
+  if (raw.backend === 'claude_code' || raw.backend === 'codex_openrouter') {
+    event.backend = raw.backend;
+  }
+  if (raw.requestMode === 'agent_new' || raw.requestMode === 'agent_resume') {
+    event.requestMode = raw.requestMode;
+  }
+  if (AGENT_DIAGNOSTIC_PHASES.has(raw.phase)) event.phase = raw.phase;
+  if (raw.outcome === 'ok' || raw.outcome === 'error') event.outcome = raw.outcome;
+  for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
+    'browserAdminToolCount', 'storyCount']) {
+    if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 1000) {
+      event[key] = raw[key];
+    }
+  }
+  if (Number.isSafeInteger(raw.responseCharacters) && raw.responseCharacters >= 0
+      && raw.responseCharacters <= 1_000_000) {
+    event.responseCharacters = raw.responseCharacters;
+  }
+  for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable']) {
+    if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
+  for (const key of ['jsonValid', 'acceptedIntentPresent', 'originsPresent', 'revisionsPresent']) {
+    if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
+  for (const key of ['resultSubtype', 'providerStopReason']) {
+    if (/^[a-z0-9_:-]{1,80}$/i.test(String(raw[key] || ''))) event[key] = raw[key];
+  }
+  if (kind === 'tool_start' || kind === 'tool_end') {
+    event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
+    if (raw.persona === 'member' || raw.persona === 'admin') event.persona = raw.persona;
+    if (Number.isSafeInteger(raw.sequence) && raw.sequence > 0 && raw.sequence <= 100000) {
+      event.sequence = raw.sequence;
+    }
+    if (kind === 'tool_start') {
+      activity.toolCounts[event.tool] = (activity.toolCounts[event.tool] || 0) + 1;
+    }
+    if (event.sequence) {
+      if (kind === 'tool_start') activity.pending.set(event.sequence, event);
+      else activity.pending.delete(event.sequence);
+    }
+  }
+  activity.counts[kind] = (activity.counts[kind] || 0) + 1;
+  activity.events.push(event);
+  if (activity.events.length > 64) activity.events.shift();
+}
+
 function newRunMetrics() {
   return {
     startedAtMs: Date.now(),
@@ -448,6 +574,8 @@ function newRunMetrics() {
     replayEvents: [],
     agentAttempts: 0,
     agentDispatches: [],
+    agentActivity: { events: [], counts: {}, toolCounts: {}, pending: new Map(), budgetMs: null },
+    agentFinalResponse: null,
     repairCount: 0,
     repairTrigger: null,
     artifactBytes: 0,
@@ -475,6 +603,17 @@ function addAgentUsage(metrics, dispatched) {
   }
 }
 
+function agentActivitySummary(metrics) {
+  return {
+    version: 1,
+    budgetMs: metrics.agentActivity.budgetMs,
+    counts: { ...metrics.agentActivity.counts },
+    toolCounts: { ...metrics.agentActivity.toolCounts },
+    events: metrics.agentActivity.events.slice(-64),
+    pendingTools: [...metrics.agentActivity.pending.values()].slice(-8),
+  };
+}
+
 function traceSummary(metrics, extra = {}) {
   return {
     ...extra,
@@ -488,6 +627,7 @@ function traceSummary(metrics, extra = {}) {
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
+    agentActivity: agentActivitySummary(metrics),
     repairCount: metrics.repairCount,
     ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
     artifactBytes: metrics.artifactBytes,
@@ -558,6 +698,7 @@ async function executeRun(config, options, injected = {}) {
   const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
   const repairAgentBudgetMs = config.visualEvidence?.maxRepairAgentMs || 120_000;
   const agentWindows = new Map();
+  metrics.agentActivity.budgetMs = agentBudgetMs;
   let replayBudgetStartedAt = null;
   let replaySuspendedMs = 0;
   const suspendedMs = () => replaySuspendedMs
@@ -822,6 +963,10 @@ async function executeRun(config, options, injected = {}) {
           origins: exploration.origins,
           authTokens,
           onProgress: (line) => progress(`Evidence agent: ${line}`),
+          onEvidenceDiagnostic: (event) => {
+            recordAgentDiagnostic(metrics, event);
+            options.onAgentDiagnostic?.(agentActivitySummary(metrics), event?.kind);
+          },
           resumeThreadId: agentThreadId,
           forceBackend,
           repairAttempt,
@@ -834,6 +979,12 @@ async function executeRun(config, options, injected = {}) {
         dispatchTrace.model = safeModelId(dispatched.model);
         if (dispatched.fallbackReason) dispatchTrace.fallbackReason = String(dispatched.fallbackReason).slice(0, 64);
         dispatchTrace.outcome = 'completed';
+        if (!latestHardVerdict?.passed) {
+          metrics.agentFinalResponse = agentFinalResponseSummary(
+            dispatched.result, authTokens, exploration.origins
+          );
+          options.onAgentFinalResponse?.(metrics.agentFinalResponse);
+        }
         return { dispatched, error: null };
       } catch (error) {
         if (error?.evidenceBackend) dispatchTrace.backend = String(error.evidenceBackend).slice(0, 64);
@@ -965,6 +1116,7 @@ async function executeRun(config, options, injected = {}) {
     const replayDetail = boundedReplayDetail(diagnosticError);
     const failureTrace = traceSummary(metrics, {
       terminalFailureClass: errorCode(error),
+      ...(metrics.agentFinalResponse ? { agentFinalResponse: metrics.agentFinalResponse } : {}),
       failure: {
         phase: toolFailure?.operation === 'run-plan' && control.planCalls === 0
           ? 'plan_validation' : failurePhase,
@@ -989,11 +1141,14 @@ async function executeRun(config, options, injected = {}) {
     if (failed && session && app) {
       notifyEvidence(session, app, 'failed', { failureCode: errorCode(error) });
     }
+    // The final model answer is for the proposal owner and app managers only;
+    // do not copy its potentially app-derived text into the general log ring.
+    const { agentFinalResponse: _privateResponse, ...logTrace } = failureTrace;
     log.warn('visual-evidence', 'Visual evidence run ended without captured evidence', {
       sessionId: session?.id || null,
       runId: run?.id || options.runId || null,
       code: errorCode(error),
-      trace: failureTrace,
+      trace: logTrace,
     });
     throw error;
   } finally {
@@ -1120,6 +1275,8 @@ async function scheduleForSession(config, options, injected = {}) {
     app,
     revision,
     onProgress: heartbeat.onProgress,
+    onAgentDiagnostic: heartbeat.onAgentDiagnostic,
+    onAgentFinalResponse: heartbeat.onAgentFinalResponse,
     onReplayEvent: heartbeat.onReplayEvent,
     authorPlan: run.author_plan || authorPlan,
   }, injected).catch((error) => {

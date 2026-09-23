@@ -329,6 +329,41 @@ function usageToken(value) {
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
 }
 
+/**
+ * #2737, corrected in #2870: tell a watching caller what the turn has spent.
+ *
+ * This is the ONLY seam a caller has for watching usage while a turn is
+ * still running — everything else about usage is terminal, written to the
+ * ledger once the turn ends. It must therefore be reachable from EVERY path
+ * that learns a token count, not just one: the hook first shipped called
+ * only from `applyClaudeResultUsage`, on the Claude `result` event, and the
+ * Codex/OpenRouter agent reports usage through a different branch entirely.
+ * A budget built on it was silently inert on that agent for its whole first
+ * day in production.
+ *
+ * Note what this does and does not buy, because the two paths differ. Claude
+ * emits `result` usage more than once in a turn, so a caller can act on it.
+ * `codex-openrouter` emits usage exactly once, at `turn.completed`: there
+ * the hook is terminal by construction, and a caller can REPORT that a turn
+ * breached its token budget but cannot stop one. Giving that agent a
+ * mid-turn signal is an upstream change, not something this seam can fake.
+ *
+ * Optional and best-effort by construction: a throwing hook must never take
+ * down the parse of a provider event.
+ */
+function notifyUsage(state) {
+  if (!state || typeof state.onUsage !== 'function') return;
+  try {
+    state.onUsage({
+      inputTokens: state.inputTokens,
+      cachedInputTokens: state.cachedInputTokens,
+      outputTokens: state.outputTokens,
+    });
+  } catch (err) {
+    log.warn('worker', 'onUsage hook threw (ignored)', { err: err.message });
+  }
+}
+
 function applyClaudeResultUsage(usage, state) {
   if (!usage || typeof usage !== 'object') return;
   const values = {
@@ -357,22 +392,7 @@ function applyClaudeResultUsage(usage, state) {
   for (const [key, value] of Object.entries(values)) {
     if (value != null) state[key] = value;
   }
-  // #2737: the one place a caller can watch usage WHILE the turn runs.
-  // Everything else about usage is terminal — the ledger row is written
-  // when the turn ends — so a caller that needs to stop a turn on its token
-  // spend has no other seam. Optional and best-effort by construction: a
-  // throwing hook must never take down the parse of a provider event.
-  if (typeof state.onUsage === 'function') {
-    try {
-      state.onUsage({
-        inputTokens: state.inputTokens,
-        cachedInputTokens: state.cachedInputTokens,
-        outputTokens: state.outputTokens,
-      });
-    } catch (err) {
-      log.warn('worker', 'onUsage hook threw (ignored)', { err: err.message });
-    }
-  }
+  notifyUsage(state);
   if (typeof usage.service_tier === 'string') state.serviceTier = usage.service_tier;
   if (typeof usage.inference_geo === 'string') state.inferenceRegion = usage.inference_geo;
 }
@@ -381,6 +401,65 @@ function safeResultSubtype(value) {
   if (typeof value !== 'string') return null;
   const subtype = value.trim();
   return /^[a-z][a-z0-9_]{0,63}$/.test(subtype) ? subtype : null;
+}
+
+// Evidence diagnostics deliberately record only a fixed vocabulary. Page
+// text, tool arguments/results, URLs, provider messages and journal lines can
+// contain private app data or credentials and must never enter a run trace.
+const EVIDENCE_DIAGNOSTIC_TOOLS = new Set([
+  'evidence_get_context', 'evidence_reset_side', 'evidence_run_plan',
+  'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
+  'browser_take_screenshot', 'browser_click', 'browser_type',
+  'browser_fill_form', 'browser_press_key', 'browser_select_option',
+  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_console_messages', 'browser_network_requests', 'browser_tabs',
+  'browser_close',
+]);
+const EVIDENCE_DIAGNOSTIC_PHASES = new Set([
+  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
+  'evidence_mcp_ready', 'claude', 'agent', 'done',
+]);
+
+function evidenceDiagnosticTool(name) {
+  const parts = String(name || '').split(/__|[./]/);
+  const tool = parts.at(-1);
+  if (!EVIDENCE_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
+  const server = parts.includes('browser_member') ? 'member'
+    : parts.includes('browser_admin') ? 'admin' : null;
+  return { tool, ...(server ? { persona: server } : {}) };
+}
+
+function emitEvidenceDiagnostic(state, event) {
+  if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
+  try { state.evidenceDiagnosticObserver(event); }
+  catch { /* Diagnostics must never affect the worker turn. */ }
+}
+
+function observeEvidenceTool(state, { phase, id, name, failed = false }) {
+  if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
+  const key = id == null ? null : String(id);
+  const starts = state.evidenceDiagnosticStarts || (state.evidenceDiagnosticStarts = new Map());
+  const completed = state.evidenceDiagnosticCompleted || (state.evidenceDiagnosticCompleted = new Set());
+  if (phase === 'start') {
+    if (key && starts.has(key)) return;
+    const sequence = (state.evidenceDiagnosticSequence || 0) + 1;
+    state.evidenceDiagnosticSequence = sequence;
+    const safeTool = evidenceDiagnosticTool(name);
+    if (key) starts.set(key, { sequence, ...safeTool });
+    emitEvidenceDiagnostic(state, { kind: 'tool_start', sequence, ...safeTool });
+    return;
+  }
+  if (key && completed.has(key)) return;
+  if (key) completed.add(key);
+  const prior = key ? starts.get(key) : null;
+  if (key) starts.delete(key);
+  emitEvidenceDiagnostic(state, {
+    kind: 'tool_end',
+    sequence: prior?.sequence || null,
+    ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}) }
+      : evidenceDiagnosticTool(name)),
+    outcome: failed ? 'error' : 'ok',
+  });
 }
 
 function noteFirstAgentOutput(state) {
@@ -399,6 +478,40 @@ function collectionCount(value) {
   if (Array.isArray(value)) return value.length;
   if (value && typeof value === 'object') return Object.keys(value).length;
   return null;
+}
+
+function evidenceToolAvailable(tools, toolName) {
+  if (collectionCount(tools) == null) return null;
+  const names = Array.isArray(tools)
+    ? tools.map((item) => typeof item === 'string' ? item : item?.name)
+    : Object.keys(tools);
+  return names.some((name) => name === toolName || name === `mcp__evidence__${toolName}`);
+}
+
+function mcpToolCount(tools, serverName) {
+  if (collectionCount(tools) == null) return null;
+  const names = Array.isArray(tools)
+    ? tools.map((item) => typeof item === 'string' ? item : item?.name)
+    : Object.keys(tools);
+  return names.filter((name) => typeof name === 'string'
+    && name.startsWith(`mcp__${serverName}__`)).length;
+}
+
+function evidenceContextResultShape(content) {
+  const text = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.find((item) => item?.type === 'text')?.text : null;
+  const responseCharacters = typeof text === 'string' ? text.length : 0;
+  let value = null;
+  try { value = JSON.parse(text); } catch { /* A malformed response is diagnostic data. */ }
+  const object = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  return {
+    responseCharacters,
+    jsonValid: !!object,
+    acceptedIntentPresent: !!object?.acceptedIntent,
+    originsPresent: !!(object?.origins?.base && object?.origins?.head),
+    revisionsPresent: !!(object?.revisions?.baseSha && object?.revisions?.headSha),
+    storyCount: Array.isArray(object?.acceptedIntent?.stories) ? object.acceptedIntent.stories.length : null,
+  };
 }
 
 function addObservedValue(set, value) {
@@ -483,6 +596,10 @@ function noteCodexToolCompletion(state, event) {
 
 function applyStreamEvent(event, onProgress, state) {
   liveAgentSpend.observe(state.liveSpend, event);
+  if (event?.type === 'stream_event' && !state.evidenceFirstStreamSeen) {
+    state.evidenceFirstStreamSeen = true;
+    emitEvidenceDiagnostic(state, { kind: 'first_stream' });
+  }
   if (state.hostSessionId && state.liveSpendEnabled) {
     workerProgress.setSpend(state.hostSessionId, liveAgentSpend.snapshot(state.liveSpend));
   }
@@ -525,7 +642,24 @@ function applyStreamEvent(event, onProgress, state) {
     state.initSessionId = event.session_id;
     state.sessionId = state.sessionId || event.session_id;
   }
+  if (systemEvent?.type === 'system' && systemEvent.subtype === 'init'
+      && !state.evidenceProviderInitSeen) {
+    state.evidenceProviderInitSeen = true;
+    emitEvidenceDiagnostic(state, {
+      kind: 'provider_init',
+      mcpServerCount: collectionCount(systemEvent.mcp_servers ?? systemEvent.mcpServers),
+      toolDefinitionCount: collectionCount(systemEvent.tools),
+      evidenceGetContextAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_get_context'),
+      evidenceRunPlanAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_run_plan'),
+      browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
+      browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
+    });
+  }
   if (event.type === 'assistant' && event.message?.content) {
+    if (!state.evidenceFirstOutputSeen) {
+      state.evidenceFirstOutputSeen = true;
+      emitEvidenceDiagnostic(state, { kind: 'first_output' });
+    }
     if (observeDiagnostics) {
       noteFirstAgentOutput(state);
       state.providerTurnCount = (state.providerTurnCount || 0) + 1;
@@ -559,8 +693,10 @@ function applyStreamEvent(event, onProgress, state) {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name });
       } else if (block.type === 'tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name });
         const input = block.input || {};
         // Track id → label mapping so the matching tool_result can
         // display "⎿ <label>: <summary>" instead of just "⎿ done".
@@ -588,6 +724,20 @@ function applyStreamEvent(event, onProgress, state) {
     // the user see CC is progressing through its plan.
     for (const block of event.message.content) {
       if (block.type !== 'tool_result') continue;
+      const diagnosticStart = block.tool_use_id == null ? null
+        : state.evidenceDiagnosticStarts?.get(String(block.tool_use_id));
+      if (diagnosticStart?.tool === 'evidence_get_context') {
+        emitEvidenceDiagnostic(state, {
+          kind: 'context_result',
+          outcome: block.is_error === true ? 'error' : 'ok',
+          ...evidenceContextResultShape(block.content),
+        });
+      }
+      observeEvidenceTool(state, {
+        phase: 'end', id: block.tool_use_id,
+        name: state.toolUses.get(block.tool_use_id)?.name,
+        failed: block.is_error === true,
+      });
       if (observeDiagnostics) {
         const resultKey = block.tool_use_id ? `claude:${block.tool_use_id}` : null;
         const firstResult = !resultKey || !state.telemetryCompletedItemIds.has(resultKey);
@@ -611,6 +761,11 @@ function applyStreamEvent(event, onProgress, state) {
     applyClaudeResultUsage(event.usage, state);
     state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
     state.providerStopReason = safeResultSubtype(event.stop_reason) || state.providerStopReason;
+    emitEvidenceDiagnostic(state, {
+      kind: 'provider_result', outcome: event.is_error ? 'error' : 'ok',
+      resultSubtype: state.resultSubtype,
+      providerStopReason: state.providerStopReason,
+    });
     const reportedDuration = observeDiagnostics ? resultMetric(event.duration_ms) : null;
     const providerDuration = observeDiagnostics ? resultMetric(event.duration_api_ms) : null;
     const turns = observeDiagnostics ? usageToken(event.num_turns) : null;
@@ -656,6 +811,10 @@ function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
   if (line.startsWith('__USERNODE_PHASE__')) {
     state.phase = line.replace('__USERNODE_PHASE__', '').trim();
+    const phase = state.phase.split(/[\s(]/, 1)[0];
+    if (EVIDENCE_DIAGNOSTIC_PHASES.has(phase)) {
+      emitEvidenceDiagnostic(state, { kind: 'runner_phase', phase });
+    }
     onProgress(`[${state.phase}]`);
     return;
   }
@@ -689,6 +848,10 @@ function parseLine(line, onProgress, state) {
       else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
     }
     state.resultSeen = true;
+    const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
+    emitEvidenceDiagnostic(state, {
+      kind: 'runner_result', outcome: terminalExit === 0 ? 'ok' : 'error',
+    });
     return;
   }
   if (line.startsWith('__USERNODE_ERROR__')) {
@@ -702,6 +865,7 @@ function parseLine(line, onProgress, state) {
     const code = parseInt(line.replace('__USERNODE_EXIT__', '').trim(), 10);
     state.exitCode = Number.isFinite(code) ? code : -1;
     state.execExitSeen = true;
+    emitEvidenceDiagnostic(state, { kind: 'runner_exit', outcome: code === 0 ? 'ok' : 'error' });
     return;
   }
   if (line.startsWith('__USERNODE_WARN__')) {
@@ -717,6 +881,7 @@ function parseLine(line, onProgress, state) {
     if (state.telemetryDiagnosticsEnabled === true
         && /^resume failed \(exit -?\d+\); retrying fresh$/.test(msg)) {
       state.providerRetryCount = (state.providerRetryCount || 0) + 1;
+      emitEvidenceDiagnostic(state, { kind: 'resume_retry' });
     }
     // Surface runner warnings ("resume failed (exit N); retrying fresh",
     // "push failed", …) in the session's progress log too — both the
@@ -747,6 +912,29 @@ function parseLine(line, onProgress, state) {
           || (ev.kind === 'file_changed' && ev.lifecycle === 'started');
         const isToolCompletion = ['command_completed', 'file_read_completed', 'mcp_completed'].includes(ev.kind)
           || (ev.kind === 'file_changed' && ev.lifecycle === 'completed');
+        if (ev.kind === 'phase' && ev.lifecycle === 'turn_started') {
+          emitEvidenceDiagnostic(state, { kind: 'provider_init' });
+        }
+        if ((ev.kind === 'agent_message' || isToolStart) && !state.evidenceFirstOutputSeen) {
+          state.evidenceFirstOutputSeen = true;
+          emitEvidenceDiagnostic(state, { kind: 'first_output' });
+        }
+        if (isToolStart) {
+          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName });
+        }
+        if (isToolCompletion) {
+          observeEvidenceTool(state, {
+            phase: 'end', id: ev.itemId, name: ev.toolName,
+            failed: (ev.exitCode != null && Number(ev.exitCode) !== 0)
+              || ['failed', 'error', 'cancelled'].includes(String(ev.status || '').toLowerCase()),
+          });
+        }
+        if (ev.kind === 'error') {
+          emitEvidenceDiagnostic(state, { kind: 'provider_notice' });
+        }
+        if (ev.kind === 'usage') {
+          emitEvidenceDiagnostic(state, { kind: 'provider_usage' });
+        }
         if (observeDiagnostics && isToolStart) noteCodexToolStart(state, ev);
         if (observeDiagnostics && isToolCompletion) {
           // A future CLI may omit item.started for a completed item. Infer the
@@ -782,6 +970,9 @@ function parseLine(line, onProgress, state) {
           if (u.cacheWriteInputTokens != null) state.cacheWriteInputTokens = u.cacheWriteInputTokens;
           if (u.outputTokens != null) state.outputTokens = u.outputTokens;
           if (u.reasoningOutputTokens != null) state.reasoningOutputTokens = u.reasoningOutputTokens;
+          // #2870: the Codex/OpenRouter half of the usage seam. Without
+          // this the watcher above never hears from this agent at all.
+          notifyUsage(state);
         }
         if (ev.kind === 'error' && ev.errorMessage != null) {
           state.ccIsError = true;
@@ -2281,6 +2472,9 @@ async function execInWorker(sessionId, {
   // transaction; ordinary callers leave it null.
   journalPath = null,
   onProgress,
+  // Content-free lifecycle events for the owner-only visual-evidence trace.
+  // Never pass journal text, tool arguments/results, URLs or model output.
+  onEvidenceDiagnostic = null,
   // #616: when true (admin-owned session on the self-edit app — the
   // caller checks via debug-access.isEligible), the turn env gains
   // PROD_DEBUG_JWT so the usernode-debug CLI can call the platform's
@@ -2708,6 +2902,14 @@ async function execInWorker(sessionId, {
     // agent_backend in __USERNODE_RESULT__ (too late for the events), so
     // we seed it from the dispatch param up front.
     state.agentBackend = agentBackend;
+    if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
+      state.evidenceDiagnosticObserver = onEvidenceDiagnostic;
+      emitEvidenceDiagnostic(state, {
+        kind: 'provider_dispatched',
+        backend: isCodex ? 'codex_openrouter' : 'claude_code',
+        requestMode: resumeSessionId ? 'agent_resume' : 'agent_new',
+      });
+    }
     state.telemetryDiagnosticsEnabled = !!measuredTelemetryComponent;
     if (isClaude) {
       state.providerRateLimitEventCount = 0;

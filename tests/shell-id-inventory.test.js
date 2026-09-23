@@ -58,6 +58,11 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Create moves into the launcher grid (the prototype's scrHome) ─
+  // Never in the frozen baseline — THE UI OVERHAUL added it through
+  // ADDED_IDS — so it leaves that map and is recorded here instead, which
+  // also puts it under the dereference guard at the bottom of this file.
+  'home-create-section': 'Home\'s fourth area, a full-width "Create app" card in a section of its own below Challenges. Create is the launcher grid\'s trailing tile now (#home-create-tile, features/home/create-tile.tsx), rendered inside #app-list on the first grid paint, so it is not in the prerendered shell. It keeps `data-panel-slot="create"` and `data-create-enabled`, the hooks the declared checks select on; the welcome tour\'s create step points at the tile.',
   // ── #2568: the included key is not claimed, it is created ────────
   // Every account is created with its included OpenRouter key, so the
   // three ids that existed to ASK for one have nothing left to do. The
@@ -346,6 +351,8 @@ const ADDED_IDS = {
   // leaves; the chip on an app's own Workshop is #dev-ws-scope-chip, which
   // renders client-side and was never in the prerendered document.
   'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
+  'platform-recents': '#2802: the desktop rail\'s Recents, between Workshop and Me: the apps you left and the conversations you were in (DMs, group chats, channels, agent chats) on one clock, newest first. It replaces the Resume strip (#platform-parked) on the desktop; the phone keeps the strip. The ROOT ships `hidden` with only its heading, which is what an empty list renders; every row arrives one commit after mount, so the prerender and the first client render agree. The rows carry no ids (they are data), only data-recent-kind / data-recent-key, which are client-only and so not in the baseline.',
+  'platform-recents-head': '#2802: the Recents heading, which names the group for assistive tech (`aria-labelledby` on #platform-recents). Rendered unconditionally inside the hidden root so the label target exists on a cold document.',
   'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',
   // ── Three ids from #2718's second pass that are NOT in this map ──
   //
@@ -372,7 +379,10 @@ const ADDED_IDS = {
   'platform-tab-workshop': '#2718: the Workshop tab, to #workshop — which of your apps wants something from you, the question Home does not answer.',
   'platform-tab-me': '#2718: the Me tab, to #profile. Challenges, Settings, Wallet, Validator and Admin are all reached from it, which is what keeps the bar to five: a sixth tab would be a section nobody opens daily.',
   'platform-tabs-badge': '#2718: the Messages tab\'s unread count, and the SECOND badge in the shell. #1443 argued for exactly one, on #notifications-badge, on the grounds that an unread message IS a notification and a menu row is where you say where you are going rather than where you learn something happened. That argument is about a MENU: a tab is visible without opening anything, and a Messages tab that cannot say "there is something here" leaves the bell as the only way to find out — which puts a conversation back behind the sheet the bar exists to get things out of. It counts CONVERSATIONS with something unread, not messages, and renders only above zero so the prerender (navStore\'s INITIAL is 0) and the first client render agree on no badge at all.',
-  "notifications-tab-agents": "#2718 review: the bell's fourth tab, listing what is RUNNING rather than what has happened \u2014 the same sessions the Improve panel calls 'changes in progress', drawn with the same <SessionRow> so a session cannot read two ways in two places. It is on the bell because a session working on your behalf is the one thing you check without anything having pinged you. Read from improveStore, which already answers which sessions are live; a second model here would be a second answer. `showApp` is the one difference from the panel's copy: the bell is the platform's, not one app's.",
+  // #notifications-tab-agents left this map in #2815: the bell's Agents tab
+  // folded into Messages, which now lists the running sessions and the agent
+  // notifications beside the conversations, as the Messages screen's chats
+  // section already did. It was only ever an ADDED id, so it simply leaves.
   // #messages-compose left this map in #2778: what starts something is the
   // "+" at the strip's end again (#messages-new), opening a popover of three
   // choices rather than a row of buttons under the strip. Its agent half,
@@ -689,11 +699,12 @@ const ADDED_IDS = {
   // The last three were draggable widgets on the launcher canvas; each is a
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
-  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the other three.',
+  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
   'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
   'home-discover-section': 'Area 2: featured tiles, the Popular lane and the way into the app directory.',
   'home-challenges-section': 'Area 3: the season\'s open challenges, and under them the leaderboard standings the retired #drawer-row-leaderboard used to point at.',
-  'home-create-section': 'Area 4: the create-an-app block, on every home screen regardless of quota.',
+  // #home-create-section (area 4) left this map when Create moved into the
+  // launcher grid; it is recorded in RETIRED_IDS.
   // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
   // running page: admin-console.js._renderShell() has always created them, by
   // writing #admin-root.innerHTML on every open. They are new to
@@ -878,6 +889,11 @@ const ADDED_IDS = {
   'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
   'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
   'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
+  // ── Discover's filter chips (the prototype's scrDiscover) ──────────
+  'browse-filter-chips': 'The All / Featured / Your apps / New chip row in the directory\'s sticky head, between the search and Sort. A chip picks which apps the list holds (Browse.filterApps); ships with All pressed, the store\'s prerender value.',
+  // ── The prototype's Challenges page: a History segment ──────────────
+  'leaderboard-history-root': 'The Leaderboard screen\'s fourth pane, the History tab (#leaderboard/seasons): the seasons that have ended, who won each, each event\'s winner and where the viewer finished — the navigation prototype\'s History segment. Ships EMPTY and hidden like the two other non-default pane roots, and Leaderboard._applySection toggles its `hidden` on a constant className; features/leaderboard/history-pane.tsx is the only writer below it.',
+  'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

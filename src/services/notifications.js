@@ -74,7 +74,22 @@ const CONVERSATION_ACCESS_SQL = `(
             WHERE direct_conversation.id = n.conversation_id
               AND direct_conversation.kind = 'direct'
          )
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks sender_block
+            WHERE sender_block.blocker_id = n.user_id
+              AND sender_block.blocked_user_id = n.source_user_id
+         )
     )
+  )
+)`;
+
+// App discussion notifications carry chat_message_id; block applies to
+// mentions, replies, and reactions even when the underlying post is visible.
+const CHAT_SENDER_ACCESS_SQL = `(
+  n.chat_message_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM user_blocks blocked
+     WHERE blocked.blocker_id = n.user_id
+       AND blocked.blocked_user_id = n.source_user_id
   )
 )`;
 
@@ -144,13 +159,18 @@ async function createMentionNotifications(pool, { appId, chatMessageId, senderId
   const params = [];
   recipients.forEach((u, i) => {
     const base = i * 5;
-    values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
+    values.push(`($${base + 1}::int, $${base + 2}::int, $${base + 3}::int, $${base + 4}::int, $${base + 5}::varchar)`);
     params.push(u.id, appId, chatMessageId, senderId, 'mention');
   });
 
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
-     VALUES ${values.join(', ')}
+     SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind
+       FROM (VALUES ${values.join(', ')}) AS v(user_id, app_id, chat_message_id, source_user_id, kind)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE blocked.blocker_id = v.user_id AND blocked.blocked_user_id = v.source_user_id
+      )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     params
   );
@@ -165,7 +185,11 @@ async function createReplyNotification(pool, { appId, replyMessageId, senderId, 
   if (!recipientId || recipientId === senderId) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
-     VALUES ($1, $2, $3, $4, 'reply')
+     SELECT $1, $2, $3, $4, 'reply'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = $4
+      )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     [recipientId, appId, replyMessageId, senderId]
   );
@@ -397,7 +421,11 @@ async function createReactionNotification(pool, { appId, messageId, senderId, re
   if (!recipientId || recipientId === senderId) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, detail)
-     VALUES ($1, $2, $3, $4, 'reaction', $5)
+     SELECT $1, $2, $3, $4, 'reaction', $5
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = $4
+      )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     [recipientId, appId, messageId, senderId, (emoji || '').slice(0, 32)]
   );
@@ -642,7 +670,7 @@ async function hydrateAndPush(pool, row) {
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-       WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL}`,
+       WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
       [row.id]
     );
     if (!rows.length) return;
@@ -971,7 +999,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
        ON conversation_message.id = n.conversation_message_id
      LEFT JOIN users su ON su.id = n.source_user_id
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL}
+     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
      ${cursorClause}
      ${kindClause}
      ORDER BY n.created_at DESC, n.id DESC
@@ -1009,7 +1037,7 @@ async function getForUser(pool, userId, id) {
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL}`,
+      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
     [id, userId]
   );
   return rows[0] || null;
@@ -1019,7 +1047,7 @@ async function countUnread(pool, userId) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
-        AND ${CONVERSATION_ACCESS_SQL}`,
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
     [userId]
   );
   return rows[0]?.c || 0;

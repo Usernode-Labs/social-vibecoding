@@ -21,18 +21,24 @@
  *    flip its label in place exactly as it does inside the home card's
  *    popover.
  *
+ * SHARE leads that card (the prototype's About sheet lists "More": Share,
+ * Add to home screen, Fork this app). It is not one of Home.menuItemsFor's
+ * items, so it is its own row: a flag on the descriptor (`canShare`, the same
+ * gate the mark menu's "Share app" uses) and Browse.shareDetailApp behind it.
+ *
  * INITIAL RENDER: `detail === null` until the detail level is entered, and
  * that renders nothing — the empty, hidden #browse-detail the hand-written
  * shell shipped and the SSG prerender has to reproduce.
  */
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ArrowRightShortIcon } from '@/components/ui/icons';
 
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
+import { ReportForm, submitReport } from '../reports/report-form';
 
 type ContributorRowView = {
   who: string;
@@ -74,6 +80,8 @@ export type DetailView =
     openLabel: string;
     isAdded: boolean;
     favLabel: string;
+    /** The app has a public link to share (Browse.shareUrlFor). */
+    canShare?: boolean;
     actions: ActionView[];
     contributors: ContributorsView;
   };
@@ -189,6 +197,9 @@ function Missing(): ReactNode {
 
 function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): ReactNode {
   const warm = () => controller()?.warmDetailApp(view.slug);
+  const [reporting, setReporting] = useState(false);
+  const ownApp = typeof window !== 'undefined'
+    && Number(view.app.created_by) === Number((window as any).App?.user?.id);
   return (
     <>
       <div className="flex items-start gap-4">
@@ -276,10 +287,31 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
           data-added={String(view.isAdded)}
           onClick={() => controller()?.toggleDetailAdded(view.app)}
         >{view.favLabel}</button>
+        {!ownApp && !view.app.demo ? <button type="button" className="rounded-full px-3 py-2 text-sm text-zinc-500 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
+          onClick={() => setReporting((open) => !open)} aria-label={`Report ${view.name}`}>
+          Report app
+        </button> : null}
       </div>
 
-      {view.actions.length ? (
+      {reporting ? <ReportForm kind="app" onCancel={() => setReporting(false)}
+        onSubmit={(reason, detail) => submitReport(`/api/apps/${encodeURIComponent(view.slug)}/report`, reason, detail)} /> : null}
+
+      {view.actions.length || view.canShare ? (
         <GroupedList className={CARD_SPACING}>
+          {view.canShare ? (
+            <ListRow
+              as="button"
+              id="browse-detail-share"
+              inset="text"
+              className="browse-detail-share transition-colors hover:bg-zinc-500/5"
+              // The action rows' own weight and ink (see them just below):
+              // Share is one more entry in the same list, not a headline.
+              titleClassName="font-normal text-zinc-700 dark:text-zinc-200"
+              tooltip="Share a link to this app"
+              title="Share"
+              onClick={() => controller()?.shareDetailApp(view.app)}
+            />
+          ) : null}
           {view.actions.map((a) => (
             <ListRow
               key={a.index}
@@ -314,5 +346,5 @@ export function BrowseDetail({ detail }: { detail: DetailView | null }): ReactNo
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading&hellip;</p>;
   }
   if (detail.state === 'missing') return <Missing />;
-  return <Ready view={detail} />;
+  return <Ready key={detail.slug} view={detail} />;
 }

@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
+import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -20,13 +21,17 @@ import { UserAvatar } from './format';
 import { MessageRow } from './message-row';
 import { ShareItemDialog } from './share-dialog';
 import {
+  agentThreadAddress,
+  fullScreenAddress,
   initializeMessagesStore,
   finishDirectBlock,
   loadConversations,
   loadOlder,
   messagesController,
   open as openConversation,
+  openAgentThread,
   respond,
+  setUserBlocked,
   selectConversation,
   syncChrome,
   setFilter,
@@ -35,7 +40,15 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { initializeGlobalChat, removeGlobalChatThread, useGlobalChatState } from '../global-chat/store';
+import { GlobalChatPanel } from '../global-chat';
+import {
+  deactivateGlobalChat,
+  getGlobalChatState,
+  initializeGlobalChat,
+  openGlobalChat,
+  removeGlobalChatThread,
+  useGlobalChatState,
+} from '../global-chat/store';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
@@ -43,7 +56,7 @@ import {
   INBOX_FILTERS, buildInbox,
   type AgentChat, type AppDiscussion, type InboxFilter, type InboxSection,
 } from './inbox';
-import type { ConversationMessage, ConversationSummary } from './types';
+import type { ConversationMessage, ConversationSummary, MessagesAgentThread } from './types';
 
 /*
  * ── The screen, in the widget language ─────────────────────────────────
@@ -266,7 +279,7 @@ function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; acti
  * cheap to lose and a modal over a list to delete one row from it is the
  * heavier gesture.
  */
-function AgentChatRow({ chat }: { chat: AgentChat }) {
+function AgentChatRow({ chat, active }: { chat: AgentChat; active: boolean }) {
   const at = chat.updatedAt || chat.createdAt || null;
   const activity = at ? agoStamp(at) : null;
   const [confirming, setConfirming] = useState(false);
@@ -306,11 +319,21 @@ function AgentChatRow({ chat }: { chat: AgentChat }) {
       </div>
     );
   }
+  // #2813: the inbox's own address, so on a desktop the chat opens in the
+  // pane beside this list. On a phone the router swaps it for `#chat/<id>`,
+  // the full-screen chat this row always led to there.
+  const thread: MessagesAgentThread = { kind: 'chat', id: chat.id };
+  const href = agentThreadAddress(thread);
   return (
     <a
-      href={`#chat/${encodeURIComponent(chat.id)}`}
+      href={href}
       data-inbox-agent={chat.id}
-      className="messages-conversation-row"
+      className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
+      aria-current={active ? 'page' : undefined}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+        if (window.location.hash === href) { event.preventDefault(); openAgentThread(thread); }
+      }}
     >
       <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
         <SparklesIcon className="w-5 h-5" />
@@ -368,31 +391,37 @@ function AgentChatRow({ chat }: { chat: AgentChat }) {
  *
  * ── Where the row goes ────────────────────────────────────────────────
  *
- * The session itself — `#app/<slug>/dev/sessions/<id>`, the conversation —
- * rather than the change's card page the bell links. That screen lights the
- * Messages tab and hangs its chevron off this inbox, and the row records
- * that before it navigates (`Improve.enterSessionFrom`), because the route
- * being left is not an app route and the Improve store cannot tell. A work
- * order has no conversation here, so it keeps its own destination.
+ * The session itself, the conversation, rather than the change's card page
+ * the bell links. Since #2813 that is `#messages/session/<slug>/<id>`: on a
+ * desktop the session opens in the pane beside this list. On a phone the
+ * router swaps that address for `#app/<slug>/dev/sessions/<id>`, the
+ * full-screen session, which lights the Messages tab and hangs its chevron
+ * off this inbox. The router records that (`Improve.enterSessionFrom`) as
+ * it swaps, because the route being left is not an app route and the
+ * Improve store cannot tell. A work order has no conversation here, so it
+ * keeps its own destination.
  */
 function inboxSessionView(session: SessionRowView): SessionRowView {
   if (session.kind !== 'session' || !session.appSlug) return session;
   return {
     ...session,
-    href: `#app/${encodeURIComponent(session.appSlug)}/dev/sessions/${session.id}`,
+    // #2813: the inbox's own address for the session, so on a desktop it
+    // opens in the pane beside this list. On a phone the router swaps it for
+    // `#app/<slug>/dev/sessions/<id>` — and records `Improve.enterSessionFrom`
+    // there, which this row's click used to — so the session is still the
+    // full-screen conversation it was, with its chevron back to this inbox.
+    href: agentThreadAddress({ kind: 'session', slug: session.appSlug, id: session.id }),
   };
 }
 
-function AgentSessionRow({ session }: { session: SessionRowView }) {
+function AgentSessionRow({ session, active }: { session: SessionRowView; active: boolean }) {
   return (
-    <div className="messages-inbox-session" data-inbox-session={session.key}>
-      <SessionRow
-        session={session}
-        showApp
-        onNavigate={() => {
-          if (session.kind === 'session') Improve.enterSessionFrom('#messages');
-        }}
-      />
+    <div
+      className={`messages-inbox-session ${active ? 'messages-inbox-session-active' : ''}`}
+      data-inbox-session={session.key}
+      aria-current={active ? 'page' : undefined}
+    >
+      <SessionRow session={session} showApp onNavigate={() => {}} />
     </div>
   );
 }
@@ -678,7 +707,7 @@ function ConversationList() {
   const shown = inbox.filter(matches);
 
   return (
-    <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+    <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -766,10 +795,16 @@ function ConversationList() {
     }
     if (entry.kind === 'session') {
       const session = bySession.get(entry.key.slice('session:'.length));
-      return session ? <AgentSessionRow key={entry.key} session={session} /> : null;
+      const open = snap.route.agent;
+      return session
+        ? <AgentSessionRow key={entry.key} session={session} active={open?.kind === 'session' && open.id === session.id} />
+        : null;
     }
     const agent = byAgent.get(entry.key.slice('agent:'.length));
-    return agent ? <AgentChatRow key={entry.key} chat={agent} /> : null;
+    const open = snap.route.agent;
+    return agent
+      ? <AgentChatRow key={entry.key} chat={agent} active={open?.kind === 'chat' && open.id === agent.id} />
+      : null;
   }
 }
 
@@ -828,11 +863,11 @@ function ThreadHeader() {
   const peer = active ? conversationPeer(active) : null;
   if (!active) return null;
   async function blockPeer() {
-    if (!peer || !window.confirm(`Block @${peer.username}? They won’t be able to start or send direct messages to you.`)) return;
+    if (!peer || !window.confirm(`Block @${peer.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
     const conversationId = active?.id;
     if (!conversationId) return;
     setBusy(true);
-    try { await api.setBlock(peer.id, true); await finishDirectBlock(conversationId); }
+    try { await setUserBlocked(peer.id, true); }
     catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : 'Couldn’t block this user.'); }
     finally { setBusy(false); setMenu(false); }
   }
@@ -858,6 +893,16 @@ function ThreadHeader() {
 }
 
 /** The day a message was sent, in the viewer's zone, for the separators. */
+/**
+ * A message that is only a card (#2884): one or more shared items and nothing
+ * a person wrote — no words, no file, no reply. A sending or unsent one is
+ * never folded: it carries a status the sender is watching.
+ */
+function isCardMessage(message: ConversationMessage): boolean {
+  return message.objects.length > 0 && !message.content && !message.attachments.length
+    && !message.reply && !message.pending && !message.failed;
+}
+
 function dayKey(message: ConversationMessage): string {
   const date = new Date(message.createdAt);
   return Number.isNaN(date.getTime()) ? '' : date.toDateString();
@@ -910,8 +955,23 @@ function AppDiscussionThread({ slug }: { slug: string }) {
   const ready = !!context && context.slug === slug;
   const name = ready ? context.name : slug;
   const readOnly = ready ? context.readOnly : false;
-  // The channel's `#handle`, from the list row when the viewer is a member.
-  const handle = snap.discussions.find((item) => item.slug === slug)?.channel || null;
+  // The channel's list row, when the viewer is a member: its `#handle`, and
+  // the app's artwork for the header tile below.
+  const row = snap.discussions.find((item) => item.slug === slug) || null;
+  const handle = row?.channel || null;
+  // THE HEADER DRAWS THE TILE THE ROW DRAWS. It was built from `{ name }`
+  // alone, so `iconViewFor` could only ever fall through to the name's first
+  // letter — a "W" over the Whiteboard channel whose row, one column to the
+  // left, wears the palette emoji. The row's own two fields first, so the two
+  // tiles cannot disagree; the app record the pane fetched (`context`) when
+  // there is no row, as for a discussion opened from a link by a non-member.
+  // Both arrive after the first paint, so the tile starts as the letter it
+  // always was.
+  const iconRecord = {
+    name,
+    icon_url: row ? row.iconUrl : (ready ? context.iconUrl : null),
+    icon_emoji: row ? row.iconEmoji : (ready ? context.iconEmoji : null),
+  };
 
   useEffect(() => {
     const el = host.current;
@@ -964,11 +1024,11 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
         <span
-          data-icon={appIconKind({ name } as never)}
+          data-icon={appIconKind(iconRecord as never)}
           className="app-icon-tile messages-inbox-tile"
           aria-hidden="true"
         >
-          <AppIconContent app={{ name } as never} />
+          <AppIconContent app={iconRecord as never} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="messages-thread-name block">{name}</span>
@@ -991,6 +1051,126 @@ function AppDiscussionThread({ slug }: { slug: string }) {
   );
 }
 
+/**
+ * A global agent chat, as a thread of this inbox (#2813).
+ *
+ * ── Rendered, not mounted ─────────────────────────────────────────────
+ *
+ * Unlike an app's discussion and a dev session, this chat is React already:
+ * features/global-chat is a store and a component tree, so the pane draws
+ * the chat's own panel (`GlobalChatPanel`) rather than hosting a legacy
+ * surface. It is the SAME panel the chat's screen draws, reading the same
+ * store — one transcript, loaded and invalidated in one place.
+ *
+ * ── The store is told who is drawing it ───────────────────────────────
+ *
+ * `host: 'messages'` is what makes New, delete-and-move-on and Close write
+ * inbox addresses (`#messages/agent/<id>`, `#messages`) instead of taking
+ * the viewer to the chat's own screen, and what hides that screen's copy of
+ * the transcript while this one is up. Leaving the pane deactivates the chat
+ * exactly as leaving its screen does — but only if the pane still owns it:
+ * following a `#chat/<id>` link from here reopens the store for the screen
+ * before this unmounts, and that open is not this pane's to undo.
+ */
+function AgentChatThread({ id }: { id: string }) {
+  useEffect(() => {
+    void openGlobalChat({ threadId: id, host: 'messages' });
+    return () => {
+      const current = getGlobalChatState();
+      if (current.open && current.host === 'messages') deactivateGlobalChat();
+    };
+  }, [id]);
+  return (
+    <section
+      className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
+      aria-label="Agent chat"
+      data-agent-chat={id}
+    >
+      <GlobalChatPanel embedded />
+    </section>
+  );
+}
+
+/**
+ * An app's dev session, as a thread of this inbox (#2813).
+ *
+ * ── Mounted, like a discussion ────────────────────────────────────────
+ *
+ * The session view — transcript, composer, header, venue, drafts, the spec
+ * and staging panes — is DevChat's (features/dev-chat/dev-chat.js), one
+ * surface with fixed ids and one owner. So the pane renders a HOST and asks
+ * AppView to fill it (`AppView.mountSessionInHost`), the same arrangement
+ * `AppDiscussionThread` makes with the group chat. The host's class string is
+ * constant and React renders nothing inside it: its whole subtree is
+ * DevChat's, which is the one-owner rule satisfied at this boundary.
+ *
+ * ── The side panes stay inside ────────────────────────────────────────
+ *
+ * The spec viewer and the staging preview are slots INSIDE the session view,
+ * so they open inside this pane, docked beside the transcript, exactly as
+ * they do in the app view. A viewer who wants the whole window for them has
+ * the "Open full view" link in the pane's head, which is the session's own
+ * address in the app.
+ *
+ * ── It says when it cannot open ───────────────────────────────────────
+ *
+ * The app view's fallback is its Board, which is not on this screen. A
+ * session this viewer cannot open — and that has no published chat to read
+ * instead — says so here, with the full-view link to try the app itself.
+ */
+function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
+  const host = useRef<HTMLDivElement | null>(null);
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const full = fullScreenAddress({ kind: 'session', slug, id });
+
+  useEffect(() => {
+    const el = host.current;
+    if (!el) return undefined;
+    const view = (window as any).AppView;
+    let live = true;
+    setPhase('loading');
+    // A macrotask later, for the reason AppDiscussionThread gives: the
+    // session view is published into portals inside flushSync, which cannot
+    // flush while React is still committing this effect.
+    const timer = window.setTimeout(() => {
+      if (!live || !view?.mountSessionInHost) return;
+      Promise.resolve(view.mountSessionInHost(el, { slug, sessionId: id }))
+        .then((result: string) => {
+          if (!live || result === 'stale') return;
+          setPhase(result === 'ready' ? 'ready' : 'unavailable');
+        })
+        .catch(() => { if (live) setPhase('unavailable'); });
+    }, 0);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      view?.unmountSessionHost?.(el);
+    };
+  }, [slug, id]);
+
+  return (
+    <section
+      className="flex messages-thread-pane messages-thread-session"
+      aria-label="Agent session"
+      data-agent-session={`${slug}/${id}`}
+    >
+      <div className="messages-session-bar">
+        <a className="messages-session-full" href={full}>Open full view</a>
+      </div>
+      {phase === 'unavailable' ? (
+        <div className="messages-state messages-state-error">
+          <p>This session could not be opened here.</p>
+          <a href={full}>Open it in the app</a>
+        </div>
+      ) : null}
+      {phase === 'loading' ? (
+        <div className="messages-state"><span className="messages-spinner" />Loading session…</div>
+      ) : null}
+      <div ref={host} className="messages-session-host flex-1 min-h-0" hidden={phase === 'unavailable'} />
+    </section>
+  );
+}
+
 function ConversationThread() {
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
@@ -999,6 +1179,8 @@ function ConversationThread() {
   const initialScroll = useRef<number | null>(null);
   const conversationId = snap.route.conversationId;
   const typing = conversationId ? typingUsers(conversationId) : [];
+  // #2884: the runs of cards the viewer has opened, by their first message.
+  const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
     if (!conversationId) return;
@@ -1007,9 +1189,12 @@ function ConversationThread() {
 
   useEffect(() => {
     const el = scroller.current;
-    const last = snap.messages.at(-1)?.id || null;
+    const lastMessage = snap.messages.at(-1);
+    const last = lastMessage?.id || null;
     if (!el || !last) return;
-    if (previousLast.current === null || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
+    // The viewer's own send always lands in view, wherever they had scrolled.
+    const sentNow = !!lastMessage?.pending && last !== previousLast.current;
+    if (previousLast.current === null || sentNow || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
       requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     }
     previousLast.current = last;
@@ -1026,6 +1211,11 @@ function ConversationThread() {
   }
 
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
+  if (snap.route.agent?.kind === 'chat') return <AgentChatThread key={snap.route.agent.id} id={snap.route.agent.id} />;
+  if (snap.route.agent?.kind === 'session') {
+    const { slug, id } = snap.route.agent;
+    return <AgentSessionThread key={`${slug}/${id}`} slug={slug} id={id} />;
+  }
   if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your chats and channels open here.</p></section>;
   // The kind is on the SECTION — `messages-thread-direct`, `-group` or
   // `-channel` — so the scroller's class string below stays the one the
@@ -1035,7 +1225,12 @@ function ConversationThread() {
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
-  for (const message of snap.messages) {
+  // #2884: three or more cards in a row — messages that are only a shared
+  // item — draw as the first and a "… N more" row (../../lib/card-runs.ts).
+  // A day divider breaks a run, so folding never hides one.
+  const runs = cardRunStarts(snap.messages, isCardMessage, (a, b) => dayKey(a) === dayKey(b));
+  for (let index = 0; index < snap.messages.length; index += 1) {
+    const message = snap.messages[index];
     const day = dayKey(message);
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
@@ -1049,6 +1244,27 @@ function ConversationThread() {
       );
     rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversationId} grouped={grouped} channels={channels} />);
     previous = message;
+    const length = runs.get(index);
+    const runKey = String(message.clientKey || message.id);
+    if (length && !expandedRuns.has(runKey)) {
+      const hidden = length - 1;
+      rows.push(
+        <div key={`more-${runKey}`} className="messages-card-run">
+          <button
+            type="button"
+            className="messages-card-run-more"
+            data-card-run-more={hidden}
+            aria-expanded="false"
+            aria-label={`Show ${hidden} more ${hidden === 1 ? 'card' : 'cards'}`}
+            onClick={() => setExpandedRuns((open) => new Set(open).add(runKey))}
+          >{cardRunLabel(hidden)}</button>
+        </div>,
+      );
+      // The row after the fold always carries its own name: drawn as a
+      // continuation under "… N more", it would read as part of the fold.
+      previous = null;
+      index += hidden;
+    }
   }
   return (
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}`} aria-label={snap.active?.title || 'Conversation'}>
@@ -1059,7 +1275,11 @@ function ConversationThread() {
           inside of this scroller on top of that — the inset twice over, as
           dead space under the last message. */}
       <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
-        {snap.loadingThread ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
+        {/* Only a thread with nothing to show yet says it is loading (#2907).
+            A refresh of the visible thread — the realtime echo of every send
+            is one — re-reads it silently: this row drawn above the messages
+            pushed the whole transcript down on each message sent. */}
+        {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
         {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p><button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button></div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
         {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button></div> : null}
@@ -1114,7 +1334,7 @@ export function MessagesScreen() {
     // the bar and puts the chevron back to the list. Without them, opening a
     // discussion kept the previous thread's name.
     [snap.active?.title, snap.route.open, snap.route.conversationId,
-      snap.route.appSlug, snap.discussionContext?.name]);
+      snap.route.appSlug, snap.route.agent, snap.discussionContext?.name]);
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.

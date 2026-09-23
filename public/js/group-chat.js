@@ -246,6 +246,7 @@ const GroupChat = {
       GroupChat.render();
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
+      GroupChat._applyPendingReveal();
       return;
     }
     GroupChat.connect(appSlug);
@@ -407,6 +408,26 @@ const GroupChat = {
     return [...byId.values()];
   },
 
+  // A block changes which persisted posts this viewer may see. Drop every
+  // cached page (including topic discussions) before reloading from the
+  // filtered API; an in-flight fetch may no longer publish its old result.
+  refreshAfterBlock() {
+    GroupChat._historyLoad = null;
+    GroupChat.messages = [];
+    GroupChat.oldestMessageId = null;
+    GroupChat.hasMore = true;
+    GroupChat.threads = new Map();
+    GroupChat.typingUsers.clear();
+    if (!GroupChat.appSlug) return;
+    GroupChat.render();
+    void GroupChat.loadHistory();
+    const active = GroupChat.activeThread;
+    if (active) {
+      GroupChat.renderThread();
+      void GroupChat.loadThreadHistory(active.type, active.ref);
+    }
+  },
+
   async loadHistory() {
     if (!GroupChat.appSlug || GroupChat._historyLoad) return;
     const load = {};
@@ -441,6 +462,7 @@ const GroupChat = {
       if (isFirstLoad && !GroupChat._didInitialScroll) {
         GroupChat.scrollToBottom();
         GroupChat._didInitialScroll = true;
+        GroupChat._applyPendingReveal();
       } else if (container) {
         const newScrollHeight = container.scrollHeight;
         container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
@@ -682,6 +704,7 @@ const GroupChat = {
     const pr = (isVote || linksProposal) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
     return {
       id: msg.id == null ? null : Number(msg.id),
+      senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
       time: stamp.text,
@@ -3121,6 +3144,74 @@ const GroupChat = {
       const tabPane = container.closest('.flex.flex-col.h-full') || container.parentElement;
       if (tabPane) ro.observe(tabPane);
     }
+  },
+
+  // ── A bell row's message, brought into view ─────────────────────────
+  //
+  // A mention, a reply, a reaction or a saved message names ONE message of an
+  // app's discussion, and the discussion opened at the newest with that
+  // message somewhere above it. The bell asks for it here as it opens the
+  // discussion in Messages (Notifications._openAppDiscussion); the first
+  // history load of that app — or the remount of an app already loaded, or
+  // this call itself when that discussion is the one already open — scrolls
+  // it to the middle of the stream and flashes it, the highlight a quote's
+  // jump-to-original lands on. Only a message inside the page that loaded
+  // can be shown; one older than that leaves the stream at the newest, as
+  // before. The request lapses after REVEAL_TTL_MS, so a discussion opened
+  // much later is not moved by a click it never saw.
+  _pendingReveal: null,
+  REVEAL_TTL_MS: 20000,
+
+  revealMessage(appSlug, messageId) {
+    const id = Number(messageId);
+    if (!appSlug || !Number.isSafeInteger(id) || id <= 0) return;
+    GroupChat._pendingReveal = { slug: appSlug, id, at: Date.now() };
+    // Now, only when the stream on screen is that discussion's pane in
+    // Messages: anywhere else the click is about to move the reader there,
+    // and the mount it lands on applies it.
+    const container = document.getElementById('gc-messages');
+    const pane = container && container.closest && container.closest('[data-discussion-app]');
+    if (pane && pane.getAttribute('data-discussion-app') === appSlug) {
+      GroupChat._applyPendingReveal();
+    }
+  },
+
+  _applyPendingReveal(attempt = 0) {
+    const want = GroupChat._pendingReveal;
+    if (!want) return false;
+    if (Date.now() - want.at > GroupChat.REVEAL_TTL_MS) {
+      GroupChat._pendingReveal = null;
+      return false;
+    }
+    if (GroupChat.appSlug !== want.slug || !GroupChat._didInitialScroll) return false;
+    const container = document.getElementById('gc-messages');
+    if (!container) return false;
+    const row = container.querySelector(`[data-msg-id="${want.id}"]`);
+    if (!row) {
+      // The transcript is published BATCHED (features/group-chat/mount.ts):
+      // its rows land in React's next commit, a frame or so after render().
+      // Wait for them while the message is one this page loaded; one older
+      // than the page is not coming, and the stream stays at the newest.
+      const loaded = GroupChat.messages.some((m) => Number(m && m.id) === want.id);
+      if (loaded && attempt < 30 && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => GroupChat._applyPendingReveal(attempt + 1));
+      } else {
+        GroupChat._pendingReveal = null;
+      }
+      return false;
+    }
+    GroupChat._pendingReveal = null;
+    // Scrolled inside the stream only: scrollIntoView would move every
+    // scrolling ancestor too. Unlocked from the bottom FIRST, or the
+    // ResizeObserver in attachScrollHandlers pins it straight back.
+    GroupChat._lockedToBottom = false;
+    const box = container.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    container.scrollTop += (at.top - box.top) - (box.height - at.height) / 2;
+    GroupChat._savedScrollTop = container.scrollTop;
+    GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
+    setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
+    return true;
   },
 
   restoreScroll() {

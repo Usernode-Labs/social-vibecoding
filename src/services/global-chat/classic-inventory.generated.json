@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 660,
-    "mappedRoutes": 522,
+    "totalRoutes": 671,
+    "mappedRoutes": 533,
     "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 369,
+    "clientApiReferences": 376,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -277,7 +277,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 264,
+      "line": 266,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -286,7 +286,7 @@
     },
     {
       "source": "server.js",
-      "line": 300,
+      "line": 302,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -301,6 +301,7 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
@@ -313,7 +314,7 @@
     },
     {
       "source": "server.js",
-      "line": 330,
+      "line": 332,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -322,7 +323,7 @@
     },
     {
       "source": "server.js",
-      "line": 370,
+      "line": 372,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -348,7 +349,7 @@
     },
     {
       "source": "server.js",
-      "line": 375,
+      "line": 377,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -367,7 +368,7 @@
     },
     {
       "source": "server.js",
-      "line": 397,
+      "line": 399,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -376,7 +377,7 @@
     },
     {
       "source": "server.js",
-      "line": 684,
+      "line": 691,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -385,7 +386,7 @@
     },
     {
       "source": "server.js",
-      "line": 866,
+      "line": 873,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -394,7 +395,7 @@
     },
     {
       "source": "server.js",
-      "line": 870,
+      "line": 877,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -403,7 +404,7 @@
     },
     {
       "source": "server.js",
-      "line": 874,
+      "line": 881,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -412,7 +413,7 @@
     },
     {
       "source": "server.js",
-      "line": 878,
+      "line": 885,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -421,7 +422,7 @@
     },
     {
       "source": "server.js",
-      "line": 882,
+      "line": 889,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -430,7 +431,7 @@
     },
     {
       "source": "server.js",
-      "line": 886,
+      "line": 893,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -1595,6 +1596,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -1676,6 +1678,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1699,6 +1702,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1722,6 +1726,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1745,6 +1750,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1768,6 +1774,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -1856,6 +1863,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -1880,6 +1888,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -1905,6 +1914,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -2011,6 +2021,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2034,6 +2045,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2180,6 +2192,7 @@
         "frontend/src/features/dialogs/app-allowance-store.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -2249,6 +2262,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/fork-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2272,6 +2286,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/creation-progress-store.js",
@@ -2296,6 +2311,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2318,6 +2334,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2380,6 +2397,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2403,6 +2421,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2427,6 +2446,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2450,6 +2470,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/rename-app.tsx",
@@ -2473,6 +2494,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2515,6 +2537,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2538,6 +2561,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2560,6 +2584,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2582,6 +2607,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2605,6 +2631,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2637,6 +2664,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/creation-progress-store.js",
@@ -2661,6 +2689,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/create-app.tsx",
         "frontend/src/features/dialogs/fork-app.tsx",
@@ -2687,6 +2716,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2728,6 +2758,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2978,6 +3009,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -3002,6 +3034,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3027,6 +3060,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3052,6 +3086,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3077,6 +3112,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3102,6 +3138,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3128,6 +3165,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3153,6 +3191,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3178,6 +3217,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3222,6 +3262,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3349,6 +3390,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -3421,6 +3463,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3443,6 +3486,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3686,6 +3730,7 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -3697,7 +3742,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 320,
+      "line": 346,
       "method": "POST",
       "path": "/api/apps/:slug/messages",
       "expression": null,
@@ -3711,6 +3756,7 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -3722,7 +3768,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 438,
+      "line": 464,
       "method": "PUT",
       "path": "/api/apps/:slug/messages/:id/bookmark",
       "expression": null,
@@ -3742,7 +3788,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 454,
+      "line": 480,
       "method": "DELETE",
       "path": "/api/apps/:slug/messages/:id/bookmark",
       "expression": null,
@@ -3762,7 +3808,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 479,
+      "line": 505,
       "method": "POST",
       "path": "/api/apps/:slug/chat-attachments",
       "expression": null,
@@ -3776,6 +3822,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3785,7 +3832,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 542,
+      "line": 568,
       "method": "GET",
       "path": "/api/apps/:slug/chat-attachments/:attId",
       "expression": null,
@@ -3804,7 +3851,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 586,
+      "line": 616,
       "method": "GET",
       "path": "/api/apps/:slug/chat-attachments/:attId/view",
       "expression": null,
@@ -3822,7 +3869,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 628,
+      "line": 662,
       "method": "GET",
       "path": "/api/apps/:slug/mention-suggestions",
       "expression": null,
@@ -3836,6 +3883,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/mention-typeahead.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
@@ -4045,6 +4093,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -4088,6 +4137,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -4151,6 +4201,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -4174,6 +4225,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -4237,8 +4289,131 @@
       ]
     },
     {
+      "source": "src/routes/content-reports.js",
+      "line": 47,
+      "method": "POST",
+      "path": "/api/apps/:slug/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.report.4b79bdfc",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/apps/browse-detail.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 72,
+      "method": "POST",
+      "path": "/api/apps/:slug/messages/:id/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "messages.post.apps.item.messages.item.report.63a3f5e8",
+      "domain": "messages",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "conversation",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#messages",
+      "clientReferences": [
+        "frontend/src/features/group-chat/transcript.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 130,
+      "method": "GET",
+      "path": "/api/admin/app-reports",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.app.reports.1e0b3e1d",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-reports.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 152,
+      "method": "GET",
+      "path": "/api/admin/app-message-reports",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.app.message.reports.79c5cb1b",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-reports.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 205,
+      "method": "POST",
+      "path": "/api/admin/app-reports/:id/:action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.app.reports.item.item.59512283",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/content-reports.js",
+      "line": 206,
+      "method": "POST",
+      "path": "/api/admin/app-message-reports/:id/:action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.app.message.reports.item.item.f506fefb",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
       "source": "src/routes/conversations.js",
-      "line": 245,
+      "line": 261,
       "method": "GET",
       "path": "/api/conversations",
       "expression": null,
@@ -4265,7 +4440,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 255,
+      "line": 271,
       "method": "POST",
       "path": "/api/conversations",
       "expression": null,
@@ -4292,7 +4467,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 273,
+      "line": 289,
       "method": "GET",
       "path": "/api/conversations/:id",
       "expression": null,
@@ -4311,7 +4486,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 289,
+      "line": 305,
       "method": "PATCH",
       "path": "/api/conversations/:id",
       "expression": null,
@@ -4330,7 +4505,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 304,
+      "line": 320,
       "method": "POST",
       "path": "/api/conversations/:id/respond",
       "expression": null,
@@ -4349,7 +4524,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 318,
+      "line": 334,
       "method": "POST",
       "path": "/api/conversations/:id/members",
       "expression": null,
@@ -4368,7 +4543,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 333,
+      "line": 349,
       "method": "DELETE",
       "path": "/api/conversations/:id/members/:userId",
       "expression": null,
@@ -4387,7 +4562,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 348,
+      "line": 364,
       "method": "POST",
       "path": "/api/conversations/:id/leave",
       "expression": null,
@@ -4406,7 +4581,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 362,
+      "line": 378,
       "method": "GET",
       "path": "/api/conversations/:id/messages",
       "expression": null,
@@ -4425,7 +4600,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 379,
+      "line": 395,
       "method": "POST",
       "path": "/api/conversations/:id/messages",
       "expression": null,
@@ -4444,7 +4619,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 404,
+      "line": 420,
       "method": "PATCH",
       "path": "/api/conversations/:id/messages/:messageId",
       "expression": null,
@@ -4463,7 +4638,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 423,
+      "line": 439,
       "method": "POST",
       "path": "/api/conversations/:id/messages/:messageId/reactions",
       "expression": null,
@@ -4482,7 +4657,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 470,
+      "line": 486,
       "method": "PUT",
       "path": "/api/conversations/:id/messages/:messageId/bookmark",
       "expression": null,
@@ -4502,7 +4677,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 488,
+      "line": 504,
       "method": "DELETE",
       "path": "/api/conversations/:id/messages/:messageId/bookmark",
       "expression": null,
@@ -4522,7 +4697,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 508,
+      "line": 524,
       "method": "POST",
       "path": "/api/conversations/:id/read",
       "expression": null,
@@ -4541,7 +4716,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 543,
+      "line": 563,
       "method": "POST",
       "path": "/api/conversations/:id/typing",
       "expression": null,
@@ -4560,7 +4735,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 561,
+      "line": 581,
       "method": "POST",
       "path": "/api/conversations/:id/messages/:messageId/report",
       "expression": null,
@@ -4579,7 +4754,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 576,
+      "line": 596,
       "method": "POST",
       "path": "/api/conversations/:id/attachments",
       "expression": null,
@@ -4598,7 +4773,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 686,
+      "line": 714,
       "method": "GET",
       "path": "/api/conversations/:id/attachments/:attachmentId",
       "expression": null,
@@ -4617,7 +4792,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 711,
+      "line": 739,
       "method": "GET",
       "path": "/api/conversations/:id/attachments/:attachmentId/view",
       "expression": null,
@@ -4635,7 +4810,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 726,
+      "line": 754,
       "method": "GET",
       "path": "/api/me/blocks",
       "expression": null,
@@ -4652,6 +4827,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/messages/api.ts",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -4660,7 +4836,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 735,
+      "line": 763,
       "method": "PUT",
       "path": "/api/me/blocks/:userId",
       "expression": null,
@@ -4679,7 +4855,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 755,
+      "line": 787,
       "method": "DELETE",
       "path": "/api/me/blocks/:userId",
       "expression": null,
@@ -4698,7 +4874,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 796,
+      "line": 832,
       "method": "GET",
       "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId",
       "expression": null,
@@ -4716,7 +4892,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 816,
+      "line": 852,
       "method": "GET",
       "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId/view",
       "expression": null,
@@ -4734,7 +4910,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 835,
+      "line": 871,
       "method": "GET",
       "path": "/api/admin/conversation-reports",
       "expression": null,
@@ -4749,13 +4925,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 862,
+      "line": 898,
       "method": "POST",
       "path": "/api/admin/conversation-reports/:id/:action",
       "expression": null,
@@ -4889,6 +5066,7 @@
         "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -4916,6 +5094,7 @@
         "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -5266,6 +5445,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -5288,6 +5468,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -5401,6 +5582,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -5880,7 +6062,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 204,
+      "line": 207,
       "method": "POST",
       "path": "/api/internal/evidence/:runId/finish",
       "expression": null,
@@ -5889,7 +6071,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 226,
+      "line": 229,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/visual-evidence-intent",
       "expression": null,
@@ -5898,7 +6080,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 253,
+      "line": 256,
       "method": "GET",
       "path": "/__caddy/access",
       "expression": null,
@@ -5907,7 +6089,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 386,
+      "line": 389,
       "method": "GET",
       "path": "/__caddy/ask",
       "expression": null,
@@ -5916,7 +6098,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 414,
+      "line": 417,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/push",
       "expression": null,
@@ -5925,7 +6107,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 499,
+      "line": 502,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/issues",
       "expression": null,
@@ -5934,7 +6116,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 564,
+      "line": 567,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/issues/:number",
       "expression": null,
@@ -5943,7 +6125,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 642,
+      "line": 645,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/attachments",
       "expression": null,
@@ -5952,7 +6134,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 686,
+      "line": 689,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/attachments/:attId",
       "expression": null,
@@ -5961,7 +6143,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 728,
+      "line": 731,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/pr",
       "expression": null,
@@ -5970,7 +6152,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 820,
+      "line": 823,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/platform-issue",
       "expression": null,
@@ -5979,7 +6161,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 945,
+      "line": 948,
       "method": "POST",
       "path": "/api/internal/sessions/:sessionId/prod-debug/sql",
       "expression": null,
@@ -5988,7 +6170,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 986,
+      "line": 989,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/prod-debug/containers",
       "expression": null,
@@ -5997,7 +6179,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 1019,
+      "line": 1022,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/prod-debug/logs/:container",
       "expression": null,
@@ -6006,7 +6188,7 @@
     },
     {
       "source": "src/routes/internal.js",
-      "line": 1068,
+      "line": 1071,
       "method": "GET",
       "path": "/api/internal/sessions/:sessionId/prod-debug/status",
       "expression": null,
@@ -6039,6 +6221,7 @@
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
         "frontend/src/features/admin/admin-campaigns.tsx",
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
@@ -6102,6 +6285,7 @@
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
         "frontend/src/features/admin/admin-campaigns.tsx",
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
@@ -6145,6 +6329,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -6168,6 +6353,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6433,6 +6619,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/leaderboard/kudos.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -6458,6 +6645,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/leaderboard/leaderboard.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -6539,6 +6727,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6565,6 +6754,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6627,6 +6817,7 @@
       "mobileSupported": true,
       "classicPath": "#settings",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -6762,6 +6953,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -6789,7 +6981,7 @@
     },
     {
       "source": "src/routes/messages-overview.js",
-      "line": 161,
+      "line": 165,
       "method": "GET",
       "path": "/api/messages/app-discussions",
       "expression": null,
@@ -6824,6 +7016,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -6849,6 +7042,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6874,6 +7068,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6897,6 +7092,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6921,6 +7117,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6947,6 +7144,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6972,6 +7170,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -6995,6 +7194,7 @@
       "mobileSupported": true,
       "classicPath": "#notifications",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -7073,6 +7273,25 @@
       ]
     },
     {
+      "source": "src/routes/platform-about.js",
+      "line": 150,
+      "method": "GET",
+      "path": "/api/platform/about",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.platform.about.a5222435",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/platform-target.js"
+      ]
+    },
+    {
       "source": "src/routes/pm-order.js",
       "line": 111,
       "method": "GET",
@@ -7088,6 +7307,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7110,6 +7330,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7118,7 +7339,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 259,
+      "line": 438,
       "method": "GET",
       "path": "/api/me/email",
       "expression": null,
@@ -7134,6 +7355,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7142,7 +7364,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 276,
+      "line": 455,
       "method": "POST",
       "path": "/api/me/email/:dynamic",
       "expression": null,
@@ -7160,7 +7382,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 311,
+      "line": 490,
       "method": "PATCH",
       "path": "/api/me/profile",
       "expression": null,
@@ -7177,6 +7399,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7185,7 +7408,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 361,
+      "line": 540,
       "method": "POST",
       "path": "/api/me/username",
       "expression": null,
@@ -7201,6 +7424,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -7210,7 +7434,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 465,
+      "line": 644,
       "method": "GET",
       "path": "/api/me/username/suggestion",
       "expression": null,
@@ -7229,7 +7453,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 521,
+      "line": 700,
       "method": "POST",
       "path": "/api/me/username/choose",
       "expression": null,
@@ -7248,7 +7472,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 588,
+      "line": 767,
       "method": "POST",
       "path": "/api/me/avatar",
       "expression": null,
@@ -7265,6 +7489,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7273,7 +7498,7 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 633,
+      "line": 812,
       "method": "DELETE",
       "path": "/api/me/avatar",
       "expression": null,
@@ -7290,6 +7515,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7298,11 +7524,12 @@
     },
     {
       "source": "src/routes/profile.js",
-      "line": 664,
+      "line": 843,
       "method": "GET",
       "path": "/api/me/challenges/completed",
       "expression": null,
       "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "leaderboards.get.me.challenges.completed.91de9ba6",
       "domain": "leaderboards",
       "risk": "read",
@@ -7311,8 +7538,31 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#leaderboard/challenges",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/profile.js",
+      "line": 925,
+      "method": "GET",
+      "path": "/api/me/summary",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.get.me.summary.50873369",
+      "domain": "profile",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile",
       "clientReferences": [
-        "frontend/src/features/profile/profile.js"
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
       ]
     },
     {
@@ -7343,6 +7593,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7368,6 +7619,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/profile/profile.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7376,11 +7628,12 @@
     },
     {
       "source": "src/routes/profiles.js",
-      "line": 212,
+      "line": 264,
       "method": "POST",
       "path": "/api/profiles/:username/report",
       "expression": null,
       "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "profile.post.profiles.item.report.35a49e8b",
       "domain": "profile",
       "risk": "external_write",
@@ -7389,13 +7642,50 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#profile",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/profiles.js",
+      "line": 265,
+      "method": "POST",
+      "path": "/api/users/:username/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.post.users.item.report.5a9ed2c7",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile",
       "clientReferences": [
+        "frontend/src/features/group-chat/transcript.tsx",
+        "frontend/src/features/messages/message-row.tsx",
         "frontend/src/features/profile/profile.js"
       ]
     },
     {
       "source": "src/routes/profiles.js",
-      "line": 273,
+      "line": 267,
+      "method": "POST",
+      "path": "/api/admin/profile-reports/:id/resolve",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.profile.reports.item.resolve.9d2a5b3d",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/profiles.js",
+      "line": 294,
       "method": "GET",
       "path": "/api/admin/profile-reports",
       "expression": null,
@@ -7410,13 +7700,14 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
     },
     {
       "source": "src/routes/profiles.js",
-      "line": 302,
+      "line": 323,
       "method": "POST",
       "path": "/api/admin/profile-reports/:id/dismiss",
       "expression": null,
@@ -7434,7 +7725,7 @@
     },
     {
       "source": "src/routes/profiles.js",
-      "line": 334,
+      "line": 355,
       "method": "POST",
       "path": "/api/admin/profiles/:username/moderation",
       "expression": null,
@@ -7452,7 +7743,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 837,
+      "line": 839,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:id/update-from-fork",
       "expression": null,
@@ -7470,7 +7761,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 948,
+      "line": 950,
       "method": "POST",
       "path": "/api/apps/:slug/work/share-in-progress",
       "expression": null,
@@ -7488,7 +7779,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1068,
+      "line": 1070,
       "method": "POST",
       "path": "/api/apps/:slug/proposal-handoffs",
       "expression": null,
@@ -7502,6 +7793,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7510,7 +7802,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1320,
+      "line": 1322,
       "method": "POST",
       "path": "/api/sessions/:id/proposal-handoff/context",
       "expression": null,
@@ -7519,7 +7811,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1350,
+      "line": 1352,
       "method": "POST",
       "path": "/api/sessions/:id/proposal-handoff/commits",
       "expression": null,
@@ -7528,7 +7820,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1521,
+      "line": 1523,
       "method": "POST",
       "path": "/api/sessions/:id/proposal-handoff/build",
       "expression": null,
@@ -7537,7 +7829,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1831,
+      "line": 1835,
       "method": "GET",
       "path": "/api/sessions/:id/proposal-handoff",
       "expression": null,
@@ -7557,7 +7849,7 @@
     },
     {
       "source": "src/routes/proposal-handoff.js",
-      "line": 1853,
+      "line": 1857,
       "method": "POST",
       "path": "/api/sessions/:id/promote",
       "expression": null,
@@ -7691,6 +7983,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7731,6 +8024,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7753,6 +8047,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7824,7 +8119,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 1495,
+      "line": 1502,
       "method": "PATCH",
       "path": "/api/sessions/:id/linked-issues",
       "expression": null,
@@ -7845,7 +8140,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 1628,
+      "line": 1635,
       "method": "PATCH",
       "path": "/api/sessions/:id/title",
       "expression": null,
@@ -7866,7 +8161,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 1749,
+      "line": 1756,
       "method": "GET",
       "path": "/api/me/active-sessions",
       "expression": null,
@@ -7883,6 +8178,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7891,7 +8187,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2067,
+      "line": 2074,
       "method": "GET",
       "path": "/api/me/session-state",
       "expression": null,
@@ -7907,6 +8203,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -7915,7 +8212,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2165,
+      "line": 2172,
       "method": "GET",
       "path": "/api/apps/:slug/sessions",
       "expression": null,
@@ -7929,6 +8226,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -7938,7 +8236,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2310,
+      "line": 2317,
       "method": "GET",
       "path": "/api/apps/:slug/shared-sessions",
       "expression": null,
@@ -7952,6 +8250,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7960,7 +8259,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2377,
+      "line": 2384,
       "method": "POST",
       "path": "/api/apps/:slug/sessions",
       "expression": null,
@@ -7974,6 +8273,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
@@ -7983,7 +8283,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2575,
+      "line": 2582,
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/headless-session",
       "expression": null,
@@ -8002,7 +8302,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 2784,
+      "line": 2791,
       "method": "POST",
       "path": "/api/sessions/:id/clone-headless",
       "expression": null,
@@ -8023,7 +8323,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3052,
+      "line": 3059,
       "method": "GET",
       "path": "/api/sessions/:id/checks",
       "expression": null,
@@ -8044,7 +8344,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3052,
+      "line": 3059,
       "method": "GET",
       "path": "/api/sessions/:id/details",
       "expression": null,
@@ -8065,7 +8365,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3126,
+      "line": 3133,
       "method": "GET",
       "path": "/api/sessions/:id",
       "expression": null,
@@ -8084,7 +8384,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3374,
+      "line": 3381,
       "method": "POST",
       "path": "/api/sessions/:id/activity",
       "expression": null,
@@ -8105,7 +8405,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3397,
+      "line": 3404,
       "method": "POST",
       "path": "/api/sessions/:id/notify-on-done",
       "expression": null,
@@ -8126,7 +8426,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3613,
+      "line": 3620,
       "method": "POST",
       "path": "/api/sessions/:id/platform-issue/:msgId/confirm",
       "expression": null,
@@ -8145,7 +8445,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3615,
+      "line": 3622,
       "method": "POST",
       "path": "/api/sessions/:id/platform-issue/:msgId/dismiss",
       "expression": null,
@@ -8164,7 +8464,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3623,
+      "line": 3630,
       "method": "POST",
       "path": "/api/sessions/:id/archive",
       "expression": null,
@@ -8186,7 +8486,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3664,
+      "line": 3671,
       "method": "POST",
       "path": "/api/sessions/:id/reset-agent-context",
       "expression": null,
@@ -8207,7 +8507,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3871,
+      "line": 3878,
       "method": "POST",
       "path": "/api/sessions/:id/build-venue",
       "expression": null,
@@ -8228,7 +8528,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3912,
+      "line": 3919,
       "method": "POST",
       "path": "/api/sessions/:id/unarchive",
       "expression": null,
@@ -8250,7 +8550,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3951,
+      "line": 3958,
       "method": "POST",
       "path": "/api/sessions/:id/share",
       "expression": null,
@@ -8270,7 +8570,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 3986,
+      "line": 3993,
       "method": "POST",
       "path": "/api/sessions/:id/unshare",
       "expression": null,
@@ -8290,7 +8590,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4017,
+      "line": 4024,
       "method": "POST",
       "path": "/api/sessions/:id/share-transcript",
       "expression": null,
@@ -8310,7 +8610,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4053,
+      "line": 4060,
       "method": "POST",
       "path": "/api/sessions/:id/unshare-transcript",
       "expression": null,
@@ -8330,7 +8630,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4096,
+      "line": 4103,
       "method": "GET",
       "path": "/api/sessions/:id/transcript",
       "expression": null,
@@ -8350,7 +8650,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4187,
+      "line": 4194,
       "method": "POST",
       "path": "/api/sessions/:id/fork",
       "expression": null,
@@ -8371,7 +8671,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4382,
+      "line": 4389,
       "method": "POST",
       "path": "/api/sessions/:id/pause",
       "expression": null,
@@ -8391,7 +8691,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4446,
+      "line": 4453,
       "method": "POST",
       "path": "/api/sessions/:id/resume",
       "expression": null,
@@ -8412,7 +8712,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4586,
+      "line": 4593,
       "method": "POST",
       "path": "/api/sessions/:id/sync-main",
       "expression": null,
@@ -8433,7 +8733,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4636,
+      "line": 4643,
       "method": "POST",
       "path": "/api/sessions/:id/attachments",
       "expression": null,
@@ -8454,7 +8754,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4697,
+      "line": 4704,
       "method": "GET",
       "path": "/api/sessions/:id/attachments/:attId",
       "expression": null,
@@ -8473,7 +8773,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 4729,
+      "line": 4736,
       "method": "POST",
       "path": "/api/sessions/:id/chat",
       "expression": null,
@@ -8494,7 +8794,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6710,
+      "line": 6791,
       "method": "GET",
       "path": "/api/sessions/:id/spec",
       "expression": null,
@@ -8514,7 +8814,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6797,
+      "line": 6878,
       "method": "GET",
       "path": "/api/sessions/:id/specs/:version",
       "expression": null,
@@ -8534,7 +8834,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6846,
+      "line": 6927,
       "method": "POST",
       "path": "/api/sessions/:id/specs/:version/share",
       "expression": null,
@@ -8553,7 +8853,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 6945,
+      "line": 7026,
       "method": "POST",
       "path": "/api/sessions/:id/specs/:version/share-user",
       "expression": null,
@@ -8572,7 +8872,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7056,
+      "line": 7137,
       "method": "GET",
       "path": "/api/sessions/:id/status",
       "expression": null,
@@ -8593,7 +8893,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7253,
+      "line": 7334,
       "method": "POST",
       "path": "/api/sessions/:id/stop",
       "expression": null,
@@ -8614,7 +8914,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7500,
+      "line": 7581,
       "method": "GET",
       "path": "/api/sessions/:id/events",
       "expression": null,
@@ -8635,7 +8935,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7562,
+      "line": 7643,
       "method": "GET",
       "path": "/api/budget",
       "expression": null,
@@ -8662,7 +8962,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7649,
+      "line": 7730,
       "method": "POST",
       "path": "/api/sessions/:id/deploy-staging",
       "expression": null,
@@ -8682,7 +8982,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7810,
+      "line": 7891,
       "method": "GET",
       "path": "/api/sessions/:id/preview-status",
       "expression": null,
@@ -8703,7 +9003,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7839,
+      "line": 7920,
       "method": "POST",
       "path": "/api/sessions/:id/ensure-staging",
       "expression": null,
@@ -8724,7 +9024,7 @@
     },
     {
       "source": "src/routes/sessions.js",
-      "line": 7923,
+      "line": 8004,
       "method": "POST",
       "path": "/api/sessions/:id/recheck",
       "expression": null,
@@ -8762,6 +9062,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -8786,6 +9087,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -8964,6 +9266,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -9117,6 +9420,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -11150,7 +11454,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 730,
+      "line": 769,
       "method": "GET",
       "path": "/api/v4/mobile/__ping",
       "expression": null,
@@ -11159,7 +11463,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 737,
+      "line": 776,
       "method": "GET",
       "path": "/api/v4/mobile/me",
       "expression": null,
@@ -11177,7 +11481,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 955,
+      "line": 999,
       "method": "GET",
       "path": "/api/v4/mobile/me/ranking",
       "expression": null,
@@ -11195,7 +11499,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1049,
+      "line": 1094,
       "method": "GET",
       "path": "/api/v4/mobile/me/breakdown",
       "expression": null,
@@ -11213,7 +11517,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1057,
+      "line": 1102,
       "method": "GET",
       "path": "/api/v4/mobile/event/points",
       "expression": null,
@@ -11231,7 +11535,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1206,
+      "line": 1251,
       "method": "GET",
       "path": "/api/v4/mobile/leaderboard",
       "expression": null,
@@ -11249,7 +11553,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1344,
+      "line": 1389,
       "method": "GET",
       "path": "/api/v4/mobile/challenges",
       "expression": null,
@@ -11267,7 +11571,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1439,
+      "line": 1484,
       "method": "GET",
       "path": "/api/v4/mobile/seasons",
       "expression": null,
@@ -11285,7 +11589,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1458,
+      "line": 1503,
       "method": "GET",
       "path": "/challenges-api/seasons",
       "expression": null,
@@ -11303,7 +11607,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1459,
+      "line": 1504,
       "method": "GET",
       "path": "/challenges-api/challenges",
       "expression": null,
@@ -11321,7 +11625,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1460,
+      "line": 1505,
       "method": "GET",
       "path": "/challenges-api/leaderboard",
       "expression": null,
@@ -11339,7 +11643,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1461,
+      "line": 1506,
       "method": "GET",
       "path": "/challenges-api/me/ranking",
       "expression": null,
@@ -11357,7 +11661,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1462,
+      "line": 1507,
       "method": "GET",
       "path": "/challenges-api/me/breakdown",
       "expression": null,
@@ -11375,7 +11679,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1467,
+      "line": 1512,
       "method": "GET",
       "path": "/challenges-api/terms/current",
       "expression": null,
@@ -11393,7 +11697,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1468,
+      "line": 1513,
       "method": "POST",
       "path": "/challenges-api/terms/consent",
       "expression": null,
@@ -11411,7 +11715,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1472,
+      "line": 1517,
       "method": "GET",
       "path": "/challenges-api/bp/state",
       "expression": null,
@@ -11429,7 +11733,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1473,
+      "line": 1518,
       "method": "POST",
       "path": "/challenges-api/bp/request",
       "expression": null,
@@ -11447,7 +11751,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1622,
+      "line": 1667,
       "method": "POST",
       "path": "/api/v4/mobile/zkpassport/complete",
       "expression": null,
@@ -11465,7 +11769,7 @@
     },
     {
       "source": "src/routes/topochain/mobile.js",
-      "line": 1871,
+      "line": 1916,
       "method": "POST",
       "path": "/api/v4/mobile/wallet/claim",
       "expression": null,
@@ -11565,7 +11869,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 213,
+      "line": 216,
       "method": "GET",
       "path": "/api/v4/public/__ping",
       "expression": null,
@@ -11574,7 +11878,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 216,
+      "line": 219,
       "method": "GET",
       "path": "/api/v4/leaderboard",
       "expression": null,
@@ -11588,12 +11892,13 @@
       "mobileSupported": true,
       "classicPath": "#leaderboard/challenges",
       "clientReferences": [
+        "frontend/src/features/leaderboard/history.js",
         "frontend/src/features/leaderboard/topochain-leaderboard.js"
       ]
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 316,
+      "line": 319,
       "method": "GET",
       "path": "/api/v4/leaderboard/global",
       "expression": null,
@@ -11602,7 +11907,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 356,
+      "line": 359,
       "method": "GET",
       "path": "/api/v4/leaderboard/epoch-breakdown",
       "expression": null,
@@ -11621,7 +11926,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 445,
+      "line": 448,
       "method": "GET",
       "path": "/api/v4/leaderboard/user-activities",
       "expression": null,
@@ -11640,7 +11945,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 571,
+      "line": 574,
       "method": "GET",
       "path": "/api/v4/season-events",
       "expression": null,
@@ -11654,12 +11959,32 @@
       "mobileSupported": true,
       "classicPath": "#leaderboard/challenges",
       "clientReferences": [
+        "frontend/src/features/leaderboard/history.js",
         "frontend/src/features/leaderboard/topochain-event-context.js"
       ]
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 622,
+      "line": 630,
+      "method": "GET",
+      "path": "/api/v4/season-history",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "leaderboards.get.v4.season.history.267a8d4f",
+      "domain": "leaderboards",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "leaderboard",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#leaderboard/challenges",
+      "clientReferences": [
+        "frontend/src/features/leaderboard/history.js"
+      ]
+    },
+    {
+      "source": "src/routes/topochain/public.js",
+      "line": 646,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId",
       "expression": null,
@@ -11678,7 +12003,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 665,
+      "line": 689,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId/challenges",
       "expression": null,
@@ -11698,7 +12023,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 802,
+      "line": 826,
       "method": "GET",
       "path": "/api/v4/season-events/:seasonEventId/challenges/:challengeId/breakdown",
       "expression": null,
@@ -11717,7 +12042,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 903,
+      "line": 927,
       "method": "GET",
       "path": "/api/v4/users/:userId/profile",
       "expression": null,
@@ -11737,7 +12062,7 @@
     },
     {
       "source": "src/routes/topochain/public.js",
-      "line": 1078,
+      "line": 1102,
       "method": "POST",
       "path": "/api/v4/app-version/check",
       "expression": null,
@@ -11762,6 +12087,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -11806,6 +12132,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -11831,6 +12158,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/settings/settings.js",
@@ -11867,7 +12195,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 208,
+      "line": 210,
       "method": "GET",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/:artifactId",
       "expression": null,
@@ -11886,7 +12214,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 270,
+      "line": 272,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/plan",
       "expression": null,
@@ -11904,7 +12232,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 344,
+      "line": 346,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/rerun",
       "expression": null,
@@ -11923,7 +12251,7 @@
     },
     {
       "source": "src/routes/visual-evidence.js",
-      "line": 384,
+      "line": 386,
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/override",
       "expression": null,
@@ -12022,6 +12350,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/import-pr.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -12098,6 +12427,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
         "public/js/app-view.js",
@@ -12120,6 +12450,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -12145,6 +12476,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -12315,6 +12647,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/app",
       "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",

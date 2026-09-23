@@ -138,6 +138,8 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'chat_session_spec_conversation_shares',
   'user_blocks',
   'conversation_message_reports',
+  'app_reports',
+  'chat_message_reports',
   // Global Chat transcript rows are private user data, which keeps them out
   // of the automated production-debug role. The signed-in human-admin console
   // already follows the same deliberate policy for platform Messages above:

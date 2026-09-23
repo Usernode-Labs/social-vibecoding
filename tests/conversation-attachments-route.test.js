@@ -210,14 +210,22 @@ test('a direct conversation is gated on the pairwise block check', async () => {
   }
 });
 
-test('a group conversation skips the pair and block lookups', async () => {
+test('a group attachment checks only whether the viewer blocked its sender', async () => {
   const seen = fixture({ kind: 'group', row: attachment() });
   const server = await startServer();
   try {
     assert.equal((await fetch(urlFor(server, servePath))).status, 200);
-    assert.ok(!seen.some((q) => /user_blocks|conversation_direct_pairs/.test(q.sql)));
+    assert.ok(!seen.some((q) => /conversation_direct_pairs/.test(q.sql)));
+    assert.ok(seen.some((q) => /blocker_id = \$1 AND blocked_user_id = \$2/.test(q.sql)));
   } finally {
     server.close();
+  }
+  fixture({ kind: 'group', blocked: true, row: attachment() });
+  const blockedServer = await startServer();
+  try {
+    assert.equal((await fetch(urlFor(blockedServer, servePath))).status, 404);
+  } finally {
+    blockedServer.close();
   }
 });
 

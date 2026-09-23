@@ -41,6 +41,33 @@ test('agent exploration timeout excludes time spent in platform replay', async (
   assert.equal(stopped, 0, 'the replay has its own bounded lifetime');
 });
 
+test('hosted evidence dispatch forwards worker lifecycle diagnostics through the normal path', async () => {
+  const events = [];
+  const workerService = {
+    ensureWorker: async () => 'warm-worker',
+    execInWorker: async (_sessionId, options) => {
+      assert.equal(options.mode, 'evidence');
+      options.onEvidenceDiagnostic({ kind: 'provider_init' });
+      return { exitCode: 0, sessionId: 'provider-thread' };
+    },
+  };
+  const result = await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'claude_code',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token' },
+    onEvidenceDiagnostic: (event) => events.push(event),
+  }, { workerService });
+  assert.equal(result.backend, 'claude_code');
+  assert.deepEqual(events.map((event) => event.kind), [
+    'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
+    'turn_start', 'provider_init', 'turn_end',
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /private-token/);
+});
+
 test('the evidence prompt asks for a replay plan and leaves visual judgement to people', () => {
   assert.match(agent.SYSTEM_PROMPT, /platform code—not you—will reset both sides and\s+replay it twice/i);
   assert.match(agent.SYSTEM_PROMPT, /human reviewers, who decide whether it proves the claim/i);
@@ -51,6 +78,8 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.promptFor({ repair: true }), /rejected plan and the exact replay failure/i);
   assert.match(agent.promptFor({ repair: true }), /BOTH exact revisions/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);
+  assert.match(agent.replayPlanGuide(), /exactly one\s+entry for every accepted story id/i);
+  assert.match(agent.replayPlanGuide(), /Do not copy those fields yourself/);
   assert.match(agent.replayPlanGuide(), /Every interaction target and each checkpoint focus must\s+identify exactly one visible element/);
   assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches/);
 });

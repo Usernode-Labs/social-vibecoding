@@ -256,13 +256,15 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   // Read-only also swaps the "+" button's tooltip and, on the self-app,
   // hides the button outright.
   assert.ok(FRAME_SRC.includes("? 'Fork this app'"), 'read-only tooltip preserved');
-  // Tolerant of layout classes between 'relative' and the gate: #1440 added
-  // `ml-auto` here and broke a version of this that pinned the exact string.
-  // What this test protects is the readOnly && selfHosted gate, not the
-  // flex utilities beside it.
+  // Tolerant of layout classes before the gate: #1440 added `ml-auto` here
+  // and broke a version of this that pinned the exact string, and the "+"
+  // moving to the end of the Workshop's tab strip swapped the Tailwind
+  // `relative ml-auto` for `.dev-ws-plus` (app.css positions it). What this
+  // test protects is the readOnly && selfHosted gate on the "+"'s wrapper,
+  // not the classes beside it.
   assert.match(
     FRAME_SRC,
-    /relative[^`$]*\$\{readOnly && selfHosted \? 'hidden' : ''\}/,
+    /className=\{`dev-ws-plus[^`$]*\$\{readOnly && selfHosted \? 'hidden' : ''\}`\}/,
     'the "+" button is hidden for a read-only viewer of the self-app'
   );
   assert.match(

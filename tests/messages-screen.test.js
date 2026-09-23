@@ -19,6 +19,7 @@ const store = read('frontend/src/features/messages/store.ts');
 const screen = read('frontend/src/features/messages/index.tsx');
 const composer = read('frontend/src/features/messages/composer.tsx');
 const row = read('frontend/src/features/messages/message-row.tsx');
+const reportForm = read('frontend/src/features/reports/report-form.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
 const dapp = JSON.parse(read('dapp.json'));
@@ -39,10 +40,11 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
     'the retired row tag stays retired');
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
-  // five tabs are adjacent siblings with nothing between them.
+  // five tabs are adjacent siblings, with only the desktop rail's Recents
+  // (#2802) between Workshop and Me — it is never drawn on the phone's bar.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-tab-workshop + #platform-tab-me'),
+      + ' + #platform-tab-workshop + #platform-recents + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,
@@ -70,7 +72,8 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
   assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox owns the address');
   assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\]\)/);
-  assert.match(app, /navigateToMessages\(conversationId, appSlug\)/);
+  // #2813 added the agent thread as a third argument, last in precedence.
+  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent\)/);
   // The ROW points here, not at the app view.
   assert.match(screen, /href=\{`#messages\/app\/\$\{encodeURIComponent\(discussion\.slug\)\}`\}/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
@@ -82,7 +85,7 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   // …and it drops BOTH portals on the way out, the transcript's first.
   assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
   // The list collapses for a discussion exactly as it does for a thread.
-  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \? 'hidden md:flex' : 'flex'/);
+  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \|\| snap\.route\.agent \? 'hidden md:flex' : 'flex'/);
 });
 
 test('deep links validate ids and route list/thread without a client events socket send', () => {
@@ -149,8 +152,8 @@ test('message creation realtime carries ids and refetches viewer-authorized REST
   assert.match(created, /loadThread\(conversationId, true\)/);
   assert.doesNotMatch(created, /normalizeMessage\(event\.message/,
     'WS must never trust a sender-hydrated private object card');
-  assert.match(store, /filter\(\(item\) => item\.id !== optimisticId && item\.id !== message\.id\)/,
-    'HTTP completion removes both optimistic and raced-in server rows');
+  assert.match(store, /filter\(\(item\) => item\.clientKey !== key && item\.id !== message\.id\)/,
+    'HTTP completion removes both the local row and a raced-in server row');
   const reaction = store.slice(store.indexOf("case 'conversation_reaction_updated'"),
     store.indexOf("case 'conversation_read'"));
   assert.match(reaction, /loadThread\(conversationId, true\)/);
@@ -200,17 +203,20 @@ test('composer and moderation payloads match the backend contracts', () => {
   assert.match(api, /query\.trim\(\)\.slice\(0, 255\)[\s\S]{0,80}scope=messages/,
     'recipient search excludes users blocked in either direction');
   for (const reason of ['harassment', 'spam', 'threats', 'hate', 'sexual_content', 'other']) {
-    assert.match(row, new RegExp(`value="${reason}"`));
+    assert.match(reportForm, new RegExp(`'${reason}'`));
   }
-  assert.match(row, /setReportDetail\(event\.target\.value\.slice\(0, 500\)\)/);
-  assert.match(row, /maxLength=\{500\}/);
+  assert.match(row, /<ReportForm kind="message"/);
+  assert.match(row, /<ReportForm kind="user"/);
+  assert.match(reportForm, /maxLength=\{500\}/);
   assert.match(api, /detail: detail\.slice\(0, 500\)/,
     'report context matches the backend and schema retention limit');
   assert.match(api, /JSON\.stringify\(\{ reason, \.\.\.\(detail \? \{ detail:/);
 });
 
 test('blocking and access-revocation purge an active direct thread locally', () => {
-  assert.match(screen, /await api\.setBlock\(peer\.id, true\); await finishDirectBlock\(conversationId\)/);
+  assert.match(screen, /await setUserBlocked\(peer\.id, true\)/);
+  assert.match(store, /await api\.setBlock\(userId, blocked\)/);
+  assert.match(store, /await finishDirectBlock\(active\.id\)/);
   const purge = store.slice(store.indexOf('export async function finishDirectBlock('),
     store.indexOf('export function draftFor('));
   assert.match(purge, /active: null/);

@@ -26,8 +26,17 @@ type RetryRequest =
     targetLabel?: string;
   };
 
+/**
+ * Which surface the open chat is drawn on (#2813): its own screen at
+ * `#chat/<id>`, or the Messages pane beside the inbox at
+ * `#messages/agent/<id>` on a desktop. One store, one transcript — the host
+ * decides only the addresses the store writes and which composer it focuses.
+ */
+export type GlobalChatHost = 'screen' | 'messages';
+
 export interface GlobalChatState {
   open: boolean;
+  host: GlobalChatHost;
   phase: Phase;
   bootstrap: GlobalChatBootstrap | null;
   threads: GlobalChatThread[];
@@ -53,6 +62,7 @@ export interface GlobalChatState {
 
 const INITIAL_STATE: GlobalChatState = {
   open: false,
+  host: 'screen',
   phase: 'idle',
   bootstrap: null,
   threads: [],
@@ -76,6 +86,22 @@ let bootstrapPromise: Promise<GlobalChatBootstrap | null> | null = null;
 let loadedThreadId: string | null = null;
 let activeAbort: AbortController | null = null;
 let navigationVersion = 0;
+
+/** The address of a chat on the surface currently drawing it (#2813). */
+function threadAddress(threadId: string): string {
+  return state.host === 'messages'
+    ? `#messages/agent/${encodeURIComponent(threadId)}`
+    : `#chat/${encodeURIComponent(threadId)}`;
+}
+
+/** The composer of that surface — the two must not share an id. */
+export function globalChatComposerId(host: GlobalChatHost = state.host): string {
+  return host === 'messages' ? 'messages-agent-composer' : 'global-chat-composer';
+}
+
+function focusComposer() {
+  requestAnimationFrame(() => document.getElementById(globalChatComposerId())?.focus());
+}
 
 function publish(next: Partial<GlobalChatState> | ((current: GlobalChatState) => Partial<GlobalChatState>)) {
   const patch = typeof next === 'function' ? next(state) : next;
@@ -375,12 +401,14 @@ async function loadThread(thread: GlobalChatThread, version: number) {
  * most recent session (or creates the first one), while #chat/<uuid> resolves
  * that exact owned thread so reloads and copied links are stable.
  */
-export async function openGlobalChat({ threadId = null }: {
+export async function openGlobalChat({ threadId = null, host = 'screen' }: {
   threadId?: string | null;
+  host?: GlobalChatHost;
 } = {}) {
   const version = ++navigationVersion;
   publish({
     open: true,
+    host,
     phase: state.bootstrap ? 'loading' : 'booting',
     error: '',
     retryRequest: null,
@@ -428,7 +456,7 @@ export async function openGlobalChat({ threadId = null }: {
   }
   if (version !== navigationVersion) return;
   void refreshGlobalChatUsage();
-  requestAnimationFrame(() => document.getElementById('global-chat-composer')?.focus());
+  focusComposer();
 }
 
 export function deactivateGlobalChat() {
@@ -455,7 +483,8 @@ export function closeGlobalChat(classicPath?: string | null) {
     '#challenges': '#leaderboard/challenges',
     '#dev': '#workshop',
   };
-  const requested = classicPath || '#home';
+  // Closing the pane beside the inbox leaves the inbox (#2813).
+  const requested = classicPath || (state.host === 'messages' ? '#messages' : '#home');
   const target = aliases[requested] || requested;
   requestAnimationFrame(() => {
     if (target === '#home') {
@@ -937,14 +966,14 @@ export async function startNewGlobalChat() {
       consumedConfirmations: {},
       clientActionStates: {},
     }));
-    const target = `#chat/${encodeURIComponent(created.thread.id)}`;
+    const target = threadAddress(created.thread.id);
     if (window.location.hash === target) {
       const restore = window.App?.restoreFromHash;
       if (typeof restore === 'function') restore.call(window.App);
     } else {
       window.location.hash = target;
     }
-    requestAnimationFrame(() => document.getElementById('global-chat-composer')?.focus());
+    focusComposer();
   } catch (error) {
     if (version !== navigationVersion) return;
     publish({ phase: 'error', error: errorText(error, 'Could not start a new chat.') });
@@ -996,7 +1025,7 @@ export async function removeGlobalChatThread(threadId: string) {
     closeGlobalChat();
     return;
   }
-  window.location.hash = `#chat/${encodeURIComponent(nextThread.id)}`;
+  window.location.hash = threadAddress(nextThread.id);
 }
 
 export function dismissConfirmation(resultId: string) {

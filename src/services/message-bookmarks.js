@@ -111,6 +111,10 @@ async function listForUser(pool, userId, { isAdmin = false, limit = MAX_SAVED } 
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN users u ON u.id = m.user_id
       WHERE b.user_id = $1 AND ${VIEW_ACCESS_SQL}
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = m.user_id
+        )
       ORDER BY b.created_at DESC, b.message_id DESC
       LIMIT $3`,
     [userId, !!isAdmin, limit]
@@ -168,6 +172,9 @@ const CONVERSATION_ACCESS_SQL = `EXISTS (
    WHERE cm.conversation_id = m.conversation_id
      AND cm.user_id = $1
      AND cm.status = 'member'
+) AND NOT EXISTS (
+  SELECT 1 FROM user_blocks b
+   WHERE b.blocker_id = $1 AND b.blocked_user_id = m.sender_id
 )`;
 
 // Save a conversation message. Idempotent, like save() above: the original

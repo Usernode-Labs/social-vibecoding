@@ -721,6 +721,9 @@ const AppView = {
    * whole of the option.
    */
   async open(slug, { needsToken = true } = {}) {
+    // #2813: an app view is opening, so a session in the Messages pane must
+    // give up the ids it holds before this view renders its own.
+    AppView._retireEmbeddedSession();
     const openId = ++AppView._openId;
     const isCurrentOpen = () => openId === AppView._openId;
     // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
@@ -1594,7 +1597,25 @@ const AppView = {
 
   startTokenRefresh() {
     AppView.stopTokenRefresh();
-    AppView.tokenRefreshInterval = setInterval(async () => {
+    // #2902: a RESUMED frame's document booted with a token minted up to a
+    // full period ago, so its first refresh is due that much sooner than a
+    // fresh launch's. Counted from the frame's own last load; a frame that
+    // just loaded (every ordinary launch) keeps the plain interval.
+    const age = AppView._appFrame().navigatedAgo();
+    if (age > AppView.TOKEN_FRESH_MS && age < AppView.TOKEN_REFRESH_MS) {
+      AppView.tokenRefreshTimeout = setTimeout(() => {
+        AppView.tokenRefreshTimeout = null;
+        AppView._startTokenRefreshInterval(true);
+      }, AppView.TOKEN_REFRESH_MS - age);
+      return;
+    }
+    AppView._startTokenRefreshInterval(false);
+  },
+
+  tokenRefreshTimeout: null,
+
+  _startTokenRefreshInterval(tickNow) {
+    const tick = async () => {
       await AppView.refreshToken(AppView.appData && AppView.appData.slug);
       // Rewrite the iframe src so the child app picks up the fresh token.
       // Only when a frame is actually mounted. Reuses the inner deep link so a
@@ -1611,10 +1632,16 @@ const AppView = {
           && AppView.tokenForSlug(AppView.appData.slug)) {
         frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow() });
       }
-    }, AppView.TOKEN_REFRESH_MS);
+    };
+    AppView.tokenRefreshInterval = setInterval(tick, AppView.TOKEN_REFRESH_MS);
+    if (tickNow) tick();
   },
 
   stopTokenRefresh() {
+    if (AppView.tokenRefreshTimeout) {
+      clearTimeout(AppView.tokenRefreshTimeout);
+      AppView.tokenRefreshTimeout = null;
+    }
     if (AppView.tokenRefreshInterval) {
       clearInterval(AppView.tokenRefreshInterval);
       AppView.tokenRefreshInterval = null;
@@ -1930,11 +1957,21 @@ const AppView = {
       return !!dom._el('app-iframe');
     },
     keeps() { return false; },
+    slug() { return ''; },
     activate() { return !!AppView._appFrameDom._el('app-iframe'); },
     // No-ops: in a DOM-only shell the next #app-content write is what removes
     // the frame, exactly as it always was.
     park() {},
     unmount() {},
+    // #2902: nothing survives an #app-content write here, so nothing is kept
+    // alive either — every open is a fresh frame, exactly as before.
+    retire() { return false; },
+    resume() { return false; },
+    resumed() { return false; },
+    evict() { return false; },
+    evictAll() {},
+    liveSlugs() { return []; },
+    navigatedAgo() { return 0; },
     isActive() { return !!AppView._appFrameDom._el('app-iframe'); },
     frame() { return AppView._appFrameDom._el('app-iframe'); },
     hasFrame() { return !!AppView._appFrameDom._el('app-iframe'); },
@@ -2032,6 +2069,60 @@ const AppView = {
     AppView._appFrame().unmount();
   },
 
+  // ── Apps kept alive (#2902) ──────────────────────────────────────────
+  //
+  // Leaving an app for Home no longer throws its document away: the last few
+  // apps opened stay loaded in hidden frames (features/app-frame/
+  // app-frame-bridge.js holds the list and its least-recently-used cut), so
+  // Resume — the Recents row, the Resume strip, the app's tile — shows the app
+  // exactly as it was left instead of reloading it.
+  //
+  // A kept document is only resumed while it is younger than the token
+  // refresh period. Past that the token it booted with is due a refresh, and
+  // the refresh is a reload anyway (startTokenRefresh), so it reloads.
+  _retireAppFrame() {
+    AppView._issueStateSource = null;
+    AppView._appFrame().retire();
+  },
+
+  // Bring `slug`'s kept (or still-mounted) frame back as it was. False, and
+  // nothing changed, when there is none to bring back or it is too old.
+  _resumeAppFrame(slug) {
+    const frame = AppView._appFrame();
+    if (!frame.resume(slug, { maxAgeMs: AppView.TOKEN_REFRESH_MS })) return false;
+    // #685: an issue-state provider that announced itself from this document
+    // is still that document. Believe it again, and only if it is.
+    const prior = AppView._issueStateBySlug[slug] || null;
+    const win = frame.frame() && frame.frame().contentWindow;
+    AppView._issueStateSource = prior && win === prior ? prior : null;
+    AppView._setSurface('app');
+    AppView.scheduleSafeAreaBroadcast();
+    return true;
+  },
+
+  // The issue-state provider each app's document announced, by slug, so a
+  // resumed document keeps it (see _resumeAppFrame).
+  _issueStateBySlug: {},
+
+  // A build that just landed for an app that is kept alive, or an app that
+  // stopped running: its hidden document is the previous build (or nothing),
+  // so let it go and the next open loads afresh. The app on screen is not
+  // touched here — its reload is the Improve panel's offer to make.
+  evictKeptApp(slug) {
+    if (!slug) return false;
+    const frame = AppView._appFrame();
+    if (frame.slug && frame.slug() === slug && frame.isActive()) return false;
+    delete AppView._issueStateBySlug[slug];
+    return frame.evict(slug);
+  },
+
+  // Sign-out: nothing of one viewer's apps outlives their session.
+  evictAllAppFrames() {
+    AppView._issueStateSource = null;
+    AppView._issueStateBySlug = {};
+    AppView._appFrame().evictAll();
+  },
+
   // Mount the launch surface and start the app loading. Called from inside
   // PlatformUI.transition's reveal callback in App.navigateToApp, so the
   // frame exists before the zoom's first frame paints. Returns true when it
@@ -2072,6 +2163,12 @@ const AppView = {
     // status-driven re-render that arrives mid-launch) has something
     // consistent to read. open() replaces it with the full detail payload.
     AppView.appData = rec;
+
+    // #2902: an app still loaded from the last time it was open comes back as
+    // it was left — no cover, no navigation. A deep link into it is the one
+    // exception, and renderAppTab settles that: it adopts a resumed frame only
+    // when no inner path is pending, and navigates it otherwise.
+    if (!AppView.pendingInnerPath && AppView._resumeAppFrame(slug)) return true;
 
     // #1085 chunk H: through the frame seam. The store write is flushed
     // synchronously, so the element exists on the next line — which it has to,
@@ -2395,6 +2492,12 @@ const AppView = {
     App._setScreenVisible('app-view', true);
   },
 
+  // #2902: `?shot=apps-kept` — see App._applyKeptAppsShot. Frames with no
+  // document, so no origin is ever loaded into one.
+  showKeptAppsShot(slugs) {
+    AppView._appFrame().keepForShot?.(slugs);
+  },
+
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
   // (#487 follow-up): the two outcomes of the offline App tab — an app whose
   // own service worker can serve its document gets its frame mounted, one
@@ -2647,7 +2750,18 @@ const AppView = {
     // the user had on screen inside someone else's app. (The DOM adapter
     // answers false here: it has no frame that survives an #app-content write,
     // so for it every later render still rebuilds, exactly as before.)
-    if (adopts || frame.keeps({ slug: appData.slug, src: iframeSrc })) {
+    // #2902: …and a frame RESUMED from being kept alive is the user's document
+    // as they left it. Its src carries the token it booted with, not the one
+    // just minted, so keeps() would call it stale and reload it — which is the
+    // very state loss keeping it alive exists to prevent. Unless a deep link
+    // is pending: then the app is being sent somewhere, and it goes.
+    if (!AppView.pendingInnerPath && frame.slug() !== appData.slug
+        && AppView._resumeAppFrame(appData.slug)) {
+      frame.activate();
+      return;
+    }
+    const resumed = !AppView.pendingInnerPath && frame.resumed(appData.slug);
+    if (adopts || resumed || frame.keeps({ slug: appData.slug, src: iframeSrc })) {
       // The surface flag still has to be asserted (#970): beginLaunch set it,
       // but a render that keeps the frame must not depend on that, or it could
       // carry a stale flag over from the Dev surface it just left.
@@ -2797,7 +2911,125 @@ const AppView = {
   // falling back to #app-content (defensive — every call site should be
   // inside renderDevView these days).
   _devContainer() {
+    // #2813: a session open in the Messages pane owns the Dev container
+    // while no app view is up. `App.currentApp` is the guard: the moment an
+    // app is navigated to, the app view's own #app-content is the container
+    // again, whatever the pane's teardown has not caught up with yet.
+    const embedded = AppView._embeddedSessionHost;
+    if (embedded && !(typeof App !== 'undefined' && App.currentApp) && embedded.isConnected) {
+      return embedded.querySelector('#dev-section') || embedded;
+    }
     return document.getElementById('dev-section') || document.getElementById('app-content');
+  },
+
+  // ── A dev session in the Messages pane (#2813) ────────────────────
+  //
+  // On a desktop an agent thread of the Messages inbox opens BESIDE the list,
+  // as a conversation does. For a dev session that is the whole session view
+  // — the transcript, the composer, the header, the spec and staging slots —
+  // and all of it is DevChat's, which is one surface with one owner and
+  // fixed ids. So, like an app's discussion (`renderGroupChatTab({host})`),
+  // the pane renders a HOST and this fills it: the same `<DevSessionShell/>`
+  // the app view mounts, and the same `renderDevChatTab` into it.
+  //
+  // What makes that sound is that the two can never both be up. The pane
+  // exists only on the Messages screen, and the Messages screen and the app
+  // view are sibling screen roots — `App.currentApp` is null for as long as
+  // the pane is showing, and every path into an app sets it first. The
+  // container switch in `_devContainer` keys on exactly that.
+  //
+  // The app travels with the mount, as the discussion's does: AppView.appData
+  // is read throughout DevChat (the composer's budget and venue, the dev
+  // caches, readOnly), so it is loaded for this app when the app view has
+  // nothing open. Nothing here opens the app view, mints an iframe token or
+  // starts the app's activity tracking — this is not a visit to the app.
+  //
+  // THE SIDE PANES. The spec viewer and the staging preview are slots INSIDE
+  // #dc-view, so they open inside the pane, docked beside the transcript,
+  // exactly as they do in the app view — the pane is as wide as a laptop's
+  // app view less the list. Nothing is hidden or re-implemented for the pane.
+  _embeddedSessionHost: null,
+  _embeddedSessionSeq: 0,
+
+  /**
+   * Fill `host` with session `sessionId` of app `slug`. Resolves 'ready',
+   * 'unavailable' (no such session for this viewer, and no published chat to
+   * read instead) or 'stale' (a newer mount or an app navigation won).
+   */
+  async mountSessionInHost(host, { slug, sessionId } = {}) {
+    if (!host || !slug || !sessionId) return 'unavailable';
+    const seq = ++AppView._embeddedSessionSeq;
+    const inApp = () => typeof App !== 'undefined' && !!App.currentApp;
+    const live = () => seq === AppView._embeddedSessionSeq
+      && AppView._embeddedSessionHost === host && host.isConnected && !inApp();
+    if (inApp()) return 'stale';
+    // A full-screen session left behind in the hidden app view holds the
+    // same ids (#dev-section, #dc-view, #dc-messages…) DevChat looks up by
+    // `getElementById`. Retire it before the pane's copy exists.
+    const appContent = document.getElementById('app-content');
+    if (appContent && appContent.querySelector('#dev-section')) {
+      AppView._reactDevBoard()?.unmount?.(appContent);
+    }
+    AppView._embeddedSessionHost = host;
+    if (!AppView.appData || AppView.appData.slug !== slug) {
+      if (window.DevChat) DevChat.reset();
+      let app = null;
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
+        if (res.ok) app = ((await res.json()) || {}).app || null;
+      } catch (_) { app = null; }
+      if (!live()) return 'stale';
+      if (!app) return 'unavailable';
+      // The same per-app reset AppView.open makes on an app switch: another
+      // app's board caches are another board.
+      Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
+      AppView._govApplying = Object.create(null);
+      AppView._govDueSince = Object.create(null);
+      AppView._devDataReady = false;
+      AppView._resetMergedPagination();
+      AppView.appData = AppView._applyPendingAppStatus(app);
+    }
+    AppView._reactDevBoard()?.mountSessionShell(host);
+    const result = await AppView.renderDevChatTab(sessionId, { embedded: true });
+    if (!live()) return 'stale';
+    return result === 'unavailable' ? 'unavailable' : 'ready';
+  },
+
+  /**
+   * An app view is opening while the pane still holds a session (#2813):
+   * "Open full view", a link out of the transcript, a deep link. The pane's
+   * screen is only hidden at the END of that navigation's transition, and
+   * until then its #dev-section / #dc-view / #dc-messages would be the ones
+   * `getElementById` finds — the app view would render its session into the
+   * pane. So the pane's copy goes first. DevChat and AppView.appData are
+   * left alone: the app view's open is about to own them.
+   */
+  _retireEmbeddedSession() {
+    const host = AppView._embeddedSessionHost;
+    if (!host) return;
+    AppView._embeddedSessionSeq += 1;
+    AppView._embeddedSessionHost = null;
+    AppView._reactDevBoard()?.unmount?.(host);
+    PlatformUI.detachScreenFx('dev-chat');
+  },
+
+  /**
+   * The pane is going away. Drops the session and the app it loaded — but
+   * only while no app view has taken over: an app navigation from the pane
+   * sets App.currentApp before the Messages screen unmounts, and the app
+   * view's own open is then what owns DevChat and AppView.appData.
+   */
+  unmountSessionHost(host) {
+    if (!host || AppView._embeddedSessionHost !== host) return;
+    AppView._embeddedSessionSeq += 1;
+    AppView._embeddedSessionHost = null;
+    AppView._reactDevBoard()?.unmount?.(host);
+    if (typeof App !== 'undefined' && App.currentApp) return;
+    PlatformUI.detachScreenFx('dev-chat');
+    if (window.DevChat) DevChat.reset();
+    AppView.appData = null;
+    AppView._devDataReady = false;
+    AppView._resetMergedPagination();
   },
 
   // ── The React seam for the Dev surfaces (#1084 chunk G) ────────────
@@ -3044,14 +3276,14 @@ const AppView = {
     // repeated segment. The bar names the SECTION, the chip names the scope.
     App.setHeaderTitle?.('Workshop');
     // NO BACK ARROW HERE ANY MORE (#2718 review). This used to publish a ← to
-    // the Workshop screen whenever `App._appBackHref` said that is where the
-    // app was opened from — the one thing standing between a reader and the
-    // rest of the platform, on a surface that had no rail.
+    // the Workshop screen whenever the app had been opened from it — the one
+    // thing standing between a reader and the rest of the platform, on a
+    // surface that had no rail.
     //
     // It has one now. The Workshop tab in the rail IS the way back, on the
     // exact screen the arrow pointed at, and it is there whether or not this
-    // app was reached from it. `_appBackHref` still earns its keep on the app
-    // tab, where the ✕ leaves to wherever the visit began.
+    // app was reached from it. The ✕ lives on the app tab alone, and leaves to
+    // the page the app was opened from (App.closeApp).
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.
@@ -5607,6 +5839,11 @@ const AppView = {
   // screen to refresh), so castVote can tell when its post-vote read landed.
   refreshDevData(kind) {
     if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
+    // Every caller here (a session/vote/checks event over the WS, the 20s
+    // checks poll, a late-answer correction) is refreshing a board already
+    // on screen, so the service worker must fetch rather than answer from
+    // its boot lane — see App.refreshActiveScreen for the loop that caused.
+    App._announceRefreshIntent?.();
     // #2782: a vote refresh must read data written AFTER the vote. Joining a
     // load already in flight — the 20s checks poll, another voter's WS
     // refresh — hands it a snapshot taken before the vote was recorded, and
@@ -12467,8 +12704,8 @@ const AppView = {
   _recheckAction(pr) {
     if (!pr) return null;
     if (AppView.readOnly) return null;
-    if (pr.status && !['active', 'promoted'].includes(pr.status)) return null;
-    if (pr.status === 'active' && !pr.check_state) return null;
+    if (pr.status && !['active', 'paused', 'promoted'].includes(pr.status)) return null;
+    if (['active', 'paused'].includes(pr.status) && !pr.check_state) return null;
     if (pr.check_state === 'passing') return null;
     const owner = !!(App.user && pr.user_id === App.user.id);
     // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
@@ -18734,9 +18971,17 @@ const AppView = {
   // missing/unopenable id bounces back to the card list. The App
   // secrets / display-name shortcuts that used to live here now sit
   // directly in the "+" menu (#645).
-  async renderDevChatTab(restoreSessionId) {
+  async renderDevChatTab(restoreSessionId, { embedded = false } = {}) {
     const content = AppView._devContainer();
     if (!content) return;
+    // #2813: in the Messages pane there is no Board to fall back to — the
+    // pane says the session could not be opened instead — and a redirect
+    // to another Dev surface goes through that surface's own address.
+    const unavailable = () => {
+      if (embedded) return 'unavailable';
+      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      return undefined;
+    };
     if (!restoreSessionId) {
       if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
       return;
@@ -18807,8 +19052,7 @@ const AppView = {
     // link) falls back to the forum rather than stranding an empty view.
     if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
       if (await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
-      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
-      return;
+      return unavailable();
     }
 
     // #846: an imported PR has NO dev chat — its code lives on GitHub and
@@ -18822,6 +19066,10 @@ const AppView = {
     if (DevChat.currentSession.source === 'imported') {
       const importedId = Number(restoreSessionId);
       DevChat.currentSession = null;
+      if (embedded) {
+        window.location.hash = `#app/${encodeURIComponent(AppView.appData.slug)}/dev/proposals/${importedId}`;
+        return 'unavailable';
+      }
       AppView.openTopic('proposal', importedId);
       return;
     }
@@ -20966,6 +21214,11 @@ const AppView = {
     const appIframe = document.getElementById('app-iframe');
     if (!appIframe || e.source !== appIframe.contentWindow) return;
     AppView._issueStateSource = type === 'available' ? e.source : null;
+    const slug = AppView.appData && AppView.appData.slug;
+    if (slug) {
+      if (AppView._issueStateSource) AppView._issueStateBySlug[slug] = e.source;
+      else delete AppView._issueStateBySlug[slug];
+    }
   },
 
   // True iff a provider announced itself from the currently mounted

@@ -31,6 +31,9 @@
 //      overlaps, and never loses an app.
 //   5. place() clamps at the edges, swaps two cells, and displaces rather
 //      than refusing.
+//   6. The Create tile is DERIVED, never placed: trailingCell puts it straight
+//      after the last tile on screen, and collapsedRowBound counts its row
+//      against the viewport budget of a collapsed grid.
 //
 // Run with: node --test tests/home-layout-model.test.js
 
@@ -138,8 +141,12 @@ test('the two-row default counts rows that HOLD apps, not row indices (#1367)', 
 
   // The renderer bounds INCLUSIVELY on this value, and re-places nothing —
   // widening the window must never move a tile off the cell its owner chose.
+  // The renderer asks through collapsedRowBound (the Create tile's row
+  // counted in, see below), which is defaultRowBound first and only ever one
+  // row of apps narrower.
   const HOME = read('frontend/src/features/home/home.js');
-  assert.match(HOME, /defaultRowBound\(layout, cols, rowBudget\)/);
+  assert.match(HOME, /collapsedRowBound\(layout, cols, rowBudget\)/);
+  assert.match(LAYOUT_SRC, /const bound = HomeLayout\.defaultRowBound\(layout, cols, rows\);/);
   assert.match(HOME, /canvas\.filter\(\(it\) => it\.row <= rowBound\)/);
   assert.match(HOME, /canvas\.some\(\(it\) => it\.row > rowBound\)/);
 });
@@ -218,17 +225,93 @@ test('two rows by default — a cap on what is shown, not on what exists', () =>
   // The canvas is still eight rows deep, so a drag can still place a tile on
   // any of them and nothing is stranded.
   assert.ok(HomeLayout.MAX_ROWS > HomeLayout.DEFAULT_ROWS);
-  // The island documents why: three fixed sections sit under this grid, and
+  // The island documents why: two fixed sections sit under this grid, and
   // an eight-row canvas would push them off the bottom of a phone. Each host
   // is rendered by its own component since #1191, so the ids live one file
-  // down — the island mounts the three, and the sections carry the hosts.
+  // down — the island mounts the two, and the sections carry the hosts.
   const SECTIONS = read('frontend/src/features/home/panels/sections.tsx');
-  for (const key of ['Discover', 'Challenges', 'Create']) {
+  for (const key of ['Discover', 'Challenges']) {
     assert.match(ISLAND, new RegExp(`<${key}Section />`), `the island mounts ${key}`);
   }
   assert.match(SECTIONS, /home-discover-section/);
   assert.match(SECTIONS, /home-challenges-section/);
-  assert.match(SECTIONS, /home-create-section/);
+  // Create is not a third section any more: it is the grid's trailing tile
+  // (tests/home-create-tile.test.js), so nothing mounts or hosts it here.
+  assert.doesNotMatch(ISLAND, /<CreateSection \/>/);
+  assert.doesNotMatch(SECTIONS, /home-create-section"|id="home-create-section|'home-create-section'/);
+});
+
+// ── The Create tile's cell (the prototype's scrHome) ──────────────────
+//
+// The launcher ends with "Create an app". It is not a layout ITEM — nothing
+// stores, drags or displaces it — so its cell is a pure function of what the
+// grid draws: the one straight after the last tile, in reading order.
+
+test('trailingCell: straight after the last tile, wrapping at the fourth column', () => {
+  const app = (slug, col, row) => ({ type: 'app', slug, col, row });
+  assert.deepEqual(HomeLayout.trailingCell([], 4), { col: 0, row: 0 },
+    'an empty canvas starts the tile at the first cell');
+  assert.deepEqual(HomeLayout.trailingCell([app('a', 0, 0)], 4), { col: 1, row: 0 });
+  assert.deepEqual(
+    HomeLayout.trailingCell([app('a', 0, 0), app('b', 1, 0), app('c', 2, 0), app('d', 3, 0)], 4),
+    { col: 0, row: 1 },
+    'a full row sends it to the next one',
+  );
+  // Reading order, not array order: the model's array is never sorted for it.
+  assert.deepEqual(
+    HomeLayout.trailingCell([app('late', 1, 2), app('early', 3, 0), app('mid', 0, 1)], 4),
+    { col: 2, row: 2 },
+  );
+});
+
+test('trailingCell: a hole earlier in the grid stays a hole', () => {
+  const app = (slug, col, row) => ({ type: 'app', slug, col, row });
+  // Holes are the point of the canvas (see place()), and the tile goes after
+  // the LAST tile rather than into the first gap: filling a gap the viewer left
+  // would read as the grid rearranging itself.
+  assert.deepEqual(HomeLayout.trailingCell([app('a', 0, 0), app('b', 3, 2)], 4), { col: 0, row: 3 });
+  assert.deepEqual(HomeLayout.trailingCell([app('a', 0, 0), app('b', 1, 2)], 4), { col: 2, row: 2 });
+  // Overflow items have no cell, so they never decide where the tile goes (the
+  // renderer flows the tile after them instead).
+  assert.deepEqual(
+    HomeLayout.trailingCell([app('a', 1, 0), app('o', 0, HomeLayout.MAX_ROWS)], 4),
+    { col: 2, row: 0 },
+  );
+  // Pure: it reads the array it is handed and changes nothing in it.
+  const layout = [app('b', 2, 1), app('a', 0, 0)];
+  const before = JSON.stringify(layout);
+  HomeLayout.trailingCell(layout, 4);
+  assert.equal(JSON.stringify(layout), before);
+});
+
+test('collapsedRowBound: the tile\'s row counts against a collapsed grid\'s budget', () => {
+  const packed = (n) => Array.from({ length: n }, (_, i) => (
+    { type: 'app', slug: `a${i}`, col: i % 4, row: Math.floor(i / 4) }
+  ));
+  // 17 apps on a four-row budget: rows 0-3 are full, so the tile would start a
+  // fifth row. The window comes in by one row of apps instead, and the tile
+  // takes the row that frees — four rows on screen, as the budget said.
+  const seventeen = packed(17);
+  assert.equal(HomeLayout.defaultRowBound(seventeen, 4, 4), 3);
+  assert.equal(HomeLayout.collapsedRowBound(seventeen, 4, 4), 2);
+  const shown = seventeen.filter((it) => it.row <= 2);
+  assert.deepEqual(HomeLayout.trailingCell(shown, 4), { col: 0, row: 3 });
+
+  // A last shown row with room in it keeps the plain bound: the tile sits
+  // beside the apps, inside the budget already.
+  const ragged = packed(15).concat([{ type: 'app', slug: 'far', col: 0, row: 5 }]);
+  assert.equal(HomeLayout.collapsedRowBound(ragged, 4, 4), HomeLayout.defaultRowBound(ragged, 4, 4));
+
+  // Nothing hidden, nothing to trade: sixteen apps fill four rows exactly and
+  // the tile takes a fifth rather than a "Show all" appearing for its sake.
+  const sixteen = packed(16);
+  assert.equal(HomeLayout.collapsedRowBound(sixteen, 4, 4), HomeLayout.defaultRowBound(sixteen, 4, 4));
+
+  // The two-row contract is about APPS: at the floor the bound never narrows.
+  assert.equal(HomeLayout.collapsedRowBound(seventeen, 4, 2), HomeLayout.defaultRowBound(seventeen, 4, 2));
+  for (const bad of [1, 0, NaN, null, undefined]) {
+    assert.equal(HomeLayout.collapsedRowBound(seventeen, 4, bad), HomeLayout.defaultRowBound(seventeen, 4, bad));
+  }
 });
 
 test('the module is evaluated before its consumers, and precached', () => {

@@ -1,5 +1,5 @@
-// Home-screen sections (issue #911) — the three blocks stacked under the
-// launcher grid. THE UI OVERHAUL fixed their order and their hosts:
+// Home-screen sections (issue #911) — the blocks stacked under the launcher
+// grid. THE UI OVERHAUL fixed their order and their hosts:
 //
 //   discover   — the admin-curated featured tiles, the Popular lane, and
 //                "Browse all apps". The shell's ONLY door to the app
@@ -8,17 +8,20 @@
 //                and under them the LEADERBOARD standings preview. That
 //                preview is where the standings live on the home screen now
 //                that the hamburger's Leaderboard row is gone.
-//   create     — the create-an-app block. On EVERY home screen, for every
-//                account: an account with no app quota gets the same block,
-//                dimmed, explaining itself on tap (see renderCreatePanel for
-//                why this is unconditional rather than conditionally shown).
+//
+// CREATE APP WAS THE THIRD. It is the launcher grid's trailing tile now
+// (features/home/create-tile.tsx, placed by Home.render() — the prototype's
+// scrHome), so it has no section, no view model and nothing in this module.
+// The server's registry still lists `create` (src/routes/home-panels.js), and
+// a cached older shell still renders its section from it; this module simply
+// no longer asks for it.
 //
 // PLACEMENT IS GONE, and with it a whole dimension of this module. Each
 // block used to be a draggable ITEM of the launcher grid — home.js planted a
 // `[data-panel-slot="<key>"]` host inside #app-list at the viewer's stored
 // (column, row) cell, HomeLayout carried a per-breakpoint footprint table for
 // each one, and PUT /api/home-layout persisted where they had been dropped.
-// They are three fixed <section> hosts in a fixed order now, outside
+// They are fixed <section> hosts in a fixed order now, outside
 // #app-list, and the drag gesture belongs to app tiles alone. The hosts still
 // carry `data-panel-slot="<key>"` — the attribute names WHICH block a host is
 // for, which is as true of a section as it was of a grid cell, and it is what
@@ -320,22 +323,22 @@ const HomePanels = {
   // grid that had not painted yet).
   //
   // THE UI OVERHAUL retired the placement, so both shapes collapse into one:
-  // three fixed section hosts, rendered in a fixed order, that no search
+  // fixed section hosts, rendered in a fixed order, that no search
   // keystroke or grid re-render can take away. The fallback existed only
   // because a widget inside #app-list vanished whenever #app-list did.
-  // The three section hosts, keyed the way panelFor() keys them. The ids are
+  // The section hosts, keyed the way panelFor() keys them. The ids are
   // ./panels/sections.tsx's now — each section component renders its own host
   // — but the mapping stays here because it is what makes "which blocks are
-  // there" one list rather than three call sites.
+  // there" one list rather than a call site per block. `create` left this map
+  // when Create app became the launcher grid's trailing tile.
   SECTION_HOSTS: {
     discover: 'home-discover-section',
     challenges: 'home-challenges-section',
-    create: 'home-create-section',
   },
 
-  // One paint: compute the three view models and push them.
+  // One paint: compute the view models and push them.
   //
-  // Was three `innerHTML` assignments, three `classList.toggle('hidden')`, a
+  // Was an `innerHTML` assignment and a `classList.toggle('hidden')` per host, a
   // `_stampState` pass that mirrored each block's own state attributes up onto
   // its host, and a `_wire` pass that re-attached eight families of listener
   // to nodes the assignment had just created. All four collapse into the push:
@@ -344,7 +347,7 @@ const HomePanels = {
   // markup, and every listener is a prop on an element React keeps.
   render() {
     // Signed out draws NOTHING — every block here is me-scoped (your
-    // challenge progress, the apps you don't have yet, your app quota), and
+    // challenge progress, the apps you don't have yet), and
     // the guard used to live in renderAll(), the one entry point there was.
     const signedIn = !!(window.App && App.user);
     const viewFor = (key, build) => {
@@ -356,7 +359,6 @@ const HomePanels = {
       painted: true,
       discover: viewFor('discover', HomePanels.discoverView),
       challenges: viewFor('challenges', HomePanels.challengesView),
-      create: viewFor('create', HomePanels.createView),
     });
   },
 
@@ -370,12 +372,14 @@ const HomePanels = {
   //
   // ./panels/sections.tsx renders both from the same view model, so the value
   // reaches both elements as a prop and there is nothing to mirror. The
-  // attribute contract is unchanged; only the second pass is gone.
+  // attribute contract is unchanged; only the second pass is gone. (The
+  // create pair lives on the launcher's trailing tile now, one element that
+  // carries both — features/home/create-tile.tsx.)
 
   // `hasLayoutRegistry()` and `gridSlotKeys()` lived here: the list of widgets
   // HomeLayout should place for this viewer, and the flag that told home.js
   // the authoritative footprints had arrived so a derived layout was safe to
-  // persist. Both went with the placement — the three sections are in the
+  // persist. Both went with the placement — the sections are in the
   // markup at fixed positions now, so nothing has to be placed and nothing
   // has to wait for a registry to know where it goes.
 
@@ -733,33 +737,10 @@ const HomePanels = {
 
   // ── Create app ─────────────────────────────────────────────────────
   //
-  // The former "Create an app" section, now a 1x1 tile-sized widget.
-  //
-  // IT IS ON EVERY HOME SCREEN, FOR EVERY ACCOUNT. An account with no app
-  // quota gets the same widget in the same cell — dimmed, and tapping it
-  // opens the dialog with exact usage — rather than having it silently
-  // absent. Two reasons this is
-  // the right shape and not a conditional placement:
-  //
-  //   1. canCreateApps is DERIVED per request (full-admin write access or
-  //      live app count < app_quota — see /api/auth/me), so it flips without
-  //      any user action:
-  //      creating your one allowed app, an admin editing your quota, an app
-  //      erroring out. Conditional placement would turn each of those flips
-  //      into a layout mutation that re-packs the grid under the user.
-  //   2. It's the majority rendering — most accounts carry no quota — so
-  //      "absent" would read as a missing feature rather than a locked one.
-  //
-  // The locked treatment belongs to the widget, not to a disabled button:
-  // that button's available action is opening the exact quota details.
-  createView(panel) {
-    return {
-      key: panel.key,
-      canCreate: !!(window.Home && typeof Home.canCreate === 'function' && Home.canCreate()),
-      hint: (window.Home && Home.CREATE_DISABLED_HINT)
-        || 'View your app allowance or request more slots.',
-    };
-  },
+  // `createView()` lived here: the Create block's quota state and its locked
+  // hint, for the fixed section below Challenges. The block is the launcher
+  // grid's trailing tile now, and Home.render() builds its view model on the
+  // same paint that places it (gridStore's `create`), so nothing is left here.
 
   // Does this challenge carry a metric with a target? With a target above one
   // it is COUNTED — "0/8 apps tested" — and challengeRowView gives it a count

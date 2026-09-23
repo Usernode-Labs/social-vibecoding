@@ -1,16 +1,16 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
 import * as api from './api';
-import { edit, react, setReply, toggleSaved } from './store';
+import { discardFailed, edit, react, retrySend, setReply, setUserBlocked, toggleSaved } from './store';
 import type { ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { messageStamp, timeOfDay } from '../../lib/timestamp';
+import { ReportForm, submitReport } from '../reports/report-form';
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢', '🙏', '🔥'];
-type ReportReason = 'harassment' | 'spam' | 'threats' | 'hate' | 'sexual_content' | 'other';
 
 /*
  * ONE SHAPE, DISCORD'S (#2783). Every chat — a DM, a group, #general and an
@@ -52,8 +52,10 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [reporting, setReporting] = useState(false);
-  const [reportReason, setReportReason] = useState<ReportReason>('spam');
-  const [reportDetail, setReportDetail] = useState('');
+  const [userReporting, setUserReporting] = useState(false);
+  const [more, setMore] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
   const longPress = useRef<number | null>(null);
   // #1408: the edit box grows with the message being edited, same as the
   // composer it visually replaces.
@@ -81,15 +83,34 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
     catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t update your saved messages.'); }
   }
 
-  async function report() {
+  async function blockSender() {
+    if (mine || !message.sender.id
+        || !window.confirm(`Block @${message.sender.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
     setBusy(true); setNotice('');
-    try {
-      await api.reportMessage(conversationId, message.id, reportReason, reportDetail.trim());
-      setNotice('Report submitted.'); setReporting(false); setReportDetail('');
-    }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t submit this report.'); }
+    try { await setUserBlocked(message.sender.id, true); }
+    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t block this person.'); }
     finally { setBusy(false); }
   }
+
+  // The ⋯ menu closes on a tap outside it or on Escape, like the composer's
+  // add menu. The ⋯ itself is not outside: its own click toggles it shut.
+  useEffect(() => {
+    if (!more) return undefined;
+    const onDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      if (moreRef.current?.contains(target) || moreButton.current?.contains(target)) return;
+      setMore(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setMore(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [more]);
 
   function startLongPress() {
     if (mine) return;
@@ -125,20 +146,22 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users?.join(', ')} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
-      {reporting ? <form className="messages-report" onSubmit={(event) => { event.preventDefault(); void report(); }}>
-        <label><span>Reason</span><select value={reportReason} onChange={(event) => setReportReason(event.target.value as ReportReason)}>
-          <option value="spam">Spam</option><option value="harassment">Harassment</option><option value="threats">Threats</option><option value="hate">Hate</option><option value="sexual_content">Sexual content</option><option value="other">Other</option>
-        </select></label>
-        <label><span>Details <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span></span><textarea value={reportDetail} onChange={(event) => setReportDetail(event.target.value.slice(0, 500))} rows={2} maxLength={500} /></label>
-        <div><button type="submit" disabled={busy}>{busy ? 'Submitting…' : 'Submit report'}</button><button type="button" onClick={() => { setReporting(false); setReportDetail(''); }}>Cancel</button></div>
-      </form> : null}
-      {notice ? <p role="status" className={`mt-1 text-sm ${notice === 'Report submitted.' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>{notice}</p> : null}
+      {reporting ? <ReportForm kind="message" onCancel={() => setReporting(false)}
+        onSubmit={(reason, detail) => api.reportMessage(conversationId, message.id, reason as Parameters<typeof api.reportMessage>[2], detail)} /> : null}
+      {userReporting ? <ReportForm kind="user" onCancel={() => setUserReporting(false)}
+        onSubmit={(reason, detail) => submitReport(`/api/users/${encodeURIComponent(message.sender.username)}/report`, reason, detail)} /> : null}
+      {notice ? <p role="status" className="mt-1 text-sm text-red-700 dark:text-red-400">{notice}</p> : null}
     </>
   );
 
   // The per-message controls. Hover-revealed on a pointer, always laid out
   // on touch (app.css), on the row's trailing edge.
-  const actions: ReactNode = !message.pending && !message.failed ? <div className="messages-message-actions">
+  //
+  // WHILE A SEND IS IN FLIGHT the tray is still laid out, but invisible and
+  // inert (#2907): on touch it is a line of its own under the message, and a
+  // row that grew that line only once the server answered moved everything
+  // under it. A failed row has no tray — its Retry is its control.
+  const actions: ReactNode = !message.failed ? <div className={`messages-message-actions ${message.pending ? 'messages-message-actions-reserved' : ''}`} aria-hidden={message.pending || undefined} inert={message.pending || undefined}>
     <button type="button" onClick={() => setReply(conversationId, message)} title="Reply" aria-label="Reply">↩</button>
     <button type="button" onClick={() => setPicker((open) => !open)} title="React" aria-label="React">☺</button>
     {/* Save, the Messages half of the app-chat bookmark (#1280). It sits
@@ -167,7 +190,16 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
       aria-label={message.saved ? 'Unsave message' : 'Save message'}
     >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}</button>
     {mine && message.content ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
-    {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setNotice(''); }} title="Report" aria-label="Report">!</button> : null}
+    {/* #2905: reporting and blocking are one ⋯ disc, not three. They are
+        the rare acts on a row, and each disc they took was one more on the
+        line every message carries on a phone. */}
+    {!mine ? <button ref={moreButton} type="button" className="messages-action-more" onClick={() => setMore((open) => !open)} title="More" aria-label="More actions" aria-haspopup="menu" aria-expanded={more}>⋯</button> : null}
+  </div> : null;
+
+  const moreNode = more && !mine ? <div ref={moreRef} className="messages-more-menu" role="menu" aria-label="More actions">
+    <button type="button" role="menuitem" onClick={() => { setMore(false); setReporting(true); setUserReporting(false); setNotice(''); }}>Report message</button>
+    {message.sender.id ? <button type="button" role="menuitem" onClick={() => { setMore(false); setUserReporting(true); setReporting(false); }}>Report @{message.sender.username}</button> : null}
+    {message.sender.id ? <button type="button" role="menuitem" className="messages-more-danger" disabled={busy} onClick={() => { setMore(false); void blockSender(); }}>Block @{message.sender.username}</button> : null}
   </div> : null;
 
   const pickerNode = picker ? <div className="messages-reaction-picker" role="menu" aria-label="Choose a reaction">{REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" onClick={() => void toggle(emoji)}>{emoji}</button>)}</div> : null;
@@ -175,16 +207,24 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
   const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''}`;
   const pointerProps = { onPointerDown: startLongPress, onPointerUp: cancelLongPress, onPointerCancel: cancelLongPress, onPointerMove: cancelLongPress };
 
-  // The state words a header carries — edited, sending, not sent. A
-  // continuation line has no header, so it carries them on a meta line of its
-  // own, beside nothing: the time is already in the gutter.
-  const status = (
-    <>
-      {message.editedAt ? <span title={fullTime(message.editedAt)}>edited</span> : null}
-      {message.pending ? <span>sending…</span> : null}
-      {message.failed ? <span className="text-red-700 dark:text-red-400">not sent</span> : null}
-    </>
-  );
+  // The state word a header carries — edited. A continuation line has no
+  // header, so it carries it on a meta line of its own, beside nothing: the
+  // time is already in the gutter.
+  //
+  // NO "sending…" (#2907). A message in flight says so by being faded
+  // (app.css), which changes no line's height; the word came and went in a
+  // line of its own on a continuation row and moved the transcript twice.
+  const status = message.editedAt ? <span title={fullTime(message.editedAt)}>edited</span> : null;
+
+  // A send that failed says so under its text, with the two things to do
+  // about it: send it again (the same idempotency key, so never twice) or
+  // drop it. Its own line, not the header's: three more words beside the
+  // name and time wrapped the header on a phone.
+  const failedNote = message.failed ? <div className="messages-message-meta messages-message-failed-note" role="status">
+    <span className="text-red-700 dark:text-red-400">Not sent</span>
+    {message.clientKey ? <button type="button" className="messages-retry" onClick={() => void retrySend(message.clientKey as string)}>Retry</button> : null}
+    {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>Discard</button> : null}
+  </div> : null;
 
   return (
     <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${grouped ? 'messages-message-grouped' : ''} ${stateClasses}`} {...pointerProps}>
@@ -195,10 +235,12 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
         {grouped ? null : <div className="messages-message-head"><span className={mine ? 'text-violet-700 dark:text-violet-300' : ''}>{message.sender.id ? '@' : ''}{message.sender.username}</span><time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {body}
         {extras}
-        {grouped && (message.editedAt || message.pending || message.failed) ? <div className="messages-message-meta">{status}</div> : null}
+        {grouped && message.editedAt ? <div className="messages-message-meta">{status}</div> : null}
+        {failedNote}
       </div>
       {actions}
       {pickerNode}
+      {moreNode}
     </article>
   );
 }
