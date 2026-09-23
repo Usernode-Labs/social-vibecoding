@@ -1042,3 +1042,97 @@ test('the JS entry points ask the panel before they navigate', () => {
   assert.match(helper.slice(0, helper.indexOf('\n  },')),
     /if \(panelRoute && window\.UsernodeReact\?\.sidePanel\?\.take\?\.\(panelRoute\)\) return true;/);
 });
+
+// ── 8. The divider (#2886) ───────────────────────────────────────────────
+
+test('the divider ships on the panel\'s left edge as a focusable vertical separator, with no value yet', () => {
+  const at = HTML.indexOf('<aside id="platform-side-panel"');
+  const el = HTML.slice(at, HTML.indexOf('</aside>', at));
+  assert.match(el, /^<aside id="platform-side-panel" class="side-panel hidden"[^>]*><div id="side-panel-divider" class="side-panel-divider" role="separator" aria-orientation="vertical" aria-controls="platform-side-panel" aria-label="Resize panel" title="[^"]*" tabindex="0"><\/div><div class="side-panel-head/,
+    'the aside\'s first child, before the header row');
+  assert.doesNotMatch(el, /aria-valuenow|aria-valuemin|aria-valuemax/,
+    'the width is read in an effect: the prerender and first client render carry none');
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  // Storage is read only inside an effect/handler, never in render.
+  const divider = SRC.slice(SRC.indexOf('function SidePanelDivider('));
+  const beforeReturn = divider.slice(0, divider.indexOf('\n  return ('));
+  assert.match(beforeReturn, /useEffect\(\(\) => \{\s*settle\(\);/);
+  assert.doesNotMatch(divider.slice(divider.indexOf('\n  return (')), /readStoredWidth|localStorage/);
+});
+
+test('the width\'s rules: 320px of panel and 480px of app at the least, whatever the window', () => {
+  const { bounds, clampWidth, MIN_PANEL_W, MIN_APP_W } = api.resize;
+  assert.equal(MIN_PANEL_W, 320);
+  assert.equal(MIN_APP_W, 480, 'the floor app.css already holds #app-view to beside the panel');
+  assert.match(CSS, /html\[data-side-panel\] #app-view \{\s*margin-right: var\(--side-panel-w\);\s*min-width: 480px;/);
+  // A 1440px window with the app flush left: up to 960px of panel.
+  assert.deepEqual({ ...bounds({ innerWidth: 1440, appLeft: 0 }) }, { min: 320, max: 960 });
+  // A rail to the left of the app comes out of the panel's room, not the app's.
+  assert.deepEqual({ ...bounds({ innerWidth: 1440, appLeft: 240 }) }, { min: 320, max: 720 });
+  // A window too narrow for both never inverts the range.
+  assert.deepEqual({ ...bounds({ innerWidth: 700, appLeft: 0 }) }, { min: 320, max: 320 });
+  const b = bounds({ innerWidth: 1440, appLeft: 0 });
+  assert.equal(clampWidth(100, b), 320);
+  assert.equal(clampWidth(5000, b), 960);
+  assert.equal(clampWidth(Number.POSITIVE_INFINITY, b), 960, 'End');
+  assert.equal(clampWidth(540.6, b), 541);
+});
+
+test('the chosen width is this device\'s, and storage that fails is simply the default', () => {
+  const { readStoredWidth, writeStoredWidth, clearStoredWidth, WIDTH_KEY } = api.resize;
+  const mem = new Map();
+  const store = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => { mem.set(k, String(v)); },
+    removeItem: (k) => { mem.delete(k); },
+  };
+  assert.equal(readStoredWidth(store), null, 'nothing chosen: the stylesheet\'s default');
+  writeStoredWidth(612.4, store);
+  assert.equal(mem.get(WIDTH_KEY), '612');
+  assert.equal(readStoredWidth(store), 612);
+  clearStoredWidth(store);
+  assert.equal(readStoredWidth(store), null, 'a double-click forgets it');
+  for (const junk of ['', 'wide', '-4', '0', 'NaN', 'Infinity']) {
+    mem.set(WIDTH_KEY, junk);
+    assert.equal(readStoredWidth(store), null, `"${junk}" is not a width`);
+  }
+  const throwing = {
+    getItem() { throw new Error('SecurityError'); },
+    setItem() { throw new Error('QuotaExceededError'); },
+    removeItem() { throw new Error('SecurityError'); },
+  };
+  assert.equal(readStoredWidth(throwing), null);
+  assert.doesNotThrow(() => writeStoredWidth(500, throwing));
+  assert.doesNotThrow(() => clearStoredWidth(throwing));
+  assert.equal(readStoredWidth(null), null, 'no storage at all');
+});
+
+test('a width is the layout\'s own knob on <html>, and none hands it back to the stylesheet', () => {
+  const { applyWidth } = api.resize;
+  const props = new Map();
+  const root = { style: {
+    setProperty: (k, v) => props.set(k, v),
+    removeProperty: (k) => props.delete(k),
+  } };
+  applyWidth(544.2, root);
+  assert.equal(props.get('--side-panel-w'), '544px');
+  applyWidth(null, root);
+  assert.equal(props.has('--side-panel-w'), false);
+});
+
+test('the divider drags, takes the keys, resets on a double-click, and lets the frames stand aside while held', () => {
+  const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
+  const divider = SRC.slice(SRC.indexOf('function SidePanelDivider('));
+  assert.match(divider, /setPointerCapture\(e\.pointerId\)/);
+  assert.match(divider, /d\.width = set\(d\.startW \+ \(d\.startX - e\.clientX\), false\);/,
+    'pinned to the right edge: moving left widens the panel, and nothing is stored mid-drag');
+  assert.match(divider, /if \(d\.width != null\) writeStoredWidth\(d\.width\);/,
+    'a press that never moved is half of a double-click, not a choice');
+  assert.match(divider, /const onDoubleClick = \(\) => \{\s*clearStoredWidth\(\);\s*settle\(\);/);
+  for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) assert.ok(divider.includes(`'${key}'`), key);
+  assert.match(divider, /window\.addEventListener\('resize', settle\)/, 'a window that narrows gives the width back');
+  const block = CSS.slice(CSS.indexOf('.side-panel-divider {'), CSS.indexOf('.side-panel-head {'));
+  assert.match(block, /cursor: col-resize;/);
+  assert.match(block, /touch-action: none;/);
+  assert.match(block, /html\.side-panel-resizing iframe \{\s*pointer-events: none;/);
+});

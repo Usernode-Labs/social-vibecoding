@@ -26,7 +26,7 @@ const dapp = JSON.parse(read('dapp.json'));
 
 // The App._entryTransition body.
 function entryTransition() {
-  const at = appJs.indexOf('  _entryTransition(preferred, screenEl) {');
+  const at = appJs.indexOf('  _entryTransition(preferred, screenEl, viaTab) {');
   assert.ok(at !== -1, 'App._entryTransition went missing');
   return appJs.slice(at, appJs.indexOf('\n  },', at));
 }
@@ -94,12 +94,13 @@ test('the zoom sites keep their split mutation intact under the gate', () => {
   // since the _exitX helpers no longer hide their own screens.
   const nav = appJs.slice(appJs.indexOf('async navigateToApp('));
   const zoom = nav.slice(0, nav.indexOf('await AppView.open(slug)'));
-  assert.match(zoom, /App\._entryTransition\('zoom-in', appViewEl\)/);
+  // `viaTab` (#2880, #2881): a Workshop-tab press resolves as a tab switch.
+  assert.match(zoom, /App\._entryTransition\('zoom-in', appViewEl, viaTab\)/);
   assert.match(zoom, /after: \(\) => \{ App\._showOnlyScreen\('app-view'\); \}/,
     'the conceal half of the mutation must survive');
-  const home = appJs.slice(appJs.indexOf('navigateHome() {'));
+  const home = appJs.slice(appJs.indexOf('navigateHome(opts) {'));
   assert.match(home.slice(0, home.indexOf('App.updateHash()')),
-    /App\._entryTransition\('zoom-out', av\)/);
+    /App\._entryTransition\('zoom-out', av, viaTab\)/);
 });
 
 // ── The two native sheets ──────────────────────────────────────────────
