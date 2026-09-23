@@ -321,6 +321,8 @@ cleanup_evidence() {
   if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
 }
 if [ "$MODE" = "evidence" ]; then
+  command -v mcp-server-playwright >/dev/null 2>&1 \
+    || die "the evidence browser MCP executable is missing"
   echo "__USERNODE_PHASE__ evidence_proxy"
   EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
     || die "could not create evidence browser state"

@@ -103,6 +103,8 @@ cleanup_evidence() {
   if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
 }
 if [ "$MODE" = "evidence" ]; then
+  command -v mcp-server-playwright >/dev/null 2>&1 \
+    || die "the evidence browser MCP executable is missing"
   echo "__USERNODE_PHASE__ evidence_proxy"
   EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
     || die "could not create evidence browser state"
@@ -267,7 +269,7 @@ startup_timeout_sec = 15
 tool_timeout_sec = 720
 
 [mcp_servers.browser_member]
-command = "playwright-mcp"
+command = "mcp-server-playwright"
 TOML
     printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
     cat <<'TOML'
@@ -276,7 +278,7 @@ startup_timeout_sec = 30
 tool_timeout_sec = 60
 
 [mcp_servers.browser_admin]
-command = "playwright-mcp"
+command = "mcp-server-playwright"
 TOML
     printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
     cat <<'TOML'
