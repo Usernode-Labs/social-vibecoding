@@ -62,7 +62,7 @@ function DatabaseSection() {
     {!data && !error && <p className={AdminUI.loading}>Loading database clusters…</p>}
     {data && !data.enabled && <p className={AdminUI.muted}>Database cluster management is not enabled for this installation.</p>}
     {data?.enabled && <>
-      <p className={AdminUI.muted}>Create a disposable preview database cluster. Existing apps keep their current database placement.</p>
+      <p className={AdminUI.muted}>Create a configured database cluster. Existing apps keep their current database placement.</p>
       <div className={AdminUI.tableWrap}>
         <table className={AdminUI.table}>
           <thead className={AdminUI.thead}><tr>
@@ -72,7 +72,7 @@ function DatabaseSection() {
           <tbody>{data.targets.map((target) => {
             const request = data.requests.find((item) => item.target === target.id);
             return <tr key={target.id} className={AdminUI.trHover}>
-              <td className={AdminUI.td}>{target.id}</td><td className={AdminUI.td}>Previews</td>
+              <td className={AdminUI.td}>{target.id}</td><td className={AdminUI.td}>{target.profile === 'retained' ? 'Retained staging' : 'Previews'}</td>
               <td className={AdminUI.td}>{request ? (phases[request.phase] || 'Unknown') : 'Not created'}</td>
               {canWrite && <td className={AdminUI.td}>{!request && <button type="button" className={AdminUI.btn.primary}
                 disabled={!!busy} onClick={() => void create(target.id)}>{busy === target.id ? 'Requesting…' : 'Create'}</button>}</td>}
