@@ -53,10 +53,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { ChatMessageRow } from '@/components/ui/chat';
+import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
+import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
 import { EventRow } from './proposal-event';
@@ -502,36 +503,29 @@ function SpecSnippet({ html }: { html: string }) {
 }
 
 /**
- * A person's message.
+ * A person's message — a named row, Discord's shape, on every surface
+ * (#2783): square avatar, name, time, flat text, the viewer's own on the
+ * left like everybody else's. The general chat used to put a person's body in
+ * a bubble and the viewer's own on the right; the Messages screen's DMs did
+ * the same and dropped it at the same time, so every chat reads alike.
  *
- * `bubbled` is the general chat's spelling of it: the body — the quoted
- * reply, the text, the files — sits in a bubble, the Messages screen's own
- * (app.css `.gc-bubble` restates `.messages-bubble`), and the viewer's own
- * message sits on the RIGHT with no avatar, in the accent tint the dev chat
- * gives your turns and the Messages screen gives yours. Reactions stay under
- * the bubble, on its side. A topic thread does not pass it and keeps the
- * flat named row it always drew, including `gc-msg-self`, which the
- * reaction bar and the thread's own tint key off in both cases.
+ * `grouped` is a continuation of the same person's previous message
+ * (`groupsWithPrevious`): no avatar and no header, the time in the gutter.
+ * `gc-msg-self` stays on the viewer's own rows, which the reaction bar and a
+ * thread's tint key off.
  */
-export function MessageRow({ msg, bubbled = false }: { msg: TranscriptMessage; bubbled?: boolean }) {
-  const me = bubbled && msg.mine;
-  const body = (
-    <>
-      {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
-      <Body html={msg.bodyHtml} />
-      <Attachments items={msg.attachments} />
-    </>
-  );
+export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; grouped?: boolean }) {
   return (
     <ChatMessageRow
       className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
-      from={me ? 'me' : 'them'}
+      grouped={grouped}
+      gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
       data-username={msg.username}
       // #2236: only when set, so an ordinary row's attribute set is exactly
       // what it was.
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
-      avatar={me ? undefined : (
+      avatar={(
         <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
           {msg.username.charAt(0).toUpperCase()}
         </Avatar>
@@ -553,7 +547,12 @@ export function MessageRow({ msg, bubbled = false }: { msg: TranscriptMessage; b
       )}
       actions={<RowActions msg={msg} />}
     >
-      {bubbled ? <div className={me ? 'gc-bubble gc-bubble-self' : 'gc-bubble'}>{body}</div> : body}
+      {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
+      <Body html={msg.bodyHtml} />
+      <Attachments items={msg.attachments} />
+      {grouped && msg.editedTitle ? (
+        <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+      ) : null}
       <Reactions msg={msg} />
     </ChatMessageRow>
   );
@@ -603,13 +602,22 @@ export function Transcript({ source = 'main' }: { source?: string }) {
  * proposal event is that event's message row; the thread draws every row
  * flat, and the line itself where the general chat draws an event.
  */
-function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, chat = false) {
+function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, chat = false, previous: TranscriptMessage | null = null) {
   const key = msg.id != null ? `m${msg.id}` : fallbackKey;
   if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
   // `chat` is a change page's own Discussion, drawn in the general chat's
-  // language: bubbles for people, and every notice as a message (its rows
-  // arrive with an event from `GroupChat._threadEvent`).
-  if (msg.kind === 'message') return <MessageRow key={key} msg={msg} bubbled={main || chat} />;
+  // language: every notice as a message (its rows arrive with an event from
+  // `GroupChat._threadEvent`). A person's message is the same named row on
+  // every surface, grouped under the previous one when it continues it.
+  if (msg.kind === 'message') {
+    const grouped = !!previous && previous.kind === 'message' && !previous.event && !msg.event
+      && !!msg.at && !!previous.at
+      && groupsWithPrevious(
+        { author: previous.username, at: previous.at },
+        { author: msg.username, at: msg.at, reply: !!msg.quote },
+      );
+    return <MessageRow key={key} msg={msg} grouped={grouped} />;
+  }
   if ((main || chat) && msg.event) return <EventRow key={key} msg={msg} />;
   return <SystemRow key={key} msg={msg} />;
 }
@@ -680,7 +688,7 @@ export function TranscriptRows({ view, source }: { view: TranscriptView; source:
       {view.lead.placeholder && !rows.length ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
-      {rows.map((msg, i) => renderRow(msg, `i${i}`, main, chat))}
+      {rows.map((msg, i) => renderRow(msg, `i${i}`, main, chat, i > 0 ? rows[i - 1] : null))}
       {quiet ? <QuietCard {...quiet} /> : null}
     </>
   );

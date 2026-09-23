@@ -1,5 +1,5 @@
 /**
- * #apps-switcher-sheet — the menu behind the header chip (#1443).
+ * #apps-switcher-sheet — the menu behind the header's Homeroom mark (#1443, #2784).
  *
  * ── The rule ───────────────────────────────────────────────────────────
  *
@@ -73,34 +73,35 @@
  *
  * Three presentations, one always-mounted element, all of them in app.css
  * (the `#apps-switcher-sheet` block): a kit bottom sheet on touch, a CSS
- * bottom sheet below `sm`, and at `sm`+ for a mouse a DROPDOWN hanging under
- * the chip that opened it. That last one was a right-edge rail like the
- * Improve panel and the notifications sheet, and it is the one thing about
- * this surface that is not like them: those two are lists with no natural
- * end, this is a menu, and a menu that answers from the far edge of a wide
- * display leaves its trigger a foot away. Nothing in here changes with the
- * presentation — the markup is one panel and the CSS decides where it is,
- * which is why the desktop change is a media query and not a branch.
+ * bottom sheet below `sm`, and at `sm`+ for a mouse a POPOVER anchored under
+ * the Homeroom mark that opened it, undimmed, like the dev board's vote
+ * popover (#2784). That last one was a right-edge rail like the notifications
+ * sheet, then a dropdown centred under the header's title chip — stranded in
+ * the middle of the screen once the trigger moved to the mark. Those rails
+ * are lists with no natural end; this is a menu, and a menu belongs under its
+ * trigger. Nothing in here changes with the presentation — the markup is one
+ * panel and the CSS decides where it is. The one measurement, the mark's
+ * rect, lives in ./index.tsx beside the Escape binding, and reaches the CSS as
+ * two custom properties the desktop rule reads.
  *
  * ── Same MATERIAL as the two rails, different SHAPE ────────────────────
  *
  * It wears `.dc-lift dc-lift-panel`, which is the frosted fill, the hairline
  * colour and bounded lift shadows the Improve and notifications rails wear.
- * OverlayScrim paints the surrounding dim through a rounded cutout, keeping
- * the glass over an undimmed page.
+ * Below `sm` OverlayScrim paints the surrounding dim through a rounded
+ * cutout, keeping the glass over an undimmed page; at `sm`+ the popover casts
+ * no dim at all (lib/overlay-scrim.js skips it), the way the kit's own
+ * desktop menus do.
  *
- * This is the pane the dim treats least kindly, and it is worth knowing why:
- * the rails dock to a screen edge, where what shows through the frost is page
- * margin, while this one hangs in the middle of the content, where it is body
- * text. Blurred text behind a menu reads as a smudge rather than as depth. If
- * that ever needs fixing it is this surface's fill alpha, not the mechanism.
+ * Blurred text behind a menu can read as a smudge rather than as depth, and
+ * the popover sits over content rather than page margin. If that ever needs
+ * fixing it is this surface's fill alpha, not the mechanism.
  * That is the whole of what it takes from them, and it is deliberate that it
  * is not more: `.dc-lift` rounds a DOCKED sheet — 1.75rem on the corners that
  * meet the page, square on the ones that run off the display — and at `sm`+
- * this thing docks to nothing. It hangs off the chip, so all four of its
+ * this thing docks to nothing. It hangs off the mark, so all four of its
  * corners are real and it keeps the kit's own 12px menu radius
- * (`--un-radius-card`) and the `--brand-line` hairline that ties it to the
- * chip's ring. Below `sm` it IS floor-docked, and there it takes the pane's
+ * (`--un-radius-card`) and the `--brand-line` hairline. Below `sm` it IS floor-docked, and there it takes the pane's
  * 1.75rem top corners like the other two.
  *
  * What this replaced was `bg-white dark:bg-zinc-900` with a zinc hairline and

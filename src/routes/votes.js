@@ -1439,8 +1439,18 @@ function normalizedSha(value) {
 // older than the push and is told the head did not move. Pass it whenever the
 // push and this call are in the same request; leave it off for the sweeps and
 // read paths, which have nothing of their own to see.
+//
+// `offline` (#2782): answer from the row alone — every early return above the
+// mirror read is unchanged, and a GitHub-backed row reports its STORED head
+// and epoch with `deferred: true` instead of fetching. The vote route uses it:
+// a vote is bound to the epoch the voter was shown (see recordVote), so the
+// live read that decides whether that epoch still describes the branch can
+// run after the response rather than in front of it. That read was a full
+// `git fetch` queued behind every other fetch of the repository — and a cold
+// clone after a restart — on the path of every Yes.
 async function reconcileNativeReviewedHead({
   config, pool, session, fresh = false, notify = true, deferChecks = false,
+  offline = false,
 }) {
   const integration = require('../services/integration');
   const mirror = require('../services/repo-mirror');
@@ -1492,6 +1502,12 @@ async function reconcileNativeReviewedHead({
   }
 
   const oldHead = normalizedSha(session.reviewed_head_sha);
+  if (offline) {
+    return {
+      enforced: true, headSha: oldHead, epoch: epochOf(session),
+      unchanged: true, deferred: true,
+    };
+  }
   let dir; let liveHead; let mainSha;
   try {
     dir = await mirror.ensureMirror(parsed.owner, parsed.repo, {
@@ -1885,7 +1901,22 @@ const VOTE_REASON_UPSERT_SQL = `reason = CASE
              WHEN pr_votes.vote = EXCLUDED.vote THEN pr_votes.reason
              ELSE NULL END`;
 
-async function recordVote({ pool, session, userId, vote, headSha, revisionEnforced, reason = null }) {
+// `expectedEpoch` (#2782) is the epoch the voter's screen was drawn at. When
+// it is given, the row lock and the comparison are the same statement: a vote
+// is written only if the proposal is STILL at that epoch, so a reconciliation
+// that cleared approvals between the page load and the click refuses the vote
+// instead of silently moving it onto code the voter has not seen. That is what
+// lets the vote route skip the live GitHub read in front of this write — the
+// binding no longer depends on the read having happened first.
+function parseExpectedEpoch(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function recordVote({
+  pool, session, userId, vote, headSha, revisionEnforced, reason = null, expectedEpoch = null,
+}) {
   if (!revisionEnforced) {
     return pool.query(
       `INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
@@ -1909,13 +1940,44 @@ async function recordVote({ pool, session, userId, vote, headSha, revisionEnforc
      )
      INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
      SELECT id, $2, $3, $4, approval_epoch, $5 FROM current_session
+      WHERE $6::integer IS NULL OR approval_epoch = $6::integer
      ON CONFLICT (session_id, user_id) DO UPDATE
        SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
            approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
            ${VOTE_REASON_UPSERT_SQL}
      RETURNING id, reason`,
-    [session.id, userId, vote, headSha, reason]
+    [session.id, userId, vote, headSha, reason, parseExpectedEpoch(expectedEpoch)]
   );
+}
+
+// After a vote has been answered (#2782): the fresh GitHub read the route used
+// to await, then the majority check. The order matters — checkAndMerge's own
+// reconcile is a non-fresh one that joins any fetch already in flight, and it
+// relied on "every interactive vote performs a fresh read" (its comment says
+// so). Running that read here, before it, keeps the guarantee; it just no
+// longer sits between the click and the answer.
+//
+// A read that finds an authored push bumps the epoch, retiring the vote just
+// recorded along with every other vote on the old code, posts the "please
+// re-review" line and pushes `headMoved` to every client — so the voter sees
+// their vote cleared rather than silently counted. A read that fails is
+// logged and the merge check still runs: the exact-sha merge is the guard
+// against a head nobody verified, as it is on every other path.
+async function settleVoteInBackground({ config, pool, session, revision }) {
+  if (revision?.deferred) {
+    try {
+      const live = await reconcileNativeReviewedHead({ config, pool, session, fresh: true });
+      if (live?.updated && !live.votesKept) {
+        // The approvals were just cleared; there is nothing to count.
+        return { merged: false, headMoved: !!live.changed, reviewReset: true };
+      }
+    } catch (err) {
+      log.warn('votes', 'Post-vote revision read failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  }
+  return checkAndMerge(config, pool, session);
 }
 
 // The background merge/rejection sweep has no user vote event to refresh a
@@ -2068,12 +2130,18 @@ function voteRoutes(config) {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'
+         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status IN ('active', 'paused')
            AND cs.is_headless = FALSE`,
         [req.params.id, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Active session not found' });
       const session = rows[0];
+      // A native preflight may have started while active. If the owner paused
+      // it during that request, require a fresh explicit submission. Paused
+      // submissions themselves never resume a worker or consume an active slot.
+      if (req.cliHandoffStatus && req.cliHandoffStatus !== session.status) {
+        return res.status(409).json({ error: 'session_state_changed' });
+      }
       const imported = session.source === 'imported';
       const previousReviewedHead = imported
         ? (session.imported_pr_head_sha || null)
@@ -2318,10 +2386,10 @@ function voteRoutes(config) {
             const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
             await pool.query(
               `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
-                WHERE id = $2 AND status = 'active' AND source = 'cli_handoff'
+                WHERE id = $2 AND status = $4 AND source = 'cli_handoff'
                   AND COALESCE(checks_commit_sha, handoff_head_sha)
                       IS NOT DISTINCT FROM $3`,
-              [detail, session.id, req.cliHandoffCheckedHead]
+              [detail, session.id, req.cliHandoffCheckedHead, session.status]
             ).catch(() => {});
             return res.status(409).json({
               error: 'branch_head_changed',
@@ -2362,8 +2430,8 @@ function voteRoutes(config) {
                   THEN reviewed_head_sha ELSE COALESCE($2, reviewed_head_sha) END,
                 imported_pr_head_sha = CASE WHEN source = 'imported'
                   THEN COALESCE($2, imported_pr_head_sha) ELSE imported_pr_head_sha END
-          WHERE id = $1 AND status = 'active'`,
-        [session.id, promotedHeadSha]
+          WHERE id = $1 AND status = $3`,
+        [session.id, promotedHeadSha, session.status]
       );
       if (!promoted.rowCount) {
         return res.status(409).json({ error: 'session_state_changed' });
@@ -3143,13 +3211,28 @@ function voteRoutes(config) {
       if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
       const session = sessionRows[0];
 
-      // Verify the live head before recording a native vote. The PR may have
-      // moved since the proposal was opened; in that case
-      // reconcileNativeReviewedHead advances the reviewed revision,
-      // drops only stale-revision votes, invalidates old checks, and this vote
-      // is then safely recorded against the new commit.
+      // #2782: the revision as the ROW has it — no GitHub round-trip. This
+      // used to be a fresh reconcile, which meant a full `git fetch` of the
+      // app's repository (queued behind any other fetch of it, and a cold
+      // clone after a restart) in front of every vote: the "sometimes a Yes
+      // takes ages to register" report.
+      //
+      // Nothing the fetch protected depends on it being HERE:
+      //   - The vote is bound to the epoch the voter was shown, atomically,
+      //     inside recordVote's row lock. A click on a proposal whose
+      //     approvals were already cleared is refused below, as before.
+      //   - A push the platform has not noticed yet leaves the epoch where
+      //     it was, so the vote is stamped with the epoch describing the code
+      //     the voter reviewed. The fresh reconcile run right after the
+      //     response (settleVoteInBackground) finds the push and, if it was
+      //     authored, bumps the epoch — which retires this vote with every
+      //     other one on the old code. A mechanical sync keeps it, exactly as
+      //     the in-request read would have.
+      //   - The merge itself never trusted this read: checkAndMerge
+      //     reconciles again, re-checks the visual-evidence gate at the exact
+      //     head, and merges only the pinned sha.
       const revision = await reconcileNativeReviewedHead({
-        config, pool, session, fresh: true,
+        config, pool, session, offline: true,
       });
       if (revision.blocked) {
         return res.status(revision.transient ? 503 : 409).json({ error: revision.reason });
@@ -3234,21 +3317,27 @@ function voteRoutes(config) {
         headSha: voteHeadSha,
         revisionEnforced: !!revision.enforced,
         reason,
+        expectedEpoch: req.body?.expectedEpoch,
       });
       // The line the row now carries: the one sent, or the earlier one the
       // upsert kept for a same-side re-cast (a Yes carried onto a new
       // version brings its sentence along).
       const recordedReason = recorded?.rows?.[0]?.reason ?? reason ?? null;
       if (revision.enforced && (recorded.rowCount || 0) === 0) {
-        // The DB head moved after the GitHub read but before the write lock.
-        // Refresh the proposal state, but never transfer this click to it.
-        const latest = await reconcileNativeReviewedHead({
-          config, pool, session, fresh: true,
-        }).catch(() => null);
+        // The epoch moved (or the proposal left review) between the read
+        // above and the write lock. Never transfer this click to the new
+        // revision; answer with the epoch it is at now so the next click can
+        // land without waiting on a refetch (#2038).
+        const { rows: latestRows } = await pool.query(
+          `SELECT reviewed_head_sha, approval_epoch FROM chat_sessions WHERE id = $1`,
+          [session.id]
+        ).catch(() => ({ rows: [] }));
+        const latest = latestRows[0] || null;
         return revisionChangedVoteResponse(
           res,
-          latest && !latest.blocked ? latest.headSha : reviewedHeadForSession(session),
-          'This proposal changed while your vote was being recorded. Refresh it, review the new revision, then vote again.'
+          latest?.reviewed_head_sha || reviewedHeadForSession(session),
+          'This proposal changed while your vote was being recorded. Refresh it, review the new revision, then vote again.',
+          latest ? latest.approval_epoch : null
         );
       }
 
@@ -3387,10 +3476,10 @@ function voteRoutes(config) {
       }
       res.json({ ok: true, merged: false });
 
-      // Kick off the majority check in the background. If it turns
-      // into a merge, we send a second broadcast so clients flip the
-      // PR out of the vote panel and update the "merged" list.
-      checkAndMerge(config, pool, session)
+      // The live head read the response no longer waits on, then the
+      // majority check. If it turns into a merge, a second broadcast flips
+      // the PR out of the vote panel and updates the "merged" list.
+      settleVoteInBackground({ config, pool, session, revision })
         .then((mergeResult) => {
           if (mergeResult?.merged) {
             pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: true });
@@ -6896,6 +6985,8 @@ module.exports = {
   parseImportLinkedIssues,
   MAX_IMPORT_LINKED_ISSUES,
   recordVote,
+  parseExpectedEpoch,
+  settleVoteInBackground,
   // #1688: the line on a vote and the names at merge, unit-tested directly.
   normalizeVoteReason,
   VOTE_REASON_MAX,

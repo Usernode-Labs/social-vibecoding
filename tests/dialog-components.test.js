@@ -111,7 +111,7 @@ const componentSrc = new Map(componentFiles.map((f) => [f, allSrc.get(f)]));
  * see the comment above AutoSessionModal. They already build on DialogCard,
  * which is the whole of the chassis available to them.
  */
-const MESSAGES_DIALOGS = ['create-dialog.tsx', 'members-dialog.tsx', 'share-dialog.tsx'];
+const MESSAGES_DIALOGS = ['agent-dialog.tsx', 'create-dialog.tsx', 'members-dialog.tsx', 'share-dialog.tsx'];
 const chassisSrc = new Map([
   ...componentSrc,
   ...MESSAGES_DIALOGS.map((f) => [`messages/${f}`, fs.readFileSync(path.join(MESSAGES, f), 'utf8')]),

@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function harness() {
+function harness(globals = {}) {
   const callbacks = new Map(), observers = [], events = new Map();
   let next = 0, reads = 0;
   const style = {
@@ -25,7 +25,7 @@ function harness() {
   const backdrop = { getAnimations: () => [] }, paint = { style: {} };
   class Observer {
     constructor(fn) { this.fn = fn; observers.push(this); }
-    observe() {}
+    observe(target, opts) { this.target = target; this.opts = opts; }
     disconnect() { this.disconnected = true; }
   }
   const sandbox = {
@@ -36,6 +36,7 @@ function harness() {
     innerWidth: 400, innerHeight: 800, matchMedia: () => ({ matches: false }),
     addEventListener: (e, f) => events.set('window:' + e, f),
     removeEventListener: e => events.delete('window:' + e),
+    ...globals,
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
@@ -78,6 +79,66 @@ test('closing animation keeps its decoration until the surface hides', () => {
   h.style.visibility = 'hidden'; h.frame();
   assert.equal(h.paint.style.visibility, 'hidden');
   assert.equal(h.callbacks.size, 0); h.detach();
+});
+
+test('the dim reaches the foot of the layout viewport when iOS collapses innerHeight (#2765)', () => {
+  // A phone with the on-screen keyboard up: innerHeight has collapsed to the
+  // 441px visual viewport while the fixed paint layer still spans the 844px
+  // layout viewport, and the dialog rides the band the keyboard panned to.
+  const h = harness({ innerHeight: 441, document: { documentElement: { clientHeight: 844 } } });
+  h.style.visibility = 'visible';
+  h.surface.getBoundingClientRect = () => ({ left: 16, top: 419, right: 374, bottom: 828, width: 358, height: 409 });
+  h.observers[0].fn(); h.frame();
+  const paint = h.paint.style.background;
+  assert.match(paint, /0px 0px \/ 400px 419px no-repeat/, 'the band above the card');
+  assert.match(paint, /0px 828px \/ 400px 16px no-repeat/, 'and the strip under it, down to 844 rather than 441');
+  assert.match(paint, /0px 419px \/ 16px 409px no-repeat/, 'the gutters run the card\'s whole height');
+  h.detach();
+});
+
+test('without a document the paint height is innerHeight, as before', () => {
+  const h = harness();
+  h.style.visibility = 'visible';
+  h.observers[0].fn(); h.frame();
+  assert.match(h.paint.style.background, /0px 0px \/ 80px 800px no-repeat/);
+  h.detach();
+});
+
+test('the cutout is placed relative to the paint layer\'s own box (#2822)', () => {
+  // The layer reaches a viewport above and below its fixed box (app.css), and
+  // with the keyboard up iOS can report both rects shifted: measuring the
+  // layer too keeps the hole on the dialog whatever the offset is.
+  const h = harness();
+  h.paint.getBoundingClientRect = () => ({ left: 0, top: -800, right: 400, bottom: 1600, width: 400, height: 2400 });
+  h.style.visibility = 'visible';
+  h.surface.getBoundingClientRect = () => ({ left: 16, top: 300, right: 384, bottom: 600, width: 368, height: 300 });
+  h.observers[0].fn(); h.frame();
+  const paint = h.paint.style.background;
+  assert.match(paint, /0px 0px \/ 400px 1100px no-repeat/, 'dim from the layer\'s top down to the dialog');
+  assert.match(paint, /0px 1400px \/ 400px 1000px no-repeat/, 'and from under it to the layer\'s foot');
+  assert.match(paint, /0px 1100px \/ 16px 300px no-repeat/, 'the gutter beside it, in layer coordinates');
+  h.detach();
+});
+
+test('a keyboard change on <html> re-measures an open dialog (#2822)', () => {
+  // --un-kb-inset and --platform-vv-top MOVE the dialog without resizing it.
+  const root = { clientHeight: 800 };
+  const h = harness({ document: { documentElement: root } });
+  const rootObserver = h.observers[2];
+  assert.equal(rootObserver.target, root);
+  assert.deepEqual([...rootObserver.opts.attributeFilter], ['style', 'class']);
+  rootObserver.fn();
+  assert.equal(h.callbacks.size, 0, 'nothing while closed');
+  h.style.visibility = 'visible';
+  h.observers[0].fn(); h.frame();
+  let moved = 0;
+  h.surface.getBoundingClientRect = () => { moved++; return { left: 80, top: 200, right: 400, bottom: 800, width: 320, height: 600 }; };
+  rootObserver.fn(); h.frame();
+  assert.equal(moved, 1);
+  assert.match(h.paint.style.background, /0px 0px \/ 400px 200px no-repeat/, 'the hole moved with the dialog');
+  h.events.get('window:scroll')(); h.frame();
+  assert.equal(moved, 2, 'a page scroll while it is open re-measures too');
+  h.detach();
 });
 
 test('adopted content does not paint a second scrim', () => {

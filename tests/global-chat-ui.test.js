@@ -45,14 +45,14 @@ test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   assert.match(appJs, /parts\[0\] === 'chat'/);
   assert.match(appJs, /navigateToGlobalChat\(threadId\)/);
   assert.match(appJs, /App\._showOnlyScreen\('global-chat-screen'\)/);
-  // THE WAY IN IS THE INBOX'S (#2718 review). `new-chat-button.tsx` was the
-  // head of the Improve panel's Chats section, and the panel retired; the
-  // control it duplicated is `#messages-new-agent`, which sits beside the
-  // rows that RESUME a chat rather than one surface away from them. The gate
-  // travelled with it unchanged — both flags, read once and driving the
-  // rows, the tab and the compose button together.
+  // THE ROWS ARE THE INBOX'S (#2718 review), gated on both flags, read once.
+  // Starting one moved (#2778): the inbox's "+" offers Agent chat, which for
+  // now opens a new dev session on an app the viewer picks — so the compose
+  // button `#messages-new-agent` that started a Global Chat is retired, and
+  // an existing chat is resumed from its row.
   assert.match(inbox, /parityReady\s*\n?\s*&& chat\.bootstrap\.profiles\.globalChat\.enabled === true/);
-  assert.match(inbox, /id="messages-new-agent"/);
+  assert.doesNotMatch(inbox, /id="messages-new-agent"/);
+  assert.match(inbox, /data-new-choice=\{item\.key\}/);
 });
 
 test('the inbox lists resumable chats, and is where one is deleted', () => {
@@ -71,7 +71,6 @@ test('the inbox lists resumable chats, and is where one is deleted', () => {
   assert.match(inbox, /Delete this chat\?/);
   assert.match(inbox, /\{removing \? 'Deleting…' : 'Delete'\}/);
   assert.match(inbox, /DraftTrashIcon/);
-  assert.match(inbox, /void startNewGlobalChat\(\)/);
 });
 test('chat navigation uses the shared screen router instead of a body-wide mode', () => {
   assert.match(store, /open:\s*false/);

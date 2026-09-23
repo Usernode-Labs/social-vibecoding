@@ -92,7 +92,9 @@ export function RefMenuView({ items, active }: AutocompleteSlot<RefOption>) {
               The badge reuses the message-chip classes so the dropdown teaches
               the rendering: violet PR#N, emerald #N.
           */}
-          {item.kind === 'pr' ? (
+          {item.kind === 'channel' ? (
+            <span className="gc-channel-ref">{`#${item.number}`}</span>
+          ) : item.kind === 'pr' ? (
             <span className="gc-ref gc-ref-pr">{`PR#${item.number}`}</span>
           ) : (
             <span className="gc-ref gc-ref-issue">{`#${item.number}`}</span>

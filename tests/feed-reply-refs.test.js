@@ -118,9 +118,13 @@ test('picking a row inserts the canonical PR#N or #N and puts the caret after it
 
 test('the trigger is the chat menu’s, character for character', () => {
   // A dropdown that offered a completion the renderer would not chip would be
-  // teaching the wrong convention. One regular expression, two composers.
+  // teaching the wrong convention. One regular expression for the numbers,
+  // two composers.
   assert.match(REFS, /const TRIGGER_RE = \/\(\^\|\[\^\\w&\]\)\(pr \?#\|#\)\(\\d\{0,7\}\)\$\/i;/);
-  assert.match(GC_JS, /_triggerRe: \/\(\^\|\[\^\\w&\]\)\(pr \?#\|#\)\(\\d\{0,7\}\)\$\/i,/);
+  // #2783: the chat's menu ALSO takes a word after the `#` — a channel, which
+  // only a chat can name. A card's reply box is not a chat, so its trigger
+  // stays the numeric half: the same boundary, the same `#`, the same digits.
+  assert.match(GC_JS, /_triggerRe: \/\(\^\|\[\^\\w&\]\)\(pr \?#\|#\)\(\\d\{0,7\}\|\[A-Za-z\]\[A-Za-z0-9-\]\{0,39\}\)\$\/i,/);
 });
 
 // ── The candidates ───────────────────────────────────────────────────

@@ -7437,6 +7437,48 @@ CREATE INDEX IF NOT EXISTS idx_notifications_conversation
   ON notifications (conversation_id, user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_conversation_message
   ON notifications (conversation_message_id);
+-- #2783: CHANNELS. A third conversation kind for a room EVERY signed-in user
+-- is in and can post to — today exactly one, #general. It lives in this
+-- domain rather than in app-scoped `chat_messages` because it belongs to no
+-- app, and because this domain already carries everything a shared room
+-- needs: replies, reactions, edits, attachments, per-viewer read cursors,
+-- saves, reports and the realtime audience.
+--
+-- Membership is IMPLICIT: services/conversations.js joins a viewer the first
+-- time their conversation list is read, so the room never needs an invite
+-- and nobody is fanned out to until they have opened Messages. A channel has
+-- no owner and cannot be left, renamed or managed by its members.
+--
+-- `channel_key` is the room's stable handle (`general`), the thing a `#name`
+-- reference in a message resolves against. The CHECKs are re-stated under
+-- names here because CREATE TABLE IF NOT EXISTS above skips an existing
+-- table: the unnamed originals (`conversations_kind_check`, and the table
+-- CHECK Postgres names `conversations_check`) only allowed two kinds.
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS channel_key VARCHAR(40);
+DO $$
+BEGIN
+  ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_kind_check;
+  ALTER TABLE conversations ADD CONSTRAINT conversations_kind_check
+    CHECK (kind IN ('direct', 'group', 'channel'));
+  ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_check;
+  ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_title_check;
+  ALTER TABLE conversations ADD CONSTRAINT conversations_title_check CHECK (
+    (kind = 'direct' AND title IS NULL)
+    OR (kind IN ('group', 'channel') AND title IS NOT NULL AND BTRIM(title) <> '')
+  );
+  ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_channel_key_check;
+  ALTER TABLE conversations ADD CONSTRAINT conversations_channel_key_check
+    CHECK ((kind = 'channel') = (channel_key IS NOT NULL));
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_channel_key
+  ON conversations (channel_key) WHERE channel_key IS NOT NULL;
+-- The room itself, in production and staging alike: it is the platform's,
+-- not demo data. `conversations` is staging:private, so a fresh staging
+-- clone starts without it and this line puts it back.
+INSERT INTO conversations (kind, title, channel_key)
+VALUES ('channel', 'general', 'general')
+ON CONFLICT (channel_key) WHERE channel_key IS NOT NULL DO NOTHING;
+
 CREATE INDEX IF NOT EXISTS idx_notifications_user_conversation_unread
   ON notifications (user_id, conversation_id, created_at DESC)
   WHERE read_at IS NULL AND conversation_id IS NOT NULL;

@@ -3,8 +3,18 @@
 // The app discussions the Messages screen lists beside a viewer's people.
 //
 //   GET /api/messages/app-discussions
-//        → { discussions: [{ slug, name, iconUrl, iconEmoji,
+//        → { discussions: [{ slug, name, channel, iconUrl, iconEmoji,
 //                            lastMessage, lastAt, lastBy }, …] }
+//
+// ── They are CHANNELS now (#2783) ──────────────────────────────────────
+//
+// The Messages list is sectioned the way Discord's is: people and agents on
+// top, then the channels — #general, and one channel per app the viewer is a
+// member of. So this returns EVERY such app, including one nobody has
+// spoken in yet (a channel with no messages is still a channel you are in),
+// which is why `latest` is a LEFT JOIN and why the cap is a directory's
+// rather than an inbox pane's. `channel` is the app's `#handle`, the name a
+// `#name` reference in a message resolves against (see channelHandles).
 //
 // ── Why this exists (#2718) ────────────────────────────────────────────
 //
@@ -53,8 +63,12 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 
-/** How many rows an inbox pane can use. Beyond this it is a directory. */
-const LIMIT = 50;
+/**
+ * A backstop, not a page size: every app the viewer is a member of is a
+ * channel in their list (#2783), and the heaviest real member is in far
+ * fewer than this.
+ */
+const LIMIT = 500;
 
 const DISCUSSIONS_SQL = `
   WITH mine AS (
@@ -80,9 +94,9 @@ const DISCUSSIONS_SQL = `
          latest.created_at AS last_at,
          u.username        AS last_by
     FROM mine
-    JOIN latest ON latest.app_id = mine.id
+    LEFT JOIN latest ON latest.app_id = mine.id
     LEFT JOIN users u ON u.id = latest.user_id
-   ORDER BY latest.created_at DESC
+   ORDER BY latest.created_at DESC NULLS LAST, LOWER(mine.name), mine.slug
    LIMIT ${LIMIT}
 `;
 
@@ -99,12 +113,45 @@ function toDiscussion(row) {
   return {
     slug: row.slug,
     name: row.name || row.slug,
+    channel: channelHandle(row.name) || row.slug,
     iconUrl: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
     iconEmoji: row.icon_emoji || null,
     lastMessage: typeof row.last_message === 'string' ? row.last_message : '',
     lastAt: row.last_at ? new Date(row.last_at).toISOString() : null,
     lastBy: row.last_by || null,
   };
+}
+
+/**
+ * An app's name as a `#handle`: lower case, runs of anything else folded to
+ * one hyphen — "Recipe Box!" is `#recipe-box`. Null when nothing is left.
+ * The same fold the client uses to match a typed `#name`, so the two cannot
+ * disagree about what a reference points at.
+ */
+function channelHandle(name) {
+  const handle = String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '');
+  return /^[a-z]/.test(handle) ? handle : null;
+}
+
+/**
+ * Make the handles unique within one viewer's list.
+ *
+ * Two apps can share a name, and `general` is the platform room's. The first
+ * app to claim a handle keeps it; a later one — and any app named "General" —
+ * falls back to its slug, which is unique by construction.
+ */
+function channelHandles(discussions) {
+  const taken = new Set(['general']);
+  return discussions.map((item) => {
+    const channel = taken.has(item.channel) ? item.slug.toLowerCase() : item.channel;
+    taken.add(channel);
+    return { ...item, channel };
+  });
 }
 
 function messagesOverviewRoutes(config) {
@@ -115,7 +162,7 @@ function messagesOverviewRoutes(config) {
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
       const { rows } = await pool.query(DISCUSSIONS_SQL, [req.user.id, !!req.user.isAdmin]);
-      return res.json({ discussions: rows.map(toDiscussion) });
+      return res.json({ discussions: channelHandles(rows.map(toDiscussion)) });
     } catch (err) {
       log.error('messages-overview', 'Failed to read app discussions', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -125,4 +172,6 @@ function messagesOverviewRoutes(config) {
   return router;
 }
 
-module.exports = { messagesOverviewRoutes, toDiscussion, DISCUSSIONS_SQL, LIMIT };
+module.exports = {
+  messagesOverviewRoutes, toDiscussion, channelHandle, channelHandles, DISCUSSIONS_SQL, LIMIT,
+};

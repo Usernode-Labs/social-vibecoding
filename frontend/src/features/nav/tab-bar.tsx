@@ -52,8 +52,9 @@
  * survives.
  *
  * WHICH TAB is lit comes from ./nav-store.js through the bridge, like the
- * header title and the back button beside it. Nothing writes it before
- * hydration, so it can be rendered directly.
+ * header title and the back button beside it, and so does WHOSE NAME the
+ * fifth tab carries (#2760). Nothing writes either before hydration, so both
+ * can be rendered directly.
  *
  * The visibility lands as `useHiddenClass` rather than a rendered
  * `className`, for the reason ../header/platform-header.tsx gives: this is
@@ -107,8 +108,41 @@ const TABS = [
   { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
   { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'Workshop', href: '#workshop', Icon: BoardIcon },
+  // "Me" is the label only until somebody is signed in: from then on this tab
+  // is named after them (#2760) — see tabLabel below.
   { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
 ];
+
+/**
+ * What a tab says, and what it is called (#2760).
+ *
+ * The fifth tab is the reader's own account, and "Me" was a word standing in
+ * for a name the shell already has. So once somebody is signed in it carries
+ * their USERNAME, on the phone's bar and the desktop rail alike — the owner
+ * asked for both — the way the account row at the foot of Slack's, Discord's
+ * and Linear's sidebars names you rather than a pronoun.
+ *
+ * "Me" STAYS THE PRERENDER. The document is built in Node with no session, so
+ * the shipped markup can only say "Me", and a first client render that said
+ * anything else would be React #418 on every route. `viewer` is null in the
+ * nav store's INITIAL and is published from App.enterAuthed, which runs after
+ * hydration, so the name arrives as an update — exactly how the lit tab does.
+ *
+ * THE ACCESSIBLE NAME KEEPS SAYING WHAT THE TAB IS. A bare username among
+ * Home, Discover, Messages and Workshop would be read out as a person rather
+ * than a place, so the label names both, and it starts with the visible text
+ * so a voice command that says what is on screen still finds it. Long names
+ * are cut by app.css with an ellipsis; usernames are at most 32 characters
+ * and never contain a space, so a clipped one is still recognisably yours.
+ */
+export function tabLabel(
+  key: string,
+  label: string,
+  viewer: string | null,
+): { text: string; ariaLabel: string | undefined } {
+  if (key === 'me' && viewer) return { text: viewer, ariaLabel: `${viewer}, your profile` };
+  return { text: label, ariaLabel: undefined };
+}
 
 /**
  * Home's plain click, routed in place.
@@ -125,6 +159,24 @@ function onHomeClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   if (nav?.isNativeClick?.(event)) return;
   event.preventDefault();
   (window as unknown as { App?: { navigateHome?: () => void } }).App?.navigateHome?.();
+}
+
+/**
+ * The Workshop tab's plain click: back to the app Workshop you left (#2776).
+ *
+ * The router decides (App.resumeWorkshopView, public/js/app.js): when this
+ * device remembers an app's Workshop view and you are not already in one, it
+ * takes you there and says so, and the href's navigation is stopped. Every
+ * other time — nothing remembered, or already inside an app's Workshop,
+ * where the tab pops to the selector as it always did — it answers false and
+ * the href does exactly what it did before. A modified click is left alone,
+ * as Home's is.
+ */
+function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
+  const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
+  if (nav?.isNativeClick?.(event)) return;
+  const app = (window as unknown as { App?: { resumeWorkshopView?: () => boolean } }).App;
+  if (app?.resumeWorkshopView?.()) event.preventDefault();
 }
 
 /**
@@ -204,7 +256,7 @@ export function PlatformTabs() {
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  const { tab, messages, screen, peek, railOpen } = useStoreState(navStore);
+  const { tab, messages, screen, peek, railOpen, viewer } = useStoreState(navStore);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -278,7 +330,8 @@ export function PlatformTabs() {
           // checks select on, and it costs no second attribute to keep in
           // step with. The colour comes from app.css keying off it.
           aria-current={tab === key ? 'page' : undefined}
-          onClick={key === 'home' ? onHomeClick : undefined}
+          aria-label={tabLabel(key, label, viewer).ariaLabel}
+          onClick={key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined}
         >
           <span className="platform-tab-mark">
             <Icon className="platform-tab-glyph" aria-hidden="true" />
@@ -301,7 +354,7 @@ export function PlatformTabs() {
             */}
             {key === 'messages' ? <TabBadge count={messages} /> : null}
           </span>
-          <span className="platform-tab-label">{label}</span>
+          <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
         </a>
       ))}
       </nav>
