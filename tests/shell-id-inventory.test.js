@@ -372,7 +372,10 @@ const ADDED_IDS = {
   'platform-tab-workshop': '#2718: the Workshop tab, to #workshop — which of your apps wants something from you, the question Home does not answer.',
   'platform-tab-me': '#2718: the Me tab, to #profile. Challenges, Settings, Wallet, Validator and Admin are all reached from it, which is what keeps the bar to five: a sixth tab would be a section nobody opens daily.',
   'platform-tabs-badge': '#2718: the Messages tab\'s unread count, and the SECOND badge in the shell. #1443 argued for exactly one, on #notifications-badge, on the grounds that an unread message IS a notification and a menu row is where you say where you are going rather than where you learn something happened. That argument is about a MENU: a tab is visible without opening anything, and a Messages tab that cannot say "there is something here" leaves the bell as the only way to find out — which puts a conversation back behind the sheet the bar exists to get things out of. It counts CONVERSATIONS with something unread, not messages, and renders only above zero so the prerender (navStore\'s INITIAL is 0) and the first client render agree on no badge at all.',
-  "notifications-tab-agents": "#2718 review: the bell's fourth tab, listing what is RUNNING rather than what has happened \u2014 the same sessions the Improve panel calls 'changes in progress', drawn with the same <SessionRow> so a session cannot read two ways in two places. It is on the bell because a session working on your behalf is the one thing you check without anything having pinged you. Read from improveStore, which already answers which sessions are live; a second model here would be a second answer. `showApp` is the one difference from the panel's copy: the bell is the platform's, not one app's.",
+  // #notifications-tab-agents left this map in #2815: the bell's Agents tab
+  // folded into Messages, which now lists the running sessions and the agent
+  // notifications beside the conversations, as the Messages screen's chats
+  // section already did. It was only ever an ADDED id, so it simply leaves.
   // #messages-compose left this map in #2778: what starts something is the
   // "+" at the strip's end again (#messages-new), opening a popover of three
   // choices rather than a row of buttons under the strip. Its agent half,

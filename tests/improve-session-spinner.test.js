@@ -155,9 +155,9 @@ test('the pill lays its two children out like the platform\'s other one', () => 
 
 test('the busy-row check selects the arc, and no check was added', () => {
   // The SURFACE moved and the check moved with it (#2718 review): these rows
-  // were the Improve panel's, and with the panel retired they are the
-  // notifications sheet's Agents tab — reachable by
-  // `?shot=notifications-agents`, which exists for that reason. The row, the
+  // were the Improve panel's, and with the panel retired they were the
+  // notifications sheet's Agents tab; #2815 folded that tab into Messages,
+  // so they are reached by `?shot=notifications-messages` now. The row, the
   // mock and the arc are unchanged, which is why this still asserts one
   // check owning one mock row.
   const busy = MANIFEST.tests.filter((t) =>
@@ -165,7 +165,7 @@ test('the busy-row check selects the arc, and no check was added', () => {
   assert.equal(busy.length, 1, 'one check owns the busy mock row');
   assert.match(busy[0].expectSelector, /\.dc-status-spinner-arc$/,
     'retargeted with the markup — .animate-pulse now matches nothing there');
-  assert.equal(busy[0].path, '/?shot=notifications-agents&demo=1#app/usernode-2d5619/dev');
+  assert.equal(busy[0].path, '/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev');
 
   // …and it RETARGETS rather than adds, which is what the equality above
   // pins: one check owns the busy mock row, before and after.
