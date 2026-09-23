@@ -52,6 +52,9 @@ class RunControl {
     this.lastReplayFailure = null;
     this.finished = null;
     this.repairReason = null;
+    this.repairFailure = null;
+    this.rejectedPlan = null;
+    this.lastSubmittedPlan = null;
     this.waiters = new Set();
     this.busy = null;
   }
@@ -64,7 +67,14 @@ class RunControl {
 
   getContext() {
     this.assertLive();
-    return cloneJson({ ...this.context, attempt: this.planCalls + 1, repairReason: this.repairReason });
+    return cloneJson({
+      ...this.context,
+      attempt: this.planCalls + 1,
+      repairReason: this.repairReason,
+      ...(this.repairFailure ? {
+        repair: { failure: this.repairFailure, rejectedPlan: this.rejectedPlan },
+      } : {}),
+    });
   }
 
   async resetSide(side) {
@@ -104,8 +114,17 @@ class RunControl {
           400
         );
       }
+      if (this.planCalls === 1 && this.maxPlanCalls === 2
+          && planContract.planHash(plan) === planContract.planHash(this.rejectedPlan)) {
+        throw new EvidenceControlError(
+          'evidence_repair_unchanged',
+          'The corrected replay plan must differ from the rejected plan.',
+          400
+        );
+      }
       // Reserve the attempt before awaiting so concurrent calls cannot execute
       // multiple expensive paired replays.
+      this.lastSubmittedPlan = cloneJson(plan);
       this.planCalls += 1;
       this.busy = 'replaying the submitted plan';
       const replayStartedAt = Date.now();
@@ -158,13 +177,16 @@ class RunControl {
     return cloneJson(this.finished);
   }
 
-  allowRepair(reason) {
+  allowRepair(reason, failure) {
     if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
-    if (this.planCalls !== 1 || this.maxPlanCalls !== 1) {
+    if (this.planCalls !== 1 || this.maxPlanCalls !== 1
+        || !this.lastReplayFailure || !this.lastSubmittedPlan) {
       throw new EvidenceControlError('evidence_repair_unavailable', 'The single repair attempt is not available.');
     }
     this.maxPlanCalls = 2;
     this.repairReason = boundedReason(reason);
+    this.repairFailure = cloneJson(failure);
+    this.rejectedPlan = cloneJson(this.lastSubmittedPlan);
     this.finished = null;
     this.latestHard = null;
   }

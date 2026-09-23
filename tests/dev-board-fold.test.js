@@ -1077,7 +1077,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // +2 (#2803): the Homeroom menu takes a dark app's palette, and a light app
   // under the dark shell leaves it in the shell's own dark mode. 746 leaves
   // 24 slots under the 770 ceiling.
-  assert.equal(DAPP.tests.length, 746);
+  //
+  // +2 (the side panel beside a running app): its host ships hidden and
+  // frameless after the app view, and a `?panel=1` address opened in a window
+  // of its own is the ordinary platform. 748, which leaves 22 slots under the
+  // 770 ceiling and 2 before the 20-slot floor at 750.
+  assert.equal(DAPP.tests.length, 748);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
