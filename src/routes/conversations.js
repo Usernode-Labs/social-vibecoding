@@ -549,6 +549,10 @@ function conversationRoutes(config) {
           userId: req.user.id, messageId: result.messageId,
         });
       });
+      // #2904: reading a conversation clears its message notifications, but
+      // announces itself as `conversation_read`, not `notifications_changed`
+      // — so re-badge the reader's iPhone here explicitly.
+      try { require('../services/mobile-push').scheduleBadgeSync(req.user.id); } catch {}
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'mark read failed', { id, err: err.message });

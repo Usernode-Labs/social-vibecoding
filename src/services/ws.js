@@ -1342,6 +1342,14 @@ function deliverToUser(userId, payload) {
 function pushToUser(userId, payload) {
   const sent = deliverToUser(userId, payload);
   wsBus.publish('user', { userId }, payload);
+  // #2904: every read path announces itself with this event, so it is also
+  // where the iOS icon badge learns the count moved. Only the emitting
+  // instance gets here (bus peers call deliverToUser), so one change is one
+  // debounced sync. Lazy and guarded: the badge is best-effort and must never
+  // break the socket fan-out.
+  if (payload && payload.type === 'notifications_changed') {
+    try { require('./mobile-push').scheduleBadgeSync(userId); } catch {}
+  }
   return sent;
 }
 

@@ -1126,11 +1126,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // reached 756 without these three, so the merged manifest holds 756 + 3 =
   // 759, leaving 31 slots under the 790 ceiling.
   //
-  // 759 → 762: +3 (#2902): an app kept loaded in the background carries a
-  // green dot on its Home tile; its hidden frame is inert, out of the tab
-  // order and the accessibility tree, and not #app-iframe; and an app nobody
-  // has opened carries no dot. 762, leaving 28 slots under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 762);
+  // 759 → 763: the tallies above were computed on either side of this merge
+  // against the same shared 759 and cannot be read as one sequence. This
+  // branch took 759 → 762 alone, +3 (#2902): an app kept loaded in the
+  // background carries a green dot on its Home tile; its hidden frame is
+  // inert, out of the tab order and the accessibility tree, and not
+  // #app-iframe; and an app nobody has opened carries no dot. Main
+  // independently took the same 759 to 760, +1 (#2894): a Your-apps tile
+  // dragged over the open Homeroom widget strip lights the strip up as its
+  // drop target (?shot=widget-drop). Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 759 + 3 + 1 = 763, leaving 27
+  // slots under the 790 ceiling.
+  assert.equal(DAPP.tests.length, 763);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
