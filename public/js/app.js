@@ -2094,6 +2094,13 @@ const App = {
   refreshActiveScreen() {
     try {
       if (document.hidden) return;
+      // A correction's re-pull is a REFRESH, not a boot. Without this the
+      // worker answered it from the zero-deadline boot lane again, found the
+      // late answer different again, and corrected again: on a board whose
+      // /promoted list carries live check progress that never settled, and
+      // every visible Workshop re-pulled its whole board about once a second
+      // until Chrome refused new requests (net::ERR_INSUFFICIENT_RESOURCES).
+      App._announceRefreshIntent();
 
       const visible = (id) => {
         const el = document.getElementById(id);
