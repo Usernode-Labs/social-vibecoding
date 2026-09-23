@@ -32,7 +32,7 @@ test('artifact ids and proposal ids are canonical and traversal-proof', () => {
   assert.equal(routes.sessionId(String(2 ** 40)), null);
 });
 
-test('terminal-run diagnostics are private to the author or app manager and retain retry history', async (t) => {
+test('run diagnostics are private to the author or app manager, available live, and retain retry history', async (t) => {
   const base = 'a'.repeat(40);
   const head = 'b'.repeat(40);
   const runId = '1'.repeat(32);
@@ -43,12 +43,21 @@ test('terminal-run diagnostics are private to the author or app manager and reta
   };
   const run = {
     id: runId, base_sha: base, head_sha: head, state: 'failed',
+    trigger: 'preview-ready', author_plan_supplied: false,
+    fixture_fingerprint: 'fixture-1', base_image_digest: 'sha256:base',
+    head_image_digest: 'sha256:head', repair_attempt: 1,
+    created_at: new Date('2026-09-01T00:00:00Z'),
+    started_at: new Date('2026-09-01T00:01:00Z'),
+    completed_at: new Date('2026-09-01T00:02:00Z'),
+    updated_at: new Date('2026-09-01T00:02:00Z'),
     replay_plan: fixtures.plan(), plan_hash: planContract.planHash(fixtures.plan()),
     failure_code: 'assertion_failed', failure_reason: 'Sort was not visible.',
     trace_summary: {
-      replayPasses: [{ pass: 1, durationMs: 20 }], agentAttempts: 1,
-      agentDispatches: [{ requestedBackend: 'claude_code', backend: 'claude_code', outcome: 'completed' }],
+      replayPasses: [{ pass: 1, durationMs: 20 }], replayRuntime: 'kubernetes', agentAttempts: 1,
+      agentDispatches: [{ requestedBackend: 'codex_openrouter', requestedModel: 'glm-4', backend: 'claude_code', model: 'claude-sonnet', fallbackReason: 'model_without_tools', outcome: 'completed' }],
       lastReplayEvent: { pass: 2, type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' },
+      replayEvents: [{ pass: 2, type: 'action_started', actionId: 'open-settings', side: 'head' }],
+      planSource: 'hosted_planner', tokenUsage: { inputTokens: 123 }, artifactBytes: 345,
       failure: { phase: 'pass_2', code: 'assertion_failed', detail: { side: 'head', phase: 'assertion' } },
       control: { planCalls: 1, finishStatus: 'failed', finishReason: 'The checkpoint did not render.' },
     },
@@ -56,8 +65,15 @@ test('terminal-run diagnostics are private to the author or app manager and reta
   const pool = { query: async (sql, params) => {
     if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
     if (String(sql).includes('FROM visual_evidence_runs')) {
-      assert.match(String(sql), /state IN \('failed', 'stale', 'verified'\)/);
+      assert.doesNotMatch(String(sql), /state IN/);
       return { rows: params[0] === runId && params[1] === session.id ? [run] : [] };
+    }
+    if (String(sql).includes('FROM visual_evidence_artifacts')) {
+      assert.deepEqual(params, [runId]);
+      return { rows: [{
+        story_id: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'focus',
+        media: 'png', bytes: 345, width: 640, height: 480, sha256: 'c'.repeat(64),
+      }] };
     }
     throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
   } };
@@ -89,15 +105,28 @@ test('terminal-run diagnostics are private to the author or app manager and reta
   assert.match(ownerResponse.headers.get('cache-control'), /no-store/);
   const { diagnostics } = await ownerResponse.json();
   assert.equal(diagnostics.runId, runId);
+  assert.equal(diagnostics.currentRun, true);
   assert.equal(diagnostics.replayPlan.stories[0].id, fixtures.plan().stories[0].id);
   assert.deepEqual(diagnostics.trace.replayPasses, [{ pass: 1, durationMs: 20 }]);
   assert.equal(diagnostics.trace.agentDispatches[0].backend, 'claude_code');
+  assert.equal(diagnostics.trace.agentDispatches[0].fallbackReason, 'model_without_tools');
   assert.equal(diagnostics.trace.lastReplayEvent.pass, 2);
+  assert.equal(diagnostics.trace.replayEvents[0].actionId, 'open-settings');
+  assert.equal(diagnostics.trace.replayRuntime, 'kubernetes');
+  assert.equal(diagnostics.trace.planSource, 'hosted_planner');
+  assert.equal(diagnostics.trace.tokenUsage.inputTokens, 123);
+  assert.equal(diagnostics.trigger, 'preview-ready');
+  assert.equal(diagnostics.repairAttempt, 1);
+  assert.equal(diagnostics.provenance.fixtureFingerprint, 'fixture-1');
+  assert.equal(diagnostics.artifacts[0].bytes, 345);
   assert.equal(diagnostics.trace.failure.detail.side, 'head');
   assert.equal(diagnostics.trace.control.planCalls, 1);
 
   userId = 8;
   assert.equal((await fetch(url)).status, 200, 'app manager can diagnose another author’s run');
+  run.state = 'replaying';
+  assert.equal((await (await fetch(url)).json()).diagnostics.state, 'replaying', 'the private trace is available while a run is active');
+  run.state = 'failed';
   userId = 9;
   assert.equal((await fetch(url)).status, 404);
   userId = 8;
@@ -119,6 +148,13 @@ test('terminal-run diagnostics are private to the author or app manager and reta
   assert.equal(verified.state, 'verified');
   assert.equal(verified.failureCode, null);
   assert.equal(verified.trace.agentDispatches[0].backend, 'claude_code');
+  session.visual_evidence_run_id = null;
+  session.visual_evidence_state = 'planned';
+  session.visual_evidence_detail = { notStartedReason: 'No staging preview was built.' };
+  const notStarted = (await (await fetch(url)).json()).diagnostics;
+  assert.equal(notStarted.runId, null);
+  assert.equal(notStarted.notStartedReason, 'No staging preview was built.');
+  assert.equal((await fetch(`${url}?runId=bad`)).status, 404);
 });
 
 test('the binary route is authenticated, current-run fenced, exact-head fenced, and private', () => {
