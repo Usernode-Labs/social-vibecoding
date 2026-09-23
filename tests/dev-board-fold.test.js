@@ -1107,10 +1107,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
   // slots under the 790 ceiling.
   //
-  // 753 → 754: +1 (#2886): the divider between a running app and its side
-  // panel ships as a vertical separator on the panel's edge. 36 slots left
-  // under the 790 ceiling.
-  assert.equal(DAPP.tests.length, 754);
+  // 753 → 756: the tallies above were computed on either side of this merge
+  // against the same shared 753 and do not reconcile through the comment
+  // trail alone. This branch took 753 → 754 alone, with #2886 above (the
+  // divider between a running app and its side panel ships as a vertical
+  // separator on the panel's edge); main independently took the same 753 to
+  // 755, with #2888 above (Send Feedback pressed with no destination turns
+  // the App/Platform row red) and #2800/#2878 above (Me is the rail's last
+  // row, straight after Recents, which is what places the thin rule drawn
+  // above it). Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 753 + 1 + 1 + 1 = 756, leaving 34 slots under the 790
+  // ceiling.
+  assert.equal(DAPP.tests.length, 756);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

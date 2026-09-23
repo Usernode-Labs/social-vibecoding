@@ -8,9 +8,9 @@ import type { ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { messageStamp, timeOfDay } from '../../lib/timestamp';
+import { ReportForm, submitReport } from '../reports/report-form';
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢', '🙏', '🔥'];
-type ReportReason = 'harassment' | 'spam' | 'threats' | 'hate' | 'sexual_content' | 'other';
 
 /*
  * ONE SHAPE, DISCORD'S (#2783). Every chat — a DM, a group, #general and an
@@ -52,8 +52,7 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [reporting, setReporting] = useState(false);
-  const [reportReason, setReportReason] = useState<ReportReason>('spam');
-  const [reportDetail, setReportDetail] = useState('');
+  const [userReporting, setUserReporting] = useState(false);
   const longPress = useRef<number | null>(null);
   // #1408: the edit box grows with the message being edited, same as the
   // composer it visually replaces.
@@ -79,16 +78,6 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
     setNotice('');
     try { await toggleSaved(message.id); }
     catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t update your saved messages.'); }
-  }
-
-  async function report() {
-    setBusy(true); setNotice('');
-    try {
-      await api.reportMessage(conversationId, message.id, reportReason, reportDetail.trim());
-      setNotice('Report submitted.'); setReporting(false); setReportDetail('');
-    }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t submit this report.'); }
-    finally { setBusy(false); }
   }
 
   async function blockSender() {
@@ -134,14 +123,11 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users?.join(', ')} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
-      {reporting ? <form className="messages-report" onSubmit={(event) => { event.preventDefault(); void report(); }}>
-        <label><span>Reason</span><select value={reportReason} onChange={(event) => setReportReason(event.target.value as ReportReason)}>
-          <option value="spam">Spam</option><option value="harassment">Harassment</option><option value="threats">Threats</option><option value="hate">Hate</option><option value="sexual_content">Sexual content</option><option value="other">Other</option>
-        </select></label>
-        <label><span>Details <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span></span><textarea value={reportDetail} onChange={(event) => setReportDetail(event.target.value.slice(0, 500))} rows={2} maxLength={500} /></label>
-        <div><button type="submit" disabled={busy}>{busy ? 'Submitting…' : 'Submit report'}</button><button type="button" onClick={() => { setReporting(false); setReportDetail(''); }}>Cancel</button></div>
-      </form> : null}
-      {notice ? <p role="status" className={`mt-1 text-sm ${notice === 'Report submitted.' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>{notice}</p> : null}
+      {reporting ? <ReportForm kind="message" onCancel={() => setReporting(false)}
+        onSubmit={(reason, detail) => api.reportMessage(conversationId, message.id, reason as Parameters<typeof api.reportMessage>[2], detail)} /> : null}
+      {userReporting ? <ReportForm kind="user" onCancel={() => setUserReporting(false)}
+        onSubmit={(reason, detail) => submitReport(`/api/users/${encodeURIComponent(message.sender.username)}/report`, reason, detail)} /> : null}
+      {notice ? <p role="status" className="mt-1 text-sm text-red-700 dark:text-red-400">{notice}</p> : null}
     </>
   );
 
@@ -176,7 +162,8 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
       aria-label={message.saved ? 'Unsave message' : 'Save message'}
     >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}</button>
     {mine && message.content ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
-    {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setNotice(''); }} title="Report" aria-label="Report">!</button> : null}
+    {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setUserReporting(false); setNotice(''); }} title="Report message" aria-label="Report message">!</button> : null}
+    {!mine && message.sender.id ? <button type="button" onClick={() => { setUserReporting((open) => !open); setReporting(false); }} title={`Report @${message.sender.username}`} aria-label={`Report @${message.sender.username}`}>⚑</button> : null}
     {!mine && message.sender.id ? <button type="button" disabled={busy} onClick={() => void blockSender()} title={`Block @${message.sender.username}`} aria-label={`Block @${message.sender.username}`}>⊘</button> : null}
   </div> : null;
 

@@ -60,6 +60,8 @@ const {
   solveRegistration,
   registerFromFrames,
   markersStillVisible,
+  displayMediaOptions,
+  REGISTRATION_VEIL_ALPHA,
   MAX_UPLOAD_BYTES,
   validateNativeCapturePayload,
 } = loadScreenshotSelect();
@@ -502,4 +504,70 @@ test('markersStillVisible: a stale frame of the veil is recognised; the clean pa
   const one = makeFrame(900, 640, 200);
   drawFinder(one, centers.tl.x * 1.5 + 64, centers.tl.y * 1.5 + 48, MARKER.MODULE * 1.5);
   assert.equal(markersStillVisible(detectMarkers(one), mapping, centers, 900), false);
+});
+
+// ── #2885: Chrome is offered this tab, and the page is dimmed, not blacked out
+
+test('displayMediaOptions: the Chromium picker options sit beside video, not inside it', () => {
+  // Nested in `video` these are unknown track constraints, which Chromium
+  // drops: it then shows the full picker with the current tab left out, and
+  // the user has to share a window or screen — the marker path, with its
+  // blackout and its "couldn't locate this page".
+  const opts = displayMediaOptions();
+  assert.equal(opts.preferCurrentTab, true);
+  assert.equal(opts.selfBrowserSurface, 'include');
+  assert.equal(opts.surfaceSwitching, 'exclude');
+  assert.equal(opts.monitorTypeSurfaces, 'exclude');
+  assert.equal(opts.audio, false);
+  assert.deepEqual(opts.video, { displaySurface: 'browser' });
+});
+
+test('start() requests capture with displayMediaOptions()', () => {
+  const src = fs.readFileSync(SRC, 'utf8');
+  assert.match(src, /getDisplayMedia\(displayMediaOptions\(\)\)/);
+  assert.doesNotMatch(src, /video:\s*\{[^}]*preferCurrentTab/);
+});
+
+// A window share's registration frame, drawn the way the browser composites
+// it: the page (light, with finder-shaped things on it at full size), then the
+// veil over the page at `alpha`, then the markers above the veil.
+function veiledPageFrame(alpha) {
+  const viewportW = 500;
+  const viewportH = 360;
+  const scale = 1.5;
+  const offsetX = 64;
+  const offsetY = 48;
+  const frame = makeFrame(900, 640, 225);
+  fillRect(frame, offsetX, offsetY, viewportW * scale, viewportH * scale, 250);
+  // Page content that has a marker's exact cross-section AND size: a QR
+  // code on the page, an icon — the thing the veil exists to hide.
+  for (const [x, y] of [[180, 140], [330, 220], [260, 120]]) {
+    drawFinder(frame, x * scale + offsetX, y * scale + offsetY, MARKER.MODULE * scale);
+  }
+  const keep = 1 - alpha;
+  for (let y = offsetY; y < offsetY + viewportH * scale; y++) {
+    for (let x = offsetX; x < offsetX + viewportW * scale; x++) {
+      const i = (y * frame.width + x) * 4;
+      for (let c = 0; c < 3; c++) frame.data[i + c] = Math.round(frame.data[i + c] * keep);
+    }
+  }
+  const centers = markerCssCenters(viewportW, viewportH);
+  for (const k of ['tl', 'tr', 'bl', 'br']) {
+    drawFinder(frame, centers[k].x * scale + offsetX, centers[k].y * scale + offsetY, MARKER.MODULE * scale);
+  }
+  return { frame, centers, scale, offsetX, offsetY };
+}
+
+test('the registration veil hides marker-shaped page content while leaving the page visible', () => {
+  assert.ok(REGISTRATION_VEIL_ALPHA < 1, 'the page is dimmed, not blacked out (#2885)');
+  const { frame, centers, scale, offsetX, offsetY } = veiledPageFrame(REGISTRATION_VEIL_ALPHA);
+  const detected = detectMarkers(frame);
+  assertMarkersMatch(detected, centers, scale, offsetX, offsetY, 3);
+  const solved = solveRegistration(detected, centers, frame.width, frame.height);
+  assert.ok(solved.ok, `solve failed: ${solved.reason}`);
+});
+
+test('without the veil the same page content is detected — the dim is load-bearing', () => {
+  const { frame } = veiledPageFrame(0);
+  assert.equal(detectMarkers(frame).length, 7);
 });

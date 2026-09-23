@@ -95,6 +95,15 @@
   --dc-strip-fill: rgba(244, 242, 228, 0.38);
   --dc-sheet-fill: rgba(255, 255, 255, 0.50);
   --dc-frost: blur(24px) saturate(1.6);
+  /* FLOATING surfaces are denser (#2887). A pane is glass over the
+     wallpaper, which the platform draws and keeps soft; a dialog or a menu
+     floats over WHATEVER is under it — an app's dark UI, a code block, a
+     photo — and at the pane's alpha that showed through as shapes behind
+     the form's own text. Mostly opaque, still frosted: the blur stays, so
+     the surface keeps its material, and the words stay legible over dark
+     content in both themes. Used by the kit's modal (Send Feedback and
+     every other dialog) and the platform mark's menu. */
+  --dc-float-fill: rgba(255, 255, 255, 0.95);
 
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
@@ -2013,6 +2022,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      differ because the grounds do. */
   --dc-strip-fill: rgba(11, 13, 27, 0.55);
   --dc-sheet-fill: rgba(28, 28, 30, 0.72);
+  --dc-float-fill: rgba(28, 28, 30, 0.95);
   --bg-code: #141416;
   --bg-code-header: #1c1c1e;
   --bg-card: rgba(90, 169, 255, 0.10);
@@ -9148,7 +9158,7 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: transparent;
 }
 .un-modal {
-  background-color: var(--dc-sheet-fill);
+  background-color: var(--dc-float-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
   box-shadow: var(--dc-lift-shadow);
@@ -9184,10 +9194,21 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* The platform mark's menu floats over the app, like a dialog (#2887): the
+   desktop dropdown is the panel itself, and below `sm` the kit's sheet it is
+   adopted into is the surface. Ids / `:has()` outrank `.dc-lift-panel` and
+   `.un-sheet` above; the blur they set is kept. */
+#apps-switcher-sheet,
+.un-sheet:has(#apps-switcher-sheet),
+.un-sheet:has(#apps-switcher-sheet)::after {
+  background-color: var(--dc-float-fill);
+}
 /* NO BLUR, NO GLASS: the kit's opaque surface comes back, in the shell's
    own sheet colour. The scrim is a shadow, not a filter, so it survives. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after {
+  .un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
+  #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
+  .un-sheet:has(#apps-switcher-sheet)::after {
     background-color: var(--dc-sheet);
   }
 }
@@ -16967,8 +16988,9 @@ html.un-kb #platform-parked {
      that reason: Slack, Discord, Linear, Notion, VS Code. The other four are
      a list of sections; this is who is looking at them.
 
-     `margin-top: auto` and nothing else: no reordering in the markup, no
-     second element, no id moved. The DOM order is still the reading order a
+     An auto top margin and nothing else: no reordering in the markup, no
+     second element, no id moved. The margin is on the rule drawn above Me
+     now (below), which pins the pair to the foot. The DOM order is still the reading order a
      screen reader announces and the order the phone's bar lays out, and this
      rule lives inside the desktop media query because on a phone the five
      are a row across the foot and an auto margin there would drop Me out of
@@ -16976,8 +16998,22 @@ html.un-kb #platform-parked {
 
      THE PARKED STRIP SITS ABOVE IT, which is the prototype's order: the
      sections, then the app you left, then you. */
+  /* A THIN RULE ABOVE ME (#2800, #2878): the sections and the history above
+     it, you below it. It is the rail's own `::after` rather than an element
+     in the markup, drawn before Me with `order` — so the DOM, the reading
+     order and the shell's id inventory are untouched, and the phone's bar
+     (where none of this media query applies) never sees it. Me used to carry
+     the `margin-top: auto`; the rule carries it now, and Me follows it. */
+  .platform-tabs::after {
+    content: "";
+    order: 1;
+    flex: none;
+    height: 1px;
+    margin: auto 4px 6px;
+    background: var(--app-sheet-line);
+  }
   #platform-tab-me {
-    margin-top: auto;
+    order: 2;
   }
   .platform-parked {
     bottom: calc(var(--platform-rail-foot-h) + var(--platform-safe-bottom, 0px));
@@ -16988,6 +17024,10 @@ html.un-kb #platform-parked {
      beside it at 15px it is the name of a place, which is what a rail's
      rows are. */
   .platform-tab {
+    /* NEVER SHRINK (#2878): Recents now holds more than fits, and a column
+       of shrinkable rows would take the overflow out of the tabs' height
+       as well as the list's. The list is the one that scrolls. */
+    flex: none;
     flex-direction: row;
     justify-content: flex-start;
     gap: 12px;
@@ -17036,7 +17076,11 @@ html.un-kb #platform-parked {
      frontend/src/features/nav/recents-list.tsx carries the argument: what you
      were just doing, apps and conversations on one clock, between the
      sections and Me. It takes the room the rail has left over and scrolls
-     inside it rather than pushing Me off the foot of a short window. */
+     inside it rather than pushing Me off the foot of a short window.
+
+     ALL THE WAY DOWN (#2878). The list used to stop at eight rows and leave
+     the rest of a tall rail empty; it now holds far more than fits
+     (RECENTS_LIMIT), so it runs to the rule above Me and scrolls there. */
   .platform-recents:not(.hidden) {
     display: flex;
     flex-direction: column;
@@ -17078,6 +17122,26 @@ html.un-kb #platform-parked {
     flex: none;
     color: var(--text-muted);
   }
+  /* AN APP'S OWN ICON (#2878), at the glyph's footprint so every label
+     starts on the same line: the launcher's tile (`.app-icon-tile` draws the
+     face and ring) shrunk to a row. The emoji inside carries the launcher's
+     `text-3xl`, which is sized for a 56px tile. */
+  .platform-recent-tile {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    border-radius: 5px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .platform-recent-tile > img {
+    border-radius: 0;
+  }
+  .platform-recent-tile > span {
+    font-size: 11px;
+  }
   .platform-recent-label {
     flex: 1 1 auto;
     min-width: 0;
@@ -17112,6 +17176,13 @@ html.un-kb #platform-parked {
   .platform-parked {
     right: auto;
     width: var(--platform-rail-full);
+    /* NO FILL OF ITS OWN (#2801). On the phone the strip floats over the
+       page and needs the sheet's frost; in the rail it would be a second,
+       different surface under the Resume row. The rail behind it is the
+       surface, as it is for every other row. */
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     padding-bottom: var(--platform-safe-bottom, 0px);
     height: auto;
     min-height: 52px;
