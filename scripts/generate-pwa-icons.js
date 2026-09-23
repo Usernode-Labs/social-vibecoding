@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Generates the platform's home-screen and browser icons from the Homeroom
-// mark — the script "H" with its four-point sparkle — drawn black on the
-// brand cream. The two paths below are the mark's vectors copied verbatim
+// mark — the script "H" with its four-point sparkle — drawn in the brand
+// cream on black, Figma's dark panel. The two paths below are the mark's vectors copied verbatim
 // from the brand Figma (file 4kAYqXh9NhpoCU44QwWvYo, frame 1246:179 "A":
 // 1246:183 is the H, 1246:184 the sparkle), so the icons are the logo
 // itself rather than a redrawing of it. Re-run after changing a layout
@@ -17,14 +17,14 @@
 //                                        rounded square, and fills any
 //                                        transparent pixel with black — so no
 //                                        pre-rounded corners and no alpha.
-//   public/icons/v2/icon-{192,512}.png   manifest `any`: desktop installs and
+//   public/icons/v3/icon-{192,512}.png   manifest `any`: desktop installs and
 //                                        Chrome's fallback. A rounded tile.
-//   public/icons/v2/icon-maskable-512.png manifest `maskable`: Android masks it
+//   public/icons/v3/icon-maskable-512.png manifest `maskable`: Android masks it
 //                                        to a circle, squircle or rounded
 //                                        square, so it is full-bleed and the
 //                                        mark stays inside the 40%-radius safe
 //                                        circle (checked below, not assumed).
-//   public/favicon.ico, icons/v2/icon.svg browser tabs; the mark is drawn
+//   public/favicon.ico, icons/v3/icon.svg browser tabs; the mark is drawn
 //                                        larger because tabs are tiny.
 //
 // THE ICON DIRECTORY IS VERSIONED. Chrome decides an installed app's icon
@@ -40,8 +40,8 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const CREAM = [0xff, 0xfe, 0xea]; // brand cream, the tile
-const INK = [0x00, 0x00, 0x00];   // the mark
+const TILE = [0x00, 0x00, 0x00]; // black, the tile
+const INK = [0xff, 0xfe, 0xea];  // brand cream, the mark
 
 // Figma node 1246:182's own frame: the mark's bounding box, in its units.
 const MARK_W = 377.327;
@@ -184,7 +184,7 @@ function render(size, { share, rounded }) {
       const i = y * size + x;
       const ink = Math.min(1, cov[i]);
       const o = i * channels;
-      for (let c = 0; c < 3; c++) px[o + c] = Math.round(CREAM[c] + (INK[c] - CREAM[c]) * ink);
+      for (let c = 0; c < 3; c++) px[o + c] = Math.round(TILE[c] + (INK[c] - TILE[c]) * ink);
       if (rounded) px[o + 3] = Math.round(tileCoverage(size, x, y) * 255);
     }
   }
@@ -280,7 +280,7 @@ function faviconSvg() {
   const hex = (rgb) => `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
   const r = +(S * TILE_RADIUS).toFixed(2);
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${S} ${S}">`
-    + `<rect width="${S}" height="${S}" rx="${r}" fill="${hex(CREAM)}"/>`
+    + `<rect width="${S}" height="${S}" rx="${r}" fill="${hex(TILE)}"/>`
     + `<g transform="translate(${+ox.toFixed(3)} ${+oy.toFixed(3)}) scale(${+scale.toFixed(6)})" fill="${hex(INK)}">`
     + MARK_PATHS.map((d) => `<path d="${d}"/>`).join('')
     + '</g></svg>\n';
@@ -289,7 +289,7 @@ function faviconSvg() {
 // ── Output ──────────────────────────────────────────────────────────────
 
 const PUBLIC = path.join(__dirname, '..', 'public');
-const ICON_DIR = path.join(PUBLIC, 'icons', 'v2');
+const ICON_DIR = path.join(PUBLIC, 'icons', 'v3');
 
 function write(rel, data) {
   const file = path.join(PUBLIC, rel);
@@ -301,13 +301,13 @@ function write(rel, data) {
 if (require.main === module) {
   fs.mkdirSync(ICON_DIR, { recursive: true });
   write('apple-touch-icon.png', encodePng(render(180, { share: MARK_SHARE.tile, rounded: false })));
-  write('icons/v2/icon-192.png', encodePng(render(192, { share: MARK_SHARE.tile, rounded: true })));
-  write('icons/v2/icon-512.png', encodePng(render(512, { share: MARK_SHARE.tile, rounded: true })));
+  write('icons/v3/icon-192.png', encodePng(render(192, { share: MARK_SHARE.tile, rounded: true })));
+  write('icons/v3/icon-512.png', encodePng(render(512, { share: MARK_SHARE.tile, rounded: true })));
   const maskable = render(512, { share: MARK_SHARE.maskable, rounded: false });
   assertInsideSafeZone(maskable);
-  write('icons/v2/icon-maskable-512.png', encodePng(maskable));
+  write('icons/v3/icon-maskable-512.png', encodePng(maskable));
   write('favicon.ico', encodeIco([16, 32, 48].map((size) => ({
     size, data: encodePng(render(size, { share: MARK_SHARE.favicon, rounded: true })),
   }))));
-  write('icons/v2/icon.svg', faviconSvg());
+  write('icons/v3/icon.svg', faviconSvg());
 }
