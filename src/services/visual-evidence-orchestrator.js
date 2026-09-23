@@ -712,7 +712,9 @@ async function executeRun(config, options, injected = {}) {
   let latestPlanHash = null;
   let latestHardVerdict = null;
   let failurePhase = 'load_run';
-  let agentThreadId;
+  // The first planning turn must not inherit the proposal's coding history.
+  // Subsequent locator-repair turns resume only this run's evidence thread.
+  let agentThreadId = null;
   const metrics = newRunMetrics();
   metrics.replayRuntime = String(config.captureRuntime || process.env.CAPTURE_RUNTIME || config.appRuntime || 'docker').slice(0, 32);
   const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
