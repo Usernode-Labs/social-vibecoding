@@ -629,8 +629,8 @@
     },
     {
       "name": "A person's page carries Message beside their name, which opens a direct message",
-      "path": "/?demo=1#leaderboard/users/staging-tester",
-      "expectSelector": "#leaderboard-root:not(.hidden) header:has([data-lb-back]) button[data-message-person=\"staging-tester\"]"
+      "path": "/?demo=1#leaderboard/users/usernode-capture",
+      "expectSelector": "#leaderboard-root:not(.hidden) header:has([data-lb-back]) button[data-message-person=\"usernode-capture\"]"
     },
     {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
