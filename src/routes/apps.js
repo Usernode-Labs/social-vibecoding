@@ -2924,6 +2924,11 @@ function appRoutes(config) {
       // contributor set is derived from rows the app delete cascades away.
       const recipients = shared ? await otherContributorIds(app, req.user) : [];
 
+      // Stop before runtime/data teardown if the selected placement is unresolved.
+      await require('../services/database-placement').assertRetirementAllowed([
+        require('../services/db-manager').appDbName(app.slug),
+      ]);
+
       // Teardown through the backend that owns this app. Historical rows
       // without runtime_kind/runtime_name remain Docker-compatible.
       if (app.runtime_name || app.container_id) {

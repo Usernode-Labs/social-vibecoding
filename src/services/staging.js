@@ -529,7 +529,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     } finally {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     }
-    const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, cloned.password);
+    const stagingDbUrl = await dbManager.connectionUrl(stagingDbNameStr, cloned.password);
 
     // 4. Stop existing staging container if any. Short grace: a preview
     // being replaced has nothing worth draining (#767).
@@ -1078,7 +1078,7 @@ async function rebuildProductionInner(config, app, options = {}) {
         `migrateAppDbsToPerRole should have populated it at platform boot.`
       );
     }
-    const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), appDbPassword);
+    const dbUrl = await dbManager.connectionUrl(dbManager.appDbName(app.slug), appDbPassword);
     // Production containers get the LLM-proxy env pair (URL + per-app
     // token); the staging path above deliberately does not — staging
     // containers must not be able to spend LLM grants (issue #34).

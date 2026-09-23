@@ -72,6 +72,7 @@ spec:
             - secretRef:
                 name: {{ include "social-vibecoding-platform.secretName" . }}
           env:
+            - {name: SV_DATABASE_BINDINGS_ENABLED, value: {{ .Values.databaseControlPlane.bindingsEnabled | quote }}}
             - {name: SV_DATABASE_CONTROL_PLANE_ENABLED, value: {{ .Values.databaseControlPlane.enabled | quote }}}
             {{- if .Values.databaseControlPlane.enabled }}
             - {name: SV_DATABASE_POLICY_FILE, value: /etc/sv-database/policy.json}

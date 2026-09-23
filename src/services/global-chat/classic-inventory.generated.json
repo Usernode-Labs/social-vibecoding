@@ -452,7 +452,7 @@
     },
     {
       "source": "src/routes/admin-databases.js",
-      "line": 17,
+      "line": 20,
       "method": "POST",
       "path": "/api/admin/database-clusters",
       "expression": null,
@@ -2581,7 +2581,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3022,
+      "line": 3027,
       "method": "POST",
       "path": "/api/apps/:slug/retry",
       "expression": null,
@@ -2607,7 +2607,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3097,
+      "line": 3102,
       "method": "POST",
       "path": "/api/apps/:slug/favorite",
       "expression": null,
@@ -2630,7 +2630,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3171,
+      "line": 3176,
       "method": "PUT",
       "path": "/api/favorites/order",
       "expression": null,
@@ -2648,7 +2648,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3218,
+      "line": 3223,
       "method": "POST",
       "path": "/api/apps/:slug/activity",
       "expression": null,

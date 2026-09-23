@@ -89,7 +89,7 @@ async function createApp(config, appRow) {
       'UPDATE apps SET db_password = $1 WHERE id = $2',
       [dbPassword, appId]
     );
-    const dbUrl = dbManager.connectionUrl(dbName, dbPassword);
+    const dbUrl = await dbManager.connectionUrl(dbName, dbPassword);
 
     // 2. GitHub repo handling
     //    - Import-existing path: appRow.repo_url is preset by the route

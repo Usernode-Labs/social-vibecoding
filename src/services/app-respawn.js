@@ -62,7 +62,7 @@ async function runExistingImage(config, app) {
     return null;
   }
 
-  const dbUrl = dbManager.connectionUrl(
+  const dbUrl = await dbManager.connectionUrl(
     dbManager.appDbName(app.slug), app.db_password
   );
 

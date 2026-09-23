@@ -259,7 +259,11 @@ function _resetTickets() { _tickets.clear(); }
 // that window closes on pg_dump's first byte — exactly as it did for the
 // raw `-Fc` stream. A failure after it still destroys the socket rather
 // than handing the browser a truncated file that looks complete.
-function runExport({ dbName, res, filename, onStart, spawnFn }) {
+async function runExport({ dbName, res, filename, onStart, spawnFn }) {
+  if (process.env.SV_DATABASE_BINDINGS_ENABLED === 'true') {
+    try { await require('./database-placement').assertCentralPlacement([dbName]); }
+    catch { return { status: 'failed', bytesSent: 0, rawBytes: 0, error: 'Database placement blocked' }; }
+  }
   return new Promise((resolve) => {
     if (!SAFE_IDENT.test(String(dbName || ''))) {
       resolve({ status: 'failed', bytesSent: 0, rawBytes: 0, error: 'unsafe database name' });

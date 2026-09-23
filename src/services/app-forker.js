@@ -306,7 +306,7 @@ async function forkApp(config, appRow, sourceApp) {
     const sourceDbName = dbManager.appDbName(sourceApp.slug);
     const { password: dbPassword } = await dbManager.cloneDatabase(sourceDbName, forkDbName);
     await pool.query('UPDATE apps SET db_password = $1 WHERE id = $2', [dbPassword, appId]);
-    const dbUrl = dbManager.connectionUrl(forkDbName, dbPassword);
+    const dbUrl = await dbManager.connectionUrl(forkDbName, dbPassword);
 
     // 2. Copy the source repo's current main tree into a fresh bot-owned
     // repo (history-free, binary-safe), rewriting dapp.json's name.

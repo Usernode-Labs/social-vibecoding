@@ -77,7 +77,12 @@ function generatePassword() {
 // a connection has to come up with the right credential, instead of
 // silently falling back to the superuser. See SELF-HOSTING.md
 // "Per-app postgres roles".
-function connectionUrl(dbName, password, binding) {
+async function connectionUrl(dbName, password, binding) {
+  const placements = await require('./database-placement').assertCentralPlacement([dbName]);
+  if (binding && placements.length && (binding.host !== placements[0].endpoint.host
+    || binding.port !== placements[0].endpoint.port || binding.owner !== ownerRoleName(dbName))) {
+    throw new Error('Explicit binding conflicts with registered central placement');
+  }
   if (binding) {
     if (binding.database !== dbName) throw new Error('Database binding does not match requested database');
     return require('./database-binding').bindingConnectionUrl(binding, password);
@@ -96,7 +101,12 @@ function connectionUrl(dbName, password, binding) {
   }
   const role = ownerRoleName(dbName);
   const admin = adminConnection();
-  admin.username = role;
+  const placement = placements.find((item) => item.database === dbName);
+  if (placement) {
+    admin.hostname = placement.endpoint.host;
+    admin.port = String(placement.endpoint.port);
+  }
+  admin.username = placement ? placement.owner : role;
   admin.password = password;
   admin.pathname = `/${dbName}`;
   return admin.toString();
@@ -607,6 +617,8 @@ async function readTemplateRefreshedAt(templateDb) {
 
 // Rebuild the template from the live source, then swap it in.
 async function refreshStagingTemplate(sourceDb) {
+  // Also guards the asynchronously queued internal refresh path.
+  await require('./database-placement').assertCentralPlacement([sourceDb]);
   const templateDb = stagingTemplateDbName(sourceDb);
   const next = `${templateDb}_next`;
   const templateRole = ownerRoleName(templateDb);
@@ -1665,3 +1677,32 @@ module.exports = {
   setAppDatabaseWritable,
   isStagingTemplateDb,
 };
+
+// Guard the public database lifecycle boundary before best-effort internals
+// can swallow errors. The legacy adapter cannot act on external placements.
+// Clone operations check BOTH names; global accounting checks every opt-in.
+const placementOperations = {
+  createDatabase: 1, dropDatabase: 1, cloneDatabase: 2,
+  applyStagingConnectionLimit: 1, adoptExistingDatabase: 1,
+  ensureRoleExists: 1, databaseExists: 1, roleExists: 1,
+  truncatePrivateTables: 1, scrubPrivateColumns: 1, privateDataExclusions: 1,
+  ensureStagingTemplate: 1, refreshStagingTemplate: 1, cloneFromTemplate: 2,
+  prepareStagingCloneSource: 1, cloneFromPreparedSource: 2,
+  releasePreparedCloneSource: 1, readTemplateRefreshedAt: 1,
+  setAppDatabaseWritable: 1, listAppDatabaseSizes: 0,
+};
+for (const [name, count] of Object.entries(placementOperations)) {
+  const operation = module.exports[name];
+  module.exports[name] = async (...args) => {
+    const databases = args.slice(0, count).map((arg) => typeof arg === 'object' ? arg?.templateDb : arg);
+    const placement = require('./database-placement');
+    await placement.assertCentralPlacement(databases, { all: count === 0 });
+    if (['createDatabase', 'dropDatabase', 'truncatePrivateTables', 'scrubPrivateColumns'].includes(name)) {
+      await placement.assertRetirementAllowed(databases);
+    }
+    if (['cloneDatabase', 'cloneFromTemplate', 'cloneFromPreparedSource'].includes(name)) {
+      await placement.assertRetirementAllowed([databases[1]]);
+    }
+    return operation(...args);
+  };
+}

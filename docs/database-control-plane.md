@@ -18,14 +18,38 @@ Implemented:
 - A separate worker entrypoint, ServiceAccount, resource limits, probes and
   API-only network access. It receives neither platform secrets nor `DB_ADMIN_URL`.
 - An approved single-instance **preview** profile, supplied by infra.
-- Explicit URL construction via `dbManager.connectionUrl(name, password, binding)`.
+- Explicit URL construction via `await dbManager.connectionUrl(name, password, binding)`.
   A supplied binding must match the database and supplies its own endpoint/owner;
   it never falls back to platform administration credentials.
 
-Existing app creation, previews, exports, SQL administration and runtime URLs
-still use their current placement. The optional URL argument is an integration
-seam, not activation of multi-cluster routing. Durable app bindings and conversion
-of every lifecycle path remain the next increment. No databases move in this release.
+The opt-in central binding increment records only selected applications. Infra's
+`bindingTargets` allowlist names the app, primary database and observed CNPG
+cluster UID. An operator registers an immutable `AppDatabaseBinding` once, then
+enables `databaseControlPlane.bindingsEnabled` in the SV release. Neither Argo
+nor the worker recreates missing bindings. Absence, deletion, mismatched identity,
+API failure, changed cluster UID or external placement blocks selected operations.
+Unselected apps make no binding API requests and retain legacy central placement.
+
+A record identifies the production environment, database/owner, central endpoint,
+cluster reference and `platform-app` credential reference (app ID); it contains no
+password. The selected runtime URL uses its endpoint and owner after checking
+that they still match the central adapter. Existing TLS options and per-app
+passwords are preserved. No credential rotation or database move is implied.
+
+The public database-manager boundary validates creation, role repair, clones
+(both sides), templates/evidence, cleanup, accounting and runtime URLs. Queued
+template refresh and exports are also guarded. The migrator has only named
+binding/cluster read permissions and validates startup role repair. Primary
+retirement/replacement and destructive scrubbing of bound production databases
+are blocked; selected app deletion stops before runtime teardown. Disposable
+clone cleanup remains supported. A binding outage pauses the central accounting
+pass rather than measuring an assumed location.
+
+The admin cluster inventory additionally returns validated `bindings` when
+binding enforcement is enabled. This first record covers the selected app's
+existing central lifecycle; previews are still on central and do not yet have
+independent bindings. There is no destination editing API or external adapter.
+No databases move in this release.
 
 Production/dedicated profiles, logical database provisioning, placement budgets,
 backup/restore, data-copy Jobs and migrations are not implemented yet. Both the
@@ -109,3 +133,20 @@ npm run ensure:shell
 The infra chart has schema/permission tests and a separate local Kubernetes
 integration runbook. Validate actual Crossplane readiness as well as rendered
 YAML; rendering alone does not exercise operator behavior.
+
+## Binding activation order
+
+1. Install the binding CRD and narrowly scoped reader RBAC through infra/Argo.
+2. Verify the live app ID/slug, database ownership and central cluster UID against
+   the allowlisted registration manifest. Use `kubectl create` once; do not put
+   the instance under automatic recreation or overwrite an existing record.
+3. Publish the candidate release, then enable `databaseControlPlane.bindingsEnabled`
+   only in staging. The migration Job needs its projected policy, API token and
+   Cilium API egress before its hook runs.
+4. Verify authenticated inventory, real app-role connection, disposable cloning
+   and cleanup, and preservation of the original database and app Deployment.
+
+Missing metadata requires investigation and explicit restoration from the saved
+record. Turning the flag off is safe only while all selected databases remain
+central; it is not a rollback strategy once external placements are implemented.
+Do not mistake binding reconstruction for data recovery.
