@@ -78,7 +78,7 @@ function makeIframe({ platformOrigin = 'https://platform.example' } = {}) {
     navigationSandboxes: [],
     isConnected: true,
     ownerDocument: { defaultView: { location: { origin: platformOrigin } } },
-    contentWindow: { name: `win-${frameSeq}-0`, postMessage() {} },
+    contentWindow: { name: `win-${frameSeq}-0`, posted: [], postMessage(m) { this.posted.push(m); } },
     onload: null,
     onerror: null,
     style: { opacity: '0' },
@@ -111,7 +111,7 @@ function makeIframe({ platformOrigin = 'https://platform.example' } = {}) {
       if (v) {
         el.navigationSandboxes.push(el._sandbox);
         el.loads += 1;
-        el.contentWindow = { name: `win-${el.gen}-${el.loads}`, postMessage() {} };
+        el.contentWindow = { name: `win-${el.gen}-${el.loads}`, posted: [], postMessage(m) { this.posted.push(m); } };
       }
     },
   });
@@ -134,25 +134,50 @@ function attachRenderer(store, refs, policy) {
   const r = {
     el: null, key: null, renders: 0, creates: 0, hostHidden: true,
     history: [],
+    // #2902: every live element by slug — the mounted one and the kept ones.
+    els: new Map(),
   };
   const render = () => {
     r.renders += 1;
-    const { slug, active, faded, sandboxReady, cover } = store.get();
+    const state = store.get();
+    const { slug, active, faded, sandboxReady, cover } = state;
+    const kept = state.kept || [];
+    const live = [...kept.map((k) => k.slug), ...(slug ? [slug] : [])];
+    // A key that leaves the live set is unmounted: its element is gone.
+    for (const [key, el] of [...r.els]) {
+      if (live.includes(key)) continue;
+      r.els.delete(key);
+      el.isConnected = false;
+      if (refs.kept && refs.kept[key] === el) delete refs.kept[key];
+      r.history.push(`unmount:${key}`);
+    }
+    // A key that joins it is created — and ONLY then.
+    for (const key of live) {
+      if (r.els.has(key)) continue;
+      r.els.set(key, makeIframe());
+      r.creates += 1;
+      r.history.push(`create:${key}`);
+    }
+    for (const k of kept) {
+      const el = r.els.get(k.slug);
+      el.id = '';
+      el.kept = true;
+      el.setAttribute('sandbox', k.sandboxReady ? policy.APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX);
+      if (refs.kept) refs.kept[k.slug] = el;
+    }
     if (!slug) {
-      if (r.el) r.history.push(`unmount:${r.key}`);
       r.key = null;
       r.el = null;
       refs.iframe = null;
     } else {
-      if (r.key !== slug) {
-        r.key = slug;
-        r.el = makeIframe();
-        r.creates += 1;
-        r.history.push(`create:${slug}`);
-      }
+      r.key = slug;
+      r.el = r.els.get(slug);
+      r.el.id = 'app-iframe';
+      r.el.kept = false;
+      if (refs.kept && refs.kept[slug] === r.el) delete refs.kept[slug];
       // Rendered props: a style change updates the existing node.
       r.el.style.opacity = faded ? '0' : '1';
-      r.el.style.backgroundColor = store.get().background || '';
+      r.el.style.backgroundColor = state.background || '';
       r.el.setAttribute(
         'sandbox',
         sandboxReady ? policy.APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX
@@ -197,8 +222,10 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
   // them to the prerendered state between cases.
   storeMod.appFrameStore.set({
     slug: '', active: false, faded: true, background: '', sandboxReady: false, cover: null,
+    seq: 0, navigatedAt: 0, kept: [],
   });
   storeMod.appFrameRefs.iframe = null;
+  storeMod.appFrameRefs.kept = {};
   stagingStoreMod.stagingStore.set({
     open: false, mode: 'fullscreen', dockRect: null, urlLabel: '',
     loaderVisible: false, loaderTitle: 'Opening preview…', loaderSub: '',
@@ -974,8 +1001,10 @@ test('the bridge refuses to act on a frame it does not own', async () => {
   const bridge = bridgeMod.appFrameBridge;
   storeMod.appFrameStore.set({
     slug: '', active: false, faded: true, background: '', sandboxReady: false, cover: null,
+    seq: 0, navigatedAt: 0, kept: [],
   });
   storeMod.appFrameRefs.iframe = null;
+  storeMod.appFrameRefs.kept = {};
 
   assert.equal(bridge.frame(), null, 'no element before the island mounts');
   assert.equal(bridge.hasFrame(), false);
@@ -1009,10 +1038,19 @@ test('the island renders one iframe, keyed only by slug, with no src prop', () =
   assert.equal(body.split('<iframe').length - 1, 1,
     'exactly one iframe element — no second element a branch could swap in');
 
-  // The ONE key in the file is `key={state.slug}`, on <AppFrame/>.
+  // The ONE key in the file is `key={slug}`, on <AppFrame/>: each live frame's
+  // own app (#2902 renders the kept ones beside the mounted one).
   const keys = FRAME.match(/\bkey=\{[^}]*\}/g) || [];
-  assert.deepEqual(keys, ['key={state.slug}'],
+  assert.deepEqual(keys, ['key={slug}'],
     'slug is the only key — a different app is a different frame, nothing else is');
+  // Mounted or kept is an ATTRIBUTE change on the same element, never a
+  // different element: the id goes to the mounted frame alone, and a kept one
+  // is inert and hidden from assistive tech.
+  assert.match(tag, /id=\{active \? 'app-iframe' : undefined\}/, 'only the mounted frame is #app-iframe');
+  assert.match(tag, /inert=\{!active\}/, 'a kept frame is inert — no focus, no clicks');
+  assert.match(tag, /aria-hidden=\{active \? undefined : 'true'\}/, 'and out of the accessibility tree');
+  assert.match(tag, /tabIndex=\{active \? undefined : -1\}/, 'and out of the tab order');
+  assert.match(body, /const cover = active \? state\.cover : null;/, 'the cover is the mounted frame\'s alone');
 
   // The iframe is the first child of the fragment and the cover trails it, so
   // the cover coming and going can never move the iframe's position.
@@ -1030,10 +1068,15 @@ test('the wrapper above the frame is unconditional, and parking hides rather tha
   // the frame's parent node is the same node for the document's lifetime.
   const wrapper = host.indexOf('<div className="app-launch-host w-full h-full">');
   assert.ok(wrapper !== -1, 'the launch host wrapper is rendered');
-  assert.ok(wrapper < host.indexOf('{state.slug ?'),
-    'and it is OUTSIDE the conditional that mounts the frame');
-  assert.match(host, /\{state\.slug \? <AppFrame key=\{state\.slug\} slug=\{state\.slug\} \/> : null\}/,
-    'the frame exists iff there is a slug');
+  assert.ok(wrapper < host.indexOf('{liveFrames(state).map('),
+    'and it is OUTSIDE the list that mounts the frames');
+  assert.match(host, /\{liveFrames\(state\)\.map\(\(slug\) => <AppFrame key=\{slug\} slug=\{slug\} \/>\)\}/,
+    'a frame exists for each live app: the mounted one and the kept ones (#2902)');
+  // In CREATION order, which never changes for a frame's life: a frame is only
+  // ever appended or removed, never moved — and moving an iframe reloads it.
+  const order = FRAME.slice(FRAME.indexOf('function liveFrames('));
+  assert.match(order.slice(0, 600), /sort\(\(a, b\) => a\.seq - b\.seq\)/,
+    'frames are ordered by their creation seq, not by recency');
   // `active` must not gate the frame's existence: parking is a class toggle.
   assert.match(host, /useHiddenClass\(hostRef, !state\.active\)/,
     'parking hides the host through a ref');
@@ -1065,7 +1108,7 @@ test('`src` is not state, and the store starts from the prerendered markup', () 
     /APP_FRAME_SANDBOX =[\s\S]*allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock/,
     'the navigated app keeps the established capability contract');
   assert.match(FRAME,
-    /sandbox=\{state\.sandboxReady \? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX\}/,
+    /sandbox=\{look\.sandboxReady \? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX\}/,
     'React owns the two-phase sandbox attribute');
   // Exactly one place in the whole chain assigns src.
   const srcWrites = BRIDGE.match(/el\.src = /g) || [];
@@ -1152,11 +1195,12 @@ test('every path that owned #app-content goes through the frame seam', () => {
   const dev = SRC.slice(SRC.indexOf('async renderDevView('), SRC.indexOf('_devForumScroll'));
   assert.ok(dev.includes('AppView._parkAppFrame();'), 'renderDevView parks the frame');
   assert.ok(!dev.includes('AppView._unmountAppFrame();'), 'and never drops it');
-  // Closing the app does drop it — from the zoom-out's `after` callback, so the
-  // shrinking card keeps showing the app until it lands.
+  // Closing the app RETIRES it (#2902) — kept loaded, hidden — from the
+  // zoom-out's `after` callback, so the shrinking card keeps showing the app
+  // until it lands.
   const appJs = read('public/js/app.js');
-  assert.ok(appJs.includes('AppView._unmountAppFrame();'),
-    'closeApp drops the frame when the app is actually left');
+  assert.ok(appJs.includes('AppView._retireAppFrame();'),
+    'closeApp retires the frame when the app is actually left');
 });
 
 test('background updates preserve the app frame and clear when another app opens', async () => {
@@ -1180,4 +1224,190 @@ test('background updates preserve the app frame and clear when another app opens
   h.AppView.handleBackgroundBridgeMessage({ source: win,
     data: { __usernode_background: 'changed', color: '#0a0d14' } });
   assert.equal(h.store.get().background, '', 'a departed app cannot paint the next frame');
+});
+
+// ── 3. KEPT ALIVE (#2902) ────────────────────────────────────────────────
+//
+// The last few apps opened stay loaded in hidden frames, so Resume shows an
+// app exactly as it was left. Everything above still holds for the MOUNTED
+// frame; these cases prove the kept ones are the same elements and the same
+// documents when they come back, and that the list is least-recently-used.
+
+function openApp(h, slug, { innerPath = null } = {}) {
+  h.AppView.appData = {
+    slug, name: slug, url: `https://${slug}.example`, status: 'running', self_hosted: false,
+  };
+  h.AppView.iframeToken = `tok-${slug}-${h.bridge.stats().navigations}`;
+  h.AppView.iframeTokenSlug = slug;
+  h.AppView.pendingInnerPath = innerPath;
+  h.AppView.renderAppTab();
+  return h.bridge.frame();
+}
+
+test('#2902: resuming a kept app is the SAME element and the SAME document, as it was left', async () => {
+  const h = await makeHarness();
+  const a = openApp(h, 'app-a');
+  const win = a.contentWindow;
+  const loads = a.loads;
+  win.typed = 'half a sentence';
+  const b = openApp(h, 'app-b');
+  const c = openApp(h, 'app-c');
+  assert.notEqual(b, a);
+  assert.notEqual(c, b);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-c', 'app-b', 'app-a'],
+    'three apps loaded: the mounted one, then the kept ones, most recent first');
+  assert.equal(a.kept, true, 'app-a is kept, not dropped');
+  assert.equal(a.id, '', 'and is no longer #app-iframe — the shell believes no message from it');
+  assert.deepEqual(win.posted.at(-1), { __usernode_visibility: 'hidden' },
+    'a kept document is told it is hidden, so the bridge pauses its media');
+
+  const creates = h.renderer.creates;
+  const navigations = h.navigations();
+  const back = openApp(h, 'app-a');
+  assert.equal(back, a, 'the very element');
+  assert.equal(back.contentWindow, win, 'the very document');
+  assert.equal(back.contentWindow.typed, 'half a sentence', 'with what the user left in it');
+  assert.equal(back.loads, loads, 'no reload');
+  assert.equal(h.navigations(), navigations, 'no navigation at all');
+  assert.equal(h.renderer.creates, creates, 'no element created');
+  assert.equal(back.id, 'app-iframe', 'it is the mounted frame again');
+  assert.equal(h.store.get().cover, null, 'with no launch cover over it');
+  assert.deepEqual(win.posted.at(-1), { __usernode_visibility: 'visible' });
+  assert.equal(h.surface(), 'app');
+});
+
+test('#2902: the keep-alive list is least-recently-used, three apps deep', async () => {
+  const h = await makeHarness();
+  openApp(h, 'app-a');
+  openApp(h, 'app-b');
+  openApp(h, 'app-c');
+  openApp(h, 'app-a'); // resumed: now the most recent
+  openApp(h, 'app-d');
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-d', 'app-a', 'app-c'],
+    'opening a fourth lets the least recently used (app-b) go, not the resumed app-a');
+  assert.ok(h.renderer.history.includes('unmount:app-b'), 'app-b\'s frame is gone');
+
+  // Opening one more than the limit, with no resume in between, drops the oldest.
+  const g = await makeHarness();
+  const a = openApp(g, 'app-a');
+  openApp(g, 'app-b');
+  openApp(g, 'app-c');
+  openApp(g, 'app-d');
+  assert.deepEqual(g.bridge.liveSlugs(), ['app-d', 'app-c', 'app-b']);
+  assert.equal(a.isConnected, false, 'app-a was evicted');
+  const again = openApp(g, 'app-a');
+  assert.notEqual(again, a, 'and reopening it is a fresh frame');
+  assert.equal(again.loads, 1, 'that loads');
+});
+
+test('#2902: backing out to Home keeps the app loaded; reopening it resumes', async () => {
+  const h = await makeHarness();
+  const a = openApp(h, 'app-a');
+  const win = a.contentWindow;
+  h.AppView._retireAppFrame();
+  assert.equal(h.bridge.slug(), '', 'nothing is mounted');
+  assert.equal(h.renderer.hostHidden, true);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-a'], 'but app-a is still loaded');
+  assert.equal(a.isConnected, true);
+  // The eager launch from its tile resumes it instead of covering and reloading.
+  h.sandbox.Home._apps = [{ slug: 'app-a', name: 'A', url: 'https://app-a.example', status: 'running' }];
+  const navigations = h.navigations();
+  assert.equal(h.AppView.beginLaunch('app-a'), true);
+  assert.equal(h.bridge.frame(), a);
+  assert.equal(a.contentWindow, win);
+  assert.equal(h.navigations(), navigations, 'no navigation');
+  assert.equal(h.store.get().cover, null, 'no cover');
+  // …and the render that follows adopts it, even though the src it would build
+  // carries a newer token than the one the document booted with.
+  h.AppView.iframeToken = 'a-newer-token';
+  h.AppView.iframeTokenSlug = 'app-a';
+  h.AppView.renderAppTab();
+  assert.equal(h.bridge.frame(), a);
+  assert.equal(h.navigations(), navigations, 'still no navigation');
+});
+
+test('#2902: a stale kept document, or a deep link into it, reloads rather than resumes', async () => {
+  const h = await makeHarness();
+  const a = openApp(h, 'app-a');
+  openApp(h, 'app-b');
+  // Older than the token refresh period: its token is due a refresh, and a
+  // refresh is a reload anyway.
+  h.store.set((s) => ({
+    ...s,
+    kept: s.kept.map((k) => ({ ...k, navigatedAt: Date.now() - h.AppView.TOKEN_REFRESH_MS - 1 })),
+  }));
+  const loads = a.loads;
+  const back = openApp(h, 'app-a');
+  assert.equal(back, a, 'the element is reused');
+  assert.equal(back.loads, loads + 1, 'but its document is reloaded');
+
+  // A deep link into a kept app is somewhere to go: it navigates.
+  openApp(h, 'app-b');
+  const deep = openApp(h, 'app-a', { innerPath: '/thread/7' });
+  assert.equal(deep, a);
+  assert.equal(deep.loads, loads + 2, 'the deep link navigates the kept frame');
+});
+
+test('#2902: a new build, a placeholder and a sign-out each let frames go', async () => {
+  const h = await makeHarness();
+  openApp(h, 'app-a');
+  openApp(h, 'app-b');
+  // A build landed for kept app-a: its hidden document is the old build.
+  assert.equal(h.AppView.evictKeptApp('app-a'), true);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
+  // The app on screen is not evicted from under the viewer.
+  assert.equal(h.AppView.evictKeptApp('app-b'), false);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
+
+  // A placeholder drops the mounted frame but not the kept ones.
+  openApp(h, 'app-c');
+  h.AppView._unmountAppFrame();
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
+
+  // Sign-out drops everything.
+  openApp(h, 'app-d');
+  h.AppView.evictAllAppFrames();
+  assert.deepEqual(h.bridge.liveSlugs(), []);
+  assert.equal(h.bridge.frame(), null);
+});
+
+test('#2902: a small device keeps one app fewer', async () => {
+  const { KEEP_ALIVE_LIMIT, keepAliveLimit, liveAppSlugs } = await import(
+    new URL('../frontend/src/features/app-frame/app-frame-store.js', `file://${__filename}`).href
+  );
+  assert.equal(KEEP_ALIVE_LIMIT, 3);
+  assert.equal(keepAliveLimit({}), 3, 'no report: the full three');
+  assert.equal(keepAliveLimit({ deviceMemory: 8 }), 3);
+  assert.equal(keepAliveLimit({ deviceMemory: 2 }), 2, 'a 2 GiB phone keeps two');
+  assert.deepEqual(
+    liveAppSlugs({ slug: 'x', kept: [{ slug: 'y' }, { slug: 'z' }] }),
+    ['x', 'y', 'z'],
+  );
+  assert.deepEqual(liveAppSlugs({ slug: '', kept: [{ slug: 'y' }] }), ['y']);
+});
+
+test('#2902: the green dot reads the frame store, on Home tiles and Recents rows', () => {
+  const live = read('frontend/src/features/app-frame/live-apps.tsx');
+  assert.match(live, /liveAppSlugs\(useStoreState\(appFrameStore\)\)/,
+    'the dot is derived from the frames actually loaded');
+  const grid = read('frontend/src/features/home/app-grid.tsx');
+  assert.match(grid, /live=\{live\.includes\(item\.app\.slug\)\}/);
+  assert.match(grid, /\{live \? <LiveAppDot className="app-card-live-dot" \/> : null\}/);
+  const recents = read('frontend/src/features/nav/recents-list.tsx');
+  assert.match(recents, /live=\{!!item\.app && live\.includes\(item\.app\.slug\)\}/);
+  assert.match(recents, /\{live \? <LiveAppDot className="platform-recent-live" \/> : null\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.app-launch-host > iframe\[data-kept\] \{[\s\S]{0,200}visibility: hidden;/,
+    'a kept frame keeps its box and is hidden by visibility, not display');
+});
+
+test('#2902: the shared bridge pauses a hidden app\'s media and resumes what it paused', () => {
+  const bridge = read('public/usernode-bridge/v1/bridge.js');
+  const block = bridge.slice(bridge.indexOf('__USERNODE_VISIBILITY_BEGIN__'),
+    bridge.indexOf('__USERNODE_VISIBILITY_END__'));
+  assert.ok(block.length > 0, 'the visibility block is in the bridge');
+  assert.match(block, /if \(e\.source !== window\.parent\) return;/, 'only the shell may say so');
+  assert.match(block, /querySelectorAll\("audio, video"\)/);
+  assert.match(block, /usernode:visibility-changed/);
+  assert.equal(read('public/usernode-bridge.js'), bridge, 'both bridge copies agree');
 });

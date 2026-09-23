@@ -641,6 +641,8 @@ const App = {
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // #2902: the apps kept loaded were the signed-out viewer's.
+    if (typeof AppView !== 'undefined') AppView.evictAllAppFrames?.();
     // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
     // top window is gone or refused. The top window is the one that shows the
     // sign-in screen, so it reloads — onto that screen if the session really
@@ -1012,6 +1014,7 @@ const App = {
     App._applyPlatformUpdateShot();
     App._applyAppUpdateShot();
     App._applyLaunchShot();
+    App._applyKeptAppsShot();
     App._applyOfflineAppShot();
     App._applyFeedbackShot();
     App._applyAppContextShot();
@@ -1423,6 +1426,31 @@ const App = {
         },
       });
     }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=apps-kept` (#2902): Home with the first
+  // two apps on the launcher marked as still loaded — the green dot on their
+  // tiles, and their hidden, inert frames behind the (hidden) app view. A real
+  // kept app exists only after opening apps and coming back, which neither a
+  // still frame nor a declared check can do. The frames are the fully
+  // restricted pending frame with no document at all (the same synthetic
+  // frame the app-tone shots use), so nothing loads and nothing can resume:
+  // tapping a tile launches the app the ordinary way. Pure UI state.
+  _applyKeptAppsShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'apps-kept') return;
+    let tries = 0;
+    const attempt = () => {
+      const slugs = Array.from(document.querySelectorAll('#app-list .app-card[data-slug]'))
+        .map((el) => el.getAttribute('data-slug'))
+        .filter(Boolean)
+        .slice(0, 2);
+      // The launcher's list is still loading; bounded, like the launch shot.
+      if (!slugs.length && tries++ < 50) { setTimeout(attempt, 100); return; }
+      try { AppView.showKeptAppsShot(slugs); } catch (err) { /* ignore */ }
+    };
+    setTimeout(attempt, 50);
   },
 
   // Screenshot-state deep link `?shot=app-launching` (#931): paint the app
@@ -2346,6 +2374,14 @@ const App = {
       }
     }
 
+    // #2902: an app kept loaded in the background is running the build before
+    // this one. Let it go, so the next open loads what just landed. The app in
+    // view keeps its frame — the Improve panel below offers that reload.
+    if (!data.deploying && !data.failed && slug !== App.currentApp
+        && typeof AppView !== 'undefined') {
+      AppView.evictKeptApp?.(slug);
+    }
+
     // The app tab, for the app in view. Its Improve button spins while the
     // build rolls out and offers the reload once it has landed. Nothing here
     // touches the frame: it keeps showing the build before this one on
@@ -2671,6 +2707,12 @@ const App = {
     // `_rememberPendingAppStatus` also treats a later `creating` phase as a
     // retry boundary and clears an older terminal fact for the same slug.
     AppView._rememberPendingAppStatus?.(data);
+
+    // #2902: an app that stopped running has nothing worth keeping loaded.
+    if (data.status && data.status !== 'running' && data.slug !== App.currentApp
+        && typeof AppView !== 'undefined') {
+      AppView.evictKeptApp?.(data.slug);
+    }
 
     // Update home screen card if visible
     const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
@@ -4331,10 +4373,19 @@ const App = {
   // the way Messages already did. The page changes in place and the bars
   // never stop being the live elements they are at rest.
   //
-  // DESKTOP ONLY, where the rail is the navigation beside the page. The
-  // phone's bottom bar keeps its slide (it is being reworked separately,
-  // #2766), and every other entry — a drill-in, an app's zoom — keeps its
-  // motion, because there the page really does go somewhere.
+  // On the desktop, where the rail is the navigation beside the page, every
+  // other entry — a drill-in, an app's zoom — keeps its motion, because there
+  // the page really does go somewhere.
+  //
+  // …AND ON THE PHONE NOTHING SLIDES AT ALL (#2896, #2775). Its bottom bar
+  // kept the push/pop, and which way a tab or a page slid was never
+  // consistent — the same press came in from the right one time and the left
+  // the next, depending on which caller asked and what it guessed about
+  // depth. So below the breakpoint every push and pop is a cut: tabs AND
+  // pages swap in place, as the desktop rail does. The rule itself is
+  // PlatformUI.phoneMotion, which every transition goes through; it is
+  // applied here too only so that `data-entered` names what actually runs.
+  // The zooms stay — an app growing out of its tile is not a page sliding.
   //
   // …AND A TAB PRESS INTO OR OUT OF AN APP'S WORKSHOP IS A TAB SWITCH TOO
   // (#2880, #2881). The Workshop tab returns to the app Workshop you left
@@ -4349,23 +4400,23 @@ const App = {
   // zoom-out, shrinking the page into its tile. A press is marked `viaTab`
   // by the one caller that knows it is one (the tab bar's Home click, and
   // resumeWorkshopView for the Workshop's), and resolves exactly as a press
-  // on any other tab does: a cut on the desktop rail, and on the phone the
-  // same push or pop its other tabs run.
+  // on any other tab does: a cut, on the rail and on the phone's bar alike.
   _entryTransition(preferred, screenEl, viaTab) {
-    if (viaTab) preferred = App._tabSwitchType(preferred === 'zoom-out' ? 'pop' : 'push');
-    else if (App._isRailSwitch(preferred, screenEl)) preferred = 'none';
+    if (viaTab || App._isRailSwitch(preferred, screenEl)) preferred = 'none';
+    else if ((preferred === 'push' || preferred === 'pop') && App._isPhoneLayout()) preferred = 'none';
     if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', preferred);
     return preferred;
   },
 
-  // What a press on a tab runs: a cut on the desktop layout, where the bar is
-  // the rail beside the page; `phoneType` on the phone's bottom bar, which is
-  // what every other tab there runs (a push into a tab, navigateHome's pop).
-  _tabSwitchType(phoneType) {
+  // Below the 768px breakpoint — PlatformUI.isPhoneLayout's question, asked
+  // here directly so the gate reads the same answer wherever PlatformUI is
+  // stubbed. Unreadable answers false: the desktop's motion.
+  _isPhoneLayout() {
     try {
-      if (window.matchMedia && window.matchMedia('(min-width: 768px)').matches) return 'none';
-    } catch (_) { /* unreadable: the phone's own motion */ }
-    return phoneType;
+      return !!(window.matchMedia && !window.matchMedia('(min-width: 768px)').matches);
+    } catch (_) {
+      return false;
+    }
   },
 
   // Set for the length of one tab press's synchronous navigation (see
@@ -6209,12 +6260,14 @@ const App = {
         // root on #app-content, so clear that root before blanking the node —
         // otherwise its store subscription and effects outlive the screen.
         AppView._teardownDevRoots();
-        // #1085 chunk H: and drop the React-owned app frame, for the same
-        // reason and at the same moment. It is unmounted HERE rather than in
+        // #1085 chunk H: and retire the React-owned app frame, for the same
+        // reason and at the same moment. It is retired HERE rather than in
         // AppView.close() (which runs in `fn`, at the START of the zoom)
         // precisely so the shrinking card keeps showing the app until it
         // lands — the same reason #app-content is blanked here and not there.
-        AppView._unmountAppFrame();
+        // Retired, not dropped (#2902): the app stays loaded, hidden, so
+        // opening it again shows it exactly as it was left.
+        AppView._retireAppFrame();
         const content = document.getElementById('app-content');
         if (content) content.innerHTML = '';
       },

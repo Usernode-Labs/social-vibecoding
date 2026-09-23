@@ -47,6 +47,8 @@ function harness() {
     close() { closes++; AppView.appData = null; },
     _teardownDevRoots() {},
     _unmountAppFrame() { frameMounted = false; },
+    // #2902: Home retires the frame (kept loaded, hidden) — off screen either way.
+    _retireAppFrame() { frameMounted = false; },
   };
   const context = vm.createContext({
     location, history, URL, URLSearchParams, console,

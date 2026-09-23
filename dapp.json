@@ -1134,6 +1134,28 @@
       "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet:not(.platform-app-tone-dark)"
     },
     {
+      "id": "kept-apps.home-dot",
+      "name": "An app still loaded in the background carries a green dot on its Home tile, and says so to a screen reader (#2902)",
+      "path": "/?demo=1&shot=apps-kept",
+      "expectSelector": "#app-list .app-card[data-live=\"true\"][aria-label$=\", still open\"] .app-card-live-dot.app-live-dot",
+      "visual": true,
+      "impact": [
+        "public/css/app.css",
+        "frontend/src/features/home/app-grid.tsx",
+        "frontend/src/features/app-frame/**"
+      ]
+    },
+    {
+      "name": "A kept app's frame stays mounted but hidden: inert, out of the tab order and the accessibility tree, and not #app-iframe (#2902)",
+      "path": "/?demo=1&shot=apps-kept",
+      "expectSelector": "#app-frame-host.hidden > .app-launch-host > iframe[data-kept][inert][aria-hidden=\"true\"][tabindex=\"-1\"][sandbox=\"\"]:not([id]):not([src])"
+    },
+    {
+      "name": "Apps nobody has opened carry no still-loaded dot (#2902)",
+      "path": "/?demo=1",
+      "expectSelector": "#app-list:has(.app-card[data-slug]):not(:has(.app-live-dot))"
+    },
+    {
       "id": "app-tone.cover-ink-dark",
       "name": "Inside a dark app the launch cover is inked for the ground it sits on, not for the shell's theme (#2704)",
       "path": "/?shot=app-tone-dark",
