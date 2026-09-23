@@ -3208,6 +3208,18 @@ const AppView = {
     AppView._devBodyAbort = devBodyAc;
     const devBodySignal = devBodyAc.signal;
     const bodyEl = document.getElementById('dev-body');
+    // #2847: ANY click on a proposal card — unfolding it in the Workshop,
+    // a pill, the ⋯ menu, a vote button — means the viewer has seen it, so
+    // its "New proposal" nudge clears. Capture phase, because several card
+    // controls stop propagation and the bubbling handler below returns early
+    // for folds and controls. Only marks read; never changes what the click does.
+    bodyEl.addEventListener('click', (e) => {
+      const card = e.target.closest
+        && e.target.closest('[data-proposal-row], [data-shared-session-row], [data-session-chip]');
+      if (!card) return;
+      const id = card.dataset.proposalRow || card.dataset.sharedSessionRow || card.dataset.sessionChip;
+      window.Notifications?.markProposalSeen?.(parseInt(id, 10));
+    }, { capture: true, signal: devBodySignal });
     bodyEl.addEventListener('click', (e) => {
       // #313/#827: the card-level "Explore in dev chat" button is a
       // <button>, so the guard below would swallow it — handle it first,
@@ -3345,6 +3357,11 @@ const AppView = {
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // #2847: arriving at a proposal's page (card tap, deep link, notification
+    // row) is the viewer seeing it — clear its "New proposal" nudge.
+    if (ref.kind === 'proposal' || ref.kind === 'session') {
+      window.Notifications?.markProposalSeen?.(ref.id);
+    }
     // The roster is cached per proposal (see `_loadVoteRoster`, and why it
     // has to be). Arriving here is a fresh read, so mark the entry stale and
     // let the paint below re-read it once — returning to a topic shows the

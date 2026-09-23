@@ -39,7 +39,7 @@ test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   assert.match(shell, /<GlobalChatScreen\s*\/>/);
   assert.match(screen, /id="global-chat-screen"/);
   assert.match(screen, /Chat\s*<span>\(experimental\)<\/span>/);
-  assert.match(screen, /Saved in Improve\./);
+  assert.match(screen, /Saved in Messages\./);
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'global-chat-screen', false\)/);
   assert.match(screen, /className="hidden flex flex-1 min-h-0 overflow-hidden"/);
   assert.match(appJs, /parts\[0\] === 'chat'/);

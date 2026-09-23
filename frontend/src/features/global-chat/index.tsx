@@ -346,7 +346,7 @@ export function GlobalChatPanel({ embedded = false }: { embedded?: boolean }) {
       <header className="global-chat-toolbar">
         <div className="min-w-0">
           <h2>Chat <span>(experimental)</span></h2>
-          <p>Saved in Improve.</p>
+          <p>Saved in Messages.</p>
         </div>
         <BudgetLabel />
         {embedded ? null : (

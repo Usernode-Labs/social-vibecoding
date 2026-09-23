@@ -395,7 +395,7 @@ test('every screen change clears the peek, and nothing else does', () => {
   // exactly that rate. Nothing in the shipped router does that today; the
   // guard is here so that nothing ever can.
   assert.match(mount, /const changed = navStore\.get\(\)\.screen !== screen;/);
-  assert.match(mount, /\.\.\.\(changed \? \{ peek: false \} : null\),/);
+  assert.match(mount, /\.\.\.\(changed \? \{ peek: false, peekOut: false \} : null\),/);
 });
 
 test('the desktop rail folds by hand, and a phone can never lose its bar', () => {
@@ -607,4 +607,54 @@ test('an app\'s discussion belongs to Messages, and says so', () => {
   assert.match(session.slice(0, session.indexOf('\n    }')),
     /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
     'a dev session shows the way up to Messages');
+});
+
+// ── #2824: the lit tab's sliding marker ───────────────────────────────
+
+test('the marker ships bare, so the first render matches the prerender', () => {
+  const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
+  const marker = html.match(/<span[^>]*class="platform-tabs-marker"[^>]*>/);
+  assert.ok(marker, 'the marker is part of the bar\'s markup');
+  assert.match(marker[0], /aria-hidden="true"/, 'aria-current already announces the lit tab');
+  assert.doesNotMatch(marker[0], /style=|data-marker-at|data-marker-slide/,
+    'unmeasured: no geometry and not visible, or hydration disagrees and it slides in from the edge');
+  // Rendered BEFORE the tabs so it paints behind them.
+  assert.ok(html.indexOf('platform-tabs-marker') < html.indexOf('id="platform-tab-home"'));
+});
+
+test('the marker is an inset of the lit tab, and an unlaid-out bar keeps the last box', () => {
+  const { markerBoxFor } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  assert.deepEqual(
+    { ...markerBoxFor({ offsetLeft: 150, offsetTop: 0, offsetWidth: 72, offsetHeight: 56 }) },
+    { x: 154, y: 4, w: 64, h: 48 },
+  );
+  assert.equal(markerBoxFor({ offsetLeft: 0, offsetTop: 0, offsetWidth: 0, offsetHeight: 0 }), null,
+    'a hidden bar (an app, the keyboard) has no geometry to report');
+});
+
+test('only a selection change slides, the Workshop\'s way (#2824)', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(src, /slide: !!prev && selectionChanged/,
+    'the first placement and a re-measure land; only a new tab slides');
+  assert.match(src, /new ResizeObserver\(\(\) => measure\(false\)\)/);
+  assert.match(src, /querySelector<HTMLElement>\('\.platform-tab\[aria-current="page"\]'\)/,
+    'the marker follows the same attribute the declared checks and screen readers read');
+});
+
+test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only', () => {
+  const rule = css.match(/\.platform-tabs-marker \{[^}]*\}/);
+  assert.ok(rule);
+  assert.match(rule[0], /position: absolute;/);
+  assert.match(rule[0], /background: var\(--brand-tint\);/);
+  assert.match(rule[0], /box-shadow: inset 0 0 0 1px var\(--brand-line\);/);
+  assert.match(rule[0], /opacity: 0;/, 'hidden until measured');
+  assert.match(css, /\.platform-tabs-marker\[data-marker-at\] \{ opacity: 1; \}/);
+  assert.match(css,
+    /@media \(prefers-reduced-motion: no-preference\) \{\s*\.platform-tabs-marker\[data-marker-slide\] \{\s*transition:\s*transform \.26s cubic-bezier\(\.32, \.72, 0, 1\)/,
+    'the slide is the Workshop marker\'s, and reduced motion does without it');
+  assert.match(css, /\.platform-tab \{\s*position: relative;\s*z-index: 1;\s*\}/,
+    'the tabs sit over the marker');
+  // The rail keeps its row fill; the marker is not drawn there.
+  const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--brand-tint);'));
+  assert.match(desktop.slice(0, 400), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
 });

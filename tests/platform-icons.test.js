@@ -108,6 +108,9 @@ test('the per-app install page borrows exactly the manifest\'s icons', () => {
 
 test('nothing still points at the retired unversioned icons', () => {
   assert.ok(!fs.existsSync(path.join(PUBLIC, 'icons', 'icon-192.png')), 'old files are deleted');
+  const versions = fs.readdirSync(path.join(PUBLIC, 'icons')).filter((d) => /^v\d+$/.test(d));
+  const current = manifest.icons[0].src.split('/')[2];
+  assert.deepEqual(versions, [current], 'new art replaces the old directory rather than sitting beside it');
   const sw = require('../public/sw.js');
   for (const icon of manifest.icons) {
     assert.ok(sw.SHELL_ASSETS.includes(icon.src), `sw.js precaches ${icon.src}`);
