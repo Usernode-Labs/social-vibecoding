@@ -176,7 +176,13 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     assert.equal((await pool.query("SELECT id FROM moderation_reports WHERE legacy_type='app'")).rowCount,2);
     assert.equal((await pool.query("SELECT id FROM moderation_reports WHERE legacy_type='app_message'")).rowCount,2);
     assert.equal((await pool.query("SELECT id FROM moderation_cases WHERE target_id < 0 AND target_type IN ('app','app_message')")).rowCount,2);
-    assert.equal((await pool.query("SELECT evidence FROM moderation_reports WHERE legacy_type='app_message' ORDER BY id LIMIT 1")).rows[0].evidence.content,'Original legacy post');
+    // INSERT ... SELECT may assign new IDs in either join order. Match the
+    // original report identity and verify both live and deleted snapshots.
+    const migratedMessages = await pool.query(`SELECT r.legacy_id, r.evidence, old.content_snapshot
+      FROM moderation_reports r JOIN chat_message_reports old ON old.id = r.legacy_id
+      WHERE r.legacy_type = 'app_message' ORDER BY r.legacy_id`);
+    assert.deepEqual(migratedMessages.rows.map(r => r.evidence.content), ['Original legacy post','Deleted legacy post']);
+    for (const r of migratedMessages.rows) assert.equal(r.evidence.content,r.content_snapshot);
     assert.equal((await get('/api/apps/reported-app/report','alice',{method:'POST',body:JSON.stringify({reason:'spam'})})).status,202);
     assert.equal((await get('/api/apps/reported-app/report','bob',{method:'POST',body:JSON.stringify({reason:'spam'})})).status,404,'own app reports are still rejected');
     assert.equal((await get(`/api/apps/reported-app/messages/${chat.id}/report`,'alice',{method:'POST',body:JSON.stringify({reason:'spam'})})).status,202);
