@@ -51,6 +51,7 @@ function loadDbManager({ templateComment = null, failOn = null, maxAge = null, p
     if (/shobj_description/.test(sql)) {
       return Promise.resolve({ stdout: templateComment ? `${templateComment}\n` : '\n', stderr: '' });
     }
+    if (/SELECT EXISTS/.test(sql)) return Promise.resolve({ stdout: 'f\n', stderr: '' });
     if (/col_description/.test(sql)) return Promise.resolve({ stdout: privateColumns.join('\n'), stderr: '' });
     if (/obj_description/.test(sql)) return Promise.resolve({ stdout: privateTables.join('\n'), stderr: '' });
     return Promise.resolve({ stdout: '', stderr: '' });
@@ -349,10 +350,9 @@ test('reused connection preserves bool/null discovery and unique private-column 
   try {
     await fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
     const updates = fixture.calls.filter((c) => c.cmd === 'pg' && /^UPDATE/.test(c.sql)).map((c) => c.sql);
-    assert.deepEqual(updates, [
-      "UPDATE public.users SET token = left('__staging_redacted__' || ctid::text, 64)",
-      'UPDATE public.users SET password = NULL',
-    ]);
+    assert.equal(updates.length, 2);
+    assert.match(updates[0], /^UPDATE public\.users SET token = '__staging_redacted__[0-9a-f]{16}:' \|\| ctid::text$/);
+    assert.equal(updates[1], 'UPDATE public.users SET password = NULL');
   } finally { fixture.restore(); }
 });
 
