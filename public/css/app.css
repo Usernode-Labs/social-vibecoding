@@ -10265,6 +10265,27 @@ html.web-browser-chrome {
   }
 }
 
+/* A FLAT TOP EDGE FOR THE INSTALLED LANDING. From iOS 26 an installed web app
+   whose status bar is black-translucent (frontend/src/head.html, #1929) gets
+   a Liquid Glass blur over the strip, and it runs about 38pt below the clock
+   — straight through this bar's content row, which blurred the wordmark. The
+   blur is reported to appear only when iOS cannot sample ONE colour at the
+   page's top edge, and the landing root paints the grain, the washes and the
+   star right up to it. So in installed mode the bar paints the ground solid
+   through the inset and its 8px pad, then fades out by its bottom edge: the
+   top edge is one colour and the wallpaper below loses no texture and gains
+   no seam. Browser tabs (the wash in browser-scroller mode above) and the
+   native WebView are not standalone display modes, so nothing here reaches
+   them. */
+@media (display-mode: standalone) {
+  #landing-header {
+    background-image: linear-gradient(
+      var(--home-ground) calc(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) + 0.5rem),
+      transparent
+    );
+  }
+}
+
 /* ── Header title centering ───────────────────────────────
    `#header-title` is in flex flow by default (left-aligned, truncating
    from the right when the right group eats its width). When there's
