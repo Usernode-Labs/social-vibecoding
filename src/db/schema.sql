@@ -7376,6 +7376,49 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_reports_pending
 CREATE INDEX IF NOT EXISTS idx_conversation_reports_queue
   ON conversation_message_reports (status, created_at DESC, id DESC);
 
+-- Reports retain their evidence when a mini-app or discussion post is later
+-- deleted. A pending report is unique per reporter and live target.
+CREATE TABLE IF NOT EXISTS app_reports (
+  id                BIGSERIAL PRIMARY KEY,
+  app_id            INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  reporter_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  app_slug_snapshot VARCHAR(255) NOT NULL,
+  app_name_snapshot VARCHAR(255) NOT NULL,
+  reason            VARCHAR(32) NOT NULL CHECK (reason IN ('spam', 'harassment', 'unsafe_content', 'impersonation', 'other')),
+  detail            VARCHAR(500),
+  status            VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved', 'dismissed')),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at       TIMESTAMPTZ,
+  resolved_by       INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_reports_pending
+  ON app_reports (app_id, reporter_user_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_app_reports_queue
+  ON app_reports (status, created_at DESC, id DESC);
+COMMENT ON TABLE app_reports IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS chat_message_reports (
+  id                BIGSERIAL PRIMARY KEY,
+  app_id            INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  message_id        INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+  reporter_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reported_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  app_slug_snapshot VARCHAR(255) NOT NULL,
+  reason            VARCHAR(32) NOT NULL CHECK (reason IN ('harassment', 'spam', 'threats', 'hate', 'sexual_content', 'other')),
+  detail            VARCHAR(500),
+  content_snapshot  TEXT NOT NULL,
+  evidence_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status            VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved', 'dismissed')),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at       TIMESTAMPTZ,
+  resolved_by       INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_message_reports_pending
+  ON chat_message_reports (message_id, reporter_user_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_chat_message_reports_queue
+  ON chat_message_reports (status, created_at DESC, id DESC);
+COMMENT ON TABLE chat_message_reports IS 'staging:private';
+
 -- Repair earlier drafts for immutable abuse evidence as well: account
 -- deletion removes attribution, never the retained report snapshot.
 DO $$
