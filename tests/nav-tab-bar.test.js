@@ -592,6 +592,43 @@ test('a tab label has room for its descenders', () => {
     'a unitless multiplier is the one value correct at both sizes');
 });
 
+test('the Messages count is the quiet one: grey on the phone, at the row\'s end on the rail (#2912)', () => {
+  // Unread messages are counted in the bell as well, so a second RED count on
+  // the Messages tab said the same thing twice in the loudest colour on the
+  // screen. The bell keeps the red (#notifications-badge is not touched);
+  // this badge used to match it on purpose and now deliberately does not.
+  const phone = css.match(/\n\.platform-tab-badge \{[^}]*\}/);
+  assert.ok(phone, 'the badge has its base (phone) rule');
+  assert.match(phone[0], /background: var\(--text-faint, #8e8e93\);/,
+    'a grey disc on the phone, one value in both themes');
+  assert.doesNotMatch(phone[0], /--danger|#ef4444/, 'the red is the bell\'s alone');
+  assert.match(phone[0], /position: absolute;\s*top: -3px;\s*left: calc\(100% - 7px\);/,
+    'and it keeps its place on the glyph\'s corner');
+
+  // On the rail the count moves to the row's far end, where Recents draws its
+  // unread dots, as a pill in the rail's own muted ink. The glyph's wrapper
+  // dissolves so the badge is an item of the row, back in the flow, so the
+  // label can shrink before it but never run under it.
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
+  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+  assert.match(block, /\n {2}\.platform-tab-mark \{\s*display: contents;\s*\}/,
+    'the wrapper dissolves on the rail and only there');
+  const rail = block.match(/\n {2}\.platform-tab-badge \{[^}]*\}/);
+  assert.ok(rail, 'the rail restyles the badge inside the desktop block');
+  for (const decl of [
+    /position: static;/, /order: 1;/, /flex: none;/, /margin-left: auto;/,
+    /background: color-mix\(in srgb, var\(--text-muted\) 16%, transparent\);/,
+    /color: var\(--text-muted\);/,
+  ]) assert.match(rail[0], decl);
+
+  // THE MARKUP DOES NOT MOVE, which is what lets the phone keep its anchor
+  // and the declared checks keep finding the badge inside the Messages tab.
+  const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
+  assert.match(html,
+    /id="platform-tab-messages"[^>]*><span class="platform-tab-mark"><svg[^>]*class="platform-tab-glyph"[\s\S]*?<\/svg><span id="platform-tabs-badge"/,
+    'the badge is still the glyph wrapper\'s child, inside #platform-tab-messages');
+});
+
 test('the Messages tab cannot be dead, whatever the flag says', () => {
   // navigateToMessages returns EARLY when `_inMessages` is set — routing the
   // island and revealing nothing, because the screen is supposed to be up

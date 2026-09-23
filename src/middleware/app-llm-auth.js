@@ -215,6 +215,10 @@ function appPlatformAuth(pool, opts = {}) {
         return res.status(403).json({ ok: false, code: 'bad_user_token' });
       }
       userId = claims.id;
+      try {
+        const live = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+        if (!live.rows.length) return res.status(401).json({ ok: false, code: 'bad_user_token' });
+      } catch { return res.status(503).json({ ok: false, code: 'lookup_failed' }); }
     }
 
     req.appPlatform = { appId: app.id, appSlug: app.slug, userId };

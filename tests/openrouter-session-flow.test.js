@@ -28,6 +28,18 @@ const server = fs.readFileSync(
   'utf8',
 );
 
+// #2779: the chat route hands the turn itself to services/mayor/turn.js, so
+// "the chat route" is the route handler followed by that module.
+const turn = fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'services', 'mayor', 'turn.js'),
+  'utf8',
+);
+const chatRoute = () => `${between(
+  sessions,
+  "router.post('/api/sessions/:id/chat'",
+  '// ===== Spec stage endpoints',
+)}\n${turn}`;
+
 function between(source, start, end) {
   const from = source.indexOf(start);
   const to = source.indexOf(end, from + start.length);
@@ -37,11 +49,7 @@ function between(source, start, end) {
 }
 
 test('interactive OpenRouter chat bypasses Claude billing', () => {
-  const route = between(
-    sessions,
-    "router.post('/api/sessions/:id/chat'",
-    '// ===== Spec stage endpoints',
-  );
+  const route = chatRoute();
   assert.match(route, /const isOpenRouterSession/);
   // #2571: an OpenRouter session still never touches resolveBillingPath —
   // there is no Anthropic key to spill onto and no Anthropic allowance to
@@ -78,11 +86,7 @@ test('interactive OpenRouter chat bypasses Claude billing', () => {
 });
 
 test('an OpenRouter session runs the Mayor on its own OpenRouter model (#2809/#2810)', () => {
-  const route = between(
-    sessions,
-    "router.post('/api/sessions/:id/chat'",
-    '// ===== Spec stage endpoints',
-  );
+  const route = chatRoute();
   const setup = between(
     route,
     "// The Mayor's model, key and payer for this turn.",
@@ -122,7 +126,9 @@ test('direct OpenRouter prompt supports chat replies as well as repository chang
   const tool = between(
     sessions,
     'async function runClaudeCodeTool({',
-    '// `prodDebug` (default false',
+    // #2779: getMayorSystemPrompt, which used to follow the tool, moved
+    // to services/mayor/prompt.js.
+    'async function getFilesFromContainer(',
   );
   assert.match(tool, /there is no separate chat model/);
   assert.match(tool, /asks for information, analysis, status, or an explanation/);

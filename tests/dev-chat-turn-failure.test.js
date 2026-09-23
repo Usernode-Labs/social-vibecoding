@@ -32,7 +32,8 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const TRANSCRIPT = read('frontend/src/features/dev-chat/transcript.tsx');
 const STORE = read('frontend/src/features/dev-chat/transcript-store.ts');
-const SESSIONS = read('src/routes/sessions.js');
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+const SESSIONS = `${read('src/services/mayor/turn.js')}\n${read('src/routes/sessions.js')}`;
 const APP_CSS = read('public/css/app.css');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');

@@ -451,6 +451,7 @@ function classicPathFor(domain, routePath) {
     return conversation ? '#messages/:' + conversation[1] : '#messages';
   }
   if (domain === 'leaderboards') return '#leaderboard/challenges';
+  if (value === '/api/auth/account' || value === '/api/auth/account-deletion') return '#settings/delete-account';
   if (domain === 'profile') return '#profile';
   if (domain === 'development') {
     const session = value.match(/\/sessions\/:(id|sessionId)(?:\/|$)/);
@@ -477,6 +478,11 @@ function classicPathFor(domain, routePath) {
 
 function transportFor(route) {
   const routePath = route.path || '';
+  // Self-deletion requires a browser session and private reauthentication in
+  // Settings. Discovery may open that form, never collect a password in chat.
+  if (routePath === '/api/auth/account' || routePath === '/api/auth/account-deletion') {
+    return 'client_action';
+  }
   if (/^\/api\/v4\/mobile\//.test(routePath)) return 'native_client';
   if (/\/(?:attachments?|chat-attachments)\/[^/]+\/view$/.test(routePath)
       || /\/report-snapshots\/:id\/html$/.test(routePath)
@@ -495,7 +501,8 @@ function mappedClassification(route, clientRefs, matches, reason = null) {
   const domain = domainFor(route);
   const risk = route.method === 'GET'
     ? 'read'
-    : (/delete|remove|revoke|reset|close|archive|override/.test(route.path || '')
+    : ((route.method === 'DELETE' && route.path === '/api/auth/account')
+      || /delete|remove|revoke|reset|close|archive|override/.test(route.path || '')
       ? 'destructive'
       : 'external_write');
   return {

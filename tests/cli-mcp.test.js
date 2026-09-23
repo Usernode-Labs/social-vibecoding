@@ -62,11 +62,32 @@ test('proposal guidance requires a shallow checkout pinned to the exact base SHA
   }
 });
 
-test('MCP initializes without credentials and returns the external login contract', async () => {
+test('MCP uses the new production origin without reusing an old-host login', async () => {
   // realpath: on macOS os.tmpdir() sits under /var → /private/var, and the
   // CLI's config-path safety check rejects symlinked path components.
   const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-')));
   await fs.chmod(home, 0o700);
+  const legacyOrigin = 'https://my.onhomeroom.com';
+  const legacyToken = makeAccessToken();
+  const directory = path.join(home, '.config', 'social-vibecoding');
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  await fs.writeFile(path.join(directory, 'config.json'), JSON.stringify({
+    version: 1,
+    default_profile: 'production',
+    profiles: { legacy: { origin: legacyOrigin } },
+    credential_backends: { [legacyOrigin]: 'file' },
+  }), { mode: 0o600 });
+  await fs.writeFile(path.join(directory, 'credentials.json'), JSON.stringify({
+    version: 1,
+    servers: {
+      [legacyOrigin]: {
+        access_token: legacyToken,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        scopes: REQUIRED_SCOPES,
+        client_id: CLIENT_ID,
+      },
+    },
+  }), { mode: 0o600 });
   const checkout = path.resolve(__dirname, '..');
   const launcher = path.join(checkout, 'tools', 'social-vibecoding');
   const bootstrap = [
@@ -74,6 +95,11 @@ test('MCP initializes without credentials and returns the external login contrac
     'const original = os.userInfo();',
     'os.userInfo = () => ({ ...original, homedir: process.argv[1] });',
     "const path = require('node:path');",
+    'delete process.env.USERNODE_DOMAIN;',
+    // Any credential reuse must fail locally, without contacting either host.
+    "require(path.join(process.argv[2], 'src/cli/http')).requestJson = async () => {",
+    "  throw new Error('Unexpected network request in missing-credential test');",
+    '};',
     "const { main } = require(path.join(process.argv[2], 'src/cli/main'));",
     "main(['mcp', '--profile', 'production'], {",
     "  launcherPath: path.join(process.argv[2], 'tools/social-vibecoding')",
@@ -144,6 +170,7 @@ test('MCP initializes without credentials and returns the external login contrac
     });
     assert.equal(status.structuredContent.status, 'missing');
     assert.equal(status.structuredContent.profile, 'production');
+    assert.equal(status.structuredContent.origin, 'https://app.onhomeroom.com');
 
     const whoami = await client.callTool({
       name: 'social_vibecoding.whoami',
@@ -178,6 +205,11 @@ test('MCP initializes without credentials and returns the external login contrac
       'production',
     ]);
     assert.doesNotMatch(stderr, /svcli_|svdev_/);
+    const credentials = JSON.parse(await fs.readFile(path.join(directory, 'credentials.json'), 'utf8'));
+    assert.deepEqual(Object.keys(credentials.servers), [legacyOrigin]);
+    assert.equal(credentials.servers[legacyOrigin].access_token, legacyToken);
+    const config = JSON.parse(await fs.readFile(path.join(directory, 'config.json'), 'utf8'));
+    assert.deepEqual(config.profiles.legacy, { origin: legacyOrigin });
   } finally {
     await client.close().catch(() => {});
     await fs.rm(home, { recursive: true, force: true });

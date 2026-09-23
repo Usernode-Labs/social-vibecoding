@@ -230,7 +230,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M12 4.5v15m7.5-7.5h-15',
     'M12 5.5v13',
     'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
-    'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z',
+    // WarningTriangleIcon left this list with #2716: Settings → Delete
+    // account draws it on the initial confirmation-entry button, including
+    // when the lazily mounted Settings interior first renders.
     'M13 7l5 5m0 0l-5 5m5-5H6',
     'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
     'M15 12a3 3 0 11-6 0 3 3 0 016 0z',

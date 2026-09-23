@@ -1034,7 +1034,9 @@ test('OpenRouter telemetry excludes a durable intent that never physically dispa
 });
 
 test('Mayor/headless call sites carry every required phase label', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
+  // #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+  const src = ['../src/services/mayor/turn.js', '../src/routes/sessions.js']
+    .map((rel) => fs.readFileSync(path.join(__dirname, rel), 'utf8')).join('\n');
   for (const component of [
     'mayor_phase_1', 'mayor_data_iteration', 'mayor_phase_2',
     'headless_decision', 'headless_wrapup',

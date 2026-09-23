@@ -189,8 +189,9 @@ uses ephemeral accessibility references, and exploration naturally contains
 dead ends. Instead:
 
 1. The model explores base and head with ordinary browser tools.
-2. It submits a clean plan to a strongly typed `evidence_run_plan` tool.
-3. The tool validates the plan and executes it with platform-owned Playwright.
+2. It submits one executable replay per accepted story to `evidence_run_plan`.
+3. The platform attaches the accepted intent, validates the complete plan,
+   and executes it with platform-owned Playwright.
 4. The model receives the replayed checkpoint images and diagnostics.
 5. It accepts the evidence or asks for one corrected plan.
 
@@ -318,9 +319,10 @@ unbounded tool logs.
 ### 5. Explore, then submit the clean replay plan
 
 The agent may inspect both versions and try interactions. Once it understands
-the flow, it calls `evidence_run_plan` with a complete structured plan. The
-runner resets both browser contexts before execution, so exploratory state
-cannot leak into the result.
+the flow, it calls `evidence_run_plan` with one `{id, replay}` entry for each
+accepted story. The platform attaches the frozen semantic intent fields and
+validates the resulting complete plan. The runner resets both browser contexts
+before execution, so exploratory state cannot leak into the result.
 
 Base and head actions may differ when the change introduces or removes the
 control used to reach the state. Comparability is defined by the semantic
@@ -591,8 +593,11 @@ models can inspect them.
 
 ### `evidence_run_plan`
 
-Accepts the complete versioned plan, validates it, executes two clean replays,
-and returns:
+Accepts only `{replays: [{id, replay}, ...]}`. The platform attaches the
+accepted version, impact, rationale, claim, persona, viewports, and semantic
+flow for each story. It rejects unknown, duplicate, or missing story ids and
+validates the assembled versioned plan before executing two clean replays and
+returning:
 
 - assertion results;
 - action/stage timings;

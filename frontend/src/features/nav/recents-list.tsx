@@ -35,12 +35,25 @@
  * It is inside #platform-tabs, so the phone's bar never shows it (app.css)
  * and a peeked rail carries it: pointing at a recent row keeps the peek up
  * because the row is the rail.
+ *
+ * ── Cut into days, the old tail folded (#2919) ──────────────────────
+ *
+ * ./recents.ts's groupRecents says which rows are Today, Yesterday and "2
+ * days ago" through "5 days ago"; each day that has a row gets a small label
+ * before it. They are plain text, not headings: the list's one heading is
+ * Recents, and a heading per day in the rail would bury the page's outline.
+ * Everything older sits behind a real button that says how many it holds,
+ * and the button's `aria-expanded` is the state. The fold is component state,
+ * so every page load starts closed; nothing is stored. The labels and the
+ * button arrive with the rows, one commit after mount, so the prerender is
+ * untouched, and a timer at the viewer's midnight re-renders the list so a
+ * rail left open overnight moves today's rows under Yesterday.
  */
 
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type MouseEvent } from 'react';
 
 import {
-  AppWindowIcon, HashIcon, SparklesIcon, UserGroupIcon, UserIcon,
+  AppWindowIcon, ChevronDownIcon, ChevronUpIcon, HashIcon, SparklesIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
@@ -52,7 +65,7 @@ import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
 import { navStore } from './nav-store.js';
 import { readRecentApps, recentAppsStore } from './recent-apps-store.js';
-import { buildRecents, type RecentItem, type RecentKind } from './recents';
+import { buildRecents, groupRecents, type RecentItem, type RecentKind } from './recents';
 
 const GLYPHS: Record<RecentKind, typeof UserIcon> = {
   app: AppWindowIcon,
@@ -121,9 +134,76 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
   );
 }
 
+/**
+ * The rows under their day labels, and the fold for the rest (#2919). Its own
+ * component so a test can render it from plain props: RecentsList shows no
+ * rows before mount, which is all a static render ever sees.
+ */
+export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
+  items: RecentItem[];
+  live: string[];
+  showOlder: boolean;
+  onToggleOlder: () => void;
+  now?: number;
+}) {
+  const { days, older } = groupRecents(items, now);
+  const row = (item: RecentItem) => (
+    <RecentRow key={item.key} item={item} live={!!item.app && live.includes(item.app.slug)} />
+  );
+  return (
+    <>
+      {days.map((day) => (
+        <Fragment key={day.daysAgo}>
+          <div className="platform-recents-day">{day.label}</div>
+          {day.items.map(row)}
+        </Fragment>
+      ))}
+      {showOlder && older.length ? (
+        <>
+          <div className="platform-recents-day">Older</div>
+          {older.map(row)}
+        </>
+      ) : null}
+      {older.length ? (
+        <button
+          type="button"
+          className="platform-recents-more"
+          aria-expanded={showOlder}
+          onClick={onToggleOlder}
+        >
+          {showOlder
+            ? <ChevronUpIcon className="platform-recents-more-icon" aria-hidden="true" />
+            : <ChevronDownIcon className="platform-recents-more-icon" aria-hidden="true" />}
+          <span>{showOlder ? 'Show less' : `Show ${older.length} older`}</span>
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+/** Re-render at the viewer's next midnight, and each one after, so the day
+ *  labels move on while the rail stays open. groupRecents reads the clock
+ *  itself; this only makes sure it is asked again. */
+function useMidnightRender(): void {
+  const [day, setDay] = useState(() => new Date().setHours(0, 0, 0, 0));
+  useEffect(() => {
+    const next = new Date(day);
+    next.setDate(next.getDate() + 1);
+    // A second past midnight, so the wake never lands on the old day.
+    const timer = window.setTimeout(
+      () => setDay(new Date().setHours(0, 0, 0, 0)),
+      Math.max(1000, next.getTime() - Date.now() + 1000),
+    );
+    return () => window.clearTimeout(timer);
+  }, [day]);
+}
+
 export function RecentsList() {
   const ref = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
+  // #2919: the rows before the labelled days, folded on every load.
+  const [showOlder, setShowOlder] = useState(false);
+  useMidnightRender();
   const { apps } = useStoreState(recentAppsStore);
   const snap = useMessagesSnapshot();
   const chat = useGlobalChatState();
@@ -166,9 +246,12 @@ export function RecentsList() {
       aria-labelledby="platform-recents-head"
     >
       <h2 id="platform-recents-head" className="platform-recents-head">Recents</h2>
-      {items.map((item) => (
-        <RecentRow key={item.key} item={item} live={!!item.app && live.includes(item.app.slug)} />
-      ))}
+      <RecentsByDay
+        items={items}
+        live={live}
+        showOlder={showOlder}
+        onToggleOlder={() => setShowOlder((open) => !open)}
+      />
     </div>
   );
 }

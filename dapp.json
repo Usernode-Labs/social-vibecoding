@@ -2893,6 +2893,11 @@
       "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] #platform-tabs-badge"
     },
     {
+      "name": "#2912: the demo's unread conversations show as the Messages tab's quiet count, still inside the Messages tab",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] > .platform-tab-mark > #platform-tabs-badge.platform-tab-badge[aria-label=\"Unread conversations\"]:not(.hidden)"
+    },
+    {
       "name": "#2824: the lit tab carries the sliding blue marker, measured behind it",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs:has(> .platform-tabs-marker[data-marker-at][aria-hidden=\"true\"] + #platform-tab-home) #platform-tab-home[aria-current=\"page\"]"
@@ -5002,6 +5007,11 @@
       "name": "#2800: Me is the rail's last row, straight after Recents, so the thin rule the rail draws above Me sits between them",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs > #platform-recents + a#platform-tab-me:last-child"
+    },
+    {
+      "name": "#2919: the desktop rail's Recents folds anything older than 5 days ago behind a collapsed Show N older button at its foot (the demo conversations are all from August)",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-recents:not(.hidden) > button.platform-recents-more[type=\"button\"][aria-expanded=\"false\"]:last-child"
     },
     {
       "name": "#2798: the sidebar toggle and the bell show their blue disc on hover only, not at rest",

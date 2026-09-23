@@ -2014,7 +2014,7 @@ async function reconcilePromotedSweepHead({ config, pool, session }) {
 // user id (for the per-viewer my_vote / my_kudos subqueries). Callers
 // append their own WHERE / ORDER / LIMIT.
 function mergedRowSelect() {
-  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, cs.merge_commit_sha, u.username, cs.created_at,
+  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, cs.merge_commit_sha, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
            -- #1264: the exact merge time (and the promotion time beside it)
            -- so the progress report can date completed work by when it
            -- actually landed instead of when it was started. NULL on rows
@@ -2103,7 +2103,7 @@ function mergedRowSelect() {
            rv.pr_url    as revert_pr_url,
            rv.status    as revert_status
          FROM chat_sessions cs
-         JOIN users u ON cs.user_id = u.id
+         LEFT JOIN users u ON cs.user_id = u.id
          LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
            AND rv.status IN ('promoted', 'merging', 'merged')`;
 }
@@ -3777,7 +3777,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
            cs.visual_evidence_state, cs.visual_evidence_run_id,
            cs.visual_evidence_detail, cs.visual_evidence_updated_at,
            -- #687 (PR-import): provenance so the client can render the
@@ -3925,7 +3925,7 @@ function voteRoutes(config) {
                        'fellBack', sv.before_fell_back))
               FROM session_visuals sv WHERE sv.session_id = cs.id) as visuals_agg
          FROM chat_sessions cs
-         JOIN users u ON cs.user_id = u.id
+         LEFT JOIN users u ON cs.user_id = u.id
          LEFT JOIN chat_sessions orig ON orig.id = cs.revert_of_session_id
          WHERE cs.app_id = $1 AND cs.status IN ('promoted', 'merging')
          ORDER BY cs.created_at DESC`,

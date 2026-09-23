@@ -75,13 +75,13 @@ test('the landing URL is a bare /, not the router\'s _rootUrl', () => {
   assert.match(SETTINGS, /const LANDING_URL = '\/';/,
     "a bare '/' so a leftover ?shot= / ?signup= query cannot outlive the "
     + 'sign-out either');
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout() {'));
+  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
   assert.doesNotMatch(body, /_rootUrl/);
 });
 
 test('every exit from logout is a REPLACE, never a pushed entry', () => {
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout() {'));
+  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
   assert.doesNotMatch(body, /location\.href\s*=/,
     'an assigned href pushes an entry, and Back then restores the '
@@ -90,7 +90,7 @@ test('every exit from logout is a REPLACE, never a pushed entry', () => {
 });
 
 test('the address is normalised in place before the terminal native call', () => {
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout() {'));
+  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
   const replaceStateAt = body.indexOf('history?.replaceState?.(null, \'\', LANDING_URL)');
   const revokeAt = body.indexOf("fetch('/api/auth/logout'");
@@ -104,7 +104,7 @@ test('the address is normalised in place before the terminal native call', () =>
 });
 
 test('a BFCache restore of the signed-out document navigates away again', () => {
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout() {'));
+  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
   assert.match(body, /addEventListener\('pageshow'/);
   assert.match(body, /if \(event && event\.persisted\) window\.location\.replace\(LANDING_URL\);/);
@@ -112,7 +112,7 @@ test('a BFCache restore of the signed-out document navigates away again', () => 
 });
 
 test('the session residue goes with the session, not just the snapshot', () => {
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout() {'));
+  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
   // _dropCachedSession is the wider sweep: snapshot + shell snapshot +
   // Improve target + SW API cache + offline-ready markers. main.tsx applies
@@ -125,7 +125,7 @@ test('the session residue goes with the session, not just the snapshot', () => {
 
 test('a native shutdown that never lands is bounded, not permanent', () => {
   assert.match(SETTINGS, /const NATIVE_LOGOUT_SAFETY_MS = 5000;/);
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout() {'));
+  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
   assert.match(body, /setTimeout\(\(\) => \{\s*\n\s*window\.location\.replace\(LANDING_URL\);\s*\n\s*\}, NATIVE_LOGOUT_SAFETY_MS\)/);
 });
@@ -146,7 +146,7 @@ test('the advisory copy is unchanged, and carries no em dash', () => {
   assert.equal(copy[1],
     'Signed out. Close and reopen the app to finish shutting down Homeroom.');
   // User-facing copy: no em dash in any encoding.
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout() {'));
+  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const scopes = [
     SETTINGS.slice(SETTINGS.indexOf('  const LANDING_URL'),
       SETTINGS.indexOf('  const Settings = {')),
@@ -159,7 +159,7 @@ test('the advisory copy is unchanged, and carries no em dash', () => {
 });
 
 test('the advisory is written only where there is something to say', () => {
-  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout() {'));
+  const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
   const writes = body.match(/setItem\?\.\(LOGOUT_NOTICE_KEY/g) || [];
   assert.equal(writes.length, 1, 'exactly one path has an advisory to hand on');

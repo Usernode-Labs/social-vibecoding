@@ -101,6 +101,14 @@ test('every Settings section and navigation surface is discoverable on mobile', 
   }
 });
 
+test('account deletion opens the private Settings form instead of collecting credentials in chat', () => {
+  const deletion = inventory.routes.find(({ method, path }) => method === 'DELETE' && path === '/api/auth/account');
+  assert.equal(deletion?.risk, 'destructive');
+  assert.equal(deletion.confirmation, 'required');
+  assert.equal(deletion.transport, 'client_action');
+  assert.equal(deletion.classicPath, '#settings/delete-account');
+});
+
 test('the reviewed first-version artifact enables the all-user experimental release gate', () => {
   assert.equal(inventory.parityReady, true);
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
