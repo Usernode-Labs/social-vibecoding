@@ -167,3 +167,60 @@ test('HTTP API requires admin reads and full-admin writes; rejects arbitrary man
   assert.equal((await post('write', { target: 'previews' })).status, 202);
   assert.equal(store.creates, 1);
 });
+
+const retainedPolicy = { namespace: 'social-platform', targets: [{ id: 'stockroom-retained',
+  namespace: 'sv-db-stockroom', clusterName: 'stockroom-retained', profile: 'retained', composition: 'sv-retained-cluster' }] };
+const { RETAINED_CLUSTERS } = require('../src/services/database-control-plane');
+
+async function retainedFixture() {
+  const store = memoryStore();
+  let child = null;
+  store.getCluster = async () => structuredClone(child);
+  const request = () => store.get(REQUESTS, retainedPolicy.namespace, 'stockroom-retained');
+  const reconcile = async () => reconcileRequest(store, retainedPolicy, await request());
+  await submitRequest(store, retainedPolicy, 'stockroom-retained', 1);
+  await reconcile(); await reconcile();
+  const composite = store.objects.get(`${RETAINED_CLUSTERS}/sv-db-stockroom/stockroom-retained`);
+  composite.status = { conditions: ['Ready','Synced'].map(type=>({ type, status:'True', observedGeneration:1 })) };
+  child = { metadata: { uid:'cnpg-original', labels:{ [OWNER_LABEL]:(await request()).metadata.uid },
+    ownerReferences:[{uid:composite.metadata.uid,controller:true}] } };
+  return { store,request,reconcile,composite,get child(){return child;},set child(value){child=value;} };
+}
+
+test('retained targets require their own approved composition', () => {
+  assert.equal(validatePolicy(retainedPolicy),retainedPolicy);
+  assert.throws(()=>validatePolicy({ ...retainedPolicy, targets:[{...retainedPolicy.targets[0],composition:'sv-preview-cluster'}] }));
+  assert.throws(()=>validatePolicy({ ...retainedPolicy, targets:[{...retainedPolicy.targets[0],profile:'constructor'}] }));
+});
+
+test('retained reconciliation persists child identity before Ready, resumes without duplication and detects loss', async () => {
+  const f=await retainedFixture();
+  assert.equal((await f.request()).status.reason,'AwaitingDatabaseCluster');
+  await f.reconcile();
+  let r=await f.request();
+  assert.equal(r.status.reason,'DatabaseClusterObserved');assert.equal(r.status.cnpgUid,'cnpg-original');
+  assert.equal(r.status.phase,'Provisioning');
+  await f.reconcile();assert.equal((await f.request()).status.phase,'Ready');
+  r=await f.request();await f.reconcile();assert.equal((await f.request()).metadata.resourceVersion,r.metadata.resourceVersion);
+  f.child=null;await f.reconcile();r=await f.request();
+  assert.equal(r.status.phase,'RecoveryRequired');assert.equal(r.status.reason,'DatabaseClusterMissing');
+  assert.equal(r.status.cnpgUid,'cnpg-original');assert.equal(f.store.creates,2);
+});
+
+test('retained reconciliation rejects substituted, deleting and foreign CNPG resources', async () => {
+  const f=await retainedFixture();await f.reconcile();
+  const original=structuredClone(f.child);
+  f.child.metadata.uid='replacement';await f.reconcile();assert.equal((await f.request()).status.reason,'DatabaseClusterReplaced');
+  f.child=structuredClone(original);f.child.metadata.deletionTimestamp=new Date().toISOString();
+  await f.reconcile();assert.equal((await f.request()).status.reason,'DatabaseClusterDeleting');
+  f.child=structuredClone(original);f.child.metadata.ownerReferences=[];
+  await f.reconcile();assert.equal((await f.request()).status.reason,'DatabaseClusterOwnershipConflict');
+  assert.equal((await f.request()).status.cnpgUid,'cnpg-original');
+});
+
+test('retained cluster API failures do not replace durable identity or create resources', async () => {
+  const f=await retainedFixture();await f.reconcile();
+  const before=await f.request();f.store.getCluster=async()=>{throw new Error('API unavailable');};
+  await assert.rejects(f.reconcile(),/API unavailable/);
+  assert.deepEqual(await f.request(),before);assert.equal(f.store.creates,2);
+});

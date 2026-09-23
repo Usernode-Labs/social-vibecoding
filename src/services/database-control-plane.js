@@ -7,6 +7,9 @@ const GROUP = 'database.social.usernode.io';
 const VERSION = 'v1alpha1';
 const REQUESTS = 'databaseclusterrequests';
 const CLUSTERS = 'appdatabaseclusters';
+const RETAINED_CLUSTERS = 'retainedappdatabaseclusters';
+const PROFILES = { preview: { plural: CLUSTERS, kind: 'AppDatabaseCluster', composition: 'sv-preview-cluster' },
+  retained: { plural: RETAINED_CLUSTERS, kind: 'RetainedAppDatabaseCluster', composition: 'sv-retained-cluster' } };
 const OWNER_LABEL = `${GROUP}/request-uid`;
 const NAME = /^[a-z][a-z0-9-]{0,61}[a-z0-9]$|^[a-z]$/;
 const validName = (value) => typeof value === 'string' && NAME.test(value);
@@ -20,9 +23,9 @@ function validatePolicy(policy) {
   for (const target of policy.targets) {
     if (!target || !validName(target.id) || !validName(target.namespace)
       || !target.namespace.startsWith('sv-db-') || target.namespace === policy.namespace
-      || !validName(target.clusterName) || target.profile !== 'preview'
-      || target.composition !== 'sv-preview-cluster') {
-      throw new Error('Only explicitly configured preview targets are supported');
+      || !validName(target.clusterName) || !Object.hasOwn(PROFILES, target.profile)
+      || target.composition !== PROFILES[target.profile].composition) {
+      throw new Error('Only explicitly configured database profiles are supported');
     }
     const destination = `${target.namespace}/${target.clusterName}`;
     if (ids.has(target.id) || destinations.has(destination)) throw new Error('Duplicate database target');
@@ -51,6 +54,10 @@ function createStore(custom) {
   return {
     async get(plural, namespace, name) {
       try { return await custom.getNamespacedCustomObject(args(plural, namespace, name), options); }
+      catch (error) { if (statusCode(error) === 404) return null; throw error; }
+    },
+    async getCluster(namespace, name) {
+      try { return await custom.getNamespacedCustomObject({ group: 'postgresql.cnpg.io', version: 'v1', plural: 'clusters', namespace, name }, options); }
       catch (error) { if (statusCode(error) === 404) return null; throw error; }
     },
     async list(namespace) {
@@ -126,39 +133,60 @@ async function reconcileRequest(store, policy, request) {
   const destination = `${target.namespace}/${target.clusterName}`;
   // Changes to installation policy must never move an existing request.
   if (previous.destination && previous.destination !== destination) return report('Blocked', 'DestinationChanged');
-  let composite = await store.get(CLUSTERS, target.namespace, target.clusterName);
+  const profile = PROFILES[target.profile];
+  if (!profile || target.composition !== profile.composition) return report('Blocked', 'ProfileNotAllowed');
+  let composite = await store.get(profile.plural, target.namespace, target.clusterName);
   if (!composite) {
     if (previous.compositeUid) return report('RecoveryRequired', 'CompositeMissing');
     // Persist the reservation before creating infrastructure. Retrying after a
     // process crash uses the same target and deterministic composite name.
     if (!previous.destination) return report('Provisioning', 'DestinationReserved', { destination });
     try {
-      composite = await store.create(CLUSTERS, target.namespace, {
-        apiVersion: `${GROUP}/${VERSION}`, kind: 'AppDatabaseCluster',
+      composite = await store.create(profile.plural, target.namespace, {
+        apiVersion: `${GROUP}/${VERSION}`, kind: profile.kind,
         metadata: { name: target.clusterName, namespace: target.namespace,
           labels: { [OWNER_LABEL]: request.metadata.uid } },
-        spec: { profile: 'preview', crossplane: { compositionRef: { name: target.composition } } },
+        spec: { profile: target.profile, crossplane: { compositionRef: { name: target.composition } } },
       });
     } catch (error) {
       if (statusCode(error) !== 409) throw error;
-      composite = await store.get(CLUSTERS, target.namespace, target.clusterName);
+      composite = await store.get(profile.plural, target.namespace, target.clusterName);
     }
   }
   if (!composite || composite.metadata.labels?.[OWNER_LABEL] !== request.metadata.uid
     || (previous.compositeUid && previous.compositeUid !== composite.metadata.uid)
-    || composite.spec.profile !== 'preview'
+    || composite.spec.profile !== target.profile
     || composite.spec.crossplane?.compositionRef?.name !== target.composition) {
     return report('Blocked', 'ResourceOwnershipConflict');
   }
   if (composite.metadata.deletionTimestamp) return report('RecoveryRequired', 'CompositeDeleting');
+  // Retained children are never silently substituted. Admission also blocks
+  // Crossplane CREATE after this UID is recorded, independently of this worker.
+  let cnpgUid;
+  if (target.profile === 'retained') {
+    const child = await store.getCluster(target.namespace, target.clusterName);
+    if (!child) return report(previous.cnpgUid ? 'RecoveryRequired' : 'Provisioning',
+      previous.cnpgUid ? 'DatabaseClusterMissing' : 'AwaitingDatabaseCluster', { destination, compositeUid: composite.metadata.uid });
+    if (previous.cnpgUid && child.metadata.uid !== previous.cnpgUid) return report('RecoveryRequired', 'DatabaseClusterReplaced');
+    if (child.metadata.deletionTimestamp) return report('RecoveryRequired', 'DatabaseClusterDeleting');
+    if (child.metadata.labels?.[OWNER_LABEL] !== request.metadata.uid
+      || !child.metadata.ownerReferences?.some((owner) => owner.uid === composite.metadata.uid && owner.controller === true)) {
+      return report('Blocked', 'DatabaseClusterOwnershipConflict');
+    }
+    cnpgUid = child.metadata.uid;
+    // Persist identity before declaring Ready, including across worker restarts.
+    if (!previous.cnpgUid) return report('Provisioning', 'DatabaseClusterObserved', {
+      destination, compositeUid: composite.metadata.uid, cnpgUid,
+    });
+  }
   const conditions = composite.status?.conditions || [];
   const current = (type) => conditions.some((condition) => condition.type === type && condition.status === 'True'
     && condition.observedGeneration === composite.metadata.generation);
   const ready = current('Ready') && current('Synced');
   await report(ready ? 'Ready' : 'Provisioning', ready ? 'ClusterReady' : 'AwaitingCrossplane', {
-    destination, compositeUid: composite.metadata.uid,
+    destination, compositeUid: composite.metadata.uid, ...(cnpgUid ? { cnpgUid } : {}),
   });
 }
 
-module.exports = { GROUP, VERSION, REQUESTS, CLUSTERS, OWNER_LABEL, validatePolicy, loadPolicy,
+module.exports = { GROUP, VERSION, REQUESTS, CLUSTERS, RETAINED_CLUSTERS, OWNER_LABEL, validatePolicy, loadPolicy,
   createStore, statusCode, submitRequest, publicRequest, reconcileRequest };

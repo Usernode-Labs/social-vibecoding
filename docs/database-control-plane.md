@@ -51,10 +51,27 @@ existing central lifecycle; previews are still on central and do not yet have
 independent bindings. There is no destination editing API or external adapter.
 No databases move in this release.
 
-Production/dedicated profiles, logical database provisioning, placement budgets,
-backup/restore, data-copy Jobs and migrations are not implemented yet. Both the
-worker allowlist and the Crossplane schema reject production profiles. Do not
-store production data in the disposable preview cluster. Crossplane can recreate
+The retained staging profile provisions a separate single-instance cluster.
+It uses a separate `RetainedAppDatabaseCluster` composite with a fixed
+`sv-retained-cluster` composition. The worker observes the CNPG child UID and
+its ownership before reporting Ready. Once observed, that identity cannot be
+cleared or replaced in request status. Missing/replaced/deleting children require
+recovery; the worker never silently adopts a replacement.
+
+Kubernetes admission uses the durable request as a one-time bootstrap gate:
+creation requires a reservation and no previously observed CNPG UID. It rejects
+CNPG creation after observation, including when Crossplane tries to reconcile a
+missing child. Separate admission rules reject deletion of the request,
+composite, CNPG cluster, target namespace and PVCs. These rules are installed
+before submitting a request; retirement/recovery must be an explicit operator
+procedure. An unrestricted administrator can change these policies, so they
+are accidental-deletion protection, not protection against cluster-admin access.
+
+Retained means protected resource lifecycle, not HA or backups. Backups are
+explicitly deferred by the operator. The first retained target has no app
+binding or automatic placement; use only staging test data. Logical database
+provisioning, placement budgets, backup/restore, data-copy Jobs and migrations
+are not implemented yet. Do not store production data in the disposable preview cluster. Crossplane can recreate
 its missing CNPG child as empty: that behavior is acceptable only for this profile.
 If the composite itself disappears after observation, the request reports
 `RecoveryRequired`; it does not silently recreate it.
@@ -67,13 +84,13 @@ If the composite itself disappears after observation, the request reports
 | SV Helm release | Worker Deployment and ServiceAccount; platform configuration/mount |
 | SV API | Request creation; reads for the admin screen |
 | SV worker | Request status and creation of allowlisted composites |
-| Crossplane / CNPG | Preview Cluster / PostgreSQL pods, services and storage |
+| Crossplane / CNPG | Approved preview or retained Cluster / PostgreSQL pods, services and storage |
 
 The existing Argo-owned platform database is absent from the target allowlist.
 Web and worker identities cannot delete requests/composites through their new
 roles. Namespace/CRD retention and absent delete UI do not protect against an
 unrestricted Kubernetes administrator; deletion of production data needs an
-explicit lifecycle design before production profiles are enabled.
+explicit lifecycle design before any real production rollout. Retained staging deletion rules do not implement retirement.
 
 ## Installation order
 
