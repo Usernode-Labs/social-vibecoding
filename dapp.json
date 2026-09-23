@@ -2882,6 +2882,11 @@
       "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] #platform-tabs-badge"
     },
     {
+      "name": "#2912: the demo's unread conversations show as the Messages tab's quiet count, still inside the Messages tab",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-tabs #platform-tab-messages[href=\"#messages\"] > .platform-tab-mark > #platform-tabs-badge.platform-tab-badge[aria-label=\"Unread conversations\"]:not(.hidden)"
+    },
+    {
       "name": "#2824: the lit tab carries the sliding blue marker, measured behind it",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs:has(> .platform-tabs-marker[data-marker-at][aria-hidden=\"true\"] + #platform-tab-home) #platform-tab-home[aria-current=\"page\"]"

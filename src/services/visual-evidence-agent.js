@@ -29,9 +29,10 @@ function failedResult(result) {
 }
 
 function replayPlanGuide() {
-  return `The replay plan is a strict JSON object. Copy version, impact,
-rationale, stories, each story's id/claim/persona/viewports/intent fields
-EXACTLY from the accepted intent, then add one replay object per story:
+  return `Call evidence_run_plan with {replays:[{id,replay}, ...]}: exactly one
+entry for every accepted story id. Supply only each story's id and executable
+replay. The platform attaches the accepted version, impact, rationale, claim,
+persona, viewports, and intent unchanged. Do not copy those fields yourself.
 
 replay.before and replay.after each contain { startPath, actions }. Paths are
 relative in-app paths. Each action has a unique id, a stage, and one supported
@@ -49,7 +50,7 @@ A target is exactly one of:
 testId. Never use an ephemeral accessibility ref. CSS may identify a stable
 component but may not be html, body, or *.
 
-Before submitting the plan, inspect both revisions in the states where each
+Before submitting the replays, inspect both revisions in the states where each
 target will be used. Every interaction target and each checkpoint focus must
 identify exactly one visible element; a waitFor target only needs one or more
 visible matches. Check full accessible names instead of assuming a partial
@@ -80,13 +81,13 @@ the same fixture. Explore both through the browser tool matching the story's
 persona. Do not sign in, expose storage, leave the supplied origins, or invent
 an alternate claim.
 
-When you understand a robust flow, submit one complete typed plan with
+When you understand a robust flow, submit the typed replays for every story with
 evidence_run_plan. Ordinary platform code—not you—will reset both sides and
 replay it twice in fresh browser contexts. A passing replay makes the captured
 media available to human reviewers, who decide whether it proves the claim.
 You do not need image understanding or to issue a relevance verdict. If the
 replay fails, report its diagnostics unless the platform explicitly starts a
-correction turn. Do not merely narrate a plan in your final answer: submit it
+correction turn. Do not merely narrate the replays in your final answer: submit them
 through the tool.`;
 
 function promptFor({ repair = false } = {}) {
@@ -96,11 +97,11 @@ evidence_get_context to read the rejected plan and the exact replay failure.
 Inspect the failed control in the live browser on BOTH exact revisions; use
 its observed role and accessible name or another stable unique locator.
 Do not guess a replacement from the error text alone. Submit one complete
-corrected plan through evidence_run_plan. The platform will reset both sides
+corrected set of replays through evidence_run_plan. The platform will reset both sides
 and run two fresh replay passes; the failed plan's media is not published.`
     : `Open the run context, explore the declared flow on both exact
-revisions, and submit a replay plan. The implementing agent's semantic
-intent is already frozen in the context; preserve it exactly.`;
+revisions, and submit one replay per accepted story id. The implementing
+agent's semantic intent is frozen; the platform attaches it automatically.`;
   return `${task}
 
 ${replayPlanGuide()}`;
