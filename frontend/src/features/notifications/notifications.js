@@ -595,6 +595,36 @@ const Notifications = {
     Notifications._renderList();
   },
 
+  // #2847: the viewer opened a proposal card, or touched something on it, so
+  // its "New proposal" nudge is answered — clear it the way a vote already
+  // does server-side. Called by AppView (the topic page and the dev board's
+  // delegated card click) through `window.Notifications`. Skipped when
+  // nothing is unread, so the common click costs no request; the server
+  // scopes the clear to pr_proposed rows for this one session.
+  async markProposalSeen(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0 || Notifications.unread === 0) return;
+    const now = new Date().toISOString();
+    for (const n of Notifications.items) {
+      if (n && !n.readAt && n.kind === 'pr_proposed' && Number(n.sessionId) === id) n.readAt = now;
+    }
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: id }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.cleared) return;
+      Notifications.unread = data.unread || 0;
+      Notifications._renderBadge();
+      Notifications._renderList();
+    } catch (err) {
+      console.warn('[notifications] markProposalSeen failed', err);
+    }
+  },
+
   // #1688: a row's own button. 'still_yes' re-casts a Yes on the proposal a
   // re-confirm ask names — the server carries the earlier line along, and
   // the vote's auto-dismiss clears the row. Anything else opens the row.
