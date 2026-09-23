@@ -547,8 +547,13 @@ clean replays and are labelled `relative-pointer` in provenance.
 - `clickPoint` / `dragPoints` relative to one bounded surface;
 - `scrollIntoView`;
 - `scrollBy` with bounded distance;
-- `waitFor` a locator, text, URL pattern, or quiet network;
+- `waitFor` a locator, visible text substring, URL pattern, or quiet network;
 - `assert` through the checkpoint assertion collection.
+
+Each story and viewport replays against a fresh copy of the same paired app
+fixture. Changes made while capturing one viewport cannot change the starting
+state of another. Plans should still use `check` or `uncheck` when setting a
+checkbox to a known state.
 
 Every state-changing action has a stable `stage` name. Matching stage names
 align base/head animation frames even when the underlying locators differ.
