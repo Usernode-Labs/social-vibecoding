@@ -20,11 +20,17 @@
  * making it one would put every dialog in the shell's router and in every
  * shared link. The record exists only to give back something to consume.
  *
- * The cost is that popping it also runs the shell's popstate handler at an
- * unchanged address. That is already a supported path rather than a new one:
- * `_routeFromHash` guards its previous-route bookkeeping on a real change
- * precisely because "one history traversal fires popstate AND hashchange, so
- * this runs twice in a tick with the address already settled".
+ * Popping it must therefore NOT reach the page's own popstate listeners, and
+ * the shell's router (`App._routeFromHash`) above all. Re-running it at an
+ * unchanged address is not the no-op it looks like: on a dev session page
+ * `restoreFromHash` -> `switchTab` -> `renderDevView` rebuilds `#dev-section`
+ * from scratch, so the whole transcript blanked for a few hundred ms every
+ * time a dialog closed over it (#2811: "after submitting an issue on a dev
+ * session page, the screen flickers"). The listener at the bottom of this
+ * file runs in the capture phase and stops the event when `handlePopstate`
+ * says the traversal was one of ours AND left the address where it was. A
+ * traversal that did move the address (something navigated while the
+ * surface was open) is passed on, because then there IS a route to restore.
  *
  * ── Dismissing by other means ──────────────────────────────────────────
  *
@@ -50,6 +56,8 @@ export type DismissResult = boolean | void;
 
 export interface BackStackEntry {
   close: () => DismissResult;
+  /** The address the surface opened at — the one its record was pushed at. */
+  href?: string | null;
 }
 
 export interface BackStack {
@@ -57,6 +65,13 @@ export interface BackStack {
   push(close: () => DismissResult): () => void;
   /** Run one back press. True when a surface consumed it. */
   handlePop(): boolean;
+  /**
+   * Run one popstate: `handlePop`, plus whether the traversal belonged
+   * entirely to a surface — a press it consumed, or a release spending its own
+   * record — and left the address unchanged. True means the rest of the page
+   * must not see this popstate: nothing was navigated.
+   */
+  handlePopstate(): boolean;
   readonly size: number;
 }
 
@@ -65,7 +80,7 @@ type HistoryLike = {
   pushState(state: unknown, title: string): void;
   back(): void;
 };
-type WindowLike = { history: HistoryLike };
+type WindowLike = { history: HistoryLike; location?: { href: string } };
 
 /** The marker on our own records, so they are recognisable in a debugger. */
 export const DISMISS_STATE_KEY = '__unDismissDepth';
@@ -76,6 +91,18 @@ export function createBackStack(win: WindowLike): BackStack {
   // read as a fresh press. Cleared by that popstate, or by a push that
   // overtakes it.
   let selfSpent = false;
+  // Where that self-spent traversal started — see handlePopstate.
+  let spentFrom: string | null = null;
+
+  // The current address, or null where the host has none to report (a test
+  // double), in which case no traversal is ever judged to be in place.
+  const href = (): string | null => {
+    try {
+      return win.location?.href ?? null;
+    } catch {
+      return null;
+    }
+  };
 
   const record = () => {
     try {
@@ -87,7 +114,7 @@ export function createBackStack(win: WindowLike): BackStack {
   };
 
   function push(close: () => DismissResult): () => void {
-    const entry: BackStackEntry = { close };
+    const entry: BackStackEntry = { close, href: href() };
     stack.push(entry);
     selfSpent = false;
     record();
@@ -104,6 +131,7 @@ export function createBackStack(win: WindowLike): BackStack {
     // entry is enough; spending a record here would steal theirs.
     if (at !== stack.length) return;
     selfSpent = true;
+    spentFrom = href();
     try {
       win.history.back();
     } catch {
@@ -128,9 +156,19 @@ export function createBackStack(win: WindowLike): BackStack {
     return true;
   }
 
+  function handlePopstate(): boolean {
+    // Read before handlePop, which clears the flag and pops the entry.
+    const from = selfSpent ? spentFrom : (stack[stack.length - 1]?.href ?? null);
+    const ours = selfSpent || stack.length > 0;
+    spentFrom = null;
+    handlePop();
+    return ours && from !== null && href() === from;
+  }
+
   return {
     push,
     handlePop,
+    handlePopstate,
     get size() {
       return stack.length;
     },
@@ -163,7 +201,10 @@ export function pushDismissible(close: () => DismissResult): () => void {
 if (typeof window !== 'undefined') {
   shared = createBackStack(window);
   (window as unknown as { UsernodeBackStack?: BackStack }).UsernodeBackStack = shared;
-  window.addEventListener('popstate', () => {
-    shared?.handlePop();
-  });
+  // Capture phase, so this runs before the shell router's own (bubble-phase)
+  // popstate listener on the same target, whichever registered first; a
+  // traversal that only closed a surface stops here (#2811).
+  window.addEventListener('popstate', (event) => {
+    if (shared?.handlePopstate()) event.stopImmediatePropagation();
+  }, true);
 }

@@ -339,6 +339,6 @@ test('the shared test fixture pairs CLI_CANONICAL_ORIGIN with the compiled produ
   // Guarded rather than asserted flat, because a self-hosted checkout with
   // USERNODE_DOMAIN exported is a supported way to run these tests.
   if (!domainAtRequire) {
-    assert.equal(constants.PRODUCTION_ORIGIN, 'https://my.onhomeroom.com');
+    assert.equal(constants.PRODUCTION_ORIGIN, 'https://app.onhomeroom.com');
   }
 });

@@ -576,6 +576,16 @@
       "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
     },
     {
+      "name": "The platform's own Workshop is a plain Workshop panel, with no close button (#2799)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "body:has(#app-view:not(.hidden) #dev-body) #back-btn.hidden #back-icon-close.hidden"
+    },
+    {
+      "name": "An app's Workshop is the platform surface the header frosts over (#2806)",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "body:has(#app-view:not(.hidden)[data-app-surface=\"platform\"] #dev-body) #platform-header"
+    },
+    {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"
@@ -1093,6 +1103,16 @@
       "name": "Inside a light app the bar takes the app's tone: cream ground under the dark shell (#1945)",
       "path": "/?shot=app-tone-light&theme=dark",
       "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden) > .app-launch-host > #app-iframe) #platform-header"
+    },
+    {
+      "name": "Inside a dark app the Homeroom menu takes the app's dark palette too, not the viewer's light mode (#2803)",
+      "path": "/?shot=app-tone-dark",
+      "expectSelector": "html[data-app-tone=\"dark\"]:not(.dark) body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet.dark.platform-app-tone-dark"
+    },
+    {
+      "name": "A light app under the dark shell leaves the Homeroom menu in the shell's own dark mode (#2803)",
+      "path": "/?shot=app-tone-light&theme=dark",
+      "expectSelector": "html.dark[data-app-tone=\"light\"] body:has(#app-frame-host:not(.hidden)) #apps-switcher-sheet:not(.platform-app-tone-dark)"
     },
     {
       "id": "app-tone.cover-ink-dark",
@@ -2423,8 +2443,18 @@
     {
       "name": "The in-composer selector is one flat list of models, with no provider headings (#2117, #2569)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)) option[value=\"anthropic:claude-opus-5\"]:checked",
-      "expectText": "Opus 5"
+      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)) option[value=\"anthropic:claude-opus-5-5\"]:checked",
+      "expectText": "Opus 5.5"
+    },
+    {
+      "name": "The model picker has no caption line under it (#2807)",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form.dc-card:not(:has(#dc-model-note)) select#dc-model-select"
+    },
+    {
+      "name": "Mid-turn, the model picker stays usable (#2812)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form:has(#dc-send-btn.dc-btn-stop) .dc-card-row select#dc-model-select:not(:disabled)"
     },
     {
       "name": "The flat list ends with the door to the full OpenRouter catalog (#2117, #2569)",
@@ -3651,7 +3681,7 @@
     {
       "name": "Model costs lists each model's note beside what its changes actually cost (#2570)",
       "path": "/#admin/model-costs",
-      "expectSelector": "#admin-model-costs-table tbody tr[data-model-cost=\"claude-opus-5\"]",
+      "expectSelector": "#admin-model-costs-table tbody tr[data-model-cost=\"claude-opus-5-5\"]",
       "expectText": "general coding work"
     },
     {
@@ -4510,10 +4540,10 @@
       "expectText": "Discussion"
     },
     {
-      "name": "An underway workspace has a direct link and keeps access to its overview",
+      "name": "An underway workspace has a direct link and keeps access to its proposal card",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900801",
       "expectSelector": "#dc-quick-replies",
-      "expectText": "Change overview"
+      "expectText": "Open proposal card"
     },
     {
       "name": "#2327: an author can edit an underway proposal title",
@@ -4537,7 +4567,7 @@
       "name": "An old ?conversation=workspace link on a change page lands on the dev session page",
       "path": "/?conversation=workspace#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "#dev-section #dc-view:has(#dc-messages):has(#dc-quick-replies)",
-      "expectText": "Change overview"
+      "expectText": "Open proposal card"
     },
     {
       "name": "A change in review has its group discussion in the Discussion sheet under the card, with no tabs, in the general chat's language: a person's message as a named row with no bubble (#2783), a platform notice as a message from the app with one box",

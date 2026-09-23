@@ -18,7 +18,7 @@ const {
 
 // #2600: the default reasoning effort for an OpenRouter CODING turn when the
 // user has not picked one in Settings. It is 'xhigh' — the top of the scale
-// above, the Opus 5 "max" equivalent — because the models the platform
+// above, the Opus 5.5 "max" equivalent — because the models the platform
 // recommends for coding (GLM 5.3 Flash, DeepSeek v4.1 Flash) are cheap enough
 // per token that thinking longer is the better trade on repository work: a
 // change that lands first time costs less than a cheap one that has to be
@@ -528,6 +528,7 @@ function load() {
         enforce: false,
         maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 720_000, 60_000),
         maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 240_000, 30_000),
+        maxRepairAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_REPAIR_AGENT_MS', 120_000, 30_000),
         failedMetadataRetentionDays: boundedInt('VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),
         failedArtifactRetentionHours: boundedInt('VISUAL_EVIDENCE_FAILED_ARTIFACT_RETENTION_HOURS', 24, 1),
       };
