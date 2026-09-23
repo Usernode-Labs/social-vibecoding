@@ -108,6 +108,26 @@ test('the inbox is where Back climbs to, but a link to it is the Messages TAB an
   }
 });
 
+test('a `#name` channel reference opens beside the app, and is a pointer, never a page to come back to', () => {
+  // #2783: `#messages/channel/<handle>` is what a `#name` in any chat links
+  // to; the Messages store replaces it with the channel's own address.
+  const page = R.panelPage('messages/channel/general');
+  assert.deepEqual(page && { kind: page.kind, key: page.key },
+    { kind: 'thread', key: 'messages/channel/general' });
+  assert.equal(R.isPanelRoute('messages/channel/general'), true, 'a channel is a conversation');
+  assert.equal(R.embeddedAllows('messages/channel/notes'), true);
+  assert.equal(R.parentRoute('messages/channel/general'), 'messages');
+  assert.equal(R.titleFor('messages/channel/general', ''), 'Messages');
+  assert.equal(R.isPointer('messages/channel/general'), true);
+  for (const route of ['messages/4242', 'messages/app/notes-ab12', 'messages', 'messages/channel',
+    'app/notes-ab12/workshop', '', null]) {
+    assert.equal(R.isPointer(route), false, `${route} is a page of its own`);
+  }
+  // No handle: the store sends it to the inbox, which is the Messages tab.
+  assert.equal(R.panelPage('messages/channel').kind, 'messages');
+  assert.equal(R.isPanelRoute('messages/channel'), false);
+});
+
 test('an app\'s App tab is never the panel\'s: it names the app to hand to the top window', () => {
   assert.equal(R.appTabSlug('app/notes-ab12'), 'notes-ab12');
   assert.equal(R.appTabSlug('app/notes-ab12/app'), 'notes-ab12');
@@ -353,6 +373,36 @@ test('Back walks the pages opened in the panel, then climbs to the list, then hi
   cleanup();
 });
 
+test('Back never lands on a `#name` channel reference, which would only send it on again', () => {
+  topWindow();
+  api.take('app/notes-ab12/dev/proposals/12');
+  const gone = fakeFrame();
+  api.embeddedApi.ready('app/notes-ab12/dev/proposals/12', 'Notes');
+  // A `#general` in the proposal's thread, followed inside the panel…
+  api.embeddedApi.navigated('messages/channel/general', 'Messages', true);
+  // …and the store's rewrite to the channel itself, reported late, as a push.
+  api.embeddedApi.navigated('messages/88', '#general', true);
+  let s = api.sidePanelStore.get();
+  assert.equal(s.route, 'messages/88');
+  assert.equal(s.title, '#general');
+  api.back();
+  assert.deepEqual(gone.at(-1), ['app/notes-ab12/dev/proposals/12', null],
+    'back to the proposal the reference was followed from');
+  // Opened from the top document too: the pointer is the panel's page until
+  // the channel replaces it, and is never kept behind it.
+  api.take('messages/channel/notes');
+  api.embeddedApi.navigated('messages/app/notes-ab12', 'Notes', false);
+  api.take('messages/4242');
+  api.back();
+  assert.deepEqual(gone.at(-1), ['messages/app/notes-ab12', null]);
+  api.back();
+  assert.deepEqual(gone.at(-1), ['app/notes-ab12/dev/proposals/12', null],
+    'the pointer between them was skipped');
+  s = api.sidePanelStore.get();
+  assert.equal(s.canBack, true, 'a proposal still climbs to its Workshop');
+  cleanup();
+});
+
 test('Close keeps the frame and forgets the history; reopening navigates it', () => {
   topWindow();
   api.take('messages/4242');
@@ -458,10 +508,11 @@ test('the panel never runs an app: the running one is asked for nothing, another
 
 // ── 5. The panel's own document ──────────────────────────────────────────
 
-function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1' } = {}) {
+function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1', navigation = false } = {}) {
   let url = new URL(href);
   const listeners = {};
   const docListeners = {};
+  const navListeners = [];
   const reports = [];
   const routed = [];
   const history = {
@@ -509,13 +560,27 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
     App: { _currentRoute: null, _routeFromHash: () => routed.push(url.href) },
     AppView: { _proposalHint: false },
   };
+  if (navigation) {
+    win.navigation = { addEventListener: (type, fn) => { if (type === 'navigate') navListeners.push(fn); } };
+  }
+  // A same-document navigation as the Navigation API announces it: returns
+  // whether a listener refused it.
+  const navigate = (navigationType, dest) => {
+    const e = {
+      navigationType, hashChange: true, cancelable: navigationType !== 'traverse',
+      destination: { url: new URL(dest, url).href, sameDocument: true },
+      defaultPrevented: false, preventDefault() { this.defaultPrevented = true; },
+    };
+    navListeners.forEach((fn) => fn(e));
+    return e.defaultPrevented;
+  };
   globalThis.document = { documentElement: { classList: { contains: (c) => c === 'in-side-panel' } } };
   if (typeof globalThis.PopStateEvent === 'undefined') {
     globalThis.PopStateEvent = class { constructor(type, init) { this.type = type; this.state = init && init.state; } };
   }
   const runtime = api.installEmbeddedRuntime(win);
   const boot = () => (docListeners['sv:authed'] || []).forEach((fn) => fn());
-  return { win, runtime, reports, routed, history, fire, boot, url: () => url.href };
+  return { win, runtime, reports, routed, history, fire, boot, navigate, url: () => url.href };
 }
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
@@ -557,14 +622,21 @@ test('the top document sends the panel somewhere by replacing its address and ro
   p.boot();
   await tick();
   p.runtime.go('messages/app/notes-ab12', null);
+  // Not inside the top window's call: on this document's own turn, so a
+  // relative location.replace() in the router resolves against THIS address
+  // (the browser resolves it against the entry document, which inside the
+  // call would be the top window — see go() in embedded.ts).
+  assert.equal(p.routed.length, 0, 'nothing is routed inside the top window\'s call');
+  assert.equal(p.url(), 'https://homeroom.test/app/notes-ab12/workshop?panel=1');
+  await tick();
   assert.equal(p.url(), 'https://homeroom.test/?panel=1#messages/app/notes-ab12');
   assert.equal(p.routed.length, 1, 'routed through the router\'s own entry point');
-  await tick();
   assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/app/notes-ab12', 'Homeroom', false],
     'the top put it there, so it is already on the top\'s stack');
   p.runtime.go('app/notes-ab12/dev/sessions/new', { proposalHint: true });
+  assert.equal(p.win.AppView._proposalHint, true, 'the hint is in place before the router runs');
+  await tick();
   assert.equal(p.url(), 'https://homeroom.test/app/notes-ab12/dev/sessions/new?panel=1');
-  assert.equal(p.win.AppView._proposalHint, true);
   delete globalThis.document;
 });
 
@@ -613,6 +685,38 @@ test('a link inside the panel is followed in place, keeping panel=1', async () =
   delete globalThis.document;
 });
 
+test('a script\'s hash push is refused and replayed as a replace; the store\'s own replace is the page settling', async () => {
+  const p = panelWindow({ href: 'https://homeroom.test/?panel=1#app/notes-ab12/dev/proposals/12', navigation: true });
+  p.boot();
+  await tick();
+  // `location.hash = '#messages/channel/general'` — a `#general` in the thread.
+  assert.equal(p.navigate('push', '#messages/channel/general'), true, 'refused: it would be an entry');
+  await tick();
+  assert.equal(p.url(), 'https://homeroom.test/?panel=1#messages/channel/general');
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/channel/general', 'Homeroom', true]);
+  // The Messages store's `location.replace('#messages/88')` once it knows the
+  // room: let through, and NOT a second page — Back from #general must not
+  // land on the reference that only sends it here again.
+  assert.equal(p.navigate('replace', '#messages/88'), false, 'a replace is let through');
+  p.win.location.replace('#messages/88');
+  await tick();
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/88', 'Homeroom', false]);
+  assert.equal(p.navigate('traverse', '#messages'), false, 'and a traversal is never touched');
+  delete globalThis.document;
+});
+
+test('without the Navigation API an unannounced hash change is taken for a push', async () => {
+  // Where a script's `location.hash = …` cannot be refused, it arrives only as
+  // a hashchange, and the viewer did go somewhere.
+  const p = panelWindow({ href: 'https://homeroom.test/?panel=1#messages/4242' });
+  p.boot();
+  await tick();
+  p.win.location.replace('#messages/4243');
+  await tick();
+  assert.deepEqual(p.reports.at(-1), ['navigated', 'messages/4243', 'Homeroom', true]);
+  delete globalThis.document;
+});
+
 // ── 6. The router, run in a vm ───────────────────────────────────────────
 
 function fakeElement() {
@@ -635,6 +739,7 @@ function fakeElement() {
 
 function router({ embedded = false, takes = true } = {}) {
   const calls = [];
+  const stored = [];
   const elements = new Map();
   const noop = () => undefined;
   const root = fakeElement();
@@ -651,7 +756,7 @@ function router({ embedded = false, takes = true } = {}) {
       querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, dispatchEvent() {},
     },
     addEventListener() {},
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    localStorage: { getItem: () => null, setItem: (k) => stored.push(k), removeItem() {} },
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
   });
   context.window = context;
@@ -679,7 +784,7 @@ function router({ embedded = false, takes = true } = {}) {
   };
   context.AppView = new Proxy(appView, { get: (t, k) => (k in t ? t[k] : noop) });
   context.Home = new Proxy({}, { get: () => noop });
-  return { App: context.App, calls };
+  return { App: context.App, calls, stored };
 }
 
 test('the router asks the panel first for a Workshop page, and only for a Workshop page', async () => {
@@ -757,6 +862,18 @@ test('in the panel\'s document the router never runs, parks or polls, and forwar
   assert.deepEqual(calls.at(-1), ['forward', '']);
 });
 
+test('the Workshop tab\'s memory (#2776) is the top window\'s: the panel\'s pages never write it', async () => {
+  const top = router();
+  await top.App.navigateToApp('notes-ab12', 'dev', null, 'forum');
+  assert.ok(top.stored.includes('usernode_workshop_view_v1'),
+    'the top window remembers the Workshop view it shows (so the check below can fail)');
+  const panel = router({ embedded: true });
+  await panel.App.navigateToApp('notes-ab12', 'dev', null, 'forum');
+  assert.equal(panel.App.currentTab, 'dev', 'the panel shows the Workshop…');
+  assert.ok(!panel.stored.includes('usernode_workshop_view_v1'),
+    '…and leaves the tab\'s memory, in storage it shares with the top window, alone');
+});
+
 test('the router consults the panel\'s document before routing an address', () => {
   const at = APP_JS.indexOf('  restoreFromHash() {');
   const body = APP_JS.slice(at, APP_JS.indexOf('  _validateInnerPath(p) {'));
@@ -765,7 +882,7 @@ test('the router consults the panel\'s document before routing an address', () =
   assert.ok(forward < body.indexOf('if (!hash) {'), 'before the first screen is chosen');
   assert.ok(forward > body.indexOf('AuthScreens.routeFromHash(hash)'), 'and after the signed-out routing');
   // The bar is down in there, and the parked strip is never written.
-  assert.match(APP_JS, /!!screen && !App\.chromeless && !inApp && !App\.embeddedPanel,/);
+  assert.match(APP_JS, /App\.embeddedPanel \? false : !!screen && !App\.chromeless && !inApp,/);
   assert.match(APP_JS, /_syncParkedApp\(inApp\) \{\s*\/\/[^\n]*\n[^\n]*\n\s*if \(App\.embeddedPanel\) return;/);
 });
 
@@ -845,8 +962,14 @@ test('what the top window owns stands down in the panel\'s document', () => {
   // The device's app history and the install offer.
   assert.match(read('frontend/src/features/app-context/app-recency.ts'), /if \(!slug \|\| isEmbeddedPanel\(\)\) return;/);
   assert.match(read('frontend/src/features/mobile-install/install-banner.tsx'), /\|\| isEmbeddedPanel\(\)\) return undefined;/);
-  // A session that ended: the top window shows the sign-in, not a form in the panel.
-  assert.match(APP_JS, /async enterAnonymous\(\) \{[\s\S]{0,700}if \(App\.embeddedPanel\) \{\s*try \{ window\.top\.location\.reload\(\); \}/);
+  // A session that ended: the top window shows the sign-in, not a form in the
+  // panel — after the boot read is settled, so nothing in here waits on it.
+  const anon = APP_JS.slice(APP_JS.indexOf('  async enterAnonymous() {'));
+  const body = anon.slice(0, anon.indexOf('\n  },'));
+  const settled = body.indexOf('App._publishBootSession({ signedOut: true });');
+  const reload = body.search(/if \(App\.embeddedPanel\) \{\s*try \{ window\.top\.location\.reload\(\); \}[^\n]*\n\s*return;/);
+  assert.ok(settled > 0 && reload > settled, 'the boot read is settled, then the top window reloads');
+  assert.ok(reload < body.indexOf('AuthScreens.enter()'), 'and no second sign-in screen is drawn in the panel');
 });
 
 test('the shell snapshot really is not written from the panel\'s document', () => {
@@ -909,5 +1032,10 @@ test('the JS entry points ask the panel before they navigate', () => {
     'New change opens the unsent change beside the app, hint and all');
   assert.ok(body.indexOf('panel?.take?.') < body.indexOf('Improve._withApp('), 'before it navigates');
   const open = APP_JS.slice(APP_JS.indexOf('  openAppTab(slug, tab, opts) {'));
-  assert.ok(open.indexOf("window.UsernodeReact?.sidePanel?.take?.(panelRoute)") < open.indexOf('App.setChromeless(false);'));
+  assert.ok(open.indexOf('const inPanel = App._openAppTabInPanel(slug, tab, opts);') > 0
+    && open.indexOf('App._openAppTabInPanel(') < open.indexOf('App.setChromeless(false);'),
+    'openAppTab asks before it clears chromeless (the panel never opens beside a chromeless app)');
+  const helper = APP_JS.slice(APP_JS.indexOf('  _openAppTabInPanel(slug, tab, opts) {'));
+  assert.match(helper.slice(0, helper.indexOf('\n  },')),
+    /if \(panelRoute && window\.UsernodeReact\?\.sidePanel\?\.take\?\.\(panelRoute\)\) return true;/);
 });

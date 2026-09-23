@@ -107,8 +107,9 @@ const App = {
   // a desktop window — see isSidePanelDocument above). It routes only the
   // panel's pages and hands everything else to the top window (restoreFromHash,
   // navigateToApp, switchTab, openAppTab, navigateHome), never runs an app,
-  // never parks one, and leaves the version poll, the reload latch and the
-  // feedback outbox to the top window, which owns them.
+  // never parks one, and leaves the version poll and the one-shot reload
+  // latch to the top window, which owns them. (The feedback outbox needs no
+  // gate: it already takes turns across documents — feedback-queue.js.)
   embeddedPanel: isSidePanelDocument(),
 
   // Set to true while restoreFromHash() is applying a URL (e.g. on
@@ -629,16 +630,6 @@ const App = {
   _authedBooted: false,
 
   async enterAnonymous() {
-    // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
-    // top window is gone or refused. The top window is the one that shows the
-    // sign-in screen, so it reloads — onto that screen if the session really
-    // ended, or back into the app if it did not — and this frame goes with
-    // it. Painting a second sign-in form inside the panel would leave the two
-    // documents disagreeing about who is signed in.
-    if (App.embeddedPanel) {
-      try { window.top.location.reload(); } catch (err) { /* no top to ask */ }
-      return;
-    }
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
       // enterAnonymous closes the private native realm synchronously before
@@ -650,6 +641,16 @@ const App = {
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
+    // top window is gone or refused. The top window is the one that shows the
+    // sign-in screen, so it reloads — onto that screen if the session really
+    // ended, or back into the app if it did not — and this frame goes with
+    // it. Painting a second sign-in form inside the panel would leave the two
+    // documents disagreeing about who is signed in.
+    if (App.embeddedPanel) {
+      try { window.top.location.reload(); } catch (err) { /* no top to ask */ }
+      return;
+    }
     // Capture the platform SHA this document booted with. The anonymous
     // shell has no drawer (so no stale-version pill), which makes
     // pull-to-refresh its only recovery path after a deploy — and
@@ -4490,6 +4491,12 @@ const App = {
 
   // Called by updateHash with the address it computed for the app on screen.
   _noteWorkshopView(url) {
+    // Never from the side panel's document (?panel=1, beside a running app):
+    // the tab this memory answers is the TOP window's, and a page opened
+    // beside an app is not a view anyone left that tab from. The entry is in
+    // localStorage, which the panel's same-origin frame shares — writing it
+    // from in there would send the Workshop tab to the panel's last page.
+    if (App.embeddedPanel) return;
     // Somewhere else now, so a resume that was in flight has landed or been
     // left: a later miss on that card is an ordinary one.
     if (App._resumingWorkshop && App._workshopViewPath(url) !== App._resumingWorkshop) {
@@ -4637,7 +4644,7 @@ const App = {
       'platform-tabs',
       // …and never in the side panel's document, which draws no chrome at
       // all: the top window's bar and rail are the navigation.
-      !!screen && !App.chromeless && !inApp && !App.embeddedPanel,
+      App.embeddedPanel ? false : !!screen && !App.chromeless && !inApp,
     );
     // Published even when the bar is down: the store keeps the last screen
     // otherwise, and the bar coming back for a tab that has since changed
@@ -4668,19 +4675,19 @@ const App = {
         ? (App._isMessagesThread() ? 'messages' : 'workshop')
         : null,
     );
+    // …AND THE SIDE PANEL BESIDE THE APP (desktop, features/side-panel/),
+    // from the same answer. It stands beside the running app and goes when
+    // the app goes, by any route: the header's close, a tab, the peeked rail,
+    // Back, Expand — and chromeless, which has no layout to stand beside.
+    // Switching straight to another app keeps `inApp` true, and the panel.
+    if (!App.embeddedPanel) {
+      window.UsernodeReact?.sidePanel?.appPresence?.(inApp && !App.chromeless);
+    }
     // …AND THE PARKED APP, from the same answer (#2762). The running app
     // going off screen is what parks it, and this is the one place that says
     // whether it is on screen. Last, so the handle lands in the same callback
     // as the bar it rides on.
     App._syncParkedApp(inApp);
-    // …AND THE SIDE PANEL BESIDE IT (desktop, frontend/src/features/side-panel/).
-    // It stands beside the running app and goes when the app goes, by any
-    // route: the header's close, a tab, the peeked rail, Back, Expand — and
-    // chromeless, which has no layout to stand beside. Switching straight to
-    // another app keeps `inApp` true, and keeps the panel.
-    if (!App.embeddedPanel) {
-      window.UsernodeReact?.sidePanel?.appPresence?.(inApp && !App.chromeless);
-    }
   },
 
   // The two `#app-view` routes that are THREADS OF MESSAGES rather than the
@@ -6400,6 +6407,31 @@ const App = {
     return true;
   },
 
+  // THE SIDE PANEL, asked by openAppTab before it navigates
+  // (frontend/src/features/side-panel/). Undefined lets openAppTab go on
+  // exactly as before; anything else is what openAppTab returns.
+  //   - In the TOP document, while an app runs on its App tab, a Workshop
+  //     page — a proposal, an issue, a change, the discussion — that a
+  //     notification, a desktop alert or any other caller opens goes to a
+  //     panel BESIDE the app instead of replacing it (true). `take` says no
+  //     whenever that is not the moment: a phone-width window, no app on
+  //     screen, chromeless.
+  //   - In the panel's OWN document a Workshop page opens right here, and an
+  //     App tab is the running app's, beside the panel (false).
+  _openAppTabInPanel(slug, tab, opts) {
+    const ref = opts && opts.sessionId != null ? opts.sessionId
+      : (opts && opts.ref != null ? opts.ref : null);
+    const subTab = (opts && opts.subTab) || null;
+    if (App.embeddedPanel) {
+      if (App._normalizeTab(tab, ref, subTab).tab !== 'app') return undefined;
+      App._forwardAppTab(slug, 'app');
+      return false;
+    }
+    const panelRoute = App._panelRouteFor(slug, tab, ref, subTab);
+    if (panelRoute && window.UsernodeReact?.sidePanel?.take?.(panelRoute)) return true;
+    return undefined;
+  },
+
   // Explicit navigation entry point for in-app deep links (e.g. clicking
   // a notification) that must render even when the target route equals
   // the current one. Unlike assigning `location.hash`, this never relies
@@ -6409,31 +6441,17 @@ const App = {
   // app/tab dispatch, plus a force-rerender branch for same app+tab.
   openAppTab(slug, tab, opts) {
     if (!slug) return;
-    const ref = opts && opts.sessionId != null ? opts.sessionId
-      : (opts && opts.ref != null ? opts.ref : null);
-    const subTab = (opts && opts.subTab) || null;
-    if (App.embeddedPanel) {
-      // The side panel's document: a Workshop page opens right here, and an
-      // App tab is the running app's, beside the panel.
-      if (App._normalizeTab(tab, ref, subTab).tab === 'app') {
-        App._forwardAppTab(slug, 'app');
-        return false;
-      }
-    } else {
-      // THE SIDE PANEL (desktop): while an app is running on its App tab, a
-      // Workshop page — a proposal, an issue, a change, the discussion — that
-      // a notification, a desktop alert or any other caller opens goes to a
-      // panel BESIDE the app instead of replacing it. `take` says no whenever
-      // that is not the moment (a phone-width window, no app on screen,
-      // chromeless), and this carries on exactly as before.
-      const panelRoute = App._panelRouteFor(slug, tab, ref, subTab);
-      if (panelRoute && window.UsernodeReact?.sidePanel?.take?.(panelRoute)) return true;
-    }
+    // The side panel beside a running app, or the panel's own document, first.
+    const inPanel = App._openAppTabInPanel(slug, tab, opts);
+    if (inPanel !== undefined) return inPanel;
     // This entry point always means the ordinary platform view. In particular,
     // the chromeless pill calls it while App.chromeless is still true; clear
     // that flag before switchTab serializes the destination or it would write
     // `/full` straight back and leave the platform header hidden.
     App.setChromeless(false);
+    const ref = opts && opts.sessionId != null ? opts.sessionId
+      : (opts && opts.ref != null ? opts.ref : null);
+    const subTab = (opts && opts.subTab) || null;
     if (App.currentApp !== slug) {
       return App.navigateToApp(slug, tab, ref, subTab);
     } else {

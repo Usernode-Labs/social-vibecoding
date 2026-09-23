@@ -48,6 +48,7 @@ import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import {
   frameUrl,
   isPanelRoute,
+  isPointer,
   isShellAddress,
   parentRoute,
   routeFromUrl,
@@ -124,6 +125,9 @@ let reported = '';
 let bypass = false;
 
 function remember(route: string): void {
+  // A `#name` channel reference is replaced by the channel it names; coming
+  // back to it would only be sent on to that channel again.
+  if (isPointer(route)) return;
   stack.push(route);
   if (stack.length > STACK_CAP) stack.splice(0, stack.length - STACK_CAP);
 }

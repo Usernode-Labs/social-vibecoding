@@ -209,8 +209,14 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
     });
   }
 
+  // A fragment change nobody marked. Where the browser has the Navigation
+  // API every PUSH was marked on its way in (above), so an unmarked one is a
+  // REPLACE — a rewrite such as a `#name` channel reference becoming the
+  // channel's own address — and the same page settling. Without it a
+  // script's `location.hash = …` arrives here unannounced, and is a push.
+  const marksPushes = !!(nav && typeof nav.addEventListener === 'function');
   win.addEventListener('hashchange', () => {
-    if (!fromTop) pendingPush = true;
+    if (!fromTop && !marksPushes) pendingPush = true;
     schedule();
   });
   win.addEventListener('popstate', () => schedule());
@@ -253,12 +259,25 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
       const url = next.startsWith('app/')
         ? `/${next}${loc.search}`
         : `/${loc.search}#${next}`;
-      replaceState(hist.state, '', url);
-      try {
-        win.App?._routeFromHash?.();
-      } finally {
-        schedule();
-      }
+      // Routed on THIS document's own turn, never inside the top window's
+      // call. The top calls in here from its own handlers (a click, a
+      // navigate event), which makes the TOP document the one the browser
+      // resolves a relative `location.replace('#…')` against — the Messages
+      // store rewriting a `#name` reference to `#messages/<id>` would then
+      // send this frame to the top window's path, out of the panel mode
+      // altogether. A callback of this document's own runs with this
+      // document as its entry, and a microtask still lands before anything
+      // the top does next.
+      const land = () => {
+        replaceState(hist.state, '', url);
+        try {
+          win.App?._routeFromHash?.();
+        } finally {
+          schedule();
+        }
+      };
+      if (typeof win.queueMicrotask === 'function') win.queueMicrotask(land);
+      else win.setTimeout(land, 0);
     },
     forward(next: string): boolean {
       if (!booted || embeddedAllows(next)) return false;

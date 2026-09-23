@@ -19,7 +19,11 @@
  *   app/<slug>/dev/shared/<id>     a change's shared page
  *   app/<slug>/dev/chat            the app's discussion, full screen
  *   messages/app/<slug>            the app's discussion, as an inbox thread
- *   messages/<id>                  a direct or group conversation
+ *   messages/<id>                  a direct or group conversation, or a
+ *                                  channel (#general)
+ *   messages/channel/<handle>      a `#name` reference to a channel: a
+ *                                  pointer, rewritten to the channel's own
+ *                                  address (isPointer)
  *   chat[/<uuid>]                  an agent chat
  *   messages                       the inbox itself — never opened INTO the
  *                                  panel from outside it (it is a tab root,
@@ -152,6 +156,10 @@ export function panelPage(route: string): PanelPage | null {
     if (NUMERIC.test(parts[1] || '')) {
       return { kind: 'thread', slug: null, key: `messages/${parts[1]}` };
     }
+    if (parts[1] === 'channel' && parts[2]) {
+      // A `#name` channel reference (#2783) — see isPointer below.
+      return { kind: 'thread', slug: null, key: `messages/channel/${parts[2]}` };
+    }
     // A malformed id: the router degrades it to the list.
     return { kind: 'messages', slug: null, key: 'messages' };
   }
@@ -171,6 +179,19 @@ export function panelPage(route: string): PanelPage | null {
 export function isPanelRoute(route: string): boolean {
   const page = panelPage(route);
   return !!page && page.kind !== 'messages';
+}
+
+/**
+ * Does `route` only POINT at a page? `messages/channel/<handle>` (#2783) is
+ * what a `#name` reference in any chat links to, and the Messages store
+ * replaces it with the channel's own address — #general's conversation, or an
+ * app's discussion — as soon as it knows which room the handle means. It is
+ * never a page to come back to: kept in the panel's history, Back would land
+ * on it and be sent straight back to the channel. So it opens in the panel
+ * like the channel it names, and the history never keeps it.
+ */
+export function isPointer(route: string | null | undefined): boolean {
+  return /^messages\/channel\/[^/?]/.test(String(route || ''));
 }
 
 /** May the panel's OWN document show `route`, or does it belong to the top? */
