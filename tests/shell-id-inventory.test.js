@@ -58,6 +58,11 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Create moves into the launcher grid (the prototype's scrHome) ─
+  // Never in the frozen baseline — THE UI OVERHAUL added it through
+  // ADDED_IDS — so it leaves that map and is recorded here instead, which
+  // also puts it under the dereference guard at the bottom of this file.
+  'home-create-section': 'Home\'s fourth area, a full-width "Create app" card in a section of its own below Challenges. Create is the launcher grid\'s trailing tile now (#home-create-tile, features/home/create-tile.tsx), rendered inside #app-list on the first grid paint, so it is not in the prerendered shell. It keeps `data-panel-slot="create"` and `data-create-enabled`, the hooks the declared checks select on; the welcome tour\'s create step points at the tile.',
   // ── #2568: the included key is not claimed, it is created ────────
   // Every account is created with its included OpenRouter key, so the
   // three ids that existed to ASK for one have nothing left to do. The
@@ -79,7 +84,7 @@ const RETIRED_IDS = {
   'home-account-avatar': 'The viewer\'s picture on that row. Its writer, App.applyUserAvatar, went with it — this was the last pair it wrote to (the header chip\'s copy was retired in the same #1443 round), and Profile\'s editor re-reads App.user when it saves.',
   'home-account-glyph': 'Its fallback person glyph.',
   // ── #1610: the completed-task count moved to the bell ───────────
-  'notifications-badge-ai': 'The green session count on #improve-btn. It counted unread session-related notifications, split out of the bell\'s number so the two would not double-count. Nothing behind that button could CLEAR it: a session notification is marked read by clicking its row in the bell\'s list, by a group-chat mark-read, or by mark-all, and opening the Improve panel marks nothing. So a finished session raised a number on the one control with no way to dismiss it, and the reporter pressed Improve again looking for a notification that was in the bell. The count is folded back into #notifications-badge, which now carries `data-session-done` in its place; what is left on the button is #improve-working-dot.',
+  'notifications-badge-ai': 'The green session count on #improve-btn. It counted unread session-related notifications, split out of the bell\'s number so the two would not double-count. Nothing behind that button could CLEAR it: a session notification is marked read by clicking its row in the bell\'s list, by a group-chat mark-read, or by mark-all, and opening the Improve panel marks nothing. So a finished session raised a number on the one control with no way to dismiss it, and the reporter pressed Improve again looking for a notification that was in the bell. The count is folded back into #notifications-badge, which now carries `data-session-done` in its place; what was left on the button is #improve-working-dot, which outlived the button itself (#2718) and is on the Homeroom mark now.',
   // ── Andrea's 27 Aug 2026 waitlist review ────────────────────────
   // Three stage-1 fields and one stage-2 field, all removed for the same
   // reason: each asked for something nothing read back.
@@ -241,7 +246,7 @@ const RETIRED_IDS = {
   'drawer-row-node': 'The native node row — #account-row-node, same component, same module.',
   'drawer-row-wallet': 'The native wallet row — #account-row-wallet, ditto.',
   'notifications-screen': 'The Notifications screen ROOT. It is #notifications-sheet now — an overlay over the current screen, out of App.SCREEN_IDS entirely, so there is no back arrow to point anywhere. Its children kept their ids.',
-  'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report.',
+  'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report. #2718 retired that button in turn and the badges moved on again, to the Homeroom mark, which is the control whose MENU holds that work now.',
   'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
   'drawer-app-rows': 'The app rows\' scroller in the drawer. The Improve panel renders them now, and #improve-sessions is the scroller.',
   'app-context-new-change': 'Merged INTO #improve-row-new-session, the panel\'s middle quick action. Two ids calling one Improve.startSession() was the duplication the merge exists to remove.',
@@ -299,6 +304,95 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #2718: the platform's destinations leave the app's menu ──────
+  //
+  // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the
+  // frozen baseline never recorded any of them: #switcher-row-home,
+  // -workshop, -discover, -challenges, -messages, -profile, -wallet,
+  // -validator, -settings, -admin and #switcher-byok-dot.
+  //
+  // They were the app chip menu's "Platform" and "You" groups, on #1443's
+  // rule that one control names where you are and its menu lists everywhere
+  // you can go. That rule is now split the way every mini-app host it was
+  // modelled on already had it: the host's sections live on a permanent bar
+  // (#platform-tabs) and the menu under a mini-app holds the MINI-APP's
+  // options. Home, Discover, Messages, Workshop and Profile are TABS;
+  // Challenges, Settings and Admin are rows of the Profile screen the Me tab
+  // lands on (features/profile/account-panel.tsx); Wallet and Validator were
+  // already rows there and are only rows there again.
+  //
+  // `switcher-row-admin` survives as a published FLAG name — app.js still
+  // publishes it and Profile reads it — which is a capability, not a row.
+  // ── #2718: Messages is one inbox ─────────────────────────────────
+  //
+  // #messages-filter-empty and the two row kinds' own elements are NOT in
+  // this map: they render only once a filter has narrowed to nothing or once
+  // a discussion or an agent chat has arrived, so none of them is in the
+  // prerendered document, which is what this map is for.
+  'messages-filters': '#2718: the filter row — All, People, Channels (Apps until #2783), Agents, with the "+" at its trailing end (#2778). Messages was the `conversations` domain only; an app\'s own discussion and an agent chat were reachable only from inside the thing they belonged to, which is not findable from the one screen somebody opens looking for "what was said to me". One list, one clock, a mark on the rows that are not a person — the arrangement Slack and Teams land on with a channel, a DM and a bot thread in one sidebar.',
+  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. The filter is presentation, so it is not persisted and not in the route: a filter that survives a reload is one somebody has to remember turning on.',
+  'messages-filter-people': '#2718: conversations only — the `conversations` domain this screen used to be.',
+  // #messages-filter-apps left this map in #2783: "Apps" became "Channels"
+  // (#messages-filter-channels, below). It was only ever an ADDED id, so it
+  // simply leaves, as #workshop-scope did.
+  'messages-filter-channels': '#2783: the Apps filter, renamed and widened. The inbox is sectioned the way Discord\'s is — the chats (people, groups and agents) on top, then the CHANNELS: #general, a platform-wide room every user is in, and one channel per app the viewer is a member of, including apps nobody has spoken in yet. This filter shows that second section alone. Membership rather than visibility is still the line: a public app you have never joined is something you can go and read, not a channel in your list.',
+  'messages-filter-agents': '#2718: the viewer\'s agent chats, read from features/global-chat\'s own store rather than copied into this one — that list is already loaded, merged on every thread event and invalidated by the chat itself. Gated on the same two flags the Improve panel\'s list is, so a shell with the feature off shows no Agents rows.',
+  'messages-new': '#2718, then #2778: the "+" at the filter strip\'s trailing end. #2718\'s review took it off the strip because ONE control saying "new" could only mean one of the kinds the inbox holds, and replaced it with a row of compose buttons under the strip (#messages-compose, retired below). #2778 brings it back as a CHOICE: pressing it opens a small popover — the vote picker\'s placement and dismissal, shared through lib/anchor-popover.ts and lib/popover-dismiss.ts — offering a direct message, a group chat or an agent chat, so it no longer has to guess. On touch the choice is the kit\'s action sheet. The popover (#messages-new-menu) renders only once pressed, so it is not in the prerendered document and not in this map.',
+  // ── #2718: the Workshop gets a scope, three tabs and a plus ──────
+  //
+  // #workshop-picker, #workshop-picker-all, #workshop-plus-change,
+  // #workshop-plus-issue, #workshop-plus-create and #workshop-tab-empty are
+  // NOT in this map and that is not an omission: all six render only once
+  // somebody has tapped or once a tab has filtered to nothing, so none of
+  // them is in the prerendered document, which is what this map is for.
+  // #workshop-scope left this map with the chip itself (#2759): the all-apps
+  // screen IS the list of your apps, so a chip whose panel listed them again
+  // was the page repeating itself. It was only ever an ADDED id, so it simply
+  // leaves; the chip on an app's own Workshop is #dev-ws-scope-chip, which
+  // renders client-side and was never in the prerendered document.
+  'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
+  'platform-recents': '#2802: the desktop rail\'s Recents, between Workshop and Me: the apps you left and the conversations you were in (DMs, group chats, channels, agent chats) on one clock, newest first. It replaces the Resume strip (#platform-parked) on the desktop; the phone keeps the strip. The ROOT ships `hidden` with only its heading, which is what an empty list renders; every row arrives one commit after mount, so the prerender and the first client render agree. The rows carry no ids (they are data), only data-recent-kind / data-recent-key, which are client-only and so not in the baseline.',
+  'platform-recents-head': '#2802: the Recents heading, which names the group for assistive tech (`aria-labelledby` on #platform-recents). Rendered unconditionally inside the hidden root so the label target exists on a cold document.',
+  'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',
+  // ── Three ids from #2718's second pass that are NOT in this map ──
+  //
+  // #workshop-total-working, #workshop-total-needs and
+  // #app-menu-workshop-owed are figures read from data, so they do not exist
+  // until a fetch answers and the prerender carries none of them. ADDED_IDS
+  // is checked BOTH ways — an entry here that is not in the document fails
+  // the same test a stray id does — so a conditional id is recorded in prose
+  // rather than in the map. They are listed here so the inventory is still
+  // the complete log of what this branch added.
+  'app-menu-row-about': '#2718: the row that opens the sheet\'s SECOND PANE — the repository, sharing, the running version and how to add the app to a home screen. A button and not an anchor, which is the honest shape: there is no address to open in a new tab, because the pane is this sheet in another state. Two panes of one sheet rather than two sheets, because the kit cannot present a sheet while it is still dismissing another.',
+  // ── #2718: the platform's five places get a bar ──────────────────
+  // The app chip's menu was carrying two unlike lists — the app's own
+  // options and the platform's destinations — because there was no bar for
+  // the second one to live on. Every host this shell is modelled on keeps
+  // both: a flat per-mini-app menu AND a permanent bar of the host's own
+  // sections, with the menu's deeper rows linking OUT to those sections.
+  // This is that bar; the rows that moved onto it leave the menu in the
+  // same change (see RETIRED_IDS).
+  'platform-tabs': '#2718: the shell\'s five sections as a permanent bar at the foot of every platform screen — Home, Discover, Messages, Workshop, Me. A React island (frontend/src/features/nav/tab-bar.tsx) and a direct child of <body>, not a child of any screen root: a bar rebuilt on every screen swap is a bar that flickers when you use it. `position: fixed` rather than a flex item at the end of the body column, because on `html[data-browser-scroller]` routes the DOCUMENT scrolls and body height goes `auto`, so a flex child there leaves the screen with the page. It ships VISIBLE, which is what the prerendered document carries; the three routes that hide it (a running app, chromeless, the signed-out shell) publish `platform-tabs` false through the visibility store, and App._syncPlatformTabs is the one place that decides.',
+  'platform-tab-home': '#2718: the Home tab. The one tab whose href is a real path (`/`) rather than a hash route, so a cmd-click opens the launcher in a new tab; a plain click is intercepted and handed to App.navigateHome(), guarded by NavLink.isNativeClick exactly as the app menu\'s Home row was.',
+  'platform-tab-discover': '#2718: the Discover tab, to #apps. Keeps the magnifier the retired #switcher-row-discover carried rather than taking a grid glyph — moving a destination should not also rename it.',
+  'platform-tab-messages': '#2718: the Messages tab, to #messages. The only tab that can carry a count (see #platform-tabs-badge).',
+  'platform-tab-workshop': '#2718: the Workshop tab, to #workshop — which of your apps wants something from you, the question Home does not answer.',
+  'platform-tab-me': '#2718: the Me tab, to #profile. Challenges, Settings, Wallet, Validator and Admin are all reached from it, which is what keeps the bar to five: a sixth tab would be a section nobody opens daily.',
+  'platform-tabs-badge': '#2718: the Messages tab\'s unread count, and the SECOND badge in the shell. #1443 argued for exactly one, on #notifications-badge, on the grounds that an unread message IS a notification and a menu row is where you say where you are going rather than where you learn something happened. That argument is about a MENU: a tab is visible without opening anything, and a Messages tab that cannot say "there is something here" leaves the bell as the only way to find out — which puts a conversation back behind the sheet the bar exists to get things out of. It counts CONVERSATIONS with something unread, not messages, and renders only above zero so the prerender (navStore\'s INITIAL is 0) and the first client render agree on no badge at all.',
+  // #notifications-tab-agents left this map in #2815: the bell's Agents tab
+  // folded into Messages, which now lists the running sessions and the agent
+  // notifications beside the conversations, as the Messages screen's chats
+  // section already did. It was only ever an ADDED id, so it simply leaves.
+  // #messages-compose left this map in #2778: what starts something is the
+  // "+" at the strip's end again (#messages-new), opening a popover of three
+  // choices rather than a row of buttons under the strip. Its agent half,
+  // #messages-new-agent, never shipped in the prerendered document (it is
+  // gated on the global-chat flags), so it was never in this map. Both were
+  // only ever ADDED ids, so they simply leave.
+  'messages-agent-dialog': '#2778: "which app?" — the Agent chat choice under the "+". An agent chat is, for now, a new dev session on one app, so this lists the apps the viewer is a member of (the same rows as their channels, already loaded) and opens the chosen one\'s new-session screen, where nothing is created until the first send. A React-owned dialog driven through useDialog like the other Messages dialogs; a platform-wide agent session will take its place later without the "+" changing.',
+  'messages-agent-apps': '#2778: the agent dialog\'s list of apps — a stable host a declared check can find, whatever is in it.',
+  "messages-search": "#2718 review: the Messages inbox's search. It takes the place of the <h2> that used to name the screen under a bar already naming it \u2014 two titles, one word, an inch apart. A CLIENT-SIDE match over the three lists already in memory (people, app discussions, agent chats), so it answers on every keystroke and adds no endpoint; what it matches is the text each row DRAWS, because a search that found rows by a field the reader cannot see returns results they cannot explain. It composes with the filter strip rather than replacing it, and a query that matches nothing says so in its own line rather than borrowing the empty inbox's offer to start a conversation.",
+  'sidebar-toggle': '#2718 review: folds and unfolds the desktop rail, from the header\'s left group — the window\'s top-left corner, where VS Code, Slack, Linear and Notion all put this control. DESKTOP ONLY: app.css gives it `display` inside `@media (min-width: 768px)` and nothing else does, because a phone\'s bar is at the FOOT of the screen and is the only navigation there is, so folding must never reach it. It ships PRESSED, matching navStore\'s `railOpen: true` and the visible bar the prerender carries; a folded rail is always something the viewer did, and it is session-only for the same reason. It renders nothing at all where the route has no rail (inside an app, chromeless, signed out), which is also what makes the header\'s left group empty on those screens rather than holding a dead control. The way back from folded is #platform-rail-peek, the same hot zone an open app already uses.',
   // ── #2370: the social-account scope disclosure ───────────────────
   'github-link-scope': '#2370: the scope line under the provider rows — no repository access, no provider token, and that this is account control rather than proof of unique humanity. It used to sit in a 76-word section lead ahead of the rows, read before anyone could act. It is deliberately NOT a disclosure: dapp.json asserts these phrases with no interaction step, which is the product stating they must be readable without a tap.',
   // ── #2266: password-reset completion ─────────────────────────────
@@ -324,17 +418,13 @@ const ADDED_IDS = {
   'app-permissions-list': '#2219: the rows host, React-owned end to end (features/settings/app-permissions-list.tsx). Ships EMPTY, like #llm-grants-list beside it: the list is fetched when the section opens, so contents in the prerender would be a hydration mismatch.',
   'app-permissions-status': '#2219: the section\'s status line, written by Settings._setAppPermissionsStatus after a revoke or a re-enable. Same controller-host contract as #llm-grants-status.',
   // ── #1823: Challenges in the app menu ────────────────────────────
-  'switcher-row-challenges': 'The app menu\'s Platform group links to the Leaderboard screen\'s Challenges tab, under Discover.',
   // ── #2382: Wallet and Validator under the app chip ───────────────
   // Profile's native account rows stay where they are; these are second
   // entrances in the menu's You group, between Profile and Settings.
-  'switcher-row-wallet': '#2382: the app menu\'s Wallet row. Ships `hidden` with a constant className and is revealed from walletSheetStore.visible, which WalletSheet.init() sets for a native top frame only. A plain tap awaits the menu\'s dismissal, then calls WalletSheet.openFromRow() — the same sheet #account-row-wallet opens; its #profile href is only the modified-click fallback.',
-  'switcher-row-validator': '#2382: the app menu\'s Validator row, to #settings/usernode, where the native block-production card asks to produce blocks. Ships `hidden` with a constant className and is revealed from nodePillStore.visible (NodePill.init(), native top frame only).',
   // ── The Workshop screen ──────────────────────────────────────────
   // The app's own Workshop page answers "what is happening in THIS app";
   // nothing answered "which of my apps wants something from me", short of
   // opening each one in turn. This is that page's two numbers, once per app.
-  'switcher-row-workshop': 'The app menu\'s Workshop row, directly under Home and above Discover. Home is the launcher (which app do I want to open); this is which app wants something from me, so it leads the Platform group with Home rather than sitting among the places you go once you know nothing is waiting. The adjacent-sibling check in dapp.json that pinned `#switcher-row-home + #switcher-row-discover` names this row between them now.',
   'workshop-screen': 'The Workshop SCREEN root (#workshop), a React-owned sibling of #messages-screen: every app in the viewer\'s "Your apps", with how many items that app\'s own Workshop page holds for them. Ships hidden and EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts in the controller\'s open() — so the prerender and the first client render agree.',
   'workshop-list': 'That screen\'s card of rows — a <GroupedList> from @/components/ui/grouped-list, the widget language\'s primary content shape, so the id sits on the primitive rather than on a hand-rolled div. It carries no rows in the prerender, like #browse-list beside it; a row is a <ListRow as="a"> with `[data-workshop-app="<slug>"]` carrying `[data-workshop-working]` and `[data-workshop-needs]`, which is what the declared checks select on.',
   'workshop-empty': 'Its nothing-to-show state, for an account with no apps. #2445 made it a CARD rather than the grey caption line it shipped as — a <ListRow as="a" href="#apps"> reading as an invitation to the directory, the way Home\'s Discover block\'s own empty card does (#1913): title over subtitle with the row\'s disclosure chevron. THE ID IS ON A WRAPPER <div>, NOT ON THAT ANCHOR, and that is load-bearing in two directions. dapp.json selects `#workshop-empty.hidden`, so the id and the `hidden` class toggle stay together on one element and visibility is never conditional rendering; and a SECOND declared check selects `#workshop-list a[data-workshop-app]:first-of-type`, which an `<a id="workshop-empty">` sibling of the rows silently steals — `:first-of-type` is structural and `display: none` does not exempt it. That shipped once and failed on the next run; the wrapper is the fix. Ships `hidden`, and stays hidden while the list is still loading — the skeleton rows are that state, and an empty list that reads as "you have no apps" before the fetch lands is the bug this distinction prevents. It is the list\'s FIRST child, not its last: GroupedList\'s row separator is `[&:not(:last-child)]:after:*` on the row, so a note after the rows would leave the last one drawing a hairline under nothing.',
@@ -345,7 +435,6 @@ const ADDED_IDS = {
   'app-access-status': '#2304: proposal success, duplicate-proposal and failure feedback for the access editor. It ships empty so the React-owned dialog hydrates exactly.',
   'app-access-propose': '#2304: the explicit action that turns a selected access draft into the existing vote-gated visibility proposal.',
   'members-load-error': '#2304: dialog-level feedback when Members & approvals is opened before its app row has loaded, replacing the misleading visibility-specific status target.',
-  'dev-ws-rail-host': 'Empty anchor outside the frosted .dc-lift-strip wrapper, so the Workshop\'s phone tab bar can be `position: fixed` to the real viewport. That wrapper\'s backdrop-filter establishes a containing block for fixed descendants — walking the rail\'s real ancestor chain it is the only one — and it is shared with the chat/topic frames and three panels, so the bar moves out rather than the blur coming off.',
   'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
   // ── OpenRouter catalog controls ──────────────────────────────────
   'settings-openrouter-model-search': 'Filters the key-visible OpenRouter catalog by model name, id or provider without another network request.',
@@ -386,12 +475,11 @@ const ADDED_IDS = {
   'feedback-first-fix-note': 'Explains the fix draft or the collaboration access requirement (#1583).',
   'feedback-first-board': 'Opens the board of the app that received the feedback (#1583).',
   'feedback-first-done': 'Dismisses the first-feedback confirmation without starting work (#1583).',
-  'improve-working-dot': 'What is left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse, rendered only while a dev session the viewer can see is mid-turn. It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact about this button that needs no dismissal. Top-right, so it cannot hide under the bottom-left outbox dot.',
+  'improve-working-dot': 'What was left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse, rendered only while a dev session the viewer can see is mid-turn. It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact that needs no dismissal. #2718 retired the button and the dot outlived it: it is on the Homeroom mark\'s tile now, which is the control on screen on every route. Top-right, so it cannot hide under the bottom-left outbox dot, which followed it there.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Homeroom app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
   'home-browse-btn': 'Discover\'s way into the #apps directory. Not a new control — it has always been the block\'s browse link — but it is in the COLD DOCUMENT now, which is why it is a new id here. The block\'s title moved out of the card to become the section\'s label, its controls followed (a card whose first row was chrome with one link floating at the end of it reads worse than one that opens on content), and a section heading is constant markup where the block behind it is fetched. So the control ships with the shell instead of appearing when /api/home-panels answers — which is also one less thing that pops in on a cached load.',
   // ── Platform UI pass: the update state, and where the versions live ──
-  'improve-btn-glyph': 'The Improve button\'s leading glyph, and a named element rather than a bare <svg> so a declared check can read `data-state` off it. Three states, one per thing worth knowing at a glance from a control that is on every screen: a lightbulb at rest, a spinner while this app or the platform is building or downloading a build, and an arrow-path once one is ready to reload onto. It is `w-4`, inside the 28px content row, so the header height contract is untouched.',
   'settings-about-section': 'Settings → About: the three version rows. They have moved twice before (#1431 built an About block, #1443 took them to the Improve panel\'s footer). They are back because the question they were being read for — "is something happening, and is there a new version yet" — is answered directly by that footer now, as a note and a reload button. What is left over is reference material, and this is the reference screen.',
   'about-row-app-version': 'The open app\'s latest merged main, in that pane. Gated on `slug && !selfHosted`, exactly as the Improve panel\'s copy was: on the platform\'s own app this row IS the platform, so it and "Platform version" under it printed the same seven characters twice.',
   'about-app-version-slot': 'Its value. A store-fed island rather than a legacy innerHTML target — the pane around it is static, and a version arriving when an app opens should repaint one row, not the settings screen.',
@@ -400,39 +488,48 @@ const ADDED_IDS = {
   'more-followed': 'The "I followed along" checkbox, stored as `answers.followed_claim`. It is a SELF-REPORT and is deliberately kept out of `answers.verified`: LinkedIn returns aggregate follower statistics with no identity, Instagram exposes a count and no relationship lookup, and X retired its boolean friendship endpoint, so no network will confirm a follow for us. Hidden here because its label is shown only once at least one follow URL is configured.',
   // ── #1443: what came back ───────────────────────────────────────
   'messages-screen': 'The Messages screen root, restored. #1431 made it #messages-sheet because a header chat bubble on every route left a full-screen Messages with no honest answer to "back to where?" — the bubble is gone and Messages is a menu row now, so the screen is both the honest shape and the one every messaging product uses for reading past conversations.',
-  'improve-footer': 'The panel\'s reference block, restored. #1431 dissolved it and rehomed each fact separately; every move was defensible alone and the sum meant leaving the app to read facts about the app you were standing in.',
   'drawer-row-native-app-version': 'The installed Flutter release, back in that footer. #1431 renamed it #about-row-native-app-version for the Settings About block it built; the block is gone with the rows it existed to hold, so the name goes back too. `.drawer-ver-row` is the shared CSS recipe, not a claim about a drawer.',
-  // ── #1443: the app's own views stayed in the Improve panel ──────
-  // They spent one round of #1443 as menu rows, on the argument that they are
-  // destinations. They came back: the menu answers WHICH APP, and these answer
-  // WHICH PART OF IT, which is the question the panel you open from inside an
-  // app is already about.
-  //
-  // There were three. `#app-context-row-board` went the way of the Activity
-  // segment before it: the Workshop and the kanban are ONE screen in two
-  // layouts, so the strip was offering a layout where its other segments offer
-  // destinations. Like other post-baseline ids it simply leaves this map
-  // rather than entering RETIRED_IDS. The board route is untouched.
-  'improve-views': 'The block holding them. #1431 built it; #1443 kept it.',
-  'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
-  'app-context-row-workshop': 'The app\'s Workshop — the lander, and the strip\'s only Dev segment: the same cards the kanban draws, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment, then outlived the Board segment.',
+  // ── #2761: the app's views are a ROW, not a toggle ────────────────
+  // #improve-views, #app-context-row-app and #app-context-row-workshop were
+  // the App | Workshop strip under the mark. They were added after the frozen
+  // baseline, so they leave this map rather than entering RETIRED_IDS. The
+  // owner asked for a plain "Go to workshop" row instead of a toggle, and for
+  // nothing in place of the App segment — the parked app on the bar (#2762)
+  // is the way back to a running app.
+  'app-menu-row-workshop': '#2761: "Go to workshop" — the row that replaced the App | Workshop strip under the mark. It links to #app/<slug>/workshop and carries the vote-count badge (#app-menu-workshop-owed, conditional, so not in this map) the strip\'s Workshop segment carried. Rendered unconditionally, like the strip, so the prerender and the hydrating render agree.',
   // ── #1443: the chip and its menu ────────────────────────────────
-  'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
-  'app-switcher-name': 'The chip\'s label, a named slot so a declared check can assert WHAT the chip says and not merely that it exists. It holds the Homeroom logotype on a platform screen and the app\'s name inside an app (frontend/@/components/ui/wordmark.tsx), so a check that wants the platform case asserts the <svg> rather than text — the mark has no text to match.',
+  // ── #2718: the chip came back apart ──────────────────────────────
+  // #app-switcher-btn was the header's label AND the one control that opened
+  // a list, on the reading that one control should name where you are and
+  // list everywhere you can go. The tab bar (#platform-tabs) carries the
+  // platform's destinations now, so the menu behind the name holds the APP's
+  // options — and a name that opens a menu about something else is a label
+  // that lies about its button. The name went back to being a name and the
+  // menu got its own button. Both of the chip's ids leave THIS map rather
+  // than entering RETIRED_IDS: the frozen baseline never recorded them.
+  'platform-mark-btn': '#2718: the Homeroom mark with a chevron, at the far right of the bar, opening the app-context menu that #app-switcher-btn used to open. THE MARK RATHER THAN A "…", which is what WeChat, Telegram, Alipay and Chrome\'s Custom Tabs all draw in this seat: the hosts whose mini-apps are made BY the people using them use their logo instead (Roblox, the Steam button on a Deck), and inside somebody else\'s app "whose menu is this" is the question the button answers. It is UNFRAMED beside the framed bell on purpose — two identical containers side by side read as one segmented control, so the pair differ in kind instead.',
+  'header-title-name': '#2718: the heading\'s label, a named slot so a declared check can assert WHAT the header says and not merely that it exists. It holds the Homeroom logotype on a platform screen and the app\'s name inside an app (frontend/@/components/ui/wordmark.tsx), so a check that wants the platform case asserts the <svg> rather than text — the mark has no text to match. It replaces #app-switcher-name one-for-one; the id changed because the element is no longer inside a switcher.',
+  // #header-subtitle and #header-app-tile are NOT in this map, and that is
+  // not an omission. Both render conditionally — the subtitle only on a
+  // screen that publishes one, the tile only inside the app view — so
+  // neither is in the prerendered document, and this map is for ids that ARE
+  // (the check below asserts exactly that). They replace
+  // #app-switcher-subtitle, which was absent from here for the same reason.
+  //   #header-subtitle: the destination WITHIN the screen the title names —
+  //     "Board", "Activity", or a dev session's lifecycle pill — beside the
+  //     name on one baseline rather than under it. #header-status-pill is
+  //     still its child on a session route, same id, same writer.
+  //   #header-app-tile: the open app's own artwork beside its name, which is
+  //     what makes the launcher → app step read as one movement. Drawn from
+  //     features/improve/improve-store.js, which already carried the name,
+  //     icon url and emoji for the panel that used to live in this bar, so
+  //     there is no new fetch and no new publisher.
+  'back-icon-close': '#2718: the ✕ in the header\'s left slot, shown inside a running app. NOT a fourth name for the chevron — leaving an app is not going up a level, it is stepping out of somebody else\'s program, and every mini-app host in the study draws that as an ✕. Where it LANDS is unchanged (App._appBackHref, so ✕ from a session still returns to that app\'s Workshop): only the glyph knows the difference. It ships `hidden`, like #back-icon-arrow, and each of the three glyphs now names its own mode rather than one of them being "not the other".',
   'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
-  'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
-  'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',
-  'switcher-row-messages': 'Messages. Was #messages-btn in the header; it has its own page, so it is a row. Carries NO count: a message notification is counted on the bell and listed in the notifications sheet with every other notification, which leaves this a plain destination like Home and Discover beside it.',
-  'switcher-row-profile': 'Profile.',
-  'switcher-row-settings': 'Settings. Was #profile-row-settings on the Profile screen.',
-  'switcher-byok-dot': 'The BYOK dot on that row — was #profile-byok-dot. settings.js publishes the flag; the className stays a constant.',
-  'switcher-row-admin': 'Admin & moderation. Was #profile-row-admin. Ships `hidden`; App.renderAdminButton publishes the isAdmin flag, unchanged.',
   // ── …and the Apps sheet behind the title tab ─────────────────────
   'apps-switcher-sheet': 'The board\'s Apps sheet — its "Switching between Apps" connector. Reuses the retired #app-context-sheet\'s controller, store and kit bottom-sheet lifecycle.',
   'apps-switcher-overlay': 'Its backdrop.',
   'apps-switcher-close': 'Its close control.',
-  'apps-switcher-create': 'The sheet\'s "Create New" action.',
-  'apps-switcher-list': 'The horizontal strip of the viewer\'s apps.',
   // ── Streamlined Concept: the drawer leads with Your apps ─────────
   // ── Andrea's simpler waitlist flow ────────────────────────────────
   // The relocated join question (see RETIRED_IDS above).
@@ -500,7 +597,7 @@ const ADDED_IDS = {
   // The dim is FOUR panels tiling the viewport minus the hole, not one
   // box-shadow. A shadow paints but receives no pointer events, so it cannot
   // block a click -- and the Improve step needs exactly that split: the
-  // cut-out passes the press through to the real #improve-btn while the
+  // cut-out passes the press through to the real Improve control while the
   // dimmed area keeps swallowing clicks.
   'home-tour-shade-top': 'The dim above the cut-out, and the whole screen on a step with nothing to point at.',
   'home-tour-shade-right': 'The dim to the right of the cut-out.',
@@ -557,7 +654,7 @@ const ADDED_IDS = {
   'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
   'cli-setup-guide': 'Always-visible local-agent setup in Settings → CLI access (#1609). It is static section markup so capability detection and credential-list state cannot blank the instructions.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
-  'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
+  'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
   'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
   // ── #1603: the description's requirement, said out loud ─────────
@@ -578,15 +675,14 @@ const ADDED_IDS = {
   // plus the drawer's Share action. Fully React-owned,
   // so unlike most of the shell it holds real state — nothing in
   // public/js/** writes a node inside it.
-  'improve-btn': 'Header control that opens the Improve panel; inherits the retired App/Dev switch\'s show/hide lifecycle (App.DrawerStatus.setAppOpen).',
-  'improve-overlay': 'Backdrop behind the Improve panel. Never uses `hidden` — opacity fades it and pointer-events stops a closed backdrop eating clicks.',
-  'improve-panel': 'The panel root. Right-edge slide-over at `sm` and up, bottom sheet below it, and a real native-kit sheet on touch where the kit is loaded.',
-  'improve-target-name': 'Which app the panel is about — the platform\'s own row on the home screen.',
-  'improve-close': 'Close button in the Improve panel header.',
-  'improve-body': 'The panel\'s scroller.',
+  // #improve-btn LEAVES THIS MAP rather than entering RETIRED_IDS, because the
+  // frozen baseline never recorded it: the UI overhaul added it, #2718 removed
+  // it, and the baseline is untouched either way. It was the header's filled
+  // violet "Improve" pill, between the bell and the mark. The panel it opened
+  // is reached from #app-menu-row-improve below; its glyph and both its dots
+  // kept their ids and are listed here still, on the row and on the mark.
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
   'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
-  'improve-sessions': 'The changes in flight, here and on the viewer\'s other apps — and the panel\'s ONE scroller, which is what keeps the actions and the views on screen at any height.',
   // #improve-version-dot is NOT here any more, and did not move: it is
   // retired. Amber while a build was deploying or downloading, violet once
   // one was here to reload onto — and the button's LEADING GLYPH already
@@ -603,11 +699,12 @@ const ADDED_IDS = {
   // The last three were draggable widgets on the launcher canvas; each is a
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
-  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the other three.',
+  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
   'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
   'home-discover-section': 'Area 2: featured tiles, the Popular lane and the way into the app directory.',
   'home-challenges-section': 'Area 3: the season\'s open challenges, and under them the leaderboard standings the retired #drawer-row-leaderboard used to point at.',
-  'home-create-section': 'Area 4: the create-an-app block, on every home screen regardless of quota.',
+  // #home-create-section (area 4) left this map when Create moved into the
+  // launcher grid; it is recorded in RETIRED_IDS.
   // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
   // running page: admin-console.js._renderShell() has always created them, by
   // writing #admin-root.innerHTML on every open. They are new to
@@ -750,6 +847,58 @@ const ADDED_IDS = {
   // ── #2377: Global Chat (experimental) ───────────────────────────
   'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',
   'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
+  // ── #2779: agent sessions (experimental, behind a per-user flag) ──
+  'agent-session-screen': '#2779: the React-owned agent session screen, one conversation with the Mayor that works on any app. Ships hidden and empty for hydration parity; the hash router reveals it at #agent/<id>, and App.REACT_SCREEN_IDS keeps its visibility single-owned. Everything inside it renders only once a conversation is open, so the root is its one static id.',
+  'settings-agent-sessions-row': '#2779: the Experimental pane\'s agent-sessions row. Ships hidden; settings.js shows it only to a user the server lets choose (agentSessionsChoosable), so the id is how that one writer finds it.',
+  'agent-sessions-enabled': '#2779: the agent-sessions switch. settings.js binds its change handler by id (POST /api/me/agent-sessions), the same way the two switches above it are bound.',
+  'agent-sessions-status': '#2779: the switch\'s status line, where a refused or failed save says why. Ships empty and hidden, like the two status lines above it.',
+  // ── #2707: the feedback destination is chosen, never assumed ────
+  'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
+  // ── #2718 REVIEW: the Improve panel retired, and ten ids with it ─────
+  //
+  // These were added by this branch and by the two chunks before it, so they
+  // leave this map rather than entering RETIRED_IDS — the frozen baseline
+  // never had them, and an id the baseline never had cannot be retired from
+  // it. Listed here as a group so the removal reads as one decision:
+  //
+  //   improve-panel, improve-overlay, improve-body, improve-sessions,
+  //   improve-footer, improve-target-name, improve-close
+  //       The drawer itself: its root, its backdrop, its scroller, the
+  //       changes in flight, the reference footer, the app name in its title
+  //       bar and the control that shut it. The sessions became the
+  //       Workshop's and the notifications sheet's Agents tab, the footer's
+  //       facts became the menu's About pane, and what was left was two
+  //       buttons behind a tap — so the buttons moved up into the menu
+  //       (#improve-quick-actions, still here) and the drawer went.
+  //   app-menu-row-improve, improve-btn-glyph
+  //       The row that opened it and the three-state glyph that row carried.
+  //       The glyph's states are the mark's two dots (#feedback-queue-dot,
+  //       #improve-working-dot), which are on screen on every route rather
+  //       than inside a closed menu.
+  //   app-menu-row-workshop
+  //       "Open in Workshop". Retired here in favour of the view strip's
+  //       Workshop segment, and back as "Go to workshop" when the strip
+  //       retired in turn (#2761) — so it is in the map above again.
+
+  // ── The side panel beside a running app (features/side-panel/) ──────
+  // On a desktop-width window, the app's Workshop, its discussion, messages,
+  // agent chats, proposals and issues open in a panel BESIDE the running app
+  // instead of replacing it. The panel is one React island, placed after the
+  // app view; it ships hidden and frameless, and its <iframe> (the platform
+  // itself at /?panel=1#<route>) exists only while a panel is open, so the
+  // frame's id is not in the static markup.
+  'platform-side-panel': 'The side panel\'s root — an <aside> named by its title, shown only while a panel page is open beside a running app on a desktop-width window. Its presence also sets html[data-side-panel], which narrows #app-view by the panel\'s width instead of hiding or moving the app\'s frame.',
+  'side-panel-back': 'The panel\'s Back: climbs the pages opened in the panel, then to the list the page belongs to (a discussion or a message to Messages; a proposal, an issue or a change to the app\'s Workshop). Ships hidden, because a freshly opened list has nowhere to climb to.',
+  'side-panel-title': 'The panel\'s title — the page\'s own header title as the panel\'s document reports it, and the aside\'s accessible name.',
+  'side-panel-expand': 'Expand ("Open full width, leaving the app"): the page the panel is showing, full width, as one ordinary navigation of the top window — which closes the app and parks it, so Resume brings it back.',
+  'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
+  'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
+  'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
+  // ── Discover's filter chips (the prototype's scrDiscover) ──────────
+  'browse-filter-chips': 'The All / Featured / Your apps / New chip row in the directory\'s sticky head, between the search and Sort. A chip picks which apps the list holds (Browse.filterApps); ships with All pressed, the store\'s prerender value.',
+  // ── The prototype's Challenges page: a History segment ──────────────
+  'leaderboard-history-root': 'The Leaderboard screen\'s fourth pane, the History tab (#leaderboard/seasons): the seasons that have ended, who won each, each event\'s winner and where the viewer finished — the navigation prototype\'s History segment. Ships EMPTY and hidden like the two other non-default pane roots, and Leaderboard._applySection toggles its `hidden` on a constant className; features/leaderboard/history-pane.tsx is the only writer below it.',
+  'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

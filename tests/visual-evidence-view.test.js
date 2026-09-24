@@ -81,6 +81,13 @@ test('pending, failed, and malformed artifact rows never leak media URLs', () =>
   }), []);
 });
 
+test('active progress shows the last stage only for the current proposal head', () => {
+  const progress = { phase: 'build_revisions', at: '2026-09-22T18:42:00Z' };
+  const active = run({ state: 'provisioning', progress });
+  assert.deepEqual(view.serialize(active, session(), 'demo-app', HEAD).progress, progress);
+  assert.equal(view.serialize(active, session({ reviewed_head_sha: OTHER }), 'demo-app', OTHER).progress, null);
+});
+
 test('snapshot serialization is truthful before a durable run exists', () => {
   const result = view.fromSnapshot(session({
     visual_evidence_state: 'planned',

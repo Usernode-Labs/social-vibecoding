@@ -439,7 +439,10 @@ test('the screen is built from the grouped-list primitives, not a copy of them',
   // language draws any more.
   const src = read('frontend/src/features/workshop/index.tsx');
   assert.match(src, /from '@\/components\/ui\/grouped-list'/);
-  for (const name of ['GroupedList', 'ListRow', 'SectionHeader']) {
+  // SectionHeader left this list with the screen's own <h1> (#2718 review):
+  // the bar above already says Workshop, and the one group on this screen is
+  // the whole of it, so there is no group WITHIN a screen left to label.
+  for (const name of ['GroupedList', 'ListRow']) {
     assert.match(src, new RegExp(`\\b${name}\\b`), `${name} is used`);
   }
   for (const wrong of [/\bdivide-y\b/, /\bbackdrop-blur/, /\bring-1\b/, /rounded-\[22px\]/]) {
@@ -556,11 +559,11 @@ test('coming back from an app re-reveals the screen', () => {
   assert.match(beforeTransition, /App\._inWorkshop = true;/);
   assert.match(beforeTransition, /App\.currentApp = null;/);
   // The other half of the same fact: nothing on the way into an app clears
-  // the flag, which is what leaves the breadcrumb readable on the lander.
+  // the flag, so the pair above is what tells "here" from "came from here".
   const enter = appJs.slice(appJs.indexOf('  async navigateToApp('));
   const chain = enter.slice(0, enter.indexOf('PlatformUI.transition('));
   assert.doesNotMatch(chain, /_exitWorkshop/,
-    'entering an app must not clear _inWorkshop — navigateToApp reads it');
+    'entering an app must not clear _inWorkshop — the way back reads it');
 });
 
 test('#workshop is a route of its own', () => {
@@ -569,50 +572,165 @@ test('#workshop is a route of its own', () => {
   assert.match(appJs, /navigateToWorkshop\(\) \{/);
   assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
   assert.match(appJs, /App\.setHeaderTitle\('Workshop'\)/);
-  // The menu row is the door, and it sits between Home and Discover.
-  const nav = /switcher-row-home([\s\S]*?)switcher-row-discover/.exec(sheetTsx);
-  assert.ok(nav, 'the Platform group still runs Home → … → Discover');
-  assert.match(nav[1], /id="switcher-row-workshop"/);
-  assert.match(nav[1], /href="#workshop"/);
-  assert.match(nav[1], /label="Workshop"/);
+  // THE DOOR IS A TAB (#2718). It was a menu row between Home and Discover,
+  // on the rule that the app chip's menu listed every destination; the bar
+  // carries them now, and Workshop is the fourth of five.
+  const html = read('public/index.html');
+  assert.match(html, /id="platform-tab-workshop"[^>]*href="#workshop"/,
+    'the unscoped screen is a tab');
+  // The app menu keeps the SCOPED entrance — the link-out every mini-app host
+  // in the study draws under a mini-app — as a plain "Go to workshop" row
+  // (#2761). It spent a round as the App | Workshop strip's segment; the
+  // owner asked for a row, not a toggle.
+  assert.match(sheetTsx, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/,
+    "and the app's menu links out to it, scoped");
+  assert.match(sheetTsx, /id="app-menu-row-workshop"/, 'as a row');
+  assert.ok(!/AppViewTabs/.test(sheetTsx), 'and not as a toggle segment');
 });
 
-test('the app-entry breadcrumb has one writer and one clearer', () => {
-  // Read by AppView._repaintDevBody to turn the Dev lander's house into a
-  // real ← back to #workshop. Anything that can set it from a second place,
-  // or fail to clear it, leaves an arrow pointing at a screen the viewer
-  // never came from.
-  const writes = appJs.match(/App\._appBackHref = /g) || [];
-  assert.equal(writes.length, 2,
-    'navigateToApp\'s write and _showOnlyScreen\'s clear — no more');
-  assert.match(appJs, /^ {2}_appBackHref: null,$/m,
-    'and the slot is declared on App with the prose that says who owns it');
-  assert.match(appJs, /App\._appBackHref = App\._inWorkshop \? '#workshop' : null;/,
-    'a BARE fragment: #back-btn\'s handler follows its href only when it '
-    + 'startsWith("#"), and anything else falls through to navigateHome');
-  assert.match(appJs, /if \(href && href\.startsWith\('#'\) && href\.length > 1\) \{/,
-    'and that is still the rule the handler applies');
-  // The mixed address the fragment produces — /app/<slug>/workshop#workshop —
-  // is healed to /#workshop by restoreFromHash, which is what makes a
-  // middle-click into a new tab land on the screen rather than the app.
+test('the ✕ knows the page the app was opened from, and forgets it with the visit', () => {
+  // The breadcrumb this replaced said '#workshop' when the Workshop screen was
+  // the origin and nothing otherwise, so the ✕ went Home from every other
+  // page — a thread, Discover, Me. The ✕ now goes back to whichever page it
+  // was (App.closeApp, driven for real in tests/app-close-origin.test.js);
+  // what is pinned here is who writes that memory and who clears it.
+  assert.ok(!/_appBackHref/.test(appJs), 'the Workshop-only breadcrumb is retired');
+  assert.match(appJs, /^ {2}_appReturn: null,$/m,
+    'the slot is declared on App with the prose that says who owns it');
+  // Written as an app's App tab is about to come on screen, BEFORE its
+  // entry is pushed over the page it was opened from — by navigateToApp…
+  const enter = appJs.slice(appJs.indexOf('  async navigateToApp('));
+  const noted = enter.indexOf("if (initialRoute.tab === 'app') App._noteAppReturn(slug);");
+  const pushed = enter.indexOf('App.updateHash({ ref: initialRoute.ref });');
+  assert.ok(noted > 0 && pushed > noted, 'noted before the app\'s own address is written');
+  assert.ok(enter.indexOf('App._pinAppReturn();') > pushed, 'and pinned once it has been');
+  // …and by switchTab, when the app's own Workshop hands over to the app.
+  const sw = appJs.slice(appJs.indexOf('  async switchTab('));
+  assert.match(sw, /if \(tab === 'app' && App\.currentTab !== 'app' && !options\?\.replaceRoute\) \{\s*App\._noteAppReturn\(App\.currentApp\);/);
+  // One clearer: revealing any other screen ends the visit it was about.
+  assert.match(appJs, /if \(revealId !== 'app-view'\) App\._appReturn = null;/,
+    'revealing any other screen ends the app visit it was about');
+  // The ✕ is App.closeApp's, ahead of the handler's own href-following rule —
+  // which still serves every ARROW: the href IS the answer, and home is the
+  // fallback for a screen that named no parent.
+  const handler = appJs.slice(appJs.indexOf("document.getElementById('back-btn').addEventListener('click'"));
+  const close = handler.indexOf("if (App.currentApp && App.currentTab === 'app' && App.closeApp()) return;");
+  const follow = handler.indexOf("if (href && href.startsWith('#') && href.length > 1) {");
+  assert.ok(close > 0 && follow > close, 'the ✕ is claimed before the href is followed');
+  // The mixed address a fragment produces — /app/<slug>/workshop#workshop —
+  // is still healed to /#workshop by restoreFromHash.
   assert.match(appJs, /if \(rawHash && pathRoute && !rawHash\.startsWith\('app\/'\)\) \{/);
-  assert.match(appJs, /if \(revealId !== 'app-view'\) App\._appBackHref = null;/,
-    'revealing any other screen ends the app visit the breadcrumb was about');
 });
 
-test('the Dev lander points back at the Workshop screen, and only the lander', () => {
-  assert.match(appViewJs, /if \(App\._appBackHref\) App\.setBackIcon\?\.\('arrow', App\._appBackHref\);/);
-  // AFTER the lander's own title publish, which is inside the card-list
-  // branch — the session, chat and topic sub-views all return before it, so
-  // none of them inherits the arrow.
-  const landerTitle = appViewJs.indexOf("App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Workshop');");
-  const arrow = appViewJs.indexOf('if (App._appBackHref) App.setBackIcon');
-  assert.ok(landerTitle > 0 && arrow > landerTitle,
-    'the override sits in the lander branch, under the title it belongs to');
-  const chatBranch = appViewJs.indexOf("if (subTab === 'chat') {");
-  assert.ok(chatBranch > 0 && chatBranch < landerTitle,
-    'and the chat branch returns before it');
-  // An arrow WITH an href is also what turns the phone's back gesture on.
+test('the Dev lander needs no back arrow, because the rail is beside it', () => {
+  // IT HAD ONE, and it was the whole of the way out: `App._appBackHref` said
+  // the app had been opened from the Workshop screen, and the lander
+  // published a ← to it. That was the best available answer on a surface
+  // with no rail — and it only pointed anywhere at all for readers who
+  // arrived by that one route.
+  //
+  // The rail is there now (#2718 review). The app's Workshop is a platform
+  // screen scoped to one app, App._syncPlatformTabs keeps the bar up on it
+  // and lights the Workshop tab, and that tab lands on the very screen the
+  // arrow pointed at — for everyone, however they got here.
+  assert.ok(!appViewJs.includes("App.setBackIcon?.('arrow', App._appBackHref)"),
+    'the lander publishes no arrow of its own');
+  assert.match(appViewJs, /App\.setBackIcon\?\.\('none'\);/,
+    'and the sub-view reset is an empty slot, not the house');
+  // The reset still sits ABOVE the branches, so the session's own ← survives
+  // it and nothing else inherits that arrow. #2770 moved its destination: a
+  // change is an agent conversation, so it hangs off Messages, not the board.
+  const reset = appViewJs.indexOf("App.setBackIcon?.('none');");
+  const session = appViewJs.indexOf("if (subTab === 'sessions' && ref) {");
+  assert.ok(reset > 0 && session > reset,
+    'the reset leads, so every sub-view that wants a slot claims it after');
+  const sessionBranch = appViewJs.slice(session, appViewJs.indexOf('\n    }', session));
+  assert.match(sessionBranch, /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
+    'and a session leads with a real ← up to Messages (#2770)');
+  // The ✕ is the app TAB's alone, and it lands wherever the visit began.
+  assert.match(read('public/js/app.js'), /App\.setBackIcon\('close', App\._closeAppHref\(\)\);/);
+  // An arrow WITH an href is what turns the phone's back gesture on — still
+  // true, and still what the session sub-view relies on.
   assert.match(read('frontend/src/features/header/native-back-navigation.ts'),
     /mode === 'arrow' && !!href/);
+});
+
+// ── One Workshop, two scopes (#2718 review) ────────────────────────────
+
+test('the app\'s own Workshop keeps the rail, and lights the tab it came through', () => {
+  // "should preserve the side bar. It doesn't need a back button anymore
+  // because of the side bar."
+  //
+  // #app-view is TWO screens behind one id: the running app, which takes the
+  // whole window because that is what makes it feel like a program, and on
+  // the `dev` tab the platform's own Workshop for that app. The second is a
+  // platform screen that happens to be scoped, and hiding the rail there left
+  // it as the one such screen with no navigation at all.
+  const appJs = read('public/js/app.js');
+  const sync = appJs.slice(appJs.indexOf('  _syncPlatformTabs(revealId) {'));
+  const body = sync.slice(0, sync.indexOf('\n  },\n'));
+  assert.match(body, /const inApp = screen === 'app-view' && App\.currentTab === 'app';/,
+    'the app itself covers the rail; its Workshop does not');
+  assert.match(body, /!!screen && !App\.chromeless && !inApp,/);
+  // The Workshop tab is lit, so the rail knows where you are — except on the
+  // app's DISCUSSION, which is a row in the Messages inbox and lights that
+  // instead (#2718 review).
+  assert.match(body, /\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/,
+    'and the Workshop tab is lit, so the rail knows where you are');
+
+  // A TAB HOP inside the app crosses that line without a screen reveal, so
+  // it is the only other place that has to re-sync.
+  const hop = appJs.slice(appJs.indexOf('  async switchTab(tab, ref, subTab, options) {'));
+  assert.match(hop.slice(0, hop.indexOf('\n  },\n')),
+    /if \(App\._isScreenVisible\?\.\('app-view'\)\) App\._syncPlatformTabs\('app-view'\);/,
+    'the rail moves with the tab');
+
+  // And the Workshop's lander ends ABOVE the platform's bar: its floor takes
+  // off the larger of that bar and the home-indicator strip. (The Workshop's
+  // own tabs used to float at the foot and ride on the bar; they sit at the
+  // head of the page now, #2767, so the floor is the only thing that has to
+  // know about it.)
+  const css = read('public/css/app.css');
+  assert.match(css,
+    /--ws-area: calc\([\s\S]*?max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)\s*\);/);
+});
+
+test('the app\'s own Workshop wears the same scope chip, read from the other end', () => {
+  // "should preserve the app switcher". The all-apps screen's chip says "All
+  // apps" and picking one navigates here; this one names the app and its
+  // panel offers the others — and All apps, which is the way back up and the
+  // other half of why the back arrow is gone.
+  const chrome = read('frontend/src/features/workshop/workshop-chrome.tsx');
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+
+  assert.match(ws, /import \{ AppWorkshopScope \} from '\.\.\/\.\.\/workshop\/workshop-chrome';/,
+    'ONE component, not a second chip that can drift from the first');
+  assert.match(ws, /<AppWorkshopScope\n\s+slug=\{slug\}/);
+  // Its name and artwork come from the store the header's own tile reads, so
+  // the two cannot disagree about which app this is, and no second fetch.
+  assert.match(ws, /name=\{app\.name \|\| undefined\}/);
+  assert.match(ws, /iconUrl=\{app\.iconUrl\}/);
+  assert.match(ws, /const app = useStoreState\(improveStore\);/);
+
+  // THE PANEL'S "All apps" ROW IS THE WAY BACK UP.
+  assert.match(chrome, /onClick=\{\(\) => \{ onClose\(\); goToAllApps\(\); \}\}/);
+  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#workshop';/,
+    'a hash assignment, so the rail\'s Workshop tab and this are one route');
+  // The app you are already in closes the panel and goes nowhere: a row that
+  // re-navigated to the current route would throw this screen's scroll
+  // position and its open windows away to arrive where it started.
+  assert.match(chrome, /onClose\(\);\n\s*if \(scope\.slug === app\.slug\) return;/);
+
+  // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): two controls open this
+  // panel — the chip above 700px, the header's tile and name below it — so
+  // the flag cannot be the chip's `useState`. And it is still not
+  // workshopStore: that was the all-apps screen's, which wears no chip now.
+  const island = chrome.slice(chrome.indexOf('export function AppWorkshopScope('));
+  assert.match(island, /const \{ open \} = useStoreState\(appScopeStore\)/);
+  assert.ok(!island.includes('workshopStore'), 'the two screens share no flag');
+  // A panel left open does not outlive the app, nor the Workshop.
+  assert.match(island, /useEffect\(\(\) => \{\n\s*appScopeStore\.set\(\{ open: false \}\);\n\s*return \(\) => appScopeStore\.set\(\{ open: false \}\);\n\s*\}, \[slug\]\);/);
+  // The list loads in an effect and never during render.
+  assert.match(island, /useEffect\(\(\) => \{[\s\S]{0,600}fetch\(`\/api\/apps\$\{demoQuery\(\)\}`\)/);
+  assert.match(island, /catch \{/, 'and offline leaves the chip working');
 });

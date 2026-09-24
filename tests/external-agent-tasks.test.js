@@ -32,6 +32,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const svc = require('../src/services/external-agent-tasks');
+const evidenceContract = require('../src/services/visual-evidence-plan');
+const evidenceFixture = require('./fixtures/visual-evidence');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/external-agent-tasks.js'), 'utf8'
@@ -904,14 +906,21 @@ test('submit_work opens the cross-fork PR when the mirror is unavailable, and st
       return { number: 88, html_url: 'https://github.com/usernode-bot/recipe-box/pull/88', head: { repo: { owner: { login: 'SomeUser' } } } };
     },
   });
+  const visualEvidence = evidenceContract.parseIntent(evidenceFixture.intent());
+  const visualEvidencePlan = {
+    baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
+    planHash: evidenceContract.planHash(evidenceFixture.plan()),
+    plan: evidenceContract.parseReplayPlan(evidenceFixture.plan()),
+  };
 
   const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, calls, () => svc.submitWork(
     { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, clientName: 'Claude', taskId: 31, title: 'Dark mode',
       body: 'Adds a toggle.',
-      importProposal: async (slug, prNumber) => {
-        imports.push({ slug, prNumber });
+      visualEvidence, visualEvidencePlan,
+      importProposal: async (slug, prNumber, extra) => {
+        imports.push({ slug, prNumber, extra });
         return { ok: true, status: 200, body: { sessionId: 55 } };
       },
     }
@@ -928,7 +937,10 @@ test('submit_work opens the cross-fork PR when the mirror is unavailable, and st
 
   // The proposal is made by the platform's own import route, replaying the
   // caller's token — this service never inserts a chat_sessions row itself.
-  assert.deepEqual(imports, [{ slug: 'recipe-box', prNumber: 88 }]);
+  assert.equal(imports[0].slug, 'recipe-box');
+  assert.equal(imports[0].prNumber, 88);
+  assert.deepEqual(imports[0].extra.visualEvidence, visualEvidence);
+  assert.deepEqual(imports[0].extra.visualEvidencePlan, visualEvidencePlan);
   assert.doesNotMatch(SRC, /INSERT INTO chat_sessions/);
 
   // The only thing stamped afterwards is the badge column, scoped to the

@@ -101,12 +101,23 @@ function bareHandle(v) {
 // (answers.verified) first, and otherwise the identity connected on its
 // linked ACCOUNT — `x_handle_source` says which, since only the first is
 // the waitlist row's own claim.
+//
+// Every stage-1/stage-2 survey field the signup could have answered gets its
+// own column (see services/waitlist-questions.js for the full shape): the
+// "group" section covers what they're building and with whom
+// (group_name/size/role/tools/need), and "loss" covers the platform-loss
+// story (had_loss/loss_product/loss_kind/loss_story). Enum answers (group
+// size/role/tools, loss had/kind) are exported as the raw stored code, same
+// as `found_us` above, so the file matches what the row actually holds
+// rather than a label that can be reworded later.
 const EXPORT_HEADER = [
   'signup_id', 'email', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
   'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
   'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
   'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
-  'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+  'country', 'city', 'found_us', 'found_us_detail', 'made_url', 'made_note',
+  'group_name', 'group_size', 'group_role', 'group_tools', 'group_need',
+  'had_loss', 'loss_product', 'loss_kind', 'loss_story', 'followed_claim',
 ];
 
 function exportRow(r) {
@@ -114,6 +125,8 @@ function exportRow(r) {
   const verified = plainObject(a.verified);
   const handles = plainObject(a.handles);
   const discovery = plainObject(a.discovery);
+  const group = plainObject(a.group);
+  const loss = plainObject(a.loss);
   const signupX = bareHandle(verified.x);
   const accountX = bareHandle(r.account_x_handle);
   return [
@@ -141,6 +154,17 @@ function exportRow(r) {
     discovery.source || '',
     discovery.detail || '',
     a.made_url || '',
+    a.made_note || '',
+    group.name || '',
+    group.size || '',
+    group.role || '',
+    Array.isArray(group.tools) ? group.tools.join('; ') : '',
+    group.need || '',
+    loss.had || '',
+    loss.product || '',
+    Array.isArray(loss.kind) ? loss.kind.join('; ') : '',
+    loss.story || '',
+    a.followed_claim ? 'true' : '',
   ];
 }
 
@@ -225,6 +249,65 @@ function waitlistAdminRoutes(config) {
       return ok(res, { data: rows.map(formatSignup) }, { meta: meta(page, perPage, total) });
     } catch (err) {
       log.error('topochain-admin', 'GET /admin/waitlist failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET /api/v4/admin/waitlist/analytics ──────────────────────────────
+  // Aggregate counts + a 30-day signup trend for the Analytics dashboard.
+  // Read-only and cheap (a handful of aggregates plus one grouped count),
+  // so it sits under the router-wide `adminReadGate` like the list route
+  // above rather than `adminWriteGate` — nothing here exposes a row an
+  // admin couldn't already see paging through the queue.
+  //
+  // Every figure is derived from columns the table actually has (no
+  // invented "status" enum): `released_at` is waiting vs. admitted,
+  // `confirmed_at` is whether the signup ever proved it could receive
+  // mail, `linked_user_id` is whether a platform account is attached.
+  router.get('/api/v4/admin/waitlist/analytics', async (req, res) => {
+    try {
+      const { rows: totalsRows } = await pool.query(
+        `SELECT COUNT(*)::int AS "totalSignups",
+                COUNT(*) FILTER (WHERE released_at IS NULL)::int AS waiting,
+                COUNT(*) FILTER (WHERE released_at IS NOT NULL)::int AS admitted,
+                COUNT(*) FILTER (WHERE confirmed_at IS NOT NULL)::int AS confirmed,
+                COUNT(*) FILTER (WHERE linked_user_id IS NOT NULL)::int AS linked
+           FROM waitlist_signups`
+      );
+      const totals = totalsRows[0];
+
+      // 30-day daily trend, zero-filled so a quiet day is a real zero
+      // rather than a missing point the chart would have to skip.
+      const days = 30;
+      const { rows: dailyRows } = await pool.query(
+        `SELECT to_char(date_trunc('day', submitted_at), 'YYYY-MM-DD') AS day,
+                COUNT(*)::int AS count
+           FROM waitlist_signups
+          WHERE submitted_at >= NOW() - $1::interval
+          GROUP BY 1`,
+        [`${days} days`]
+      );
+      const byDay = new Map(dailyRows.map((r) => [r.day, r.count]));
+      const series = [];
+      for (let i = days - 1; i >= 0; i -= 1) {
+        const d = new Date();
+        d.setUTCDate(d.getUTCDate() - i);
+        const day = d.toISOString().slice(0, 10);
+        series.push({ day, count: byDay.get(day) || 0 });
+      }
+
+      return ok(res, {
+        data: {
+          totalSignups: totals.totalSignups,
+          waiting: totals.waiting,
+          admitted: totals.admitted,
+          confirmed: totals.confirmed,
+          linked: totals.linked,
+          series,
+        },
+      });
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/waitlist/analytics failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

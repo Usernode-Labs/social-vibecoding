@@ -155,6 +155,19 @@ export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
 /**
+ * EXPAND — two arrows out to opposite corners: the side panel's "open full
+ * width, leaving the app" (features/side-panel/side-panel.tsx). Transcribed
+ * from the navigation prototype the panel comes from, which draws exactly
+ * these four strokes; the panel's header row is its only caller.
+ */
+export const ExpandIcon = stroked('ExpandIcon', [
+  'M14 4h6v6',
+  'M20 4l-7 7',
+  'M10 20H4v-6',
+  'M4 20l7-7',
+]);
+
+/**
  * The dev composer's send mark (Streamlined Concept). Its button is a 44px
  * circle now rather than a rectangle carrying the word "Send", so the arrow
  * IS the label — drawn on the full 24 grid, like PlusWideIcon and for the
@@ -412,6 +425,16 @@ export const UserGroupIcon = stroked(
   'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9',
 );
 
+/**
+ * A HASH — a channel, in the desktop rail's Recents (#2802).
+ *
+ * The Messages inbox draws a channel's tile as a literal `#` character; the
+ * rail's rows are glyphs beside a label, so it needs the same mark as a
+ * stroked icon to sit on the person / group / sparkle / app glyphs' grid.
+ * Heroicons v1 outline `hashtag`, the set this file is drawn from.
+ */
+export const HashIcon = stroked('HashIcon', 'M7 20l4-16m2 16l4-16M6 9h14M4 15h14');
+
 // ── Tooling ──────────────────────────────────────────────────────────────
 
 /**
@@ -425,6 +448,26 @@ export const UserGroupIcon = stroked(
  * module exists to prevent — so it became an export rather than a duplicate.
  */
 export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
+
+/**
+ * A PANEL WITH A RAIL DOWN ITS LEFT — the desktop sidebar's own toggle.
+ *
+ * The one glyph the whole industry agrees on for this control: VS Code,
+ * Slack, Linear, Notion and the design study's own prototype all draw a
+ * rounded rectangle with a line a third of the way in. It is a PICTURE OF THE
+ * LAYOUT rather than a metaphor, which is why nothing else reads as clearly —
+ * a hamburger says "a menu is behind this" and the rail is not behind
+ * anything, it is beside you.
+ *
+ * Deliberately NOT mirrored when the rail is collapsed. The button is a
+ * toggle and says which state it is in through `aria-pressed`; an icon that
+ * flips as well makes the reader work out whether it is showing the current
+ * state or the one they would get.
+ */
+export const SidebarIcon = stroked(
+  'SidebarIcon',
+  'M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zM9 4v16',
+);
 
 /**
  * A NEWSPAPER — the Activity row and screen.

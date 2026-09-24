@@ -40,6 +40,10 @@ const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
 const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
 const sessionHeaderTsx = read('frontend/src/features/dev-chat/session-header.tsx');
+const topicBackTsx = read('frontend/src/features/dev-board/topic/topic-back.tsx');
+const topicHeadTsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+const headerTsx = read('frontend/src/features/header/platform-header.tsx');
+const improveStoreJs = read('frontend/src/features/improve/improve-store.js');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
 const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
 const kudosPaneTsx = read('frontend/src/features/leaderboard/kudos-pane.tsx');
@@ -191,14 +195,20 @@ test('the header back/home control is a real anchor', () => {
   const inner = html.slice(html.indexOf('<a id="back-btn"'), html.indexOf('</a>', html.indexOf('<a id="back-btn"')));
   assert.match(inner, /id="back-icon-home"/, 'the house');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
-  // …and the document ships showing exactly one of them. Which one does not
-  // matter here (the router publishes the real state on the first screen
-  // swap); that BOTH or NEITHER is visible is the broken state.
-  const shownHome = !/id="back-icon-home"[^>]*class="[^"]*\bhidden\b/.test(inner);
-  const shownArrow = !/id="back-icon-arrow"[^>]*class="[^"]*\bhidden\b/.test(inner);
-  assert.notEqual(shownHome, shownArrow,
-    'one glyph is hidden and the other is not — two glyphs in one 28px disc '
-    + 'is what a wrong `hidden` looks like');
+  assert.match(inner, /id="back-icon-close"/, 'and the ✕ that steps out of an app (#2718)');
+  // …and AT MOST ONE of them is showing. Two glyphs in one 28px disc is what
+  // a wrong `hidden` looks like, and it is the only broken state here: the
+  // cold document publishes mode 'none', which hides the anchor itself, so
+  // none of the three being visible inside it is correct rather than empty.
+  // It used to be "exactly one", on a render where the house was drawn for
+  // every mode that was not the arrow — which is precisely the bug a third
+  // glyph introduces, so each one names its own mode now.
+  const shown = ['home', 'arrow', 'close'].filter((name) =>
+    !new RegExp(`id="back-icon-${name}"[^>]*class="[^"]*\\bhidden\\b`).test(inner));
+  assert.ok(shown.length <= 1,
+    `at most one glyph may be visible at a time, and these were: ${shown.join(', ')}`);
+  assert.match(html, /<a id="back-btn"[^>]*class="[^"]*\bhidden\b/,
+    "…and in the cold document the anchor is hidden outright, which is mode 'none'");
   // 28x28 now, not 20x28: the slot holds the app glyph as well as the arrow
   // (features/header/header-app-icon.tsx), and they never draw together. What
   // matters to the header-layout hook is that the width is FIXED, and it is.
@@ -245,35 +255,45 @@ test('every screen entry refreshes the href through the one choke point', () => 
   const at = appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   assert.ok(at !== -1, '_showOnlyScreen went missing');
   const fn = appJs.slice(at, appJs.indexOf('\n  },', at));
-  assert.match(fn, /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
+  // A TABLE, READ THROUGH ONE HELPER (#2718 review). The ternary here had
+  // grown three answers and still disagreed with the screens that write
+  // their own slot a moment later, so the corner depended on which writer
+  // ran last. What matters for THIS test is unchanged: every screen change
+  // passes through this line, so the href cannot go stale.
+  assert.match(fn, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
     'this is what keeps the href from ever going stale — every screen change '
     + 'passes through here');
+  assert.match(appJs, /_backSlotFor\(revealId\) \{[\s\S]{0,400}App\._BACK_SLOT\[revealId\]/,
+    'and the answer comes from the table rather than a chain of conditions');
 });
 
 test('the three up-one-level screens pass their own target', () => {
   // Browse's detail view is a level INSIDE that screen and draws the arrow.
-  // Settings and Admin draw one at level 2 only — the mobile drill-in, which
-  // is likewise a level inside the screen and would strand a phone viewer
-  // without it.
+  // Settings and Admin draw one at level 2 as well — the mobile drill-in,
+  // which is likewise a level inside the screen and would strand a phone
+  // viewer without it.
   //
-  // Settings and Admin roots draw the house, and since #2639 so does the
-  // Browse LIST: it is somewhere you go from Home, not a root you arrive at,
-  // and an empty bar left the chip menu as the only way out. A Browse detail
-  // opened from Home still draws the house, while a detail opened from the
-  // list (or directly) links back to that list.
+  // THE HOUSE IS GONE FROM ALL THREE (#2718 review). It was the answer while
+  // these screens hung off Home's account row; the five-tab bar answers "how
+  // do I get out of here" now, so a house is either a duplicate of the Home
+  // tab or — worse, on Settings and Admin — a jump PAST the Me tab the viewer
+  // came through and which is still lit. What is left is the honest pair: an
+  // arrow when there is a level above, nothing when there is not.
   assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
     'browse names the one state with a list above it…');
-  assert.match(browseJs, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,
-    '…and that state alone gets the chevron; every other level gets the house');
+  assert.match(browseJs, /const backMode = upToList \? 'arrow' : 'none';/,
+    '…and that state alone gets the chevron; the list and a detail opened '
+    + 'from a Home card are roots of this screen and show nothing');
   assert.match(browseJs, /setBackIcon\(backMode, upToList \? '#apps' : undefined\)/,
     'the list-bound chevron keeps its explicit parent target');
-  assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the admin section chevron pops to the console menu; its root gets home');
+  assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
+    'the admin section chevron pops to the console menu; its root goes up to '
+    + 'the Me tab it was opened from');
   // Settings resolves its section target through _upHref (#1565): the menu
   // when the menu is what sits below the entry, and the address the viewer
-  // came from when they arrived from elsewhere in the app. Its root still
-  // gets the house.
-  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/,
+  // came from when they arrived from elsewhere in the app. Its root goes to
+  // the same place Admin's does.
+  assert.match(settingsJs, /setBackIcon\('arrow', inSection \? Settings\._upHref\(\) : '#profile'\)/,
     'the settings section chevron points where its back press goes');
   assert.match(settingsJs, /_upHref\(\) \{[\s\S]{0,400}return '#settings';/,
     '…which is still the menu unless something else of ours is below');
@@ -342,9 +362,11 @@ test('the app-wide dev chat carries no back control any more', () => {
 test('"back out of a dev session" rides the header back anchor, with a real target', () => {
   assert.ok(!/dc-back/.test(sessionHeaderTsx),
     'session-header.tsx: the in-strip back control stays retired');
+  // #2770: a change is an agent conversation, so the anchor hangs off
+  // Messages rather than off the Board.
   assert.match(appViewJs,
-    /setBackIcon\?\.\('arrow', App\._appUrl\([\s\S]{0,140}boardView: 'kanban'/,
-    'app-view.js points the header anchor at the Board on the way into a session');
+    /if \(subTab === 'sessions' && ref\) \{[\s\S]{0,900}?setBackIcon\?\.\('arrow', '#messages'\)/,
+    'app-view.js points the header anchor at Messages on the way into a session');
   // The header listener's guard runs before preventDefault (pinned in
   // app.js for every screen the anchor serves), and the plain click walks
   // the handleBack chain into dev-chat.js's.
@@ -353,21 +375,24 @@ test('"back out of a dev session" rides the header back anchor, with a real targ
   assert.match(devChatJs, /handleBack\(\) \{[\s\S]{0,300}?leaveSession\(\)/,
     'a session claims the click');
   // And the work the plain click does is still dev-chat.js's.
-  assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,900}?App\.switchTab\('dev'\)/);
+  assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,2400}?location\.hash = '#messages'/);
 });
 
-// The topic page's back bar is retired too, and it was the LAST one. It was a
+// The topic page's back bar is retired, and it stays retired. It was a
 // full-width bar with a hairline whose entire content was `← Back`, sitting
-// directly under a platform header that — since the back/home rule — carries a
-// chevron to the same Board on this very route. Two back controls one row
-// apart, and the page opened with a strip of chrome instead of the proposal
-// you came to read.
+// directly under a platform header that carried a chevron to the same Board on
+// this very route. Two back controls one row apart, and the page opened with a
+// strip of chrome instead of the proposal you came to read.
 //
-// Nothing #1036 bought that anchor is lost: the header's chevron is a real
-// `<a href>` with the same NavLink guard, provided once instead of twice.
-test('"back out of an issue / proposal / governance topic" rides the header anchor', () => {
+// #2916 MOVED THE ONE THAT WAS LEFT. The header's chevron was asked to sit
+// "inside" the Workshop pane, and it does: the "‹ Workshop" chip at the top of
+// the topic head, with the header drawing NO back control on these routes. The
+// rule this block has always enforced is unchanged: one back control per page,
+// and a pinned bar above the thread is not coming back to be the second.
+test('"back out of an issue / proposal / governance topic" is the in-pane Workshop chip (#2916)', () => {
   assert.ok(!/dev-topic-back/.test(topicFrameTsx),
-    'topic-frame.tsx: the back anchor is retired');
+    'topic-frame.tsx: the pinned back bar is retired, and the chip is not the '
+    + "frame's either: it scrolls with the card, so it lives in the topic head");
   // Code only: the file's header explains what was removed and names both
   // props while doing it, which is prose worth keeping.
   const topicCode = topicFrameTsx.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -378,24 +403,65 @@ test('"back out of an issue / proposal / governance topic" rides the header anch
     'app-view.js hands the host over and nothing else, exactly as the general '
     + 'chat mount already did');
 
-  // The header IS the back control on this route, by route derivation rather
-  // than by an imperative call — pinned properly in tests/header-back-home.js;
-  // named here so this file's map of "who owns back" stays complete.
-  assert.match(read('frontend/src/features/header/platform-header.tsx'),
-    /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
-    'the header points a topic page at its board — `board` and not a literal '
-    + '`/board`, because Workshop and Board are one screen in two layouts and '
-    + 'the arrow has to name the one the reader came from');
+  // THE CHIP: a real anchor with a real target, guarded before it
+  // preventDefaults, exactly what #1036 bought the header's chevron.
+  assert.match(topicBackTsx, /<a\n\s+className="dev-topic-back un-touch-target"\n\s+href=\{href\}/,
+    'topic-back.tsx: the control is an <a> with an href');
+  assert.ok(!/target=/.test(topicBackTsx.replace(/\/\*[\s\S]*?\*\//g, '')),
+    'and no target=_blank, which the native WebView would push out to the system browser');
+  const click = topicBackTsx.slice(topicBackTsx.indexOf('function onBackClick('));
+  const guard = click.indexOf('isNativeClick?.(event)');
+  const prevent = click.indexOf('event.preventDefault()');
+  assert.ok(guard !== -1 && prevent !== -1, 'the modified-click guard and the plain-click claim');
+  assert.ok(guard < prevent, 'the guard must come FIRST, or cmd-click is swallowed');
+  assert.match(click, /window\.location\.hash = href;/,
+    'a plain click follows the href, as the header listener did on this route');
+  // Its destination is the one the header's chevron carried: `boardHref`,
+  // never a literal `/board`, because Workshop and Board are one screen in
+  // two layouts and back has to name the one the reader came from.
+  assert.match(improveStoreJs,
+    /export function topicBackHref\(\{ slug, tab, subTab, boardView \}\) \{\n\s+return slug && tab === 'dev' && subTab === 'topic' \? boardHref\(slug, boardView\) : null;/,
+    'the chip resolves a topic route to its board through boardHref');
+  assert.match(topicBackTsx, /const href = topicBackHref\(\{ slug, tab, subTab, boardView \}\);\n\s+if \(!href\) return null;/,
+    'and renders only when that answer exists');
+  // First in `.dev-topic`, so it sits above the hero or the card and scrolls
+  // with them, on every kind of topic (TopicHead is the head of all of them).
+  assert.match(topicHeadTsx, /<div ref=\{root\} className="dev-topic">\n\s+\{back \? <TopicBack \/> : null\}/,
+    'topic-head.tsx: the chip is the first child of .dev-topic');
+  assert.match(topicHeadTsx, /conversation=\{conversation\} back \/>;/,
+    'and TopicHead, the topic page, is what asks for it');
 });
 
-test('no in-page back control is left anywhere in the Dev area', () => {
+test('a topic page has exactly one back control: the chip, and no header arrow (#2916)', () => {
+  // The header reads the SAME function the chip renders from and forces its
+  // slot to 'none' on that answer, so "chip shown" and "arrow hidden" are one
+  // fact. Two call sites agreeing by convention is how a page grows zero or
+  // two back controls; this is agreement by construction.
+  assert.match(headerTsx, /const paneBack = topicBackHref\(\{/,
+    'platform-header.tsx derives the topic from topicBackHref');
+  assert.match(headerTsx, /const mode = backMode === 'close' \? 'close'\n\s+: paneBack \? 'none'/,
+    "and draws no back control where the chip is the page's back");
+  // …and no longer maps a topic to the board itself: that answer is the chip's.
+  assert.doesNotMatch(headerTsx, /subTab === 'topic'\) return boardHref/,
+    "the header's ladder no longer sends a topic anywhere");
+  // Dev SESSIONS are Messages threads, not topics (#2770): they keep the
+  // header arrow and never get the chip.
+  assert.match(headerTsx, /subTab === 'sessions'\) return sessionOrigin \|\| '#messages';/,
+    'a dev session still climbs by the header arrow');
+});
+
+test('no other in-page back control is left anywhere in the Dev area', () => {
   // The three retired one at a time and each left the others in place, so the
-  // count is the assertion: a fourth surface growing its own is the shape of
-  // this regression, not any single id coming back.
+  // count is the assertion: a surface growing its own is the shape of this
+  // regression, not any single id coming back. The topic chip (#2916) is the
+  // one in-page back the Dev area has, it lives in topic/topic-back.tsx, and
+  // it replaced the header's arrow on those routes rather than joining it.
   for (const [name, src] of [['chat-frame.tsx', chatFrameTsx],
     ['topic-frame.tsx', topicFrameTsx], ['session-header.tsx', sessionHeaderTsx]]) {
     assert.ok(!/id="d(c|ev)-[a-z-]*back"/.test(src),
-      `${name} must carry no in-page back control — the header has it`);
+      `${name} must carry no in-page back control — the header, or on a topic the chip, has it`);
+    assert.ok(!/dev-topic-back/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')),
+      `${name} must not render the topic chip — it belongs to the topic head alone`);
   }
 });
 
@@ -494,10 +560,13 @@ test('#browse-detail-back keeps its own layout as an anchor', () => {
 // retired the switch, so the exception is gone with it — every navigating
 // control in the shell is an anchor or goes through App's router now.
 //
-// #improve-btn is deliberately NOT a new exception. It opens a panel rather
-// than navigating, so there is no destination for a cmd-click to open; the
-// panel's own rows are where navigation happens, and those ARE anchors
-// (see features/improve/improve-panel.tsx's SessionRow and ImproveRow).
+// #app-menu-row-improve is deliberately NOT a new exception — nor was
+// #improve-btn, the header pill it replaced when #2718 retired that. It opens
+// a panel rather than navigating, so there is no destination for a cmd-click
+// to open; the panel's own rows are where navigation happens, and those ARE
+// anchors (see features/improve/session-row.tsx). Same for
+// #app-menu-row-about, a button for the same reason: the pane it opens is the
+// sheet in another state, not an address.
 test('the retired App/Dev switch left no interception behind', () => {
   assert.equal(appJs.indexOf(".querySelectorAll('.app-mode-seg')"), -1,
     'the switch wiring is gone from app.js');
@@ -607,12 +676,12 @@ test('dapp.json pins the anchors that a capture can actually see', () => {
   );
 
   // The session's back control is the header's own anchor now (Streamlined
-  // Concept — #dc-back retired), so its check pins a#back-btn at the card
-  // area. That address is the WORKSHOP: the Board view retired, its columns
-  // are the Workshop's stage pane, and `boardHref` has one answer left.
+  // Concept — #dc-back retired), so its check pins a#back-btn. #2770 moved
+  // its address: a change is an agent conversation, a thread of Messages, so
+  // a cold session link goes up to #messages rather than to the Workshop.
   const session = (dapp.tests || []).find(
     (t) => typeof t.expectSelector === 'string'
-      && /a#back-btn[^"]*\[href="#app\/[^"]+\/workshop"\]/.test(t.expectSelector)
+      && /a#back-btn[^"]*\[href="#messages"\]/.test(t.expectSelector)
   );
   assert.ok(session, 'the session back anchor needs its own check');
   assert.match(session.path, /dev\/sessions\/\d+/, 'it must land on a session');

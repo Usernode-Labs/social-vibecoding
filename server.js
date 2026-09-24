@@ -14,13 +14,16 @@ const { authMiddleware } = require('./src/middleware/auth');
 const { errorHandler } = require('./src/middleware/error-handler');
 const { baseSecurityHeaders, applyShellFramingHeaders } = require('./src/middleware/security-headers');
 const { explorerProxyRoutes } = require('./src/routes/explorer-proxy');
+const { githubWebhookRoutes } = require('./src/routes/github-webhook');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
+const { contentReportRoutes } = require('./src/routes/content-reports');
 const { sessionRoutes } = require('./src/routes/sessions');
+const { agentSessionRoutes } = require('./src/routes/agent-sessions');
 const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
 const { demoModeRoutes } = require('./src/routes/demo-mode');
@@ -63,6 +66,8 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
+const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
+const { platformAboutRoutes } = require('./src/routes/platform-about');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
@@ -196,6 +201,14 @@ app.use(mcpPreAuthRoutes(config));
 // limit, an allow-list of methods and a path-traversal refusal.
 app.use(explorerProxyRoutes(config));
 
+// ── GitHub webhook ─────────────────────────────────────────────────────────
+// #2737. Mounted HERE for the same two reasons as the passthrough above: the
+// signature is over the RAW bytes, so it must precede the JSON parser, and
+// the caller is GitHub, which has no session for authMiddleware to find. The
+// route verifies an HMAC before it reads anything, and is off entirely when
+// no secret is configured. src/routes/github-webhook.js carries the rest.
+app.use(githubWebhookRoutes(config));
+
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
 // external leaderboard deployment. Since the topochain merge the same five
@@ -248,8 +261,12 @@ app.use((req, res, next) => {
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
   if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
-  // A bounded executable evidence plan can exceed the global 100kb parser;
-  // its route validates the strict plan shape after its own 512kb parse.
+  // A bounded executable evidence plan can exceed the global 100kb parser.
+  // PR import parses here; the dedicated plan route mounts its own parser.
+  if (req.method === 'POST'
+      && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
+    return express.json({ limit: '512kb' })(req, res, next);
+  }
   if (req.method === 'POST'
       && /^\/api\/apps\/[^/]+\/proposals\/[^/]+\/evidence\/plan$/.test(req.path)) return next();
   express.json()(req, res, next);
@@ -522,6 +539,10 @@ app.use(topochainMobileRoutes(config));
 // can never be confused for one of those distinct credentials.
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
+worker.setAccountDeletionGuard(sessionId => require('./src/services/account-deletion-cleanup')
+  .assertWorkerAllowed(getPool(config), sessionId));
+app.use(require('./src/services/account-deletion-runtime').trackResponse);
+app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));
 app.use(cliBrowserRoutes(config));
 // Social identity proofs are a platform account surface, independent of
 // the hosted MCP connector. They remain reviewable (with fixtures only) in
@@ -542,7 +563,12 @@ app.use(illustrationRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(conversationRoutes(config));
+app.use(contentReportRoutes(config));
 app.use(proposalHandoffRoutes(config));
+// #2779: agent sessions, the per-user conversation that starts changes.
+app.use(agentSessionRoutes(config, {
+  scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
+}));
 app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));
@@ -586,6 +612,11 @@ app.use(workshopThemesRoutes(config));
 // every app the viewer can see. Me-scoped like the ordering routes, so it
 // sits behind authMiddleware and refuses an anonymous caller outright.
 app.use(workshopOverviewRoutes(config));
+app.use(messagesOverviewRoutes(config));
+// The mark menu's "About Homeroom" pane: the platform's name, tagline and
+// version, and its apps / members / merged figures. One cached answer for
+// every viewer, so it sits behind authMiddleware beside the other overviews.
+app.use(platformAboutRoutes(config));
 // The Workshop's placement stage runs when a card arrives on or leaves a
 // board — which every route and service announces through ws.pushSessionUpdate
 // / pushIssueUpdate — on whichever instance handled the change (the row's
@@ -971,15 +1002,40 @@ async function becomeLeader() {
   // worker died, remove their deterministic paired runtimes/databases, and
   // enforce the shorter failed-media and bounded audit-retention windows.
   const visualEvidenceGc = require('./src/services/visual-evidence-gc');
-  const runVisualEvidenceGc = () => visualEvidenceGc.sweep(config, getPool(config))
-    .then((counts) => {
-      if (Object.values(counts).some((count) => count > 0)) {
-        log.info('visual-evidence', 'Retention/recovery sweep completed', counts);
-      }
-    })
-    .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }));
+  let evidenceGcRunning = false;
+  const runVisualEvidenceGc = () => {
+    if (evidenceGcRunning) return;
+    evidenceGcRunning = true;
+    visualEvidenceGc.sweep(config, getPool(config))
+      .then((counts) => {
+        if (Object.values(counts).some((count) => count > 0)) {
+          log.info('visual-evidence', 'Retention/recovery sweep completed', counts);
+        }
+      })
+      .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }))
+      .finally(() => { evidenceGcRunning = false; });
+  };
   runVisualEvidenceGc();
   setInterval(runVisualEvidenceGc, 6 * 60 * 60 * 1000).unref?.();
+  // Evidence runs execute after their scheduling HTTP request has returned.
+  // A platform rollout can terminate that process mid-build; heartbeats stop
+  // then, and this short recovery poll releases the abandoned proposal slot.
+  // The six-hour sweep above still owns retention and orphan-file pruning.
+  const recoverInterruptedEvidence = () => {
+    if (evidenceGcRunning) return;
+    evidenceGcRunning = true;
+    visualEvidenceGc.recoverInterrupted(config, getPool(config))
+      .then(({ failed, cancelled, cleanupRetried }) => {
+        if (failed || cancelled || cleanupRetried) {
+          log.warn('visual-evidence', 'Interrupted visual evidence runs recovered', {
+            failed, cancelled, cleanupRetried,
+          });
+        }
+      })
+      .catch((err) => log.warn('visual-evidence', 'Interrupted evidence recovery failed', { err: err.message }))
+      .finally(() => { evidenceGcRunning = false; });
+  };
+  setInterval(recoverInterruptedEvidence, 2 * 60 * 1000).unref?.();
   // Recover intent-only proposals separately from the six-hour retention
   // sweep. A missed checks hand-off should start within minutes, while the
   // durable run claim ensures this cannot duplicate a live runner.
@@ -1165,6 +1221,21 @@ async function becomeLeader() {
           log.warn('server', 'Quick-reply backfill failed', { err: err.message });
         });
     });
+
+  // Durable deletion tasks survive provider outages and platform restarts.
+  const runAccountDeletionCleanup = () => require('./src/services/account-deletion-cleanup')
+    .sweep(getPool(config), config).catch(err => log.warn('account-deletion', 'Cleanup sweep failed', { code: err.code }));
+  void runAccountDeletionCleanup();
+  setInterval(runAccountDeletionCleanup, 60_000).unref();
+
+  // #2779: delegated connector grants — the agent-session Mayor's, one or two
+  // a turn — are dead the moment their turn ends. Keep a week for the audit
+  // trail's sake, then remove them and their tokens.
+  const runDelegationPrune = () => require('./src/services/mcp-oauth')
+    .pruneDelegations(getPool(config))
+    .then((n) => { if (n) log.info('mcp', 'Pruned ended delegated grants', { count: n }); })
+    .catch((err) => log.warn('mcp', 'Delegated-grant prune failed', { code: err.code, message: err.message }));
+  setInterval(runDelegationPrune, 60 * 60 * 1000).unref();
 
   // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
   // reclaims that memory after a tunable idle period. The CC volume
@@ -2361,6 +2432,101 @@ function recoveredAgentIdentity(session, activeTurn = null) {
   };
 }
 
+// Codex owns a durable per-attempt ledger row in addition to active_turn.
+// Once the latter is cleared there is no remaining pointer from recovery to
+// the running attempt, so terminalize it first. A transient ledger failure
+// retains the turn for retry; a missing attempt quarantines it through the
+// same policy used by the stale-turn watchdog.
+async function abandonCodexAttempt(pool, sessionId, turn, { label, errorDetail }) {
+  if (turn?.backend !== 'codex_openrouter' || !turn?.turnUuid) return;
+  const agentTurn = require('./src/services/agent-turn');
+  try {
+    await agentTurn.completeCodexAttempt({
+      pool,
+      turnUuid: turn.turnUuid,
+      status: 'failed',
+      errorCode: 'recovery_abandoned',
+      errorDetail,
+      telemetryComponent: turnLifecycle.phaseOf(turn) === turnLifecycle.PHASE_DISPATCH_PENDING
+        ? null
+        : turn.telemetryComponent || null,
+      telemetryMetrics: {
+        requestMode: turn.telemetryRequestMode || null,
+        requestMessageCount: turn.telemetryRequestTextCharacters == null ? null : 1,
+        requestUserMessageCount: turn.telemetryRequestTextCharacters == null ? null : 1,
+        requestContentBlockCount: turn.telemetryRequestTextCharacters == null ? null : 1,
+        requestTextCharacters: turn.telemetryRequestTextCharacters ?? null,
+        requestUserTextCharacters: turn.telemetryRequestTextCharacters ?? null,
+        requestPayloadCharacters: turn.telemetryRequestTextCharacters ?? null,
+        modelContextWindowTokens: turn.telemetryModelContextWindowTokens ?? null,
+        modelMaxOutputTokens: turn.telemetryModelMaxOutputTokens ?? null,
+      },
+    });
+  } catch (ledgerErr) {
+    const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+      pool,
+      sessionId,
+      activeTurn: turn,
+      error: ledgerErr,
+    });
+    log.error('server', disposition.action === 'retry'
+      ? `${label} Codex turn retained because ledger terminalization failed`
+      : `${label} Codex turn quarantined because its ledger attempt is missing`, {
+      sessionId, err: ledgerErr.message,
+    });
+    throw ledgerErr;
+  }
+}
+
+// A visual-evidence turn cannot outlive the process that dispatched it: its
+// MCP bridge calls back to that process's pod address, and the run it
+// answers to exists only in that process's control registry. Resumed, the
+// agent retries tool calls that can no longer succeed, holding the session
+// busy and spending the user's model credit with no bound. End it instead,
+// without chat narration — evidence turns never write chat rows, and the
+// visual-evidence GC fails the run itself with a retryable reason once the
+// run goes idle.
+async function abandonOrphanEvidenceTurn({
+  pool, sessionId, containerName, activeTurn, containerRunning, retryRuntimeRecovery,
+}) {
+  // A follower promoted to leader recovers its own workers too, and one of
+  // them may be executing an evidence run this process dispatched and still
+  // bounds.
+  if (worker.getActiveTurnMode(sessionId) === 'evidence') {
+    log.info('server', 'Evidence turn is live in this process; leaving it to its run', {
+      containerName, sessionId,
+    });
+    return;
+  }
+  const args = turnCleanupArgs(activeTurn);
+  if (containerRunning) {
+    worker.adoptWarmWorker(sessionId, containerName);
+    await worker.stopTurn(sessionId);
+    // The stop targeted the orphan. Left pending, it would make the next
+    // dispatch — the user's preview retry — skip as stopped during spin-up.
+    worker.clearPendingStop(sessionId);
+    if (await worker.isWorkerExecuting(containerName) !== false) {
+      throw retryRuntimeRecovery('Orphaned visual-evidence turn is not confirmed stopped');
+    }
+  }
+  await abandonCodexAttempt(pool, sessionId, activeTurn, {
+    label: 'Orphaned visual-evidence',
+    errorDetail: 'Visual-evidence turn was abandoned after the platform process that dispatched it exited.',
+  });
+  recoveryRetry.requireDurableTurnCleanup(
+    containerRunning
+      ? await worker.finishTurn(sessionId, args)
+      : await worker.clearActiveTurn(sessionId, args),
+    args,
+  );
+  log.warn('server', 'Abandoned orphaned visual-evidence turn after restart', {
+    containerName, sessionId,
+    turnId: turnLifecycle.turnIdentity(activeTurn),
+    backend: activeTurn.backend || null,
+  });
+  if (!containerRunning) await worker.destroyWorker(containerName);
+}
+
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
   const { name: containerName, sessionId } = orphan;
   let containerState = orphan.state;
@@ -2447,6 +2613,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     if (!['running', 'not_found'].includes(containerState)) {
       throw retryRuntimeRecovery('Kubernetes worker is not ready for recovery');
     }
+  }
+
+  if (session.active_turn?.mode === 'evidence') {
+    await abandonOrphanEvidenceTurn({
+      pool, sessionId, containerName,
+      activeTurn: session.active_turn,
+      containerRunning: containerState === 'running',
+      retryRuntimeRecovery,
+    });
+    return;
   }
 
   // Long-lived worker reality check: a *running* container could be
@@ -2574,50 +2750,10 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // GitHub, and resending buys a duplicate run (see
     // buildCodeLandedBreadcrumb). Say what landed and repair the preview.
     const codeLanded = !!goneTail.sha && goneTail.pushOk === true;
-    // Codex owns a durable per-attempt ledger row in addition to active_turn.
-    // Once the latter is cleared there is no remaining pointer from this
-    // recovery path to the running attempt, so terminalize it first. A
-    // transient ledger failure retains the turn for retry; a missing attempt
-    // quarantines it through the same policy used by the stale-turn watchdog.
-    if (goneTurn?.backend === 'codex_openrouter' && goneTurn?.turnUuid) {
-      const agentTurn = require('./src/services/agent-turn');
-      try {
-        await agentTurn.completeCodexAttempt({
-          pool,
-          turnUuid: goneTurn.turnUuid,
-          status: 'failed',
-          errorCode: 'recovery_abandoned',
-          errorDetail: 'Durable turn was abandoned after its worker container disappeared.',
-          telemetryComponent: turnLifecycle.phaseOf(goneTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
-            ? null
-            : goneTurn.telemetryComponent || null,
-          telemetryMetrics: {
-            requestMode: goneTurn.telemetryRequestMode || null,
-            requestMessageCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
-            requestUserMessageCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
-            requestContentBlockCount: goneTurn.telemetryRequestTextCharacters == null ? null : 1,
-            requestTextCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
-            requestUserTextCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
-            requestPayloadCharacters: goneTurn.telemetryRequestTextCharacters ?? null,
-            modelContextWindowTokens: goneTurn.telemetryModelContextWindowTokens ?? null,
-            modelMaxOutputTokens: goneTurn.telemetryModelMaxOutputTokens ?? null,
-          },
-        });
-      } catch (ledgerErr) {
-        const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
-          pool,
-          sessionId,
-          activeTurn: goneTurn,
-          error: ledgerErr,
-        });
-        log.error('server', disposition.action === 'retry'
-          ? 'Gone Codex turn retained because ledger terminalization failed'
-          : 'Gone Codex turn quarantined because its ledger attempt is missing', {
-          sessionId, err: ledgerErr.message,
-        });
-        throw ledgerErr;
-      }
-    }
+    await abandonCodexAttempt(pool, sessionId, goneTurn, {
+      label: 'Gone',
+      errorDetail: 'Durable turn was abandoned after its worker container disappeared.',
+    });
     recoveryRetry.requireDurableTurnCleanup(
       await worker.clearActiveTurn(sessionId, turnCleanupArgs(goneTurn)),
       turnCleanupArgs(goneTurn),
@@ -5468,24 +5604,29 @@ async function cleanup() {
     governanceApplyTickerHandle = null;
   }
 
+  const evidenceRuns = require('./src/services/visual-evidence-orchestrator').inFlightSnapshot;
   const startingCount = getActiveWorkerCount();
+  const startingEvidence = evidenceRuns();
   log.info('server', 'Shutdown initiated, draining handlers', {
-    activeWorkers: startingCount, timeoutMs: DRAIN_TIMEOUT_MS,
+    activeWorkers: startingCount,
+    activeEvidenceRuns: startingEvidence.slice(0, 20),
+    timeoutMs: DRAIN_TIMEOUT_MS,
   });
 
   const [drained] = await Promise.all([
-    lifecycle.waitFor(() => getActiveWorkerCount() === 0, {
+    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && evidenceRuns().length === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
   ]);
 
   if (!drained) {
-    log.warn('server', 'Drain timeout — exiting; workers keep running and will be adopted on restart', {
-      remaining: getActiveWorkerCount(),
+    log.warn('server', 'Drain timeout — exiting with in-flight work', {
+      remainingWorkers: getActiveWorkerCount(),
+      remainingEvidenceRuns: evidenceRuns().slice(0, 20),
     });
-  } else if (startingCount > 0) {
-    log.info('server', 'All handlers drained; worker containers persist across restart');
+  } else if (startingCount > 0 || startingEvidence.length > 0) {
+    log.info('server', 'All handlers and visual evidence runs drained');
   }
   await pushStop;
 

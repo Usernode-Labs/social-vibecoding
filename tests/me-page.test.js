@@ -1,0 +1,135 @@
+// The Me page as the navigation prototype draws it (`scrMe`): the profile
+// card, three stat cards, a "More" list whose rows say what is behind them,
+// and "Your contributions" — shaped in frontend/src/features/profile/
+// profile-store.js and drawn by profile-view.tsx.
+//
+// Pinned here: what each part SAYS for real data and for missing data, that
+// every part of the older, longer Profile still has a home, and that the
+// prerender still draws nothing (the island rule: data only from effects).
+//
+// Run with: node --test tests/me-page.test.js
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+
+const root = path.join(__dirname, '..');
+const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+const STORE = 'frontend/src/features/profile/profile-store.js';
+const NOW = Date.parse('2026-09-23T12:00:00Z');
+
+const SUMMARY = {
+  merged: 9, apps: 3, kudos: 3, memberSince: '2026-03-04T10:00:00Z',
+  challenges: { done: 2, total: 7, season: { id: 3, name: 'Season 3' } },
+  contributions: [
+    { sessionId: 213, title: 'Messages as a tab', appSlug: 'usernode-2d5619', appName: 'Homeroom', platform: true, mergedAt: '2026-09-20T12:00:00Z', kudos: 4 },
+    { sessionId: 188, title: 'CSV export', appSlug: 'recipe box', appName: 'Recipe Box', appIconEmoji: '🍲', mergedAt: '2026-08-01T12:00:00Z', kudos: 0 },
+    { sessionId: 140, title: 'Lasso', appSlug: 'whiteboard', appName: 'Whiteboard', appIconUrl: '/app-icons/abc', mergedAt: '2025-06-01T12:00:00Z', kudos: 1 },
+  ],
+};
+
+test('the three stat cards: merged, kudos, challenges — and a dash, not a zero, without data', () => {
+  const { statsView } = loadTsx(STORE);
+  assert.deepEqual(statsView(SUMMARY).map((s) => [s.key, s.value, s.label]),
+    [['merged', '9', 'merged'], ['kudos', '3', 'kudos'], ['challenges', '2', 'challenges']]);
+  assert.deepEqual(statsView(null).map((s) => s.value), ['–', '–', '–'],
+    'a read that failed is not a claim of zero');
+});
+
+test('the More rows say what is behind them, from the data only', () => {
+  const { moreRowsView } = loadTsx(STORE);
+  assert.deepEqual(moreRowsView({
+    ranking: { season_name: 'Season 3', rank: 3 }, summary: SUMMARY,
+  }), { challenges: 'Season 3 · rank #3 · 2 of 7 done', kudos: '3 received' });
+  // No rank yet (signed-in newcomer): the season and the tally, no invented rank.
+  assert.deepEqual(moreRowsView({ ranking: {}, summary: SUMMARY }),
+    { challenges: 'Season 3 · 2 of 7 done', kudos: '3 received' });
+  assert.deepEqual(moreRowsView({ ranking: null, summary: null }), { challenges: null, kudos: null });
+});
+
+test('the card\'s one line of facts: @handle, building since, apps', () => {
+  const { identityView } = loadTsx(STORE);
+  const user = { username: 'evan', displayName: 'Evan S', links: {} };
+  const view = identityView({ user, data: { summary: SUMMARY } });
+  assert.equal(view.name, 'Evan S');
+  // Month names are the runtime locale's; the shape is what is pinned.
+  assert.match(view.sub, /^@evan · Building since \S+ 2026 · 3 apps$/);
+  const bare = identityView({ user: { username: 'evan' }, data: { summary: { ...SUMMARY, apps: 1 } } });
+  assert.equal(bare.name, '@evan');
+  assert.match(bare.sub, /^Building since \S+ 2026 · 1 app$/, 'the handle is the headline, so not repeated');
+  assert.equal(identityView({ user: { username: 'evan' }, data: null }).sub, null);
+});
+
+test('contributions: each a link to its proposal, with its app tile and a readable date', () => {
+  const { contributionsView } = loadTsx(STORE);
+  const view = contributionsView(SUMMARY, 'evan', NOW);
+  assert.equal(view.seeAllHref, '#leaderboard/users/evan');
+  assert.deepEqual(view.rows.map((r) => r.href), [
+    '#app/usernode-2d5619/dev/proposals/213',
+    '#app/recipe%20box/dev/proposals/188',
+    '#app/whiteboard/dev/proposals/140',
+  ]);
+  assert.deepEqual(view.rows.map((r) => r.tile.kind), ['platform', 'emoji', 'image']);
+  assert.equal(view.rows[0].meta, 'Homeroom · merged 3 days ago · 4 kudos');
+  assert.match(view.rows[1].meta, /^Recipe Box · merged (\S+ 1|1 \S+)$/, 'past a fortnight: month and day, no year this year');
+  assert.match(view.rows[2].meta, /^Whiteboard · merged .*2025 · 1 kudos$/, 'and the year once it is not this one');
+  assert.doesNotMatch(view.rows[1].meta, /\d+\/\d+\/\d+/, 'never a numeric date that reads differently by region');
+  assert.equal(contributionsView(null, 'evan').loaded, false, 'a failed read is told apart from "nothing merged"');
+  const unsafe = contributionsView({ contributions: [{ sessionId: 1, appSlug: 'x', appIconUrl: 'javascript:1' }] }, 'evan', NOW);
+  assert.equal(unsafe.rows[0].tile.kind, 'letter', 'only the platform\'s own /app-icons/ path is an image');
+});
+
+test('the page renders the four parts in the prototype\'s order', () => {
+  const state = {
+    open: true,
+    data: { ranking: { season_name: 'Season 3', rank: 3 }, summary: SUMMARY, ownerPublicProfile: null },
+    user: { username: 'evan', links: {} },
+    sheetOpen: false, publicStatus: '', publishing: false, previewOpen: false,
+  };
+  const real = loadTsx(STORE);
+  const mod = loadTsx('frontend/src/features/profile/profile-view.tsx', {
+    stubs: { './profile-store.js': { ...real, profileStore: { get: () => state, subscribe: () => () => {} } } },
+  });
+  const html = renderToHtml(createElement(mod.ProfileRoot, {}));
+  const order = ['id="profile-identity-card"', 'id="profile-stats"', 'id="profile-more"', 'id="profile-contributions"']
+    .map((needle) => html.indexOf(needle));
+  assert.ok(order.every((i) => i >= 0), 'all four parts render');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'card, stats, More, contributions');
+  assert.match(html, /id="profile-edit-btn"/);
+  assert.match(html, /data-contribution="213"/);
+  assert.ok(!/Log out|profile-row-admin|data-completed-challenge|Points breakdown/.test(html),
+    'nothing that moved elsewhere is drawn twice');
+});
+
+test('every part of the older Profile has a home', () => {
+  // points, rank, breakdown, token → the Challenges tab's standing card
+  const standing = read('frontend/src/features/leaderboard/your-standing.tsx');
+  assert.match(standing, /Points by event/);
+  assert.match(standing, /Token allocation/);
+  assert.match(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /<YourStanding \/>/);
+  // public-profile publishing → the Edit profile sheet
+  const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
+  assert.match(sheet, /id="public-profile-controls"/);
+  assert.match(sheet, /Profile\._setPublished\(!controls\.published\)/);
+  assert.match(sheet, /Copy public link/);
+  // Admin & moderation, node / wallet / staking → Settings; Log out already there
+  const rows = read('frontend/src/features/settings/account-rows.tsx');
+  for (const needle of ['id="settings-row-admin"', '<NodePillRow />', '<WalletRow />', '<StakingRow />']) {
+    assert.ok(rows.includes(needle), needle);
+  }
+  assert.match(read('frontend/src/features/settings/index.tsx'), /id="settings-logout"/);
+  // completions → counted on Me, listed on the Challenges tab
+  assert.match(read(STORE), /summary\.challenges && summary\.challenges\.done/);
+});
+
+test('the prerender draws nothing: the Me screen\'s data only ever arrives from effects', () => {
+  const real = loadTsx(STORE);
+  assert.deepEqual(real.buildProfileView(real.profileStore.get()), { kind: 'empty' });
+  const rows = loadTsx('frontend/src/features/settings/account-rows.tsx');
+  assert.equal(renderToHtml(createElement(rows.SettingsAccountRows, {})), '',
+    'Settings\' account block renders nothing until mounted, so its footer hydrates as shipped');
+});

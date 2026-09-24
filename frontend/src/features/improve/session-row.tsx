@@ -23,7 +23,8 @@
  *   * A STATUS PILL. Tinted, on the trailing edge — the one loud element in a
  *     row, and the thing a viewer is actually scanning for.
  *
- * The rows then sit in a bordered group (see improve-panel.tsx), because a
+ * The rows sat in a bordered group in the Improve panel, which retired
+ * (#2718 review); they are the notifications sheet's Agents tab now, because a
  * group says "these are records" where edge-to-edge rows say "these are
  * destinations".
  *
@@ -67,6 +68,8 @@ export type SessionRowView = {
   /** Waiting on the user — see awaitsInput in ./improve-controller.js (#1959). */
   awaitingInput: boolean;
   lastActivityAt?: string | null;
+  /** #2779: the agent session a change was started from; Messages lists it there. */
+  agentSessionId?: number | null;
 };
 
 // `relTime` lived here. It ran a thirty-day bucket and then months, so a row

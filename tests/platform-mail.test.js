@@ -407,10 +407,13 @@ test('the join mail carries the CODE, the confirm link AND the survey link', asy
   // #1540: the sentence is shorter and the HTML half is a button, but the
   // text part must still carry the URL for a reader who cannot see HTML.
   assert.match(msg.text, /confirm in one tap/i);
-  // Andrea's copy for the optional questions, and the rolling-groups
-  // promise that replaced the placeholder "[September 9]" date — no wave
-  // has been committed to, and a date that slips is worse than none.
-  assert.match(msg.text, /increase your chances of getting into an earlier group/i);
+  // The rolling-groups promise that replaced the placeholder "[September 9]"
+  // date — no wave has been committed to, and a date that slips is worse
+  // than none. #2908 dropped the closing "increase your chances" paragraph
+  // and its survey link, so neither may come back.
+  assert.doesNotMatch(msg.text, /increase your chances of getting into an earlier group/i);
+  assert.ok(!msg.text.includes(seen[0].url) && !msg.html.includes('#more/'),
+    'the survey link is no longer in the mail');
   assert.match(msg.text, /rolling basis/i);
   assert.doesNotMatch(msg.text, /September/i);
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');

@@ -702,10 +702,10 @@ test('"Link GitHub" is a link to GitHub itself, not a trip to Settings (#2679, #
   assert.deepEqual(done.actions, []);
 });
 
-test('the dev chat no longer sends "Link GitHub" to Settings (#2679)', () => {
+test('the dev chat sends neither "Link GitHub" nor "Connect Homeroom" to Settings (#2679, #2706)', () => {
   // The two actions used to share one branch that assigned the Settings
-  // hash. "Connect Homeroom" still goes there — the connector is added on
-  // that screen — but GitHub has its own road now.
+  // hash. #2679 gave GitHub its own road; #2706 took the connector off that
+  // road too, and neither step navigates away from the walkthrough now.
   assert.doesNotMatch(DEV_CHAT_SRC, /action === 'link-github' \|\| action === 'link-connector'/,
     'the shared branch is gone');
   const branch = DEV_CHAT_SRC.match(/if \(action === 'link-github'\)[^\n]*/);
@@ -714,7 +714,8 @@ test('the dev chat no longer sends "Link GitHub" to Settings (#2679)', () => {
     'to the handler that follows the anchor, or hands it to the bridge');
   const connector = DEV_CHAT_SRC.match(/if \(action === 'link-connector'\) \{[\s\S]*?\n    \}/);
   assert.ok(connector, 'link-connector keeps its own branch');
-  assert.match(connector[0], /#settings\/connectors/, 'and it still goes to Settings');
+  assert.doesNotMatch(connector[0], /location\.hash/, 'and it no longer leaves the session');
+  assert.match(connector[0], /flow\.connectorSteps = true/, 'it opens the steps in place');
   // Both wiring sites hand the event over, or the app could not take the
   // anchor over on a phone.
   const sites = DEV_CHAT_SRC.match(/onAction: \(action, target, event\) => DevChat\._devFlowAction\(action, target, event\)/g) || [];

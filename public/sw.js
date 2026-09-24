@@ -261,7 +261,37 @@
 // ignored the new field, making the proposal look unchanged even though the
 // preview served the new API and controller code. Retire that shell here so
 // existing preview tabs and installed clients receive the renderer too.
-const SW_VERSION = 'v33';
+//
+// v34 (#2718): THE NAVIGATION REDESIGN, which is the largest shell change
+// these notes have had to cover and exactly the case v10 names. The five
+// places as a permanent bar, the desktop rail and its fold, the header taking
+// the rail's surface, Messages as two panes, the mark's menu — all of it is
+// public/css/app.css, /shell/assets/shell.js and the prerendered
+// /index.html, and all three are precached here. public/js/** changes with
+// them, but a stale shell has no rail for the router to publish to and no
+// second pane for the inbox to fill, so the controller code lands against
+// markup that cannot show it.
+//
+// Found the way v15 says it gets found. The preview was rebuilt and served
+// the new code, and testing still reported one pane in Messages and a back
+// button that went to the Workshop — behaviours measured as correct on the
+// built shell, from a browser that was drawing the cached one. v15 recorded
+// "two rounds of 'still not fixed'" for the same omission; this is the
+// third, and it is the same lesson: the bump belongs in the proposal that
+// changes the shell, not in the one after it.
+//
+// v35 (home-screen icon): the icons are the real Homeroom mark on the brand
+// cream now, and they moved from /icons/icon-*.png to /icons/v2/ — Chrome
+// judges an installed app's icon changed by its URL, so new art gets a new
+// directory. The old files are deleted, and the precached /index.html is
+// what names them in its <head>: a client serving the v34 copy would keep
+// linking a favicon and touch icon the server no longer has. Per v10 the
+// retirement ships with the change, and it drops the old pictures too.
+//
+// v36 (home-screen icon on black): the same mark, now cream on a black tile
+// after feedback, so it moves again, /icons/v2/ to /icons/v3/, for the
+// reason v35 gives — and the cached /index.html names the v2 favicon.
+const SW_VERSION = 'v36';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -584,9 +614,9 @@ const SHELL_ASSETS = [
   // too, and moved in the same chunk. Only the shared event RULES they read
   // (topochain-events.js, above) are still a classic script.
   '/manifest.webmanifest',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/icon-maskable-512.png',
+  '/icons/v3/icon-192.png',
+  '/icons/v3/icon-512.png',
+  '/icons/v3/icon-maskable-512.png',
   // The signed-out landing's illustration. Unlike the challenge artwork that
   // deliberately stays on the network (see the classify tests), this one has no
   // fallback to draw in its place, and it is the first thing a visitor who has
@@ -594,6 +624,12 @@ const SHELL_ASSETS = [
   // first run would otherwise render the new landing around a broken image.
   // Provenance and export settings in public/brand/README.md.
   '/brand/people.png',
+  // #2718: the Homeroom mark, drawn in the header on EVERY route — the
+  // button that opens the platform's menu. The landing's illustration above
+  // is precached because the signed-out screen has nothing to put in its
+  // place; this one because a missing header logo is a hole at the top of
+  // every screen, offline and on a cold cache alike.
+  '/brand/homeroom-mark.png',
 ];
 
 // Server-rendered standalone pages that stay online-only: never serve the
@@ -1372,6 +1408,19 @@ if (typeof module !== 'undefined' && module.exports) {
   // trips on a pathological session, and dropping it wholesale is harmless —
   // the worst an empty set costs is one extra correction lap.
   const CORRECTING_MAX = 200;
+  // The same loop on the ORDINARY deadline. The lane guard above covers only
+  // a lane serve, but an endpoint that is BOTH slow and never the same twice
+  // loops there too: the Workshop's /promoted list carries every running
+  // check's live progress (ran, passed, updatedAt), so under load it lost the
+  // 1s race and differed on every lap, and each correction re-pulled the
+  // whole board — about nine requests a second per visible tab, until Chrome
+  // refused new requests (net::ERR_INSUFFICIENT_RESOURCES). A re-pull after
+  // such a correction is asking for the current state, so it WAITS for the
+  // network (up to CORRECTION_WAIT_MS) instead of racing the cache it was
+  // just told is wrong. Consumed on read like `correcting`; a boot in another
+  // tab keeps its zero-deadline lane and its own correction.
+  const awaitingNetwork = new Set();
+  const CORRECTION_WAIT_MS = 10000;
 
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
@@ -1389,9 +1438,11 @@ if (typeof module !== 'undefined' && module.exports) {
 
     // Consume the correction mark, if any: this request pays the ordinary
     // deadline once and the next one is back in the lane.
-    const laned = !correcting.delete(event.request.url)
+    const settling = awaitingNetwork.delete(event.request.url);
+    const laned = !correcting.delete(event.request.url) && !settling
       && bootLaneApplies(event.request.url, ORIGIN, Date.now(), refreshIntentUntil);
-    const timeoutMs = laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
+    const timeoutMs = settling ? CORRECTION_WAIT_MS
+      : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 
     const { response, pending } = await raceNetworkAndCache({
       startFetch: () => fetch(event.request).then((res) => {
@@ -1412,6 +1463,9 @@ if (typeof module !== 'undefined' && module.exports) {
               if (laned) {
                 if (correcting.size >= CORRECTING_MAX) correcting.clear();
                 correcting.add(event.request.url);
+              } else {
+                if (awaitingNetwork.size >= CORRECTING_MAX) awaitingNetwork.clear();
+                awaitingNetwork.add(event.request.url);
               }
               await notifyClients({ type: 'api-updated', url: event.request.url });
             }

@@ -77,11 +77,15 @@ test('the bridge narrows to all THREE, not to two', () => {
   assert.match(body, /mode === 'arrow' \? 'arrow'/, "…and 'arrow' still wins first");
 });
 
-test('setBackIcon maps the three modes and toggles both glyphs', () => {
+test('setBackIcon maps the four modes and toggles all three glyphs', () => {
   const at = APP_JS.indexOf('  setBackIcon(mode, href) {');
   assert.ok(at > 0, 'setBackIcon must exist');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(body, /const slot = arrow \? 'arrow' : \(mode === 'none' \? 'none' : 'home'\)/,
+  // #2718 added 'close' — the ✕ inside a running app. One expression still
+  // owns the mapping and the fallback is unchanged: anything unrecognised
+  // falls to 'home' rather than 'none', because an unknown mode should leave
+  // a way OFF the screen, not remove one.
+  assert.match(body, /const slot = arrow \? 'arrow'\n\s+: mode === 'close' \? 'close'\n\s+: \(mode === 'none' \? 'none' : 'home'\);/,
     'one expression owns the mapping, and anything unrecognised falls to '
     + "'home' rather than 'none' — an unknown mode should leave a way OFF "
     + 'the screen, not remove one');
@@ -89,8 +93,12 @@ test('setBackIcon maps the three modes and toggles both glyphs', () => {
     'and the SAME value is what gets published');
   // The pre-hydration fallback has three nodes to keep in step again.
   assert.match(body, /toggle\('hidden', slot === 'none'\)/, 'the anchor hides on none');
-  assert.match(body, /back-icon-arrow'\)\?\.classList\.toggle\('hidden', !arrow\)/);
-  assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', arrow\)/);
+  // EACH GLYPH NAMES ITS OWN MODE. It was `!arrow` / `arrow` — correct while
+  // there were two of them and exactly the bug a third introduces, because
+  // "not the arrow" silently drew the house for 'close' too.
+  assert.match(body, /back-icon-arrow'\)\?\.classList\.toggle\('hidden', slot !== 'arrow'\)/);
+  assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', slot !== 'home'\)/);
+  assert.match(body, /back-icon-close'\)\?\.classList\.toggle\('hidden', slot !== 'close'\)/);
 });
 
 // ── 2. Home and Browse share one root-header rule ──────────────────────
@@ -106,10 +114,16 @@ test('Home is the only root, and it gets that from the shared screen reveal', ()
   // arrive at, it is one you go to from Home's "Find more apps", and landing
   // there with an empty bar left the chip menu's Home row as the only way
   // back. One rule still owns the answer, and now only Home is exempt.
-  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
+  // #2718: the answer stopped being a two-way question when the tab bar
+  // landed, so it is a TABLE (App._BACK_SLOT) that this one rule reads. A tab
+  // ROOT shows nothing — its tab is on screen beside it, so a corner control
+  // that goes home is a second way to press a button already in view — a
+  // SUB-PAGE shows an arrow to its tab's root, and an APP shows the ✕ that
+  // steps out of it.
+  assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
     'one rule, including cold boots and history navigation');
-  assert.doesNotMatch(body, /browse-screen/,
-    'Browse takes the default like every other screen you navigate into');
+  assert.doesNotMatch(body, /'home-screen' \? 'none'/,
+    'the answers live in the table, not in a chain of ternaries here');
   assert.doesNotMatch(APP_JS, /App\.setBackIcon\('none'\)/,
     'no per-entry override briefly shows the house before hiding it');
 
@@ -134,16 +148,20 @@ test('Home is the only root, and it gets that from the shared screen reveal', ()
 test('the anchor renders both glyphs and hides exactly one', () => {
   assert.match(HEADER, /id="back-icon-arrow"\n\s+className=\{backArrow \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
     'the chevron shows on arrow');
-  assert.match(HEADER, /id="back-icon-home"\n\s+className=\{backArrow \? 'hidden w-5 h-5' : 'w-5 h-5'\}/,
-    'the house shows otherwise — the two are complements of one flag, so '
-    + 'they cannot both be on');
+  // NOT `!backArrow`. With three glyphs, "not the arrow" is two of them, so
+  // each names its own mode — the same change public/js/app.js's
+  // pre-hydration fallback made for the same reason.
+  assert.match(HEADER, /id="back-icon-home"\n\s+className=\{mode === 'home' \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+    'the house shows on home, and on nothing else');
+  assert.match(HEADER, /id="back-icon-close"\n\s+className=\{backClose \? 'w-5 h-5' : 'hidden w-5 h-5'\}/,
+    'and the ✕ inside a running app');
   // Both in the COLD DOCUMENT. Rendering only the active one would take an
   // id out of the shipped inventory whenever the initial mode is the other,
   // and that inventory is a contract (tests/shell-id-inventory.test.js).
   assert.match(HEADER, /className=\{BACK_BTN_CLASS \+ \(mode === 'none' \? ' hidden' : ''\)\}/,
     "the anchor itself hides only on 'none'");
-  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : 'Home'\}/,
-    'and the accessible name follows the glyph — two meanings, two names');
+  assert.match(HEADER, /aria-label=\{backArrow \? 'Back' : backClose \? 'Close app' : 'Home'\}/,
+    'and the accessible name follows the glyph — three meanings, three names');
 });
 
 // ── 4. The ladder inside an app ────────────────────────────────────────
@@ -154,32 +172,61 @@ test('the route decides where UP is, inside an app', () => {
   const body = HEADER.slice(at, HEADER.indexOf('\n}', at));
   assert.match(body, /if \(!slug \|\| tab !== 'dev'\) return null;/,
     'the app tab itself has no level above it inside the app — it gets the '
-    + 'house, like every other root');
-  assert.match(body, /const board = boardHref\(slug, boardView\);/,
-    '"the board" is TWO screens — Workshop and Board are one screen in two '
-    + 'layouts and the layout IS the route — so the destination is resolved '
-    + 'from the layout that was on screen, never spelled as a literal');
-  assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| board;/,
-    'a session goes where it was opened from, falling back to that board');
-  assert.match(body, /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
-    'the general chat and a topic card are reached FROM the board');
+    + '✕, which leaves to the page the app was opened from');
+  // #2770 REVERSED THE FALLBACK: a change is an agent conversation, a thread
+  // of Messages, so a session with no captured origin goes up to that inbox
+  // rather than to the board it used to fall back to.
+  assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| '#messages';/,
+    'a session goes where it was opened from, falling back to Messages');
+  // THE DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763). The old
+  // full-screen route still resolves for a legacy link, and its ‹ climbed to
+  // the board — so a bell mention's Back landed on a Workshop the reader had
+  // never been on. It agrees with App._backSlotFor now.
+  assert.match(body, /subTab === 'chat'\) return '#messages';/,
+    'the general chat goes up to the inbox it is a thread of');
+  // #2916: A TOPIC IS NOT THIS BAR'S ANY MORE. Its level up is still the
+  // board it was opened from, but the control is the "‹ Workshop" chip at the
+  // top of the pane, and the bar draws nothing there. So the ladder must not
+  // answer for a topic (it would put a chevron back beside the chip); the
+  // board it goes to is pinned on `topicBackHref` in section 5b below.
+  assert.doesNotMatch(body, /return boardHref\(/,
+    'the ladder no longer climbs from a topic: the in-pane chip does');
+  assert.match(body, /subTab 'topic'\) falls through on purpose \(#2916\)/,
+    'and says so where the row used to be, so it is not "fixed" back in');
   // THE REGRESSION. `#app/${slug}/board` sent a viewer who had opened an
   // issue from the Workshop to the Kanban board — and that route APPLIES its
   // layout (AppView._setViewMode in restoreFromHash's alias block), so the
   // back arrow also rewrote their stored preference on the way.
   assert.ok(!/`#app\/\$\{slug\}\/board`/.test(body),
     'and no literal /board survives in the derivation');
-  assert.match(body, /subTab === 'forum'\) return selfHosted \? null : `#app\/\$\{slug\}\/app`/,
-    'and the Board/Activity go up to the app itself — except on the '
-    + "platform's own app, which HAS no app tab (App.switchTab coerces a "
-    + 'request for one back to the dev forum), so up there would bounce '
-    + 'straight back to the board it just left');
+  // AN APP'S WORKSHOP HAS NO BACK CONTROL (#2740 review), any app's — the
+  // platform's own (#2843) was the exception this used to carry. It went up
+  // to `#app/<slug>/app`: a ‹ from the mark's "Go to workshop" or Expand,
+  // and both it and the ✕ the Workshop tab's arrival wore OPENED the app.
+  assert.ok(!/`#app\/\$\{slug\}\/app`/.test(body),
+    'nothing in the ladder climbs from the Workshop into the running app');
+  assert.doesNotMatch(body, /subTab === 'forum'/,
+    'the Workshop itself falls through to null: nowhere up to go');
+  assert.match(body, /\n  return null;\s*$/, 'and null is the last answer');
 });
 
 test('the derived answer outranks the imperative one, and only inside an app', () => {
-  assert.match(HEADER, /const mode = routeUp \? 'arrow' : backMode;/,
-    'an app route with a level above it wins; everything else keeps what '
-    + 'setBackIcon published');
+  // #2718 put ONE thing above the route: the app view's own 'close'. Inside
+  // an app the ✕ is the whole way out — the Workshop and the app's other
+  // views are rows of the mark's menu now, not a chevron's destination — so
+  // a sub-route that used to earn an arrow gets the ✕ instead. The
+  // DESTINATION is untouched: resolvedBackHref still prefers the route's
+  // up-level href, so ✕ from a session lands on that app's Workshop as ← did.
+  // #2916 put one answer between the two: a Workshop topic draws its back
+  // in the pane, so the bar's slot is 'none' there whatever setBackIcon last
+  // published. It is derived from the same function the chip renders from,
+  // which is what keeps the page at exactly one back control.
+  assert.match(HEADER, /const mode = backMode === 'close' \? 'close'\n\s+: paneBack \? 'none'\n\s+: \(routeUp \? 'arrow' : backMode\);/,
+    'an app view wins outright; a Workshop topic hides the bar\'s slot for the '
+    + 'in-pane chip; an app route with a level above it wins over the '
+    + 'imperative call; everything else keeps what setBackIcon published');
+  assert.match(HEADER, /const paneBack = topicBackHref\(\{\n\s+slug: backSlug, tab: backTab, subTab: backSubTab, boardView,\n\s+\}\);/,
+    'and that topic answer is topicBackHref\'s, the chip\'s own');
   assert.match(HEADER, /const resolvedBackHref = routeUp\n\s+\|\| \(mode === 'home' \? homeHref\(\) : backHref\);/,
     "and 'home' resolves its own href rather than relying on a caller to "
     + 'pass one');
@@ -207,13 +254,24 @@ function loadImprove(initial) {
   // then writes into — one store, reached two ways, as in the bundle.
   runModules(sandbox, [['improve-store.js', IMPROVE_STORE]], {
     imports: { '../../lib/plain-store.js': { createStore: () => store } },
-    tail: 'window.__improveStore = { improveStore, boardHref };',
+    tail: 'window.__improveStore = { improveStore, boardHref, topicBackHref };',
   });
+  // The one surface still listing these sessions. Flip `sheet.open` in a
+  // test that needs the reload gate open; it is the notifications sheet's
+  // flag, not the Improve panel's — that panel retired (#2718 review).
+  const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', IMPROVE_CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor: () => ({}) },
-      '../../lib/kit-surface': { adoptKitSurface: () => null },
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
+      // Improve panel's root through lib/kit-surface and swept the other
+      // sheets through lib/sheet-controller; the panel retired, `open()`
+      // forwards to the app-context sheet, and both stubs went with it. What
+      // it does import is the notifications sheet's own open flag — the one
+      // surface still listing these sessions, and the gate on reloading them.
+      '../notifications/notifications-sheet-store.js': {
+        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
+      },
       './improve-store.js': sandbox.__improveStore,
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
@@ -222,6 +280,7 @@ function loadImprove(initial) {
   return {
     Improve: sandbox.__improve, store, sandbox,
     boardHref: sandbox.__improveStore.boardHref,
+    topicBackHref: sandbox.__improveStore.topicBackHref,
   };
 }
 
@@ -234,7 +293,24 @@ test('the first routing pass of a page load captures no origin', () => {
   const { Improve, store } = loadImprove({ slug: 'demo-app' });
   Improve.setTab('dev', 'sessions');
   assert.equal(store.state.sessionOrigin, null,
-    'nothing to go back to, so the header falls back to the Board');
+    'nothing to go back to, so the header falls back to Messages');
+});
+
+test('a door that names its origin wins, once (#2770)', () => {
+  // New change and the Messages inbox's session rows record where the
+  // session hangs off BEFORE they navigate: the Improve store's `prev` is the
+  // last APP route, and Messages is not one.
+  const { Improve, store } = loadImprove({ slug: 'demo-app' });
+  Improve.setTab('dev', 'forum');
+  Improve.enterSessionFrom('#messages');
+  Improve.setTab('dev', 'sessions');
+  assert.equal(store.state.sessionOrigin, '#messages', 'the named origin is recorded');
+  Improve.setTab('dev', 'forum');
+  Improve.setTab('dev', 'sessions');
+  assert.equal(store.state.sessionOrigin, '#app/demo-app/workshop',
+    'and it is taken once, so it cannot outlive the entry it was set for');
+  Improve.enterSessionFrom('https://elsewhere.example/');
+  assert.equal(Improve._nextSessionOrigin, null, 'only a hash is accepted');
 });
 
 test('entering a session serialises the route being left', () => {
@@ -283,7 +359,7 @@ test("the platform's own app can never be an origin's app tab", () => {
   Improve.setTab('app');
   Improve.setTab('dev', 'sessions');
   assert.equal(store.state.sessionOrigin, null,
-    'it has no app tab to go back to, so the Board fallback is the answer');
+    'it has no app tab to go back to, so the Messages fallback is the answer');
 });
 
 // ── 6. The click path agrees with the href ─────────────────────────────
@@ -301,14 +377,15 @@ test('leaving a session follows the same origin the arrow shows', () => {
     + 'is a syntax error');
   assert.match(body, /if \(origin[\s\S]{0,80}?location\.hash = origin;/,
     'and goes there');
-  assert.match(body, /App\.switchTab\('dev'\)/,
-    'with the Board still the fallback when there is no origin');
-  // Compared on the CODE, not the prose: the comment above this branch names
-  // `App.switchTab('dev')` as what it replaced, and an indexOf over the raw
-  // body finds that first.
+  // #2770: the fallback is Messages now — a change is an agent conversation
+  // and that is its inbox — matching the header's own fallback.
+  assert.match(body, /location\.hash = '#messages';/,
+    'with Messages the fallback when there is no origin');
   const code = body.replace(/\/\/.*$/gm, '');
-  assert.ok(code.indexOf('location.hash = origin') < code.indexOf("App.switchTab('dev')"),
+  assert.ok(code.indexOf('location.hash = origin') < code.indexOf("location.hash = '#messages'"),
     'the origin is preferred over the fallback, not the other way round');
+  assert.doesNotMatch(code, /App\.switchTab\('dev'\)/,
+    'and the Board is no longer where a session with no origin goes back to');
 });
 
 // ── 5b. Which board "back to the board" means ──────────────────────────
@@ -361,9 +438,31 @@ test('with no AppView at all the layout is the Workshop', () => {
   assert.equal(store.state.boardView, 'workshop');
 });
 
-test('a session origin and the topic arrow answer with the same board', () => {
-  // One expression, imported by both (features/improve/improve-store.js), so
-  // the captured origin and the derived arrow cannot name different screens.
+test('a topic route, and only a topic route, has an in-pane back to its board (#2916)', () => {
+  // `topicBackHref` is what the chip renders from AND what the header hides
+  // its own slot on, so this table is the whole of "which pages carry the
+  // chip instead of the arrow".
+  const { topicBackHref } = loadImprove({ slug: 'demo-app' });
+  const at = (subTab, extra = {}) => topicBackHref({
+    slug: 'demo-app', tab: 'dev', subTab, boardView: 'workshop', ...extra,
+  });
+  assert.equal(at('topic'), '#app/demo-app/workshop',
+    'an issue / proposal / governance vote / shared session goes to its board');
+  assert.equal(at('topic', { boardView: 'kanban' }), '#app/demo-app/board',
+    '…in the layout it was opened from, never a literal');
+  for (const subTab of ['sessions', 'chat', 'forum', null]) {
+    assert.equal(at(subTab), null,
+      `subTab ${subTab}: no chip (a dev session and the discussion are Messages `
+      + 'threads and keep the header arrow; the Workshop has nowhere up to go)');
+  }
+  assert.equal(at('topic', { tab: 'app' }), null, 'never on the running app');
+  assert.equal(at('topic', { slug: null }), null, 'and never without an app');
+});
+
+test('a session origin and the topic chip answer with the same board', () => {
+  // One expression, used by both (features/improve/improve-store.js), so the
+  // captured origin and the in-pane chip (#2916; the header's arrow before
+  // it) cannot name different screens.
   const { Improve, store, sandbox, boardHref } = loadImprove({ slug: 'demo-app' });
   sandbox.AppView = { _getViewMode: () => 'workshop' };
   Improve.setTab('dev', 'forum');
@@ -382,20 +481,27 @@ test('the accessor the click path reads is published on the controller', () => {
 
 // ── 7. The order of the right group ────────────────────────────────────
 
-test('the bell renders BEFORE Improve, to its left', () => {
+test('the bell renders BEFORE the mark, to its left', () => {
   // The bell was moved to the far right for a round, on the argument that a
-  // standing alert wants a fixed address and Improve's width (which clears
-  // entirely on a screen with no target) moves it. The arrangement was
+  // standing alert wants a fixed address and Improve's width (which cleared
+  // entirely on a screen with no target) moved it. The arrangement was
   // preferred as it had always been: the alert reads inward from the edge and
-  // the ACTION owns the corner. Both are defensible, which is exactly why the
-  // one we ship is pinned — an order nobody asserts is an order that drifts.
+  // the corner goes to the control that never moves. Both are defensible,
+  // which is exactly why the one we ship is pinned — an order nobody asserts
+  // is an order that drifts.
+  //
+  // #2718 retired #improve-btn, so the group is two controls: the bell, then
+  // the Homeroom mark. The argument only got stronger — the mark is a fixed
+  // 26px tile, so the bell's address is fixed too.
   const group = HEADER.slice(HEADER.indexOf('<div ref={rightGroupRef}'));
   const body = group.slice(0, group.indexOf('</div>\n      </header>'));
   const bell = body.indexOf('id="notifications-btn"');
-  const improve = body.indexOf('<ImproveButton />');
-  assert.ok(bell > 0 && improve > 0, 'both controls are in the right group');
-  assert.ok(bell < improve,
-    'the bell first, then Improve — DOM order is visual order in this flex row');
+  const mark = body.indexOf('<PlatformMark />');
+  assert.ok(bell > 0 && mark > 0, 'both controls are in the right group');
+  assert.ok(bell < mark,
+    'the bell first, then the mark — DOM order is visual order in this flex row');
+  assert.equal(body.indexOf('<ImproveButton />'), -1,
+    'and the Improve pill is not back between them');
 
   // The bell must stay INSIDE this group. rightGroupRef is what
   // use-header-layout.ts measures as the title's right-hand clearance, so a
@@ -417,21 +523,28 @@ test('the bell renders BEFORE Improve, to its left', () => {
 //
 // So this asserts BOTH writers agree, not just the one that reads first.
 
-test('both writers of the bar agree that the Browse list gets the house', () => {
+test('both writers of the bar agree that the Browse list is a tab root', () => {
   const browse = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
   );
 
-  // Writer 1: the screen reveal.
+  // #2718 review: Discover is a TAB now, so the list level shows nothing —
+  // the bar is on screen beside it and a corner control that goes home is a
+  // second way to press a button already in view. The empty bar #2639 fixed
+  // is not back: what fixed it was giving the viewer a way out, and the tab
+  // bar is a better one than the house.
+  //
+  // Writer 1: the screen reveal, through the table.
   const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(body, /revealId === 'home-screen' \? 'none' : 'home'/);
+  assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/);
+  assert.match(APP_JS, /'browse-screen': \['none'\],/, 'and the table calls it a root');
 
-  // Writer 2: Browse's own chrome sync, which runs after it.
-  assert.match(browse, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'home';/,
-    'the list level must not publish none over the reveal');
-  assert.doesNotMatch(browse, /: 'none';/,
-    'no remaining none in the chrome sync');
+  // Writer 2: Browse's own chrome sync, which runs after it and so decides.
+  assert.match(browse, /const backMode = upToList \? 'arrow' : 'none';/,
+    'the list level agrees with the table');
+  assert.doesNotMatch(browse, /: 'home';/,
+    'no remaining house in the chrome sync');
 
   // And the order that makes the second one decisive is still the order.
   const nav = APP_JS.slice(APP_JS.indexOf('navigateToBrowse'));
@@ -449,4 +562,55 @@ test('the detail level keeps its own two answers', () => {
   // opened from a Home card and there is no list behind it.
   assert.match(browse, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/);
   assert.match(browse, /App\.setBackIcon\(backMode, upToList \? '#apps' : undefined\)/);
+});
+
+test('the back-slot table and the tab map agree about what is a root', () => {
+  // TWO TABLES SAYING ONE THING, which is the shape that rots. App._BACK_SLOT
+  // decides what the header's left slot shows for a screen; TAB_FOR_SCREEN
+  // decides which tab lights up for the same screen. The rule that binds them
+  // is short: a screen that IS its tab's root shows nothing, and a screen that
+  // belongs to a tab it is not the root of shows an arrow to that tab's
+  // address. So the two are derived from each other here rather than trusted
+  // to stay in step by hand.
+  const nav = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/nav/nav-store.js'), 'utf8'
+  );
+  const tabFor = {};
+  const mapBody = nav.match(/TAB_FOR_SCREEN = Object\.freeze\(\{([\s\S]*?)\}\)/)[1];
+  for (const line of mapBody.split('\n')) {
+    const m = line.match(/'([a-z-]+)': '([a-z]+)'/);
+    if (m) tabFor[m[1]] = m[2];
+  }
+  assert.ok(Object.keys(tabFor).length >= 9, 'the tab map was read');
+
+  const slots = {};
+  const slotBody = APP_JS.match(/_BACK_SLOT: \{([\s\S]*?)\n  \},/)[1];
+  for (const line of slotBody.split('\n')) {
+    const m = line.match(/'([a-z-]+)': \[([^\]]*)\]/);
+    if (m) slots[m[1]] = m[2].split(',').map((p) => p.trim().replace(/'/g, ''));
+  }
+
+  // The tab bar's own hrefs, so the arrow lands where the tab does rather than
+  // at an address this test made up.
+  const HREF = { home: '/', discover: '#apps', messages: '#messages', workshop: '#workshop', me: '#profile' };
+  // The root of each tab: the screen its tab navigates to.
+  const ROOT = {
+    home: 'home-screen', discover: 'browse-screen', messages: 'messages-screen',
+    workshop: 'workshop-screen', me: 'profile-screen',
+  };
+
+  for (const [screen, tab] of Object.entries(tabFor)) {
+    assert.ok(slots[screen], `${screen} is in the tab map, so it needs a slot`);
+    if (ROOT[tab] === screen) {
+      assert.deepEqual(slots[screen], ['none'],
+        `${screen} is ${tab}'s root, so its corner is empty`);
+    } else {
+      assert.deepEqual(slots[screen], ['arrow', HREF[tab]],
+        `${screen} belongs to ${tab}, so it goes up to ${HREF[tab]}`);
+    }
+  }
+  // An app is neither: leaving somebody else's program is stepping out, not
+  // going up, and #app-view is deliberately absent from the tab map.
+  assert.deepEqual(slots['app-view'], ['close']);
+  assert.ok(!tabFor['app-view'], 'and no tab claims it');
 });

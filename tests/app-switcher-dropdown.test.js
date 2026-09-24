@@ -1,37 +1,33 @@
-// The app chip's menu is a DROPDOWN on desktop, not a right-edge rail.
+// The Homeroom menu is a POPOVER under the mark on desktop (#2784).
 //
 // #apps-switcher-sheet is one always-mounted element with three
 // presentations, all of them decided in app.css: a kit bottom sheet on touch,
-// a CSS bottom sheet below `sm`, and at `sm`+ for a mouse a panel hanging
-// under the chip that opened it. That last one used to be the same
-// full-height right-edge slide-over as #improve-panel and the notifications
-// sheet, which is right for a list with no natural end and wrong for a menu:
-// the trigger sits in the middle of the top bar, and on a wide display the
-// answer arrived a foot away from the question.
+// a CSS bottom sheet below `sm`, and at `sm`+ for a mouse a popover hanging
+// under the Homeroom mark that opened it. That last one has moved twice: from
+// a full-height right-edge rail to a dropdown centred under the header's
+// title chip, and — once the trigger moved from the chip to the mark at the
+// far right of the bar — from the middle of the screen, dimming the page, to
+// right under the mark with no dim, the way the dev board's vote popover
+// hangs off its button. The research behind that last move (how mini-app
+// hosts present their platform menu) is in the #2784 proposal.
 //
 // Nothing about the markup changed, which is the point — these pin the CSS
-// contract that replaced it, and the three traps in it:
+// contract, the one measurement the island makes, and the traps in it:
 //
-//   1. A dropdown cannot hide by sliding off an edge (its edge is the header,
-//      and it paints above it), so the closed state is opacity + visibility.
-//      `.platform-sheet-adopted` flattens transform, position, border and
-//      shadow but NOT those two — so a touch device wider than 639px, which
-//      matches the desktop rule and the kit adoption at once, would present
-//      an invisible sheet without an explicit reset.
-//   2. The chip is only viewport-centred while it fits
-//      (features/header/use-header-layout.ts toggles `.is-centered`), so the
-//      panel follows the class rather than assuming the middle.
-//   3. The backdrop stays — it is what catches the dismissing click — and
-//      paints nothing. That WAS an argument about modality (a scrim behind a
-//      header menu says "modal"), and it lost on review: this menu and the
-//      Improve rail are opened the same way, so one dimming and the other not
-//      made them read as two kinds of surface. The dim came back and is here
-//      now; what changed is that the PANEL casts it, as a 100vmax box-shadow
-//      on `.dc-lift-panel[data-open]`. A dim painted behind the panel lands
-//      inside the panel's own backdrop-filter and turns its glass grey — see
-//      tests/overlay-panes-lift.test.js for the measurements.
+//   1. A popover cannot hide by sliding off an edge (it has none, and it
+//      paints above the header), so the closed state is opacity +
+//      visibility. `.platform-sheet-adopted` flattens transform, position,
+//      border and shadow but NOT those two — so a touch device wider than
+//      639px, which matches the desktop rule and the kit adoption at once,
+//      would present an invisible sheet without an explicit reset.
+//   2. Where the mark is depends on the header's layout, so the popover is
+//      placed from the mark's measured rect — through lib/anchor-popover.ts,
+//      the arithmetic the vote popover uses — not from restated geometry.
+//   3. No dim at `sm`+, and the backdrop lets the pointer through there, or
+//      every outside click (the bell included) would be a dead click. Below
+//      `sm` it is still a bottom sheet and its backdrop still dismisses it.
 //
-// And the offset is the header's own height, restated once as
+// And the fallback offset is the header's own height, restated once as
 // --platform-header-h, which is only worth having if it cannot drift from the
 // markup it describes. The first test is what makes that true.
 //
@@ -46,20 +42,11 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const CSS = read('public/css/app.css');
 const HEADER = read('frontend/src/features/header/platform-header.tsx');
 const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
-const TABS = read('frontend/src/features/improve/view-tabs.tsx');
-const TW = read('tailwind.config.js');
+const ISLAND = read('frontend/src/features/app-context/index.tsx');
+const VOTE = read('frontend/src/features/dev-board/card/dev-card.tsx');
 
 /** A Tailwind spacing step in px — the scale is 0.25rem per unit. */
 const step = (n) => n * 4;
-
-/** A radius from the config's OVERRIDDEN scale, in px. Never the stock one. */
-function radius(name) {
-  const scale = TW.match(/borderRadius:\s*\{([^}]*)\}/);
-  assert.ok(scale, 'tailwind.config.js declares a borderRadius scale');
-  const hit = scale[1].match(new RegExp(`'?${name}'?:\\s*'([\\d.]+)rem'`));
-  assert.ok(hit, `the scale declares ${name}`);
-  return Number(hit[1]) * 16;
-}
 
 /** A rule's body, by exact selector text. */
 function rule(selector) {
@@ -149,23 +136,39 @@ test('--platform-header-h is the height the header markup actually builds', () =
     `--platform-header-h must equal pt-${pt[1]} + pb-${pb[1]} + h-7 = ${expected}rem`);
 });
 
-// ── The dropdown ───────────────────────────────────────────────────────
+// ── The popover ────────────────────────────────────────────────────────
 
-test('the desktop presentation hangs off the header, not the right edge', () => {
+/** The closed-state rule of the desktop block. */
+function desktopClosed() {
   const block = switcherDesktopBlock();
-  const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
+  return block.slice(block.indexOf('#apps-switcher-sheet {'),
     block.indexOf('#apps-switcher-sheet[data-open]'));
+}
 
-  assert.match(closed, /top:\s*calc\(var\(--platform-header-h\)\s*\+\s*var\(--platform-safe-top\)/,
-    'it is offset by the bar it hangs from, including the status-bar inset');
-  assert.match(closed, /left:\s*50%/, 'centred on the viewport, under the centred chip');
-  assert.match(closed, /right:\s*auto/, 'the right edge no longer pins it…');
+test('the desktop presentation is anchored under the mark, not centred on the page', () => {
+  const closed = desktopClosed();
+  assert.match(closed,
+    /top:\s*var\(--menu-anchor-top,\s*calc\(var\(--platform-header-h\)\s*\+\s*var\(--platform-safe-top\)\)\)/,
+    'placed from the measured anchor, falling back to the underside of the bar');
+  assert.match(closed, /left:\s*var\(--menu-anchor-left,/,
+    'and from the measured left edge, which right-aligns it with the mark');
+  assert.doesNotMatch(closed, /left:\s*50%/,
+    'no longer centred on the viewport under a title chip that is not the trigger');
+  assert.doesNotMatch(closed, /translate\(-50%/, 'and no centring transform');
+  assert.match(closed, /right:\s*auto/, 'the right edge does not pin it…');
   assert.match(closed, /bottom:\s*auto/, '…and neither does the floor: it is content-height');
-  assert.match(closed, /max-height:\s*calc\(100dvh/,
-    'capped against the fold, with #switcher-nav taking the overflow');
+  assert.match(closed, /max-height:\s*calc\(100dvh - var\(--menu-anchor-top/,
+    'capped against the fold from where it actually starts, with #switcher-nav '
+    + 'taking the overflow');
   assert.match(closed, /border-radius:/, 'a floating panel has corners on all four sides');
   assert.doesNotMatch(closed, /border-left-width/,
-    'a rail borders one edge; a dropdown borders all of them');
+    'a rail borders one edge; a popover borders all of them');
+  assert.match(closed, /transform-origin:\s*top right/,
+    'it grows out of the corner under the mark');
+
+  // The title-chip follow rule is gone with the chip as the trigger.
+  assert.doesNotMatch(switcherDesktopBlock(), /header-title/,
+    'nothing about the menu depends on where the title sits any more');
 });
 
 test('closed is opacity + visibility, because there is no edge to hide behind', () => {
@@ -202,56 +205,66 @@ test('a kit-adopted sheet is never left invisible by the dropdown state', () => 
     + 'is the only thing standing between a touch tablet and an empty sheet');
 });
 
-test('the panel follows the chip when the title is not centred', () => {
-  const block = switcherDesktopBlock();
-  const closed = 'body:has(#header-title:not(.is-centered)) #apps-switcher-sheet {';
-  const open = 'body:has(#header-title:not(.is-centered)) #apps-switcher-sheet[data-open] {';
-  assert.ok(block.includes(closed), 'flow mode has its own resting position');
-  assert.ok(block.includes(open), 'and its own open position');
-
-  const flow = block.slice(block.indexOf(closed), block.indexOf(open));
-  assert.match(flow, /left:\s*1rem/,
-    "1rem is the header's own px-4 — the panel opens on the bar's content edge");
-  assert.match(flow, /transform:\s*translate\(0,/,
-    'no -50% here: the panel is anchored by its left edge, not its centre');
-
-  // The open variant carries the same :has() prefix, so it outranks the flow
-  // rule above it. Without the prefix the more specific closed rule would win
-  // and the menu would never finish opening in flow mode.
-  assert.ok(block.indexOf(open) > block.indexOf(closed),
-    'and it comes after, so the two read in the order they apply');
+test('the island measures the mark with the vote popover\'s arithmetic', () => {
+  // One helper, two callers: the popover and the menu cannot drift apart.
+  assert.match(VOTE, /import \{ placeUnderAnchor \} from '\.\.\/\.\.\/\.\.\/lib\/anchor-popover';/);
+  assert.match(VOTE, /placeUnderAnchor\(rect,/, 'the vote popover places itself through it');
+  assert.match(ISLAND, /import \{ placeUnderAnchor \} from '\.\.\/\.\.\/lib\/anchor-popover';/);
+  assert.match(ISLAND, /getElementById\(MARK_ID\)/, 'the menu reads the mark\'s rect');
+  assert.match(ISLAND, /const MARK_ID = 'platform-mark-btn';/);
+  assert.match(ISLAND, /\{ flip: false \}/,
+    'and never flips above it — above the header is off the screen');
+  // Custom properties, not top/left: the root's inline style is the one
+  // channel that does not touch the constant class string the kit writes to.
+  assert.match(ISLAND, /setProperty\('--menu-anchor-top'/);
+  assert.match(ISLAND, /setProperty\('--menu-anchor-left'/);
+  // Placed in a LAYOUT effect, before the open state paints, and only on the
+  // web presentation — the kit positions an adopted sheet itself.
+  assert.match(ISLAND, /useIsomorphicLayoutEffect\(\(\) => \{\s*\n\s*if \(!open \|\| adopted\) return undefined;/);
+  assert.match(ISLAND, /window\.addEventListener\('resize', place\)/,
+    'and follows the mark when the window is resized');
 });
 
 // ── The backdrop ───────────────────────────────────────────────────────
 
-test('the backdrop dims exactly as the Improve panel\'s does', () => {
-  // These two panels open from the same bar and dismiss the same way, so one
-  // dimming the page and the other not made them read as two different KINDS
-  // of surface. The desktop transparency override that did that is gone.
-  // Narrowed from "no desktop rule may touch the backdrop at all". That was
-  // the right guard when the only reason to reach for one was to turn the dim
-  // off, and too broad the moment a desktop rule moved where the dim STARTS
-  // (it now begins under the header, so the bar stays lit and clickable — see
-  // tests/header-stays-live.test.js). What must not come back is the
-  // transparency, so that is what this forbids: the geometry is free to move,
-  // the paint is not.
+test('no dim at sm+, and an outside click still lands', () => {
+  // THE DIM IS GONE ON DESKTOP. It came back once on review, on the argument
+  // that the Improve rail and this menu opened from the same bar and one
+  // dimming while the other did not made them read as different KINDS of
+  // surface. The rail retired (#2718 review), and #2784 asked for the menu to
+  // read like the vote popover: an undimmed menu under its trigger, the
+  // kit's own desktop idiom (.un-popover, which has no backdrop).
+  const SCRIM = read('frontend/src/lib/overlay-scrim.js');
+  assert.match(SCRIM,
+    /surface\.id === 'apps-switcher-sheet' && matchMedia\('\(min-width: 640px\)'\)\.matches\) return null;/,
+    'the scrim paints nothing for the desktop popover');
+
+  // The backdrop is still mounted and still covers the page — below `sm` it
+  // is the bottom sheet's dismissal target — but at `sm`+ it lets the
+  // pointer through, in a block AFTER the base rule it overrides (same
+  // specificity, so order decides).
+  assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,300}?className="fixed inset-0/);
+  const base = CSS.indexOf('\n#apps-switcher-overlay[data-open] {');
+  assert.ok(base > 0);
+  const desktop = mediaBlocks('min-width: 640px')
+    .filter((b) => b.includes('#apps-switcher-overlay[data-open]'));
+  assert.equal(desktop.length, 1, 'one desktop rule releases the pointer');
+  assert.match(desktop[0], /#apps-switcher-overlay\[data-open\] \{\s*pointer-events:\s*none;/);
+  assert.ok(CSS.indexOf(desktop[0]) > base, 'and it comes after the rule it overrides');
   for (const block of mediaBlocks('min-width: 640px')) {
-    if (!block.includes('#apps-switcher-overlay')) continue;
     assert.doesNotMatch(block, /#apps-switcher-overlay[^}]*background/,
-      'no desktop rule may repaint the backdrop — it dims at every width');
-    assert.doesNotMatch(block, /#apps-switcher-overlay[^}]*opacity/,
-      'nor fade it out: opacity is the open/closed switch, not a width choice');
+      'no desktop rule repaints the backdrop');
   }
 
-  // Sameness by construction rather than by two copies of a value: both
-  // overlays ship one class string and share one pair of opacity rules.
-  const IMPROVE = read('frontend/src/features/improve/improve-panel.tsx');
-  const cls = /id="improve-overlay"[\s\S]{0,200}?className="([^"]*)"/.exec(IMPROVE);
-  assert.ok(cls, 'the Improve panel states its backdrop classes');
-  assert.ok(SHEET.includes(`className="${cls[1]}"`),
-    `the switcher's backdrop must carry the same run: ${cls[1]}`);
+  // Which leaves dismissal to the island: an outside click closes the menu
+  // in the capture phase and still reaches what was clicked, the vote
+  // popover's rule. The mark is spared, because its own click toggles.
+  assert.match(ISLAND, /document\.addEventListener\('click', onDoc, true\)/);
+  assert.match(ISLAND, /sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\)/);
+  assert.doesNotMatch(ISLAND, /preventDefault|stopPropagation/,
+    'the click is not swallowed');
 
-  // And it is still the thing that catches the dismissing click.
+  // Below `sm` the backdrop still catches the dismissing tap.
   assert.match(rule('#apps-switcher-overlay[data-open]'), /pointer-events:\s*auto/);
   assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?onClick=\{close\}/,
     'clicking it closes the sheet');
@@ -260,6 +273,8 @@ test('the backdrop dims exactly as the Improve panel\'s does', () => {
 // ── The other two presentations are untouched ──────────────────────────
 
 test('below sm it is still a bottom sheet, dim and all', () => {
+  // #2784 researched this too: WeChat, Alipay and LINE open their platform
+  // menu as a sheet from the bottom of the screen, which is what this is.
   const block = blockWith('max-width: 639px', '#apps-switcher-sheet {');
   const sheet = block.slice(block.indexOf('#apps-switcher-sheet {'));
   assert.match(sheet, /bottom:\s*0/);
@@ -273,99 +288,84 @@ test('below sm it is still a bottom sheet, dim and all', () => {
   assert.match(sheet, /border-top-left-radius:\s*1\.75rem/, 'and keeps its two top corners');
   assert.match(sheet, /border-top-right-radius:\s*1\.75rem/);
 
-  // The dim is still the default at every width — but the panel CASTS it now
-  // (`.dc-lift-panel[data-open]`'s 100vmax box-shadow) rather than the backdrop
-  // painting it, because a dim painted behind the panel lands inside the
-  // panel's own backdrop-filter and turns its glass grey. The backdrop element
-  // stays for pointer-events and dismiss-on-click, and paints nothing.
+  // The dim here is lib/overlay-scrim.js's paint layer rather than the
+  // backdrop, because a dim painted behind the panel lands inside the panel's
+  // own backdrop-filter and turns its glass grey. The backdrop element stays
+  // for pointer-events and dismiss-on-click, and paints nothing.
   assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?className="fixed inset-0 z-40"/);
   assert.doesNotMatch(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?bg-black/);
 });
 
 test('the sheet markup is one panel — the presentation is entirely CSS', () => {
-  // The whole point of doing this in a media query: no branch, no second
-  // element, nothing measured in JS, so the three presentations cannot grow
-  // three sets of behaviour.
-  assert.doesNotMatch(SHEET, /matchMedia/,
+  // The presentation is a media query: no branch, no second element, so the
+  // three presentations cannot grow three sets of behaviour. The one thing
+  // measured — the mark's rect — is measured in the island (./index.tsx)
+  // and handed to the CSS as custom properties; the sheet itself neither
+  // measures nor asks how wide the window is.
+  assert.doesNotMatch(SHEET, /matchMedia|getBoundingClientRect/,
     'the panel does not ask how wide the window is');
+  assert.doesNotMatch(ISLAND, /matchMedia/,
+    'and neither does the island: the media query decides which rule reads the anchor');
   assert.match(SHEET, /id="apps-switcher-sheet"[\s\S]{0,600}?className="fixed z-50/,
     'one root, one constant class string');
 });
 
 // ── The panel's contents ───────────────────────────────────────────────
 
-test('the app strip revalidates on every open without clearing cached rows', () => {
-  const start = SHEET.indexOf('// The viewer\'s apps, in the home grid');
-  const end = SHEET.indexOf('// Every way into an app funnels through', start);
-  assert.ok(start >= 0 && end > start, 'located the app-list loading effect');
-  const effect = SHEET.slice(start, end);
-
-  assert.match(effect, /if \(!open\) return;/,
-    'a closed sheet does not fetch during prerender or while hidden');
-  assert.doesNotMatch(effect, /if \(!open\s*\|\||\|\|\s*apps\)/,
-    'a previous response must not suppress the next open-time refresh');
-  assert.match(effect, /\}, \[open\]\);/,
-    'each closed-to-open transition reruns the request');
-  assert.doesNotMatch(effect, /setApps\(null\)/,
-    'the last successful strip stays visible while it revalidates');
-});
-
-test('the panel is deliberately wider than the rails, and still fits', () => {
-  const block = switcherDesktopBlock();
-  const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
-    block.indexOf('#apps-switcher-sheet[data-open]'));
+test('the popover is a menu\'s width — narrower than the rail, and it fits', () => {
+  const closed = desktopClosed();
   const mine = closed.match(/\n\s*width:\s*([\d.]+)rem/);
-  assert.ok(mine, 'the dropdown states a width');
+  assert.ok(mine, 'the popover states a width');
 
-  // It matched #notifications-sheet / #messages-sheet for one round. It does
-  // not any more, and that is a decision rather than drift: the app strip is
-  // the only part of this menu that uses width, and those two hold rows only.
-  // Pinned as an INEQUALITY so the departure is deliberate in both directions
-  // — restoring parity should fail here and be argued for, not slip in.
+  // It was 36rem, wider than the rails on purpose, while the menu headed
+  // with a horizontal strip of app tiles — the only part of it that used
+  // width. The strip retired; what is left is rows, so #2784 brought it
+  // down to a menu's width. Pinned as an INEQUALITY against the rail so
+  // going back to "wider" has to be argued for, not slip in.
   const sheets = rule('#notifications-sheet,\n#messages-sheet');
   const theirs = sheets.match(/\n\s*width:\s*([\d.]+)rem/);
-  assert.ok(theirs, 'the notifications/messages rail states a width');
-  assert.ok(Number(mine[1]) > Number(theirs[1]),
-    'the menu is the wider of the two on purpose — see the comment for the '
-    + 'measurements that bought it and what they cost');
+  assert.ok(theirs, 'the notifications rail states a width');
+  assert.ok(Number(mine[1]) < Number(theirs[1]),
+    'the menu is narrower than the notifications rail — see the comment');
+  assert.ok(Number(mine[1]) * 16 >= 312,
+    'and no narrower than the vote popover it is modelled on');
 
-  // At this size the guard is load-bearing: the panel has to stay inside the
-  // narrowest viewport the desktop rule applies to, with air on both sides.
+  // The guard keeps it inside the narrowest viewport the desktop rule
+  // applies to, with the placement's 8px margin on both sides.
   const guard = closed.match(/max-width:\s*calc\(100vw\s*-\s*([\d.]+)rem\)/);
   assert.ok(guard, 'and it caps itself against the viewport');
+  assert.equal(Number(guard[1]) * 16, 16, '8px a side, the margin the placement clamps to');
   const SM = 640;
   const px = Number(mine[1]) * 16;
   assert.ok(px <= SM - (Number(guard[1]) * 16),
-    `${px}px must fit inside ${SM}px less the ${Number(guard[1]) * 16}px guard, `
-    + 'or the panel touches both edges the moment the desktop rule engages');
+    `${px}px must fit inside ${SM}px less the ${Number(guard[1]) * 16}px guard`);
 });
 
-test('the panel meets the header rather than floating under it', () => {
-  const block = switcherDesktopBlock();
-  const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
-    block.indexOf('#apps-switcher-sheet[data-open]'));
-  const top = closed.match(/top:\s*calc\(([^;]*)\);/);
-  assert.ok(top, 'the dropdown states its top');
-  assert.doesNotMatch(top[1], /\+\s*[\d.]+rem/,
-    'the header height and the safe-area inset, and nothing added to them: '
-    + 'the chip is IN the bar, so a gap is a seam through one object');
-  // The bar has no surface on the wallpaper routes, so what ties the menu to
-  // the chip is the hairline they share, not a slab they both sit on.
-  assert.match(closed, /border-color:\s*var\(--brand-line\)/,
-    'the hairline is the brand one the chip itself wears');
+test('the popover hangs just under the mark, with the brand hairline', () => {
+  // A 6px gap, the vote popover's — lib/anchor-popover.ts's default, which
+  // the island does not override.
+  assert.doesNotMatch(ISLAND, /gap:/, 'the island keeps the shared 6px gap');
+  const ANCHOR = read('frontend/src/lib/anchor-popover.ts');
+  assert.match(ANCHOR, /gap = 6, margin = 8/);
+  assert.match(desktopClosed(), /border-color:\s*var\(--brand-line\)/,
+    'the hairline is the brand one the mark\'s tile sits in');
 });
 
-test('the Apps label is the same label as In this app, not a heading', () => {
-  // The row it sits in cannot use SECTION — it holds Create New and the close
-  // button too — so the type half is shared as a constant and the row states
-  // SECTION's own padding. Both halves have to hold for "the same as In this
-  // app" to be true.
+test('the label row is a label, not a heading', () => {
+  // The row it sits in cannot use SECTION — it holds the close button too —
+  // so the type half is shared as a constant and the row states SECTION's own
+  // padding. Both halves have to hold for it to read as a label.
+  //
+  // IT SAYS THE APP'S NAME NOW. "Apps" was right while a strip of every app
+  // sat under it; with the strip retired (#2718 review) this row names what
+  // the sheet is about, and the duplicate label that used to open the list
+  // below went with it.
   assert.match(SHEET, /const SECTION_TYPE = 'text-\[0\.7rem\] font-semibold uppercase tracking-wide '/,
     'the type half is a constant of its own');
   assert.match(SHEET, /const SECTION = 'px-5 pt-4 pb-1 ' \+ SECTION_TYPE;/,
     'and SECTION is that constant plus the row it owns');
-  assert.match(SHEET, /className=\{'flex-1 min-w-0 block ' \+ SECTION_TYPE\}/,
-    'the Apps label reads as a label…');
+  assert.match(SHEET, /className=\{'flex-1 min-w-0 block truncate ' \+ SECTION_TYPE\}/,
+    'the label reads as a label…');
   assert.match(SHEET, /className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0"/,
     '…in a row carrying SECTION\'s own padding');
   assert.doesNotMatch(SHEET, /text-lg font-semibold text-zinc-900/,
@@ -373,101 +373,37 @@ test('the Apps label is the same label as In this app, not a heading', () => {
 });
 
 test('every group in the menu announces itself', () => {
-  // Apps, the platform's destinations, the viewer's own. Home/Discover/
-  // Messages were the one group without a label, which read as rows left
-  // over above "You".
+  // ONE GROUP NOW. "Platform" and "You" were the platform's destinations and
+  // the viewer's, and both left with #2718 — the tab bar carries the first
+  // and the Profile screen the second. The apps strip was the third and left
+  // on the owner's review, so what remains is named after the APP, which is
+  // what every row in it is about.
   //
-  // "In this app" is NOT in this list any more, and its absence is the point:
-  // the App | Board | Activity strip it captioned has left this menu. The
-  // menu picks WHICH APP, so a control about the app you are already inside
-  // sat between you and the list you opened it for. The Improve panel keeps
-  // the strip and the header's back arrow is the way out of a Board — see
-  // the assertion below, which is what stops it drifting back.
-  for (const label of ['Apps', 'Platform', 'You']) {
-    assert.ok(SHEET.includes('>' + label + '<') || SHEET.includes('\n            ' + label + '\n'),
-      `the ${label} group is labelled`);
-  }
-  // It goes INSIDE #switcher-nav, above Home — which keeps Home and Discover
-  // adjacent siblings, and dapp.json selects on exactly that.
+  // "In this app" is not in this list either, and its absence is older: the
+  // App | Board | Activity strip it captioned left when the menu was still
+  // picking WHICH APP, because a control about the app you are already inside
+  // sat between you and the list you opened it for.
+  assert.match(SHEET, /\{appLabel\}\n\s+<\/span>/,
+    "the one group is labelled with the app's name");
   const nav = SHEET.slice(SHEET.indexOf('id="switcher-nav"'));
-  const label = nav.indexOf('>Platform<');
-  const home = nav.indexOf('id="switcher-row-home"');
-  assert.ok(label > 0 && label < home, 'the label precedes the rows it names');
-  assert.doesNotMatch(nav.slice(label, home), /id="switcher-row-/,
-    'and nothing sits between it and Home, so #switcher-row-home + '
-    + '#switcher-row-discover still resolves (dapp.json)');
+  assert.ok(!nav.includes('{appLabel}</div>'),
+    'and not a second time inside the list — the header row is the label now');
+  assert.doesNotMatch(nav, /id="switcher-row-/,
+    'and no platform destination is left in this menu at all — they are tabs '
+    + 'and Profile rows now (#2718)');
 });
 
-test('the menu is the APP PICKER — the view strip is not in it', () => {
-  // The regression this guards: the strip is one module rendered from a
-  // caller-supplied id map, so a second surface is one import away, and a
-  // duplicated navigation control is the kind of thing that reads as
-  // harmless in a diff. Two owners of one decision is what view-tabs.tsx's
-  // own header warned about; the chip's copy was it.
-  assert.ok(!/AppViewTabs/.test(SHEET),
-    'no view strip in the chip menu');
+test('the Workshop is a row in the menu, not a toggle (#2761)', () => {
+  // The App | Workshop strip was the one CONTROL in a menu of rows. The owner
+  // asked for a plain "Go to workshop" row instead, with nothing in place of
+  // the App segment — the parked app on the bar (#2762) is the way back.
+  assert.ok(!/AppViewTabs|view-tabs/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
+    'the strip is not rendered here any more');
+  assert.match(SHEET, /id="app-menu-row-workshop"[\s\S]{0,200}label="Go to workshop"/,
+    'the row that replaced it');
+  // The strip's Workshop segment carried the vote count; it rides the row now.
+  assert.match(SHEET, /id="app-menu-workshop-owed"/);
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
-    'and no caption left behind for it — comments explaining the removal '
-    + 'are fine, rendered text is not');
-});
-
-test('equal air above and below the app strip, which is not equal padding', () => {
-  const strip = SHEET.match(/id="apps-switcher-list"[\s\S]{0,200}?className="([^"]*)"/);
-  assert.ok(strip, 'the strip states its padding');
-  const pt = strip[1].match(/\bpt-(\d+)\b/);
-  const pb = strip[1].match(/\bpb-(\d+)\b/);
-  assert.ok(pt && pb, 'both paddings are explicit');
-
-  // Every term, read from the source rather than restated, because the whole
-  // point is that the four of them do not cancel out the way they look like
-  // they should.
-  const labelRow = SHEET.match(/className="flex items-center gap-3 px-5 pt-\d+ pb-(\d+) shrink-0"/);
-  assert.ok(labelRow, 'the Apps label row states its bottom padding');
-  const section = SHEET.match(/const SECTION = 'px-5 pt-(\d+) pb-\d+ ' \+ SECTION_TYPE;/);
-  assert.ok(section, 'SECTION states the padding it opens with');
-
-  // The selected tile's ring paints outside its own box: ring-2 ring-offset-2.
-  const tile = SHEET.match(/ring-(\d+) ring-offset-(\d+)/);
-  assert.ok(tile, 'the selected tile states its ring');
-  const RING = Number(tile[1]) + Number(tile[2]);
-
-  // What the EYE measures, on each side of the tiles:
-  //   above — the label row's own bottom padding, plus the strip's top
-  //           padding, LESS the ring that paints up into it
-  //   below — the strip's bottom padding, plus the padding the next label
-  //           opens with
-  const above = step(Number(labelRow[1])) + step(Number(pt[1])) - RING;
-  const below = step(Number(pb[1])) + step(Number(section[1]));
-  assert.equal(above, below,
-    `the tiles read ${above}px above and ${below}px below — the ring outset `
-    + "and the next label's own padding are why symmetric padding is not "
-    + 'symmetric air');
-  assert.ok(step(Number(pt[1])) >= RING,
-    'and the top padding still clears the ring, or its top arc is sliced flat');
-});
-
-// ── The segmented control's pill ───────────────────────────────────────
-
-test('the tab pill is concentric with the track it sits in', () => {
-  // THE BUG THIS PINS: a rounded box nested in a rounded box has exactly one
-  // correct radius — the outer one less the gap. The pill was `0.625rem`,
-  // which is `xl - 2px` in STOCK Tailwind, where xl is 12px. This config
-  // overrides the whole radius scale, so the track is 16px and the pill was
-  // 4px too tight, leaving a crescent of track at each end of the strip.
-  const track = TABS.match(/const TRACK =\s*\n?\s*'([^']*)'/);
-  assert.ok(track, 'the track states its classes');
-  const tr = track[1].match(/\brounded-(\w+)\b/);
-  const pad = track[1].match(/\bp-(\d+(?:\.\d+)?)\b/);
-  assert.ok(tr && pad, 'the track states a radius and a padding');
-
-  const seg = TABS.match(/const SEG =\s*\n?\s*'([^']*)'/);
-  assert.ok(seg, 'the pill states its classes');
-  const sr = seg[1].match(/rounded-\[([\d.]+)rem\]/);
-  assert.ok(sr, 'the pill states an explicit radius');
-
-  const inner = radius(tr[1]) - (Number(pad[1]) * 4);
-  assert.equal(Number(sr[1]) * 16, inner,
-    `the track is ${radius(tr[1])}px with ${Number(pad[1]) * 4}px of padding, `
-    + `so the pill must be ${inner}px — read the radius off tailwind.config.js, `
-    + 'never off what Tailwind ships by default');
+    'and no caption left behind — comments explaining a move are fine, '
+    + 'rendered text is not');
 });

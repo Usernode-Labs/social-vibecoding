@@ -53,12 +53,14 @@ const FRAME = FRAME_ONLY + '\n' + ACTIONS;
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
-// The Kanban|Feed control lives here now, not in the board frame.
-const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
-// The App | Board | Activity strip, rendered by BOTH the Improve panel and the
-// header chip's menu — and the store's only reader now that Kanban|Feed is
-// retired. See the note in that file: the two layouts WERE Board and Activity.
-const VIEW_TABS = read('frontend/src/features/improve/view-tabs.tsx');
+// The Improve panel WAS read here, as the host of the strip below and of a
+// Kanban|Feed sub-strip under its Board row. The panel retired (#2718
+// review) and the strip's one remaining host is the mark's menu, so the
+// sheet is what the two assertions about that host now read.
+const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+// The App | Workshop | Activity strip, rendered by the mark's menu — and no
+// longer a reader of the store at all. See the note in that file: the two
+// layouts WERE Board and Activity.
 // Streamlined Concept: the Board draws its own Kanban|Feed control now,
 // inside the frame itself — there is no separate toggle module to read.
 const MAIN = read('frontend/src/main.tsx');
@@ -187,7 +189,10 @@ test('no portal outlives its surface', () => {
   // away.
   assert.doesNotMatch(APP_VIEW, /subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots/);
   // `mountTopicSubView(content)` — no options object any more: the back bar
-  // the two props fed retired in favour of the platform header's chevron.
+  // the two props fed retired in favour of the platform header's chevron, and
+  // that in turn became the "‹ Workshop" chip at the top of the topic head
+  // (#2916), which TopicHead renders. Neither is the frame's, so the mount
+  // still takes nothing but its host.
   assert.match(APP_VIEW, /mountTopicSubView\(content\);/, 'the topic sub-view is mounted');
 
   // What replaces it for every host a caller is NOT in a position to know
@@ -377,13 +382,14 @@ test('the view toggle is real React state, and the className writer is gone', ()
   // subscribe: the Workshop and the kanban are ONE screen in two layouts, so
   // the strip marks Workshop in either. The store's readers are the board
   // frame's own now, which is where a LAYOUT belongs — the strip answers which
-  // part of the app you are in, not how its cards are stacked.
-  assert.ok(!VIEW_TABS.includes('useDevViewMode'),
-    'the view strip no longer reads the store — it marks Workshop in either layout');
+  // part of the app you are in, not how its cards are stacked. The strip
+  // itself then retired to a plain "Go to workshop" row (#2761).
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/improve/view-tabs.tsx')),
+    'the view strip is retired, so nothing there reads the store');
   assert.match(FRAME_ONLY, /useDevViewMode\(\)/,
     'the board frame does, which is the half that is unchanged');
-  assert.ok(!/useDevViewMode\(\)/.test(PANEL),
-    'and the panel reads it only through the strip');
+  assert.ok(!/useDevViewMode\(\)/.test(SHEET),
+    'and the menu that hosted the strip does not read it either');
   // The FRAME reads the mode too, and for something that is not a control:
   // the General-discussion card draws on the kanban only, because the Feed
   // draws the same fact as an activity row (see ./discussion-store.ts). What
@@ -412,8 +418,9 @@ test('the view toggle is real React state, and the className writer is gone', ()
     'the discussion card, the body skeleton and the toolbar\u2019s home, and nothing else');
   assert.match(frameCode, /mode === 'workshop' \? null : \(\s*<DevActionsRow/,
     'and the third reader is exactly that: no toolbar on the Workshop');
-  assert.ok(!PANEL.includes('id="improve-board-layouts"'),
-    'the Kanban|Feed sub-strip under the Board row is retired');
+  assert.ok(!SHEET.includes('id="improve-board-layouts"'),
+    'the Kanban|Feed sub-strip that sat under the Board row is retired, and '
+    + 'did not follow the strip into the mark\u2019s menu');
   assert.ok(!FRAME.includes('id="dev-view-toggle"'),
     'the Board draws no view tab strip above its cards');
   // The click still runs the module's behaviour, unchanged.
@@ -429,33 +436,23 @@ test('the view toggle is real React state, and the className writer is gone', ()
     assert.ok(!FRAME.includes(`id: '${id}'`) && !FRAME.includes(`id="${id}"`),
       `${id} was retired with the dev-screen tab strip`);
   }
-  // The control still reports where you are to the a11y tree, and it says
-  // `aria-current="page"` rather than `aria-pressed`: these are DESTINATIONS
-  // with their own addresses, not a pair of toggles restating one panel in
-  // another layout. `data-view-segment` went with the sub-strip; the segments
-  // name themselves with `data-context-row`, the key the Board and Activity
-  // rows already carried and the one dapp.json's checks select on.
-  assert.match(VIEW_TABS, /aria-current=\{active === 'workshop' \? 'page' : 'false'\}/,
-    'the Workshop segment reports whether it is the one you are on');
-  assert.match(VIEW_TABS, /data-context-row="workshop"/,
-    'each view still names itself with data-context-row');
-  assert.ok(!PANEL.includes('data-view-segment') && !FRAME.includes('data-view-segment'),
+  // `data-view-segment` went with the sub-strip, and the App | Workshop strip
+  // that replaced it retired to a plain "Go to workshop" row (#2761), which
+  // still names its destination with `data-context-row`.
+  assert.match(SHEET, /id="app-menu-row-workshop"\s+dataContextRow="workshop"/,
+    'the Workshop row still names itself with data-context-row');
+  assert.ok(!SHEET.includes('data-view-segment') && !FRAME.includes('data-view-segment'),
     'the retired sub-strip left no data-view-segment behind');
   // The Workshop is a hash route, so it has to be an anchor — cmd/ctrl-click
   // and "open in new tab" work on it, the rule tests/nav-new-tab.test.js pins
-  // across the shell. The App segment is a button because it is not a hash (on
-  // the self-hosted row it goes home).
-  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/,
-    'the Workshop segment is an anchor at the workshop route');
-  // The Board segment retired: the Workshop and the kanban are ONE screen in
-  // two layouts, so the strip stopped offering the layout as a destination.
-  // `#app/<slug>/board` and `?view=kanban` still resolve onto the kanban —
-  // dapp.json checks both — and the strip marks Workshop while you are there.
-  assert.ok(!VIEW_TABS.includes('data-context-row="board"'),
-    'the Board segment is gone from the strip');
-  assert.ok(!VIEW_TABS.includes('${slug}/board'),
-    'and with it the only control that navigated to the board route — the '
-    + 'route itself is untouched, which is why the header still names it');
+  // across the shell. MenuRow always renders an <a>.
+  assert.match(SHEET, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/,
+    'the Workshop row is an anchor at the workshop route');
+  // No control navigates to the board route — `#app/<slug>/board` and
+  // `?view=kanban` still resolve onto the kanban, and dapp.json checks both.
+  assert.ok(!/dataContextRow="board"/.test(SHEET) && !SHEET.includes('${slug}/board'),
+    'the menu offers no Board destination — the route itself is untouched, '
+    + 'which is why the header still names it');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');

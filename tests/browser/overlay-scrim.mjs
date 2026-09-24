@@ -33,7 +33,7 @@ try {
        ? execFileSync('git', ['show', `${base}:${path}`], { cwd: root }) : readFileSync(root + path);
       return route.fulfill({ contentType, body });
      }
-     return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="${theme === 'dark' ? 'dark' : ''} ${kind === 'creation' && width === 390 ? 'in-native-webview un-android' : ''}"><head><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/usernode-native/v1/native.css"><link rel="stylesheet" href="/css/app.css"><link rel="stylesheet" href="/css/tailwind.css"><style>body{min-height:100vh;background:linear-gradient(120deg,${theme === 'light' ? '#edb393,#adb6d8 45%,#deca87' : '#412822,#282c42 45%,#403a25'})}main{padding:90px 20px;font-size:28px;color:#927b70}section{padding:32px}input{margin:20px 0}#improve-panel,#apps-switcher-sheet{padding:32px}</style></head><body><button id="opener">Open</button><main>Homeroom<br><br>Wallpapers and text remain behind bright glass.<br><br>Another row of background content.</main><script src="/usernode-native/v1/native.js"></script><script src="/js/platform-ui.js"></script></body></html>` });
+     return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="${theme === 'dark' ? 'dark' : ''} ${kind === 'creation' && width === 390 ? 'in-native-webview un-android' : ''}"><head><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/usernode-native/v1/native.css"><link rel="stylesheet" href="/css/app.css"><link rel="stylesheet" href="/css/tailwind.css"><style>body{min-height:100vh;background:linear-gradient(120deg,${theme === 'light' ? '#edb393,#adb6d8 45%,#deca87' : '#412822,#282c42 45%,#403a25'})}main{padding:90px 20px;font-size:28px;color:#927b70}section{padding:32px}input{margin:20px 0}#notifications-sheet,#apps-switcher-sheet{padding:32px}</style></head><body><button id="opener">Open</button><main>Homeroom<br><br>Wallpapers and text remain behind bright glass.<br><br>Another row of background content.</main><script src="/usernode-native/v1/native.js"></script><script src="/js/platform-ui.js"></script></body></html>` });
     });
     await page.goto('http://overlay.test/');
     if (version === 'head') await page.addScriptTag({ content: bridge + '\n' + legacy + '\nwindow.attachOverlayScrim=attachOverlayScrim;' });
@@ -42,8 +42,10 @@ try {
      const content = '<h2>Existing frosted surface</h2><input aria-label="First" value="Keep this input"><input aria-label="Second" value="Other input"><div style="height:140px"></div>';
      document.querySelector('#opener').focus();
      if (isLegacy) {
-      const id = kind === 'rail' ? 'improve-panel' : 'apps-switcher-sheet';
-      document.body.insertAdjacentHTML('beforeend', `<div id="${kind === 'rail' ? 'improve-overlay' : 'apps-switcher-overlay'}" class="fixed inset-0 z-40"></div><section id="${id}" class="fixed z-50 dc-lift dc-lift-panel ${kind === 'rail' ? 'improve-panel-transition' : 'app-context-transition'}">${content}</section><div class="overlay-scrim" aria-hidden="true"></div>`);
+      // The rail was #improve-panel until its panel retired (#2718 review);
+      // the bell's sheet is the rail idiom's remaining tenant.
+      const id = kind === 'rail' ? 'notifications-sheet' : 'apps-switcher-sheet';
+      document.body.insertAdjacentHTML('beforeend', `<div id="${kind === 'rail' ? 'notifications-sheet-overlay' : 'apps-switcher-overlay'}" class="fixed inset-0 z-40"></div><section id="${id}" class="fixed z-50 dc-lift dc-lift-panel ${kind === 'rail' ? 'nav-sheet-transition' : 'app-context-transition'}">${content}</section><div class="overlay-scrim" aria-hidden="true"></div>`);
       window.surface = document.getElementById(id);
       window.backdrop = surface.previousElementSibling;
       window.openSurface = () => { surface.dataset.open = ''; backdrop.dataset.open = ''; };
@@ -64,7 +66,13 @@ try {
     const bounds = await page.evaluate(() => { const s = getComputedStyle(surface); return { ...surface.getBoundingClientRect().toJSON(), outline: [s.outlineStyle, s.outlineWidth, s.outlineOffset, s.outlineColor], transform: s.transform }; });
     await page.screenshot({ path: `${out}/${theme}-${width}-${kind}-${version}.png` });
     writeFileSync(`${out}/${theme}-${width}-${kind}-${version}.json`, JSON.stringify(bounds));
-    if (version === 'head') {
+    // The Homeroom menu is an undimmed popover at desktop widths (#2784):
+    // no scrim, and its backdrop leaves the page (and the header) clickable.
+    const undimmed = kind === 'dropdown' && width >= 640;
+    if (version === 'head' && undimmed) {
+     assert.equal(await page.evaluate(() => [...document.querySelectorAll('.overlay-scrim')].filter(e => getComputedStyle(e).visibility === 'visible').length), 0); checks++;
+     assert.equal(await page.evaluate(() => getComputedStyle(backdrop).pointerEvents), 'none'); checks++;
+    } else if (version === 'head') {
      assert.equal(await page.evaluate(() => [...document.querySelectorAll('.overlay-scrim')].filter(e => getComputedStyle(e).visibility === 'visible').length), 1); checks++;
      assert.equal(await page.evaluate(() => getComputedStyle(surface).boxShadow.includes('1280px')), false); checks++;
      if (kind !== 'creation' || width !== 390) {

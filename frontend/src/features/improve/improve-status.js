@@ -40,9 +40,11 @@ const ImproveStatus = {
     // App/Dev segmented control. There is no App/Dev switch any more — an
     // app is just an app, and "Dev" is somewhere the Improve panel links to.
     // What this call publishes now is that panel's TARGET, which is what
-    // decides whether #improve-btn exists at all, so the header control still
-    // rides exactly this one lifecycle: it already covers openApp,
-    // navigateHome, AppView.close() and all six other-screen navigations.
+    // decides whether the control that opens it exists at all — #improve-btn
+    // in the header until #2718, #app-menu-row-improve in the mark's menu
+    // since — so it still rides exactly this one lifecycle: it already covers
+    // openApp, navigateHome, AppView.close() and all six other-screen
+    // navigations.
     //
     // The self-hosted platform row is NOT excluded here, unlike the switch it
     // replaced. That exclusion existed because the row's App mode had no
@@ -98,11 +100,13 @@ const ImproveStatus = {
   // hamburger, from when the version rows lived in that drawer's footer; they
   // are in the Improve panel's footer now, so the cue that says "go and look
   // at them" belongs on the control that opens it. The name went too — a dot
-  // called `header-menu-*` on the Improve button would be a lie that outlives
-  // everyone who remembers the move.
+  // called `header-menu-*` on the Improve button would have been a lie that
+  // outlives everyone who remembers the move, and it has since outlived the
+  // button too (#2718).
   //
-  // And it PUBLISHES rather than toggling a class: #improve-btn is React-owned
-  // end to end, so its indicators are store state. That also lets the second
+  // And it PUBLISHES rather than toggling a class: every renderer of this
+  // state is React-owned end to end — the panel, and the glyph on the row
+  // that opens it — so its indicators are store state. That also lets the second
   // state exist at all — `button.drawer-ver--stale`, the violet "the platform
   // rolled past the SHA this tab loaded against" reload affordance, which the
   // old dot could not show because it had exactly one colour.

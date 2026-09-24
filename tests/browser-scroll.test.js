@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTsx } = require('./lib/render-tsx');
-const { createBrowserScroll, allowsPageScroll, pageScroller, MOBILE_PAGE_QUERY } =
+const { createBrowserScroll, allowsPageScroll, pageScroller, strandedPan, textFocused, panOffset, MOBILE_PAGE_QUERY } =
   loadTsx('frontend/src/lib/browser-scroll.ts');
 
 function fixture() {
@@ -128,4 +128,149 @@ test('resizing transfers the position between the document and the bounded scree
   controller.sync();
   assert.equal(controller.scrollElement(home), doc.scrollingElement);
   assert.equal(html.scrollTop, 160);
+});
+
+// ── #2771: a pan the installed app was left with ─────────────────────
+
+function installed() {
+  const f = fixture();
+  let kb = false;
+  f.html.clientHeight = 844;
+  f.html.classList.contains = (name) => name === 'un-kb' && kb;
+  f.win.standalone = true; // display-mode: standalone — the bounded shell
+  f.win.innerHeight = 844;
+  f.win.visualViewport = { scale: 1, height: 844 };
+  f.win.scrollY = 0;
+  f.win.scrollTo = (x, y) => { f.win.scrollY = y; };
+  f.setKeyboard = (on) => { kb = on; f.win.visualViewport.height = on ? 500 : 844; };
+  return f;
+}
+
+test('an installed app puts a stranded document pan back once the keyboard is gone', () => {
+  const { add, doc, win, html, controller, setKeyboard } = installed();
+  add('home-screen');
+  controller.sync();
+  assert.equal(html.dataset.browserScroller, undefined, 'installed apps keep the bounded shell');
+
+  // Keyboard up: iOS pans the document to reveal the field. Leave it be.
+  setKeyboard(true);
+  html.scrollTop = 300;
+  controller.onScroll({ target: doc });
+  assert.equal(html.scrollTop, 300, 'a pan while the keyboard is up is the browser doing its job');
+
+  // Keyboard down, pan left behind: the tab bar is off the bottom edge.
+  setKeyboard(false);
+  controller.settle();
+  assert.equal(html.scrollTop, 0);
+  assert.equal(win.scrollY, 0);
+
+  // Any later stray pan is undone on the scroll that makes it.
+  html.scrollTop = 40;
+  controller.onScroll({ target: doc });
+  assert.equal(html.scrollTop, 0);
+});
+
+test('the pan reset never touches a paging document, a zoom, a desktop or a frame', () => {
+  const { add, doc, win, html, controller, scroll } = fixture();
+  add('home-screen');
+  controller.sync();
+  assert.equal(html.dataset.browserScroller, 'home-screen');
+  scroll(500);
+  controller.settle();
+  assert.equal(html.scrollTop, 500, 'a mobile browser tab pages the document on purpose');
+
+  const f = installed();
+  assert.equal(strandedPan(f.win, f.doc, 120), true);
+  assert.equal(strandedPan(f.win, f.doc, 0), false);
+  f.win.visualViewport.scale = 2;
+  assert.equal(strandedPan(f.win, f.doc, 120), false, 'pinch zoom pans on purpose');
+  f.win.visualViewport.scale = 1;
+  f.win.mobile = false;
+  assert.equal(strandedPan(f.win, f.doc, 120), false, 'desktop is out of scope');
+  f.win.mobile = true;
+  f.win.top = {};
+  assert.equal(strandedPan(f.win, f.doc, 120), false, 'an embedded shell is its parent\'s business');
+  f.win.top = f.win;
+  f.setKeyboard(true);
+  assert.equal(strandedPan(f.win, f.doc, 120), false);
+  void doc; void win;
+});
+
+// ── #2823: the tabs still moved up after some usage ──────────────────
+
+const field = (type = 'text') => ({ tagName: 'INPUT', type });
+
+test('a short visual viewport is only a keyboard while a text field has focus', () => {
+  const f = installed();
+  f.add('home-screen');
+  f.controller.sync();
+  // The keyboard went and iOS never grew the visual viewport back: #2771's
+  // guard read that as "keyboard still up" and left the pan for good.
+  f.win.visualViewport.height = 500;
+  f.doc.activeElement = null;
+  f.html.scrollTop = 260;
+  f.controller.settle();
+  assert.equal(f.html.scrollTop, 0, 'nothing focused, nothing to type into: the pan is stranded');
+
+  // With a field focused the same geometry IS a keyboard, even before the
+  // kit's tracker has set `un-kb`.
+  f.doc.activeElement = field();
+  f.html.scrollTop = 260;
+  f.controller.settle();
+  assert.equal(f.html.scrollTop, 260, 'a focused field keeps its reveal');
+});
+
+test('which focused elements can raise a keyboard', () => {
+  const doc = { body: {}, documentElement: {} };
+  assert.equal(textFocused({ ...doc, activeElement: null }), false);
+  assert.equal(textFocused({ ...doc, activeElement: doc.body }), false);
+  assert.equal(textFocused({ ...doc, activeElement: field('text') }), true);
+  assert.equal(textFocused({ ...doc, activeElement: field('search') }), true);
+  assert.equal(textFocused({ ...doc, activeElement: field('checkbox') }), false);
+  assert.equal(textFocused({ ...doc, activeElement: field('button') }), false);
+  assert.equal(textFocused({ ...doc, activeElement: { tagName: 'TEXTAREA' } }), true);
+  assert.equal(textFocused({ ...doc, activeElement: { tagName: 'DIV', isContentEditable: true } }), true);
+  assert.equal(textFocused({ ...doc, activeElement: { tagName: 'IFRAME' } }), true,
+    'an app\'s field is focused inside its frame, where this document cannot look');
+  assert.equal(textFocused({ ...doc, activeElement: { tagName: 'A' } }), false);
+});
+
+test('a pan left on <body> or the visual viewport is found and put back', () => {
+  const f = installed();
+  f.add('home-screen');
+  f.controller.sync();
+  f.doc.body = { scrollTop: 0 };
+  assert.equal(panOffset(f.win, f.doc), 0);
+
+  f.doc.body.scrollTop = 180;
+  assert.equal(panOffset(f.win, f.doc), 180, 'a focus reveal can scroll <body> past overflow: hidden');
+  f.controller.settle();
+  assert.equal(f.doc.body.scrollTop, 0);
+
+  f.win.visualViewport.offsetTop = 90;
+  assert.equal(panOffset(f.win, f.doc), 90, 'the visual viewport sitting below the layout top');
+  let reset = false;
+  f.win.scrollTo = () => { reset = true; f.win.visualViewport.offsetTop = 0; };
+  f.controller.settle();
+  assert.equal(reset, true);
+  assert.equal(panOffset(f.win, f.doc), 0);
+});
+
+test('the reset is re-armed on every moment a stranded pan can surface', () => {
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'frontend/src/lib/browser-scroll.ts'), 'utf8');
+  for (const [target, event] of [
+    ['window.visualViewport?', 'resize'],
+    ['window.visualViewport?', 'scroll'],
+    ['document', 'focusout'],
+    ['document', 'touchend'],
+    ['document', 'visibilitychange'],
+    ['window', 'pageshow'],
+    ['window', 'orientationchange'],
+    ['window', 'hashchange'],
+    ['window', 'popstate'],
+  ]) {
+    const re = new RegExp(`${target.replace(/[.?]/g, '\\$&')}\\.addEventListener\\('${event}'`);
+    assert.match(src, re, `${target} ${event} settles a stranded pan`);
+  }
 });

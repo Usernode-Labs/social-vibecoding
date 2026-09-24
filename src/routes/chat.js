@@ -44,7 +44,9 @@ const { attachmentDisposition } = attachmentsSvc;
 
 // #1808: staging demo rows for a chat transcript, injected at request time
 // (?demo=1) only when the real read came back EMPTY, so a genuine transcript
-// always wins. Never persisted, and a strict no-op outside staging.
+// always wins — except on the mock topics in PINNED_DEMO_THREADS below, whose
+// transcript is fixture content the declared checks read. Never persisted,
+// and a strict no-op outside staging.
 //
 // Why the group chat needs one at all: `chat_messages` IS cloned into a
 // staging preview, so a prod-cloned container has a transcript. A declared
@@ -101,6 +103,37 @@ function stagingMockGroupChat(appId, thread) {
       posted_via: 'agent',
     },
   ];
+}
+
+// The demo topics whose mock transcript IS the fixture: the declared checks
+// read these rows (#1926's folded conflict notices, #2236's via-agent chip on
+// issue 900008's Discussion), so they must not depend on nobody having typed
+// there. The empty-transcript rule above assumed a check sees an untouched
+// database, but a preview is a live, shared stack: a reviewer trying the
+// composer on the demo issue, or an evidence replay doing the same, leaves one
+// real row, and from then on every load of that preview answered with that row
+// alone and the chip check failed on proposals that never touched it. A thread
+// listed here keeps its mock rows on every first page in demo mode and shows
+// whatever was posted there AFTER them, so a preview still echoes what a
+// tester sends. Only mock topics belong here: none exists outside a preview,
+// so no genuine transcript is ever padded with fixture rows.
+const PINNED_DEMO_THREADS = new Set(['issue:900008']);
+
+function isPinnedDemoThread(thread) {
+  return !!thread && PINNED_DEMO_THREADS.has(`${thread.type}:${thread.ref}`);
+}
+
+// What a staging `?demo=1` first page answers with, or null to serve the real
+// rows unchanged. `realRows` is the page the SELECT returned, oldest first.
+function stagingDemoTranscript(appId, thread, realRows) {
+  if (isPinnedDemoThread(thread)) {
+    const mock = stagingMockGroupChat(appId, thread);
+    const mockIds = new Set(mock.map((m) => m.id));
+    // A real id equal to a mock one would collapse into it on the client
+    // (history is merged by id); keep the fixture row, which the checks read.
+    return [...mock, ...realRows.filter((m) => !mockIds.has(m.id))];
+  }
+  return realRows.length === 0 ? stagingMockGroupChat(appId, thread) : null;
 }
 
 function parseThreadRef(value) {
@@ -201,6 +234,8 @@ function chatRoutes(config) {
         params.push(before);
         beforeClause = ` AND m.id < $${params.length}`;
       }
+      params.push(req.user.id);
+      const viewerIndex = params.length;
       params.push(limit);
 
       const query = `
@@ -209,17 +244,43 @@ function chatRoutes(config) {
         FROM chat_messages m
         LEFT JOIN users u ON m.user_id = u.id
         WHERE m.app_id = $1 AND ${threadClause}${beforeClause}
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks blocked
+             WHERE blocked.blocker_id = $${viewerIndex}
+               AND blocked.blocked_user_id = m.user_id
+          )
         ORDER BY m.id DESC
         LIMIT $${params.length}`;
 
       const { rows } = await pool.query(query, params);
-      const messages = rows.reverse();
+      const messages = rows.reverse().map(message => ({ ...message,
+        username: message.username || (message.msg_type === 'message' && message.user_id == null ? 'Deleted user' : message.username),
+      }));
+
+      // A reply can quote a blocked author's text even when its own sender
+      // remains visible. Hide that quoted content for this viewer.
+      const quotedIds = messages.map((m) => Number(m.metadata?.quote?.refMsgId))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (quotedIds.length) {
+        const hiddenQuotes = await pool.query(
+          `SELECT quoted.id FROM chat_messages quoted
+             JOIN user_blocks blocked ON blocked.blocked_user_id = quoted.user_id
+            WHERE blocked.blocker_id = $1 AND quoted.id = ANY($2::int[])`,
+          [req.user.id, quotedIds]
+        );
+        const hidden = new Set(hiddenQuotes.rows.map((row) => Number(row.id)));
+        for (const m of messages) {
+          if (hidden.has(Number(m.metadata?.quote?.refMsgId))) {
+            m.metadata = { ...m.metadata, quote: null };
+          }
+        }
+      }
 
       // #25: attach emoji reactions so the chat renders them on load (live
       // updates arrive separately over the per-app WS 'reaction' event).
       try {
         const { getReactionsForMessages } = require('../services/ws');
-        const byId = await getReactionsForMessages(pool, messages.map((m) => m.id));
+        const byId = await getReactionsForMessages(pool, messages.map((m) => m.id), req.user.id);
         for (const m of messages) m.reactions = byId[m.id] || [];
       } catch (err) {
         log.warn('chat', 'reaction hydrate failed', { message: err.message });
@@ -258,14 +319,16 @@ function chatRoutes(config) {
         }
       }
 
-      // The empty-transcript fallback described at stagingMockGroupChat.
-      // Only a first page: a `before` cursor is the client paging PAST what
-      // it already has, and answering that with the same four rows again
-      // would loop the transcript.
-      if (IS_STAGING && req.query.demo === '1' && !before && messages.length === 0) {
-        return res.json({
-          messages: stagingMockGroupChat(appId, threadType ? { type: threadType, ref: threadRef } : null),
-        });
+      // The empty-transcript fallback described at stagingMockGroupChat, and
+      // the pinned demo topics described at PINNED_DEMO_THREADS. Only a first
+      // page: a `before` cursor is the client paging PAST what it already
+      // has, and answering that with the same rows again would loop the
+      // transcript.
+      if (IS_STAGING && req.query.demo === '1' && !before) {
+        const demo = stagingDemoTranscript(
+          appId, threadType ? { type: threadType, ref: threadRef } : null, messages
+        );
+        if (demo) return res.json({ messages: demo });
       }
 
       res.json({ messages });
@@ -521,6 +584,10 @@ function chatRoutes(config) {
       if (att.message_id == null && att.user_id !== req.user?.id) {
         return res.status(404).end();
       }
+      if (att.message_id != null && (await pool.query(
+        `SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_user_id = $2`,
+        [req.user.id, att.user_id]
+      )).rows.length) return res.status(404).end();
       const inline = att.kind === 'image';
       const contentType = att.kind === 'image'
         ? (att.content_type || 'application/octet-stream')
@@ -565,6 +632,10 @@ function chatRoutes(config) {
       if (att.message_id == null && att.user_id !== req.user?.id) {
         return res.status(404).end();
       }
+      if (att.message_id != null && (await pool.query(
+        `SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_user_id = $2`,
+        [req.user.id, att.user_id]
+      )).rows.length) return res.status(404).end();
       res.set('Content-Type', 'text/html; charset=utf-8');
       res.set('Content-Security-Policy', 'sandbox allow-scripts');
       res.set('Referrer-Policy', 'no-referrer');
@@ -621,14 +692,18 @@ function chatRoutes(config) {
       const { rows } = await pool.query(
         `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name
            FROM users u
-          WHERE u.id = ANY($2::int[])
+          WHERE NOT EXISTS (
+                  SELECT 1 FROM user_blocks blocked
+                   WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = u.id
+                )
+            AND (u.id = ANY($2::int[])
              OR u.id IN (
                SELECT m.user_id FROM chat_messages m
                 WHERE m.app_id = $1 AND m.user_id IS NOT NULL
-             )
+             ))
           ORDER BY sort_name
           LIMIT 500`,
-        [appId, ids]
+        [appId, ids, req.user.id]
       );
 
       res.json({ users: rows.map((r) => ({ username: r.username })) });
@@ -641,4 +716,4 @@ function chatRoutes(config) {
   return router;
 }
 
-module.exports = { chatRoutes, postedViaFor, stagingMockGroupChat };
+module.exports = { chatRoutes, postedViaFor, stagingMockGroupChat, stagingDemoTranscript };

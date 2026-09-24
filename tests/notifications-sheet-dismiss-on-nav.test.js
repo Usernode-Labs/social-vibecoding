@@ -126,6 +126,12 @@ function load({ touch = true, fetchImpl } = {}) {
       openAppTab: (slug, tab) => calls.push(['nav', slug, tab]),
       _isScreenVisible: () => false,
     },
+    // AN APP'S DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763): the
+    // rows about a message in it, a saved message and an accepted invite all
+    // open it there, through the Messages controller.
+    UsernodeReact: {
+      messages: { openDiscussion: (slug) => calls.push(['nav', slug, 'discussion']) },
+    },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -165,7 +171,8 @@ test('touch: accepting an invite dismisses the sheet, then navigates to the app'
   assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav'],
     'the sheet is dismissed BEFORE navigation');
   const nav = calls.find((c) => c[0] === 'nav');
-  assert.deepEqual(nav, ['nav', 'demo-app', 'group-chat']);
+  assert.deepEqual(nav, ['nav', 'demo-app', 'discussion'],
+    'the people just joined are in the app\'s discussion, in Messages');
   assert.equal(N.open, false, 'the drawer is closed');
   assert.ok(panel.classList.contains('hidden'), 'the panel is hidden again');
   assert.ok(!panel.classList.contains('platform-panel-adopted'),
@@ -177,7 +184,7 @@ test('touch: the accept response appSlug wins over the row slug', async () => {
   N.invites = [{ appId: 5, appSlug: 'stale-slug', kind: 'collab' }];
   N.show();
   await N._acceptInvite(5, 'stale-slug', 'collab');
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'canonical-slug', 'group-chat']);
+  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'canonical-slug', 'discussion']);
 });
 
 test('touch: a failed accept keeps the sheet up (toast + re-sync, no navigation)', async () => {
@@ -229,7 +236,7 @@ test('desktop: accepting navigates and the drawer closes behind it', async () =>
 
   assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav'],
     'the drawer closes BEFORE navigation, at every width');
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'group-chat']);
+  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
   assert.equal(N.open, false, 'the drawer is closed');
   assert.ok(panel.classList.contains('hidden'), 'the panel is hidden again');
 });
@@ -241,7 +248,7 @@ test('desktop: clicking a notification row closes the drawer before routing', ()
   N._onItemClick(9);
 
   assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav']);
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'dev']);
+  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
   assert.equal(N.open, false, 'the drawer is closed');
   assert.ok(panel.classList.contains('hidden'));
 });
@@ -255,7 +262,7 @@ test('touch: clicking a notification row dismisses the sheet before routing', ()
   N._onItemClick(9);
 
   assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav']);
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'dev']);
+  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
   assert.equal(N.open, false);
 });
 
@@ -279,7 +286,7 @@ test('touch: clicking a saved message dismisses the sheet before routing', () =>
   N._onSavedClick(3);
 
   assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav']);
-  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'dev']);
+  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'discussion']);
 });
 
 test('touch: a saved row without an appSlug routes nowhere and keeps the drawer', () => {

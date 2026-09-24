@@ -5,13 +5,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const state = require('../src/services/visual-evidence-state');
-const { intent } = require('./fixtures/visual-evidence');
+const contract = require('../src/services/visual-evidence-plan');
+const { intent, plan } = require('./fixtures/visual-evidence');
 
 test('visual evidence lifecycle permits only the documented progression and one repair loop', () => {
   const allowed = [
     ['planned', 'provisioning'],
     ['provisioning', 'exploring'],
     ['exploring', 'replaying'],
+    ['replaying', 'replaying'],
     ['replaying', 'reviewing'],
     ['reviewing', 'replaying'],
     ['reviewing', 'verified'],
@@ -21,6 +23,46 @@ test('visual evidence lifecycle permits only the documented progression and one 
   for (const [from, to] of [['planned', 'verified'], ['failed', 'planned'], ['stale', 'verified'], ['cancelled', 'planned']]) {
     assert.throws(() => state.assertTransition(from, to), { code: 'invalid_evidence_transition' });
   }
+});
+
+test('replaying may replace a failed plan only once with a different plan', async () => {
+  const runId = 'e'.repeat(32);
+  const rejected = plan();
+  const corrected = plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const row = {
+    id: runId, session_id: 42, current_run_id: runId, state: 'replaying',
+    base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), intent: intent(),
+    replay_plan: rejected, plan_hash: contract.planHash(rejected), repair_attempt: 0,
+    updated_at: new Date('2026-09-22T00:00:00Z'),
+  };
+  let updates = 0;
+  const pool = { query: async (sql) => {
+    if (/SELECT r\.\*/.test(sql)) return { rows: [row] };
+    if (/UPDATE visual_evidence_runs/.test(sql)) {
+      updates += 1;
+      Object.assign(row, {
+        replay_plan: corrected, plan_hash: contract.planHash(corrected), repair_attempt: 1,
+      });
+      return { rows: [row] };
+    }
+    if (/UPDATE chat_sessions/.test(sql)) return { rowCount: 1 };
+    throw new Error(`Unexpected query: ${sql}`);
+  } };
+  await assert.rejects(state.transitionRun(pool, runId, 'replaying', {
+    replayPlan: rejected, planHash: contract.planHash(rejected), repairAttempt: 1,
+  }), { code: 'invalid_evidence_repair' });
+  assert.equal(updates, 0);
+  await state.transitionRun(pool, runId, 'replaying', {
+    replayPlan: corrected, planHash: contract.planHash(corrected), repairAttempt: 1,
+  });
+  assert.equal(updates, 1);
+  await assert.rejects(state.transitionRun(pool, runId, 'replaying', {
+    replayPlan: rejected, planHash: contract.planHash(rejected), repairAttempt: 1,
+  }), { code: 'invalid_evidence_repair' });
+  assert.equal(updates, 1);
 });
 
 test('terminal-state and required-evidence policy distinguish an explicit no-impact rationale', () => {
@@ -39,6 +81,56 @@ test('terminal-state and required-evidence policy distinguish an explicit no-imp
     headSha: 'a'.repeat(40),
     reason: 'This proposal appears to change the UI but has no visual change preview declaration yet.',
   });
+});
+
+test('evidence heartbeat renews only the current active run and stores a bounded stage', async () => {
+  let statement;
+  const pool = { query: async (sql, values) => {
+    statement = { sql: String(sql), values };
+    return { rowCount: 1 };
+  } };
+  const id = 'f'.repeat(32);
+  assert.deepEqual(await state.heartbeatRun(pool, id, 'checkout_revisions'), { active: true });
+  assert.deepEqual(statement.values, [id, 'checkout_revisions', null]);
+  assert.match(statement.sql, /s\.visual_evidence_run_id = r\.id/);
+  assert.match(statement.sql, /r\.state IN \('provisioning','exploring','replaying','reviewing'\)/);
+  assert.match(statement.sql, /trace_summary = jsonb_set/);
+  const event = { pass: 1, type: 'action_started', actionId: 'open-settings' };
+  await state.heartbeatRun(pool, id, 'pass_1', {
+    lastReplayEvent: event, replayEvents: [event],
+  });
+  assert.deepEqual(JSON.parse(statement.values[2]), {
+    lastReplayEvent: event, replayEvents: [event],
+  });
+  await state.heartbeatRun(pool, id, 'agent_exploration', {
+    agentActivity: { version: 1, events: [{ kind: 'tool_start', tool: 'browser_navigate' }] },
+    agentFinalResponse: { excerpt: 'Planner stopped.', characters: 16 },
+  });
+  assert.deepEqual(JSON.parse(statement.values[2]), {
+    agentActivity: { version: 1, events: [{ kind: 'tool_start', tool: 'browser_navigate' }] },
+    agentFinalResponse: { excerpt: 'Planner stopped.', characters: 16 },
+  });
+  await assert.rejects(state.heartbeatRun(pool, id, 'pass_1', {
+    replayEvents: Array.from({ length: 40 }, () => ({ message: 'x'.repeat(2000) })),
+  }), { code: 'invalid_evidence_heartbeat' });
+  await assert.rejects(state.heartbeatRun(pool, id, 'https://private.internal'), {
+    code: 'invalid_evidence_heartbeat',
+  });
+});
+
+test('interrupted recovery rechecks the heartbeat under the transition lock', async () => {
+  const id = 'f'.repeat(32);
+  const pool = { query: async (sql) => {
+    if (String(sql).includes('FOR UPDATE OF r, s')) {
+      return { rows: [{ id, current_run_id: id, state: 'provisioning', updated_at: new Date() }] };
+    }
+    throw new Error('a renewed run must not be updated');
+  } };
+  await assert.rejects(state.transitionRun(pool, id, 'failed', {
+    failureCode: 'evidence_run_interrupted',
+    failureReason: 'Worker stopped.',
+    recoveryMinIdleMs: 60_000,
+  }), { code: 'evidence_run_active' });
 });
 
 test('recordIntentInTransaction reuses its caller-owned client without reconnecting or releasing it', async () => {
@@ -83,6 +175,39 @@ test('recordIntentInTransaction reuses its caller-owned client without reconnect
     'the caller owns the surrounding transaction boundary');
 });
 
+test('PR import stores the executable plan in a private run before committing the session', async () => {
+  const baseSha = 'a'.repeat(40);
+  const headSha = 'b'.repeat(40);
+  const statements = [];
+  const client = {
+    async connect() { throw new Error('The import transaction already owns this client'); },
+    async query(sql, values) {
+      statements.push({ sql: String(sql), values });
+      if (/SELECT id FROM chat_sessions/.test(sql)) return { rows: [{ id: 42 }] };
+      if (/SELECT \* FROM visual_evidence_runs/.test(sql)) return { rows: [] };
+      if (/INSERT INTO visual_evidence_runs/.test(sql)) {
+        return { rows: [{
+          id: values[0], session_id: values[1], base_sha: values[2], head_sha: values[3],
+          intent: JSON.parse(values[5]), state: values[6], author_plan: JSON.parse(values[8]),
+        }] };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const created = await state.createRunInTransaction(client, {
+    sessionId: 42, baseSha, headSha, intent: intent(), authorPlan: plan(), trigger: 'import-author-plan',
+  });
+  assert.equal(created.created, true);
+  assert.deepEqual(created.run.author_plan, contract.parseReplayPlan(plan()));
+  const insert = statements.find(({ sql }) => /INSERT INTO visual_evidence_runs/.test(sql));
+  assert.match(insert.sql, /author_plan/);
+  assert.deepEqual(JSON.parse(insert.values[8]), contract.parseReplayPlan(plan()));
+  const publicDetail = JSON.parse(statements.at(-1).values[3]);
+  assert.equal(publicDetail.runId, created.run.id);
+  assert.equal(Object.hasOwn(publicDetail, 'authorPlan'), false);
+  assert.ok(!statements.some(({ sql }) => /^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql.trim())));
+});
+
 test('the UI heuristic durably enrolls a missing declaration instead of allowing a gate bypass', async () => {
   const queries = [];
   const pool = {
@@ -112,6 +237,7 @@ test('schema carries private revision-scoped runs, artifacts, session pointers a
   assert.match(schema, /ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_state/);
   assert.match(schema, /idx_visual_evidence_runs_current_head[\s\S]*state NOT IN \('stale', 'cancelled'\)/);
   assert.match(schema, /COMMENT ON TABLE visual_evidence_runs IS 'staging:private'/);
+  assert.match(schema, /ALTER TABLE visual_evidence_runs ADD COLUMN IF NOT EXISTS author_plan JSONB/);
   assert.match(schema, /COMMENT ON TABLE visual_evidence_artifacts IS 'staging:private'/);
 });
 
@@ -156,7 +282,8 @@ test('public run summary includes claims and artifact metadata but no executable
     semantic_verdict: null,
     trace_summary: { runs: 2, relativePointer: true },
     repair_attempt: 1, plan_hash: 'c'.repeat(64), updated_at: new Date('2026-09-17T00:00:00Z'),
-    replay_plan: { secret: 'must not escape' }, fixture_fingerprint: 'private-fixture',
+    replay_plan: { secret: 'must not escape' }, author_plan: { secret: 'must not escape' },
+    fixture_fingerprint: 'private-fixture',
   }, [{ id: 'd'.repeat(32), storyId: 'dialog', side: 'base', variant: 'focus', media: 'png' }]);
   assert.equal(summary.state, 'verified');
   assert.equal(summary.claims[0].claim, 'The dialog is usable.');
@@ -166,6 +293,7 @@ test('public run summary includes claims and artifact metadata but no executable
   assert.equal(summary.relativePointer, true);
   assert.equal(summary.verifiedReason, null);
   assert.equal(Object.hasOwn(summary, 'replayPlan'), false);
+  assert.equal(Object.hasOwn(summary, 'authorPlan'), false);
   assert.equal(Object.hasOwn(summary, 'fixtureFingerprint'), false);
 });
 

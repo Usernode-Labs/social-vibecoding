@@ -54,6 +54,7 @@ die() {
 : "${EVIDENCE_HEAD_ORIGIN:=}"
 : "${EVIDENCE_MEMBER_TOKEN:=}"
 : "${EVIDENCE_ADMIN_TOKEN:=}"
+: "${SYSTEM_PROMPT_FILE:=}"
 # Scout must NEVER receive push authority (review #4): WORKER_JWT is
 # required for build (to push) but must be empty for scout.
 if [ "$MODE" = "build" ] && [ -z "$WORKER_JWT" ]; then
@@ -66,6 +67,8 @@ export WORKER_JWT
 if [ "$MODE" = "evidence" ]; then
   [ -n "$EVIDENCE_JWT" ] || die "EVIDENCE_JWT required for evidence mode"
   [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
+  [ -n "$SYSTEM_PROMPT_FILE" ] && [ -s "$SYSTEM_PROMPT_FILE" ] \
+    || die "system prompt file required for evidence mode"
 fi
 
 if [ "$MODE" = "evidence" ]; then
@@ -98,15 +101,27 @@ mkdir -p "$CODEX_HOME"
 
 EVIDENCE_PROXY_PID=""
 EVIDENCE_TMP=""
+EVIDENCE_DIAGNOSTIC_TAIL_PID=""
 cleanup_evidence() {
   if [ -n "$EVIDENCE_PROXY_PID" ]; then kill "$EVIDENCE_PROXY_PID" 2>/dev/null || true; fi
+  if [ -n "$EVIDENCE_DIAGNOSTIC_TAIL_PID" ]; then
+    sleep 0.3
+    kill "$EVIDENCE_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
+  fi
   if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
 }
 if [ "$MODE" = "evidence" ]; then
+  command -v mcp-server-playwright >/dev/null 2>&1 \
+    || die "the evidence browser MCP executable is missing"
+  echo "__USERNODE_PHASE__ evidence_proxy"
   EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
     || die "could not create evidence browser state"
   chmod 700 "$EVIDENCE_TMP"
   export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
+  export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
+  : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
+  tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &
+  EVIDENCE_DIAGNOSTIC_TAIL_PID=$!
   export EVIDENCE_PROXY_PORT=17891
   export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
   export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
@@ -117,6 +132,7 @@ if [ "$MODE" = "evidence" ]; then
   i=0
   while [ ! -f "$EVIDENCE_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
   [ -f "$EVIDENCE_PROXY_READY" ] || die "evidence origin proxy failed to start"
+  echo "__USERNODE_PHASE__ evidence_browser_bootstrap"
   node /usr/local/bin/evidence-browser-bootstrap.js \
     || die "evidence browser authentication failed"
   unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN
@@ -183,6 +199,7 @@ if ! {
   printf 'sandbox_mode = "%s"\n' "$SANDBOX_MODE"
   if [ "$MODE" = "evidence" ]; then
     printf 'web_search = "disabled"\n'
+    printf 'developer_instructions = "%s"\n' "$(toml_escape "$(cat "$SYSTEM_PROMPT_FILE")")"
   fi
   cat <<'TOML'
 approval_policy = "never"
@@ -204,7 +221,15 @@ TOML
   cat <<'TOML'
 
 [shell_environment_policy]
-exclude = ["OPENROUTER_API_KEY"]
+TOML
+  # #2779: the read-only Homeroom grant stays out of commands the model
+  # launches, like the provider key. Only its MCP bridge receives it.
+  if [ -n "${HOMEROOM_MCP_TOKEN:-}" ]; then
+    printf 'exclude = ["OPENROUTER_API_KEY", "HOMEROOM_MCP_TOKEN"]\n'
+  else
+    printf 'exclude = ["OPENROUTER_API_KEY"]\n'
+  fi
+  cat <<'TOML'
 
 [agents]
 enabled = false
@@ -235,7 +260,7 @@ TOML
 [mcp_servers.playwright]
 command = "npx"
 TOML
-    printf 'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
+    printf 'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
     cat <<'TOML'
 startup_timeout_sec = 30
 tool_timeout_sec = 60
@@ -265,22 +290,40 @@ startup_timeout_sec = 15
 tool_timeout_sec = 720
 
 [mcp_servers.browser_member]
-command = "playwright-mcp"
+command = "node"
 TOML
-    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
+    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "member", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
     cat <<'TOML'
+env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
 enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
 startup_timeout_sec = 30
 tool_timeout_sec = 60
 
 [mcp_servers.browser_admin]
-command = "playwright-mcp"
+command = "node"
 TOML
-    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
+    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "admin", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
     cat <<'TOML'
+env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
 enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
 startup_timeout_sec = 30
 tool_timeout_sec = 60
+TOML
+  fi
+  # #2779: the coding agent's read-only Homeroom tools, for a build or scout
+  # turn the platform issued a grant to. The bridge receives the grant from
+  # this process's environment through env_vars; the config names only the
+  # variable, never its value.
+  if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && { [ "$MODE" = "build" ] || [ "$MODE" = "scout" ]; }; then
+    cat <<'TOML'
+
+[mcp_servers.homeroom]
+command = "node"
+args = ["/usr/local/bin/homeroom-read-mcp.js"]
+env_vars = ["HOMEROOM_MCP_TOKEN", "PLATFORM_URL"]
+enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"]
+startup_timeout_sec = 15
+tool_timeout_sec = 30
 TOML
   fi
 } > "$CONFIG_TMP"; then
@@ -295,9 +338,16 @@ if grep -Fq -- "$OPENROUTER_API_KEY" "$CONFIG_TMP"; then
   rm -f "$CONFIG_TMP"
   die "refusing Codex config containing the OpenRouter key"
 fi
+if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && grep -Fq -- "$HOMEROOM_MCP_TOKEN" "$CONFIG_TMP"; then
+  rm -f "$CONFIG_TMP"
+  die "refusing Codex config containing the Homeroom grant"
+fi
 chmod 600 "$CONFIG_TMP" || { rm -f "$CONFIG_TMP"; die "could not secure Codex config"; }
 mv -f "$CONFIG_TMP" "$CODEX_HOME/config.toml" \
   || { rm -f "$CONFIG_TMP"; die "could not install Codex config"; }
+if [ "$MODE" = "evidence" ]; then
+  echo "__USERNODE_PHASE__ evidence_mcp_ready"
+fi
 
 # Export the user's key for this process only.
 export OPENROUTER_API_KEY
@@ -323,7 +373,7 @@ TMP_STATUS=$(mktemp /home/node/.usernode/turn-codex-status-XXXX 2>/dev/null || m
 # contain replacement or regex metacharacters are handled safely.
 redact_codex_stream() {
   awk '
-    BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"] }
+    BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"]; grant = ENVIRON["HOMEROOM_MCP_TOKEN"] }
     {
       # Codex emits a structured JSON retry event immediately after this
       # internal Rust warning. Drop the duplicate implementation detail so
@@ -333,6 +383,12 @@ redact_codex_stream() {
       if (secret != "") {
         while ((at = index($0, secret)) > 0) {
           $0 = substr($0, 1, at - 1) "****" substr($0, at + length(secret))
+        }
+      }
+      # #2779: the read-only Homeroom grant, scrubbed the same literal way.
+      if (grant != "") {
+        while ((at = index($0, grant)) > 0) {
+          $0 = substr($0, 1, at - 1) "****" substr($0, at + length(grant))
         }
       }
       print
@@ -351,6 +407,49 @@ start_codex() {
 
 CODEX_REQUEST_WRAPPER="$(dirname "$0")/codex-openrouter-request.js"
 
+# A scout is read-only by contract: it reads the repository and writes the
+# spec as its final message. run-cc.sh enforces that with
+# --disallowed-tools; Codex runs danger-full-access inside this container
+# (see SANDBOX_MODE above) and has no equivalent switch. Now that OpenRouter
+# sessions scout through the Mayor (#2810), whatever a scout edits,
+# creates or commits is put back before the next build's `git add -A` could
+# publish it. Files that were already untracked before the scout are kept.
+SCOUT_BASE_SHA=""
+SCOUT_PRE_UNTRACKED=""
+if [ "$MODE" = "scout" ] && git rev-parse --verify HEAD >/dev/null 2>&1; then
+  SCOUT_BASE_SHA=$(git rev-parse HEAD)
+  SCOUT_PRE_UNTRACKED=$(mktemp /home/node/.usernode/scout-untracked-XXXX 2>/dev/null || mktemp)
+  git ls-files --others --exclude-standard > "$SCOUT_PRE_UNTRACKED" 2>/dev/null || true
+fi
+restore_scout_tree() {
+  [ -n "$SCOUT_BASE_SHA" ] || return 0
+  SCOUT_NEW_UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null \
+    | grep -vxF -f "$SCOUT_PRE_UNTRACKED" || true)
+  if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] \
+    || [ -n "$SCOUT_NEW_UNTRACKED" ] \
+    || [ "$(git rev-parse HEAD 2>/dev/null)" != "$SCOUT_BASE_SHA" ]; then
+    echo "__USERNODE_WARN__ scout changed the repository; discarding its changes"
+  fi
+  # A mixed reset first, so a scout commit's files return to the working
+  # tree rather than being deleted: one that swept an already-untracked file
+  # into its commit must not cost the user that file. Tracked content then
+  # goes back to the base, and only the files the scout added are removed.
+  if git reset --quiet "$SCOUT_BASE_SHA" 2>/dev/null; then
+    git checkout --quiet -- . 2>/dev/null || true
+  else
+    echo "__USERNODE_WARN__ could not restore the tree after the scout"
+  fi
+  SCOUT_NEW_UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null \
+    | grep -vxF -f "$SCOUT_PRE_UNTRACKED" || true)
+  if [ -n "$SCOUT_NEW_UNTRACKED" ]; then
+    printf '%s\n' "$SCOUT_NEW_UNTRACKED" | while IFS= read -r scout_path; do
+      [ -n "$scout_path" ] && rm -f -- "$scout_path"
+    done
+  fi
+  rm -f "$SCOUT_PRE_UNTRACKED" 2>/dev/null
+  SCOUT_BASE_SHA=""
+}
+
 if [ -n "$AGENT_THREAD_ID" ]; then
   echo "__USERNODE_PHASE__ codex (resume $AGENT_THREAD_ID, mode $MODE)"
   start_codex node "$CODEX_REQUEST_WRAPPER" exec resume --dangerously-bypass-approvals-and-sandbox "$AGENT_THREAD_ID" - --json
@@ -367,12 +466,14 @@ if [ -n "$AGENT_THREAD_ID" ]; then
       # with a new agent_turns row and no resume id.
       echo "__USERNODE_WARN__ codex thread missing (exit $CODEX_RUN_EXIT); requesting fresh retry"
       rm -f "$TMP_STATUS" "$TMP_JSONL" 2>/dev/null
+      restore_scout_tree
       echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT agent_retry_fresh=1"
       exit "$CODEX_RUN_EXIT"
     else
       echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_RUN_EXIT); NOT retrying fresh"
       CODEX_EXIT=$CODEX_RUN_EXIT
       AGENT_THREAD_OUT=""
+      restore_scout_tree
       # The failed resume's output was already streamed live; emit a
       # terminal result so the host doesn't wait forever, then bail.
       echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT"
@@ -396,6 +497,7 @@ fi
 rm -f "$TMP_JSONL" 2>/dev/null
 
 if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
+  restore_scout_tree
   echo "__USERNODE_PHASE__ done"
   echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT"
   exit "$CODEX_EXIT"

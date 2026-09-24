@@ -105,10 +105,11 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  * ── Why it is here and not in the header ───────────────────────────────
  *
  * It was an eye/pencil PAIR in the platform header's right slot, where it
- * displaced Improve. Improve is the header's standing action now (see
- * ../improve/improve-button.tsx), and this loop belongs beside the name of
- * the change it acts on anyway: it is the only genuinely contextual control
- * the product has, and a dev session is the only place it means anything.
+ * displaced Improve. That slot is gone entirely — Improve became the header's
+ * standing action and then a row of the app's own menu (#2718) — and this loop
+ * belongs beside the name of the change it acts on anyway: it is the only
+ * genuinely contextual control the product has, and a dev session is the only
+ * place it means anything.
  *
  * ── What it says ──────────────────────────────────────────────────────
  *
@@ -389,18 +390,22 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
       >
         {s.title}
       </span>
-      {/* #1941: `shrink-0 whitespace-nowrap` on the PR number, because it is
-          the one child that could WRAP: at 375px it broke into "PR" over
-          "#21" and made the strip two lines tall with nothing on the second
-          line but half a word. It sits on the title's line at every width. */}
+      {/* #1941: `shrink-0 whitespace-nowrap` on this link, because it is
+          the one child that could WRAP: at 375px it broke over two lines and
+          made the strip two lines tall with nothing on the second line but
+          half a word. It sits on the title's line at every width.
+
+          #2821: it names its destination, "Open proposal card" (the new-change
+          banner's wording), instead of "PR #12", and it goes to the card page,
+          where the retired "Change overview" strip above this header went. */}
       {s.pr ? (
         <button
           id="dc-pr-header-link"
           className="shrink-0 whitespace-nowrap text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           title={s.prTitle}
-          onClick={() => controller()?.revealPrCard?.()}
+          onClick={() => controller()?.openProposalCard?.()}
         >
-          {`PR #${s.pr}`}
+          Open proposal card
         </button>
       ) : (
         /* "New change" is the PR link's resting state — it says only "no PR

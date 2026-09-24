@@ -313,6 +313,7 @@ test('the copy-style rule is stated for generated apps and for the assistant', (
     path.join(ROOT, 'src/prompts/app-conventions.md'), 'utf8');
   assert.match(conventions, /## Writing user-facing copy: no em dashes/);
 
-  const sessions = fs.readFileSync(path.join(ROOT, 'src/routes/sessions.js'), 'utf8');
-  assert.match(sessions, /Do not use em dashes/);
+  // #2779: the Mayor's system prompt moved to services/mayor/prompt.js.
+  const mayorPrompt = fs.readFileSync(path.join(ROOT, 'src/services/mayor/prompt.js'), 'utf8');
+  assert.match(mayorPrompt, /Do not use em dashes/);
 });

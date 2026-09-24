@@ -1425,6 +1425,14 @@ test('submit_work documents direct v1 evidence input when the helper tool is abs
   assert.match(block, /validates both paths identically/);
 });
 
+test('submit_work validates and forwards a local plan with the first import', () => {
+  const block = registration('submit_work');
+  assert.match(block, /parseAuthorPlanSubmission\(/);
+  assert.match(block, /visualEvidencePlan: acceptedVisualEvidencePlan/);
+  assert.match(block, /extra\.visualEvidencePlan \? \{ visualEvidencePlan: extra\.visualEvidencePlan \}/);
+  assert.match(block, /atomic author-plan handoff currently applies to a new PR import/);
+});
+
 test('submit_visual_evidence_plan forwards the exact typed flow to the owner-scoped platform route', async () => {
   const c = connector((method, pathname) => {
     assert.equal(method, 'POST');
@@ -1567,6 +1575,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // Demo mode: the four acting tools of a creator's synthetic partner, and
     // its read — see ACTING_TOOLS and routes/demo-mode.js.
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
+    // #2779. A native change, read the way the change page reads it.
+    'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
     // cover it — a drift check that prompts every call is one nobody runs.
     'get_checkout_status',
@@ -1578,9 +1588,17 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
     'notify_awaiting_input', 'notify_input_received',
-    'prepare_work', 'release_request',
+    'prepare_work',
+    // #2779. The native change lifecycle. recheck_change is on every surface;
+    // the other four are registered only for an agent session's Mayor — see
+    // the per-kind test below and services/mcp-audiences.js.
+    'promote_change', 'recheck_change',
+    'release_request',
+    'start_change',
     'start_platform_build', 'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work',
+    'sync_change',
     'update_proposal_issues', 'whoami',
+    'withdraw_change',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
   // user's own coding agent and puts the result to a vote; it does not vote,
@@ -1745,8 +1763,9 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
     'create_request', 'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
-    'prepare_work', 'start_platform_build',
-    'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work', 'update_proposal_issues',
+    'prepare_work', 'promote_change', 'recheck_change', 'start_change', 'start_platform_build',
+    'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work', 'sync_change',
+    'update_proposal_issues', 'withdraw_change',
   ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);

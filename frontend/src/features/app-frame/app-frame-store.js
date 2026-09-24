@@ -40,10 +40,53 @@ import { BASE_ALLOW } from './app-frame-policy.js';
  *   note: string, spinner: boolean, out: boolean,
  * }} LaunchCoverState
  * @typedef {{
+ *   slug: string, seq: number, background: string, sandboxReady: boolean,
+ *   allow: string, navigatedAt: number,
+ * }} KeptFrame
+ * @typedef {{
  *   slug: string, active: boolean, faded: boolean, background: string,
  *   sandboxReady: boolean, allow: string, cover: LaunchCoverState | null,
+ *   seq: number, navigatedAt: number, kept: KeptFrame[],
  * }} AppFrameState
  */
+
+/**
+ * How many apps stay LOADED at once (#2902): the one on screen plus the ones
+ * you most recently left, each still running in its own frame, hidden. Resume
+ * one and it is exactly where you left it; open one more than this and the
+ * least recently used is dropped, and reloads when it is next opened.
+ *
+ * Three, because each is a whole other document in memory and a phone is where
+ * that is felt first. A device that reports being small (Chrome's
+ * `navigator.deviceMemory`, in GiB, rounded down) keeps one fewer.
+ */
+export const KEEP_ALIVE_LIMIT = 3;
+
+/**
+ * The limit for this device. `nav` is injectable for the tests.
+ *
+ * @param {{ deviceMemory?: number } | undefined} [nav]
+ */
+export function keepAliveLimit(nav = typeof navigator !== 'undefined' ? navigator : undefined) {
+  const memory = Number(nav && nav.deviceMemory);
+  if (Number.isFinite(memory) && memory > 0 && memory <= 2) return KEEP_ALIVE_LIMIT - 1;
+  return KEEP_ALIVE_LIMIT;
+}
+
+/**
+ * Every app with a live frame right now — the one on screen (or parked behind
+ * its Workshop) first, then the kept ones, most recently used first. This is
+ * what the green "still loaded" dot reads (Home's tiles, the rail's Recents).
+ *
+ * @param {AppFrameState} state
+ * @returns {string[]}
+ */
+export function liveAppSlugs(state) {
+  const out = [];
+  if (state.slug) out.push(state.slug);
+  for (const k of state.kept || []) if (k.slug && !out.includes(k.slug)) out.push(k.slug);
+  return out;
+}
 
 /**
  * The initial values MUST be the empty/hidden state the hand-written shell
@@ -77,6 +120,23 @@ export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
   allow: BASE_ALLOW,
   /** The launch cover, or null once revealed. See COVER_DEFAULTS. */
   cover: null,
+  /**
+   * #2902: the mounted frame's place in the DOM. Every frame gets the next
+   * number when it is CREATED and keeps it for life, and the island renders
+   * frames in this order — so a frame is only ever appended or removed, never
+   * moved. Moving an iframe in the DOM reloads it, which is exactly the loss
+   * keeping it alive exists to prevent.
+   */
+  seq: 0,
+  /** #2902: when the mounted frame last navigated (ms), 0 before it has. */
+  navigatedAt: 0,
+  /**
+   * #2902: the apps you left that are still loaded, hidden, most recently used
+   * first. The mounted frame is NOT in here; it is the top-level fields above.
+   * Resuming one swaps it with the mounted frame without touching either
+   * document. Capped by keepAliveLimit() - 1.
+   */
+  kept: [],
 }));
 
 /**
@@ -105,6 +165,11 @@ export const COVER_DEFAULTS = {
  * be able to act on an element React does not currently own, and
  * tests/app-frame-identity.test.js reads exactly what the island published.
  *
- * @type {{ iframe: HTMLIFrameElement | null }}
+ * `kept` (#2902) holds the elements of the apps kept alive behind it, by slug,
+ * registered by the same island. The bridge uses them for one thing only: to
+ * tell a document it has been hidden or shown again (see `announce` in
+ * ./app-frame-bridge.js).
+ *
+ * @type {{ iframe: HTMLIFrameElement | null, kept: Record<string, HTMLIFrameElement> }}
  */
-export const appFrameRefs = { iframe: null };
+export const appFrameRefs = { iframe: null, kept: {} };

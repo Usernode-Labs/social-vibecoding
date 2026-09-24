@@ -159,7 +159,7 @@ export function shadeBoxes(
 export function panelBox(
   doc: Document | null = typeof document === 'undefined' ? null : document,
 ): Box | null {
-  const panel = doc?.getElementById('improve-panel');
+  const panel = doc?.getElementById('apps-switcher-sheet');
   if (!panel) return null;
   const surface = panel.closest('.un-sheet') ?? panel;
   const rect = surface.getBoundingClientRect();

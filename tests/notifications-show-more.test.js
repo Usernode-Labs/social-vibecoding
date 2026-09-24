@@ -132,7 +132,10 @@ test('_renderList publishes one row descriptor per notification, in feed order',
 });
 
 test('the renderer maps rows directly, with no between-apps divider', () => {
-  assert.match(listBlock(), /\.map\(\(view\) => <ScreenRow/, 'renders one child per row');
+  // #2815: through renderEntry, which draws a notification as <ScreenRow>
+  // and a Messages-tab session as <SessionRow> — still one child per entry.
+  assert.match(listBlock(), /\.map\(renderEntry\)/, 'renders one child per row');
+  assert.match(LIST_CODE, /: <ScreenRow key=\{entry\.key\} view=\{entry\.view\} \/>/);
   assert.doesNotMatch(LIST_CODE, /DIVIDER/,
     'the heavier between-apps divider is gone — rows carry their own border');
 });

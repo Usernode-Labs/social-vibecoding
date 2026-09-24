@@ -7,17 +7,18 @@
 // iframe's content is included. Two mapping branches, chosen by the
 // surface the browser actually granted:
 //
-//   - 'browser' (tab self-capture; Chromium desktop): the frame IS the
-//     tab viewport at device resolution, so the selection rect maps by a
-//     measured per-axis scale with zero offset.
+//   - 'browser' (tab self-capture; Chromium desktop, which offers it only
+//     when the request carries preferCurrentTab — see displayMediaOptions):
+//     the frame IS the tab viewport at device resolution, so the selection
+//     rect maps by a measured per-axis scale with zero offset.
 //   - 'window' / 'monitor' (all Firefox and desktop Safari can offer):
 //     the frame contains browser chrome / other windows at an unknown
 //     offset+scale. Four QR-finder-style fiducial markers rendered in
 //     the viewport corners are located in a registration frame and an
 //     axis-aligned scale+offset mapping is solved from them; a second,
 //     clean frame (overlay hidden) is then cropped with that mapping.
-//     The registration frame is shot with the page blacked out behind
-//     the markers, so nothing the page draws can pass for one; what the
+//     The registration frame is shot with the page darkened behind the
+//     markers, so nothing the page draws can pass for one; what the
 //     share includes AROUND the page (a tab strip's favicons, toolbar
 //     icons, the dock, another window) can, so the solve accepts extra
 //     candidates and picks the one set of four that agrees with the
@@ -393,6 +394,163 @@
     return { ok: true, mapping: best.mapping };
   }
 
+  // ── Registration over a live stream (pure given nextFrame) ────────
+  // A single grab is not a registration. The frame a capture stream hands
+  // over right after the veil goes black is not reliably a frame of the veil:
+  // window and screen capturers deliver frames with a lag, queue the ones the
+  // viewer's own cursor produced on the way to the confirm button, and emit
+  // nothing at all while the surface is static — so the one frame the solve
+  // used to see could predate the markers entirely ("found 0") and the whole
+  // capture failed on the first try (#2808). Keep reading frames until one of
+  // them solves, and fail closed only when none does within the budget.
+  //
+  // `nextFrame()` resolves the next frame as an ImageData-like
+  // { data, width, height }, or null when none is available. The budget is
+  // time, not a frame count — a capturer at 30fps and one that only emits on
+  // damage get the same chance — with a frame cap as a backstop. Resolves
+  // { ok: true, mapping, width, height } for the frame that solved, or the
+  // last failure as { ok: false, reason }.
+  const REGISTRATION_BUDGET_MS = 2500;
+  const REGISTRATION_MAX_FRAMES = 90;
+
+  // What one frame looked like, for telling failures apart. Firefox on
+  // a Mac, sharing its own window, failed with "expected 4 markers, found 0":
+  // not one frame in the budget had a marker in it. That has two unrelated
+  // causes a bare count cannot separate — frames that arrive BLANK (a window
+  // capture with no content in it, which is what macOS hands over when the
+  // browser's screen-recording permission is missing or lapsed) and a video
+  // that never advances past the frames from before the markers existed. The
+  // luminance range answers the first (the same < 32 test binarize applies);
+  // a coarse sampled fingerprint answers the second.
+  function frameStats(frame) {
+    const { data, width, height } = frame;
+    let min = 255;
+    let max = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const v = ((data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000) | 0;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    const step = Math.max(1, Math.floor(Math.sqrt((width * height) / 4096)));
+    let hash = 2166136261;
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const i = (y * width + x) * 4;
+        hash = Math.imul(hash ^ data[i] ^ (data[i + 1] << 8) ^ (data[i + 2] << 16), 16777619) >>> 0;
+      }
+    }
+    return { blank: max - min < 32, signature: `${width}x${height}:${hash}` };
+  }
+
+  async function registerFromFrames(nextFrame, cssCenters, opts = {}) {
+    const budgetMs = opts.budgetMs ?? REGISTRATION_BUDGET_MS;
+    const maxFrames = opts.maxFrames ?? REGISTRATION_MAX_FRAMES;
+    const now = opts.now || (() => Date.now());
+    const started = now();
+    let last = { ok: false, reason: 'No video frame available' };
+    const stats = { read: 0, blank: 0, distinct: 0, width: 0, height: 0 };
+    const seen = new Set();
+    for (let i = 0; i < maxFrames; i++) {
+      if (i > 0 && now() - started >= budgetMs) break;
+      const frame = await nextFrame();
+      if (!frame || !frame.width || !frame.height) continue;
+      const solved = solveRegistration(detectMarkers(frame), cssCenters, frame.width, frame.height);
+      if (solved.ok) return { ok: true, mapping: solved.mapping, width: frame.width, height: frame.height };
+      const s = frameStats(frame);
+      stats.read++;
+      if (s.blank) stats.blank++;
+      seen.add(s.signature);
+      stats.distinct = seen.size;
+      stats.width = frame.width;
+      stats.height = frame.height;
+      last = solved;
+    }
+    if (!stats.read) return last;
+    // The count alone is what the notice keys on; the rest is what a report
+    // needs to say WHICH failure it was.
+    return {
+      ok: false,
+      reason: `${last.reason} (${stats.read} frames at ${stats.width}x${stats.height}, `
+        + `${stats.blank} blank, ${stats.distinct} distinct)`,
+      stats,
+    };
+  }
+
+  // How a failed registration should be reported and retried. 'blank': every
+  // frame had no content, so the share itself is empty — retaking it the same
+  // way cannot help, and the viewer needs to be told where the problem is.
+  // 'frozen': frames had content but never changed, so the video element is
+  // stuck on a frame from before the markers — worth re-attaching the stream
+  // once. Anything else is a genuine failure to locate the page.
+  function classifyRegistrationFailure(solved) {
+    const s = solved && solved.stats;
+    if (!s || !s.read) return 'no-frames';
+    if (s.blank === s.read) return 'blank';
+    if (s.read > 1 && s.distinct === 1) return 'frozen';
+    return 'not-found';
+  }
+
+  // Whether a frame still shows the registration markers where the solved
+  // mapping put them — i.e. the "clean" grab is really a stale frame of the
+  // veil, and cropping it would attach a black rectangle. Two or more of the
+  // four at their solved position and size is the veil; one is a
+  // coincidence the page can produce.
+  function markersStillVisible(detected, mapping, cssCenters, frameW) {
+    if (!Array.isArray(detected) || !detected.length || !mapping) return false;
+    const tol = Math.max(4, frameW * 0.01);
+    const expectedUnit = MARKER.MODULE * (mapping.scaleX + mapping.scaleY) / 2;
+    let seen = 0;
+    for (const k of ['tl', 'tr', 'bl', 'br']) {
+      const px = cssCenters[k].x * mapping.scaleX + mapping.offsetX;
+      const py = cssCenters[k].y * mapping.scaleY + mapping.offsetY;
+      const hit = detected.some((p) => Math.hypot(p.x - px, p.y - py) <= tol
+        && (typeof p.unit !== 'number' || Math.abs(p.unit - expectedUnit) <= expectedUnit * 0.4 + 0.5));
+      if (hit) seen++;
+    }
+    return seen >= 2;
+  }
+
+  // The getDisplayMedia request. `preferCurrentTab`, `selfBrowserSurface`,
+  // `surfaceSwitching` and `monitorTypeSurfaces` are OPTIONS of the call,
+  // not constraints of its video track — they sit beside `video`, never in
+  // it. Nested inside `video` (as they were until #2885) Chromium ignores
+  // them all: instead of the one-click "share this tab" prompt it shows the
+  // full picker, which leaves the current tab out by default, so every
+  // Chrome user had to share a window or the whole screen. That put them on
+  // the marker-registration path below — the page blacked out while it
+  // searched, and "couldn't locate this page" whenever it lost — for a
+  // capture the direct tab mapping takes exactly. Only `displaySurface` is
+  // a track constraint. Browsers without these options ignore them.
+  function displayMediaOptions() {
+    return {
+      video: { displaySurface: 'browser' },
+      audio: false,
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+      surfaceSwitching: 'exclude',
+      monitorTypeSurfaces: 'exclude',
+    };
+  }
+
+  // Only a tab self-capture is trusted for direct mapping; anything else
+  // goes through marker registration, which fails closed if the page isn't
+  // actually visible in the share. That includes an UNREPORTED surface:
+  // Firefox's getSettings() carries no displaySurface at all for a window
+  // share, and treating that as a tab would crop the window's toolbar.
+  function isTabCapture(settings) {
+    return !!settings && settings.displaySurface === 'browser';
+  }
+
+  // How dark the page goes behind the markers while a window / screen
+  // share is registered. Not opaque (#2885): at 80% the brightest thing the
+  // page can draw is ~20% luminance, well under the dark/light threshold a
+  // frame with a marker in it binarizes at (its black core and white quiet
+  // zone span the full range), so nothing on the page can form a marker's
+  // light rings — which is all the old solid black bought — while the page
+  // stays visibly there instead of the screen "going black" for the
+  // seconds a slow capturer takes to deliver a frame.
+  const REGISTRATION_VEIL_ALPHA = 0.8;
+
   const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
   const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
 
@@ -423,6 +581,9 @@
 
   const pure = {
     MARKER,
+    REGISTRATION_VEIL_ALPHA,
+    displayMediaOptions,
+    isTabCapture,
     MAX_UPLOAD_BYTES,
     markerCssCenters,
     directMapping,
@@ -431,6 +592,9 @@
     detectMarkers,
     classifyCorners,
     solveRegistration,
+    registerFromFrames,
+    classifyRegistrationFailure,
+    markersStillVisible,
     validateNativeCapturePayload,
   };
 
@@ -610,7 +774,7 @@
   // stream is granted (app.js hides the feedback modal there). Resolves
   // { blob, contentType } or rejects with a coded Error:
   //   'unsupported' | 'denied' | 'cancelled' | 'register_failed' |
-  //   'capture_failed'
+  //   'capture_blank' | 'capture_failed'
   async function start(opts = {}) {
     if (!isSupported()) throw fail('unsupported');
 
@@ -618,17 +782,7 @@
     // await, preserving the transient user activation.
     let stream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: 'browser',
-          // Chromium hints — safely ignored elsewhere.
-          preferCurrentTab: true,
-          selfBrowserSurface: 'include',
-          surfaceSwitching: 'exclude',
-          monitorTypeSurfaces: 'exclude',
-        },
-        audio: false,
-      });
+      stream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions());
     } catch (err) {
       void err;
       throw fail('denied', 'Screen capture was declined');
@@ -636,16 +790,19 @@
 
     const track = stream.getVideoTracks()[0];
     const settings = (track && track.getSettings && track.getSettings()) || {};
-    // Only a tab self-capture is trusted for direct mapping; anything
-    // else (or an unreported surface) goes through marker registration,
-    // which fails closed if the page isn't actually visible in the share.
-    const tabMode = settings.displaySurface === 'browser';
+    const tabMode = isTabCapture(settings);
 
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
     video.srcObject = stream;
-    video.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+    // Inside the viewport and not fully transparent, on purpose (#2808): a
+    // muted video a browser considers invisible — parked at -9999px, or at
+    // opacity 0 — is one it may stop presenting frames for (WebKit pauses
+    // invisible muted playback), and every grab then returns the frame from
+    // before the markers existed. 2px at 1% in the corner, under the overlay,
+    // is visible to the browser and to nobody else.
+    video.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;';
     document.body.appendChild(video);
 
     const cleanupBits = [];
@@ -804,32 +961,77 @@
       let regFrameW = null;
       let regFrameH = null;
       if (!tabMode) {
-        // Registration frame: the markers over a blacked-out page. The
+        // Registration frame: the markers over a darkened page. The
         // selection's cut-out showed the page at full brightness here
         // before, and anything it framed with a finder pattern's
         // cross-section — a radio button, a ring icon, a QR code — became
-        // a fifth "marker". With the veil opaque the page contributes
-        // nothing; only the markers, and whatever the share includes
-        // around the page, are left for detection to see.
+        // a fifth "marker". Under the veil the page binarizes as solid
+        // dark and contributes nothing (see REGISTRATION_VEIL_ALPHA); only
+        // the markers, and whatever the share includes around the page,
+        // are left for detection to see.
         selection.style.display = 'none';
         controls.style.display = 'none';
         hint.style.display = 'none';
-        veil.style.background = '#000';
+        veil.style.background = `rgba(0,0,0,${REGISTRATION_VEIL_ALPHA})`;
         await waitFrames(video, 2);
-        const reg = grabFrame(video);
-        if (!reg) throw fail('capture_failed', 'No video frame available');
-        regFrameW = reg.width;
-        regFrameH = reg.height;
-        const detected = detectMarkers(reg.ctx.getImageData(0, 0, reg.width, reg.height));
-        const solved = solveRegistration(detected, markerCssCenters(viewportW, viewportH), reg.width, reg.height);
-        if (!solved.ok) throw fail('register_failed', solved.reason);
+        // One frame is not enough — see registerFromFrames. The first read
+        // takes the frame two frames after the veil; each retry waits for the
+        // next one the stream delivers.
+        const register = () => {
+          let first = true;
+          return registerFromFrames(async () => {
+            if (!first) await waitFrames(video, 1);
+            first = false;
+            if (video.paused) { try { await video.play(); } catch { /* grab what is there */ } }
+            const reg = grabFrame(video);
+            return reg && reg.ctx.getImageData(0, 0, reg.width, reg.height);
+          }, markerCssCenters(viewportW, viewportH));
+        };
+        let solved = await register();
+        if (!solved.ok && classifyRegistrationFailure(solved) === 'frozen') {
+          // Every grab returned the same picture: the element is stuck on a
+          // frame from before the markers. Re-attaching the stream makes it
+          // start presenting again; one more budget, then fail as before.
+          console.warn('[screenshot] capture video not advancing, re-attaching:', solved.reason);
+          video.srcObject = null;
+          video.srcObject = stream;
+          try { await video.play(); } catch { /* the grab below reports it */ }
+          await waitFrames(video, 2);
+          solved = await register();
+        }
+        if (!solved.ok) {
+          // The reason itself is what a bug report needs.
+          console.warn('[screenshot] registration failed:', solved.reason);
+          const kind = classifyRegistrationFailure(solved);
+          const code = kind === 'no-frames' ? 'capture_failed' : (kind === 'blank' ? 'capture_blank' : 'register_failed');
+          throw fail(code, solved.reason);
+        }
+        regFrameW = solved.width;
+        regFrameH = solved.height;
         mapping = solved.mapping;
       }
 
-      // Clean frame: nothing of ours visible.
+      // Clean frame: nothing of ours visible. The same lag that could hand
+      // registration a frame from before the veil can hand this grab a frame
+      // OF the veil, which crops to a black rectangle; read on until the
+      // markers are gone (bounded — past the budget the last frame is used,
+      // exactly as a single grab did).
       overlay.style.display = 'none';
       await waitFrames(video, 2);
-      const clean = grabFrame(video);
+      let clean = grabFrame(video);
+      if (!tabMode) {
+        const css = markerCssCenters(viewportW, viewportH);
+        const cleanStarted = Date.now();
+        while (clean && Date.now() - cleanStarted < 1500) {
+          const m = clean.width === regFrameW && clean.height === regFrameH
+            ? mapping
+            : rescaleMapping(mapping, regFrameW, regFrameH, clean.width, clean.height);
+          const pixels = clean.ctx.getImageData(0, 0, clean.width, clean.height);
+          if (!m || !markersStillVisible(detectMarkers(pixels), m, css, clean.width)) break;
+          await waitFrames(video, 1);
+          clean = grabFrame(video) || clean;
+        }
+      }
       if (!clean) throw fail('capture_failed', 'No video frame available');
       if (tabMode) {
         mapping = directMapping(viewportW, viewportH, clean.width, clean.height);

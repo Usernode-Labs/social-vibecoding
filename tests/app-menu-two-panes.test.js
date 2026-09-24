@@ -1,0 +1,214 @@
+'use strict';
+
+// The app chip's sheet is the APP's menu, and About is its second pane
+// (#2718).
+//
+// What this file exists to pin is the seam rather than the rows: a pane that
+// can open empty, a pane that does not reset when the sheet closes, and a
+// "back" that is really a second sheet are each the kind of defect that looks
+// right in a diff and is obvious the first time somebody uses it.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
+const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
+const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const CONTROLLER = read('frontend/src/features/app-context/app-context-controller.js');
+
+// ONE bundle for the component and the store it reads: render-tsx bundles
+// each entry separately, so a store imported on its own is a second copy and
+// setting it changes nothing the component can see.
+const ui = loadTsx('tests/fixtures/about-pane-api.ts');
+
+const render = (patch) => {
+  const before = { ...ui.improveStore.get() };
+  ui.improveStore.set({ ...before, ...patch });
+  try {
+    return renderToHtml(createElement(ui.AboutPane, { label: patch.name || 'Notes' }));
+  } finally {
+    ui.improveStore.set(before);
+  }
+};
+
+test('About never opens empty', () => {
+  // Every other line in it is conditional — a description the manifest may
+  // not have, a repository, a share the platform may not allow yet, a version
+  // it may never have deployed, a home screen the device may not have — and
+  // all of them are absent at once often enough that a pane without an
+  // unconditional line would regularly open blank. A row that sometimes leads
+  // nowhere is the one thing a menu row must not be. The address stands in
+  // the tagline's place when there is no tagline.
+  const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
+  assert.match(bare, /id="app-about-identity"/);
+  assert.match(bare, />Notes</, 'the app is named');
+  assert.match(bare, /\/app\/notes-ab12/, 'and addressed');
+});
+
+test('each fact appears only when there is one', () => {
+  const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
+  assert.doesNotMatch(bare, /improve-row-github/, 'no repository, no row');
+  assert.doesNotMatch(bare, /improve-row-share/, 'no share, no row');
+  assert.doesNotMatch(bare, /app-about-version/, 'no version, no pill');
+
+  const full = render({
+    target: 'app', name: 'Notes', slug: 'notes-ab12',
+    repoUrl: 'https://github.com/example/notes', canShare: true, version: '14',
+  });
+  assert.match(full, /id="improve-row-github"[\s\S]{0,200}href="https:\/\/github\.com\/example\/notes"/);
+  assert.match(full, /target="_blank"/, 'the repository opens away from the shell');
+  assert.match(full, /id="improve-row-share"/);
+  // The design draws the version as a PILL beside the builders' avatars —
+  // "v41 · 2h ago" — and it is still not a row: there is nowhere for it to
+  // go. The platform names a version by its commit, so the pill does too.
+  assert.match(full, /id="app-about-pills"[\s\S]*?id="app-about-version"[^>]*>14</,
+    'the version is a pill in the identity block, not a row');
+  // The design's MORE order: Share, Add to home screen, then the source
+  // (View on GitHub is its "Source code"), then Fork.
+  assert.ok(full.indexOf('improve-row-share') < full.indexOf('improve-row-github'),
+    'sharing leads, the repository follows — the design\'s order');
+});
+
+test('two panes of ONE sheet, not two sheets', () => {
+  // The kit cannot present a sheet while it is still dismissing another —
+  // the ordering the wallet row already worked around — and About is where
+  // the menu GOES rather than something that opens over it.
+  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : \(/,
+    'the pane replaces the rows inside the same scroller');
+  assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
+  // The label row's own text is the pane switch's other half: the menu names
+  // the app, About's back arrow names it again beside a chevron.
+  assert.match(SHEET, /\{view === 'about' \? \(/, 'one row, two states');
+  // What used to be tested here — that Create New and the app strip belonged
+  // to the MENU pane rather than to About — is gone with both of them
+  // (#2718 review). About was never the reason: a rail of other apps at the
+  // top of a sheet about ONE app was an invitation to leave it, and that is
+  // just as true of the menu pane.
+  assert.ok(!SHEET.includes('id="apps-switcher-create"'), 'no Create entry');
+  assert.ok(!SHEET.includes('id="apps-switcher-list"'), 'no app strip');
+});
+
+test('closing resets the pane, by any route', () => {
+  // A SUBSCRIPTION rather than a wrapper around close(): the kit's own
+  // dismissal — a swipe, a tap on its backdrop — publishes `open: false`
+  // without passing through the controller at all, and a sheet that reopens
+  // on the pane you left is a sheet that ignores what you asked for.
+  assert.match(CONTROLLER, /appContextStore\.subscribe\(\(\) => \{/);
+  assert.match(CONTROLLER, /if \(wasOpen && !open\) appContextStore\.set\(\{ view: 'menu' \}\);/);
+  assert.doesNotMatch(CONTROLLER, /AppContext\.close = /,
+    'close() is not wrapped — that would miss the kit\'s own dismissal');
+});
+
+test('the menu row that opens it is a button, and says so', () => {
+  // There is no address to open in a new tab, because the pane is this sheet
+  // in another state — which is exactly why every OTHER row here is an
+  // anchor and this one is not.
+  const at = SHEET.indexOf('id="app-menu-row-about"');
+  assert.ok(at > 0);
+  const row = SHEET.slice(SHEET.lastIndexOf('<', at), SHEET.indexOf('</button>', at));
+  assert.match(row, /type="button"/);
+  assert.match(row, /AppContext\.showAbout\(\)/);
+  assert.match(row, /w-full/, 'and fills the sheet, so its chevron sits at the edge');
+});
+
+test('the Workshop row says what it owes you, and stays silent when it cannot', () => {
+  // The design study drew "2 to vote" here. It is the one thing on this menu
+  // that REPORTS rather than navigates, which the sheet's own header calls
+  // the decay signal — and it earns the exception the way the row does: it is
+  // a property of the destination, like a folder saying how many files are in
+  // it. A row that sends you to a queue and will not say whether the queue is
+  // empty makes you go and look.
+  // IT RIDES THE "Go to workshop" ROW (#2761). It spent a round on the App |
+  // Workshop strip's Workshop segment; the strip retired to a plain row, and
+  // the figure came with it. The number is a count badge and the words are
+  // its accessible name.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
+    'the badge is the Workshop row\'s trailing figure');
+  assert.match(sheet, /id="app-menu-workshop-owed"/);
+  assert.match(sheet, /aria-label=\{`\$\{owed\} to vote`\}/);
+
+  // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
+  // endpoint, so this is the same figure that screen shows on the same app's
+  // row rather than a second count computed a second way.
+  assert.match(sheet, /fetch\(`\/api\/workshop\/counts\$\{demo\}`\)/);
+  const at = sheet.indexOf("if (!open || !slug)");
+  const effect = sheet.slice(at, sheet.indexOf('}, [open, slug]);', at));
+  assert.ok(at > 0, 'it loads on open, keyed to the app in context');
+
+  // FAILURE IS SILENCE. A menu row that works is worth more than a count, so
+  // an offline or refused request leaves the row exactly as it was.
+  assert.match(effect, /catch \{/);
+  assert.match(effect, /typeof n === 'number' && n > 0/,
+    'zero is silence too — "0 to vote" is a row shouting that it has nothing');
+
+  // Nothing during render, so the prerender ships no figure and hydration has
+  // nothing to correct.
+  assert.ok(!read('public/index.html').includes('id="app-menu-workshop-owed"'),
+    'a figure read from data is not in a cold document');
+});
+
+test('a platform screen is named by the bar, and says it once', () => {
+  // The two screens spent a round disagreeing about what a title is —
+  // Messages at 28px, the Workshop wearing the grouped list's 15px muted
+  // SECTION LABEL — and were made to agree at 28px. They agree on something
+  // simpler now (#2718 review): they do not say it at all. The bar above was
+  // already reading "Messages" over an <h2> reading Messages, and Workshop
+  // over an <h1> reading Workshop — the same word twice, an inch apart, on
+  // every visit. The bar is the title, which is what it is for on every
+  // other screen in the shell.
+  //
+  // HOME REACHED THIS FIRST and for the same reason, which is why it was
+  // never a caller: the bar carries the Homeroom wordmark, and a screen
+  // called Home under a wordmark is the same word twice.
+  const workshop = read('frontend/src/features/workshop/index.tsx');
+  const messages = read('frontend/src/features/messages/index.tsx');
+  const home = read('frontend/src/features/home/home.js');
+  for (const [name, src] of [['Workshop', workshop], ['Messages', messages], ['Home', home]]) {
+    assert.ok(!src.includes('platform-screen-title'), `${name} does not title itself`);
+  }
+  assert.ok(!workshop.includes('<SectionHeader>Workshop</SectionHeader>'),
+    'and certainly not with a muted section label');
+  assert.ok(!messages.includes('messages-list-title'),
+    'Messages\' own title row went with it — a search took the space');
+  // What each screen DOES say is the thing the bar cannot. Messages: which
+  // of three kinds of message. The Workshop said which workshop with a scope
+  // chip until #2759 — but that screen IS the list of your apps, so the chip
+  // repeated the page; what it says under the bar now is the legend's totals.
+  assert.ok(!/<WorkshopScope /.test(workshop), 'the all-apps screen wears no scope chip (#2759)');
+  assert.match(workshop, /id="workshop-total-working"/);
+  assert.match(messages, /<InboxFilters /);
+});
+
+test('the desktop rail un-centres the header title', () => {
+  // use-header-layout.ts centres on the room it measures, and on a 1280px
+  // desktop with an empty left group there is room for anything — so the
+  // wordmark landed in the middle of the window, floating over the content
+  // column with the rail's 224px to its left. What the hook centres against
+  // is the WINDOW, and the window stopped being the content area the moment a
+  // rail took a fifth of it.
+  const css = read('public/css/app.css');
+  const at = css.indexOf('NOT WHILE THE DESKTOP RAIL IS UP');
+  assert.ok(at > 0, 'the rule states its reason');
+  const block = css.slice(at, css.indexOf('}', css.indexOf('text-align: left;', at)));
+  assert.match(block, /@media \(min-width: 768px\)/);
+  // IT IS NOT KEYED OFF THE RAIL ANY MORE (#2718 review). That left exactly
+  // one live case for centring — a desktop window with no rail, which is a
+  // running app — so an app's name floated mid-bar while every platform
+  // screen's sat left: the two states of one bar disagreeing about where a
+  // title goes, on the one navigation where they alternate.
+  assert.match(block, /\n  #header-title\.is-centered \{/,
+    'every desktop title is in flow, whatever is beside it');
+  assert.doesNotMatch(block, /body:has\(#platform-tabs/,
+    'the rail is no longer what decides it');
+  assert.match(block, /position: static;/);
+  assert.match(block, /text-align: left;/);
+  // Expressed in CSS rather than in the hook: "is there room" is a
+  // measurement, "is there a rail" is a layout fact the stylesheet knows, and
+  // a media query cannot get out of step with the one that draws the rail.
+  const hook = read('frontend/src/features/header/use-header-layout.ts');
+  assert.ok(!hook.includes('platform-tabs'), 'the hook still only measures');
+});

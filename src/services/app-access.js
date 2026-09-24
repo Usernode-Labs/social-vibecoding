@@ -218,6 +218,10 @@ const visCacheById = new Map();   // appId -> { at, viewPrivate, memberIds:Set }
 const slugToId = new Map();       // slug -> { at, appId }
 const hostVisBySlug = new Map();  // slug -> { at, appId, viewPrivate } (edge gate)
 
+function invalidateAllVisibility() {
+  visCacheById.clear(); slugToId.clear(); hostVisBySlug.clear();
+}
+
 function invalidateVisibility(appId, slug) {
   if (appId != null) visCacheById.delete(Number(appId));
   if (slug) {
@@ -358,6 +362,7 @@ module.exports = {
   issueCollabGuard,
   getWsVisibility,
   invalidateVisibility,
+  invalidateAllVisibility,
   parseAppHost,
   getHostVisibility,
   isViewMember,

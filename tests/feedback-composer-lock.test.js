@@ -72,8 +72,16 @@ test('the guards that ask "is the form locked?" read the same flag', () => {
 test('the submit BUTTON is still disabled, which is right for a button', () => {
   // It holds no caret and dismisses no keyboard, and disabled is the honest
   // state for a control that must not fire.
-  assert.match(SRC, /feedbackBtn\.disabled = true;/);
-  assert.match(SRC, /feedbackBtn\.disabled = false;/);
+  //
+  // The writes sit behind two helpers. #2707 gave the flag a second owner
+  // (Submit dead while the destination row waited); #2888 took it away
+  // again — the unanswered row is a refusal that says so, not a disabled
+  // button — so the hand-back is a plain `false` once more. `readOnly` is
+  // still not it: that is the composer's lock, and a button has no text to
+  // protect.
+  assert.match(SRC, /const disableSubmit = \(\) => \{ submitBusy = true; feedbackBtn\.disabled = true; \};/);
+  assert.match(SRC, /const enableSubmit = \(\) => \{ submitBusy = false; feedbackBtn\.disabled = false; \};/);
+  assert.doesNotMatch(SRC, /feedbackBtn\.readOnly/);
 });
 
 test('nothing reads the property the lock stopped setting', () => {

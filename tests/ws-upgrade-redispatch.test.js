@@ -28,6 +28,7 @@ const USER = { user_id: 1, username: 'evan', is_admin: true };
 // ── pool stub ──────────────────────────────────────────────────────────
 const fakePool = {
   async query(sql, params = []) {
+    if (/SELECT id FROM users WHERE id = \$1/.test(sql)) return { rows: [{ id: params[0] }] };
     if (/FROM sessions s JOIN users u/.test(sql)) {
       if (params[0] !== VALID_SESSION) return { rows: [] };
       return {

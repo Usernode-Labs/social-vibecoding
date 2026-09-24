@@ -900,31 +900,106 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // of them: 703 + 1 + 2 + 1 = 707, which leaves 23 slots against
   // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
   //
-  // 707 → 708: #2679 and #2680 made the hand-off walkthrough's "Link
-  // GitHub" step a real link to GitHub's own authorization page instead of
-  // a hop to Settings, and no declared check had ever looked at that step:
-  // the staging fixture has always been linked, so the card never opened
-  // on it. ONE check, on the new ?order=link fixture shape, pins the anchor
-  // and its destination.
+  // 707 → 708: #2490 added one check on Home's Challenges block. On the
+  // staging demo, finished challenges sit last under a Done header, after
+  // every unfinished one. That leaves 22 slots, still clear of the floor.
   //
-  // 707 → 709: independently on main, #2684 adds the Homeroom bot's admin
-  // dashboard, with two declared checks on its section (the verdict table
-  // renders; the intro says shadow mode posts nothing).
+  // 707 → 708: independently on main, #2688 added one check on the native
+  // Android header, pinning the status-bar inset classification regression.
   //
-  // 707 → 708: also independently on main, the native/browser
-  // classification script's startup ordering could tag a native Android
-  // WebView as browser chrome too, dropping the safe-area inset the
-  // platform header needs under the status bar. ONE check pins that a
-  // native Android session keeps `#platform-header.un-safe-top-extend`.
+  // 708 → 709: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 707 → 708 alone,
+  // with the #2490 check above; main independently took the same 707 to 708
+  // with the #2688 check above. Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 707 + 1 + 1 = 709.
+  //
+  // 707 → 708: on a later side of main, #2679 and #2680 made the hand-off
+  // walkthrough's "Link GitHub" step a real link to GitHub's own
+  // authorization page instead of a hop to Settings, and no declared check
+  // had ever looked at that step: the staging fixture has always been
+  // linked, so the card never opened on it. ONE check, on the new
+  // ?order=link fixture shape, pins the anchor and its destination.
+  //
+  // 707 → 709: independently on that same side of main, #2684 adds the
+  // Homeroom bot's admin dashboard, with two declared checks on its section
+  // (the verdict table renders; the intro says shadow mode posts nothing).
   //
   // 708 → 711, 709 → 711: the tallies above were computed on either side of
-  // this merge and cannot be read as one sequence. This branch took
-  // 707 → 708 alone, with the #2679/#2680 Link-GitHub check above; main
-  // independently took the same 707 to 709 with the #2684 Homeroom-bot pair
-  // and to 708 with the native-Android-header check. None of the three sets
-  // overlaps another, so the merged manifest holds every one of them:
-  // 707 + 1 + 2 + 1 = 711, which leaves 19 slots against MAX_DECLARED_TESTS
-  // (730) — one past the 20-slot floor.
+  // a DIFFERENT merge on main and cannot be read as one sequence either:
+  // main took 707 → 708 with the #2679/#2680 check and 707 → 709 with the
+  // #2684 pair, landing on 711 once the same native-Android-header check
+  // named above is folded in on that side too (707 + 1 + 2 + 1 = 711).
+  //
+  // 709 → 712: reconciling this branch's 709 with main's 711 would
+  // double-count the native-Android-header check — both sides already carry
+  // it from the same commit, this branch merged in at the 708 → 709 step
+  // above and main counted again inside its own 711. Only main's other two
+  // additions are new against the shared 709: the Link-GitHub check (+1)
+  // and the Homeroom-bot pair (+2). 709 + 1 + 2 = 712, which leaves 38 slots
+  // against MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot
+  // floor. The ceiling itself already moved from 730 to 750 on main's side,
+  // once its own total stood on the old ceiling's 20-slot floor; that move
+  // carries over unchanged (services/app-manifest.js).
+  //
+  // 712 → 714: the #2704 pair, one per tone. They select the launch cover
+  // inside #app-frame-host on the two tone shots — the surface whose ink the
+  // tone decides, and which those shots did not mount until that change —
+  // so each tone has a check that fails if the cover is inked for the
+  // shell's theme rather than for the ground it sits on. 712 + 2 = 714,
+  // leaving 36 slots against MAX_DECLARED_TESTS (750).
+  //
+  // 712 -> 713: independently on main, #2681 renames the dev walkthrough's
+  // footer button to "Build on the Homeroom platform instead", and no
+  // declared check asserted the old string, so the rename adds one rather
+  // than editing one.
+  //
+  // 712 → 715: also independently on main, #2707 declares three, all on the
+  // Send Feedback dialog — the unchosen destination row and its dead Submit
+  // on ?shot=feedback-choose, and the one-destination case on ?shot=feedback,
+  // which is the half a later refactor is most likely to lose (there, a
+  // destination IS selected and Submit IS live, because a tap with one
+  // possible answer is a tax).
+  //
+  // 713 → 716: the tallies above were computed on either side of that same
+  // merge on main and cannot be read as one sequence. Main took 712 → 713
+  // alone, with the #2681 check above, then independently 712 → 715 with the
+  // #2707 trio above. One +1 and one +3 against a shared 712 is 716.
+  //
+  // 716 → 720: #2706 puts the connector walkthrough inline on the dev
+  // session page instead of sending the reader to Settings, and that is a
+  // screen state with four things to pin — the steps themselves, the live
+  // MCP server URL beside them, the ChatGPT hand-off getting ChatGPT's
+  // steps rather than Claude's, and Settings still being one tap away. Both
+  // sides of the 713 → 716 merge happened to land on 716 from different
+  // additions, which is a coincidence and not a sequence: main reached it
+  // with #2681 and #2707, and these four are new against it.
+  //
+  // 714 → 718, 720 → 722: the tallies above were computed on either side of
+  // THAT merge and cannot be read as one sequence either. This branch took
+  // 712 → 714 alone, with the #2704 pair above; main independently took the
+  // same 712 to 720, with the #2681, #2707 and #2706 checks above. Neither
+  // set overlaps the other, so that merged manifest held every one of them:
+  // 712 + 2 + 1 + 3 + 4 = 722, which left 28 slots against
+  // MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot floor.
+  //
+  // 712 → 714 (again, independently): the share-view Homeroom mark (#2705)
+  // adds two, and both are assertions of an ABSENCE — that the platform's
+  // own document does not draw the mark the bridge draws on an app's
+  // subdomain. One rides the existing chromeless-view path, where a failure
+  // would be the mark sitting beside #chromeless-pill (the "not twice"
+  // case); one rides Home. Neither is a new screen, so neither is tagged
+  // visual: the surface the change is actually visible on is an app's own
+  // hostname, which no declared check can navigate to. That is where main
+  // stood alone, against the same shared 712 the #2704 pair stood against.
+  //
+  // 722 → 724: the tallies above were computed on either side of THIS merge
+  // and cannot be read as one sequence either. Both stand on the shared 720
+  // (712 + the #2681, #2707 and #2706 checks): this branch already carries
+  // that 720 forward to 722 with the #2704 pair, and main independently
+  // carries the same 720 to 722 with the #2705 pair. Neither pair overlaps
+  // the other, so the merged manifest holds every one of them: 720 + 2 + 2 =
+  // 724, which leaves 26 slots against MAX_DECLARED_TESTS (750) —
+  // comfortably clear of the 20-slot floor.
   //
   // 711, ceiling 730 → 750: main alone stood exactly ON the floor (710), so
   // this branch's one check crossed it, and the two tests that state the
@@ -932,8 +1007,210 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // tests/proposal-tests-manifest.test.js) both say to move the ceiling
   // rather than delete a check. It moved with this branch
   // (services/app-manifest.js, 730 → 750, still not a coupled move), so
-  // 711 leaves 39 slots, clear of the 20-slot floor. The count is unchanged.
-  assert.equal(DAPP.tests.length, 711);
+  // 711 left 39 slots, clear of the 20-slot floor.
+  //
+  // 715 with #2718. The navigation change rewrote NINE checks in place — the
+  // app chip's menu no longer holds the platform's destinations, so each one
+  // names the control that carries it now (a tab, a Profile row, the app's
+  // own menu row) rather than being deleted — and ADDED four for what the
+  // change introduces: the mark as the header's menu button, About as the
+  // menu's second pane, the app strip inside a running app, and the bar's
+  // absence there. 715 leaves 35 slots, still clear of the floor.
+  //
+  // 716 with the same change's last commit, which retires #improve-btn. Seven
+  // MORE were rewritten in place on the same principle and none deleted: four
+  // asserted the header pill was on screen and now assert the menu row it
+  // became, two carried it as bar-shape context in a `:has()` chain (the mark
+  // is that context now), and one pinned that it wore no notification count —
+  // a claim that followed the two work dots onto the mark. The one ADDED is
+  // the retirement itself: a header with no #improve-btn in it, and a mark
+  // with both dots on it. A check that only says an id is gone would pass on
+  // a bar that lost the mark too, which is why it says both in one selector.
+  //
+  // 724 AND 716 ARE TWO TALLIES OF ONE MANIFEST, computed either side of
+  // this merge, and neither is a sequence the other continues. The block
+  // above is main's, ending at 724; the block below is #2718's, ending at
+  // 716. They stand on different shared totals because each counted its own
+  // additions against the base it was cut from.
+  //
+  // The merged manifest simply holds both sets: git took every entry from
+  // each side of dapp.json, and no check appears on both (the navigation
+  // change rewrote its nine in place and added thirteen; main's additions are
+  // the #2704 and #2705 pairs, the #2681 rename, #2707, #2706 and the
+  // Link-GitHub and Homeroom-bot checks). Counted rather than derived: the
+  // arithmetic on either side above is the reasoning each change owes for
+  // its OWN additions, and a third sum reconciling them would be a number
+  // nobody could check. 729 leaves 21 slots against MAX_DECLARED_TESTS
+  // (750) — clear of the 20-slot floor, and close enough to it that the next
+  // change to add checks should move the ceiling rather than squeeze.
+  //
+  // +1 (#2764): the folded-sidebar peek's toggle check, 730 — exactly the
+  // 20-slot floor, so the next addition moves the ceiling.
+  //
+  // +1 (#2760): the fifth tab named after the signed-in user, 731 — one past
+  // that floor, so the ceiling moved with it (services/app-manifest.js,
+  // 750 → 770, still not a coupled move).
+  //
+  // +1 (#2748): the waitlist analytics dashboard's Analytics button/panel
+  // check, landing beside #2760 rather than after it — both counted from
+  // the same 730 base, so together they put the manifest at 732, not 731
+  // twice. The ceiling already moved 750 → 770 above; 732 leaves 38 slots.
+  //
+  // +1 (#2784): the Homeroom menu opens anchored under the mark rather than
+  // centred mid-screen, 733 — 37 slots left under the 770 ceiling.
+  //
+  // +7 (#2783, #2778): the Messages channels — the sectioned list, the
+  // Channels filter, the "+" at the strip's end, #general's grouped rows and
+  // its title row, and a `#name` channel link beside a `#123` issue ref in a
+  // message. 740 leaves 30 slots under the 770 ceiling.
+  //
+  // +1 (#2824): the lit tab's sliding marker on the phone's bar, 741 — 29
+  // slots left under the 770 ceiling.
+  //
+  // 742 → 744, 742 → 744: the tallies above were computed on either side of
+  // this merge against the same shared 740 and do not reconcile through the
+  // comment trail alone. Main added #2799 and #2806 — the platform's own
+  // Workshop shows no close button, and an app's Workshop is the platform
+  // surface its header frosts over (+2); main also added #2807 and #2812 —
+  // the dev-chat model picker has no caption line under it, and stays
+  // usable while a turn runs (+2). Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 740 + 2 + 2 = 744, leaving 26
+  // slots under the 770 ceiling.
+  //
+  // +2 (#2803): the Homeroom menu takes a dark app's palette, and a light app
+  // under the dark shell leaves it in the shell's own dark mode. 746 leaves
+  // 24 slots under the 770 ceiling.
+  //
+  // 741 → 747: the tallies above were computed on either side of this merge
+  // against the same shared 740 and cannot be read as one sequence. This
+  // branch took 740 → 741 alone, with #2824 above; main independently took
+  // the same 740 to 746, with the #2799/#2806/#2807/#2812 checks (+4) and
+  // #2803 (+2). Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 740 + 1 + 6 = 747, leaving 23 slots under the 770
+  // ceiling.
+  //
+  // 747 → 749: independently on main, +2 (the side panel beside a running
+  // app): its host ships hidden and frameless after the app view, and a
+  // `?panel=1` address opened in a window of its own is the ordinary
+  // platform. 749, which leaves 21 slots under the 770 ceiling and 1 before
+  // the 20-slot floor at 750.
+  //
+  // 749 → 751: +2 (#2802, #2798): the desktop rail's Recents sitting between
+  // Workshop and Me, and the sidebar toggle and bell carrying their blue disc
+  // on hover only. 751 was one past the 20-slot floor under the 770
+  // ceiling, so the ceiling moved to 790 with it (services/app-manifest.js),
+  // leaving 39 slots.
+  //
+  // 751 → 753: +2 (#2813): a dev session opens in the Messages pane beside
+  // the list on a desktop, and that pane links to the session's full view.
+  // This branch counted them against an older shared base; main reached 751
+  // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
+  // slots under the 790 ceiling.
+  //
+  // 753 → 756: the tallies above were computed on either side of this merge
+  // against the same shared 753 and do not reconcile through the comment
+  // trail alone. This branch took 753 → 754 alone, with #2886 above (the
+  // divider between a running app and its side panel ships as a vertical
+  // separator on the panel's edge); main independently took the same 753 to
+  // 755, with #2888 above (Send Feedback pressed with no destination turns
+  // the App/Platform row red) and #2800/#2878 above (Me is the rail's last
+  // row, straight after Recents, which is what places the thin rule drawn
+  // above it). Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 753 + 1 + 1 + 1 = 756, leaving 34 slots under the 790
+  // ceiling.
+  //
+  // 756 → 759: +3 (#2884): a run of four shared cards in #general draws as
+  // the first card and "… 3 more"; the plain message before it is not folded
+  // in; an app's channel in Messages folds its run of proposal cards the same
+  // way. Counted on a branch that already held main's Me-row check; main
+  // reached 756 without these three, so the merged manifest holds 756 + 3 =
+  // 759, leaving 31 slots under the 790 ceiling.
+  //
+  // 759 → 763: the tallies above were computed on either side of this merge
+  // against the same shared 759 and cannot be read as one sequence. This
+  // branch took 759 → 762 alone, +3 (#2902): an app kept loaded in the
+  // background carries a green dot on its Home tile; its hidden frame is
+  // inert, out of the tab order and the accessibility tree, and not
+  // #app-iframe; and an app nobody has opened carries no dot. Main
+  // independently took the same 759 to 760, +1 (#2894): a Your-apps tile
+  // dragged over the open Homeroom widget strip lights the strip up as its
+  // drop target (?shot=widget-drop). Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 759 + 3 + 1 = 763, leaving 27
+  // slots under the 790 ceiling.
+  //
+  // 763 → 778: independently on main, on top of the same #2894 already
+  // folded into the 763 above, the prototype-gaps proposal (Homeroom task
+  // 598) merges five streams of work into one change. What each adds, net of
+  // the checks it RE-POINTED rather than added (those do not count):
+  //   +3  About is the app's page (Open, Add to your apps, its builders with
+  //       what each has merged); About Homeroom carries the platform's own
+  //       figures; a cold load of any platform tab but Home points the mark's
+  //       menu at Homeroom.
+  //   +3  Discover's filter chips, the Featured chip's filtering
+  //       (?filter=featured), and Share on an app's page. The two Create
+  //       checks were re-pointed at the launcher grid's trailing tile.
+  //   +4  Me's "More" rows, Me's Your contributions, the Challenges page's
+  //       History tab, and the Message button on a person's page. Five more
+  //       were re-pointed (Me's card and stat cards, and the Admin, Node and
+  //       two staking rows that moved into Settings).
+  //   +3  An app's own Workshop has no back control; the app discussion's old
+  //       full-screen address climbs to Messages; a peek over a running app
+  //       never brings the sidebar toggle into the app's strip.
+  //   +2  An app's Workshop ends its view-tab strip with the "+" on Current
+  //       status too (prototype wsTabs), and the global chat's composer
+  //       wears the safe-bar contract, so on a phone it sits above the tab
+  //       bar. The four checks that pinned the "+" in All items' actions row
+  //       were re-pointed.
+  // Its streams were counted against main's own 760 (759 + the #2894 above),
+  // reaching 775; this branch's #2902 checks are not in that count, so the
+  // merged manifest holds 763 + 15 = 778. That is past the 20-slot floor
+  // under the 790 ceiling, so the ceiling moved to 810 with it
+  // (services/app-manifest.js), leaving 32 slots.
+  //
+  // 778 → 780: +2 (#2905), counted on this branch against the shared 759
+  // above and not yet folded into main's own count: a follow-up message in
+  // #general carries one ⋯ disc for report and block instead of three, and
+  // an app's chat in Messages draws no report/block text links in its rows.
+  // 780 leaves 30 slots under the 810 ceiling.
+  //
+  // 780 → 781: +1 (#2916), on this branch. A topic's back control moved
+  // from the header into the pane as the "‹ Workshop" chip: the two checks
+  // that pinned the header arrow on an issue (Workshop and kanban layouts)
+  // were re-pointed at the chip, and one new check pins it above a
+  // proposal's hero. The dev session's header arrow is still #2770's check.
+  //
+  // 780 → 782: independently on main, +2 (#2915): an app's Workshop opened
+  // on Current status with an All items search in the URL still draws the
+  // whole dashboard and no "nothing matches" note, and the All items tab
+  // wears the dot that says its search is still on.
+  //
+  // 780 → 781: also independently on main, +1 (#2919): the desktop rail's
+  // Recents folds everything older than five days ago behind a collapsed
+  // "Show N older" button at its foot.
+  //
+  // 780 → 781: also independently on main, +1 (#2912): the demo's unread
+  // conversations show as the Messages tab's quiet count, still inside the
+  // Messages tab (the badge left the icon for the row's end on the desktop
+  // rail by CSS alone, so the check pins the markup that move depends on).
+  //
+  // 781 → 785, 782 → 785, 781 → 785 (twice over): the tallies above were
+  // computed on different sides of this merge against the same shared 780
+  // and cannot be read as one sequence. This branch took 780 → 781 alone,
+  // with #2916 above; main independently took the same 780 to 784, with
+  // #2915, #2919 and #2912 above. Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 780 + 1 + 2 + 1 + 1 = 785,
+  // leaving 25 slots under the 810 ceiling.
+  //
+  // 785 → 788: independently on main, +3 (#2866): this PR's own three
+  // checks exercise the owner menu, shared menu, and direct link.
+  //
+  // 788 → 790: +2 (#2779): an agent session in the desktop Messages pane
+  // beside its inbox row, with a pending card's Confirm and Not now; and its
+  // own screen's bar with the changes drawer open, on the staging-seeded
+  // conversation 990801. It had four; the manifest keeps 20 slots clear, so
+  // they were folded into two with :has() once main's three landed.
+  // Exactly 20 slots left under the 810 ceiling.
+  assert.equal(DAPP.tests.length, 790);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

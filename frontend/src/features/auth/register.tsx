@@ -22,12 +22,15 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton, backToLanding } from './back-button';
+import { NativeLoginDetailsLink } from './native-login-details';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
   fetchSessionMint,
   finishLogin,
   hiddenLast,
+  NativeLoginPreparationError,
+  type NativeLoginFailureDetails,
   sessionMintFailureMessage,
   useAuthScreensPatch,
 } from './shared';
@@ -57,6 +60,7 @@ export function RegisterScreen() {
   const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.register);
 
   const [error, setError] = useState<string | null>(null);
+  const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
 
   const code = useRef<HTMLInputElement>(null);
   const username = useRef<HTMLInputElement>(null);
@@ -69,6 +73,7 @@ export function RegisterScreen() {
    * re-navigation cannot clobber something half-typed.
    */
   const registerOnShow = useCallback((seg?: string) => {
+    setDetails(null);
     if (!seg || !code.current || code.current.value) return;
     code.current.value = decodeURIComponent(seg);
     username.current?.focus();
@@ -77,6 +82,7 @@ export function RegisterScreen() {
   const onSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
+    setDetails(null);
     if (blockedOffline(setError)) return;
     try {
       const res = await fetchSessionMint('/api/auth/register', {
@@ -96,6 +102,7 @@ export function RegisterScreen() {
       finishLogin();
     } catch (error) {
       setError(sessionMintFailureMessage(error));
+      setDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
   }, []);
 
@@ -197,6 +204,7 @@ export function RegisterScreen() {
             </div>
             <div id="reg-error" className={hiddenLast(!error, 'text-red-400 text-sm')}>
               {error}
+              <NativeLoginDetailsLink details={details} />
             </div>
             <Button type="submit" layout="full" variant="pillAccent" size="pillLg" ink="solidLate">
               Register

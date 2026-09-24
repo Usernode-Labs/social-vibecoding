@@ -84,7 +84,7 @@ declare global {
         [key: string]: unknown;
       } | null;
       eventsWs?: WebSocket | null;
-      navigateHome?(): void;
+      navigateHome?(opts?: { viaTab?: boolean }): void;
       restoreFromHash?(): void;
       navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
       openAppTab?(slug: string, tab?: string, opts?: unknown): void;
@@ -235,6 +235,19 @@ declare global {
         /** Repaint one row's save state — the notifications drawer's unsave. */
         paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
+      };
+      /** features/agent-session/store.ts (#2779). */
+      agentSession?: {
+        open(id: number, options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
+        route(id: number, options?: { drawer?: boolean }): Promise<void> | void;
+        start(
+          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
+          options?: { message?: string | null },
+        ): Promise<unknown>;
+        deactivate(): void;
+        isOpen(): boolean;
+        currentId(): number | null;
+        refreshList(): Promise<void> | void;
       };
       globalChat?: {
         open(options?: { threadId?: string | null }): Promise<void> | void;

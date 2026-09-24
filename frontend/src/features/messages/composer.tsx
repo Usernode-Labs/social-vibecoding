@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
-import { draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
+import { channels, draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
 import type { MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -35,7 +35,6 @@ export function MessageComposer() {
   const [uploading, setUploading] = useState(0);
   const [object, setObject] = useState<SharedObjectReference | null>(null);
   const [error, setError] = useState('');
-  const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   // #1955: the paperclip and the share tray were two adjacent icons that both
   // answered "put something in this message", and neither said which was
@@ -97,6 +96,27 @@ export function MessageComposer() {
       && member.username.toLowerCase().startsWith(prefix.toLowerCase())).slice(0, 6);
   }, [active?.members, value]);
 
+  // #2783: `#` offers the viewer's channels — #general and their apps' —
+  // and inserts `#handle`, which every chat renders as a link to it. Only a
+  // word after the `#`: `#123` is an issue reference, and a DM has no app to
+  // look issues up in.
+  const channelMatches = useMemo(() => {
+    const cursor = inputRef.current?.selectionStart ?? value.length;
+    const prefix = value.slice(0, cursor).match(/(?:^|\s)#([A-Za-z][A-Za-z0-9-]*|)$/)?.[1];
+    if (prefix === undefined) return null;
+    const q = prefix.toLowerCase();
+    return channels().filter((item) => item.handle.startsWith(q)).slice(0, 6);
+  }, [value, snap.conversations, snap.discussions]);
+
+  function insertChannel(handle: string) {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? value.length;
+    const before = value.slice(0, cursor).replace(/#([A-Za-z][A-Za-z0-9-]*|)$/, `#${handle} `);
+    const next = before + value.slice(cursor);
+    updateValue(next);
+    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(before.length, before.length); });
+  }
+
   function updateValue(next: string) {
     const trimmed = next.slice(0, 8000);
     setValue(trimmed); setDraft(conversationId, trimmed);
@@ -150,15 +170,17 @@ export function MessageComposer() {
     };
   }, [addOpen]);
 
-  async function submit() {
-    if (sending || uploading || (!value.trim() && !attachments.length && !object)) return;
-    setSending(true); setError(''); notifyTyping(false);
-    try {
-      await send({ content: value.trim(), attachmentIds: attachments.map((item) => item.id), object: object || undefined });
-      setValue(''); setAttachments([]); setObject(null);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    } catch (err) { setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'); }
-    finally { setSending(false); }
+  // NO SENDING STATE (#2907). The message is drawn in the transcript the
+  // moment it is sent — faded until the server has it, with a Retry if it
+  // never does — so the box empties at once and is ready for the next one.
+  // The button does not wait on the round trip or change its glyph.
+  function submit() {
+    if (uploading || (!value.trim() && !attachments.length && !object)) return;
+    setError(''); notifyTyping(false);
+    const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object || undefined };
+    setValue(''); setAttachments([]); setObject(null);
+    requestAnimationFrame(() => inputRef.current?.focus());
+    send(input).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
@@ -173,6 +195,7 @@ export function MessageComposer() {
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(conversationId, null)} aria-label="Cancel reply">×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><button type="button" onClick={() => setObject(null)} aria-label="Remove shared item">×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
+      {channelMatches?.length && !mention?.length ? <div className="messages-mention-menu" role="listbox" aria-label="Channels">{channelMatches.map((item) => <button key={item.handle} type="button" role="option" data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
       {mention?.length ? <div className="messages-mention-menu" role="listbox">{mention.map((member) => <button key={member.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
@@ -194,8 +217,8 @@ export function MessageComposer() {
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
-        <button type="button" onClick={() => void submit()} disabled={sending || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message">{sending ? '…' : <ArrowUpIcon aria-hidden="true" />}</button>
+        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
+        <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       <div className="mt-1 px-1 flex justify-end"><span className={`text-[10px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>

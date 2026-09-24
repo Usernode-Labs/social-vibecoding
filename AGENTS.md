@@ -28,7 +28,10 @@ Use the matching skill whenever its description fits:
 
 - `usernode-api` — inspect or change Homeroom app/platform state.
 - `usernode-proposal` — run a locally authored native proposal through
-  staging, checks, and optional promotion.
+  staging, checks, and optional promotion from an agent on the user's own
+  machine. This skill does not apply inside a Homeroom hosted dev-chat worker:
+  that worker commits on its assigned branch, records visual evidence intent
+  with its supplied tool, and leaves push, PR, and staging to the harness.
 - `react-shell-migration` — convert a legacy-owned shell region to React.
 - `mobile-push-testing` — verify push delivery through a real phone.
 
@@ -47,9 +50,20 @@ selects a skill.
   quote a SHA. **Do not assume the branch you were handed is based
   correctly**, and do not reach for the fork's default branch as the base —
   that is the thing most likely to be stale.
-- **Establish the base commit before the first edit.** It comes from the work
-  order (`prepare_work`), from the guided hand-off's `Base commit:` line, or —
-  with neither to hand — from asking. Inspect the current checkout with
+- **Choose the proposal workflow before resolving the base.** For a native
+  locally authored proposal, follow `usernode-proposal`: resolve the app and
+  exact base through the authenticated Homeroom API, then use `proposal_start`
+  and the platform-managed commit upload. This path needs no personal GitHub
+  link and no `prepare_work`. That tool prepares an external fork contribution
+  and requires GitHub identity for that different workflow; do not call it
+  merely to discover a native proposal's base.
+- **Establish the base commit before the first edit.** Use an already supplied
+  work order or guided hand-off's `Base commit:` when present. For a new native
+  proposal, use the exact canonical revision resolved through Homeroom as
+  described in `usernode-proposal`; a verified API result is sufficient and
+  does not require another user confirmation. Ask only when no trustworthy
+  exact revision can be resolved or the user has requested an ambiguous base.
+  Inspect the current checkout with
   `git status --short --branch`, `git rev-parse HEAD`, and
   `git rev-parse --abbrev-ref HEAD`; compare all forty characters of `HEAD`.
   This is the check step 2 of the `usernode-proposal` skill already makes,
@@ -106,6 +120,38 @@ selects a skill.
   `--test-timeout=180000`, which bounds every test and every file as a whole
   (the slowest file takes about twelve seconds); a test that never settles
   fails after three minutes instead of holding the summary open.
+
+## Verify author-written visual evidence before opening a PR
+
+This section applies to an external agent authoring a PR from a local
+checkout. A Homeroom hosted dev-chat worker records semantic intent through
+its supplied tool and lets the platform create and replay the evidence plan.
+
+Before opening a PR for a platform UI change with `visualEvidence` impact
+`ui` or `motion`, write the semantic intent and replay plan locally, then run
+`npm run verify:visual-evidence:local -- --base <40-char-sha> --head <40-char-sha> --intent <file> --plan <file>`
+against the final committed head. The command uses the local development
+database and the production browser replay/encoder on exact base and head
+builds. Read its manifest and inspect the resulting PNGs and any WebM before
+submitting the plan. If an action, assertion, reproducibility check, or media
+generation fails, correct the plan or app and run it again. Any head commit
+change requires another run. If local data cannot represent the claim, report
+that blocker before opening the PR. Do not submit a guessed plan or claim
+local verification from schema validation or the synthetic fixture harness.
+On a successful pass, send the generated `submission.json` fields
+`visualEvidence` and `visualEvidencePlan` together in the first `submit_work`
+that imports the PR. The plan carries exact base/head SHAs and its content
+hash; the import rejects a mismatch and stores the plan before the platform
+starts the evidence run. If the steps need clarification, edit the typed
+actions, locators, and assertions and rerun locally before submitting. The
+platform executes this plan directly rather than asking a hosted agent to
+reinterpret prose.
+
+This local verifier currently supports this platform repository and its
+running local Homeroom stack. Other apps need their own local runtime and
+representative fixture before the same gate can be claimed. See
+`docs/proposal-visuals/pre-pr-local-plan-verification.md` for setup and the
+remaining live-proposal boundary.
 
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 

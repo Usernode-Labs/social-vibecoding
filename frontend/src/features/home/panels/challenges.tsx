@@ -42,16 +42,21 @@
  *
  * The cards are the Challenges tab's list in the tab's order: grouped by the
  * board's categories (Get started, This week, Always open, the season's other
- * challenges, and a finished Get started last), and collapsed to the first
- * four cards of that list, so the cap takes the first groups and may cut the
- * last one short. EVERY group opens with the tab's `GroupHeader`, one group on
+ * challenges, and a finished Get started last). Expanded, the block draws
+ * that whole list. Collapsed, its four slots go to the viewer's unfinished
+ * challenges first (#2490), cutting a group mid-way when the cap falls inside
+ * it; finished challenges only fill the slots that are left, and they sit
+ * last under one "Done" header, so a finished card is never drawn above one
+ * still to do. EVERY group opens with the tab's `GroupHeader`, one group on
  * screen included, static here: no toggle, no collapse and no count, because a
  * collapsed block does not draw the whole group. The header owns the clock
  * ("This week · 3d left", "Always open · no deadline") and the cards under it
- * drop theirs; Get started's keep their own. HomePanels.orderRows and
- * HomePanels.challengeGroups decide all of it; the headers sit inside
- * `.home-panel-rows` beside the cards, which the declared checks select
- * through, so nothing comes between the season progress and the body.
+ * drop theirs; Get started's keep their own. The Done header carries no clock.
+ * HomePanels.orderRows, HomePanels.visibleSlots and HomePanels.challengeGroups
+ * decide all of it; the headers sit inside `.home-panel-rows` beside the
+ * cards, which the declared checks select through, so nothing comes between
+ * the season progress and the body. The Done header alone carries a class of
+ * its own, `home-challenge-done-head`, which the #2490 check selects on.
  *
  * ── While setup gates the season ──────────────────────────────────────
  *
@@ -139,7 +144,13 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
         <div className="home-panel-rows flex flex-col gap-2.5">
           {groups.map((g) => (
             <Fragment key={g.key}>
-              {g.heading ? <GroupHeader heading={g.heading} meta={g.meta} /> : null}
+              {g.heading ? (
+                <GroupHeader
+                  heading={g.heading}
+                  meta={g.meta}
+                  className={g.key === 'done' ? 'home-challenge-done-head' : undefined}
+                />
+              ) : null}
               {g.rows.map((row) => (
                 <ChallengeCard
                   key={row.id}

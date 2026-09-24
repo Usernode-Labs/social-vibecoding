@@ -71,10 +71,18 @@ export function MessageBubble({ className, from, ...props }: MessageBubbleProps)
  * draw your own face beside your own words.
  */
 export function ChatMessageRow({
-  className, from = 'them', avatar, name, timestamp, actions, children, ...props
+  className, from = 'them', avatar, name, timestamp, actions, grouped = false, gutter, children, ...props
 }: {
   from?: 'them' | 'me';
   avatar?: React.ReactNode;
+  /**
+   * A continuation of the same person's previous message (#2783): no avatar
+   * and no header line, just the body, indented to the column the named row
+   * above it writes in. `gutter` is what sits where the avatar would — the
+   * time, muted, so the line still says when without a header.
+   */
+  grouped?: boolean;
+  gutter?: React.ReactNode;
   name: React.ReactNode;
   timestamp?: React.ReactNode;
   /**
@@ -86,6 +94,17 @@ export function ChatMessageRow({
   actions?: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const me = from === 'me';
+  if (grouped) {
+    return (
+      <div className={cn('flex gap-3 px-4 py-0.5', className)} data-grouped="" {...props}>
+        <span className="w-11 shrink-0 pt-0.5 text-right text-[0.6875rem] leading-5 text-zinc-500 dark:text-zinc-500">{gutter}</span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[1.0625rem] leading-snug text-zinc-900 dark:text-zinc-100">{children}</div>
+        </div>
+        {actions ? <span className="flex shrink-0 items-start gap-1">{actions}</span> : null}
+      </div>
+    );
+  }
   return (
     <div className={cn('flex gap-3 px-4 py-2', me && 'flex-row-reverse', className)} {...props}>
       {avatar}
@@ -110,6 +129,26 @@ export function ChatMessageRow({
       </div>
     </div>
   );
+}
+
+/**
+ * Whether a message continues the one before it (#2783) — Discord's rule,
+ * shared by every transcript so the two surfaces group alike: the same
+ * author, within seven minutes, on the same day, and not a reply (a quoted
+ * message restates who it answers, so it gets its own header).
+ */
+export const GROUP_WINDOW_MS = 7 * 60 * 1000;
+export function groupsWithPrevious(
+  previous: { author: string | number; at: string | number | Date } | null | undefined,
+  current: { author: string | number; at: string | number | Date; reply?: boolean },
+): boolean {
+  if (!previous || current.reply) return false;
+  if (String(previous.author) !== String(current.author)) return false;
+  const a = new Date(previous.at);
+  const b = new Date(current.at);
+  const gap = b.getTime() - a.getTime();
+  if (!Number.isFinite(gap) || gap < 0 || gap > GROUP_WINDOW_MS) return false;
+  return a.toDateString() === b.toDateString();
 }
 
 /**

@@ -276,7 +276,9 @@ test('the refresh is wired between the list load and the repaint', () => {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
   const branch = src.slice(src.indexOf("if (App.currentSubTab === 'topic')"));
-  const head = branch.slice(0, branch.indexOf('return;'));
-  assert.match(head, /_loadDevData\(\)[\s\S]*_refreshTopicOnDemandRow\(\)[\s\S]*_renderTopicHead\(\)/,
+  // #2782: the branch now returns its promise and passes `opts` (a vote's
+  // refresh asks for a fresh load), so it ends at the next branch's guard.
+  const head = branch.slice(0, branch.indexOf("if (App.currentSubTab !== 'forum')"));
+  assert.match(head, /_loadDevData\((?:opts)?\)[\s\S]*_refreshTopicOnDemandRow\(\)[\s\S]*_renderTopicHead\(\)/,
     'load -> top up -> paint, in that order');
 });

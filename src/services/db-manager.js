@@ -37,6 +37,9 @@ const DUMP_RESTORE_TIMEOUT_MS = Number(process.env.DB_CLONE_TIMEOUT_MS) || 10 * 
 // would need to special-case the literal to ever accept it, and we
 // don't.
 const STAGING_REDACTED_SENTINEL = '__staging_redacted__';
+// ctid renders as (block,offset): uint32 + uint16, at most 18 characters.
+// Leave room for the entire value rather than truncating its unique suffix.
+const MAX_CTID_TEXT_LENGTH = 18;
 
 function appDbName(slug) {
   return `app_${slug.replace(/[^a-z0-9_]/g, '_')}`;
@@ -1485,19 +1488,40 @@ SELECT n.nspname || '.' || c.relname,
       failures.push({ target: `${qualified}.${column}`, error: `unusable max length ${maxLength}` });
       continue;
     } else {
-      // NOT NULL columns can't accept NULL, and a single literal
-      // sentinel breaks any UNIQUE constraint on the column (the
-      // production incident: onchain_accounts.registration_code is
-      // NOT NULL UNIQUE, so writing '__staging_redacted__' into every
-      // row failed the whole clone). Derive a per-row-unique value from
-      // ctid — unique within the table for the life of this single
-      // UPDATE — sized to the column's max length when it has one (e.g.
-      // VARCHAR(64)) so it never overflows. Auth code should never
-      // accept this literal in any code path — bcrypt.compare against
-      // it returns false for every plaintext, which is the only place
-      // today that meaningfully reads users.password.
-      const base = `'${STAGING_REDACTED_SENTINEL}' || ctid::text`;
-      value = maxLength != null ? `left(${base}, ${maxLength})` : base;
+      // A template is scrubbed when built and again on each clone. Its
+      // existing placeholders contain the rows' OLD ctids; a later UPDATE
+      // can assign one of those values to a different row and hit a UNIQUE
+      // constraint. Give every scrub a fresh namespace, check that it is
+      // absent from the source column, and append the row's current ctid.
+      // Do not truncate the ctid: that would make multiple rows equal.
+      const compact = maxLength != null
+        && maxLength < STAGING_REDACTED_SENTINEL.length + 16 + 1 + MAX_CTID_TEXT_LENGTH;
+      const marker = compact ? '~' : STAGING_REDACTED_SENTINEL;
+      const nonceBytes = compact ? 4 : 8;
+      if (maxLength != null && maxLength < marker.length + nonceBytes * 2 + 1 + MAX_CTID_TEXT_LENGTH) {
+        failures.push({ target: `${qualified}.${column}`, error: `max length ${maxLength} cannot hold unique redaction values` });
+        continue;
+      }
+      let prefix = null;
+      try {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const candidate = `${marker}${crypto.randomBytes(nonceBytes).toString('hex')}:`;
+          const occupied = await execute(targetDb,
+            `SELECT EXISTS (SELECT 1 FROM ${qualified} WHERE left(${column}::text, ${candidate.length}) = '${candidate}')`,
+            { tuplesOnly: true });
+          if (String(occupied).trim() !== 'f') continue;
+          prefix = candidate;
+          break;
+        }
+      } catch (err) {
+        failures.push({ target: `${qualified}.${column}`, error: err.message });
+        continue;
+      }
+      if (!prefix) {
+        failures.push({ target: `${qualified}.${column}`, error: 'could not reserve a unique redaction namespace' });
+        continue;
+      }
+      value = `'${prefix}' || ctid::text`;
     }
     try {
       await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);

@@ -15,7 +15,7 @@
  *   * the header bar — the "+" button and its dropdown, including every
  *     `data-plus` row and the two `data-plus-group` headings. The Feed/Kanban
  *     tab strip is NOT here any more: the Board's two layouts are a choice
- *     under the Improve panel's Board row now (see improve-panel.tsx), because
+ *     under the Improve panel's Board row (both retired, #2718 review), because
  *     a strip whose first tab restated the destination the header chip had
  *     just named was navigation drawn twice;
  *   * `#dev-forum-scroll` and, on the kanban only, the General-discussion
@@ -126,7 +126,10 @@ export interface DevBoardFrameProps {
  * workshop/workshop.tsx), which replaced the Activity feed as the Dev
  * screen's lander; the kanban Done column renders its own completed rows.
  */
-const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(3) + '</div>' };
+// FOUR rows, the count workshop.tsx's own loading state draws a moment later
+// (`<CardSkeleton n={4}>`): the hand-off between the two is then invisible,
+// where three becoming four read as the page jumping on the way in (#2880).
+const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(4) + '</div>' };
 const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 
 /**

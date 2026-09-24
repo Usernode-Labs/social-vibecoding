@@ -79,9 +79,18 @@ test('nothing in notifications.js counts or paints a messages badge', () => {
 
 // ── 2. …and off the row behind the app chip ─────────────────────────────
 
-test('the Messages row in the chip menu is a plain destination', () => {
-  assert.match(HTML, /id="switcher-row-messages" href="#messages"/,
-    'the row itself stays: Messages has its own page');
+test('Messages is a TAB, and the tab is where its count lives', () => {
+  // #2718 moved the destination out of the chip's menu onto the bar, and
+  // moved the argument with it. #1443 retired a per-conversation badge from
+  // the menu ROW on the reading that a menu is where you say where you are
+  // going rather than where you learn something happened — true of a row you
+  // have to open a sheet to see, and not of a tab that is on screen already.
+  // So the tab carries a count and the retired row's badge stays retired.
+  assert.match(HTML, /id="platform-tab-messages"[^>]*href="#messages"/,
+    'the destination is a tab');
+  assert.match(HTML, /id="platform-tabs-badge"/, 'which can say there is something there');
+  assert.doesNotMatch(HTML, /id="switcher-row-messages"/,
+    'and the menu row it replaces is gone, not merely unlabelled');
   assert.doesNotMatch(HTML, /drawer-messages-badge/,
     'the unread tag is gone from the shell, not shipped hidden');
   assert.doesNotMatch(SHEET_SRC, /id="drawer-messages-badge"/);
