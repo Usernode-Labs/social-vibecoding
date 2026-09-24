@@ -1594,6 +1594,20 @@ const Home = {
     },
 
     pin() { Home._searchReveal._pinned = true; },
+
+    // Bring a parked or half-parked bar all the way out (QA 2026-09-24
+    // Q30c). A parked bar is transparent under the translucent header now
+    // (app.css), so focusing it must also SHOW it. Only from near the top:
+    // a page scrolled well past the bar is left to the browser's own
+    // focus scrolling.
+    reveal() {
+      const screen = Home._searchReveal.screenEl();
+      const bar = Home._searchReveal.barEl();
+      if (!screen || !bar) return;
+      const h = bar.offsetHeight || 0;
+      if (h && screen.scrollTop > 0 && screen.scrollTop <= h) screen.scrollTop = 0;
+      Home._searchReveal.mark();
+    },
     unpin() {
       Home._searchReveal._pinned = false;
       Home._searchReveal.sync({ park: true });
@@ -1842,7 +1856,10 @@ const Home = {
       clearTimeout(Home._searchDebounce);
       Home._searchDebounce = setTimeout(apply, 100);
     });
-    input.addEventListener('focus', () => Home._searchReveal.pin());
+    input.addEventListener('focus', () => {
+      Home._searchReveal.pin();
+      Home._searchReveal.reveal();
+    });
     // Leaving an empty field releases the pin, so the next render (or a
     // scroll down) can tuck the bar away again. A field with text in it
     // stays pinned by isPinned()'s query check.
@@ -2205,7 +2222,14 @@ const Home = {
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
-    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed grayscale-[0.75]';
+    // Launcher actions open from the tile context menu. Retry remains an
+    // inline recovery action for creators/full admins on errored apps.
+    const showRetry = !discovery && isError
+      && (App.user?.canAdminWrite || App.user?.id === app.created_by);
+    // A tile with Retry greys only its icon (QA 2026-09-24 Q9): a greyed
+    // card made the one working control on it look disabled.
+    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer'
+      : showRetry ? 'cursor-not-allowed' : 'cursor-not-allowed grayscale-[0.75]';
 
     // Per-tile sections, computed up front so the template stays
     // readable. Anything that may be empty is collapsed to '' so the
@@ -2229,10 +2253,6 @@ const Home = {
       ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
       : '';
 
-    // Launcher actions open from the tile context menu. Retry remains an
-    // inline recovery action for creators/full admins on errored apps.
-    const showRetry = !discovery && isError
-      && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
     // Discovery grids swap the hamburger for the add/remove badge: a ✓
     // when the app is already in "Your apps", a + when it isn't. The
@@ -2268,8 +2288,11 @@ const Home = {
     const menuBadgeHtml = discovery
       ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-left-1.5') : ''}`
       : '';
+    // QA 2026-09-24 Q9: Retry is a pill in the caption lane beside "Error",
+    // not a corner button the icon covered on phones. Same classes as
+    // app-grid.tsx's RETRY_BTN; a Retry tile greys only its icon.
     const retryHtml = showRetry
-      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="Retry ${escapeHtml(String(app.name || '')).replace(/"/g, '&quot;')}">Retry</button>`
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
@@ -2314,8 +2337,7 @@ const Home = {
     const demoAttr = app.demo ? ' data-demo="true"' : '';
     return `
       <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
-        ${retryHtml}
-        <div class="relative w-14 h-14 shrink-0">
+        <div class="relative w-14 h-14 shrink-0${showRetry ? ' grayscale-[0.75]' : ''}">
           <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
             ${icon.html}
           </div>
@@ -2324,7 +2346,7 @@ const Home = {
         </div>
         <div class="w-full min-w-0">
           <div class="app-card-title" title="${nameAttr}">${escapeHtml(app.name)}</div>
-          ${warningHtml}
+          ${showRetry ? `<div class="app-card-retry flex items-center justify-center gap-1">${warningHtml}${retryHtml}</div>` : warningHtml}
         </div>
       </div>
     `;

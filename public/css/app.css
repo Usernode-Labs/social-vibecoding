@@ -4747,6 +4747,23 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
 }
 
+/* THE PARKED SEARCH BAR IS TRANSPARENT (QA 2026-09-24 Q30c). Parking the
+   scroller at the bar's height does not take the bar off the screen on a
+   phone: the platform header is translucent (rgba(255,255,255,.5) over a
+   blur) and overlays the top of the scroller, so the parked bar sat right
+   under it and "Search your apps…" read through the Homeroom logo on every
+   load. Home._searchReveal already stamps whether the bar is showing
+   (data-revealed, half the bar or more); the bar simply fades with it. A
+   focused bar is never transparent, whatever its scroll position, so a
+   keyboard focus can never leave the caret in an invisible field (the focus
+   handler in home.js also scrolls it out, see _searchReveal.reveal). */
+#home-search-bar {
+  transition: opacity 150ms ease;
+}
+#home-search-bar[data-revealed="false"]:not(:focus-within) {
+  opacity: 0;
+}
+
 /* NOTE: .home-bottom-anchor is gone with the two trailing sections it
    existed for ("Featured apps" and "Create an app", which pushed to the
    bottom of a short feed). Both are widgets in the grid now, so there is
@@ -4803,6 +4820,25 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   .browse-row .browse-row-meta { grid-column: 2; grid-row: 2; min-width: 0; }
   .browse-row > .browse-add-btn { grid-column: 3; grid-row: 2; min-height: 44px; }
   .browse-row .browse-row-title > span { align-items: baseline; }
+}
+
+/* QA 2026-09-24 Q10: from 640px up the name keeps its row beside the icon and
+   the Add pill, and it used to be one `truncate`d line there, which cut
+   "Staging demo Puzzle Chain" to "Staging de…" in a desktop box. It may take
+   TWO lines now before it ellipsises. The phone rule above already lets it wrap
+   freely on its own full-width row; this is the clamped version of the same
+   idea for the boxes. */
+@media (min-width: 640px) {
+  .browse-row .browse-row-title { white-space: normal; }
+  .browse-row .browse-row-title > span { align-items: baseline; }
+  .browse-row .browse-row-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* Phone: a single hairline BETWEEN consecutive rows, INSET to the text column.
@@ -11753,14 +11789,17 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
    CARD: the kit lifts it out of #create-modal while presented).
 
    The footer follows: Cancel always; Next until the last step has
-   unfolded, then Create / Import. */
+   unfolded, then Create / Import. Create is hidden on the details step
+   too (QA 2026-09-24 Q6): showing it beside Next put two equal accent
+   buttons on step 2, and Create there skipped "Who can use it". */
 #create-card[data-step="start"]   [data-create-step="details"],
 #create-card[data-step="start"]   [data-create-step="access"],
 #create-card[data-step="details"] [data-create-step="access"] {
   display: none;
 }
-#create-card[data-step="start"]  #create-submit,
-#create-card[data-step="access"] #create-next {
+#create-card[data-step="start"]   #create-submit,
+#create-card[data-step="details"] #create-submit,
+#create-card[data-step="access"]  #create-next {
   display: none;
 }
 

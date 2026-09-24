@@ -136,6 +136,26 @@ const wired = new WeakSet<Element>();
  */
 const SKELETON_TILES = 8;
 
+/*
+ * THE ERRORED TILE'S RETRY (QA 2026-09-24 Q9). It used to be a text button
+ * pinned to the tile's top-right corner (`absolute top-2 right-2`): on a phone
+ * the 56px icon, painted later with no z-index, covered it, so a tap landed on
+ * the icon and did nothing; on desktop it sat about 90px from the icon, and the
+ * whole tile was `grayscale` and `cursor-not-allowed`, so the one working
+ * control on it looked disabled.
+ *
+ * It is a small filled pill in the caption lane now, beside "Error". The lane
+ * is the tile's fixed 12px line (see --home-cell-h in app.css), so the pill is
+ * drawn at that height and its hit area is grown by an invisible `::before`
+ * rather than by padding, which would push the tile past its row. A tile with
+ * Retry greys only its ICON, so "Error" and the pill keep their colour.
+ * home.js's renderAppCard spells the same classes.
+ */
+const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 '
+  + 'px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors '
+  + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
+  + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
+
 function AppCardTile({ app, style, yours, live }: {
   app: HomeAppView; style?: string; yours: boolean; live: boolean;
 }) {
@@ -176,7 +196,8 @@ function AppCardTile({ app, style, yours, live }: {
     <div
       ref={wireRef}
       className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
-        app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer') : 'cursor-not-allowed grayscale-[0.75]'
+        app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer')
+          : app.showRetry ? 'cursor-not-allowed' : 'cursor-not-allowed grayscale-[0.75]'
       }`}
       data-slug={app.slug}
       data-status={app.status}
@@ -241,16 +262,7 @@ function AppCardTile({ app, style, yours, live }: {
         (window as any).App?.navigateToApp(app.slug);
       }}
     >
-      {app.showRetry ? (
-        <button
-          className="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors"
-          data-slug={app.slug}
-          onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
-        >
-          Retry
-        </button>
-      ) : null}
-      <div className="relative w-14 h-14 shrink-0">
+      <div className={app.showRetry ? 'relative w-14 h-14 shrink-0 grayscale-[0.75]' : 'relative w-14 h-14 shrink-0'}>
         {/*
             The tile KEEPS its 3.5rem box — the grid's cell height, the drag
             overlay's mirror and HomeLayout's geometry are all measured
@@ -283,7 +295,25 @@ function AppCardTile({ app, style, yours, live }: {
       </div>
       <div className="w-full min-w-0">
         <div className="app-card-title" title={app.name}>{app.name}</div>
-        {app.statusLabel ? (
+        {app.statusLabel && app.showRetry ? (
+          <div className="app-card-retry flex items-center justify-center gap-1">
+            <p
+              className="app-card-status text-[color:var(--state-blocked)]"
+              {...(app.failureReason ? { title: app.failureReason } : null)}
+            >
+              {app.statusLabel}
+            </p>
+            <button
+              type="button"
+              className={RETRY_BTN}
+              data-slug={app.slug}
+              aria-label={`Retry ${app.name}`}
+              onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : app.statusLabel ? (
           <p
             className={`app-card-status ${app.isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}`}
             {...(app.failureReason ? { title: app.failureReason } : null)}
