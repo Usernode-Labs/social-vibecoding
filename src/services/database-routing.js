@@ -31,6 +31,7 @@ async function run(names, fn, options = {}) {
   return runResolved(records, credentials(records, options.env), names, fn);
 }
 function runResolved(records, urls, names, fn) {
+  if (names.some(name => records.filter(r => placement.ownsDatabase(r, name)).length > 1)) throw blocked();
   return context.run({records, urls, defaultName: names.at(-1)}, fn);
 }
 function currentRecords() { return context.getStore()?.records || []; }

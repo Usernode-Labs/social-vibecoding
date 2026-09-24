@@ -49,3 +49,10 @@ test('operator projection copies only verified public CA and credentials, reject
  assert.doesNotMatch(JSON.stringify(saved),/private-key/);
  await assert.rejects(projectRuntime(core,{getCluster:async()=>({metadata:{uid:'replacement'}})},{namespace:'social-platform',runtimeTargets:[policy.runtimeTargets[0]]}));
 });
+
+test('overlapping app database families block ambiguous routing before any SQL',()=>{
+ const routing=require('../src/services/database-routing');let called=false;
+ const a={slug:'one',database:'app_one'},b={slug:'one-staging-copy',database:'app_one_staging_copy'};
+ assert.throws(()=>routing.runResolved([a,b],new Map(),['app_one_staging_copy'],()=>{called=true}),/blocked/);
+ assert.equal(called,false);
+});

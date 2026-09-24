@@ -75,7 +75,7 @@ function DatabaseSection() {
     <p className={AdminUI.muted}>CPU and memory use a five-minute average against the reserved budget per instance. Storage shows the fullest instance. Admission additionally counts all retained app reservations, including completed apps, conservatively on top of these observations. Budgets include the app’s previews; they do not guarantee node failover capacity.</p>
     {(data.pools || []).filter(p => p.capacity.state !== 'available' || p.phase !== 'Ready').map(pool => <p role="alert" key={pool.id} className={AdminUI.muted}>{pool.displayName}: {pool.capacity.message}{!pool.acceptingNewApps ? ' Closed to new app assignments.' : ''}</p>)}
     {!!data.allocation?.allocations.length && <div><h3 className={AdminUI.cardTitle}>App assignments and reservations</h3>
-      {data.allocation.allocations.map(a => <p key={a.app_id} className={AdminUI.muted}>{a.slug}: {a.target_id || 'Waiting for capacity'} · {a.phase}</p>)}</div>}
+      {data.allocation.allocations.map(a => <p key={a.app_id} className={AdminUI.muted}>{a.slug}: {data.pools?.find(p => p.id === a.target_id)?.displayName || a.target_id || 'Waiting for capacity'} · {a.phase}</p>)}</div>}
     {!data.pools?.length && <p className={AdminUI.muted}>No shared pools registered. An infrastructure operator needs to provision and register a pool.</p>}
   </section></>;
 
