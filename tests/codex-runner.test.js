@@ -143,6 +143,8 @@ test('runner: fresh and resumed GLM invocations put catalog limits into actual H
     assert.equal(result.code, 0, result.stdout + result.stderr);
     assert.match(result.stdout, /agent_thread_id=mock-glm-thread/);
     assert.match(result.stdout, /"type":"usernode.openrouter.request"/);
+    assert.match(result.stdout, /__USERNODE_CODING_PROVIDER__ \{"kind":"provider_request_start"/);
+    assert.match(result.stdout, /__USERNODE_CODING_PROVIDER__ \{"kind":"provider_request_end"/);
     assert.doesNotMatch(result.stdout + result.stderr, /sk-or-v1-test/);
     const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
     assert.ok(config.includes(env.OPENROUTER_API_BASE), 'the persistent config keeps the upstream URL');

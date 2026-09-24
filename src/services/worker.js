@@ -901,8 +901,84 @@ function applyStreamEvent(event, onProgress, state) {
   }
 }
 
+// Keep slow OpenRouter calls visible in the owner's coding transcript. The
+// adapter emits only timing/counts, but still accept an explicit allowlist
+// here: runner output is untrusted and must never echo a prompt, key, URL, or
+// provider body into progress. Fast requests add no transcript noise.
+const CODING_PROVIDER_STAGES = new Set(['await_headers', 'await_first_byte', 'streaming']);
+const CODING_PROVIDER_OUTCOMES = new Set(['ok', 'http_error', 'cancelled', 'network_error', 'stream_error']);
+function observeCodingProviderTiming(event, onProgress, state) {
+  if (event?.kind === 'codex_output_idle') {
+    const durationMs = event.durationMs;
+    if (!Number.isSafeInteger(durationMs) || durationMs > 86_400_000) return;
+    if (durationMs < 60_000 || !Number.isSafeInteger(event.activeRequests)
+        || event.activeRequests < 0 || event.activeRequests > 1000) return;
+    onProgress(`Codex produced no output for ${Math.round(durationMs / 1000)}s; ${event.activeRequests} OpenRouter requests active`);
+    return;
+  }
+  const ordinal = event?.requestOrdinal;
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 1_000_000) return;
+  const requests = state.codingProviderRequests || (state.codingProviderRequests = new Map());
+  if (event.kind === 'provider_request_start') {
+    requests.set(ordinal, { lastReportedMs: null, lastReportedStage: null });
+    return;
+  }
+  const durationMs = event.durationMs;
+  if (!Number.isSafeInteger(durationMs) || durationMs < 0 || durationMs > 86_400_000) return;
+  const prior = requests.get(ordinal);
+  if (event.kind === 'provider_request_pending') {
+    if (!CODING_PROVIDER_STAGES.has(event.stage) || durationMs < 30_000) return;
+    const request = prior || { lastReportedMs: null, lastReportedStage: null };
+    if (request.lastReportedStage === event.stage
+        && durationMs - request.lastReportedMs < 60_000) return;
+    request.lastReportedMs = durationMs;
+    request.lastReportedStage = event.stage;
+    requests.set(ordinal, request);
+    const seconds = Math.round(durationMs / 1000);
+    const stage = {
+      await_headers: 'no response headers',
+      await_first_byte: 'headers received, no response bytes',
+      streaming: 'response streaming',
+    }[event.stage];
+    const bytes = Number.isSafeInteger(event.responseBytes) && event.responseBytes >= 0
+      && event.responseBytes <= 10_000_000 ? event.responseBytes : null;
+    const chunks = Number.isSafeInteger(event.chunkCount) && event.chunkCount >= 0
+      && event.chunkCount <= 1000 ? event.chunkCount : null;
+    const transfer = event.stage === 'streaming' && bytes != null && chunks != null
+      ? `, ${bytes} bytes in ${chunks} chunks` : '';
+    onProgress(`OpenRouter request #${ordinal}: ${stage} after ${seconds}s${transfer}`);
+    return;
+  }
+  if (event.kind === 'provider_response_headers' || event.kind === 'provider_response_first_byte') {
+    if (!prior || prior.lastReportedMs == null) return;
+    if (event.kind === 'provider_response_headers') {
+      const status = event.httpStatus;
+      if (!Number.isSafeInteger(status) || status < 100 || status > 599) return;
+      onProgress(`OpenRouter request #${ordinal}: HTTP ${status} headers after ${Math.round(durationMs / 1000)}s`);
+    } else {
+      onProgress(`OpenRouter request #${ordinal}: first response byte after ${Math.round(durationMs / 1000)}s`);
+    }
+    return;
+  }
+  if (event.kind === 'provider_request_end') {
+    requests.delete(ordinal);
+    if (!prior || prior.lastReportedMs == null || !CODING_PROVIDER_OUTCOMES.has(event.outcome)) return;
+    const status = Number.isSafeInteger(event.httpStatus) && event.httpStatus >= 100 && event.httpStatus <= 599
+      ? `, HTTP ${event.httpStatus}` : '';
+    onProgress(`OpenRouter request #${ordinal}: ${event.outcome} after ${Math.round(durationMs / 1000)}s${status}`);
+  }
+}
+
 function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
+  if (line.startsWith('__USERNODE_CODING_PROVIDER__ ')) {
+    try {
+      if (state.agentBackend === 'codex_openrouter' && !state.evidenceDiagnosticObserver) {
+        observeCodingProviderTiming(JSON.parse(line.slice('__USERNODE_CODING_PROVIDER__ '.length)), onProgress, state);
+      }
+    } catch { /* Malformed diagnostics must not change the agent turn. */ }
+    return;
+  }
   if (line.startsWith('__USERNODE_EVIDENCE_PROVIDER__ ')) {
     try {
       const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_PROVIDER__ '.length));
