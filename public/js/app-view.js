@@ -19035,6 +19035,26 @@ const AppView = {
     }
   },
 
+  // #2879: whether AppView.appData is the record of the app on screen.
+  _hasCurrentAppRecord() {
+    if (!AppView.appData) return false;
+    const slug = typeof App !== 'undefined' ? App.currentApp : null;
+    return !slug || AppView.appData.slug === slug;
+  },
+
+  // #2879: the session screen with no app record to draw against — said,
+  // with a retry, instead of an empty page. Plain markup in the host this
+  // function already owns by innerHTML; no React island is mounted yet.
+  _renderSessionAppUnavailable(content, restoreSessionId) {
+    content.innerHTML = `
+      <div id="dc-app-unavailable" class="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">
+        <p class="text-sm text-zinc-600 dark:text-zinc-300">This app could not be loaded. Check your connection and try again.</p>
+        <button type="button" id="dc-app-unavailable-retry" class="inline-flex h-9 items-center rounded-full bg-violet-600 px-4 text-sm font-semibold text-white hover:bg-violet-500 un-touch-target">Try again</button>
+      </div>`;
+    const retry = content.querySelector('#dc-app-unavailable-retry');
+    if (retry) retry.addEventListener('click', () => { AppView.renderDevChatTab(restoreSessionId); });
+  },
+
   // Forum revision: the dedicated session view. There is no session
   // list / meta panel anymore — sessions are reached from the forum's
   // Your-sessions strip, proposal cards, and the "+" flow, and a
@@ -19062,6 +19082,24 @@ const AppView = {
         <div id="dc-view" style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden"></div>
       </div>`;
 
+    // #2879: THE APP'S RECORD MAY NOT BE HERE. navigateToApp goes on to this
+    // screen whether or not AppView.open got GET /api/apps/<slug>: a failed
+    // or superseded read leaves AppView.appData empty (or describing another
+    // app), and this used to return right here, over an empty #dc-view.
+    // That is the blank page New change on Home landed on — the header
+    // already named Homeroom and lit Messages, and nothing drew beneath it.
+    // So ask for the record once more, and if it still will not come, say
+    // so with a way to try again rather than painting nothing.
+    if (!embedded && !AppView._hasCurrentAppRecord()) {
+      const slug = typeof App !== 'undefined' ? App.currentApp : null;
+      if (slug) await AppView.open(slug, { needsToken: false });
+      // The viewer went somewhere else while that was in flight.
+      if (typeof App !== 'undefined' && App.currentApp !== slug) return undefined;
+      if (!AppView._hasCurrentAppRecord()) {
+        AppView._renderSessionAppUnavailable(content, restoreSessionId);
+        return undefined;
+      }
+    }
     if (!AppView.appData) return;
 
     // Ground-truth guard: if the in-memory session belongs to a
