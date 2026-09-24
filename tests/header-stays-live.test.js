@@ -5,7 +5,7 @@
 // For one round the Improve rail, the notifications rail and all four
 // backdrops started at the bar's underside, so the header stayed lit and
 // clickable with a panel open. That bought one real thing: pressing the bell
-// while Improve was up moved straight between the two panels, instead of the
+// while another panel was up moved straight between them, instead of the
 // first click landing on the backdrop and only dismissing.
 //
 // It cost more than it bought. A dim that stops 60px short of the top of the
@@ -18,23 +18,31 @@
 // TWO CLICKS TO CHANGE PANELS IS THE ACCEPTED COST, and it is written down
 // here rather than left to be rediscovered: dismiss, then open the next.
 //
-// ── The one thing that did NOT revert ──────────────────────────────────
+// ── The one thing that did NOT revert, and where it ended up ───────────
 //
-// Every sheet built on lib/sheet-controller.js closes the Improve panel when
-// it opens; the Improve panel closed none of them back, because the line that
-// did it retired with the hamburger and left only its comment. The live
-// header is what made that gap reachable — and the gap was a real one either
-// way, so `Improve.open()` still dismisses the registered sheets through the
-// same helper `_closeSiblings` uses. Reverting the geometry is not a reason
-// to un-fix a bug the geometry merely exposed.
+// Every sheet built on lib/sheet-controller.js closed the Improve panel when
+// it opened; the panel closed none of them back, because the line that did it
+// retired with the hamburger and left only its comment. The live header is
+// what made that gap reachable, and it was a real gap either way, so
+// `Improve.open()` was made to dismiss the registered sheets through the same
+// helper `_closeSiblings` uses.
+//
+// THE PANEL THEN RETIRED (#2718 review) and the fix outlived it in the best
+// possible way: `Improve.open()` forwards to the app-context sheet, which is
+// IN the registry, so one sweep with `except` sparing the opener covers
+// every surface. `_closeSiblings` no longer names any sheet by hand — which
+// is what the two assertions below check, one for the sweep and one for the
+// forward.
 //
 // ── The one surface still hanging from the bar ─────────────────────────
 //
-// #apps-switcher-sheet, and only on desktop, because it is a DROPDOWN: it is
-// anchored to the chip that opens it, and a menu drawn over its own trigger
-// has nothing to point at. Its backdrop dims the bar like every other one.
+// #apps-switcher-sheet, and only on desktop, because it is a POPOVER: it is
+// anchored under the Homeroom mark that opens it (#2784), and a menu drawn
+// over its own trigger has nothing to point at. It casts no dim there, and
+// its backdrop lets the pointer through, so with it open the bar is not just
+// visible but live — the bell opens in one click.
 // tests/app-switcher-dropdown.test.js owns that geometry; what this file
-// checks is that it stayed put while the rails moved.
+// checks is that it still starts under the bar while the rails cover it.
 //
 // Run with: node --test tests/header-stays-live.test.js
 
@@ -62,8 +70,13 @@ const UNDER_HEADER = 'calc(var(--platform-header-h) + var(--platform-safe-top))'
  * app.css. It stays in the list because the RULE lists it — a test that
  * quietly knew better than the stylesheet would hide the discrepancy instead
  * of leaving it where the next reader trips over it.
+ *
+ * `#improve-overlay` was the fourth and is NOT here for the opposite reason:
+ * its panel retired (#2718 review) and its rules went out of app.css with it,
+ * so the rule does not list it either. That is the discrepancy closing, not
+ * the test knowing better.
  */
-const BACKDROPS = ['#improve-overlay', '#apps-switcher-overlay',
+const BACKDROPS = ['#apps-switcher-overlay',
   '#notifications-sheet-overlay', '#messages-sheet-overlay'];
 
 function rule(selector) {
@@ -89,21 +102,19 @@ function mediaBlocks(condition) {
 
 // ── The geometry ───────────────────────────────────────────────────────
 
-test('the Improve rail covers the bar', () => {
-  const panel = rule('#improve-panel');
-  assert.match(panel, /top:\s*0/,
-    'the rail starts at the top of the viewport, over the header');
-  assert.ok(!panel.includes(UNDER_HEADER),
-    'and carries no leftover of the offset it used to hang from');
-  assert.match(panel, /bottom:\s*0/,
-    'and still reaches the floor — only where it STARTS moved');
-});
-
-test('the notifications rail covers it too', () => {
+// The Improve rail was the other one, and the first assertion this file
+// made. It retired with its panel (#2718 review) and every rule that drew it
+// left app.css, so what is left to pin is the rail that is still there — and
+// the ABSENCE below, which is what actually guards against the offset coming
+// back for any of them.
+test('the notifications rail covers the bar', () => {
   const rail = rule('#notifications-sheet,\n#messages-sheet');
-  assert.match(rail, /top:\s*0/, 'the rail starts at the top, like Improve');
-  assert.ok(!rail.includes(UNDER_HEADER), 'with no leftover offset');
-  assert.match(rail, /bottom:\s*0/, 'and still reaches the floor');
+  assert.match(rail, /top:\s*0/,
+    'the rail starts at the top of the viewport, over the header');
+  assert.ok(!rail.includes(UNDER_HEADER),
+    'and carries no leftover of the offset it used to hang from');
+  assert.match(rail, /bottom:\s*0/,
+    'and still reaches the floor — only where it STARTS moved');
 });
 
 test('no rule lifts a backdrop off the bar', () => {
@@ -124,6 +135,11 @@ test('no rule lifts a backdrop off the bar', () => {
 });
 
 test('the dim itself is untouched — it still catches the dismissing click', () => {
+  // The base rule, which is every backdrop's at every width except the app
+  // menu's at `sm`+: there the menu is an undimmed popover and a later
+  // desktop rule releases the pointer (#2784, pinned in
+  // tests/app-switcher-dropdown.test.js). Below `sm` it is a bottom sheet
+  // and this still holds for it too.
   for (const id of BACKDROPS) {
     const at = CSS.indexOf(`${id}[data-open]`);
     assert.ok(at > 0, `${id} has an open state`);
@@ -142,8 +158,10 @@ test('the app menu is the ONE surface still hanging from the bar', () => {
   const menu = mediaBlocks('min-width: 640px')
     .filter((b) => b.includes('\n  #apps-switcher-sheet {'));
   assert.equal(menu.length, 1, 'one desktop rule positions the app menu');
-  assert.ok(menu[0].includes(`top: ${UNDER_HEADER}`),
-    'and it still starts at the bar\'s underside, where its trigger is');
+  // Measured under the mark now (#2784), with the bar's underside as the
+  // fallback for a frame where the mark cannot be measured.
+  assert.ok(menu[0].includes(`top: var(--menu-anchor-top, ${UNDER_HEADER})`),
+    'and it still starts under the bar, where its trigger is');
 });
 
 test('the phone is untouched — it is a sheet over the page there', () => {
@@ -151,9 +169,12 @@ test('the phone is untouched — it is a sheet over the page there', () => {
   // over everything on touch. Neither the previous change nor this one
   // touches the phone.
   const small = mediaBlocks('max-width: 639px');
-  const improve = small.filter((b) => b.includes('#improve-panel {'));
-  assert.equal(improve.length, 1, 'the bottom sheet still states its own geometry');
-  assert.match(improve[0], /top:\s*auto/,
+  // #improve-panel was read here too, and retired (#2718 review). The app
+  // menu is the one that now states its own phone geometry rather than
+  // inheriting the desktop rule.
+  const menu = small.filter((b) => b.includes('#apps-switcher-sheet {'));
+  assert.equal(menu.length, 1, 'the bottom sheet still states its own geometry');
+  assert.match(menu[0], /top:\s*auto/,
     'which resets the desktop rule rather than inheriting it');
 
   assert.equal(small.filter((b) => BACKDROPS.some((id) => b.includes(id))).length, 0,
@@ -162,27 +183,49 @@ test('the phone is untouched — it is a sheet over the page there', () => {
 
 // ── The behaviour ──────────────────────────────────────────────────────
 
-test('one implementation of "close the other sheets", used from both ends', () => {
+test('one implementation of "close the other sheets", and one sweep', () => {
   assert.match(CONTROLLER, /export function dismissRegisteredSheets\(except\)/,
-    'the registry sweep is exported, because the Improve panel is not built here');
-  assert.match(CONTROLLER, /_closeSiblings\(\) \{[\s\S]{0,240}?dismissRegisteredSheets\(controller\)/,
+    'the registry sweep is exported');
+  assert.match(CONTROLLER, /_closeSiblings\(\)[\s\S]{0,900}?dismissRegisteredSheets\(controller\)/,
     'the sheets go through it, sparing themselves');
-  assert.match(CONTROLLER, /_closeSiblings\(\) \{[\s\S]{0,240}?window\.Improve\?\.dismissForNav/,
-    'and still close the Improve panel by name');
+  // It used to call `window.Improve?.dismissForNav?.()` first, by name,
+  // because the panel predated the registry. Now that Improve forwards to a
+  // sheet that IS in the registry, that named call would either do nothing
+  // or — when the app-context sheet is the one opening — tell it to close
+  // itself. `except` spares the opener; nothing needs naming.
+  assert.ok(!/_closeSiblings\(\)[\s\S]{0,900}?window\.Improve\?\.dismissForNav\?\.\(\);/.test(CONTROLLER),
+    'and no sheet is closed by name on top of the sweep');
 });
 
-test('Improve closes the other sheets when it opens', () => {
-  // The half that was missing. Without it, a live header means the app menu
-  // and the Improve panel can both be on screen at once.
-  assert.match(IMPROVE, /import \{ dismissRegisteredSheets \} from '\.\.\/\.\.\/lib\/sheet-controller\.js';/,
-    'it imports the one implementation rather than walking a registry it cannot see');
-  const open = IMPROVE.slice(IMPROVE.indexOf('\n  open() {'));
-  const body = open.slice(0, open.indexOf('\n  },'));
-  assert.match(body, /dismissRegisteredSheets\(\)/,
-    'open() dismisses them, with no argument — this panel is not in the registry');
+test('Improve closes the other sheets when it opens, through the surface it forwards to', () => {
+  // The half that was missing. Without it, a live header means two panels can
+  // be on screen at once.
+  //
+  // It is not Improve's own line any more and it does not need to be: the
+  // panel retired (#2718 review), `Improve.open()` forwards to the
+  // app-context sheet, and that sheet's `open()` runs `_closeSiblings()`
+  // before it presents — which is where the sweep belongs, once, for every
+  // surface built on the chassis.
+  assert.match(IMPROVE, /_surface\(\) \{[\s\S]{0,200}window\.AppContext/,
+    'the forward names the controller that owns the surface');
+  assert.match(IMPROVE, /open\(\) \{\n\s+return Improve\._surface\(\)\?\.open\(\);/,
+    'and open() is that forward, holding no presentation of its own');
+  const improveCode = IMPROVE
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/improveStore\.get\(\)\.open/.test(improveCode),
+    'nor a second copy of `open` — a flag nobody writes would answer toggle '
+    + 'and dismissForNav wrongly, so the field left the store too');
+  const STORE = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/improve/improve-store.js'), 'utf8',
+  ).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/\bopen:\s*false/.test(STORE) && !/\badopted:\s*false/.test(STORE),
+    'and the store declares neither');
 
-  // And it happens before the panel presents, not after: two backdrops fading
-  // past each other is the artefact of closing them late.
-  assert.ok(body.indexOf('dismissRegisteredSheets()') < body.indexOf('improveStore.set({ open: true })'),
-    'and does it before this panel publishes open');
+  // And the sweep still happens before the present, not after: two backdrops
+  // fading past each other is the artefact of closing them late.
+  const open = CONTROLLER.slice(CONTROLLER.indexOf('\n    open() {'));
+  const body = open.slice(0, open.indexOf('\n    },'));
+  assert.ok(body.indexOf('_closeSiblings()') < body.indexOf("store.set({ open: true })"),
+    'the siblings go down before this surface publishes open');
 });

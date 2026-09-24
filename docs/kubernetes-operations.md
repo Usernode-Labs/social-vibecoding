@@ -250,7 +250,7 @@ ResourceQuota reports reservations and object counts, not measured CPU or
 memory consumption. Do not substitute Docker host statistics for cluster usage.
 
 Capture Jobs default to an 8-CPU / 6Gi limit for sixteen concurrent browser
-groups, with 1 CPU / 3Gi requested. The foundation worker LimitRange must allow
+groups, with 4 CPUs / 3Gi requested. The foundation worker LimitRange must allow
 at least 8 CPUs and 6Gi per container. `CAPTURE_CPUS`, `CAPTURE_MEMORY` and
 `TEST_CONCURRENCY` override these settings on the platform. Memory is the bound
 on the pool — budget roughly 150 MiB per concurrent page plus 1 GiB for the
@@ -260,8 +260,20 @@ requests are scheduling reservations, so the larger limit allows bursts but
 does not guarantee eight idle cores. Check historical CPU throttling as well as
 completion: a successful Job can still produce timing-sensitive assertion
 failures under CPU contention. Unit-suite Jobs default to 8 CPUs / 4Gi (the CPU
-quota sets `node --test`'s process-pool size); coding-worker resource settings
-are independent.
+quota sets `node --test`'s process-pool size), requesting 4 CPUs / 1Gi.
+Evidence replays share the capture reservation. A smaller explicit CPU limit
+also caps the request; coding-worker resource settings are independent.
+
+All three check kinds carry `social.usernode.io/workload=check`. A hostname
+topology-spread preference counts that group across sessions in the worker
+namespace, honoring node affinity and taints. It favors an even distribution
+but permits imbalance when available node capacity requires it. CPU requests
+control admission and CPU share under contention; burst limits are unchanged.
+Existing Jobs keep their requests and placement until completion. Raise the
+worker namespace CPU-request quota before deploying this runtime if its old
+budget would prevent the intended check concurrency. Reserve platform CPU
+separately through the installation's `platform.resources.requests.cpu`, with
+namespace quota headroom for rolling-update overlap and migration.
 
 Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect
 Docker or Kubernetes workloads, or read the parent's deployment status. Their

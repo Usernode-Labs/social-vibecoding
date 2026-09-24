@@ -1,15 +1,18 @@
-// Leaderboard screen — the Kudos leaderboard, the Topochain standings and
-// the season's challenges merged behind one entry point with a three-tab
-// strip. (Filename kept from when the screen was titled "Standings"; the
-// screen and its drawer row read "Leaderboard" now.)
+// Leaderboard screen — the Kudos leaderboard, the Topochain standings, the
+// season's challenges and the past seasons, behind one entry point with a
+// four-tab strip: Challenges, Kudos, Standings, History (the navigation
+// prototype's Challenges page). The screen has no heading of its own any
+// more: the platform bar names the TAB (Leaderboard._syncTitle).
 //
 // The contract that's easy to break later:
 //   - the screen opens on CHALLENGES, the strip's first tab (#2374): the
 //     bare #leaderboard hash, the pane the shell ships visible and the
 //     module's starting section must all agree on that;
-//   - the Topochain standings, which the tab strip labels simply
-//     "Leaderboard", are addressed by name — #leaderboard/topochain — and
-//     the home widget's fill links there explicitly;
+//   - the Topochain standings, which the tab strip labels "Standings", are
+//     addressed by name — #leaderboard/topochain — and the home widget's
+//     fill links there explicitly;
+//   - History is #leaderboard/seasons (NOT #leaderboard/history, which is
+//     the Kudos pane's "My history" and keeps meaning that);
 //   - the kudos board is still all there, one tab over, named "Kudos";
 //   - every existing #leaderboard/<sub> deep link (prs / users / history /
 //     users/<name>) still resolves to a Kudos sub-tab;
@@ -79,22 +82,30 @@ function tabsConstant(name) {
 
 // ─── Shell ───────────────────────────────────────────────────────────────
 
-test('the Leaderboard screen hosts a tab strip, an event bar and all three panes', () => {
+test('the Leaderboard screen hosts a tab strip, an event bar and all four panes', () => {
   const start = html.indexOf('<main id="leaderboard-screen"');
   const end = html.indexOf('</main>', start);
   assert.ok(start > -1, '#leaderboard-screen exists');
   const screen = html.slice(start, end);
-  assert.ok(screen.includes('>Leaderboard<'), 'the screen is titled Leaderboard');
+  // Bug f of the navigation audit: the screen said its name twice — the bar
+  // and an <h2>Leaderboard</h2> — and neither named the tab showing. The
+  // platform names a screen ONCE, in the bar, and the bar follows the tab now.
+  assert.ok(!screen.includes('>Leaderboard<'), 'no second, in-page title');
+  assert.doesNotMatch(screen.slice(0, screen.indexOf('id="standings-tabs"')), /<h2/,
+    'nothing heads the strip: it is the first thing under the bar');
   assert.ok(screen.includes('id="standings-tabs"'), 'it carries the section tab strip');
   assert.ok(screen.includes('id="leaderboard-event-bar"'), 'it carries the shared event bar');
   assert.ok(screen.includes('id="leaderboard-root"'), 'it hosts the Kudos pane');
   assert.ok(screen.includes('id="topochain-leaderboard-root"'), 'it hosts the Topochain pane');
   assert.ok(screen.includes('id="challenges-root"'), 'it hosts the Challenges pane');
+  assert.match(screen, /<div id="leaderboard-history-root" class="hidden w-full"><\/div>/,
+    'and the History pane, shipped empty and hidden like the other non-default panes');
   // Wide enough for the Topochain table; the Kudos lists keep their
-  // narrower reading column.
+  // narrower reading column, centered on its own (#2921) rather than
+  // left-pinned inside the wider frame.
   assert.match(screen, /max-w-5xl/, 'the shell is the wider column');
-  assert.match(screen, /id="leaderboard-root" class="hidden max-w-3xl"/,
-    'the Kudos pane keeps its reading width (and now ships hidden — see below)');
+  assert.match(screen, /id="leaderboard-root" class="hidden max-w-3xl mx-auto"/,
+    'the Kudos pane keeps its reading width, centered (and now ships hidden — see below)');
 });
 
 test('the retired screens are gone from the shell', () => {
@@ -136,7 +147,7 @@ test('Leaderboard.section defaults to Challenges (#2374)', () => {
 // and keys are asserted where they now live. `_renderSectionTabs` is still the
 // entry point and is checked to have become a publish rather than a write, so
 // the two halves can't drift back into both rendering.
-test('the tab strip reads Challenges, Kudos, Leaderboard (#1917)', () => {
+test('the tab strip reads Challenges, Kudos, Standings, History (#1917, the prototype)', () => {
   const list = island.slice(island.indexOf('const SECTION_TABS = ['), island.indexOf('];', island.indexOf('const SECTION_TABS = [')));
   assert.ok(list.length > 0, 'SECTION_TABS located in the island');
   const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
@@ -144,8 +155,13 @@ test('the tab strip reads Challenges, Kudos, Leaderboard (#1917)', () => {
   assert.deepEqual(labels, [
     ['challenges', 'Challenges'],
     ['kudos', 'Kudos'],
-    ['topochain', 'Leaderboard'],
-  ], 'what you can do first, the ranking last; the standings tab is still called Leaderboard');
+    ['topochain', 'Standings'],
+    ['seasons', 'History'],
+  ], 'what you can do first, then the ranking, then the rankings that are over; '
+    + 'the prototype\'s words, Standings and History');
+  // Four labels have to fit a 390px column: the triggers tighten below `sm`.
+  assert.match(island, /const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2\.5 sm:px-4 /,
+    'a phone-width trigger padding, restored from sm up');
   // The KEYS are the platform's vocabulary for these tabs (hash aliases in
   // app.js, dapp.json checks) and must survive both the relabelling and the
   // move: they are the attribute dapp.json selects on.
@@ -265,8 +281,8 @@ test('_setSection validates its input and syncs the hash', () => {
   assert.ok(fn.length > 0, '_setSection located');
   assert.match(fn, /if \(!Leaderboard\.SECTIONS\.includes\(section\)\) return;/,
     'garbage sections are a no-op, mirroring _setSub');
-  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges'\],/,
-    'all three sections are declared in one place, in tab order');
+  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges', 'seasons'\],/,
+    'all four sections are declared in one place');
   assert.match(lbJs, /EVENT_SECTIONS: \['topochain', 'challenges'\],/,
     'the two event-scoped sections are declared in one place');
   assert.match(fn, /Leaderboard\._syncHash\(\);/, 'the hash follows the tab');
@@ -308,7 +324,14 @@ test('navigateToLeaderboard routes every section segment to the section', () => 
   assert.ok(fn.length > 0, 'navigateToLeaderboard located');
   assert.match(fn, /sub === 'topochain' \|\| sub === 'kudos' \|\| sub === 'challenges'/,
     "every section segment selects the section rather than falling through to _setSub");
-  assert.match(fn, /App\.setHeaderTitle\('Leaderboard'\)/, 'the screen is titled Leaderboard');
+  // #2718 REVIEW: the screen is titled after the SECTION it is showing.
+  // It said "Leaderboard" for every one of them, so arriving at Challenges
+  // from the Me tab's Challenges row put a word on the bar that matched
+  // neither the row pressed nor the tab still lit. The table is
+  // App.LEADERBOARD_TITLES and the fallback is the old word, for a section
+  // nobody has named yet.
+  assert.match(fn, /App\.setHeaderTitle\(App\._leaderboardTitle\(sub, profileUser\)\)/,
+    'the screen is titled after the section it shows');
   // openProfile must still win over both — _setSub/_setSection would
   // replaceState the profile hash away.
   assert.ok(

@@ -42,11 +42,12 @@ test('an estimate is per-token pricing times the typical change, in cents', () =
     ),
     300,
   );
-  // The real default profile, on the published Opus price.
-  const opus = modelCosts.estimateCents(modelCosts.publishedPricing('claude-opus-5'));
+  // The real default profile, on the published Opus 5.5 price (#2818:
+  // $4 in / $20 out, below Opus 5's $5 / $25).
+  const opus = modelCosts.estimateCents(modelCosts.publishedPricing('claude-opus-5-5'));
   const { inputTokens, outputTokens } = modelCosts.TYPICAL_CHANGE;
   assert.equal(opus, Math.round(
-    ((inputTokens / 1_000_000) * 5 + (outputTokens / 1_000_000) * 25) * 100 * 100,
+    ((inputTokens / 1_000_000) * 4 + (outputTokens / 1_000_000) * 20) * 100 * 100,
   ) / 100);
   // The ladder the picker will show is the ladder the prices describe.
   const sonnet = modelCosts.estimateCents(modelCosts.publishedPricing('claude-sonnet-5'));
@@ -69,9 +70,17 @@ test('an estimate is per-token pricing times the typical change, in cents', () =
     { deepseek: shown(deepseek), glm: shown(glm), sonnet: shown(sonnet),
       opus: shown(opus), fable: shown(fable) },
     { deepseek: '$0.21', glm: '$0.30', sonnet: '$6.20',
-      opus: '$15.50', fable: '$31.00' },
+      opus: '$12.40', fable: '$31.00' },
     'at 2.5M in / 120k out, these are the five figures the picker states',
   );
+});
+
+test('the retired Opus 5 keeps its price for recorded history, but is not offered (#2818)', () => {
+  assert.deepEqual(modelCosts.publishedPricing('claude-opus-5'),
+    { inputPricePerMillion: 5, outputPricePerMillion: 25 });
+  assert.ok(!modelCosts.curatedModelIds().includes('claude-opus-5'),
+    'the picker and the admin table do not list it as a curated model');
+  assert.ok(modelCosts.curatedModelIds().includes('claude-opus-5-5'));
 });
 
 test('a model with no published price gets no estimate rather than a zero', () => {
@@ -307,21 +316,21 @@ test('an override replaces the shown estimate and clears back to the derived one
   };
   assert.deepEqual(await modelCosts.readOverrides(pool), {});
 
-  await modelCosts.writeOverride(pool, { modelId: 'claude-opus-5', cents: 250, actorId: 1 });
-  assert.deepEqual(await modelCosts.readOverrides(pool), { 'claude-opus-5': 250 });
+  await modelCosts.writeOverride(pool, { modelId: 'claude-opus-5-5', cents: 250, actorId: 1 });
+  assert.deepEqual(await modelCosts.readOverrides(pool), { 'claude-opus-5-5': 250 });
 
   const picker = await modelCosts.pickerPayload(pool);
-  assert.equal(picker.models['claude-opus-5'].estimateCents, 250,
-    'the override the admin typed, not the derived 1550');
-  assert.equal(picker.models['claude-opus-5'].estimateSource, 'override');
+  assert.equal(picker.models['claude-opus-5-5'].estimateCents, 250,
+    'the override the admin typed, not the derived 1240');
+  assert.equal(picker.models['claude-opus-5-5'].estimateSource, 'override');
   assert.equal(picker.models['claude-sonnet-5'].estimateSource, 'pricing',
     'the models nobody overrode keep their derived figure');
   assert.equal(picker.typicalChange.source, 'documented_constant');
 
-  await modelCosts.writeOverride(pool, { modelId: 'claude-opus-5', cents: null, actorId: 1 });
+  await modelCosts.writeOverride(pool, { modelId: 'claude-opus-5-5', cents: null, actorId: 1 });
   assert.deepEqual(await modelCosts.readOverrides(pool), {});
   const cleared = await modelCosts.pickerPayload(pool);
-  assert.equal(cleared.models['claude-opus-5'].estimateSource, 'pricing');
+  assert.equal(cleared.models['claude-opus-5-5'].estimateSource, 'pricing');
 
   // Garbage in the setting is ignored rather than rendered.
   stored = '{"good/model": 10, "bad/model": "nope", "": 5}';

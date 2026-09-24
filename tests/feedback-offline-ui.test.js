@@ -35,7 +35,7 @@ const queueJs = read('public', 'js', 'feedback-queue.js');
 const indexHtml = read('public', 'index.html');
 const shellTsx = read('frontend', 'src', 'Shell.tsx');
 const headerTsx = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
-const improveBtnTsx = read('frontend', 'src', 'features', 'improve', 'improve-button.tsx');
+const markTsx = read('frontend', 'src', 'features', 'header', 'platform-mark.tsx');
 const swJs = read('public', 'sw.js');
 const dapp = JSON.parse(read('dapp.json'));
 
@@ -193,13 +193,17 @@ test('the queued shot seeds the store before it pins connectivity', () => {
 test('the header dot is markup, hidden, and toggled from the store', () => {
   // THE UI OVERHAUL retired #feedback-btn: the dialog opens from the Improve
   // panel now. The dot moved onto #improve-btn rather than going with it,
-  // because that button is the only remaining way to reach the dialog from the
-  // header — an unsent draft with no visible cue is exactly what it exists to
-  // prevent. Same id, same writer, same publish seam; new host component.
-  assert.match(improveBtnTsx, /id="feedback-queue-dot"/);
-  assert.match(improveBtnTsx, /const IMPROVE_BTN_CLASS =\n  'relative /,
-    'the dot is positioned against the button');
-  const dot = improveBtnTsx.slice(improveBtnTsx.indexOf('id="feedback-queue-dot"'));
+  // because that button was the only remaining way to reach the dialog from
+  // the header — an unsent draft with no visible cue is exactly what it exists
+  // to prevent. #2718 retired that button too and the dot moved again, by the
+  // same rule and to the control the rule now points at: "Give feedback" is
+  // the lead row of the Homeroom mark's menu, so the dot is on the mark. Same
+  // id, same writer, same publish seam; third host component.
+  assert.match(markTsx, /id="feedback-queue-dot"/);
+  assert.match(markTsx, /<span className="relative shrink-0 inline-flex">/,
+    'the dot is positioned against the mark TILE, not the button — a dot on '
+    + 'the outer corner would hang off the disclosure chevron');
+  const dot = markTsx.slice(markTsx.indexOf('id="feedback-queue-dot"'));
   assert.match(dot.slice(0, 200), /className="hidden absolute/,
     'ships hidden: an island renders empty/hidden markup');
   assert.doesNotMatch(headerTsx, /id="feedback-queue-dot"/,
@@ -218,8 +222,8 @@ test('the dot travels through the visibility store, not a classList write', () =
   assert.match(feedbackJs, /publishVisibility\('feedback-queue-dot', n > 0\)/);
   assert.doesNotMatch(feedbackJs, /getElementById\('feedback-queue-dot'\)/,
     'no direct DOM write may sneak back in beside the publish');
-  assert.match(improveBtnTsx, /useVisibilityHiddenClass\(dotRef, 'feedback-queue-dot', false\)/);
-  assert.match(improveBtnTsx, /ref=\{dotRef\}\n\s+id="feedback-queue-dot"/);
+  assert.match(markTsx, /useVisibilityHiddenClass\(dotRef, 'feedback-queue-dot', false\)/);
+  assert.match(markTsx, /ref=\{dotRef\}\n\s+id="feedback-queue-dot"/);
 });
 
 test('the queue module loads before app.js and is precached', () => {

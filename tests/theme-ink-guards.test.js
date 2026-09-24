@@ -364,6 +364,9 @@ test('the light and dark palettes declare the same variables', () => {
     //
     // Layout insets (env(safe-area-inset-*)), not colours.
     '--platform-safe-top', '--platform-safe-bottom',
+    // How much of that bottom inset the phone tab bar spends (#2766) — a
+    // length derived from it, smaller on iOS; no colour in it.
+    '--platform-tabs-inset',
     // The mobile install strip's content-row height (#1372) — a length, and
     // the one number both `body`'s reserved padding and the strip's own
     // height read, so that the space held open and the space drawn cannot
@@ -380,29 +383,11 @@ test('the light and dark palettes declare the same variables', () => {
     // --dc-*-fill tints (which DO have .dark counterparts and are checked
     // like every other colour); a `.dark` copy could only restate this one.
     '--dc-frost',
-    // The air under the Workshop's phone tab bar — 8px, a length, and the one
-    // number the bar's own `bottom` offset, `--ws-area`'s floor and the tab
-    // body's clearance all read, so where the bar rests and the space held
-    // open for it cannot drift apart. It is declared at the ROOT rather than
-    // on `.dev-ws` because the bar is portalled out of that subtree to be
-    // fixed to the viewport, and a property declared there would be undefined
-    // for it — which drops the whole `calc()` and sends the bar off-screen.
-    // Nothing about the dark palette moves it; a `.dark` copy could only
-    // restate this one.
+    // The air at the foot of the Workshop's lander — 8px, a length, read by
+    // `--ws-area`'s floor. Root-scoped since the phone tab bar was portalled
+    // out of `.dev-ws`; the bar is back in flow (#2767) and the token stayed
+    // where every reader can see it. A `.dark` copy could only restate it.
     '--ws-gap',
-    // The Workshop bar's box above the home indicator — 72px, a length, and
-    // the one number `--ws-area`'s floor and the tab body's clearance both
-    // read. The bar is `position: fixed` and portalled out of the Workshop's
-    // subtree, so nothing reserves its space automatically and those two
-    // rules are all that keep content from running underneath it. Root-scoped
-    // for the same reason as the gap; a `.dark` copy could only restate it.
-    '--ws-bar',
-    // How far the Workshop's pill floats off the bottom — a length, derived
-    // from the home-indicator inset rather than from any colour. Root-scoped
-    // with the other two because the bar is portalled out of `.dev-ws` and
-    // could not read a property declared there. A `.dark` copy could only
-    // restate it.
-    '--ws-lift',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],

@@ -288,13 +288,25 @@
         : (DEPTH[route] > DEPTH[prev] ? 'push'
           : DEPTH[route] < DEPTH[prev] ? 'pop' : 'none');
 
+      // BEFORE the transition, not after it. `prev`, `sameScreen` and `type`
+      // are all resolved above, so nothing below still needs the old value —
+      // and App._syncPlatformTabs reads this to decide whether the platform's
+      // tab bar belongs on screen, from inside the callback. `fx` runs that
+      // callback synchronously on the no-animation path and a task later on
+      // the animated one; an assignment after the call is correct for one of
+      // those and a frame late for the other.
+      AuthScreens._current = route;
       fx(() => {
         window.UsernodeBrowserScroll?.capture();
         for (const r of Object.keys(SCREEN_IDS)) {
           setScreenVisible(SCREEN_IDS[r], SCREEN_IDS[r] === id);
         }
+        // The platform's tab bar has nothing to tab to from here, so it goes
+        // with the rest of the authed shell. In the callback because the kit
+        // captures the incoming page from what the callback did before it
+        // returned — the same rule App._showOnlyScreen states for the header.
+        window.App?._syncPlatformTabs?.();
       }, type);
-      AuthScreens._current = route;
     },
 
     // See show(). Reached by name — this file is a classic script, and
@@ -311,6 +323,11 @@
       AuthScreens._resetLandingViewer();
       for (const r of Object.keys(SCREEN_IDS)) setScreenVisible(SCREEN_IDS[r], false);
       AuthScreens._current = null;
+      // The authed shell is back, so the tab bar's decision changes — but
+      // WHETHER it comes back is App's to say, not this file's: the viewer
+      // may be landing straight into an app or a chromeless route. Cleared
+      // `_current` first, for the reason show() gives.
+      window.App?._syncPlatformTabs?.();
     },
 
     _wireScreen(route) {

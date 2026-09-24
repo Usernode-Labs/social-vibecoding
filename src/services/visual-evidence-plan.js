@@ -270,6 +270,11 @@ const replaySchema = z.object({
   checkpoint: checkpointSchema,
 }).strict();
 
+const hostedReplayEntrySchema = z.object({
+  id: z.string().min(1).max(96).regex(ID_RE),
+  replay: replaySchema,
+}).strict();
+
 const executableStorySchema = storyIntentObject.extend({ replay: replaySchema }).strict()
   .superRefine((story, ctx) => {
     const names = new Set();
@@ -375,6 +380,68 @@ function semanticIntentFromPlan(value) {
   });
 }
 
+// Hosted planners choose only browser actions and assertions. Semantic fields
+// come from the accepted run, so copying a claim or viewport cannot change it.
+function replayPlanFromIntent(rawIntent, rawReplays) {
+  const intent = parseIntent(rawIntent);
+  const replays = parseWith(z.array(hostedReplayEntrySchema).min(1).max(MAX_STORIES), rawReplays);
+  const expected = new Set(intent.stories.map((story) => story.id));
+  const byId = new Map();
+  for (const [index, entry] of replays.entries()) {
+    if (!expected.has(entry.id)) {
+      throw new VisualEvidenceValidationError([{
+        path: ['replays', index, 'id'], message: `Story id ${entry.id} is not in the accepted intent`,
+      }]);
+    }
+    if (byId.has(entry.id)) {
+      throw new VisualEvidenceValidationError([{
+        path: ['replays', index, 'id'], message: `Story id ${entry.id} is duplicated`,
+      }]);
+    }
+    byId.set(entry.id, entry.replay);
+  }
+  const missing = intent.stories.filter((story) => !byId.has(story.id));
+  if (missing.length) {
+    throw new VisualEvidenceValidationError([{
+      path: ['replays'], message: `Missing accepted story ids: ${missing.map((story) => story.id).join(', ')}`,
+    }]);
+  }
+  return parseReplayPlan({
+    version: intent.version,
+    impact: intent.impact,
+    rationale: intent.rationale,
+    stories: intent.stories.map((story) => ({ ...story, replay: byId.get(story.id) })),
+  });
+}
+
+// A local pass produces this small handoff, separately from its media and
+// verdict. The hashes bind the submitted flow to the exact two Git revisions;
+// hosted replay still independently decides whether it works there.
+function parseAuthorPlanSubmission(value, intent, revisions = null) {
+  const invalid = (path, message) => {
+    throw new VisualEvidenceValidationError([{ path: ['visualEvidencePlan', path], message }]);
+  };
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== 'baseSha,headSha,plan,planHash') {
+    invalid('', 'Expected exactly baseSha, headSha, planHash, and plan');
+  }
+  for (const side of ['baseSha', 'headSha']) {
+    if (typeof value[side] !== 'string' || !/^[0-9a-f]{40}$/.test(value[side])) {
+      invalid(side, 'Expected an exact 40-character commit SHA');
+    }
+    if (revisions && value[side] !== revisions[side]) {
+      invalid(side, `Does not match the imported pull request ${side}`);
+    }
+  }
+  const plan = parseReplayPlan(value.plan);
+  if (canonicalJson(semanticIntentFromPlan(plan)) !== canonicalJson(parseIntent(intent))) {
+    invalid('plan', 'The plan changes the accepted visual evidence intent');
+  }
+  const hash = planHash(plan);
+  if (value.planHash !== hash) invalid('planHash', 'Does not match the submitted plan');
+  return { baseSha: value.baseSha, headSha: value.headSha, planHash: hash, plan };
+}
+
 function containsRelativePointer(plan) {
   const parsed = parseReplayPlan(plan);
   return parsed.stories.some((story) => ['before', 'after'].some((side) =>
@@ -408,5 +475,7 @@ module.exports = {
   canonicalJson,
   planHash,
   semanticIntentFromPlan,
+  replayPlanFromIntent,
+  parseAuthorPlanSubmission,
   containsRelativePointer,
 };

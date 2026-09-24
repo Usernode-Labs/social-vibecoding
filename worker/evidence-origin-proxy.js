@@ -10,6 +10,9 @@ const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
+const { performance } = require('node:perf_hooks');
+
+const DIAGNOSTIC_MARKER = '__USERNODE_EVIDENCE_BROWSER__ ';
 
 let origins;
 try {
@@ -27,6 +30,15 @@ const authorities = new Set([...origins].map((origin) => {
 }));
 const port = Number(process.env.EVIDENCE_PROXY_PORT || 17891);
 const readyFile = process.env.EVIDENCE_PROXY_READY || '';
+const originList = [...origins];
+let documentOrdinal = 0;
+
+function diagnostic(event) {
+  // Only fixed-shape metadata leaves the proxy. Never log URL, query,
+  // headers, document content, cookies, or upstream error messages.
+  try { process.stderr.write(`${DIAGNOSTIC_MARKER}${JSON.stringify(event)}\n`); }
+  catch { /* Observability cannot affect the browser's network path. */ }
+}
 
 function reject(socketOrResponse, code = 403) {
   if (typeof socketOrResponse.writeHead === 'function') {
@@ -46,15 +58,34 @@ const server = http.createServer((req, res) => {
     catch { return reject(res, 400); }
   }
   if (!origins.has(target.origin)) return reject(res);
+  const isDocument = req.headers['sec-fetch-dest'] === 'document';
+  const ordinal = isDocument ? ++documentOrdinal : null;
+  const startedAt = performance.now();
+  const side = target.origin === originList[0] ? 'base' : 'head';
+  if (isDocument) diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side });
   const headers = { ...req.headers, host: target.host };
   delete headers['proxy-authorization'];
   delete headers['proxy-connection'];
   const transport = target.protocol === 'https:' ? https : http;
   const upstream = transport.request(target, { method: req.method, headers }, (upstreamResponse) => {
+    let bodyBytes = 0;
+    upstreamResponse.on('data', (chunk) => { bodyBytes += chunk.length; });
+    if (isDocument) res.once('finish', () => diagnostic({
+      kind: 'document_response', documentOrdinal: ordinal, side,
+      outcome: (upstreamResponse.statusCode || 502) < 400 ? 'ok' : 'http_error',
+      httpStatus: upstreamResponse.statusCode || 502,
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      bodyBytes: Math.min(bodyBytes, 10_000_000),
+    }));
     res.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
     upstreamResponse.pipe(res);
   });
-  upstream.on('error', () => reject(res, 502));
+  upstream.on('error', () => {
+    if (isDocument) diagnostic({ kind: 'document_response', documentOrdinal: ordinal,
+      side, outcome: 'network_error',
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)) });
+    reject(res, 502);
+  });
   req.pipe(upstream);
 });
 
@@ -75,7 +106,7 @@ server.on('connect', (req, client, head) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  if (readyFile) fs.writeFileSync(readyFile, String(process.pid), { mode: 0o600 });
+  if (readyFile) fs.writeFileSync(readyFile, String(server.address().port), { mode: 0o600 });
 });
 
 function stop() {

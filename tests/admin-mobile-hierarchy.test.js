@@ -166,8 +166,8 @@ test('the header back button defers to the console, then goes home', () => {
     'and home is the fallback for a screen that named none');
 });
 
-test('the back button has both icons and one named toggle', () => {
-  // TWO icons, exactly one shown. #back-icon-home retired in #1443 — Home is
+test('the back button has all three icons and one named toggle', () => {
+  // THREE icons, at most one shown. #back-icon-home retired in #1443 — Home is
   // a row of the chip's menu, so a house an inch to its left answered one
   // question twice — and came back when the rule became "every page has a
   // back or a home button, except Home": that retirement left the app itself,
@@ -179,6 +179,10 @@ test('the back button has both icons and one named toggle', () => {
   // (tests/shell-id-inventory.test.js, plus the dapp.json selectors).
   assert.ok(html.includes('id="back-icon-home"'), 'the house ships');
   assert.ok(html.includes('id="back-icon-arrow"'), 'the chevron ships');
+  // #2718's third: the ✕ that steps out of a running app. Leaving somebody
+  // else's program is not going up a level, and every mini-app host in the
+  // study draws that as an ✕ rather than a chevron.
+  assert.ok(html.includes('id="back-icon-close"'), 'and the ✕ ships');
   // #1036 widened it to setBackIcon(mode, href): the control is a real
   // anchor now, so the same choke point that owns which icon shows also
   // owns where it points.
@@ -194,10 +198,15 @@ test('the back button has both icons and one named toggle', () => {
     'setBackIcon publishes the slot state rather than only writing to the DOM');
   assert.ok(body.indexOf('backButton') < body.indexOf('back-btn'),
     'the publish comes first; the DOM writes are the pre-hydration fallback');
-  // The pre-hydration fallback toggles all three nodes again: the anchor for
-  // 'none', and one glyph each for which of the two remaining modes it is.
-  assert.match(body, /back-icon-home/, 'the fallback toggles the house');
-  assert.match(body, /back-icon-arrow/, 'and the chevron');
+  // The pre-hydration fallback toggles all four nodes again: the anchor for
+  // 'none', and one glyph each for which of the three remaining modes it is.
+  // Each names its own mode — `!arrow` drew the house for 'close' too.
+  assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', slot !== 'home'\)/,
+    'the fallback toggles the house');
+  assert.match(body, /back-icon-arrow'\)\?\.classList\.toggle\('hidden', slot !== 'arrow'\)/,
+    'and the chevron');
+  assert.match(body, /back-icon-close'\)\?\.classList\.toggle\('hidden', slot !== 'close'\)/,
+    'and the ✕');
   assert.match(body, /back-btn/, 'it toggles the anchor itself');
   // 'none' is what hides the slot now — NOT 'home', which draws a house.
   // The distinction is the whole point: a screen that publishes the default
@@ -215,8 +224,15 @@ test('the back button has both icons and one named toggle', () => {
   assert.ok(!exit.slice(0, exit.indexOf('\n  },')).includes('setBackIcon'),
     '_exitAdminConsole leaves the icon to _showOnlyScreen');
   const swap = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
-  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\(revealId === 'home-screen' \? 'none' : 'home'\)/,
-    '_showOnlyScreen restores Home on secondary screens and hides it on the Home/Browse roots');
+  assert.match(
+    swap.slice(0, swap.indexOf('\n  },')),
+    /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
+    '_showOnlyScreen publishes the back slot from App._BACK_SLOT');
+  // Admin is a SUB-PAGE of Me — it is reached from the Profile screen's rows
+  // — so its slot is an arrow up to that screen rather than the house it
+  // carried before the tab bar existed (#2718 review).
+  assert.match(appJs, /'admin-screen': \['arrow', '#profile'\],/,
+    'the console goes up to Me, not home');
 });
 
 test('the admin gate runs before the already-open route() shortcut', () => {
@@ -265,18 +281,26 @@ test('mobile section presses drill in; desktop presses switch in place', () => {
 
 test('the header becomes the section nav bar on mobile level 2 only', () => {
   const fn = consoleJs.slice(consoleJs.indexOf('  _syncChrome() {'));
-  const body = fn.slice(0, 900);
+  // BOUNDED AT THE METHOD'S OWN CLOSING BRACE rather than a character count.
+  // A fixed window walks off the end the moment a comment is added above the
+  // call it is looking for, and then fails for a reason that has nothing to
+  // do with the code — which is exactly what a longer note here did.
+  const body = fn.slice(0, fn.indexOf('\n  },\n'));
   assert.match(body, /AdminConsole\._isMobile\(\) && AdminConsole\._level === 2/,
     'only a mobile section view borrows the header');
   // #1036: the second argument is the anchor's href — inside a section
   // the chevron pops to the console's own menu, so that is where it points.
-  // LEVEL 2 ONLY. The root's arrow (which pointed at Profile) is gone with the
-  // other two account screens': Admin, Settings and Profile are reached from
-  // the Home account row and left through it, and a header arrow duplicating
-  // the row one tap below it read as chrome. The mobile drill-in keeps its
-  // chevron because it is the only way up a level INSIDE this screen.
-  assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the chevron is the section view\'s alone; the root draws no back control');
+  //
+  // THE ROOT'S ARROW IS BACK, pointing at the Me tab (#2718 review). It was
+  // retired when Admin hung off Home's account row: the row was one tap
+  // behind you and a header arrow duplicating it read as chrome. The Me tab
+  // replaced that row, and the house it was swapped for is worse than the
+  // duplication was — it sends you past the screen you came from, to one the
+  // bar's own Home tab already reaches, while the tab still lit says Me. One
+  // glyph now, two targets: the console menu from inside a section, the tab
+  // above from the root.
+  assert.match(body, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
+    'the chevron points at the level above, whichever level that is');
   assert.match(body, /App\.setHeaderTitle\(s \? s\.label : /,
     'the title becomes the section label (which also feeds the native AppBar)');
   assert.match(body, /'Platform status'/,

@@ -314,17 +314,44 @@ if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 
+# #2779: the coding agent's read-only Homeroom tools, for a build or scout
+# turn the platform issued a grant to (HOMEROOM_MCP_TOKEN). The config names
+# only the stdio bridge; the grant reaches it through this process's
+# environment and is never written to a file. A build loads it beside the
+# browser config; a scout loads it alone, so it stays browser-free. Still
+# --strict-mcp-config either way.
+HOMEROOM_MCP_CONFIG="${HOMEROOM_MCP_CONFIG:-/usr/local/share/usernode/homeroom-mcp.json}"
+if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
+  if [ "$MODE" = "build" ] && [ -n "$BROWSER_MCP_FLAGS" ]; then
+    BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG $HOMEROOM_MCP_CONFIG --strict-mcp-config"
+  elif [ "$MODE" = "build" ] || [ "$MODE" = "scout" ]; then
+    BROWSER_MCP_FLAGS="--mcp-config $HOMEROOM_MCP_CONFIG --strict-mcp-config"
+  fi
+fi
+
 EVIDENCE_PROXY_PID=""
+EVIDENCE_DIAGNOSTIC_TAIL_PID=""
 EVIDENCE_TMP=""
 cleanup_evidence() {
   if [ -n "$EVIDENCE_PROXY_PID" ]; then kill "$EVIDENCE_PROXY_PID" 2>/dev/null || true; fi
+  if [ -n "$EVIDENCE_DIAGNOSTIC_TAIL_PID" ]; then
+    sleep 0.3
+    kill "$EVIDENCE_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
+  fi
   if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
 }
 if [ "$MODE" = "evidence" ]; then
+  command -v mcp-server-playwright >/dev/null 2>&1 \
+    || die "the evidence browser MCP executable is missing"
+  echo "__USERNODE_PHASE__ evidence_proxy"
   EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
     || die "could not create evidence browser state"
   chmod 700 "$EVIDENCE_TMP"
   export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
+  export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
+  : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
+  tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &
+  EVIDENCE_DIAGNOSTIC_TAIL_PID=$!
   export EVIDENCE_PROXY_PORT=17891
   export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
   export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
@@ -335,12 +362,14 @@ if [ "$MODE" = "evidence" ]; then
   i=0
   while [ ! -f "$EVIDENCE_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
   [ -f "$EVIDENCE_PROXY_READY" ] || die "evidence origin proxy failed to start"
+  echo "__USERNODE_PHASE__ evidence_browser_bootstrap"
   node /usr/local/bin/evidence-browser-bootstrap.js \
     || die "evidence browser authentication failed"
   unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN
   BROWSER_MCP_CONFIG="$EVIDENCE_TMP/mcp.json"
   node /usr/local/bin/write-evidence-mcp-config.js "$BROWSER_MCP_CONFIG" \
     || die "could not create evidence MCP config"
+  echo "__USERNODE_PHASE__ evidence_mcp_ready"
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 

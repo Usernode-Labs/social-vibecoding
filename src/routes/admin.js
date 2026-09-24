@@ -24,6 +24,9 @@ const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+// The CSV writer the topochain admin's two exports share: quoting plus the
+// spreadsheet formula-injection guard, documented where it is defined.
+const { csvField } = require('./topochain/helpers');
 const {
   accountRecovery,
   withTransaction,
@@ -618,63 +621,13 @@ function adminRoutes(config) {
   });
 
   router.delete('/api/admin/users/:id', requireAdminWrite, async (req, res) => {
-    const userId = parseInt(req.params.id);
-
-    if (userId === req.user.id) {
-      return res.status(400).json({ error: 'Cannot delete yourself' });
-    }
-
-    // Deleting drops the admin count just like a revoke, so it takes the
-    // same advisory lock / transaction and enforces the last-admin
-    // invariant server-side — even though the UI hides Delete for admins,
-    // a direct API call must not be able to zero out the admins.
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
-
-      const { rows: existing } = await client.query(
-        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
-        [userId]
-      );
-      if (!existing.length) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'User not found' });
-      }
-      const { rows: managedKeys } = await client.query(
-        `SELECT id FROM credentials.managed_openrouter_keys
-          WHERE user_id = $1 AND status <> 'deleted'`,
-        [userId],
-      );
-      if (managedKeys.length) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({
-          error: 'Delete this user\'s company OpenRouter key before deleting the account.',
-        });
-      }
-      // Only a FULL admin counts toward the "at least one admin" invariant
-      // (issue #311) — deleting a view-only admin never threatens it.
-      if (existing[0].is_admin && !existing[0].admin_readonly) {
-        const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
-        );
-        if (countRows[0].n <= 1) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: "Can't delete the last full admin." });
-        }
-      }
-
-      await client.query('DELETE FROM users WHERE id = $1', [userId]);
-      await client.query('COMMIT');
-      log.info('admin', 'User deleted', { id: userId, by: req.user.username });
-      res.json({ ok: true });
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      log.error('admin', 'Delete user failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    } finally {
-      client.release();
-    }
+      const result = await require('../services/account-deletion').deleteAccount(pool, {
+        userId: Number(req.params.id), actorId: req.user.id, mode: 'admin', confirmation: req.body?.confirmation,
+      });
+      res.json(result);
+      void require('../services/account-deletion-cleanup').sweep(pool, config).catch(() => {});
+    } catch (err) { require('./account-deletion').sendError(res, err); }
   });
 
   // Admin-issued temporary password (issue #282). The universal recovery
@@ -946,17 +899,74 @@ function adminRoutes(config) {
   //
   // PERMISSIONS: the read is open to view-only admins, like /model-costs —
   // the verdicts are the point of the screen. The three writes (settings,
-  // a rating, a "run now") are requireAdminWrite, like every mutation here.
+  // a rating, a "run now") are requireAdminWrite, like every mutation here,
+  // and so is the CSV export — see its own note below.
+  // `verdict=budget` is not a verdict: it selects the runs the bot stopped
+  // on their own budget, which are recorded as failures carrying the limit
+  // that tripped (#2742). It rides the same parameter because it is the same
+  // control on the screen — one "what am I looking at" picker.
+  const botRunFilters = (q) => ({
+    app: typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null,
+    verdict: ['question', 'ready', 'person', 'empty', 'failed'].includes(q.verdict) ? q.verdict : null,
+    budgetOnly: q.verdict === 'budget',
+  });
+
   router.get('/api/admin/homeroom-bot', async (req, res) => {
     try {
       const q = req.query || {};
-      const app = typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null;
-      const verdict = ['question', 'ready', 'person', 'failed'].includes(q.verdict) ? q.verdict : null;
       const before = /^\d+$/.test(String(q.before || '')) ? Number(q.before) : null;
-      res.json(await homeroomBot.adminPayload(pool, config, { app, verdict, before }));
+      res.json(await homeroomBot.adminPayload(pool, config, { ...botRunFilters(q), before }));
     } catch (err) {
       log.error('admin', 'Read homeroom bot failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The whole verdict ledger as one CSV, for the analysis the paged table
+  // cannot do: how often a `ready` was rated wrong, what a verdict costs by
+  // app, which questions keep coming back.
+  //
+  // PERMISSIONS: requireAdminWrite, unlike the read beside it. Not because
+  // the rows are more sensitive — a view-only admin reads the same fields
+  // on screen — but because a bulk downloadable artifact is the exposure
+  // class the other two CSV exports (topochain users, waitlist) and the
+  // database export already put behind the write gate. Consistent with
+  // those rather than with the screen it sits on.
+  //
+  // Streamed, not buffered: `question` and `build_note` are 4,000 characters
+  // each, so the file is written chunk by chunk as the keyset pages arrive
+  // and neither this process nor the browser ever holds the whole ledger.
+  // Every value goes through `csvField`, which quotes and carries the
+  // spreadsheet formula-injection guard — this file is model-written text
+  // and admin-typed notes, which is the case that guard exists for.
+  router.get('/api/admin/homeroom-bot/export.csv', requireAdminWrite, async (req, res) => {
+    const filters = botRunFilters(req.query || {});
+    try {
+      const scope = [
+        filters.app || 'all-apps',
+        filters.budgetOnly ? 'budget-stops' : (filters.verdict || 'all-verdicts'),
+      ].join('-');
+      const day = new Date().toISOString().slice(0, 10);
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="homeroom-bot-verdicts-${scope}-${day}.csv"`);
+      res.write(`${homeroomBot.EXPORT_COLUMNS.join(',')}\n`);
+      let rows = 0;
+      for await (const chunk of homeroomBot.iterateRunsForExport(pool, filters)) {
+        for (const row of chunk) {
+          res.write(`${homeroomBot.exportRow(row).map(csvField).join(',')}\n`);
+        }
+        rows += chunk.length;
+      }
+      log.info('admin', 'Homeroom bot verdicts exported', { by: req.user.username, rows, ...filters });
+      return res.end();
+    } catch (err) {
+      log.error('admin', 'Homeroom bot CSV export failed', { message: err.message });
+      // Past the first chunk the status line and half the file are already
+      // on the wire, so there is no JSON error to send: end the response and
+      // let the truncated download fail loudly rather than look complete.
+      if (!res.headersSent) return res.status(500).json({ error: 'Internal server error' });
+      return res.end();
     }
   });
 

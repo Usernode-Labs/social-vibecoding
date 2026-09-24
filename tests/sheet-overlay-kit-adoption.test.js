@@ -1,7 +1,7 @@
 // The sheets' web overlay stays DOWN while the kit presents the surface.
 //
-// The Improve panel, the app-context sheet and the Notifications sheet each
-// pair a full-screen dimming overlay with their CSS slide-over: `data-open`
+// The app-context sheet and the Notifications sheet each pair a full-screen
+// dimming overlay with their CSS slide-over: `data-open`
 // raises it and `transition: opacity` fades it with the slide. On touch the
 // same element is adopted into a kit sheet instead — and the kit brings its
 // own backdrop, which fades 1:1 with the drag and the exit spring.
@@ -32,7 +32,6 @@ const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const SHEET_CONTROLLER = read('frontend/src/lib/sheet-controller.js');
-const IMPROVE_CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 
 function makeSandbox(panelIds) {
   const panels = Object.fromEntries(panelIds.map((id) => [id, { id }]));
@@ -131,87 +130,27 @@ test('desktop: adopted never rises, so the overlay fades with the CSS slide', ()
   assert.equal(store.state.adopted, false);
 });
 
-// ── the Improve panel (its own copy of the chassis, predating it) ────────
-
-function loadImprove(kitSurface) {
-  const store = makeStoreStub({
-    open: false,
-    adopted: false,
-    slug: 'demo',
-    name: 'Demo',
-    sessionsLoaded: false,
-  });
-  const log = [];
-  const sandbox = makeSandbox(['improve-panel']);
-  // loadSessions() needs a fetch; failing is fine — the catch keeps state.
-  sandbox.fetch = async () => ({ ok: false });
-  runModules(sandbox, [['improve-controller.js', IMPROVE_CONTROLLER]], {
-    imports: {
-      '../../lib/kit-surface': typeof kitSurface === 'function'
-        ? kitSurface(store, log)
-        : kitSurface,
-      './improve-store.js': { improveStore: store },
-      // The controller remembers the panel's target for the next cold paint
-      // (frontend/src/lib/shell-snapshot.ts). Irrelevant to adoption, and a
-      // no-op here rather than a localStorage stub: what this file tests is
-      // when `platform-sheet-adopted` rises and falls.
-      '../../lib/shell-snapshot': { saveShellSnapshot() {} },
-      // open() dismisses the sheets built on lib/sheet-controller.js, so that
-      // pressing Improve from a live header does not leave two panels up. No
-      // sheet is registered in this sandbox and none of these tests opens
-      // one, so the real function would sweep an empty set — the stub says
-      // that out loud rather than pulling the registry in.
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
-      // The change rows carry the app's own artwork, resolved from the two
-      // `app_icon_*` columns the list endpoints send. Also irrelevant here,
-      // and stubbed with the real function's SHAPE rather than a bare
-      // `() => ({})`: a stub that returns something a caller cannot use turns
-      // a future adoption bug into a confusing one about icons.
-      '../apps/app-card.js': {
-        iconViewFor: (app) => (app.icon_url
-          ? { kind: 'image', src: app.icon_url }
-          : app.icon_emoji
-            ? { kind: 'emoji', emoji: app.icon_emoji }
-            : { kind: 'letter', letter: String(app.name || '?').charAt(0).toUpperCase() }),
-      },
-    },
-  });
-  return { Improve: sandbox.Improve, store, log };
-}
-
-test('improve, touch: adopted rises with the present and falls with the teardown', () => {
-  const { Improve, store, log } = loadImprove(touchKitSurface);
-  Improve.open();
-  const present = log.find((c) => c[0] === 'present');
-  assert.ok(present, 'the kit sheet presented');
-  assert.equal(present[2].open, true, 'open is published BEFORE the present');
-  assert.deepEqual(
-    { open: store.state.open, adopted: store.state.adopted },
-    { open: true, adopted: true },
-  );
-  Improve.close();
-  assert.deepEqual(
-    { open: store.state.open, adopted: store.state.adopted },
-    { open: false, adopted: false },
-  );
-});
-
-test('improve, desktop: adopted never rises', () => {
-  const { Improve, store } = loadImprove(DESKTOP);
-  Improve.open();
-  assert.deepEqual(
-    { open: store.state.open, adopted: store.state.adopted },
-    { open: true, adopted: false },
-  );
-  Improve.close();
-  assert.equal(store.state.open, false);
-});
+// ── the Improve panel had its own copy of the chassis, and retired ──────
+//
+// Two tests stood here, driving `Improve.open()` / `Improve.close()` through
+// a stubbed kit-surface to pin that `platform-sheet-adopted` rose with the
+// present and fell with the teardown. The panel predated
+// lib/sheet-controller.js and adopted its root directly, which is why it
+// needed its own pair.
+//
+// It retired (#2718 review) — its two actions, its build notice and its view
+// strip are rows of the app-context sheet now — and with it went the
+// `adoptKitSurface` call, the sandbox that loaded the controller, and the
+// `open`/`adopted` flags it published. What those tests asserted is asserted
+// of the app-context sheet above, through the shared chassis both surfaces
+// now use, so nothing lost coverage: the rule moved to the one place that
+// implements it.
 
 // ── the overlays actually read the flag ──────────────────────────────────
 
 test('every sheet overlay derives data-open from open && !adopted', () => {
   const overlays = [
-    ['frontend/src/features/improve/improve-panel.tsx', 'improve-overlay'],
+    // #improve-overlay was the third; it retired with its panel (see above).
     ['frontend/src/features/app-context/app-context-sheet.tsx', 'apps-switcher-overlay'],
     ['frontend/src/features/notifications/notifications-sheet.tsx', 'notifications-sheet-overlay'],
   ];

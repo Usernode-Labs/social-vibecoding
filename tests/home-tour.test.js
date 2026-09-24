@@ -67,9 +67,15 @@ const spotlight = loadTsx(`${TOUR_DIR}/spotlight.ts`);
 
 test('the eight steps are the ones the design settled on, in order', () => {
   assert.equal(steps.TOUR_LENGTH, 8);
+  // NINE BECAME EIGHT when the Improve panel retired (#2718 review). The arc
+  // had a step that taught "press the Improve row, a panel opens" and a step
+  // that taught "the mark opens the app's menu" — and once the panel's two
+  // actions became rows of that menu, both were teaching the same press. One
+  // step: welcome -> create -> the menu -> give feedback -> new change ->
+  // Workshop -> challenges -> settings.
   assert.deepEqual(steps.TOUR_STEPS.map((s) => s.id), [
-    'welcome', 'create', 'improve', 'feedback', 'new-change', 'workshop',
-    'challenges', 'settings',
+    'welcome', 'create', 'app-menu', 'feedback', 'new-change',
+    'workshop', 'challenges', 'settings',
   ]);
 });
 
@@ -87,46 +93,93 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   // Step 1 has nothing to point at: it says what the place is.
   assert.deepEqual([...byId.welcome.targets], []);
-  assert.deepEqual([...byId.create.targets], ['#home-create-section']);
+  // Create is the launcher grid's trailing tile (features/home/create-tile.tsx)
+  // rather than a section of its own; until the grid has painted, the Your apps
+  // area it ends is the next best thing to point at.
+  assert.deepEqual([...byId.create.targets], ['#home-create-tile', '#home-apps-section']);
   assert.deepEqual([...byId.challenges.targets], ['#home-challenges-section']);
-  // The way into Settings from Home is the header chip, whose menu carries
-  // #switcher-row-settings.
-  assert.deepEqual([...byId.settings.targets], ['#app-switcher-btn']);
-  // The Improve arc: the header control on Home, then the rows of the panel
-  // the viewer opens with it. No mock anywhere in the feature.
-  assert.deepEqual([...byId.improve.targets], ['#improve-btn']);
+  // The way into Settings is the Me tab, whose screen carries
+  // #profile-row-settings (#2718).
+  assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
+  // THE MENU ARC: the mark that opens it, then the two actions inside it.
+  // The mark is on screen on every route, which is what lets this step be the
+  // one the arc falls back to. No mock anywhere in the feature.
+  assert.deepEqual([...byId['app-menu'].targets], ['#platform-mark-btn']);
   assert.deepEqual([...byId.feedback.targets], ['#improve-row-feedback']);
   assert.deepEqual([...byId['new-change'].targets], ['#improve-row-new-session']);
-  assert.deepEqual([...byId.workshop.targets], ['#app-context-row-workshop']);
+  assert.ok(!byId.improve, 'the Improve row retired with the panel it opened');
+  // Workshop is a TAB. Its target was `#app-context-row-workshop`, an id
+  // nothing had rendered for some time, so the step fell through to no target
+  // and drew its card with no cut-out at all.
+  assert.deepEqual([...byId.workshop.targets], ['#platform-tab-workshop']);
   for (const src of [STEPS_SRC, OVERLAY_SRC]) {
     assert.doesNotMatch(src, /\bmock\b/i, 'the inline still life is gone, not hidden');
   }
 });
 
-test('the Improve step waits for the viewer, and has no Next to skip it with', () => {
+test('the Improve step waits for the menu, and its Next opens the menu rather than skipping it', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
-  assert.equal(byId.improve.advanceOn, 'improve-open');
-  assert.equal(steps.hasNext(steps.IMPROVE_STEP_INDEX), false);
+  assert.equal(byId['app-menu'].advanceOn, 'menu-open');
   assert.equal(steps.IMPROVE_STEP_INDEX, 2);
-  // Every other step is driven by Next.
+  // Only the menu step's Next opens the menu; every other Next moves the
+  // counter (or finishes, on the last step).
   for (const [i, step] of steps.TOUR_STEPS.entries()) {
-    if (step.advanceOn) continue;
-    assert.equal(steps.hasNext(i), true, `${step.id} has a Next`);
+    assert.equal(steps.nextOpensMenu(i), step.advanceOn === 'menu-open', `${step.id}'s Next`);
   }
-  // The click is watched, never intercepted: the overlay subscribes to the
-  // store and advances on the EDGE into open.
-  assert.match(OVERLAY_SRC, /improveStore\.subscribe\(/);
-  assert.match(OVERLAY_SRC, /if \(now && stepAt\(indexRef\.current\)\.advanceOn === 'improve-open'\)/);
+  // Next is on EVERY step now: nothing hides it.
+  assert.doesNotMatch(OVERLAY_SRC, /nextRef/);
+  assert.doesNotMatch(OVERLAY_SRC, /hasNext|showsNext/);
+  // The menu step's Next goes through the controller's own open path, and
+  // does NOT move the counter itself: the store watcher below does that,
+  // so step 4 can only ever arrive with the menu it points into.
+  const goNext = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const goNext = useCallback('));
+  const body = goNext.slice(0, goNext.indexOf('}, [finish]);'));
+  assert.match(body, /if \(nextOpensMenu\(at\)\) void AppContext\.open\(\);\s*else if \(isLastStep\(at\)\) finish\(\);/);
+  // The click on the mark is watched, never intercepted: the overlay
+  // subscribes to the store and advances on the EDGE into open.
+  assert.match(OVERLAY_SRC, /appContextStore\.subscribe\(/);
+  assert.match(OVERLAY_SRC, /if \(now && stepAt\(indexRef\.current\)\.advanceOn === 'menu-open'\)/);
   assert.doesNotMatch(OVERLAY_SRC, /addEventListener\('click'/);
+});
+
+test("a press on the tour never dismisses the menu it is pointing into", () => {
+  // Steps 4 and 5 spotlight rows INSIDE the app's menu, whose desktop
+  // popover closes on any click outside it. The tour's card sits outside it,
+  // so Next counted as an outside click: the menu shut, the next step (which
+  // needs it) fell back to the menu step, and Next on step 4 landed on
+  // step 3. The outside-click listener spares the tour's whole overlay.
+  const MENU_SRC = read('frontend/src/features/app-context/index.tsx');
+  assert.match(MENU_SRC, /const TOUR_ID = 'home-tour';/);
+  const onDoc = MENU_SRC.slice(MENU_SRC.indexOf('const onDoc = (event: Event) => {'));
+  const body = onDoc.slice(0, onDoc.indexOf('void AppContext.close();'));
+  assert.match(body, /const tour = document\.getElementById\(TOUR_ID\);/);
+  assert.match(body, /if \(t && \(sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\) \|\| tour\?\.contains\(t\)\)\) return;/);
+  // And the id it spares is the overlay's root, which holds the card, the
+  // shades and every button the tour draws.
+  assert.match(OVERLAY_SRC, /ref=\{rootRef\}\s*id="home-tour"/);
 });
 
 test('the cut-out passes the press through only where pressing is the point', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
-  for (const id of ['improve', 'feedback', 'new-change', 'workshop']) {
-    assert.equal(byId[id].interactive, true, `${id} lets the real control be pressed`);
-  }
-  for (const id of ['welcome', 'create', 'challenges', 'settings']) {
+  // ONE step is pressed through: the Improve step, which the viewer completes
+  // by opening the menu themselves (or with Next, which opens it the same way).
+  assert.equal(byId['app-menu'].interactive, true, 'the menu step lets the real mark be pressed');
+  // EVERYTHING ELSE DESCRIBES ITS TARGET. Feedback presents a dialog, New
+  // change starts a session, Workshop navigates off Home and the mark opens a
+  // menu over the card itself, so a press on any of them walks out of a tour
+  // that is only pointing at them. The keyboard has always been shut out of
+  // them by the focus move and the Tab handler below, and the pointer agrees.
+  // #2718's two new targets arrived carrying the flag and lost it here: a tab
+  // and a menu button are the same case as the rows, not an exception to it.
+  for (const id of ['welcome', 'create', 'feedback', 'new-change',
+    'workshop', 'challenges', 'settings']) {
     assert.equal(byId[id].interactive, undefined, `${id} only describes its target`);
+  }
+  // The rule stated once more against the table itself, so a step added later
+  // cannot quietly become pressable: `interactive` belongs to `advanceOn`.
+  for (const step of steps.TOUR_STEPS) {
+    if (!step.interactive) continue;
+    assert.ok(step.advanceOn, `${step.id} is interactive, so it must be a step the viewer ACTS on`);
   }
   // The root blocks nothing; the four shades block everything around the
   // hole. A box-shadow could not, which is why there are four of them.
@@ -135,19 +188,48 @@ test('the cut-out passes the press through only where pressing is the point', ()
   assert.match(OVERLAY_SRC, /useClassToggle\(spotRef, 'pointer-events-auto', !step\.interactive\)/);
 });
 
-test('the three panel steps know they need the panel, and step 7 shuts it', () => {
+test('two panel steps know they need the panel, and the step after shuts it', () => {
+  // TWO, where there were three: Workshop is a TAB since #2718, so it left
+  // the panel with the other repointed targets. Feedback did not — it went to
+  // the mark's menu for a round and the review brought it back.
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
-  for (const id of ['feedback', 'new-change', 'workshop']) {
-    assert.equal(byId[id].needsPanel, true);
+  assert.equal(byId.feedback.needsPanel, true);
+  assert.equal(byId['new-change'].needsPanel, true);
+  for (const id of ['app-menu', 'workshop', 'challenges']) {
+    assert.equal(byId[id].needsPanel, undefined, `${id} does not need the menu`);
   }
-  assert.equal(byId.improve.needsPanel, undefined, 'the Improve step stands on its own');
-  assert.equal(byId.challenges.closesPanel, true);
+  assert.equal(byId['app-menu'].needsPanel, undefined,
+    'the Improve step needs no panel: its target is a row of the app\'s own '
+    + 'menu, which it presents for itself');
+  // AND THE STEP AFTER THEM SHUTS IT. The mark is in the HEADER, and a panel
+  // drawn over the header would put the cut-out around something the viewer
+  // cannot see, so the close moved up to the menu step from Challenges —
+  // which still carries it, for a viewer who never opened the panel at all.
+  assert.equal(byId.workshop.closesPanel, true);
   // Closed through the controller's own path, never by writing to the
-  // panel's DOM, which React owns.
-  assert.match(OVERLAY_SRC, /if \(!stepAt\(index\)\.closesPanel\) return;\s*\n\s*if \(!panelOpenNow\(\)\) return;\s*\n\s*void Improve\.close\(\);/);
-  assert.doesNotMatch(OVERLAY_SRC, /getElementById\('improve-panel'\)\.(?:classList|innerHTML|style)/);
+  // panel's DOM, which React owns. Both surfaces, because the steps that
+  // carry `closesPanel` spotlight the header and either one drawn over it
+  // would hide the thing the cut-out is drawn around.
+  assert.match(OVERLAY_SRC, /if \(!stepAt\(index\)\.closesPanel\) return;\s*\n\s*if \(panelOpenNow\(\)\) void Improve\.close\(\);\s*\n\s*if \(appContextStore\.get\(\)\.open\) void AppContext\.close\(\);/);
+  assert.doesNotMatch(OVERLAY_SRC, /getElementById\('apps-switcher-sheet'\)\.(?:classList|innerHTML|style)/);
+  assert.doesNotMatch(OVERLAY_SRC, /getElementById\('apps-switcher-sheet'\)\.(?:classList|innerHTML|style)/);
 });
 
+test('the menu step arrives with the menu shut, and presents nothing', () => {
+  // `opensSheet` RETIRED WITH THE PANEL (#2718 review). It existed because the
+  // step's target was a ROW INSIDE the menu, which has no box for
+  // ./spotlight.ts to find while the menu is closed — so the tour had to
+  // present the surface before it could point at anything. The target is the
+  // MARK now, on screen on every route, so there is nothing to present.
+  assert.ok(!steps.TOUR_STEPS.some((s) => 'opensSheet' in s), 'the flag is gone');
+  assert.doesNotMatch(STEPS_SRC, /opensSheet/);
+  // What is left is the other half: arriving with the menu already up means
+  // the edge into `open` never fires and the step cannot advance.
+  const guard = OVERLAY_SRC.slice(
+    OVERLAY_SRC.indexOf("if (stepAt(index).advanceOn !== 'menu-open') return;"));
+  const body = guard.slice(0, guard.indexOf('}, ['));
+  assert.match(body, /if \(panelOpenNow\(\)\) void Improve\.close\(\);/);
+});
 test('the tour pauses for anything else on screen, and resumes where the rule says', () => {
   // Paused is derived from the two things that mean "not on Home, alone":
   // Home is not the visible screen, or the kit has presented something that
@@ -156,6 +238,16 @@ test('the tour pauses for anything else on screen, and resumes where the rule sa
   assert.match(OVERLAY_SRC, /const live = open && !paused;/);
   assert.match(OVERLAY_SRC, /useHiddenClass\(rootRef, !live\)/);
   assert.match(OVERLAY_SRC, /const KIT_SURFACES = '\.un-modal, \.un-sheet, \.un-alert'/);
+  // …minus the two surfaces the tour drives itself. The app's own menu joined
+  // the Improve panel with #2718 and it is load-bearing rather than tidy: on
+  // touch that sheet is adopted into a `.un-sheet`, so a tour that paused for
+  // it would open the menu on the Improve step and hide itself in the same
+  // frame — a presented sheet and no card, on the surface the tour is most
+  // often run on.
+  // ONE SURFACE NOW, not two: the Improve panel retired and its actions are
+  // rows of this one (#2718 review).
+  assert.match(OVERLAY_SRC, /const TOUR_OWNED_SURFACES = \['#apps-switcher-sheet'\];/);
+  assert.match(OVERLAY_SRC, /if \(!TOUR_OWNED_SURFACES\.some\(\(sel\) => el\.querySelector\(sel\)\)\) return true;/);
   assert.match(OVERLAY_SRC, /new MutationObserver\(read\)/);
   // A panel step with no panel resumes at the Improve step, and only once
   // the flow that took the viewer away has finished (`live`, not `open`).
@@ -166,18 +258,20 @@ test('the tour pauses for anything else on screen, and resumes where the rule sa
   assert.match(OVERLAY_SRC, /\}, \[live, index, panelOpen\]\);/);
 });
 
-test('Back onto the Improve step shuts the panel, so the step always reads the same', () => {
-  // Arriving with the panel already up would be a dead end: the step ends on
-  // the panel OPENING and there is no edge left to wait for.
-  const guard = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf("if (stepAt(index).advanceOn !== 'improve-open') return;"));
+test('Back onto the menu step arrives with the menu shut', () => {
+  // Arriving with it already up would be a dead end: the step ends on the menu
+  // OPENING and there is no edge left to wait for. It used to also PRESENT a
+  // surface, because its target was a row inside one; the target is the mark
+  // now, so the chained open retired with `opensSheet` and what is left is the
+  // shut.
+  const guard = OVERLAY_SRC.slice(
+    OVERLAY_SRC.indexOf("if (stepAt(index).advanceOn !== 'menu-open') return;"));
   const body = guard.slice(0, guard.indexOf('}, ['));
-  assert.match(body, /if \(!panelOpenNow\(\)\) return;/);
-  assert.match(body, /void Improve\.close\(\);/);
+  assert.match(body, /if \(panelOpenNow\(\)\) void Improve\.close\(\);/);
   // Back itself is a plain step move; the effect above is what handles the
-  // panel, so it covers every way of landing there.
+  // menu, so it covers every way of landing there.
   assert.match(OVERLAY_SRC, /const goBack = useCallback\(\(\) => setIndex\(clampIndex\(indexRef\.current - 1\)\), \[\]\);/);
 });
-
 test('Next, Back and Finish cannot walk off either end', () => {
   assert.equal(steps.clampIndex(-3), 0);
   assert.equal(steps.clampIndex(99), 7);
@@ -493,11 +587,16 @@ test('a reload resumes where the viewer was, and a panel step at the Improve ste
   assert.equal(steps.resumeIndex(null), 0, 'nothing kept: from the top');
   assert.equal(steps.resumeIndex(1), 1);
   assert.equal(steps.resumeIndex(7), 7);
-  // A fresh document has no Improve panel open, so the three panel steps
-  // cannot be resumed as themselves: the arc restarts at "press Improve".
-  for (const saved of [3, 4, 5]) {
-    assert.equal(steps.resumeIndex(saved), steps.IMPROVE_STEP_INDEX, `step ${saved + 1} resumes at Improve`);
-  }
+  // A fresh document has no Improve panel open, so a panel step cannot be
+  // resumed as itself: the arc restarts at "press Improve". TWO steps are in
+  // the panel (Give feedback, New change), where three were before #2718 made
+  // Workshop a tab.
+  assert.equal(steps.resumeIndex(3), steps.IMPROVE_STEP_INDEX, 'step 4 resumes at the menu');
+  assert.equal(steps.resumeIndex(4), steps.IMPROVE_STEP_INDEX, 'and so does step 5');
+  // …and the ones that are not in it resume where they are, because the mark
+  // and the Workshop tab are on screen in a fresh document.
+  assert.equal(steps.resumeIndex(5), 5, 'Workshop resumes as itself');
+  assert.equal(steps.resumeIndex(6), 6, 'and so does Challenges');
   assert.equal(steps.resumeIndex(99), 7, 'clamped like every other index');
   assert.equal(steps.resumeIndex(Number.NaN), 0);
 });
@@ -569,7 +668,6 @@ test('visibility rides refs, never a rendered className', () => {
     'useHiddenClass(rootRef, !live)',
     'useHiddenClass(bodyRef, confirming)',
     'useHiddenClass(confirmRef, !confirming)',
-    'useHiddenClass(nextRef, !showsNext)',
   ]) {
     assert.ok(OVERLAY_SRC.includes(call), `${call} is how that node hides`);
   }

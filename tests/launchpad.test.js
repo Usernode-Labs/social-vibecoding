@@ -115,7 +115,11 @@ test('the composer is HIDDEN, never removed', () => {
   // #1078: the composer is a component, so the swap is a `hidden` FIELD of
   // its model rather than an interpolation in the template. Same guarantee,
   // read on both halves of the seam.
-  assert.match(DEV_CHAT_SRC, /hidden: !!DevChat\._launchpadVenue\(\),/,
+  // #2779 adds the one other reason the composer gives way: a change its
+  // owner started from an agent session is revised in that conversation, and
+  // a banner leads there. Same field, same hidden-not-removed guarantee.
+  assert.match(DEV_CHAT_SRC,
+    /hidden: !!DevChat\._launchpadVenue\(\) \|\| !!DevChat\._agentSessionBannerView\(DevChat\.currentSession\),/,
     'the model carries the swap');
   const VIEW_TSX2 = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
@@ -277,8 +281,10 @@ test('dismissing a launchpad repaints BOTH halves of the swap', () => {
   assert.doesNotMatch(fn[0], /renderChatView\(\)/,
     'and neither needs the screen rebuilt to land');
   // Both read the same predicate, so they cannot disagree about the swap.
+  // (The composer's `hidden` also has #2779's agent-session clause, pinned
+  // above; that one has no launchpad and so no slot to agree with.)
   assert.match(DEV_CHAT_SRC, /barEmpty: !!DevChat\._launchpadVenue\(\)/);
-  assert.match(DEV_CHAT_SRC, /hidden: !!DevChat\._launchpadVenue\(\),/);
+  assert.match(DEV_CHAT_SRC, /hidden: !!DevChat\._launchpadVenue\(\) \|\| /);
 });
 
 test('the web launchpad takes its vendor from the VENUE, not the flow target', () => {

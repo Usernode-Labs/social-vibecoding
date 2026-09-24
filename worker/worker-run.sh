@@ -158,6 +158,7 @@ JSON
 #                contributes the SwiftShader launch args.
 #   --headless : no display in the worker; Chromium runs headless.
 #   --isolated : ephemeral profile per session, no on-disk profile state.
+#   --no-sandbox : Chromium's own sandbox cannot start in the worker container.
 #   --config   : the software-WebGL launch args seeded just above.
 # `npx @playwright/mcp` resolves the globally-installed pinned package, so
 # there's no network fetch at launch, and Chromium itself launches lazily
@@ -172,7 +173,7 @@ cat > "$BROWSER_MCP_CONFIG" <<JSON
     },
     "playwright": {
       "command": "npx",
-      "args": ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--config", "$BROWSER_PW_CONFIG"]
+      "args": ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG"]
     }
   }
 }

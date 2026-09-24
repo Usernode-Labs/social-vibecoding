@@ -21,7 +21,7 @@ const TRANSITIONS = Object.freeze({
   planned: new Set(['provisioning', 'failed', 'cancelled']),
   provisioning: new Set(['exploring', 'failed', 'cancelled']),
   exploring: new Set(['replaying', 'failed', 'cancelled']),
-  replaying: new Set(['reviewing', 'failed', 'cancelled']),
+  replaying: new Set(['replaying', 'reviewing', 'failed', 'cancelled']),
   reviewing: new Set(['replaying', 'verified', 'failed', 'cancelled']),
   verified: new Set(['stale']),
   failed: new Set(['stale']),
@@ -324,6 +324,7 @@ function runSummary(row, artifactSummary = []) {
   const intent = row.intent && typeof row.intent === 'object' ? row.intent : null;
   const trace = row.trace_summary && typeof row.trace_summary === 'object'
     ? row.trace_summary : null;
+  const progress = trace?.progress;
   return {
     state: row.state,
     // A heuristic may keep an explicit `impact:none` declaration in the
@@ -341,6 +342,9 @@ function runSummary(row, artifactSummary = []) {
     repairCount: Number.isInteger(Number(row.repair_attempt))
       ? Math.max(0, Math.min(1, Number(row.repair_attempt))) : 0,
     relativePointer: trace?.relativePointer === true,
+    progress: progress && typeof progress.phase === 'string'
+      && /^[a-z][a-z0-9_-]{0,63}$/.test(progress.phase)
+      ? { phase: progress.phase, at: progress.at || null } : null,
     verifiedReason: null,
     overriddenBy: row.override_user_id || null,
     overriddenAt: row.overridden_at || null,
@@ -350,76 +354,106 @@ function runSummary(row, artifactSummary = []) {
   };
 }
 
-async function createRun(pool, {
+async function createRunWithClient(client, {
   sessionId, baseSha, headSha, intent: rawIntent, trigger = null, heuristicUi = false,
+  authorPlan: rawAuthorPlan = null,
 }) {
   if (!validSha(baseSha) || !validSha(headSha)) {
     throw new VisualEvidenceStateError('invalid_evidence_revision', 'Visual evidence requires exact 40-character base and head SHAs.', 400);
   }
   const intent = planContract.parseIntent(rawIntent);
+  const authorPlan = rawAuthorPlan == null ? null : planContract.parseReplayPlan(rawAuthorPlan);
+  if (authorPlan && planContract.canonicalJson(planContract.semanticIntentFromPlan(authorPlan))
+      !== planContract.canonicalJson(intent)) {
+    throw new VisualEvidenceStateError('evidence_intent_mismatch', 'The author plan changes the accepted visual evidence intent.', 400);
+  }
   const required = requiredForIntent(intent, { heuristicUi });
   const initialState = intent.impact === 'none' && !required ? 'not_required' : 'planned';
   const id = newId();
 
-  return withTransaction(pool, async (client) => {
-    const locked = await client.query(
-      'SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE',
-      [sessionId]
-    );
-    if (!locked.rows[0]) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
-    const existing = await client.query(
-      `SELECT * FROM visual_evidence_runs
-        WHERE session_id = $1 AND head_sha = $2
-          AND state NOT IN ('stale', 'cancelled')
-        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [sessionId, headSha]
-    );
-    if (existing.rows[0]) return { created: false, run: existing.rows[0] };
-
-    // In-flight work for an older revision is cancelled; a terminal verdict
-    // becomes stale. Both happen before the session pointer moves.
-    await client.query(
-      `UPDATE visual_evidence_runs
-          SET state = CASE
-                WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
-                  THEN 'cancelled'
-                ELSE 'stale'
-              END,
-              completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
-        WHERE session_id = $1 AND head_sha <> $2
-          AND state NOT IN ('stale','cancelled')`,
-      [sessionId, headSha]
-    );
-
-    const inserted = await client.query(
-      `INSERT INTO visual_evidence_runs
-         (id, session_id, base_sha, head_sha, plan_version, intent, state,
-          trigger, completed_at)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::varchar(24), $8,
-          CASE WHEN $7::varchar(24) = 'not_required' THEN NOW() END)
-       RETURNING *`,
-      [id, sessionId, baseSha, headSha, planContract.PLAN_VERSION,
-       JSON.stringify(intent), initialState, clip(trigger, 32)]
-    );
-    const run = inserted.rows[0];
-    const detail = {
-      ...pendingDetail(intent, { heuristicUi, headSha }),
-      runId: id,
-      baseSha,
-      state: initialState,
-    };
+  const locked = await client.query(
+    'SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE',
+    [sessionId]
+  );
+  if (!locked.rows[0]) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
+  const existing = await client.query(
+    `SELECT * FROM visual_evidence_runs
+      WHERE session_id = $1 AND head_sha = $2
+        AND state NOT IN ('stale', 'cancelled')
+      ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+    [sessionId, headSha]
+  );
+  if (existing.rows[0]) {
+    const run = existing.rows[0];
+    if (!authorPlan) return { created: false, run };
+    if (run.state !== 'planned') return { created: false, run };
+    if (run.base_sha !== baseSha || planContract.canonicalJson(run.intent) !== planContract.canonicalJson(intent)) {
+      throw new VisualEvidenceStateError('evidence_revision_mismatch', 'The existing evidence run belongs to another revision or claim.');
+    }
     const updated = await client.query(
-      `UPDATE chat_sessions
-          SET visual_evidence_state = $2,
-              visual_evidence_run_id = $3,
-              visual_evidence_detail = $4::jsonb,
-              visual_evidence_updated_at = NOW()
-        WHERE id = $1`,
-      [sessionId, initialState, id, JSON.stringify(detail)]
+      `UPDATE visual_evidence_runs SET author_plan = $2::jsonb, updated_at = NOW()
+        WHERE id = $1 RETURNING *`,
+      [run.id, JSON.stringify(authorPlan)]
     );
-    if (!updated.rowCount) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
-    return { created: true, run };
-  });
+    return { created: false, run: updated.rows[0] };
+  }
+
+  // In-flight work for an older revision is cancelled; a terminal verdict
+  // becomes stale. Both happen before the session pointer moves.
+  await client.query(
+    `UPDATE visual_evidence_runs
+        SET state = CASE
+              WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
+                THEN 'cancelled'
+              ELSE 'stale'
+            END,
+            completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
+      WHERE session_id = $1 AND head_sha <> $2
+        AND state NOT IN ('stale','cancelled')`,
+    [sessionId, headSha]
+  );
+
+  const inserted = await client.query(
+    `INSERT INTO visual_evidence_runs
+       (id, session_id, base_sha, head_sha, plan_version, intent, author_plan, state,
+        trigger, completed_at)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $9::jsonb, $7::varchar(24), $8,
+        CASE WHEN $7::varchar(24) = 'not_required' THEN NOW() END)
+     RETURNING *`,
+    [id, sessionId, baseSha, headSha, planContract.PLAN_VERSION,
+     JSON.stringify(intent), initialState, clip(trigger, 32),
+     authorPlan ? JSON.stringify(authorPlan) : null]
+  );
+  const run = inserted.rows[0];
+  const detail = {
+    ...pendingDetail(intent, { heuristicUi, headSha }),
+    runId: id,
+    baseSha,
+    state: initialState,
+  };
+  const updated = await client.query(
+    `UPDATE chat_sessions
+        SET visual_evidence_state = $2,
+            visual_evidence_run_id = $3,
+            visual_evidence_detail = $4::jsonb,
+            visual_evidence_updated_at = NOW()
+      WHERE id = $1`,
+    [sessionId, initialState, id, JSON.stringify(detail)]
+  );
+  if (!updated.rowCount) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
+  return { created: true, run };
+}
+
+async function createRun(pool, options) {
+  return withTransaction(pool, (client) => createRunWithClient(client, options));
+}
+
+// Import already owns the session INSERT transaction. Store the typed plan
+// with the run before committing that session, so no checks/recovery worker
+// can start a different planner in the gap after import.
+async function createRunInTransaction(client, options) {
+  if (!client || typeof client.query !== 'function') throw new TypeError('A transaction client is required');
+  return createRunWithClient(client, options);
 }
 
 function assertTransitionPayload(row, next, patch) {
@@ -476,8 +510,28 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
         'This run no longer owns the proposal evidence slot.'
       );
     }
+    // Recovery reads the run before acquiring this lock. A heartbeat may
+    // renew it in between, so check the idle interval again under the lock
+    // before failing it or removing its resources.
+    if (Object.prototype.hasOwnProperty.call(patch, 'recoveryMinIdleMs')) {
+      const idleMs = Date.now() - new Date(row.updated_at).getTime();
+      if (!Number.isFinite(idleMs) || idleMs < patch.recoveryMinIdleMs) {
+        throw new VisualEvidenceStateError(
+          'evidence_run_active', 'This visual evidence run is still active.'
+        );
+      }
+      delete patch.recoveryMinIdleMs;
+    }
     assertTransition(row.state, nextState);
     assertTransitionPayload(row, nextState, patch);
+    if (row.state === 'replaying' && nextState === 'replaying'
+        && (patch.repairAttempt !== 1 || Number(row.repair_attempt || 0) !== 0
+          || patch.planHash === row.plan_hash)) {
+      throw new VisualEvidenceStateError(
+        'invalid_evidence_repair',
+        'Only one changed replay plan may replace a failed first replay.'
+      );
+    }
 
     const sets = ['state = $2', 'updated_at = NOW()'];
     const values = [runId, nextState];
@@ -528,6 +582,43 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     }
     return next;
   });
+}
+
+// A fire-and-forget evidence run belongs to a web process. Keep a durable
+// lease while that process is alive so a rollout can be distinguished from a
+// slow checkout, clone, or image build. Only the current active run may renew
+// its lease; a late heartbeat cannot revive a failed or superseded run.
+async function heartbeatRun(pool, runId, phase, progress = null) {
+  if (!/^[0-9a-f]{32}$/.test(String(runId || ''))
+      || !/^[a-z][a-z0-9_-]{0,63}$/.test(String(phase || ''))) {
+    throw new VisualEvidenceStateError('invalid_evidence_heartbeat', 'Evidence heartbeat identity or phase is invalid.', 400);
+  }
+  const progressPatch = progress == null ? null : JSON.stringify({
+    ...(progress.lastReplayEvent || Array.isArray(progress.replayEvents) ? {
+      lastReplayEvent: progress.lastReplayEvent || null,
+      replayEvents: Array.isArray(progress.replayEvents)
+        ? progress.replayEvents.slice(-40) : [],
+    } : {}),
+    ...(progress.agentActivity ? { agentActivity: progress.agentActivity } : {}),
+    ...(progress.agentFinalResponse ? { agentFinalResponse: progress.agentFinalResponse } : {}),
+  });
+  if (progressPatch && progressPatch.length > 64_000) {
+    throw new VisualEvidenceStateError('invalid_evidence_heartbeat', 'Evidence heartbeat trace is too large.', 400);
+  }
+  const result = await pool.query(
+    `UPDATE visual_evidence_runs r
+        SET updated_at = NOW(),
+            trace_summary = jsonb_set(
+              COALESCE(r.trace_summary, '{}'::jsonb), '{progress}',
+              jsonb_build_object('phase', $2::text, 'at', NOW()), true)
+              || COALESCE($3::jsonb, '{}'::jsonb)
+       FROM chat_sessions s
+      WHERE r.id = $1 AND s.id = r.session_id
+        AND s.visual_evidence_run_id = r.id
+        AND r.state IN ('provisioning','exploring','replaying','reviewing')`,
+    [runId, phase, progressPatch]
+  );
+  return { active: (result.rowCount || 0) > 0 };
 }
 
 async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer proposal revision superseded this visual change preview.') {
@@ -664,7 +755,9 @@ async function getRun(pool, runId, { forUpdate = false } = {}) {
 // A same-head retry creates a new immutable run rather than rewinding the old
 // row. This preserves the failed/verified audit record while the partial
 // unique index guarantees there is still one reviewer-visible owner.
-async function rerunSameHead(pool, runId, { trigger = 'manual-rerun', intent: replacementIntent = null } = {}) {
+async function rerunSameHead(pool, runId, {
+  trigger = 'manual-rerun', intent: replacementIntent = null, authorPlan: replacementPlan = undefined,
+} = {}) {
   return withTransaction(pool, async (client) => {
     const old = await getRun(client, runId, { forUpdate: true });
     if (!['failed', 'verified', 'overridden', 'not_required'].includes(old.state)) {
@@ -674,6 +767,12 @@ async function rerunSameHead(pool, runId, { trigger = 'manual-rerun', intent: re
       throw new VisualEvidenceStateError('stale_evidence_operation', 'Only the proposal\'s current evidence run can be rerun.');
     }
     const intent = planContract.parseIntent(replacementIntent || old.intent);
+    const authorPlan = replacementPlan === undefined ? old.author_plan
+      : (replacementPlan == null ? null : planContract.parseReplayPlan(replacementPlan));
+    if (authorPlan && planContract.canonicalJson(planContract.semanticIntentFromPlan(authorPlan))
+        !== planContract.canonicalJson(intent)) {
+      throw new VisualEvidenceStateError('evidence_intent_mismatch', 'The replacement plan changes the accepted visual evidence intent.', 400);
+    }
     const heuristicUi = old.current_evidence_detail?.required === true && intent.impact === 'none';
     const required = requiredForIntent(intent, { heuristicUi });
     const initialState = intent.impact === 'none' && !required ? 'not_required' : 'planned';
@@ -686,13 +785,14 @@ async function rerunSameHead(pool, runId, { trigger = 'manual-rerun', intent: re
     const id = newId();
     const inserted = await client.query(
       `INSERT INTO visual_evidence_runs
-         (id, session_id, base_sha, head_sha, plan_version, intent, state,
+         (id, session_id, base_sha, head_sha, plan_version, intent, author_plan, state,
           trigger, completed_at)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::varchar(24), $8,
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $9::jsonb, $7::varchar(24), $8,
           CASE WHEN $7::varchar(24) = 'not_required' THEN NOW() END)
        RETURNING *`,
       [id, old.session_id, old.base_sha, old.head_sha, planContract.PLAN_VERSION,
-       JSON.stringify(intent), initialState, clip(trigger, 32)]
+       JSON.stringify(intent), initialState, clip(trigger, 32),
+       authorPlan ? JSON.stringify(authorPlan) : null]
     );
     const next = inserted.rows[0];
     const updated = await client.query(
@@ -816,7 +916,9 @@ module.exports = {
   requireIntentForUiChange,
   clearIntent,
   createRun,
+  createRunInTransaction,
   transitionRun,
+  heartbeatRun,
   markStaleForHead,
   overrideRun,
   getRun,

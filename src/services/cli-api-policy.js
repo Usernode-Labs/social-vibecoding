@@ -150,9 +150,9 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // the exact-revision replay and verifies the resulting media; this grants
   // no ability to publish a screenshot or declare evidence verified.
   { method: 'POST', pattern: '/api/apps/:slug/proposals/:id/evidence/plan' },
-  // Failure diagnostics are read-only and the handler requires the proposal
-  // owner. A connector needs this exact route to retrieve the replay plan
-  // and error for a local reproduction without infrastructure credentials.
+  // Evidence diagnostics are read-only and the handler requires the proposal
+  // owner or an app manager. A connector needs this exact route to retrieve
+  // the replay plan and trace without infrastructure credentials.
   { method: 'GET', pattern: '/api/apps/:slug/proposals/:id/evidence/diagnostics' },
   // Sharing work to the IN-PROGRESS area instead of putting it to a vote
   // (#1347). Allowlisted for the same reason as the route above: the agent
@@ -171,6 +171,12 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // (id, user_id), so a connector can only ever reopen the caller's own
   // session (see the owner-scope tests beside promote's).
   { method: 'POST', pattern: '/api/sessions/:id/resume' },
+  // recheck_change (#2779): re-run the checks on a proposal's CURRENT commit.
+  // No code moves and no vote is touched — it is the same act as the "Re-run
+  // checks" button, and submit_work's `recheck: true` already reaches it
+  // through the update route. The handler refuses anyone but the owner or a
+  // write-admin, and a proposal that is no longer open.
+  { method: 'POST', pattern: '/api/sessions/:id/recheck' },
   // Demo mode (routes/demo-mode.js): the one deliberate exception to the
   // note above, so it is worth being exact. These five let a connected agent
   // drive a RECORDING of the proposal flow: a synthetic partner proposes,
@@ -191,6 +197,69 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/apps/:slug/demo/vote' },
   { method: 'POST', pattern: '/api/apps/:slug/demo/reset' },
 ]);
+
+// ── Delegated grants (#2779) ───────────────────────────────────────────
+//
+// A delegated token is the platform's OWN agent acting for the user, and each
+// kind gets its own exhaustive list — never the external list above, and
+// never the CLI denylist. The same fail-closed rule holds: a route not named
+// for that kind is refused, whatever the token's scopes say.
+//
+// `agent_mayor` — the Mayor of an agent session. Every read its tools make,
+// the request writes the external list already carries, and the change
+// lifecycle of the user's own native changes: create, promote, resume,
+// re-check, sync with main, withdraw. What is here and NOT on the external
+// list is exactly the three routes the classic dev chat's own buttons call,
+// each owner-scoped by its handler; and every write a Mayor makes is one the
+// user confirmed first (the token for it is minted at that moment and lives
+// for one action). Still nothing that votes, merges, touches settings,
+// secrets or membership.
+const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
+  { method: 'GET', pattern: '/api/apps' },
+  { method: 'GET', pattern: '/api/apps/:slug' },
+  { method: 'GET', pattern: '/api/apps/:slug/github-issues' },
+  { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number/comments' },
+  { method: 'POST', pattern: '/api/apps/:slug/github-issues/:number/claim' },
+  { method: 'DELETE', pattern: '/api/apps/:slug/github-issues/:number/claim' },
+  { method: 'GET', pattern: '/api/apps/:slug/promoted' },
+  { method: 'GET', pattern: '/api/apps/:slug/messages' },
+  { method: 'POST', pattern: '/api/apps/:slug/messages' },
+  { method: 'POST', pattern: '/api/apps/:slug/issues' },
+  { method: 'GET', pattern: '/api/me/active-sessions' },
+  { method: 'GET', pattern: '/api/sessions/:id' },
+  { method: 'GET', pattern: '/api/sessions/:id/status' },
+  { method: 'GET', pattern: '/api/sessions/:id/spec' },
+  { method: 'PATCH', pattern: '/api/sessions/:id/linked-issues' },
+  // The change lifecycle (start_change, promote_change, recheck_change,
+  // sync_change, withdraw_change). start_change names the change on the
+  // create itself, so the rename route is not on this list.
+  { method: 'POST', pattern: '/api/apps/:slug/sessions' },
+  { method: 'POST', pattern: '/api/sessions/:id/promote' },
+  { method: 'POST', pattern: '/api/sessions/:id/resume' },
+  { method: 'POST', pattern: '/api/sessions/:id/recheck' },
+  { method: 'POST', pattern: '/api/sessions/:id/sync-main' },
+  { method: 'POST', pattern: '/api/sessions/:id/archive' },
+]);
+
+// `worker_read` — the coding agent inside one change's worker. It runs the
+// repository's own code with a shell, so assume it can read its token: GETs
+// only, and only what its six read tools need. The bearer chain additionally
+// pins every `:slug` to the grant's app and every `:id` to a change in that
+// app (see delegatedRouteBinding), so the worst a leaked token does is read
+// one app the user can already see.
+const WORKER_READ_ALLOWED_ROUTES = Object.freeze([
+  { method: 'GET', pattern: '/api/apps/:slug' },
+  { method: 'GET', pattern: '/api/apps/:slug/github-issues' },
+  { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number/comments' },
+  { method: 'GET', pattern: '/api/apps/:slug/promoted' },
+  { method: 'GET', pattern: '/api/sessions/:id' },
+  { method: 'GET', pattern: '/api/sessions/:id/status' },
+]);
+
+const DELEGATED_ALLOWED_ROUTES = Object.freeze({
+  agent_mayor: AGENT_MAYOR_ALLOWED_ROUTES,
+  worker_read: WORKER_READ_ALLOWED_ROUTES,
+});
 
 function matchesPattern(pathname, pattern) {
   const actual = pathname.split('/');
@@ -218,6 +287,37 @@ function isConnectorApiRequest(method, pathname) {
   );
 }
 
+// The delegated twin of isConnectorApiRequest: the same canonical-target
+// wall underneath, then the kind's own list. An unknown kind reaches nothing.
+function isDelegatedApiRequest(kind, method, pathname) {
+  const routes = Object.prototype.hasOwnProperty.call(DELEGATED_ALLOWED_ROUTES, kind)
+    ? DELEGATED_ALLOWED_ROUTES[kind] : null;
+  if (!routes || typeof method !== 'string' || typeof pathname !== 'string') return false;
+  if (canonicalApiTarget(pathname) !== pathname) return false;
+  const upper = method.toUpperCase();
+  return routes.some((route) => route.method === upper && matchesPattern(pathname, route.pattern));
+}
+
+// The app and change a delegated request names, read off the matched route
+// pattern so the bearer chain can hold a bound grant to them. `slug` is the
+// `:slug` segment and `sessionId` the numeric `:id` segment; null when the
+// route has neither. A non-numeric `:id` is reported as NaN, which no change
+// matches.
+function delegatedRouteBinding(kind, method, pathname) {
+  const routes = DELEGATED_ALLOWED_ROUTES[kind] || [];
+  const upper = String(method || '').toUpperCase();
+  const route = routes.find((r) => r.method === upper && matchesPattern(pathname, r.pattern));
+  if (!route) return null;
+  const actual = pathname.split('/');
+  const expected = route.pattern.split('/');
+  const binding = { slug: null, sessionId: null };
+  expected.forEach((segment, i) => {
+    if (segment === ':slug') binding.slug = actual[i];
+    if (segment === ':id') binding.sessionId = /^[1-9]\d{0,9}$/.test(actual[i]) ? Number(actual[i]) : NaN;
+  });
+  return binding;
+}
+
 // Secret-declaration proposals use otherwise-generic session endpoints for
 // voting, force-merging, withdrawal, and restoration. Those endpoints cannot
 // be denied by pathname without also disabling ordinary PR workflows, so the
@@ -235,8 +335,12 @@ module.exports = {
   DENIED_SEGMENTS,
   SECRET_DECLARATION_BRANCH_PREFIX,
   CONNECTOR_ALLOWED_ROUTES,
+  AGENT_MAYOR_ALLOWED_ROUTES,
+  WORKER_READ_ALLOWED_ROUTES,
   canonicalApiTarget,
   isCliApiPath,
   isConnectorApiRequest,
+  isDelegatedApiRequest,
+  delegatedRouteBinding,
   isCliCredentialManagementSession,
 };

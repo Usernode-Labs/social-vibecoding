@@ -80,6 +80,7 @@ async function migrate(config) {
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
+  await seedStagingAgentSession(pool, config);
   await seedStagingSavedDrafts(pool, config);
   await seedStagingDraftDelete(pool, config);
   await seedStagingVenueLine(pool, config);
@@ -132,6 +133,7 @@ async function migrate(config) {
   await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingRestartRecoveredPills(pool, config);
+  await seedStagingGeneralChannel(pool);
   await seedStagingQuickReplyFallback(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
@@ -1125,6 +1127,59 @@ async function seedStagingDemoUser(pool) {
     log.info('db', 'Staging demo user seeded', { id: 900001 });
   } catch (err) {
     log.warn('db', 'Staging demo user seeding failed', { message: err.message });
+  }
+}
+
+// #2783: a few obviously-fake lines in #general, so the staging preview of
+// the Messages channels section opens on a room with something in it.
+//
+// `conversations` and its message table are staging:private, so a clone
+// starts with the room (schema.sql recreates it on every boot) and no
+// history. Two fake speakers of their own, never the viewer: the checks read
+// the room as the view-only check user, and seeding THAT user's words would
+// fabricate the thing being checked. Idempotent through the messages'
+// idempotency keys; strictly a no-op outside staging.
+async function seedStagingGeneralChannel(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (902783, 'staging-demo-general-ada', 'staging-demo-not-a-login'),
+              (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    const room = await pool.query(
+      `SELECT id FROM conversations WHERE channel_key = 'general' AND kind = 'channel'`
+    );
+    const roomId = room.rows[0]?.id;
+    if (!roomId) return;
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN (902783, 902784)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [roomId]
+    );
+    const lines = [
+      [902783, 'staging-general-1', 'Staging demo: welcome to #general, the room everybody is in.', '3 hours'],
+      [902783, 'staging-general-2', 'Staging demo: consecutive lines from one person group under one name.', '2 hours 59 minutes'],
+      [902784, 'staging-general-3', 'Staging demo: and a reference to issue #1 still reads as an issue.', '2 hours'],
+    ];
+    for (const [sender, key, content, ago] of lines) {
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - $5::interval)
+         ON CONFLICT (conversation_id, sender_id, idempotency_key)
+           WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+         DO NOTHING`,
+        [roomId, sender, content, key, ago]
+      );
+    }
+    log.info('db', 'Staging #general fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging #general seeding failed', { message: err.message });
   }
 }
 
@@ -2746,6 +2801,101 @@ async function seedStagingStartScreenSession(pool, config) {
     owner: owner.username,
     sessionId: STAGING_START_SCREEN_SESSION_ID,
     inserted: rowCount,
+  });
+}
+
+// #2779: an agent session for the declared checks to open.
+//
+// A conversation with the Mayor, owned by the check viewer, focused on the
+// platform app, with one change started from it and one confirmation card
+// still waiting: the four things the conversation screen draws that a
+// staging clone has none of (agent_sessions, agent_session_actions and
+// chat_sessions are all staging:private). Checks load it at #agent/990801,
+// #agent/990801/changes and #messages/agent/990801.
+//
+// The card can never run: its sealed input is a placeholder that fails the
+// fingerprint check, so a Confirm pressed on staging reports that it could
+// not go through. Its expiry is pushed forward on every boot so the card
+// stays pending for as long as the preview lives. The transcript rows are
+// written once. The viewer's agent-sessions flag is NOT turned on, so every
+// classic flow the other checks load is unchanged.
+//
+// Idempotent on the ids; strict no-op in production.
+const STAGING_AGENT_SESSION_ID = 990801;
+const STAGING_AGENT_CHANGE_ID = 990802;
+const STAGING_AGENT_CARD_ID = '99080100-0000-4000-8000-000000000001';
+
+async function seedStagingAgentSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { rows: appRows } = await pool.query('SELECT id, name FROM apps WHERE slug = $1', [config.selfAppSlug]);
+  const app = appRows[0];
+  if (!app) {
+    log.warn('db', 'Staging agent-session fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+  const owner = await getStagingCheckViewer(pool, 'Staging agent-session fixture');
+  if (!owner) return;
+
+  await pool.query(
+    `INSERT INTO agent_sessions (id, user_id, title, title_source, status, focus_app_id, focus_context,
+                                 last_activity_at, created_at)
+     VALUES ($1, $2, '[staging fixture] Dark mode for the dev board', 'manual', 'open', $3,
+             '{"entry":"improve"}'::jsonb, NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '5 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, status = 'open', archived_at = NULL,
+                                    focus_app_id = EXCLUDED.focus_app_id`,
+    [STAGING_AGENT_SESSION_ID, owner.id, app.id]
+  );
+  await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, session_title, status, agent_session_id, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/agent-session', '[staging fixture] Dark mode toggle', 'active', $4,
+             NOW() - INTERVAL '4 minutes', NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, agent_session_id = EXCLUDED.agent_session_id`,
+    [STAGING_AGENT_CHANGE_ID, app.id, owner.id, STAGING_AGENT_SESSION_ID]
+  );
+  await pool.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1', [STAGING_AGENT_SESSION_ID, STAGING_AGENT_CHANGE_ID]);
+
+  const card = {
+    id: STAGING_AGENT_CARD_ID,
+    toolName: 'promote_change',
+    title: 'Put the change up for the group vote',
+    input: { changeId: STAGING_AGENT_CHANGE_ID },
+    expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+  };
+  await pool.query(
+    `INSERT INTO agent_session_actions (id, agent_session_id, user_id, tool_name, sealed_input, input_hash,
+                                        status, expires_at, created_at)
+     VALUES ($1, $2, $3, 'promote_change', '{"version":1,"ciphertext":"staging-fixture"}'::jsonb, $4,
+             'pending', NOW() + INTERVAL '30 days', NOW() - INTERVAL '1 minute')
+     ON CONFLICT (id) DO UPDATE SET status = 'pending', result = NULL, decided_at = NULL,
+                                    expires_at = EXCLUDED.expires_at, created_at = EXCLUDED.created_at`,
+    [STAGING_AGENT_CARD_ID, STAGING_AGENT_SESSION_ID, owner.id, '0'.repeat(64)]
+  );
+
+  const { rows: existing } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE agent_session_id = $1 LIMIT 1',
+    [STAGING_AGENT_SESSION_ID]
+  );
+  if (!existing.length) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES (NULL, $1, 'user', 'Add a dark mode toggle to the dev board.', '{}'::jsonb, NOW() - INTERVAL '5 minutes'),
+              (NULL, $1, 'system', $2, '{"agentSessionEvent":"change_started"}'::jsonb, NOW() - INTERVAL '4 minutes'),
+              ($3, $1, 'assistant', 'The change is started. When the preview looks right, confirm the card and I will put it up for the vote.',
+               $4::jsonb, NOW() - INTERVAL '3 minutes')`,
+      [STAGING_AGENT_SESSION_ID, `Started a change on ${app.name || 'Homeroom'}: Dark mode toggle`,
+        STAGING_AGENT_CHANGE_ID, JSON.stringify({ confirmations: [card] })]
+    );
+  } else {
+    // Keep the card's shown expiry in step with the row's.
+    await pool.query(
+      `UPDATE chat_session_messages SET metadata = $2::jsonb
+        WHERE agent_session_id = $1 AND role = 'assistant' AND metadata ? 'confirmations'`,
+      [STAGING_AGENT_SESSION_ID, JSON.stringify({ confirmations: [card] })]
+    );
+  }
+  log.info('db', 'Staging agent-session fixture seeded', {
+    owner: owner.username, agentSessionId: STAGING_AGENT_SESSION_ID, changeId: STAGING_AGENT_CHANGE_ID,
   });
 }
 

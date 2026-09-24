@@ -181,7 +181,7 @@ export function init() {
       // paths. This path was added separately and kept the old writes, so
       // the two changes were green apart and red together.
       setComposerLocked(true);
-      feedbackBtn.disabled = true;
+      disableSubmit();
       const hasBoard = typeof moment.appSlug === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(moment.appSlug);
       firstFix.disabled = !hasBoard || !moment.canFix || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0;
       firstBoard.disabled = !hasBoard;
@@ -225,11 +225,21 @@ export function init() {
     const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
     const feedbackCaretApp = document.getElementById('feedback-caret-app');
     const feedbackCaretPlatform = document.getElementById('feedback-caret-platform');
+    const feedbackTargetGroup = document.getElementById('feedback-target');
+    const feedbackTargetHint = document.getElementById('feedback-target-hint');
 
-    // Currently selected feedback target ('app' or 'platform'). The
-    // "This app" button is only enabled when an app with a repo is open,
-    // so this stays 'platform' on home/leaderboard. Reset on each open.
+    // Currently selected feedback target: 'app', 'platform', or — #2707 —
+    // null while BOTH are selectable and the person has not picked yet.
+    // Set on every open; the value here only covers the window before the
+    // first one, where the dialog is not on screen.
     let feedbackTarget = 'platform';
+    // #2707: true while the row is offering a real choice nobody has made.
+    // A submit refuses for exactly as long as this holds (#2888: the button
+    // stays live and the refusal says what is missing). It is never true in
+    // the one-destination case — there is nothing to disambiguate there, and
+    // charging a tax of one tap for it would only train people to tap past
+    // the question this change exists to ask.
+    let awaitingTarget = false;
     // #685: whether the open app announced a usernode.issueState provider
     // from the mounted iframe. Computed on each modal open; the "Include
     // app state" row shows only while this holds AND the target is 'app'.
@@ -269,29 +279,96 @@ export function init() {
     const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
     const inactiveHoverClasses = ['hover:bg-zinc-100', 'dark:hover:bg-zinc-800'];
     const disabledTargetClasses = ['opacity-40', 'cursor-not-allowed'];
-    // Toggle the active styling between the two buttons. Enabled/disabled
+    // #2707: the copy under the row while no destination is chosen. One
+    // literal, in one place, because the declared dapp.json check matches on
+    // this text — see tests/feedback-target-choice.test.js.
+    const CHOOSE_TARGET_HINT = 'Choose where this feedback goes.';
+    // `feedbackBtn.disabled` means BUSY and nothing else: submitting, saved
+    // for later, or behind the first-feedback confirmation. Taken by
+    // disableSubmit(), and only the path that took it hands it back, with
+    // enableSubmit().
+    //
+    // #2888: it used to have a second owner, the TARGET GATE — Submit stayed
+    // disabled while the destination row waited for a tap (#2707). A dead
+    // button with the reason in small grey type under a different control
+    // read as a broken button: people pressed it, nothing happened, and
+    // nothing said why. Now it is always pressable, and pressing it with no
+    // destination is a refusal that SAYS so, the #1603 rule the description
+    // follows — the row turns red, the hint turns red and is announced, and
+    // focus lands on the row. See showTargetError().
+    let submitBusy = false;
+    const enableSubmit = () => { submitBusy = false; feedbackBtn.disabled = false; };
+    const disableSubmit = () => { submitBusy = true; feedbackBtn.disabled = true; };
+    // #2888: the missed-destination state, painted on top of the waiting
+    // hint. The row's buttons and the hint carry constant React classNames,
+    // so these are toggled on (and off) beside them — `!` so the red wins
+    // over the border / text colour the className already sets, whichever
+    // order the compiled utilities land in.
+    const targetErrorClasses = ['!border-red-600', 'dark:!border-red-500', 'bg-red-50', 'dark:bg-red-950/40'];
+    const hintErrorClasses = ['!text-red-700', 'dark:!text-red-400', 'font-medium'];
+    const paintTargetError = (on) => {
+      if (on) feedbackTargetGroup?.setAttribute('aria-invalid', 'true');
+      else feedbackTargetGroup?.removeAttribute('aria-invalid');
+      targetErrorClasses.forEach((c) => {
+        feedbackTargetApp.classList.toggle(c, on);
+        feedbackTargetPlatform.classList.toggle(c, on);
+      });
+      hintErrorClasses.forEach((c) => feedbackTargetHint.classList.toggle(c, on));
+      // Announced when it appears, like #feedback-text-error (role="alert"
+      // there is static; here the same node is also the quiet prompt, which
+      // must not be read out on every open).
+      if (on) feedbackTargetHint.setAttribute('role', 'alert');
+      else feedbackTargetHint.removeAttribute('role');
+    };
+    const setAwaitingTarget = (waiting) => {
+      awaitingTarget = waiting;
+      feedbackTargetHint.textContent = waiting ? CHOOSE_TARGET_HINT : '';
+      feedbackTargetHint.classList.toggle('hidden', !waiting);
+      // Point the radiogroup at its own explanation, the way the empty
+      // description points the textarea at #feedback-text-error.
+      if (waiting) feedbackTargetGroup?.setAttribute('aria-describedby', 'feedback-target-hint');
+      else feedbackTargetGroup?.removeAttribute('aria-describedby');
+      // A fresh question is asked quietly; only a submit makes it an error.
+      paintTargetError(false);
+    };
+    // #2888: Submit was pressed with no destination. Nothing is sent; the
+    // row says what is missing and takes focus, because it is the thing to
+    // fix — the first control, so the reading order agrees.
+    const showTargetError = () => {
+      setAwaitingTarget(true);
+      paintTargetError(true);
+      try { feedbackTargetApp.focus(); } catch { /* detached in tests */ }
+    };
+    // Toggle the active styling between the two buttons — or off both, when
+    // `target` is null and the choice is still open (#2707). Enabled/disabled
     // state of the "This app" button is owned by the open handler.
     const setFeedbackTarget = (target) => {
       feedbackTarget = target;
       const onApp = target === 'app';
+      const onPlatform = target === 'platform';
       feedbackTargetApp.setAttribute('aria-checked', onApp ? 'true' : 'false');
-      feedbackTargetPlatform.setAttribute('aria-checked', onApp ? 'false' : 'true');
+      feedbackTargetPlatform.setAttribute('aria-checked', onPlatform ? 'true' : 'false');
       activeTargetClasses.forEach((c) => {
         feedbackTargetApp.classList.toggle(c, onApp);
-        feedbackTargetPlatform.classList.toggle(c, !onApp);
+        feedbackTargetPlatform.classList.toggle(c, onPlatform);
       });
-      // The neutral hover only applies to the unselected option, so the
-      // selected one doesn't get its violet overridden on hover.
+      // The neutral hover applies to every option that is not the selected
+      // one, so the selected one doesn't get its violet overridden on hover.
+      // With nothing selected both options keep it.
       inactiveHoverClasses.forEach((c) => {
         feedbackTargetApp.classList.toggle(c, !onApp);
-        feedbackTargetPlatform.classList.toggle(c, onApp);
+        feedbackTargetPlatform.classList.toggle(c, !onPlatform);
       });
-      // Move the caret under the selected option.
+      // Move the caret under the selected option — and under neither while
+      // the question is still open.
       feedbackCaretApp.classList.toggle('hidden', !onApp);
-      feedbackCaretPlatform.classList.toggle('hidden', onApp);
+      feedbackCaretPlatform.classList.toggle('hidden', !onPlatform);
       // #685: app state only travels with app-targeted feedback — the
       // shell has no provider of its own, so the row hides on Platform.
       stateRow.classList.toggle('hidden', !(stateAvailable && onApp));
+      // #2707: a tap is the answer, so it clears the gate, the hint and —
+      // #2888 — the red.
+      if (target && awaitingTarget) setAwaitingTarget(false);
     };
     // Enable or gray-out the "This app" option. When disabled it stays
     // visible (so users see both choices) but isn't clickable/selectable.
@@ -304,6 +381,47 @@ export function init() {
       if (!feedbackTargetApp.disabled) setFeedbackTarget('app');
     });
     feedbackTargetPlatform.addEventListener('click', () => setFeedbackTarget('platform'));
+    // #2707: paint the destination row for the context the dialog opened in.
+    //
+    // With BOTH destinations selectable, NONE is selected and Submit waits
+    // for a tap. It used to preselect "This app" as "the most likely intent"
+    // — and a guess about intent is exactly what miscategorises a report:
+    // the person who is reading their own words, not the row above them,
+    // files an app bug against the platform (or the reverse) without ever
+    // making that choice, and the issue lands on a board they will never
+    // look at. Nobody sees their own mistake, so nobody reports it.
+    //
+    // With only the platform reachable there is nothing to disambiguate, so
+    // it stays selected and Submit is live on open. A tap that has exactly
+    // one possible answer teaches people to tap past the question.
+    const applyTargetAvailability = (canTargetApp, appData) => {
+      if (canTargetApp) {
+        feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
+        setAppTargetEnabled(true);
+        setFeedbackTarget(null);
+        setAwaitingTarget(true);
+      } else {
+        // With an app actually open (no repo yet, or self-hosted) keep
+        // its name on the grayed label — "No app open" would be wrong
+        // there. Only show "No app open" when no app is really open.
+        feedbackTargetApp.textContent = appData
+          ? (appData.name ? `This app (${appData.name})` : 'This app')
+          : 'No app open';
+        setAppTargetEnabled(false);
+        setAwaitingTarget(false);
+        setFeedbackTarget('platform');
+      }
+    };
+    // #2707: a destination that comes back with a returned draft is the
+    // person's OWN earlier pick, not a default — handing it back is not the
+    // accidental preselection this change removed, and re-asking for a
+    // decision they already made would quietly lose it. 'platform' is
+    // restored as well as 'app' now: with nothing preselected, dropping it
+    // would leave a rescued draft pointing nowhere.
+    const restoreChosenTarget = (target) => {
+      if (target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
+      else if (target === 'platform') setFeedbackTarget('platform');
+    };
 
     // #556: live title generation. As the user types the description,
     // a debounced POST /api/feedback/title fills the editable Title
@@ -476,6 +594,68 @@ export function init() {
         return draft;
       } catch { return null; }
     };
+
+    // #2796: the draft itself — the title and description someone has typed
+    // but not sent. Closing the dialog is not throwing the words away: the
+    // backdrop, Cancel, the back gesture and a reload all keep them, and only
+    // a send (or a save to the outbox, which owns them from then on) clears
+    // them. localStorage, so a reload keeps them too, and keyed by the viewer
+    // so a shared device never hands one person's words to another.
+    //
+    // One draft per viewer, NOT per app: the dialog files against the app or
+    // the platform, and nothing is chosen until the person picks (#2707), so
+    // a half-written platform report started from one app's screen is still
+    // the same report on another's. The destination is deliberately not part
+    // of the draft for the same reason.
+    const SAVED_DRAFT_KEY_PREFIX = 'usernode.feedbackDraft.';
+    const savedDraftKey = () => {
+      const userId = App?.user?.id;
+      return userId == null ? null : `${SAVED_DRAFT_KEY_PREFIX}${userId}`;
+    };
+    const clearSavedDraft = () => {
+      const key = savedDraftKey();
+      if (!key) return;
+      try { window.localStorage.removeItem(key); } catch { /* ignore */ }
+    };
+    const saveDraft = () => {
+      // A synthetic ?shot= state is not somebody's draft (see onShotRoute),
+      // and a locked composer is showing words that have already been sent.
+      if (onShotRoute() || feedbackText.readOnly) return;
+      const key = savedDraftKey();
+      if (!key) return;
+      const description = feedbackText.value;
+      const title = feedbackTitle.value;
+      if (!description.trim() && !title.trim()) { clearSavedDraft(); return; }
+      try {
+        window.localStorage.setItem(key, JSON.stringify({
+          description,
+          title,
+          titleDirty,
+          // An auto-filled title is only valid for the text it was made
+          // from (#732) — carried so a restored one is not dropped at submit.
+          titleFor: lastGeneratedFor,
+          savedAt: Date.now(),
+        }));
+      } catch { /* private mode or quota — the words are still on screen */ }
+    };
+    const readSavedDraft = () => {
+      if (onShotRoute()) return null;
+      const key = savedDraftKey();
+      if (!key) return null;
+      try {
+        const draft = JSON.parse(window.localStorage.getItem(key) || 'null');
+        if (!draft || typeof draft.description !== 'string') return null;
+        return draft;
+      } catch { return null; }
+    };
+    // Only the draft that was actually sent: words typed into a reopened
+    // dialog while the old request was in flight are a new draft.
+    const forgetSentDraft = (sentDescription) => {
+      const draft = readSavedDraft();
+      if (draft && draft.description.trim() === sentDescription) clearSavedDraft();
+    };
+    feedbackText.addEventListener('input', saveDraft);
+    feedbackTitle.addEventListener('input', saveDraft);
 
     const showFeedbackNotice = (text, isError) => {
       feedbackStatus.textContent = text;
@@ -663,6 +843,11 @@ export function init() {
         // is afraid of losing — the screenshot they can retake (#1284).
         if (err && err.code === 'denied') {
           showFeedbackNotice('Screen capture was declined. Nothing was attached, and your feedback is safe.', false);
+        } else if (err && err.code === 'capture_blank') {
+          // The share arrived with nothing in it — on a Mac, what window
+          // capture hands over when the browser's screen-recording
+          // permission is off or has lapsed. Retrying the same way can't help.
+          showFeedbackNotice("The shared window came through blank. On a Mac, allow your browser under System Settings, Privacy & Security, Screen & System Audio Recording, then try again. Your feedback is safe.", true);
         } else if (err && err.code === 'register_failed') {
           showFeedbackNotice("Couldn't locate this page in the shared window. Keep it fully visible and try again. Your feedback is safe.", true);
         } else if (err && err.code === 'too-large') {
@@ -791,7 +976,10 @@ export function init() {
     // that is the newer and more specific thing to say, so the line is only
     // rewritten while it is hidden or still showing our own text.
     const paintQueueState = () => {
-      if (!feedbackBtn.disabled) feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
+      // #2707: `submitBusy`, not `feedbackBtn.disabled`. They are the same
+      // thing again since #2888 made Submit live while the destination row
+      // waits, but the busy flag is the one that says what it means.
+      if (!submitBusy) feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
       const owned = feedbackStatus.classList.contains('hidden')
         || (queueLineText && feedbackStatus.textContent === queueLineText);
       if (!owned) return;
@@ -881,10 +1069,12 @@ export function init() {
       clearDescriptionError();
       // #1284: safe in the outbox now — the capture stash has nothing to add.
       clearCaptureDraft();
+      // #2796: and the outbox owns the words now, so the saved draft goes too.
+      clearSavedDraft();
       resetTitleGenState();
       resetScreenshotState();
       setComposerLocked(true);
-      feedbackBtn.disabled = true;
+      disableSubmit();
       feedbackBtn.textContent = 'Saved';
       // This count is the freshest thing anyone knows — invalidate any read
       // that was already in flight so it cannot paint the pre-save figure.
@@ -945,9 +1135,22 @@ export function init() {
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
       // #1603: this used to be a bare `return` — the one submit path that
-      // refused and said nothing. It stays FIRST (ahead of the offline
-      // branch below, which would otherwise queue an empty description).
-      if (!text) { showDescriptionError(); return; }
+      // refused and said nothing. The refusals stay FIRST (ahead of the
+      // offline branch below, which would otherwise queue an empty
+      // description, or one filed nowhere).
+      //
+      // #2888: no destination chosen. Submit is live on purpose, so this is
+      // the ordinary path now, not a keyboard corner case: send nothing and
+      // say what is missing. Both refusals are painted at once — fixing one
+      // only to be told about the other is a second round trip — and the
+      // destination row, the first control in the form, is painted last so
+      // it is where focus ends up.
+      const missingTarget = awaitingTarget || !feedbackTarget;
+      if (!text || missingTarget) {
+        if (!text) showDescriptionError();
+        if (missingTarget) showTargetError();
+        return;
+      }
       // Guard against double-submit while the request is in flight, and
       // also against submits after success (the textarea is disabled
       // then, but a stale cmd+enter on a focused button could still
@@ -968,7 +1171,7 @@ export function init() {
       if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
       titleGenSeq++;
       feedbackTitle.placeholder = titleIdlePlaceholder;
-      feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
+      disableSubmit(); feedbackBtn.textContent = 'Submitting...';
       const submittedPresentation = presentation;
       const submittedBy = App.user?.id;
       try {
@@ -1040,7 +1243,7 @@ export function init() {
         // outbox.
         if (isOfflineNow()) {
           if (await saveForLater(body)) return;
-          feedbackBtn.disabled = false;
+          enableSubmit();
           feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
           return;
         }
@@ -1058,11 +1261,15 @@ export function init() {
           });
         } catch (err) {
           if (await saveForLater(body)) return;
-          feedbackBtn.disabled = false;
+          enableSubmit();
           feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
           return;
         }
         const data = await res.json();
+        // #2796: a dismissal while the POST was in flight saved these words
+        // as a draft; they are filed now, so that draft must not come back
+        // (the presentation check below returns before the cleanup does).
+        if (res.ok && submittedBy === App.user?.id) forgetSentDraft(text);
         // An old response must not replace a reopened draft or another
         // account's dialog after sign-out/sign-in.
         if (submittedPresentation !== presentation || submittedBy !== App.user?.id) return;
@@ -1096,6 +1303,8 @@ export function init() {
           clearDescriptionError();
           // #1284: filed — there is nothing left to rescue.
           clearCaptureDraft();
+          // #2796: sent — the only thing that ends a saved draft.
+          clearSavedDraft();
           // Discard any in-flight title preview so it can't repopulate
           // the cleared field during the "Thanks!" grace window.
           resetTitleGenState();
@@ -1136,7 +1345,7 @@ export function init() {
         feedbackStatus.className = 'text-sm mt-2 text-red-400';
         feedbackStatus.classList.remove('hidden');
       }
-      feedbackBtn.disabled = false;
+      enableSubmit();
       feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
     };
 
@@ -1158,7 +1367,10 @@ export function init() {
       // Opening a queued success must not consume a failed outbox draft or
       // start screenshot/title probes behind the confirmation.
       if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved feedback has been sent.')) return;
-      feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
+      // #2707: clear the previous open's question (and #2888 its red) first;
+      // the destination branch below asks again when it has to.
+      setAwaitingTarget(false);
+      enableSubmit(); feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
       // #1603: a refusal from a previous open never greets the next one.
       clearDescriptionError();
@@ -1215,21 +1427,7 @@ export function init() {
         const modal = document.getElementById('feedback-modal');
         if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
       }).catch(() => { /* budget unavailable — row stays as painted */ });
-      if (canTargetApp) {
-        feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
-        setAppTargetEnabled(true);
-        // Default to the app the user is looking at — most likely intent.
-        setFeedbackTarget('app');
-      } else {
-        // With an app actually open (no repo yet, or self-hosted) keep
-        // its name on the grayed label — "No app open" would be wrong
-        // there. Only show "No app open" when no app is really open.
-        feedbackTargetApp.textContent = appData
-          ? (appData.name ? `This app (${appData.name})` : 'This app')
-          : 'No app open';
-        setAppTargetEnabled(false);
-        setFeedbackTarget('platform');
-      }
+      applyTargetAvailability(canTargetApp, appData);
 
       // #1054: the outbox state — the offline hint, the "Save for later"
       // button label, and anything already waiting to send. Painted last so
@@ -1240,7 +1438,14 @@ export function init() {
       // A submit the server refused outright (a 400 no amount of retrying can
       // satisfy) is handed back here rather than disappearing: the user's own
       // words, their title and their target, with the reason above them.
-      if (window.FeedbackQueue) {
+      //
+      // #2796: not while a saved draft is about to be restored below.
+      // takeFailed() removes the record from the outbox, so taking it into a
+      // composer the draft then fills would lose one set of words or the
+      // other; left where it is, it comes back on the first open after that
+      // draft is sent.
+      const saved = readSavedDraft();
+      if (window.FeedbackQueue && !saved) {
         Promise.resolve(window.FeedbackQueue.takeFailed()).then((failed) => {
           const modal = document.getElementById('feedback-modal');
           if (!failed || modal.classList.contains('hidden')) return;
@@ -1250,7 +1455,7 @@ export function init() {
           const p = failed.payload || {};
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
-          if (p.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
+          restoreChosenTarget(p.target);
           feedbackStatus.textContent = `This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
             + ' Your text is back, so edit it and try again.';
           feedbackStatus.className = 'text-sm mt-2 text-red-400';
@@ -1273,9 +1478,25 @@ export function init() {
             feedbackTitle.value = rescued.title;
             titleDirty = rescued.titleDirty !== false;
           }
-          if (rescued.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
+          restoreChosenTarget(rescued.target);
           showFeedbackNotice("The screenshot didn't make it, but your feedback is safe. Here it is again.", false);
           queueLineText = '';
+        }
+      }
+
+      // #2796: the words this viewer typed and closed the dialog on — by the
+      // backdrop, Cancel, back or a reload. Same "empty, editable field only"
+      // rule as the two hand-backs above, and restored silently: this is
+      // simply where they left off. The destination is NOT restored — #2707
+      // leaves that choice to the person every time.
+      if (saved && !feedbackText.readOnly && !feedbackText.value.trim() && !feedbackTitle.value.trim()) {
+        feedbackText.value = saved.description;
+        feedbackTitle.value = typeof saved.title === 'string' ? saved.title : '';
+        titleDirty = saved.titleDirty === true && feedbackTitle.value.trim().length > 0;
+        // A restored auto-filled title stays valid only for the text it was
+        // generated from; any other text falls back to the server's naming.
+        if (!titleDirty && saved.titleFor && saved.titleFor === saved.description.trim()) {
+          lastGeneratedFor = saved.titleFor;
         }
       }
 
@@ -1291,9 +1512,11 @@ export function init() {
     // untouched.
     //
     // The button's outbox dot moved rather than went: #feedback-queue-dot
-    // keeps its id and its writer (paintQueueDot) and now renders on
-    // #improve-btn, which is the only way to reach this dialog from the
-    // header.
+    // keeps its id and its writer (paintQueueDot) through two moves — onto
+    // #improve-btn, and onto the Homeroom mark when #2718 retired that pill.
+    // It sits on whatever control is the way to reach this dialog from the
+    // header, and the mark is that control now: "Give feedback" is the lead
+    // row of its menu.
     // Admin/moderation console (#588) is a drawer row now, not a header
     // button — its click handler is wired in HeaderMenu.init() (close the
     // drawer; the anchor's #admin href does the navigating). The row is
@@ -1317,6 +1540,9 @@ export function init() {
       // dialog — so the draft, the title and the notice stay. (The screenshot
       // half below resets either way: that attempt is over.)
       if (!captureInFlight) {
+        // #2796: closing is not discarding — whatever is in the composer is
+        // kept for the next open (saveDraft skips a locked, already-sent one).
+        saveDraft();
         feedbackText.value = '';
         feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
@@ -1325,7 +1551,11 @@ export function init() {
         clearCaptureDraft();
       }
       setComposerLocked(false);
-      feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
+      // #2707: a stale teardown mid-capture must not drop the question — the
+      // same dialog, with the same unanswered row, is about to be presented
+      // again.
+      if (!captureInFlight) setAwaitingTarget(false);
+      enableSubmit(); feedbackBtn.textContent = 'Submit';
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.
       screenshotProbeSequence += 1;
@@ -1406,6 +1636,23 @@ export function init() {
   // the shipped refusal rather than a mock of it. That path returns before
   // any fetch on an empty description, so this files nothing either.
   App._simulateEmptyFeedbackSubmit = () => { void submitFeedback(); };
+
+  // #2707: the ?shot=feedback-choose reviewable state — the dialog as
+  // somebody with an app open meets it, where both destinations are real and
+  // neither is chosen. It runs the SHIPPED applyTargetAvailability rather
+  // than posing the row by hand, so the photograph is of the branch that
+  // ships. Display-only: it pins a label, nothing else, and files nothing.
+  App._simulateFeedbackTargetChoice = (name) => applyTargetAvailability(true, { name });
+
+  // #2888: the ?shot=feedback-choose-missed reviewable state — the same
+  // two-destination dialog after Submit is pressed with neither chosen. It
+  // presses the REAL button, so the photograph is of the shipped refusal;
+  // with no destination that refusal returns before any fetch, so this files
+  // nothing.
+  App._simulateFeedbackTargetMissed = (name) => {
+    applyTargetAvailability(true, { name });
+    feedbackBtn.click();
+  };
 
   // Display-only review state: no feedback, session, or milestone is written.
   App._simulateFirstFeedback = () => showFirstFeedback({

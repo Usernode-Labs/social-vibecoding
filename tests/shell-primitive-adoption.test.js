@@ -84,10 +84,11 @@ const FIELD_BOXES = [
 
 /** See the header. Every entry is a considered exception. */
 const ALLOWED_BUTTON_FILES = new Set([
-  // #dev-plus-btn and the view-toggle segment fill. The "+" moved into its
-  // own row component when the Workshop gained a copy of the toolbar; the
-  // exception moved with it.
-  'dev-board/actions-row.tsx',
+  // `dev-board/actions-row.tsx` WAS HERE, for #dev-plus-btn's violet fill.
+  // The "+" closes the Workshop's view-tab strip now and is drawn on the
+  // strip's own metrics and ink (app.css `.dev-ws-plus-btn`) — a bare glyph,
+  // not a primary button — so the file has no fill left to excuse and the
+  // entry went with it rather than staying as a standing exemption.
   // The Kudos pane's two segmented toggles — the All-time / This week window
   // pills and the Kudos / Votes history chips — whose ACTIVE state is the
   // violet fill. Same shape as board-frame's view toggle, and the same
@@ -125,23 +126,20 @@ const ALLOWED_BUTTON_FILES = new Set([
   // well as colour — the current one grows a label and the other collapses to
   // a 24px glyph — which is a cva table of its own, for one control.
   'dev-chat/session-header.tsx',
-  // #improve-btn, the header's standing action. It genuinely IS a primary
-  // filled button now (the Streamlined Concept board draws it that way — and
-  // that board is NEWER than the review that once made this plain text; see
-  // the note above IMPROVE_BTN_CLASS before touching it), and
-  // it is listed rather than routed for two reasons the primitive cannot
-  // meet. Its height is pinned to the header's 28px content row with NO
-  // vertical padding — the invariant #909 exists to protect and
-  // tests/header-height-parity.test.js re-asserts — while every Button size
-  // spells its height through `py-*`. And it ships in the SSG prerender, so
-  // its class attribute has to stay byte-identical across a hydration it
-  // shares with three absolutely-positioned indicators.
+  // #improve-btn, the header's standing action, IS RETIRED (#2718) and its
+  // entry is gone with the file. It was here for two reasons the primitive
+  // could not meet, and both are worth keeping in view because the next
+  // header control will hit them again: its height was pinned to the header's
+  // 28px content row with NO vertical padding — the invariant #909 exists to
+  // protect and tests/header-height-parity.test.js re-asserts — while every
+  // Button size spells its height through `py-*`; and it shipped in the SSG
+  // prerender, so its class attribute had to stay byte-identical across a
+  // hydration it shared with two absolutely-positioned indicators.
   //
-  // Note it does not currently TRIP this scan: the run lives in a
-  // module-scope `IMPROVE_BTN_CLASS`, not inside the tag, and the scanner
-  // reads opening tags only. The entry is here so the record is the decision
-  // rather than that blind spot.
-  'improve/improve-button.tsx',
+  // Nothing replaces it in this list. What it became is a row of the app's own
+  // menu (#app-menu-row-improve), which is a menu row like the four beside it
+  // and wears that menu's ROW constant — no fill, no pill, nothing a primitive
+  // would want to own.
 ]);
 
 /**

@@ -57,8 +57,12 @@ test('protocol parser rejects malformed, mismatched, duplicate, and failed-resul
 test('a partial browser job keeps its termination reason and last checkpoint', async (t) => {
   const saved = kubernetes.runEvidenceJob;
   kubernetes.runEvidenceJob = async () => ({
-    stdout: event({ type: 'viewport_started', runId: 'a'.repeat(32), pass: 1,
-      storyId: 'invite-suggestions', viewport: 'desktop' }),
+    stdout: [
+      event({ type: 'viewport_started', runId: 'a'.repeat(32), pass: 1,
+        storyId: 'invite-suggestions', viewport: 'desktop' }),
+      event({ type: 'action_started', runId: 'a'.repeat(32), pass: 1,
+        storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', actionId: 'open-settings' }),
+    ].join('\n'),
     partial: true, partialReason: 'capture OOM killed',
   });
   t.after(() => { kubernetes.runEvidenceJob = saved; });
@@ -68,10 +72,82 @@ test('a partial browser job keeps its termination reason and last checkpoint', a
     assert.equal(error.code, 'missing_replay_result');
     assert.deepEqual(error.detail.execution, {
       partial: true, partialReason: 'capture OOM killed',
-      lastEvent: { type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' },
+      lastEvent: { type: 'action_started', storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', actionId: 'open-settings' },
     });
     return true;
   });
+});
+
+test('Kubernetes streams action and failure events into the live diagnostics callback', async (t) => {
+  const saved = kubernetes.runEvidenceJob;
+  const action = event({ type: 'action_started', runId: 'a'.repeat(32), pass: 1,
+    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', actionId: 'open-settings' });
+  const failure = event({ type: 'result', runId: 'a'.repeat(32), pass: 1,
+    passed: false, code: 'locator_not_found', message: 'Control was missing.' });
+  kubernetes.runEvidenceJob = async (_config, options) => {
+    options.onStdoutLine(action);
+    options.onStdoutLine(failure);
+    return { stdout: [action, failure].join('\n') };
+  };
+  t.after(() => { kubernetes.runEvidenceJob = saved; });
+  const observed = [];
+  await assert.rejects(replay.runPass({ captureRuntime: 'kubernetes' }, 42, {
+    runId: 'a'.repeat(32), pass: 1, plan: require('./fixtures/visual-evidence').plan(),
+  }, { onEvent: (item) => observed.push(item) }), { code: 'locator_not_found' });
+  assert.deepEqual(observed.map((item) => item.type), ['action_started', 'result']);
+  assert.equal(observed[0].actionId, 'open-settings');
+});
+
+test('each story and viewport runs after a fresh paired fixture reset', async () => {
+  const plan = require('./fixtures/visual-evidence').plan();
+  plan.stories[0].viewports.push({ name: 'mobile', width: 390, height: 844 });
+  const planHash = require('../src/services/visual-evidence-plan').planHash(plan);
+  const runId = 'a'.repeat(32);
+  let settingEnabled = true;
+  let resets = 0;
+  const selected = [];
+  const result = await replay.runPassCases({}, 42,
+    { runId, pass: 1, plan, publishArtifacts: false }, {
+      prepareCase: async (item) => {
+        settingEnabled = false;
+        resets += 1;
+        selected.push(`${item.storyId}/${item.viewport}`);
+        return { origins: { base: 'http://base:3000', head: 'http://head:3000' } };
+      },
+      runCase: async (_config, _sessionId, input) => {
+        assert.equal(settingEnabled, false, 'the preceding viewport must not change this fixture');
+        assert.equal(input.plan.stories[0].viewports.length, 2, 'each job carries the full hashed plan');
+        settingEnabled = true;
+        return {
+          result: { passed: true, runId, pass: 1, planHash,
+            provenance: { fixtureFingerprint: 'same-pair' },
+            stories: [{ id: input.selection.storyId, viewport: input.selection.viewport }] },
+          artifacts: [], events: [],
+        };
+      },
+    });
+  assert.equal(resets, 2);
+  assert.deepEqual(selected, ['invite-suggestions/desktop', 'invite-suggestions/mobile']);
+  assert.deepEqual(result.result.stories.map((item) => item.viewport), ['desktop', 'mobile']);
+  assert.equal(result.result.planHash, planHash);
+});
+
+test('an isolated case cannot return another viewport or fixture identity', async () => {
+  const plan = require('./fixtures/visual-evidence').plan();
+  const runId = 'a'.repeat(32);
+  const planHash = require('../src/services/visual-evidence-plan').planHash(plan);
+  await assert.rejects(replay.runPassCases({}, 42, {
+    runId, pass: 1, plan, publishArtifacts: false,
+    provenance: { fixtureFingerprint: 'expected' },
+  }, {
+    prepareCase: async () => ({ origins: { base: 'http://base:3000', head: 'http://head:3000' } }),
+    runCase: async () => ({
+      result: { passed: true, runId, pass: 1, planHash,
+        provenance: { fixtureFingerprint: 'changed' },
+        stories: [{ id: 'invite-suggestions', viewport: 'desktop' }] },
+      artifacts: [],
+    }),
+  }), { code: 'isolated_replay_mismatch' });
 });
 
 test('a browser job launcher error keeps its original code with bounded runtime context', async (t) => {
@@ -121,6 +197,7 @@ test('two clean passes must agree before evidence is reproducible', () => {
   assert.equal(replay.comparePasses(pass(), second()).passed, true);
   assert.deepEqual(replay.comparePasses(pass(), second({ head: 'different' })), {
     passed: false, code: 'non_reproducible', reason: 'The two clean replay passes reached different checkpoints.',
+    detail: { storyId: 'dialog', viewport: 'desktop', side: 'head', field: 'fingerprint', first: 'head', second: 'different' },
   });
   assert.equal(replay.comparePasses(pass(), second({ planHash: 'b'.repeat(64) })).code, 'plan_hash_changed');
   assert.equal(replay.comparePasses(pass(), second(), { plan: require('./fixtures/visual-evidence').plan() }).code, 'plan_hash_mismatch');

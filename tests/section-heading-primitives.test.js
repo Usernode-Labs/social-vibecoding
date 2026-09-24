@@ -142,19 +142,24 @@ test('the Homeroom-app settings section ARE field’s SectionHeading, rule inclu
   assert.match(html, /border-t border-zinc-200 dark:border-zinc-800/);
 });
 
-test('the profile’s public-profile card is a form section, and says so', () => {
-  // PublicControls is internal to the module and needs the profile store to
-  // reach it, so this one is anchored on the source: what matters is that the
-  // card opens with the primitive and carries no class string of its own.
-  const src = read('frontend/src/features/profile/profile-view.tsx');
-  assert.match(src, /import \{ SectionHeading \} from '@\/components\/ui\/field';/);
-  assert.match(src, /<SectionHeading title="Public profile">/,
-    'the “Public profile” heading is the primitive, not a hand-written <h2>');
-  assert.doesNotMatch(src, /className="font-semibold text-base"/,
+test('the public-profile controls are a group of the Edit profile sheet, headed like its others', () => {
+  // They were a card of their own on Me, opening with SectionHeading. The
+  // prototype's Me has no room for them, so they moved into the sheet that
+  // edits what the public page shows — and there a section is the sheet's own
+  // inset-grouped `Group` (the kit's `.un-group-header` vocabulary), the
+  // heading every other section of that sheet uses. Anchored on the source:
+  // what matters is that it is that shared heading and no class string of its
+  // own.
+  const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
+  assert.match(sheet, /<Group title="Public page">/,
+    'the “Public page” heading is the sheet’s shared Group, not a hand-written <h2>');
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  assert.doesNotMatch(view, /className="font-semibold text-base"/,
     'the old hand-written heading class is gone');
+  assert.doesNotMatch(view, /title="Public profile"/, 'and Me carries no second copy');
 });
 
-test('two sites keep their own treatment, deliberately', () => {
+test('one site keeps its own treatment, deliberately', () => {
   // NEITHER of these is "a label over a group", and forcing one of the two
   // primitives onto them would look wrong on its own screen.
   //
@@ -168,14 +173,16 @@ test('two sites keep their own treatment, deliberately', () => {
   const home = read('frontend/src/features/home/panels/ui.tsx');
   assert.match(home, /className="home-area-label[^"]*text-base font-\[550\]/,
     'the home area title is unchanged — see the note in this test');
-  // 2. The Improve panel's `<h2>Improve</h2>` is the PANEL'S TITLE, on one
-  //    baseline with the target app's name and the close control. A dialog
-  //    title bar is not a section label. The panel's own section labels
-  //    ("Changes in progress") are denser than either primitive on purpose:
-  //    it is a light surface in its own right, which is why it draws a
-  //    bordered group instead of grouped-list's floating card.
-  const improve = read('frontend/src/features/improve/improve-panel.tsx');
-  assert.match(improve, /<h2 className="shrink-0 text-sm font-semibold text-zinc-800/);
+  // 2. THE SECOND SITE RETIRED (#2718 review). It was the Improve panel's
+  //    `<h2>Improve</h2>` — the PANEL'S TITLE, on one baseline with the
+  //    target app's name and the close control, which is a dialog title bar
+  //    and not a section label. The panel is gone, its own denser section
+  //    labels with it, so the exception has nothing left to except. Recorded
+  //    rather than deleted silently: "two sites" was the count this file
+  //    argued for, and a reader who finds one needs to know the other did
+  //    not simply get converted.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/improve/improve-panel.tsx')),
+    'the second exception retired with its panel, rather than being converted');
 });
 
 // ── Half A: one spelling per primitive, product-wide ───────────────────

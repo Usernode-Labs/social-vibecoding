@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
+const agentSessionsFlag = require('../services/agent-sessions-flag');
 
 const PUBLIC_PATHS = [
   // Legacy standalone auth pages, now tiny redirect stubs into the SPA's
@@ -96,6 +97,11 @@ const PUBLIC_PATHS = [
   '/sw.js',
   '/manifest.webmanifest',
   '/icons/',
+  // The two icons browsers, crawlers and link previews look for at the root
+  // by convention, whatever the page links; without these they got a 302 to
+  // the root. Whole file names, so the prefix match opens nothing else there.
+  '/favicon.ico',
+  '/apple-touch-icon.png',
   // Challenge artwork (public/illustrations/challenges/). The challenge list
   // it decorates is public (/api/v4/), so the pictures must be too: an image
   // request answered with a redirect body draws a broken picture instead of
@@ -301,7 +307,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.agent_sessions_enabled, u.session_bridge_enabled, u.locale, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -377,6 +383,10 @@ function authMiddleware(config) {
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
             // #1281: opt-in for the session-CLI bridge venue. Default FALSE.
             sessionBridgeEnabled: !!rows[0].session_bridge_enabled,
+            // #2779: the user's own agent-sessions choice (NULL = none) and
+            // the value in effect once the deployment default fills it in.
+            agentSessionsChoice: agentSessionsFlag.choiceOf(rows[0].agent_sessions_enabled),
+            agentSessionsEnabled: agentSessionsFlag.effective(config, rows[0].agent_sessions_enabled),
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -460,7 +470,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, agent_sessions_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -514,6 +524,8 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     sessionBridgeEnabled: !!userRow.session_bridge_enabled,
+    agentSessionsChoice: agentSessionsFlag.choiceOf(userRow.agent_sessions_enabled),
+    agentSessionsEnabled: agentSessionsFlag.effective(config, userRow.agent_sessions_enabled),
     locale: userRow.locale || null,
     hasPlatformAccess: !!userRow.has_platform_access,
   };

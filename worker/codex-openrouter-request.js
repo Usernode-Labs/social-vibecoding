@@ -14,6 +14,7 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { StringDecoder } = require('node:string_decoder');
 const { constants: { signals } } = require('node:os');
+const { performance } = require('node:perf_hooks');
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 const MAX_KEY_RESPONSE_BYTES = 32 * 1024;
@@ -120,7 +121,8 @@ async function readKeyAllowance(base, apiKey, fetchImpl, signal) {
   }
 }
 
-async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens, onRequest = () => {}, fetchImpl = fetch }) {
+async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
+  onRequest = () => {}, onTiming = null, timingIntervalMs = 15_000, fetchImpl = fetch }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error('invalid_provider_url');
@@ -130,6 +132,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens, on
   }
   const upstreamBase = base.href.replace(/\/+$/, '');
   const active = new Set();
+  let requestOrdinal = 0;
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/responses') {
       replyError(res, 404, 'Unsupported OpenRouter adapter route');
@@ -146,6 +149,11 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens, on
     const controller = new AbortController();
     active.add(controller);
     res.on('close', () => controller.abort());
+    let timing = null;
+    const emitTiming = (event) => {
+      if (!onTiming) return;
+      try { onTiming(event); } catch { /* Telemetry cannot affect the provider request. */ }
+    };
     try {
       let body;
       try {
@@ -164,6 +172,21 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens, on
         return;
       }
       body.max_output_tokens = Math.min(maxOutputTokens, incomingCap ?? maxOutputTokens);
+      if (onTiming) {
+        const ordinal = ++requestOrdinal;
+        const startedAt = performance.now();
+        timing = { ordinal, startedAt, stage: 'await_headers', status: null,
+          responseBytes: 0, chunks: 0, outcome: 'ok' };
+        emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal });
+        timing.interval = setInterval(() => emitTiming({
+          kind: 'provider_request_pending', requestOrdinal: ordinal,
+          stage: timing.stage,
+          durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+          responseBytes: Math.min(timing.responseBytes, 10_000_000),
+          chunkCount: Math.min(timing.chunks, 1000),
+        }), timingIntervalMs);
+        timing.interval.unref?.();
+      }
       const headers = {};
       const connectionHeaders = new Set(String(req.headers.connection || '').toLowerCase().split(',').map(s => s.trim()));
       for (const [name, value] of Object.entries(req.headers)) {
@@ -174,6 +197,14 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens, on
       const response = await fetchImpl(`${upstreamBase}/responses`, {
         method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal,
       });
+      if (timing) {
+        timing.status = response.status;
+        timing.stage = 'await_first_byte';
+        timing.outcome = response.status >= 400 ? 'http_error' : 'ok';
+        emitTiming({ kind: 'provider_response_headers', requestOrdinal: timing.ordinal,
+          httpStatus: response.status,
+          durationMs: Math.max(0, Math.round(performance.now() - timing.startedAt)) });
+      }
       const diagnostic = {
         model, maxOutputTokens: body.max_output_tokens,
         inputBytes: Buffer.byteLength(JSON.stringify(body.input ?? [])),
@@ -223,12 +254,38 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens, on
           : response.status === 402
             ? Readable.from(observeErrorBody(response.body, recordError))
             : Readable.fromWeb(response.body);
-        await pipeline(bodyStream, res);
+        if (timing) {
+          async function* observeTransfer() {
+            for await (const chunk of bodyStream) {
+              timing.responseBytes += chunk.length;
+              timing.chunks += 1;
+              if (timing.stage === 'await_first_byte') {
+                timing.stage = 'streaming';
+                emitTiming({ kind: 'provider_response_first_byte', requestOrdinal: timing.ordinal,
+                  durationMs: Math.max(0, Math.round(performance.now() - timing.startedAt)) });
+              }
+              yield chunk;
+            }
+          }
+          await pipeline(Readable.from(observeTransfer()), res);
+        } else await pipeline(bodyStream, res);
       } else res.end();
     } catch {
+      if (timing) timing.outcome = controller.signal.aborted ? 'cancelled'
+        : timing.stage === 'await_headers' ? 'network_error' : 'stream_error';
       if (!res.headersSent && !res.destroyed) replyError(res, 502, 'OpenRouter request transport failed');
       else res.destroy();
     } finally {
+      if (timing) {
+        clearInterval(timing.interval);
+        emitTiming({ kind: 'provider_request_end', requestOrdinal: timing.ordinal,
+          outcome: timing.outcome, stage: timing.stage,
+          ...(timing.status != null ? { httpStatus: timing.status } : {}),
+          durationMs: Math.max(0, Math.round(performance.now() - timing.startedAt)),
+          responseBytes: Math.min(timing.responseBytes, 10_000_000),
+          chunkCount: Math.min(timing.chunks, 1000),
+        });
+      }
       active.delete(controller);
     }
   });
@@ -255,6 +312,9 @@ async function runCodex(args, env = process.env) {
     model: env.AGENT_MODEL,
     maxOutputTokens: selected?.max_output_tokens,
     onRequest: diagnostic => process.stdout.write(`${JSON.stringify({ type: 'usernode.openrouter.request', diagnostic })}\n`),
+    onTiming: env.MODE === 'evidence'
+      ? diagnostic => process.stdout.write(`__USERNODE_EVIDENCE_PROVIDER__ ${JSON.stringify(diagnostic)}\n`)
+      : null,
   });
   // The override is process-local. Neither the key nor the ephemeral listener
   // is written to the persistent Codex configuration.

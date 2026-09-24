@@ -13,6 +13,9 @@ const { visualHeadForSession, sameSha } = require('./pr-vote-revision');
 const FAILED_MEDIA_HOURS = 24;
 const ROLLBACK_MEDIA_DAYS = 7;
 const RUN_RETENTION_DAYS = 30;
+// Runs started before heartbeats were deployed may legitimately be in a
+// 30-minute image build. Give those rows a longer one-time grace period.
+const LEGACY_RUN_GRACE_MS = 45 * 60_000;
 
 async function cleanupRunResources(config, run) {
   const errors = [];
@@ -29,52 +32,120 @@ async function cleanupRunResources(config, run) {
   return errors;
 }
 
-async function recoverInterrupted(config, pool, { maxAgeMs = null, limit = 20 } = {}) {
-  const ageMs = Math.max(60_000, Number(maxAgeMs) || config.visualEvidence?.maxRunMs || 720_000);
+async function recoverInterrupted(config, pool, {
+  maxAgeMs = null, limit = 20, cleanup = cleanupRunResources, stateService = state,
+} = {}) {
+  const ageMs = Math.max(60_000, Number(maxAgeMs) || config.visualEvidence?.maxRunMs || 1_440_000);
+  const legacyAgeMs = Math.max(ageMs, LEGACY_RUN_GRACE_MS);
   const { rows } = await pool.query(
     `SELECT r.*, a.slug AS app_slug, s.visual_evidence_run_id AS current_run_id
        FROM visual_evidence_runs r
        JOIN chat_sessions s ON s.id = r.session_id
        JOIN apps a ON a.id = s.app_id
       WHERE r.state IN ('planned','provisioning','exploring','replaying','reviewing')
-        AND r.updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+        AND NOT (r.state = 'planned' AND r.author_plan IS NOT NULL)
+        AND r.updated_at < NOW() - (
+          (CASE WHEN COALESCE(r.trace_summary, '{}'::jsonb) ? 'progress'
+            THEN $1 ELSE $3 END)::bigint * INTERVAL '1 millisecond')
       ORDER BY r.updated_at ASC LIMIT $2`,
-    [ageMs, Math.max(1, Math.min(100, Number(limit) || 20))]
+    [ageMs, Math.max(1, Math.min(100, Number(limit) || 20)), legacyAgeMs]
   );
   let failed = 0;
+  let cancelled = 0;
+  const markCleaned = (id) => pool.query(
+    `UPDATE visual_evidence_runs
+        SET trace_summary = jsonb_set(COALESCE(trace_summary, '{}'::jsonb),
+          '{cleanupComplete}', 'true'::jsonb, true)
+      WHERE id = $1 AND state IN ('failed','cancelled')
+        AND failure_code = 'evidence_run_interrupted'`,
+    [id]
+  );
   for (const run of rows) {
-    await cleanupRunResources(config, run);
+    const minIdleMs = run.trace_summary?.progress ? ageMs : legacyAgeMs;
+    let terminalized = false;
     if (run.current_run_id === run.id) {
       try {
-        await state.transitionRun(pool, run.id, 'failed', {
+        await stateService.transitionRun(pool, run.id, 'failed', {
           failureCode: 'evidence_run_interrupted',
           failureReason: 'The visual change preview worker stopped before the run completed. Retry the preview run.',
+          recoveryMinIdleMs: minIdleMs,
         });
         failed += 1;
-        continue;
+        terminalized = true;
       } catch (err) {
-        log.warn('visual-evidence', 'Interrupted run could not use normal transition', {
-          runId: run.id, err: err.message,
-        });
+        if (err.code !== 'evidence_run_active' && err.code !== 'stale_evidence_operation'
+            && err.code !== 'invalid_evidence_transition') {
+          log.warn('visual-evidence', 'Interrupted run could not use normal transition', {
+            runId: run.id, err: err.message,
+          });
+        }
       }
-    }
-    await pool.query(
-      `UPDATE visual_evidence_runs
-          SET state = 'cancelled', failure_code = 'evidence_run_interrupted',
+    } else {
+      // This run no longer owns its proposal. Fence the direct update against
+      // a late heartbeat or a changed owner, just as the current-run path is
+      // fenced by transitionRun's row lock and idle check.
+      const result = await pool.query(
+        `UPDATE visual_evidence_runs r
+            SET state = 'cancelled', failure_code = 'evidence_run_interrupted',
               failure_reason = 'The visual change preview worker stopped before the run completed.',
               completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
-        WHERE id = $1 AND state IN ('planned','provisioning','exploring','replaying','reviewing')`,
-      [run.id]
-    );
+           FROM chat_sessions s
+          WHERE r.id = $3 AND s.id = r.session_id
+            AND s.visual_evidence_run_id IS DISTINCT FROM r.id
+            AND r.state IN ('planned','provisioning','exploring','replaying','reviewing')
+            AND r.updated_at < NOW() - (
+              (CASE WHEN COALESCE(r.trace_summary, '{}'::jsonb) ? 'progress'
+                THEN $1 ELSE $2 END)::bigint * INTERVAL '1 millisecond')`,
+        [ageMs, legacyAgeMs, run.id]
+      );
+      terminalized = !!result.rowCount;
+      if (terminalized) cancelled += 1;
+    }
+    if (!terminalized) continue;
+    // Terminalize first, then clean up. A live worker can no longer renew a
+    // row after this point, and a process exit during cleanup is retried below.
+    const cleanupErrors = await cleanup(config, run);
+    if (cleanupErrors.length) {
+      log.warn('visual-evidence', 'Interrupted evidence cleanup was incomplete', {
+        runId: run.id, errors: cleanupErrors.map((error) => error.message).slice(0, 4),
+      });
+    } else {
+      await markCleaned(run.id);
+    }
   }
-  return { examined: rows.length, failed };
+  // A process can stop after terminalizing an interrupted run but before
+  // resource cleanup finishes. Retry only rows without a completion marker;
+  // cleanup is deterministic and safe to repeat for missing resources.
+  const retries = await pool.query(
+    `SELECT r.*, a.slug AS app_slug
+       FROM visual_evidence_runs r
+       JOIN chat_sessions s ON s.id = r.session_id
+       JOIN apps a ON a.id = s.app_id
+      WHERE r.state IN ('failed','cancelled')
+        AND r.failure_code = 'evidence_run_interrupted'
+        AND NOT (COALESCE(r.trace_summary, '{}'::jsonb) @> '{"cleanupComplete":true}'::jsonb)
+      ORDER BY r.updated_at ASC LIMIT $1`,
+    [Math.max(1, Math.min(100, Number(limit) || 20))]
+  );
+  let cleanupRetried = 0;
+  for (const run of retries.rows) {
+    const errors = await cleanup(config, run);
+    if (errors.length) {
+      log.warn('visual-evidence', 'Interrupted evidence cleanup retry failed', {
+        runId: run.id, errors: errors.map((error) => error.message).slice(0, 4),
+      });
+      continue;
+    }
+    await markCleaned(run.id);
+    cleanupRetried += 1;
+  }
+  return { examined: rows.length, failed, cancelled, cleanupRetried };
 }
 
 // Intent is written before checks finish. The ordinary checks completion
 // event starts evidence, but a process can die between those two writes.
-// Unlike an interrupted run, that leaves no visual_evidence_runs row for
-// recoverInterrupted to find. Reconcile open, settled, exact-head proposals
-// so a one-time hand-off cannot leave "planned" on the card forever.
+// A submitted author plan already has a durable planned run at import;
+// both that case and an intent-only proposal need the same recovery handoff.
 async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, schedule = null } = {}) {
   if (!config.visualEvidence?.execute) return { examined: 0, scheduled: 0 };
   const retryAfterMs = 10 * 60_000;
@@ -82,8 +153,10 @@ async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, s
     `SELECT cs.id, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
             cs.checks_commit_sha, cs.handoff_head_sha
        FROM chat_sessions cs
+       LEFT JOIN visual_evidence_runs r ON r.id = cs.visual_evidence_run_id
       WHERE cs.visual_evidence_state = 'planned'
-        AND cs.visual_evidence_run_id IS NULL
+        AND (cs.visual_evidence_run_id IS NULL
+             OR (r.state = 'planned' AND r.author_plan IS NOT NULL))
         AND cs.status IN ('active', 'promoted')
         AND cs.visual_evidence_detail->>'required' = 'true'
         AND jsonb_typeof(cs.visual_evidence_detail->'intent') = 'object'
@@ -101,8 +174,7 @@ async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, s
       `UPDATE chat_sessions
           SET visual_evidence_detail = visual_evidence_detail
                 || jsonb_build_object('recoveryAttemptAt', $2::bigint)
-        WHERE id = $1 AND visual_evidence_state = 'planned'
-          AND visual_evidence_run_id IS NULL`,
+        WHERE id = $1 AND visual_evidence_state = 'planned'`,
       [id, Date.now()]
     );
   };
@@ -167,8 +239,10 @@ async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpd
   const active = await pool.query(
     `SELECT id FROM visual_evidence_runs
       WHERE state IN ('planned','provisioning','exploring','replaying','reviewing')
-        AND updated_at >= NOW() - ($1::bigint * INTERVAL '1 millisecond')`,
-    [boundedAge]
+        AND updated_at >= NOW() - (
+          (CASE WHEN COALESCE(trace_summary, '{}'::jsonb) ? 'progress'
+            THEN $1 ELSE $2 END)::bigint * INTERVAL '1 millisecond')`,
+    [boundedAge, Math.max(boundedAge, LEGACY_RUN_GRACE_MS)]
   );
   const activePrefixes = new Set((active.rows || []).map((row) => String(row.id || '').slice(0, 8)));
   let entries;
@@ -204,7 +278,7 @@ async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpd
 async function sweep(config, pool) {
   const recovered = await recoverInterrupted(config, pool);
   const checkouts = await sweepOrphanCheckouts(pool, {
-    maxAgeMs: config.visualEvidence?.maxRunMs || 720_000,
+    maxAgeMs: config.visualEvidence?.maxRunMs || 1_440_000,
   });
   const pruned = await prune(pool, config);
   return {
@@ -219,6 +293,7 @@ module.exports = {
   FAILED_MEDIA_HOURS,
   ROLLBACK_MEDIA_DAYS,
   RUN_RETENTION_DAYS,
+  LEGACY_RUN_GRACE_MS,
   cleanupRunResources,
   recoverInterrupted,
   recoverUnstarted,

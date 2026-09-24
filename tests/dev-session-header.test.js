@@ -241,8 +241,12 @@ test('the strip carries no back control — the platform header owns ← now', (
   DevChat.currentSession = { ...SESSION };
   let switched = null;
   sandbox.App.switchTab = (tab) => { switched = tab; };
+  sandbox.location = { hash: '' };
   assert.equal(DevChat.handleBack(), true);
-  assert.equal(switched, 'dev', 'backing out of a session lands on the Board');
+  // #2770: with no captured origin, a change — an agent conversation — goes
+  // up to Messages rather than landing on the Board.
+  assert.equal(sandbox.location.hash, '#messages', 'backing out of a session lands on Messages');
+  assert.equal(switched, null, 'and no longer on the Board');
   // And app.js's header listener actually consults it, before the
   // navigate-home fallback.
   const appJs = read('public', 'js', 'app.js');
@@ -254,12 +258,24 @@ test('the strip carries no back control — the platform header owns ← now', (
 test('a session with a pull request offers it; one without says so', () => {
   const { view } = makeDevChat();
   const withPr = headerHtml(view({ ...SESSION, pr_number: 42 }));
-  assert.match(withPr, /id="dc-pr-header-link"[^>]*>PR #42</);
+  // #2821: it names where it goes, not the PR number.
+  assert.match(withPr, /id="dc-pr-header-link"[^>]*>Open proposal card</);
+  assert.doesNotMatch(withPr, />PR #42</);
   assert.match(withPr, /title="[^"]*goes to PR #42/);
 
   const without = headerHtml(view(SESSION));
   assert.doesNotMatch(without, /dc-pr-header-link/);
   assert.match(without, /New change</);
+});
+
+test('#2821: "Open proposal card" opens the change\'s card page', () => {
+  const { DevChat, sandbox } = makeDevChat();
+  const opened = [];
+  sandbox.AppView = { openTopic: (kind, id) => opened.push([kind, id]) };
+  DevChat.currentSession = { ...SESSION, pr_number: 42 };
+  DevChat.openProposalCard();
+  assert.deepEqual(opened, [['proposal', SESSION.id]]);
+  assert.equal(typeof DevChat.revealPrCard, 'undefined', 'the in-page PR jump retired with the "PR #x" label');
 });
 
 test('the title falls back through its three sources, and the branch is the tooltip', () => {
@@ -308,12 +324,17 @@ test('the strip hosts no lifecycle pill — the header chip does', () => {
   const html = headerHtml(view({ ...SESSION, check_state: 'passing' }));
   assert.doesNotMatch(html, /dc-status-pill/);
   assert.doesNotMatch(html, /ms-pill/);
-  // The pill's seat moved from the bar's left slot INTO the chip, as its
+  // The pill's seat moved from the bar's left slot INTO the title, as its
   // subtitle. On a new change the old arrangement drew the lifecycle alone —
-  // the chip was empty on this route — so the top of the screen said "Draft"
+  // the label was empty on this route — so the top of the screen said "Draft"
   // and never said which app was being changed. Same store, same component,
   // same id, one control.
-  const chipTsx = read('frontend', 'src', 'features', 'header', 'app-switcher-chip.tsx');
+  //
+  // The FILE moved in #2718, and nothing else about this did: the chip that
+  // held the subtitle stopped being a button when the tab bar took the
+  // platform destinations out of its menu, and what is left is the heading.
+  // See features/header/header-title.tsx.
+  const chipTsx = read('frontend', 'src', 'features', 'header', 'header-title.tsx');
   assert.match(chipTsx, /id="header-status-pill"/);
   assert.match(chipTsx, /sessionHeaderStore/);
   assert.match(chipTsx, /MergeStatusPill/);

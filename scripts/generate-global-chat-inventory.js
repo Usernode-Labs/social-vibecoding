@@ -46,6 +46,7 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/app-llm-proxy.js', 'child-app provider proxy, not a Classic control'],
   ['src/routes/app-platform-api.js', 'child-app platform API authenticated by app grants'],
   ['src/routes/app-storage.js', 'child-app storage transport authenticated by app grants'],
+  ['src/routes/agent-sessions.js', 'the agent-session Mayor\'s own conversation (#2779); one assistant does not drive another'],
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],
@@ -174,7 +175,7 @@ const DOMAIN_RULES = [
   [/^\/api\/v4\/mobile(?:\/|$)/, 'native'],
   [/^\/challenges-api(?:\/|$)/, 'leaderboards'],
   [/^\/api\/(?:me\/)?global-chat/, 'settings'],
-  [/^\/api\/(?:auth|me\/(?:profile|public-profile|avatar|password|email|locale|social-identities|blocks)|profiles|users)/, 'profile'],
+  [/^\/api\/(?:auth|me\/(?:profile|public-profile|avatar|password|email|locale|social-identities|blocks|summary)|profiles|users)/, 'profile'],
   [/^\/api\/(?:notifications|me\/(?:notification|mobile-push)|apps\/[^/]+\/notification)/, 'notifications'],
   [/^\/api\/(?:conversations|apps\/[^/]+\/messages)/, 'messages'],
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
@@ -451,6 +452,7 @@ function classicPathFor(domain, routePath) {
     return conversation ? '#messages/:' + conversation[1] : '#messages';
   }
   if (domain === 'leaderboards') return '#leaderboard/challenges';
+  if (value === '/api/auth/account' || value === '/api/auth/account-deletion') return '#settings/delete-account';
   if (domain === 'profile') return '#profile';
   if (domain === 'development') {
     const session = value.match(/\/sessions\/:(id|sessionId)(?:\/|$)/);
@@ -477,6 +479,11 @@ function classicPathFor(domain, routePath) {
 
 function transportFor(route) {
   const routePath = route.path || '';
+  // Self-deletion requires a browser session and private reauthentication in
+  // Settings. Discovery may open that form, never collect a password in chat.
+  if (routePath === '/api/auth/account' || routePath === '/api/auth/account-deletion') {
+    return 'client_action';
+  }
   if (/^\/api\/v4\/mobile\//.test(routePath)) return 'native_client';
   if (/\/(?:attachments?|chat-attachments)\/[^/]+\/view$/.test(routePath)
       || /\/report-snapshots\/:id\/html$/.test(routePath)
@@ -495,7 +502,8 @@ function mappedClassification(route, clientRefs, matches, reason = null) {
   const domain = domainFor(route);
   const risk = route.method === 'GET'
     ? 'read'
-    : (/delete|remove|revoke|reset|close|archive|override/.test(route.path || '')
+    : ((route.method === 'DELETE' && route.path === '/api/auth/account')
+      || /delete|remove|revoke|reset|close|archive|override/.test(route.path || '')
       ? 'destructive'
       : 'external_write');
   return {

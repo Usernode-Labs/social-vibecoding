@@ -4,18 +4,19 @@
 //
 // ── What the screen is ─────────────────────────────────────────────────
 //
-// One screen, three top-level SECTIONS, one pane visible at a time:
+// One screen, four top-level SECTIONS, one pane visible at a time:
 //
 //   topochain   #topochain-leaderboard-root   TopochainLeaderboard
 //   kudos       #leaderboard-root             Leaderboard itself
 //   challenges  #challenges-root              TopochainChallenges   (default)
+//   seasons     #leaderboard-history-root     LeaderboardHistory    ("History")
 //
 // The two Topochain-domain sections share one event selection, rendered into
 // #leaderboard-event-bar by TopochainEventContext and hidden on Kudos.
 //
 // ── What this island owns, and what it does not ────────────────────────
 //
-// It owns the FRAME — the <main>, the column, the title, the four hosts — and
+// It owns the FRAME — the <main>, the column, the five hosts — and
 // the SECTION TAB STRIP, which is the one piece of DOM that actually changes
 // hands here. Everything below a host is still the owning module's innerHTML,
 // exactly as in chunks A–E: React owns the container, the module owns the
@@ -56,7 +57,6 @@
 import { useRef } from 'react';
 import {
   SECTION_TAB_ACTIVE,
-  SECTION_TAB_BASE,
   SECTION_TAB_INACTIVE,
   SECTION_TABS_LIST,
   Tabs,
@@ -76,6 +76,7 @@ import { EventBar } from './event-bar';
 import { KudosPane } from './kudos-pane';
 import { TopochainStandingsPane } from './topochain-standings';
 import { ChallengesPane } from './challenges-pane';
+import { HistoryPane } from './history-pane';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
 
 // The strip, in TAB ORDER. Moved here verbatim from the template that
@@ -89,11 +90,37 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 // do next leads, the ranking it feeds comes last. Only the ORDER moved — the
 // keys and labels are as they were. #2374 then made the first tab the default
 // section too, behind a bare #leaderboard.
+//
+// The navigation prototype names this page's segments Challenges, Standings,
+// History and Kudos, and two of those are this change:
+//
+//   * HISTORY is new — the seasons that have ended and who won them
+//     (./history.js). It sits right after the standings because it IS past
+//     standings, and last because it is the least-visited; #1917's order for
+//     the other three is kept.
+//   * the standings tab is labelled "Standings", the prototype's word and the
+//     one the Me row that leads here uses ("Challenges & standings"). It was
+//     "Leaderboard" because it was the screen's own title too; the screen's
+//     <h2> is gone (the bar names the tab now, see Leaderboard._syncTitle),
+//     so the label no longer has to double as one. Its KEY stays `topochain`
+//     — every hash alias and dapp.json check speaks in keys.
+//
+// History's key is `seasons`, not `history`: #leaderboard/history has long
+// been the Kudos pane's "My history" sub-view, and a deep link must keep
+// meaning what it meant.
 const SECTION_TABS = [
   { key: 'challenges', label: 'Challenges' },
   { key: 'kudos', label: 'Kudos' },
-  { key: 'topochain', label: 'Leaderboard' },
+  { key: 'topochain', label: 'Standings' },
+  { key: 'seasons', label: 'History' },
 ];
+
+// Four labels at the strip's px-4 are wider than a 390px phone's column, so
+// the triggers tighten to px-2.5 below `sm` — the same track, the same face —
+// and the list scrolls sideways rather than wrapping on anything narrower
+// still (a 320px phone). Complete literals, for Tailwind's extractor.
+const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2.5 sm:px-4 rounded-full text-sm font-semibold transition-colors shrink-0';
+const STRIP_LIST = `${SECTION_TABS_LIST} max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`;
 
 export function LeaderboardScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
@@ -115,13 +142,21 @@ export function LeaderboardScreen() {
     >
       {/*
           max-w-5xl for the Topochain table's sake; the Kudos pane keeps its
-          narrower max-w-3xl reading column below.
+          narrower max-w-3xl reading column below — centered with its own
+          `mx-auto` (#2921) rather than left-pinned inside this wider frame,
+          the way Profile's own `max-w-3xl mx-auto` column is.
       */}
       <div className="max-w-5xl mx-auto p-4 w-full">
         <div className={detailOpen ? 'hidden' : undefined}>
-          <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">
-            Leaderboard
-          </h2>
+          {/*
+              No <h2> here any more. The screen said "Leaderboard" twice — once
+              in the platform bar and once as this heading — and neither named
+              the tab you were on. The platform's rule is one name per screen,
+              in the bar; the bar now follows the active tab
+              (Leaderboard._syncTitle → App._leaderboardTitle), so the tab
+              strip is the first thing under it, as on every other tabbed
+              screen.
+          */}
           <Tabs
             value={section}
             onValueChange={(key) => {
@@ -131,14 +166,14 @@ export function LeaderboardScreen() {
               window.Leaderboard?._setSection?.(key);
             }}
           >
-            <TabsList id="standings-tabs" className={SECTION_TABS_LIST}>
+            <TabsList id="standings-tabs" className={STRIP_LIST}>
               {mounted
                 ? SECTION_TABS.map((s) => (
                     <TabsTrigger
                       key={s.key}
                       value={s.key}
                       data-standings-tab={s.key}
-                      className={SECTION_TAB_BASE}
+                      className={STRIP_TAB}
                       activeClassName={SECTION_TAB_ACTIVE}
                       inactiveClassName={SECTION_TAB_INACTIVE}
                     >
@@ -178,7 +213,7 @@ export function LeaderboardScreen() {
             standings root's is — `_applySection()` still toggles `hidden` on
             it, per the note above.
         */}
-        <div id="leaderboard-root" className="hidden max-w-3xl">
+        <div id="leaderboard-root" className="hidden max-w-3xl mx-auto">
           <KudosPane />
         </div>
         {/*
@@ -203,6 +238,16 @@ export function LeaderboardScreen() {
         */}
         <div id="challenges-root" className="w-full">
           <ChallengesPane />
+        </div>
+        {/*
+            The History pane (#leaderboard/seasons): the seasons that have
+            ended. React-owned end to end from the start — ./history-pane.tsx
+            is its only writer — and shipped EMPTY and hidden like the two
+            non-default roots above, with a CONSTANT className that
+            `_applySection()` toggles `hidden` on.
+        */}
+        <div id="leaderboard-history-root" className="hidden w-full">
+          <HistoryPane />
         </div>
       </div>
     </main>

@@ -122,13 +122,39 @@ test('the count rides only on a genuine collapse', () => {
 // ── 2. the Messages tab ─────────────────────────────────────────────────
 
 test('the sheet filters a Messages tab off the row flag, not off kind', () => {
-  assert.match(SHEET_SRC, /const messages = all\.filter\(\(view\) => view\.conversation\)/);
-  assert.match(SHEET_SRC, /tab === 'unread' \? unread : tab === 'messages' \? messages : all/);
+  assert.match(SHEET_SRC, /const messages = all\.filter\(\(view\) => view\.conversation \|\| view\.agent\)/);
+  assert.match(SHEET_SRC, /tab === 'unread' \? unread\s*\n\s*: tab === 'messages' \? messages : all/);
   // The flag is set where CONVERSATION_NOTIF_KINDS already lives, so the tab
   // cannot drift from the set the routing and the row copy agree on.
   assert.match(FE_SRC, /conversation: true,/);
   assert.match(HTML, /id="notifications-tab-messages"/,
     'the tab ships in the static markup, so it is there before any data loads');
+});
+
+// ── #2815: agents live under Messages, not on a tab of their own ────────
+
+test('there is no Agents tab: the strip is Unread, Messages, All', () => {
+  assert.doesNotMatch(SHEET_SRC, /notifications-tab-agents/);
+  assert.doesNotMatch(SHEET_SRC, /'agents'/);
+  assert.doesNotMatch(HTML, /id="notifications-tab-agents"/);
+  assert.doesNotMatch(FE_SRC, /notifications-agents/,
+    'the retired deep link is gone from the opener too');
+});
+
+test('agent notifications carry a flag set beside the kinds that name them', () => {
+  const kinds = FE_SRC.slice(FE_SRC.indexOf('const AGENT_NOTIF_KINDS'));
+  for (const kind of ['session_done', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted']) {
+    assert.match(kinds.slice(0, kinds.indexOf(']);')), new RegExp(`'${kind}'`));
+  }
+  assert.match(FE_SRC, /AGENT_NOTIF_KINDS\.has\(run\.item && run\.item\.kind\)\s*\n?\s*\? \{ \.\.\.rowView\(run\.item\), agent: true \}/);
+});
+
+test('the Messages tab interleaves running sessions with its rows by time', () => {
+  // The same <SessionRow> the Agents tab drew, sorted into one list with the
+  // notification rows on their own timestamps, newest first.
+  assert.match(SHEET_SRC, /\{ type: 'session', key: `s:\$\{session\.key\}`, at: session\.sortAt \|\| 0, session \}/);
+  assert.match(SHEET_SRC, /\]\.sort\(\(a, b\) => b\.at - a\.at\)/);
+  assert.match(SHEET_SRC, /<SessionRow[\s\S]{0,120}showApp/);
 });
 
 test('the tab count sums collapsed rows, so it agrees with the bell', () => {

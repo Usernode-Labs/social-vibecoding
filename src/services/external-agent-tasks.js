@@ -1042,6 +1042,9 @@ function buildWorkOrder({
       '   their real user flows; genuinely non-visual work uses impact "none", no',
       '   stories, and a specific rationale. Homeroom produces new exact-base/head',
       '   evidence instead of reusing old captures.',
+      '   On an UPDATE, submit_work does not accept visualEvidencePlan. Locally',
+      '   verify a revised executable flow before this call when your app has a',
+      '   paired local replay runner, then use the separate plan action below.',
       '   After submit_work, use get_proposal and submit_visual_evidence_plan',
       '   to send your UI flow for exact-head replay and PNG/WebM capture.',
       '   If that tool is absent, the hosted evidence agent remains available.',
@@ -1183,12 +1186,18 @@ function buildWorkOrder({
       '   whether the UI existed on the base revision, and animation "none", "steps",',
       '   or "motion". For a genuinely non-visual change use impact "none", an empty',
       '   stories array, and a specific rationale. Never include secrets or personal',
-      '   data. Homeroom lets an evidence agent perform the flow, turns the successful',
-      '   interaction trace into a bounded plan, and replays it twice against exact',
-      '   base and head revisions before publishing claim-labelled evidence.',
-      '   After submit_work, use get_proposal and submit_visual_evidence_plan',
-      '   to send your UI flow for two clean replays and PNG/WebM verification.',
-      '   If that tool is absent, the hosted evidence agent can author the plan.',
+      '   data. Without a submitted plan, Homeroom lets an evidence agent perform',
+      '   the flow, turns its interaction trace into a bounded plan, and replays',
+      '   it twice against exact base and head revisions before publishing evidence.',
+      '   If this is the Homeroom platform repository with a running local',
+      '   Compose stack, follow AGENTS.md: write a typed plan, replay it on',
+      '   exact local base/head builds, inspect the PNG/WebM, and refine the',
+      '   actions and assertions until the plan actually proves the claim.',
+      '   Pass both fields from the successful submission.json in this SAME',
+      '   submit_work call. The import rejects a moved PR head or mismatched',
+      '   plan, then the platform replays the stored plan independently.',
+      '   For apps without a local paired runner, omit visualEvidencePlan;',
+      '   the hosted evidence agent authors a plan from visualEvidence.',
       // #1214: the answer now says which routes it took and which it could
       // not use, so a malformed route is caught while the agent is still
       // holding the branch rather than from a boolean minutes later.
@@ -3438,6 +3447,7 @@ async function submitWorkLocked(deps, params) {
   const imported = await importProposal(slug, pr.number, {
     linkedIssues: linkedIssuesFor(task),
     ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
+    ...(params.visualEvidencePlan ? { visualEvidencePlan: params.visualEvidencePlan } : {}),
   });
   if (!imported || !imported.ok) {
     const retryable = retryableImportFailure(imported);

@@ -169,31 +169,36 @@ test('FLOOR: each bar holds its 28px content row open', () => {
   }
 });
 
-test('CEILING: the Improve button is exactly the 28px row', () => {
-  // THE UI OVERHAUL replaced #app-mode-switch with #improve-btn, and the
-  // invariant transferred WITH it: this is the one child that appears in the
-  // bar when an app opens, so its height IS the in-app header height. The
-  // switch it replaced was 30px for a while (24px segments + 4px p-0.5 + 2px
-  // border), which quietly made the in-app header 2px taller than every other
-  // screen's — the whole of #909. Pinning the replacement to h-7 is what stops
-  // that recurring with a differently-shaped control.
-  const tag = html.match(/<button id="improve-btn"[\s\S]*?>/)[0];
+test('CEILING: the Homeroom mark is exactly the 28px row', () => {
+  // THE UI OVERHAUL replaced #app-mode-switch with #improve-btn and the
+  // invariant transferred WITH it; #2718 retired that pill in turn and it
+  // transferred again, to #platform-mark-btn. The chain matters less than what
+  // it is a chain OF: whichever control is the tallest thing in the bar when
+  // an app opens, its height IS the in-app header height. The switch that
+  // started it was 30px for a while (24px segments + 4px p-0.5 + 2px border),
+  // which quietly made the in-app header 2px taller than every other screen's
+  // — the whole of #909. Pinning each successor to h-7 is what stops that
+  // recurring with a differently-shaped control.
+  const tag = html.match(/<button id="platform-mark-btn"[\s\S]*?>/)[0];
   assert.match(tag, /\bh-7\b/,
-    "the Improve button is pinned to the header's 28px content row");
+    "the mark is pinned to the header's 28px content row");
   assert.doesNotMatch(tag, /\b(?:sm:)?py-\d/,
-    'the Improve button carries no vertical padding — h-7 owns the height');
-  // It has a text label as well as a glyph, so it must centre its content
-  // vertically rather than letting the two children set their own baseline.
+    'the mark carries no vertical padding — h-7 owns the height');
+  // Artwork beside a chevron, so it must centre its content vertically rather
+  // than letting the two children set their own baseline. The tile is 26px
+  // inside the 28px row, which is where the 1px of air above and below it
+  // comes from.
   assert.match(tag, /\bitems-center\b/,
-    'the Improve button centres its glyph and label vertically');
-  assert.match(tag, /\binline-flex\b/, 'the Improve button is a flex box');
-  // …and SPACES them. There was no gap at all, so the glyph and the "I" of
-  // Improve met — one smudged mark rather than a state cue in front of a
-  // label, worst on the spinner (whose arc carries no bounding whitespace)
-  // and on the arrow-path (whose head reaches the glyph box's edge). A gap
-  // is a horizontal cost only, so the 28px ceiling above is untouched.
-  assert.match(tag, /\bgap-1\.5\b/,
-    'the glyph and the label are spaced like the header group they sit in');
+    'the mark centres its tile and chevron vertically');
+  assert.match(tag, /\binline-flex\b/, 'the mark is a flex box');
+  // …and SPACES them, though barely: 2px, because the chevron is a disclosure
+  // ON the mark rather than a second control beside it. A gap is a horizontal
+  // cost only, so the 28px ceiling above is untouched either way.
+  assert.match(tag, /\bgap-0\.5\b/,
+    'the tile and its chevron are spaced, not fused');
+  const tile = html.match(/<img[^>]*class="platform-mark-tile[^"]*"/)[0];
+  assert.match(tile, /(?:^|\s)h-\[26px\](?:\s|$)/,
+    'the artwork is 26px, so it fits the row with a pixel to spare');
 });
 
 test('CEILING: the landing bar is the wordmark at 28px, and carries no CTA', () => {
@@ -270,8 +275,9 @@ test('badges still overflow the row rather than being clipped', () => {
   assert.match(platform, /id="notifications-badge"[^>]*-top-1/,
     'the bell badge still hangs off the top-right corner');
   assert.match(platform, /id="improve-working-dot"[^>]*-top-1/,
-    'and the Improve button\'s working dot hangs off the same corner (#1610 '
-    + 'retired the green count that used to sit there)');
+    'and the work dot hangs off the same corner of the mark it moved to when '
+    + '#2718 retired the Improve pill (#1610 had already retired the green '
+    + 'count that used to sit there)');
 });
 
 test('the invariant is documented where the next editor will look', () => {
@@ -288,11 +294,12 @@ test('the invariant is documented where the next editor will look', () => {
   // wrong for as long as it existed (it omitted the border), so the rule is
   // that the source comment names the CLASS that pins the height rather than
   // asserting an arithmetic result. #improve-btn inherited both the slot and
-  // the rule — see features/improve/improve-button.tsx.
-  const buttonSrc = fs.readFileSync(
-    path.join(root, 'frontend/src/features/improve/improve-button.tsx'), 'utf8');
-  assert.match(buttonSrc, /h-7` matches the header's 28px content-row ceiling|h-7`? matches the header/,
-    'the Improve button comment points at the class that pins its height');
+  // the rule, and #platform-mark-btn inherited them from it when #2718 retired
+  // that pill — see features/header/platform-mark.tsx.
+  const markSrc = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/platform-mark.tsx'), 'utf8');
+  assert.match(markSrc, /h-7` is the header's 28px content-row ceiling/,
+    'the mark comment points at the class that pins its height');
 });
 
 test('no JS sets a header height — the contract lives entirely in markup + CSS', () => {

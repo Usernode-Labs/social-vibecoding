@@ -256,7 +256,7 @@ test('recordVote writes the line, and the upsert carries or drops the old one by
     const locked = pool.queries[1];
     assert.match(locked.sql, /FOR UPDATE/, 'the revision-enforced path still takes the row lock');
     assert.match(locked.sql, /WHEN pr_votes\.vote = EXCLUDED\.vote THEN pr_votes\.reason/);
-    assert.deepEqual(locked.params, [41, 8, 'yes', HEAD, null], 'no line: null, never the empty string');
+    assert.deepEqual(locked.params, [41, 8, 'yes', HEAD, null, null], 'no line: null, never the empty string; no epoch stamp: null');
   } finally {
     restore();
   }

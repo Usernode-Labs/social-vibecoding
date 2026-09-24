@@ -590,21 +590,32 @@ test('the header back button consults Settings.handleBack behind _inSettings', (
     'and home is the fallback for one that named none');
 });
 
-test("Settings is reached from the chip's menu, by a real anchor", () => {
+test('Settings is reached from the Me tab, by a real anchor', () => {
   // It was a hamburger row; #1431 retired the hamburger and parked it in the
   // Profile screen's account group; #1443 gave the shell a menu again and
-  // Settings went back into it, because it has its own page and the menu's
-  // rule is that everything in it does. One entrance, one hop, from anywhere.
-  const panel = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(panel, /id="switcher-row-settings"[\s\S]{0,80}href="#settings"/,
-    'navigation rides the anchor hash, like Challenges / Profile');
-  assert.match(panel, /id="switcher-byok-dot"/, 'the BYOK indicator dot survives');
+  // Settings went into it; #2718 took the platform's destinations back out,
+  // because the menu holds the APP's options now and the tab bar carries the
+  // platform's places. It is a Profile row again — one entrance, two hops
+  // from anywhere: the Me tab, then the row.
+  const panel = read('frontend/src/features/profile/account-panel.tsx');
+  assert.match(panel, /id="profile-row-settings"[\s\S]{0,120}href="#settings"/,
+    'navigation rides the anchor hash, like Challenges beside it');
   // The row does not call Settings.open — the hash does the navigating and
-  // always did. It DOES dismiss the menu it sits in, which is the one thing
-  // the Profile-screen version of this row had nothing to do: a menu that
-  // stays open over the screen it just sent you to is the bug.
-  assert.match(panel, /AppContext\.dismissForNav\(\)/,
-    'activating a row closes the menu before the hash lands');
+  // always did. Nor does it dismiss anything: it is on a screen rather than
+  // in a sheet, which is the whole of what changed.
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.doesNotMatch(menu, /id="switcher-row-settings"/,
+    'and there is no second entrance left in the menu');
+});
+
+test('the BYOK dot went with the row it marked', () => {
+  // It was `#switcher-byok-dot` on the menu's Settings row, published by
+  // settings.js. The row left; the dot has no seat on the Profile row yet and
+  // is not rendered anywhere, which is the honest state — a published flag
+  // with no reader is dead, and a dot invented on a new row without a design
+  // board is worse than none.
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.doesNotMatch(menu, /switcher-byok-dot/);
 });
 
 // ── Two-level layout ───────────────────────────────────────────────────
@@ -701,7 +712,10 @@ test('the level-2 chevron points where handleBack actually goes (#1565)', () => 
   assert.match(up, /window\.App\.previousRoute\(\) \|\| undefined/,
     'otherwise the address the viewer came from; home falls back to the home href');
   const chrome = sliceMethod(settingsJs, '_syncChrome');
-  assert.match(chrome, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/);
+  // ONE GLYPH, TWO TARGETS since #2718's review: _upHref from inside a
+  // section, the Me tab from the root. See the note in the _syncChrome test
+  // below for why the root stopped drawing the house.
+  assert.match(chrome, /setBackIcon\('arrow', inSection \? Settings\._upHref\(\) : '#profile'\)/);
 });
 
 test('a menu tap is a real hash navigation', () => {
@@ -763,14 +777,19 @@ test('the nav hosts still ship EMPTY, so the prerender is unchanged', () => {
 
 test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
-  const head = fn.slice(0, 1400);
+  // The method's own closing brace, not a character count — see the note on
+  // the same move in the refresh() test at the foot of this file.
+  const head = fn.slice(0, fn.indexOf('\n    },\n'));
   // #1036: the second argument is the anchor's href — inside a section the
   // chevron pops to whatever is below it, which _upHref resolves (#1565).
-  // LEVEL 2 ONLY: the mobile drill-in's chevron is the only way up a level
-  // inside this screen, while the root's arrow is gone with the other two
-  // account screens' (Profile and Admin — see App.navigateToProfile).
-  // `'home'` is hidden.
-  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/);
+  //
+  // AND THE ROOT DRAWS ONE TOO since #2718's review. It did not while
+  // Settings hung off Home's account row — the row was one tap behind you and
+  // an arrow duplicating it was chrome — but the Me tab replaced that row,
+  // and the house it was swapped for sends you past the screen you came from
+  // to one the bar's Home tab already reaches, with the Me tab still lit.
+  // Settings, Admin and the Challenges pane all moved together.
+  assert.match(head, /App\.setBackIcon\('arrow', inSection \? Settings\._upHref\(\) : '#profile'\)/);
   assert.match(head, /App\.setHeaderTitle\(/,
     'setHeaderTitle mirrors document.title for the native AppBar');
   assert.doesNotMatch(head, /getElementById\('header-title'\)/,
@@ -1749,7 +1768,7 @@ test('the wallet-recovery demo deep link is read-only and declared', () => {
 test('sign-out closes once, then uses terminal protocol 2 or web navigation',
   () => {
   const logout = settingsJs.slice(
-    settingsJs.indexOf('    async logout() {'),
+    settingsJs.indexOf('    async logout({ accountDeleted = false } = {}) {'),
     settingsJs.indexOf('    _clearSwApiCache() {'),
   );
   const closeAt = logout.indexOf('NativeChrome.prepareWebLogout()');
