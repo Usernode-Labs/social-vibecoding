@@ -612,6 +612,10 @@ const GroupChat = {
     // send while any upload is in flight).
     const atts = GroupChat._takePendingAttachments(thread);
     if (atts.length) payload.attachmentIds = atts.map((a) => a.id);
+    // #2938: whatever the error line said was about the composer this send
+    // just emptied — a "Still uploading" notice from an earlier tap above
+    // all, which nothing else would ever take down.
+    GroupChat._setAttachError(null, thread);
 
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
       GroupChat.ws.send(JSON.stringify(payload));
@@ -919,7 +923,7 @@ const GroupChat = {
         // block the send (input keeps its text).
         const threadScope = { type, ref };
         if (GroupChat.attachmentsUploading(threadScope)) {
-          GroupChat._setAttachError('Still uploading, one moment…', threadScope);
+          GroupChat._setAttachError(GroupChat.UPLOAD_WAIT_NOTICE, threadScope);
           return;
         }
         if (!content && !GroupChat.hasPendingAttachments(threadScope)) return;
@@ -2118,6 +2122,12 @@ const GroupChat = {
         entry.kind = data.kind;
         entry.meta = data.meta || null;
         entry.uploading = false;
+        // #2938: a send tapped mid-upload left the wait notice up; once the
+        // last upload in this composer lands there is nothing to wait for.
+        if (!GroupChat.attachmentsUploading(thread)
+            && GroupChat._attachErrors[GroupChat._composerScope(thread)] === GroupChat.UPLOAD_WAIT_NOTICE) {
+          GroupChat._setAttachError(null, thread);
+        }
       } catch (err) {
         GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a !== entry);
         if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch { /* already revoked */ } }
@@ -2162,8 +2172,17 @@ const GroupChat = {
   // — the component draws the row either way, so the module has one thing to
   // say rather than two to keep in step.
   _setAttachError(msg, thread) {
-    GroupChat._publishComposer(GroupChat._composerScope(thread), { attachError: msg || null });
+    const scope = GroupChat._composerScope(thread);
+    GroupChat._attachErrors[scope] = msg || null;
+    GroupChat._publishComposer(scope, { attachError: msg || null });
   },
+
+  // What each composer's error line currently says, so an upload finishing
+  // can take down the wait notice without erasing a real error (#2938).
+  _attachErrors: { general: null, thread: null },
+
+  // Shown when Send is tapped while an attachment is still uploading.
+  UPLOAD_WAIT_NOTICE: 'Still uploading, one moment…',
 
   _humanAttSize(bytes) {
     const n = Number(bytes) || 0;
