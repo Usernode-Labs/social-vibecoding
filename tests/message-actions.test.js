@@ -119,3 +119,58 @@ test('the thread chip counts replies and says what it opens', () => {
   assert.match(many, /Last reply /);
   assert.match(many, /msgx-thread-chip-active/);
 });
+
+// #2387 follow-up: Discord's card — "3 replies ›" over the newest reply.
+test('the thread card shows the count over the newest reply', () => {
+  const { ThreadSummaryChip } = loadTsx(`${DIR}/thread-summary.tsx`);
+  const html = renderToHtml(createElement(ThreadSummaryChip, {
+    replyCount: 3,
+    lastReplyAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+    lastReply: { face: createElement('span', { className: 'face' }, 'S'), name: 'salah', text: 'Thanks a lot @AdoN' },
+    onOpen: () => {},
+  }));
+  assert.match(html, /class="msgx-thread-chip msgx-thread-card /, 'still the thread chip, for the selectors that find a thread by it');
+  assert.match(html, /<span class="msgx-thread-count">3 replies<\/span>/);
+  assert.match(html, /class="msgx-thread-line"><span class="face">S<\/span><strong class="msgx-thread-line-name">@salah<\/strong><span class="msgx-thread-line-text">Thanks a lot @AdoN<\/span><time/);
+  assert.match(html, /aria-label="3 replies, last from @salah 3h ago\. Open thread"/);
+});
+
+// #2387 follow-up: a thread's replies in the main transcript, where they
+// landed — one card for a run of them.
+test('the thread-activity card names the thread, the time and the latest three replies', () => {
+  const { ThreadActivityCard, THREAD_ACTIVITY_LINES } = loadTsx(`${DIR}/thread-activity.tsx`);
+  const reply = (name, text) => ({ key: name + text, face: createElement('i', null, name[0]), name, text });
+  const one = renderToHtml(createElement(ThreadActivityCard, {
+    rootText: 'Anyone else trying the new #general room?', time: '1:21 PM', replies: [reply('ada', 'Yes!')], onOpen: () => {},
+  }));
+  assert.match(one, /class="msgx-thread-activity-what">Replied in thread</);
+  assert.match(one, /class="msgx-thread-activity-root ">Anyone else trying the new #general room\?</);
+  assert.match(one, /· 1:21 PM/);
+  assert.match(one, /aria-label="Replied in thread: Anyone else trying the new #general room\?, 1:21 PM\. Open thread"/);
+
+  const many = renderToHtml(createElement(ThreadActivityCard, {
+    rootText: 'Root', time: '1:21 PM – 1:30 PM',
+    replies: [reply('a', 'one'), reply('b', 'two'), reply('c', 'three'), reply('d', 'four')], onOpen: () => {},
+  }));
+  assert.match(many, />4 replies in thread</, 'the head counts the whole run');
+  assert.equal((many.match(/class="msgx-thread-line"/g) || []).length, THREAD_ACTIVITY_LINES, 'three lines at most');
+  assert.doesNotMatch(many, />one</, 'the latest three: the oldest drops');
+  assert.match(many, />four</);
+
+  const gone = renderToHtml(createElement(ThreadActivityCard, {
+    rootText: '', rootDeleted: true, time: '9:00 AM', replies: [reply('a', '')], onOpen: () => {},
+  }));
+  assert.match(gone, /msgx-thread-activity-root-deleted">Message deleted</);
+  assert.match(gone, /msgx-thread-line-text">Attachment</, 'a reply with no words is a file');
+});
+
+test('Reply focuses the box only where there is a mouse or trackpad', () => {
+  const { wantsKeyboardFocus } = loadTsx(`${DIR}/focus.ts`);
+  const withPointer = (fine) => {
+    global.window = { matchMedia: (query) => ({ matches: query === '(any-pointer: fine)' ? fine : false }) };
+    try { return wantsKeyboardFocus(); } finally { delete global.window; }
+  };
+  assert.equal(withPointer(true), true, 'a desktop, or a tablet with a trackpad');
+  assert.equal(withPointer(false), false, 'a touch-only phone: no on-screen keyboard over the message');
+  assert.equal(wantsKeyboardFocus(), false, 'no window (a prerender) answers no');
+});

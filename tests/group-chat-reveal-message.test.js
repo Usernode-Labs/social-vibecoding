@@ -177,6 +177,23 @@ test('a reply inside a reply thread opens that thread beside the channel', async
   assert.deepEqual(h.patches, []);
 });
 
+// #2387 follow-up: the general stream now holds a reply-thread's replies too,
+// drawn as lines of a thread card — so a link to one that the page loaded
+// opens its thread straight away, with no row to scroll to and nothing to fetch.
+test('a loaded reply opens its reply thread at once', () => {
+  const h = setup();
+  const opened = [];
+  h.sandbox.window.UsernodeReact = { messages: { openAddress: (href) => opened.push(href) } };
+  h.sandbox.fetch = async () => { throw new Error('nothing to look up'); };
+  h.gc.revealMessage('garden-ab12', 1234);
+  h.mounted('garden-ab12');
+  h.gc.messages = [{ id: 900 }, { id: 1234, thread_type: 'message', thread_ref: 900 }];
+  assert.equal(h.gc._applyPendingReveal(), false);
+  assert.deepEqual(opened, ['#messages/app/garden-ab12/thread/900']);
+  assert.equal(h.gc._pendingReveal, null);
+  assert.equal(h.frames.length, 0, 'no waiting for a row a card stands in for');
+});
+
 test('a message the server cannot show is not coming: the stream stays at the newest', async () => {
   const h = setup();
   h.sandbox.fetch = async () => ({ ok: false, json: async () => ({}) });

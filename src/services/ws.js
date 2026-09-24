@@ -404,6 +404,20 @@ async function broadcastFromSender(pool, appId, data, senderId, excludeWs = null
     );
     routing.quoteHiddenUserIds = quoted.rows.map((row) => row.blocker_id);
   }
+  // #2387 follow-up: a reply-thread reply now draws a line in the general
+  // stream naming its thread's first message. Whoever blocked that message's
+  // author cannot open the thread and does not load its replies, so the live
+  // frame is withheld from them too.
+  const rootId = data.type === 'chat' && data.thread && data.thread.type === appChat.MESSAGE_THREAD
+    ? Number(data.thread.ref) : null;
+  if (rootId) {
+    const rootBlockers = await pool.query(
+      `SELECT blocked.blocker_id FROM chat_messages root
+         JOIN user_blocks blocked ON blocked.blocked_user_id = root.user_id
+        WHERE root.id = $1`, [rootId]
+    );
+    routing.blockedUserIds.push(...rootBlockers.rows.map((row) => row.blocker_id));
+  }
   if (data.type === 'reaction') {
     const blockedReactors = await pool.query(
       `SELECT blocked.blocker_id, reactor.username
@@ -775,6 +789,19 @@ async function handleMessage(pool, client, msg) {
         ({ rows } = await pool.query(insertSql, insertParams));
       }
 
+      // #2387 follow-up: a reply in a reply thread is drawn in the general
+      // stream as a line naming the message its thread hangs off.
+      let threadRoot = null;
+      if (thread && thread.type === appChat.MESSAGE_THREAD) {
+        const root = await appChat.findThreadRoot(pool, client.appId, thread.ref);
+        if (root) {
+          threadRoot = {
+            id: Number(root.id), username: root.username || null,
+            content: root.deleted_at ? '' : appChat.snippet(root.content), deleted: !!root.deleted_at,
+          };
+        }
+      }
+
       const outMsg = {
         type: 'chat',
         id: rows[0].id,
@@ -784,6 +811,7 @@ async function handleMessage(pool, client, msg) {
         msgType: 'message',
         ...(metadata ? { metadata } : {}),
         ...(thread ? { thread } : {}),
+        ...(threadRoot ? { threadRoot } : {}),
         createdAt: rows[0].created_at,
         // Always present on a human row, so a live row and a loaded one
         // carry the same fact (`posted_via` on the REST payload).

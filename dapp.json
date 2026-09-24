@@ -5110,6 +5110,18 @@
       "expectText": "Replies stay in here"
     },
     {
+      "name": "#2387 follow-up: a thread's replies show in #general where they landed, one card for the run, and the card under the first message shows the newest reply",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": ".messages-thread-channel:has(#messages-message-9100404 .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card .msgx-thread-line",
+      "expectText": "3 replies in thread"
+    },
+    {
+      "name": "#2387 follow-up: an app channel draws its reply thread's replies where they landed, and the thread card shows the newest reply",
+      "path": "/?demo=1#messages/app/staging-demo-app",
+      "expectSelector": "#gc-messages:has([data-msg-id=\"9902003\"] .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card",
+      "expectText": "3 replies in thread"
+    },
+    {
       "name": "#2967: the channels you are not in fold under \u201cShow N more\u201d",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll button#messages-more-channels.messages-more-channels[aria-expanded=\"false\"]",

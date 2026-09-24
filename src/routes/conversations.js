@@ -238,15 +238,19 @@ function demoMessagesRaw(user, conversationId) {
       },
       {
         // #2387: the demo THREAD's root. Its three replies are in
-        // demoThreadReplies below — not here, because a thread reply is never
-        // part of the main stream — and this summary is what the transcript
-        // draws under the message to open them.
+        // demoThreadReplies below; the main stream draws each as a line where
+        // it landed (demoMainStream), and this summary is the card under the
+        // message that opens them.
         id: 9100404, conversationId, sender: lin,
         content: 'Anyone else trying the new #general room?', createdAt: '2026-08-13T13:10:00Z', editedAt: null,
         reply: null, reactions: [], attachments: [], objects: [],
         thread: {
-          replyCount: 3, lastReplyAt: '2026-08-13T13:20:00Z',
+          replyCount: 3, lastReplyAt: '2026-08-13T13:30:00Z',
           participants: [ada, self],
+          lastReply: {
+            id: 9100413, sender: ada, content: 'And the room stays quiet while we talk.',
+            createdAt: '2026-08-13T13:30:00Z',
+          },
         },
       },
       {
@@ -287,20 +291,31 @@ function demoMessages(user, conversationId) {
 
 // #2387: the demo thread under #general's "Anyone else trying the new
 // #general room?" (9100404) — three replies from two people, the viewer's own
-// in the middle so the thread shows both sides of a conversation.
+// in the middle so the thread shows both sides of a conversation. They land
+// after the run of cards, so ids and times agree and the main stream draws
+// them as ONE card of consecutive replies (the follow-up's merged line).
 function demoThreadReplies(user, conversationId) {
   if (conversationId !== 910004) return [];
   const self = demoUser(user.id, user.username || 'you');
   const ada = demoUser(910001, 'ada');
+  const lin = demoUser(910002, 'lin');
+  const threadRoot = { id: 9100404, senderUsername: lin.username, content: 'Anyone else trying the new #general room?', deleted: false };
   const reply = (id, sender, content, createdAt) => demoShape({
     id, conversationId, sender, content, createdAt, editedAt: null,
-    reply: null, reactions: [], attachments: [], objects: [], threadRootId: 9100404,
+    reply: null, reactions: [], attachments: [], objects: [], threadRootId: 9100404, threadRoot,
   });
   return [
-    reply(9100411, ada, 'Yes! Threads keep the room readable.', '2026-08-13T13:11:00Z'),
-    reply(9100412, self, 'Replying here instead of in the room.', '2026-08-13T13:13:00Z'),
-    reply(9100413, ada, 'And the room stays quiet while we talk.', '2026-08-13T13:20:00Z'),
+    reply(9100411, ada, 'Yes! Threads keep the room readable.', '2026-08-13T13:21:00Z'),
+    reply(9100412, self, 'Replying here instead of in the room.', '2026-08-13T13:23:00Z'),
+    reply(9100413, ada, 'And the room stays quiet while we talk.', '2026-08-13T13:30:00Z'),
   ];
+}
+
+// The main stream as the real one reads it since the #2387 follow-up: the
+// conversation's messages and its threads' replies, in the order they landed.
+function demoMainStream(user, conversationId) {
+  return [...demoMessages(user, conversationId), ...demoThreadReplies(user, conversationId)]
+    .sort((a, b) => a.id - b.id);
 }
 
 function demoLimit(raw) {
@@ -310,7 +325,7 @@ function demoLimit(raw) {
 // The demo transcript paged the way listMessages pages the real one: `before`
 // (default), `after`, or an `around` window with its `focus`.
 function demoMessagePage(user, conversationId, { before = null, after = null, around = null, limit } = {}) {
-  const all = demoMessages(user, conversationId);
+  const all = demoMainStream(user, conversationId);
   const size = demoLimit(limit);
   if (around) {
     const target = all.find((row) => row.id === around)
