@@ -954,3 +954,40 @@ test('a signed-out reader gets the cross-link without a tally that is not theirs
   assert.match(standingsTsx, /id="tc-lb-challenge-link"/);
   assert.match(standingsTsx, /id="tc-lb-to-challenges"/);
 });
+
+// #2991: the History filter chips said which one was on by fill colour only.
+// aria-pressed carries the same state to assistive tech, and type="button"
+// keeps a chip from ever submitting an enclosing form.
+test('the Kudos History filter chips expose their on-state as aria-pressed (#2991)', () => {
+  const state = {
+    mounted: true,
+    chrome: null,
+    body: {
+      kind: 'history',
+      chips: [
+        { key: 'given', label: 'Given', on: true },
+        { key: 'received', label: 'Received', on: false },
+      ],
+      list: { kind: 'empty', message: 'Nothing yet.' },
+      more: null,
+    },
+  };
+  const mod = loadTsx('frontend/src/features/leaderboard/kudos-pane.tsx', {
+    stubs: {
+      './kudos-pane-store.js': {
+        kudosPaneStore: { get: () => state, subscribe: () => () => {} },
+      },
+    },
+  });
+  const out = renderToHtml(createElement(mod.KudosPane, {}));
+  const chip = (key) => {
+    const m = out.match(new RegExp(`<button[^>]*data-lb-hfilter="${key}"[^>]*>`));
+    assert.ok(m, `the ${key} chip renders`);
+    return m[0];
+  };
+  assert.match(chip('given'), /aria-pressed="true"/);
+  assert.match(chip('received'), /aria-pressed="false"/);
+  for (const key of ['given', 'received']) assert.match(chip(key), /type="button"/);
+  // The colour treatment is unchanged: the attribute is added, not swapped in.
+  assert.match(chip('given'), /bg-violet-600 text-white/);
+});

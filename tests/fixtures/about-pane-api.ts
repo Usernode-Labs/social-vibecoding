@@ -6,3 +6,4 @@ export { AboutPane } from '../../frontend/src/features/app-context/about-pane';
 export { improveStore } from '../../frontend/src/features/improve/improve-store.js';
 export { parkedStore } from '../../frontend/src/features/nav/parked-store.js';
 export { PlatformTarget } from '../../frontend/src/features/app-context/platform-target.js';
+export { ContributorsFold } from '../../frontend/src/features/app-context/about-pane';

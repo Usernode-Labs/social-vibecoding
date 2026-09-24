@@ -1810,6 +1810,10 @@ test('contributors: the list folds at 5 with a Show-all toggle, and expands in p
   assert.equal(open.rows.length, 7);
   assert.equal(open.toggle, 'Show fewer');
   assert.equal(open.rows.some((r) => r.who === 'u6'), true);
+  // The fold state rides the descriptor so the toggle can expose it as
+  // aria-expanded rather than only through its label (#2991).
+  assert.equal(folded.expanded, false);
+  assert.equal(open.expanded, true);
 });
 
 test('contributors: exactly 5 rows need no toggle', () => {

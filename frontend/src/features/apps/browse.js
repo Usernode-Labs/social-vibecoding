@@ -947,6 +947,9 @@ const Browse = {
       count: (state === 'ready' && total > 0) ? total : null,
       rows: [],
       toggle: null,
+      // Whether the fold is open, so the toggle can say so to assistive tech
+      // (aria-expanded) and not only through its label (#2991).
+      expanded,
       note: null,
     };
 
