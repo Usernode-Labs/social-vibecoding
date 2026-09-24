@@ -7647,6 +7647,35 @@ CREATE INDEX IF NOT EXISTS idx_notifications_conversation_message
 -- names here because CREATE TABLE IF NOT EXISTS above skips an existing
 -- table: the unnamed originals (`conversations_kind_check`, and the table
 -- CHECK Postgres names `conversations_check`) only allowed two kinds.
+--
+-- Channel directory (Discord-style categories): channels can be grouped under
+-- admin-managed categories and ordered inside their group. `read_only`
+-- (meaningful for kind='channel') makes a room admins-post-only; the service
+-- enforces it because adding a CHECK against an existing deployment is the
+-- awkward half of an idempotent migration (see the conversation_members
+-- last_read FK DO-block above for the same trade-off made the other way).
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS category_id INTEGER;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS channel_position INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS read_only BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- The categories themselves. `category_key` follows the same handle grammar
+-- as `channel_key` ([a-z][a-z0-9-]{0,39}) so a category and a channel can
+-- never disagree about what a `#name` reference points at. Position is
+-- advisory: ties break by id, so a hand-edited duplicate degrades to a
+-- stable order rather than breaking a render.
+CREATE TABLE IF NOT EXISTS chat_categories (
+  id           SERIAL PRIMARY KEY,
+  category_key TEXT NOT NULL,
+  name         VARCHAR(60) NOT NULL,
+  position     INTEGER NOT NULL DEFAULT 0,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (category_key)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_categories_position
+  ON chat_categories (position, id);
+
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS channel_key VARCHAR(40);
 DO $$
 BEGIN
@@ -7663,8 +7692,53 @@ BEGIN
   ALTER TABLE conversations ADD CONSTRAINT conversations_channel_key_check
     CHECK ((kind = 'channel') = (channel_key IS NOT NULL));
 END $$;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_channel_key
-  ON conversations (channel_key) WHERE channel_key IS NOT NULL;
+-- The channel handle's uniqueness must not fight an ARCHIVED channel's
+-- history. The service archives channels instead of deleting them (their
+-- conversation_messages cascade would silently erase a transcript), and a
+-- re-created channel with the same handle is the ordinary flow afterwards —
+-- so the uniqueness is scoped to ACTIVE rows only. Idempotent swap: the
+-- DROP is a no-op on a fresh database, and the CREATE below replaces the
+-- old scoped index in place.
+DROP INDEX IF EXISTS idx_conversations_channel_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_channel_key_active
+  ON conversations (channel_key) WHERE channel_key IS NOT NULL AND status = 'active';
+-- The platform's channel directory. Categories first (advisory position,
+-- id tiebreak), then the channels in each group ordered by their own
+-- position. The defaults ship in production AND staging alike: they are the
+-- platform's furniture, not demo data, and the four channels below cover the
+-- requested set — #announcements (read-only for non-admins), #general,
+-- #testnet and #production.
+INSERT INTO chat_categories (category_key, name, position)
+VALUES ('information', 'Information', 0), ('development', 'Development', 10)
+ON CONFLICT (category_key) DO NOTHING;
+
+INSERT INTO conversations
+  (kind, title, channel_key, category_id, channel_position, read_only)
+SELECT 'channel', v.channel_key, v.channel_key, cat.id, v.pos, v.read_only
+  FROM (VALUES
+    ('announcements', 0, TRUE),
+    ('general', 10, FALSE),
+    ('testnet', 0, FALSE),
+    ('production', 10, FALSE)
+  ) AS v(channel_key, position, read_only)
+  JOIN chat_categories cat
+    ON cat.category_key = CASE v.channel_key
+      WHEN 'announcements' THEN 'information'
+      WHEN 'general' THEN 'information'
+      WHEN 'testnet' THEN 'development'
+      ELSE 'development'
+    END
+ON CONFLICT (channel_key) WHERE channel_key IS NOT NULL DO NOTHING;
+
+-- An existing #general row predating categories picks up its grouping on the
+-- next boot; the idempotent INSERT above skips it, so the UPDATE is what
+-- carries the new column forward on existing deployments. Idempotent by
+-- construction (it only ever sets the same values).
+UPDATE conversations c
+   SET category_id = cat.id, channel_position = 10, read_only = FALSE
+  FROM chat_categories cat
+ WHERE c.channel_key = 'general' AND cat.category_key = 'information'
+   AND c.category_id IS NULL;
 -- The room itself, in production and staging alike: it is the platform's,
 -- not demo data. `conversations` is staging:private, so a fresh staging
 -- clone starts without it and this line puts it back.
@@ -7687,6 +7761,7 @@ COMMENT ON TABLE conversation_message_objects IS 'staging:private';
 COMMENT ON TABLE chat_session_spec_conversation_shares IS 'staging:private';
 COMMENT ON TABLE user_blocks IS 'staging:private';
 COMMENT ON TABLE conversation_message_reports IS 'staging:private';
+COMMENT ON TABLE chat_categories IS 'staging:private';
 
 -- Account deletion must not strand a group without an owner or erase retained
 -- conversation history. This centralized BEFORE DELETE trigger covers every
