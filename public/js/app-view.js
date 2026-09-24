@@ -3828,6 +3828,13 @@ const AppView = {
     const changePage = t.kind === 'session' || t.kind === 'proposal';
     const head = document.getElementById('gc-thread-head');
     if (!head) return;
+    // Two surfaces render a `#gc-thread-head`: the change page's is its own
+    // React element, a thread's is an empty host `mountTopicHead` takes
+    // over. A late repaint for the topic just left (its vote roster landing
+    // after the route moved on) can run before the new topic's surface
+    // mounts, and mounting into the change page's head deletes React's own
+    // node out from under it. The surface's mount repaints the head itself.
+    if (changePage !== !!head.closest('.dev-change-overview')) return;
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
 
