@@ -391,12 +391,14 @@ function usageToken(value) {
  * A budget built on it was silently inert on that agent for its whole first
  * day in production.
  *
- * Note what this does and does not buy, because the two paths differ. Claude
- * emits `result` usage more than once in a turn, so a caller can act on it.
- * `codex-openrouter` emits usage exactly once, at `turn.completed`: there
- * the hook is terminal by construction, and a caller can REPORT that a turn
- * breached its token budget but cannot stop one. Giving that agent a
- * mid-turn signal is an upstream change, not something this seam can fake.
+ * Note what this does NOT buy (#3035). Both paths are terminal: Claude's
+ * usage arrives on its `result` event and `codex-openrouter`'s on
+ * `turn.completed`, each the last thing a turn emits. A caller can REPORT
+ * that a finished turn breached a token budget; it cannot stop a turn with
+ * this, and must never treat a breach seen here as a reason to discard a
+ * finished result — the Homeroom bot did exactly that for a day. On Codex
+ * the figure is also the THREAD's running total, not the turn's. Giving an
+ * agent a mid-turn signal is an upstream change this seam cannot fake.
  *
  * Optional and best-effort by construction: a throwing hook must never take
  * down the parse of a provider event.

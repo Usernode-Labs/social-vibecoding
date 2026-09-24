@@ -2706,7 +2706,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // #2779: an optional name, as the user would call the change. The
       // agent-session Mayor's start_change sends one; the browser buttons
-      // do not, and their sessions are named from the first message.
+      // do not, and their sessions are named from the first message. It is
+      // the change's display name, not a title a person chose: it does NOT
+      // go in proposed_pr_title, which outranks every generated title and
+      // would pin the proposal to the Mayor's first guess. pr-metadata reads
+      // it back (from the change_started event) as the change's request, so
+      // the title and description are written from the change itself.
+      // PATCH /api/sessions/:id/title is how a person pins one.
       let initialTitle = null;
       if (req.body && req.body.title != null) {
         initialTitle = typeof req.body.title === 'string'
@@ -2863,8 +2869,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
             linked_issues, issue_link_seeded,
             agent_backend, agent_provider, agent_model, agent_reasoning_effort,
-            session_title, proposed_pr_title)
-         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7, $8, $9, $10::text, $10::text)
+            session_title)
+         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7, $8, $9, $10::text)
          RETURNING *`,
         [app.id, req.user.id, issueNumber,
          issueNumber ? [issueNumber] : [], !!issueNumber,

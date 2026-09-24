@@ -32,6 +32,14 @@ const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
 // not carry. A Symbol key survives the object spread in buildInventory() and
 // is skipped by JSON.stringify, so this stays internal to the generator.
 //
+// `line` is where the router call sits. It orders the routes (declaration
+// order) and finds shadowed registrations below, and it is deliberately NOT
+// written out: every edit above a route moved it, so the committed file went
+// stale on nearly every change to a routes file, and on the merge of two
+// changes that had each regenerated it correctly. 26 of the 40 commits that
+// last touched the file changed nothing but line numbers and totals. Without
+// it the file changes only when the route surface does.
+//
 // `pathCount` is how many paths one router call registered: >1 means an array
 // of paths, which is how a shared boundary middleware is written.
 // `shadowsLaterRoute` means the same method and path is registered again
@@ -363,11 +371,10 @@ function discoverRoutes() {
           for (const route of discovered) {
             routes.push({
               source: relative(file),
-              line,
               method: method.toUpperCase(),
               path: route.path,
               expression: route.expression,
-              [REGISTRATION]: { pathCount: discovered.length, shadowsLaterRoute: false },
+              [REGISTRATION]: { line, pathCount: discovered.length, shadowsLaterRoute: false },
             });
           }
         }
@@ -389,12 +396,13 @@ function markShadowedRegistrations(routes) {
     if (!route.path) continue;
     const key = `${route.source}\0${route.method}\0${route.path}`;
     const seen = lastLine.get(key);
-    if (seen === undefined || route.line > seen) lastLine.set(key, route.line);
+    const { line } = route[REGISTRATION];
+    if (seen === undefined || line > seen) lastLine.set(key, line);
   }
   for (const route of routes) {
     if (!route.path) continue;
     const key = `${route.source}\0${route.method}\0${route.path}`;
-    route[REGISTRATION].shadowsLaterRoute = route.line < lastLine.get(key);
+    route[REGISTRATION].shadowsLaterRoute = route[REGISTRATION].line < lastLine.get(key);
   }
 }
 
@@ -587,7 +595,7 @@ function buildInventory() {
     ...classifyRoute(route, clientRefs),
   })).sort((a, b) => (
     a.source.localeCompare(b.source)
-    || a.line - b.line
+    || a[REGISTRATION].line - b[REGISTRATION].line
     || a.method.localeCompare(b.method)
   ));
   const matchedReferences = new Set(routes.flatMap((route) => (
