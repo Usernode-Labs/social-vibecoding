@@ -141,8 +141,8 @@ test('a red release workflow is reported at once: record, group message, admins 
   assert.equal(posted[0].appId, 10);
   assert.equal(posted[0].kind, 'system');
   assert.equal(posted[0].content,
-    '⚠️ PR #2589 merged (7817d05) 2 minutes ago but was not released: the "Build Kubernetes images" workflow failed. '
-    + `${RUN_URL} The platform is still running 741b8f7. Re-run its failed jobs to release it; the next merge would carry it too.`);
+    '⚠️ PR #2589 merged (7817d05) 2 minutes ago but was not released: the "Build Kubernetes images" workflow did not complete. '
+    + `${RUN_URL} The platform is still running 741b8f7. Run it on main to release the latest commit; a later merge would also carry this change.`);
   assert.deepEqual(notified, [{ appId: 10, detail: 'release_stalled' }]);
   assert.equal(pushed.length, 1, 'the notification is pushed, not only inserted');
 });
