@@ -166,7 +166,10 @@ const GroupChat = {
   // (#gc-messages) plus at most one mounted thread (#gc-thread-messages,
   // inside an Issues/Proposals accordion). Per-thread history caches
   // live in `threads`, keyed by `${type}:${ref}`.
-  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded, loading }
+  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded, loading, failed }
+  // #2992: the general stream's first history request failed, so the
+  // transcript offers "Try again" instead of an empty (or quiet) channel.
+  _historyFailed: false,
   activeThread: null,       // { type, ref } | null — the mounted thread
   _threadTypingTimer: null,
 
@@ -177,7 +180,7 @@ const GroupChat = {
   _threadState(type, ref) {
     const key = GroupChat.threadKey(type, ref);
     if (!GroupChat.threads.has(key)) {
-      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false, loading: false });
+      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false, loading: false, failed: false });
     }
     return GroupChat.threads.get(key);
   },
@@ -264,6 +267,7 @@ const GroupChat = {
     GroupChat.activeThread = null;
     GroupChat.oldestMessageId = null;
     GroupChat.hasMore = true;
+    GroupChat._historyFailed = false;
     GroupChat._lockedToBottom = true;
     GroupChat._savedScrollTop = null;
     GroupChat._didInitialScroll = false;
@@ -424,6 +428,7 @@ const GroupChat = {
     GroupChat.messages = [];
     GroupChat.oldestMessageId = null;
     GroupChat.hasMore = true;
+    GroupChat._historyFailed = false;
     GroupChat.threads = new Map();
     GroupChat.typingUsers.clear();
     if (!GroupChat.appSlug) return;
@@ -440,8 +445,9 @@ const GroupChat = {
     if (!GroupChat.appSlug || GroupChat._historyLoad) return;
     const load = {};
     GroupChat._historyLoad = load;
+    const isFirstLoad = !GroupChat.oldestMessageId;
+    let ok = false;
     try {
-      const isFirstLoad = !GroupChat.oldestMessageId;
       const url = GroupChat.oldestMessageId
         ? `/api/apps/${GroupChat.appSlug}/messages?before=${GroupChat.oldestMessageId}&limit=50`
         : `/api/apps/${GroupChat.appSlug}/messages?limit=50${GroupChat._demoParam()}`;
@@ -453,10 +459,12 @@ const GroupChat = {
       const prevScrollTop = container?.scrollTop || 0;
 
       const res = await fetch(url);
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { messages } = await res.json();
       // Disconnect invalidates this request, even if we return to the same app.
       if (GroupChat._historyLoad !== load) return;
+      ok = true;
+      GroupChat._historyFailed = false;
 
       if (messages.length < 50) GroupChat.hasMore = false;
 
@@ -477,8 +485,18 @@ const GroupChat = {
         const newScrollHeight = container.scrollHeight;
         container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
       }
-    } catch {} finally {
-      if (GroupChat._historyLoad === load) GroupChat._historyLoad = null;
+    } catch { /* surfaced below */ } finally {
+      if (GroupChat._historyLoad === load) {
+        GroupChat._historyLoad = null;
+        // #2992: a failed FIRST page left the channel blank (or claiming a
+        // quiet channel) with nothing to retry; say so and offer "Try again".
+        // A failed earlier page keeps what is on screen — the next scroll to
+        // the top asks again.
+        if (!ok && isFirstLoad) {
+          GroupChat._historyFailed = true;
+          GroupChat.render();
+        }
+      }
     }
   },
 
@@ -863,12 +881,13 @@ const GroupChat = {
       {
         earlier: false,
         placeholder: null,
+        error: GroupChat._historyFailed ? 'Couldn’t load messages.' : null,
         // The quiet card's three facts (features/group-chat/quiet-card.tsx).
         // Whether the card SHOWS is the transcript's call — it knows whether a
         // person's message is among the rows, including one that lands live —
         // but "paged back to the beginning", "can this viewer post" and the
         // app's name are this module's to know.
-        quiet: {
+        quiet: GroupChat._historyFailed ? null : {
           exhausted: !GroupChat.hasMore,
           canPost: !GroupChat._readOnly(),
           appName: GroupChat._appName()
@@ -1064,15 +1083,23 @@ const GroupChat = {
     // finishes. Only one initial/page request may own this cache at a time.
     if (st.loading) return;
     st.loading = true;
+    let ok = false;
+    // A retry goes back to "Loading…" while it is in flight.
+    if (st.failed) {
+      st.failed = false;
+      const a = GroupChat.activeThread;
+      if (a && a.type === type && Number(a.ref) === Number(ref)) GroupChat.renderThread();
+    }
     const beforeParam = st.oldestId ? `&before=${st.oldestId}` : '';
     try {
       const res = await fetch(
         `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(type)}&thread_ref=${encodeURIComponent(ref)}`
         + `&limit=50${beforeParam}${beforeParam ? '' : GroupChat._demoParam()}`
       );
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const messages = Array.isArray(data.messages) ? data.messages : [];
+      ok = true;
       if (GroupChat.threads.get(GroupChat.threadKey(type, ref)) !== st) return;
       // #2387: a reply thread's first message, which heads the thread.
       if (type === 'message' && data.root) st.root = data.root;
@@ -1082,12 +1109,22 @@ const GroupChat = {
         st.oldestId = messages[0].id;
       }
       st.loaded = true;
+      st.failed = false;
       const a = GroupChat.activeThread;
       if (a && a.type === type && Number(a.ref) === Number(ref)) {
         GroupChat.renderThread();
       }
-    } catch { /* transient — re-open retries */ } finally {
+    } catch { /* surfaced below */ } finally {
       st.loading = false;
+      // #2992: a failed FIRST page used to leave the thread on "Loading…"
+      // forever — nothing re-rendered it. Record the failure and repaint so
+      // the transcript offers "Try again" (loadThreadHistoryForOpen). A failed
+      // earlier page keeps the "Load earlier" control, which is its retry.
+      if (!ok && !st.loaded && GroupChat.threads.get(GroupChat.threadKey(type, ref)) === st) {
+        st.failed = true;
+        const a = GroupChat.activeThread;
+        if (a && a.type === type && Number(a.ref) === Number(ref)) GroupChat.renderThread();
+      }
     }
   },
 
@@ -1141,7 +1178,8 @@ const GroupChat = {
         // means; the placeholder line is the flat thread's.
         placeholder: st.loaded
           ? (st.messages.length || chat ? null : 'No messages yet. Start the thread.')
-          : 'Loading…',
+          : (st.failed ? null : 'Loading…'),
+        error: !st.loaded && st.failed ? 'Couldn’t load this thread.' : null,
         language,
         ...(chat && st.loaded ? {
           quiet: {

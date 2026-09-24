@@ -53,6 +53,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import {
@@ -997,6 +998,23 @@ export function TranscriptRows({ view, source, foldCards = false }: {
           next full publish — a remount or a refresh (#2498). */}
       {view.lead.placeholder && !rows.length ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
+      ) : null}
+      {/* #2992: the history request failed. The module keeps the failure on
+          its own state and republishes; "Try again" re-enters the same load
+          the channel or thread opened with, and a success clears the line. */}
+      {view.lead.error ? (
+        <div role="alert" className="gc-history-error flex items-center gap-2 px-2 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <span>{view.lead.error}</span>
+          <Button
+            type="button"
+            variant="neutral"
+            size="xsText"
+            ink="neutral"
+            onClick={() => (main ? controller()?.loadHistory?.() : controller()?.loadThreadHistoryForOpen?.())}
+          >
+            Try again
+          </Button>
+        </div>
       ) : null}
       {drawn}
       {quiet ? <QuietCard {...quiet} /> : null}
