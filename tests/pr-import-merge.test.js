@@ -501,3 +501,66 @@ test('finalizeMerge: the merge line names who built, backed and shaped it, in wo
     restore();
   }
 });
+
+// ── Follow-up to #2897: the platform's own app is not live at merge time ──
+// A self-hosted merge releases after it merges (GitHub Actions, then Argo CD),
+// so its announcement says it merged and will be live in a few minutes, and
+// the metadata carries `liveSoon` for the chat to read. A child app keeps
+// "is live" (the credits test above pins that line exactly).
+
+test('finalizeMerge: a self-hosted merge says it will be live in a few minutes, in words and as metadata', async () => {
+  const { subject, systemMessages, rebuildCalls, restore } = loadVotes({
+    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
+  });
+  try {
+    const pool = makeRecordingPool([
+      [/SET status = 'merging'/, [{ id: 1 }]],
+      [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'social-vibecoding', self_hosted: true }]],
+      [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
+      [/SELECT username FROM users WHERE id = \$1/, [{ username: 'evan' }]],
+      [/FROM pr_votes pv/, [
+        { username: 'evan', vote: 'yes', reason: null },
+        { username: 'alice', vote: 'yes', reason: null },
+      ]],
+      [/FROM chat_messages cm/, []],
+    ]);
+    await subject.finalizeMerge({
+      required: 1, activeCount: 2, yesCount: 2, majority: 1,
+      force: false, forceBy: null, dstep: () => {}, dend: () => {},
+      mergeCommitSha: 'abc123', config: { jwtSecret: 's' },
+      pool, session: { ...nativeSession },
+    });
+    assert.equal(rebuildCalls.length, 0, 'the platform is released outside the process, never rebuilt here');
+    const line = 'Native change merged (PR #30) and will be live in a few minutes. Built by evan, backed by alice. (2/2 votes)';
+    const announced = systemMessages.filter((m) => m.content === line);
+    assert.equal(announced.length, 2, 'general chat and the proposal\'s thread, the same line');
+    assert.equal(announced[0].meta.merged.liveSoon, true);
+    assert.ok(!systemMessages.some((m) => /is live \(PR #30\)/.test(m.content)), 'no claim it is live yet');
+  } finally {
+    restore();
+  }
+});
+
+test('finalizeMerge: an untitled self-hosted merge without names keeps the "(yes/active votes)" tail', async () => {
+  const { subject, systemMessages, restore } = loadVotes({
+    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
+  });
+  try {
+    const pool = makeRecordingPool([
+      [/SET status = 'merging'/, [{ id: 1 }]],
+      [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'social-vibecoding', self_hosted: true }]],
+      [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
+    ]);
+    await subject.finalizeMerge({
+      required: 1, activeCount: 1, yesCount: 1, majority: 1,
+      force: false, forceBy: null, dstep: () => {}, dend: () => {},
+      mergeCommitSha: 'abc123', config: { jwtSecret: 's' },
+      pool, session: { ...nativeSession, pr_title: '' },
+    });
+    const line = systemMessages.find((m) => /^PR #30 merged and will be live in a few minutes\. /.test(m.content));
+    assert.ok(line, systemMessages.map((m) => m.content).join('\n'));
+    assert.match(line.content, /\((\d+)\s*\/\s*(\d+)\s+vote/, 'the "(yes/active votes)" tail is unchanged');
+  } finally {
+    restore();
+  }
+});
