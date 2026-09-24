@@ -199,3 +199,44 @@ Run `npm run test:changed -- --base <pre-change-sha>` for focused tests. The inf
 runbook covers the synthetic private-data fixture, live Stockroom rehearsal,
 terminal-result collection and scratch cleanup. Backups, source fencing, durable
 migration state transitions and placement cutover remain separate work.
+
+## Controlled external placement (staging)
+
+The binding's immutable `spec` records its original central identity. Its status
+holds `phase`, `operation` and `current: {targetId, revision}`. An operator starts
+with `Moving` at central revision zero; all selected database operations fail
+closed in that phase. Switching to another target requires `Moving` → `Ready`,
+the same operation ID and the next revision. Status cannot be cleared. Runtime
+resolves the target against infra's explicit `runtimeTargets` and verifies the
+live CNPG UID. This status is routing intent, not database contents or a backup.
+
+Every app database family follows current placement, including preview/evidence
+clones and reusable templates. Operation-local connections keep simultaneous
+app operations separate. Logical copies can cross servers; PostgreSQL physical
+template copies require the same server. Catalog accounting excludes old retained
+copies and queries each active target. Primary retirement remains blocked.
+
+The optional `databaseControlPlane.runtimeSecret` projects `targets.json` and CA
+certificates into the platform and startup migrator. Each registry entry has
+`id`, `clusterUid`, and an administrative PostgreSQL URL using `sslmode=verify-full`
+and `/etc/sv-database-targets/<targetId>.crt`. Endpoints must match configured
+service names. Existing app URLs retain their original connection options while
+changing endpoint; this does not add CA projection to generated apps. The legacy
+DB manager requires administrative SQL on the destination, so staging explicitly
+enables CNPG superuser access for that target. The separate provisioning worker
+still has no credentials/Secret reads. Do not enable this globally by default.
+
+The infra operator adapter initially supports only Stockroom's first central to
+`staging-apps` move. It briefly pauses the staging platform to drain pre-existing
+administrative operations and pauses Stockroom, discards disposable templates,
+rotates the source app password and terminates old sessions. The copy Job alone
+has the temporary password. After verification it disables source connections,
+commits current placement, updates Stockroom's environment Secret and resumes both
+Deployments. The source remains retained and fenced. Native Job metadata, Secrets
+and binding status permit a fresh operator process to resume. Before cutover an
+explicit abort may restore the source; after cutover recovery must move forward.
+Do not disable binding routing or restore the old URL after destination writes.
+
+The admin interface still manages clusters; migration initiation is operator-only.
+General app selection, move-back/demotion and worker-driven orchestration remain
+future increments. Backups remain deferred by the staging operator.

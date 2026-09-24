@@ -13,6 +13,7 @@ clusterDomain: cluster.local
 databaseControlPlane:
   enabled: false
   bindingsEnabled: false
+  runtimeSecret: ""
   serviceAccountName: social-database-worker
   policyConfigMap: social-database-policy
   resources:

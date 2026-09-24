@@ -90,9 +90,9 @@ test('malformed opt-in policy does not silently disable bindings', () => {
 });
 
 test('clone, repair and global accounting stop before database side effects', async () => {
-  const original = placement.assertCentralPlacement;
+  const original = placement.resolvePlacements;
   const seen = [];
-  placement.assertCentralPlacement = async (names, opts) => { seen.push({ names, all: !!opts?.all }); throw Error('blocked'); };
+  placement.resolvePlacements = async (names, opts) => { seen.push({ names, all: !!opts?.all }); throw Error('blocked'); };
   try {
     await assert.rejects(db.cloneDatabase('app_other', target.database), /blocked/);
     await assert.rejects(db.cloneDatabase(target.database, 'app_other'), /blocked/);
@@ -101,5 +101,5 @@ test('clone, repair and global accounting stop before database side effects', as
     await assert.rejects(db.connectionUrl(target.database, 'secret'), /blocked/);
     assert.deepEqual(seen.slice(0, 2).map((item) => item.names), [['app_other', target.database], [target.database, 'app_other']]);
     assert.equal(seen[3].all, true);
-  } finally { placement.assertCentralPlacement = original; }
+  } finally { placement.resolvePlacements = original; }
 });

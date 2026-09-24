@@ -115,7 +115,7 @@ function isStaging() {
 function postgresEnv(dbName) {
   const value = process.env.DB_ADMIN_URL || process.env.DATABASE_URL;
   if (!value) throw new Error('DB_ADMIN_URL or DATABASE_URL is required');
-  const url = new URL(value);
+  const url = require('./database-routing').connection(dbName) || new URL(value);
   return {
     ...process.env,
     PGHOST: url.hostname,
@@ -124,6 +124,7 @@ function postgresEnv(dbName) {
     PGPASSWORD: decodeURIComponent(url.password || ''),
     PGDATABASE: dbName,
     ...(url.searchParams.get('sslmode') ? { PGSSLMODE: url.searchParams.get('sslmode') } : {}),
+    ...(url.searchParams.get('sslrootcert') ? { PGSSLROOTCERT: url.searchParams.get('sslrootcert') } : {}),
   };
 }
 
@@ -259,11 +260,12 @@ function _resetTickets() { _tickets.clear(); }
 // that window closes on pg_dump's first byte — exactly as it did for the
 // raw `-Fc` stream. A failure after it still destroys the socket rather
 // than handing the browser a truncated file that looks complete.
-async function runExport({ dbName, res, filename, onStart, spawnFn }) {
-  if (process.env.SV_DATABASE_BINDINGS_ENABLED === 'true') {
-    try { await require('./database-placement').assertCentralPlacement([dbName]); }
-    catch { return { status: 'failed', bytesSent: 0, rawBytes: 0, error: 'Database placement blocked' }; }
-  }
+async function runExport(options) {
+  if (process.env.SV_DATABASE_BINDINGS_ENABLED !== 'true') return runRoutedExport(options);
+  try { return await require('./database-routing').run([options.dbName], () => runRoutedExport(options)); }
+  catch { return {status:'failed', bytesSent:0, rawBytes:0, error:'Database placement blocked'}; }
+}
+async function runRoutedExport({ dbName, res, filename, onStart, spawnFn }) {
   return new Promise((resolve) => {
     if (!SAFE_IDENT.test(String(dbName || ''))) {
       resolve({ status: 'failed', bytesSent: 0, rawBytes: 0, error: 'unsafe database name' });

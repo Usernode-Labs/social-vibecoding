@@ -38,3 +38,18 @@ test('binding opt-in equips the migrator to validate placement without write per
   assert.doesNotMatch(disabled, /kind: CiliumNetworkPolicy|mountPath: \/etc\/sv-database/);
   assert.throws(() => execFileSync('helm', [...args, '--set', 'databaseControlPlane.enabled=false'], { stdio: 'pipe' }));
 });
+
+test('cluster administrative credentials are projected only into platform and startup migrator', () => {
+  const args=['template','test','deploy/helm/social-vibecoding-platform','--set',
+    'enabled=true,databaseControlPlane.enabled=true,databaseControlPlane.bindingsEnabled=true,databaseControlPlane.runtimeSecret=runtime-targets,secrets.create=false,postgresql.enabled=false',
+    '--set','secrets.existingSecret=social-vibecoding,postgresql.host=central.social-platform.svc.cluster.local',
+    '--set-json','postgresql.podSelector={"cnpg.io/cluster":"central"}',
+    '--set-string',`release.sourceRevision=${'a'.repeat(40)},platform.image.digest=sha256:${'b'.repeat(64)},platform.workerImage.digest=sha256:${'b'.repeat(64)},platform.captureImage.digest=sha256:${'b'.repeat(64)}`];
+  for(const template of ['platform.yaml','migration-job.yaml']) {
+    const result=execFileSync('helm',[...args,'--show-only',`templates/${template}`],{encoding:'utf8'});
+    assert.match(result,/SV_DATABASE_TARGETS_FILE/);assert.match(result,/secretName: "runtime-targets"/);
+  }
+  const worker=execFileSync('helm',[...args,'--show-only','templates/database-worker.yaml'],{encoding:'utf8'});
+  assert.doesNotMatch(worker,/runtime-targets|database-targets|SV_DATABASE_TARGETS_FILE/);
+  assert.throws(()=>execFileSync('helm',[...args,'--set','databaseControlPlane.bindingsEnabled=false'],{stdio:'pipe'}));
+});

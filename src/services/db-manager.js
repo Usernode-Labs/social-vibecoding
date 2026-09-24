@@ -36,6 +36,8 @@ const DUMP_RESTORE_TIMEOUT_MS = Number(process.env.DB_CLONE_TIMEOUT_MS) || 10 * 
 // for any opaque-token column (wallet links, API keys); the auth path
 // would need to special-case the literal to ever accept it, and we
 // don't.
+const routing = require('./database-routing');
+
 const STAGING_REDACTED_SENTINEL = '__staging_redacted__';
 
 function appDbName(slug) {
@@ -78,7 +80,7 @@ function generatePassword() {
 // silently falling back to the superuser. See SELF-HOSTING.md
 // "Per-app postgres roles".
 async function connectionUrl(dbName, password, binding) {
-  const placements = await require('./database-placement').assertCentralPlacement([dbName]);
+  const placements = await require('./database-placement').resolvePlacements([dbName]);
   if (binding && placements.length && (binding.host !== placements[0].endpoint.host
     || binding.port !== placements[0].endpoint.port || binding.owner !== ownerRoleName(dbName))) {
     throw new Error('Explicit binding conflicts with registered central placement');
@@ -100,19 +102,21 @@ async function connectionUrl(dbName, password, binding) {
     );
   }
   const role = ownerRoleName(dbName);
-  const admin = adminConnection();
-  const placement = placements.find((item) => item.database === dbName);
+  const admin = new URL(process.env.DB_ADMIN_URL || process.env.DATABASE_URL);
+  const placement = placements.find((item) => require('./database-placement').ownsDatabase(item, dbName));
   if (placement) {
     admin.hostname = placement.endpoint.host;
     admin.port = String(placement.endpoint.port);
   }
-  admin.username = placement ? placement.owner : role;
+  admin.username = role;
   admin.password = password;
   admin.pathname = `/${dbName}`;
   return admin.toString();
 }
 
-function adminConnection() {
+function adminConnection(dbName) {
+  const routed = routing.connection(dbName);
+  if (routed) return routed;
   const value = process.env.DB_ADMIN_URL || process.env.DATABASE_URL;
   if (!value) throw new Error('DB_ADMIN_URL or DATABASE_URL is required for database administration');
   let parsed;
@@ -128,15 +132,16 @@ function adminUser() {
 }
 
 function postgresEnv(dbName) {
-  const admin = adminConnection();
+  const admin = adminConnection(['postgres','usernode'].includes(dbName) ? undefined : dbName);
   return {
     ...process.env,
     PGHOST: admin.hostname,
     PGPORT: admin.port || '5432',
     PGUSER: decodeURIComponent(admin.username || DB_USER),
     PGPASSWORD: decodeURIComponent(admin.password || ''),
-    PGDATABASE: dbName,
+    PGDATABASE: dbName === 'usernode' && routing.connection() ? 'postgres' : dbName,
     ...(admin.searchParams.get('sslmode') ? { PGSSLMODE: admin.searchParams.get('sslmode') } : {}),
+    ...(admin.searchParams.get('sslrootcert') ? { PGSSLROOTCERT: admin.searchParams.get('sslrootcert') } : {}),
   };
 }
 
@@ -331,7 +336,8 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneDatabase: unsafe identifiers ${sourceDb}/${targetDb}`);
   }
-  if (viaTemplate && stagingTemplatesEnabled()) {
+  if (viaTemplate && stagingTemplatesEnabled()
+    && routing.connection(sourceDb)?.hostname === routing.connection(targetDb)?.hostname) {
     const viaTmpl = await withTemplateLock(sourceDb, async () => {
       const ensured = await ensureStagingTemplate(sourceDb).catch((err) => {
         log.warn('db-manager', 'Staging template unavailable — cloning directly', {
@@ -618,7 +624,7 @@ async function readTemplateRefreshedAt(templateDb) {
 // Rebuild the template from the live source, then swap it in.
 async function refreshStagingTemplate(sourceDb) {
   // Also guards the asynchronously queued internal refresh path.
-  await require('./database-placement').assertCentralPlacement([sourceDb]);
+  await require('./database-placement').resolvePlacements([sourceDb]);
   const templateDb = stagingTemplateDbName(sourceDb);
   const next = `${templateDb}_next`;
   const templateRole = ownerRoleName(templateDb);
@@ -702,7 +708,7 @@ function queueTemplateRefresh(sourceDb) {
   withTemplateLock(sourceDb, async () => {
     const refreshedAt = await readTemplateRefreshedAt(stagingTemplateDbName(sourceDb));
     if (refreshedAt !== null && (Date.now() - refreshedAt) <= STAGING_TEMPLATE_MAX_AGE_MS) return;
-    await refreshStagingTemplate(sourceDb);
+    await module.exports.refreshStagingTemplate(sourceDb);
   }).catch((err) => {
     log.warn('db-manager', 'Background staging-template refresh failed', { sourceDb, err: err.message });
   }).finally(() => { _queuedRefreshes.delete(sourceDb); });
@@ -715,6 +721,9 @@ function templateIdle(sourceDb) {
 
 // The fast clone: a file copy of the template, handed to a fresh role.
 async function cloneFromTemplate(templateDb, targetDb) {
+  if (routing.connection(templateDb)?.hostname !== routing.connection(targetDb)?.hostname) {
+    throw new Error('Physical template cloning requires a shared database server');
+  }
   if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneFromTemplate: unsafe identifiers ${templateDb}/${targetDb}`);
   }
@@ -1078,8 +1087,8 @@ async function roleExists(roleName) {
 // inside a transaction, and a failed redaction must not abort later attempts.
 async function withDatabaseConnection(dbName, fn) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`Unsafe connection database: ${dbName}`);
-  const url = adminConnection();
-  url.pathname = `/${dbName}`;
+  const url = adminConnection(dbName === 'usernode' ? undefined : dbName);
+  url.pathname = `/${dbName === 'usernode' && routing.connection() ? 'postgres' : dbName}`;
   const client = new Client({
     connectionString: url.toString(),
     connectionTimeoutMillis: 30000,
@@ -1124,7 +1133,7 @@ async function withDatabaseConnection(dbName, fn) {
 }
 
 async function execInDb(sql, opts = {}) {
-  return execInTarget('usernode', sql, opts);
+  return execInTarget(routing.connection() ? 'postgres' : 'usernode', sql, opts);
 }
 
 async function execInTarget(dbName, sql, opts = {}) {
@@ -1679,7 +1688,7 @@ module.exports = {
 };
 
 // Guard the public database lifecycle boundary before best-effort internals
-// can swallow errors. The legacy adapter cannot act on external placements.
+// can swallow errors. Every operation gets its own verified routing context.
 // Clone operations check BOTH names; global accounting checks every opt-in.
 const placementOperations = {
   createDatabase: 1, dropDatabase: 1, cloneDatabase: 2,
@@ -1696,13 +1705,27 @@ for (const [name, count] of Object.entries(placementOperations)) {
   module.exports[name] = async (...args) => {
     const databases = args.slice(0, count).map((arg) => typeof arg === 'object' ? arg?.templateDb : arg);
     const placement = require('./database-placement');
-    await placement.assertCentralPlacement(databases, { all: count === 0 });
-    if (['createDatabase', 'dropDatabase', 'truncatePrivateTables', 'scrubPrivateColumns'].includes(name)) {
-      await placement.assertRetirementAllowed(databases);
-    }
-    if (['cloneDatabase', 'cloneFromTemplate', 'cloneFromPreparedSource'].includes(name)) {
-      await placement.assertRetirementAllowed([databases[1]]);
-    }
-    return operation(...args);
+    return routing.run(databases, async () => {
+      if (['createDatabase', 'dropDatabase', 'truncatePrivateTables', 'scrubPrivateColumns'].includes(name)) {
+        await placement.assertRetirementAllowed(databases);
+      }
+      if (['cloneDatabase', 'cloneFromTemplate', 'cloneFromPreparedSource'].includes(name)) {
+        await placement.assertRetirementAllowed([databases[1]]);
+      }
+      if (name === 'listAppDatabaseSizes') {
+        const records = routing.currentRecords();
+        const central = await routing.withDefault(undefined, () => operation(...args));
+        const result = central.filter(row => !records.some(r => r.targetId !== 'central' && placement.ownsDatabase(r,row.dbName)));
+        const seen = new Set();
+        for (const record of records.filter(r => r.targetId !== 'central')) {
+          if (seen.has(record.targetId)) continue;
+          seen.add(record.targetId);
+          const rows = await routing.withDefault(record.database, () => operation(...args));
+          result.push(...rows.filter(row => records.some(r => r.targetId === record.targetId && placement.ownsDatabase(r,row.dbName))));
+        }
+        return result;
+      }
+      return operation(...args);
+    }, { all: count === 0 });
   };
 }
