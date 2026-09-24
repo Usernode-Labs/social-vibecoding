@@ -237,9 +237,9 @@ and binding status permit a fresh operator process to resume. Before cutover an
 explicit abort may restore the source; after cutover recovery must move forward.
 Do not disable binding routing or restore the old URL after destination writes.
 
-The admin interface still manages clusters; migration initiation is operator-only.
-General app selection, move-back/demotion and worker-driven orchestration remain
-future increments. Backups remain deferred by the staging operator.
+The initial cutover above has since been extended with selected-app moves in both
+directions and the admin executor described below. Backups remain deferred by the
+staging operator.
 
 ## Admin migrations (staging opt-in)
 
@@ -270,3 +270,23 @@ namespace, selected binding status updates and selected workload scaling/Secret
 updates. It cannot delete CNPG Clusters/PVCs/namespaces. Only DATABASE_URL is
 projected for session authentication; GitHub, model and signing keys are not mounted.
 Infra supplies CRD/RBAC/scripts separately. Existing deployments default disabled.
+
+### Using the controls
+
+Open Admin → Databases, choose a destination and select **Review move**. Read the
+pause/archive summary, type the exact app slug and select **Start move**. Open the
+maintenance page before starting if you want progress and recovery in a separate
+tab. **Cancel** dismisses a review without creating a request.
+
+If an operation needs attention, **Resume** continues its recorded checkpoints.
+**Abort move** asks for confirmation and attempts pre-cutover recovery; it cannot
+undo a completed cutover. Once writes resume on the destination, moving back is a
+new reviewed migration that copies the latest data. History identifies the admin,
+request, target and outcome. Refreshing the page does not resubmit an operation.
+
+Staging validation on 2026-09-24 exercised the actual buttons: interrupted start
+plus Abort recovered central revision 4; a subsequent move reached staging-apps
+revision 5; an interrupted return plus Resume reached central revision 6. Both
+recovery pages were reloaded with the main platform paused. The copy jobs verified
+matching schema, data and sequence digests. The final UI also passed review/cancel
+and incorrect-slug checks. This is planned-downtime validation, not backup/restore.
