@@ -318,6 +318,26 @@ test('the card is always inside the viewport, hole or no hole', () => {
   assert.equal(centred.top, 292);
 });
 
+test('in the app the card keeps clear of the status bar', () => {
+  const viewport = { width: 390, height: 844 };
+  const card = { width: 340, height: 160 };
+  // A tall target with no room below: the card pins to the top edge.
+  const tall = { top: 120, left: 10, width: 370, height: 720 };
+  assert.equal(spotlight.placeCard(viewport, card, tall).top, spotlight.VIEWPORT_MARGIN);
+  const inset = spotlight.placeCard(viewport, card, tall, 40);
+  assert.ok(inset.top >= spotlight.VIEWPORT_MARGIN + 40, 'below the 40px status bar');
+  const panel = { top: 0, left: 0, width: 390, height: 844 };
+  assert.ok(spotlight.placeCardForPanel(viewport, card, tall, panel, 40).top >= 52);
+});
+
+test('the tour waits for focus in the app and hands Home back at its top', () => {
+  const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
+  const body = start.slice(0, start.indexOf('}, [userId, start]);'));
+  assert.match(body, /await whenTermsSettled\(\);[\s\S]*await whenAppFocused\(\);[\s\S]*await whenHomeVisible\(\);/);
+  assert.match(OVERLAY_SRC, /FOCUS_WAIT_MAX_MS/, 'the focus wait is bounded');
+  assert.match(OVERLAY_SRC, /clearStep\(userId\);[\s\S]{0,200}backToTopOfHome\(\);/);
+});
+
 test('a narrow viewport shrinks the card rather than overflowing', () => {
   assert.equal(spotlight.cardWidth(320), 296);
   assert.equal(spotlight.cardWidth(1280), 340);
@@ -402,7 +422,7 @@ test('roomLeftOfPanel is the whole desktop/narrow decision', () => {
 
 test('only the panel steps consult the panel, and the overlay uses the pair', () => {
   assert.match(OVERLAY_SRC, /const panel = stepAt\(indexRef\.current\)\.needsPanel && panelOpenNow\(\) \? panelBox\(\) : null;/);
-  assert.match(OVERLAY_SRC, /placeCardForPanel\(viewport, \{ width, height: card\.offsetHeight \}, hole, panel\)/);
+  assert.match(OVERLAY_SRC, /placeCardForPanel\(\s*viewport, \{ width, height: card\.offsetHeight \}, hole, panel, safeTopInset\(\),\s*\)/);
   // The panel is measured on the kit's sheet when it has been adopted into
   // one, because that wrapper is the surface the viewer sees.
   const SPOT_SRC = read(`${TOUR_DIR}/spotlight.ts`);
