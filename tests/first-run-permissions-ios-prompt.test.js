@@ -101,8 +101,10 @@ function boot(opts) {
       getElementById() { return null; },
       createElement(tag) { return fakeNode(tag); },
       addEventListener() {},
+      removeEventListener() {},
     },
     addEventListener() {},
+    removeEventListener() {},
     dispatchEvent() {},
     // Real, REF'D timers. An unref'd timer here starves the grant-recheck
     // loop (native-chrome's only setTimeout, bounded at 4 iterations): the

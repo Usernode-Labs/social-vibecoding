@@ -75,8 +75,10 @@ async function showFirstRunSheet(permissions) {
       getElementById() { return null; },
       createElement(tag) { return fakeNode(tag); },
       addEventListener() {},
+      removeEventListener() {},
     },
     addEventListener() {},
+    removeEventListener() {},
     dispatchEvent() {},
     setTimeout(fn, delay) {
       const t = setTimeout(fn, delay);

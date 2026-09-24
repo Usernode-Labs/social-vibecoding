@@ -999,10 +999,46 @@
       };
 
       render(perms);
+
+      // The snapshot this sheet opened with can be stale: the Android app
+      // may cover SV with its own permission gate while the user grants
+      // there, and the battery exemption is granted in the OS settings
+      // app. Re-read whenever the page is visible again or the app reports
+      // a change, and never keep asking for what the device already has.
+      let closed = false;
+      const refresh = async () => {
+        if (closed || document.visibilityState === 'hidden') return;
+        let state = null;
+        try { state = await window.usernode.getSettingsState(); } catch (_) {}
+        if (closed || !state || !state.permissions) return;
+        const next = state.permissions;
+        if (!isAndroid) {
+          const status = await NativeChrome._iosPushPermissionStatus();
+          if (status != null) pushStatus = status;
+        }
+        if (closed) return;
+        const alarmOk = !isAndroid && pushStatus != null
+          ? pushStatus === 'granted'
+          : !!next.exactAlarmGranted;
+        const batteryOk = !isAndroid || next.batteryOptDisabled === true;
+        if (alarmOk && batteryOk) {
+          NativeChrome._markFirstRunDone();
+          if (sheet && sheet.dismiss) sheet.dismiss();
+          return;
+        }
+        render(next);
+      };
+      const stopRefreshing = () => {
+        closed = true;
+        window.removeEventListener('usernode:permissions-changed', refresh);
+        document.removeEventListener('visibilitychange', refresh);
+      };
+
       const presentedAt = Date.now();
       sheet = PlatformUI.sheet({
         contentEl: panel,
         onDismiss: () => {
+          stopRefreshing();
           if (opts.onDismiss) {
             opts.onDismiss({
               interacted,
@@ -1011,6 +1047,10 @@
           }
         },
       });
+      if (sheet) {
+        window.addEventListener('usernode:permissions-changed', refresh);
+        document.addEventListener('visibilitychange', refresh);
+      }
       return sheet || null;
     },
 
