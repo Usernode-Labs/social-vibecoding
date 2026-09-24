@@ -1180,7 +1180,11 @@ function proposalHandoffRoutes(config) {
       );
       const replacedActiveSlot = replacementSession?.status === 'active' ? 1 : 0;
       if (Number(ownCounts[0].cnt) - replacedActiveSlot >= caps.activeSessions) {
-        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
+        // Paused for the user rather than refused (session-lifecycle.freeUserSlot).
+        const { freed } = await sessionLifecycle.freeUserSlot({
+          pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
+        });
+        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
       }
       const { rows: globalCounts } = await pool.query(
         `SELECT COUNT(*) AS cnt FROM chat_sessions

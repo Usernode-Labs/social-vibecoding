@@ -410,8 +410,10 @@ export function toolActivity(name: string): string {
 export function changeStatusLabel(status: string | null | undefined, busy = false): string {
   if (busy) return 'Building';
   switch (status) {
-    case 'active': return 'In progress';
-    case 'paused': return 'Parked';
+    // "paused" is the platform's bookkeeping, never a state of the work: it
+    // pauses by itself when idle and resumes by itself when used.
+    case 'active':
+    case 'paused': return 'In progress';
     case 'promoted': return 'In vote';
     case 'merging': return 'Merging';
     case 'merged': return 'Merged';

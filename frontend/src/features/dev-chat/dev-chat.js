@@ -9123,28 +9123,21 @@ const DevChat = {
     // row matches the board and the cog drawer without widening that payload.
     const busy = (typeof window !== 'undefined' && window.SessionState)
       ? SessionState.isBusy(s.id, false) : false;
+    // No Pause and no Resume (#2779 follow-up): pausing is the platform's
+    // bookkeeping. It pauses an idle session by itself, pauses the least
+    // recently used one when new work needs the slot, and resumes a session
+    // when it is opened or messaged, so neither is a step anybody takes.
+    //
     // Promoted sessions can't be demoted to 'paused' (their PR must stay
     // votable), but a warm worker can still be freed — same endpoint, server
     // keeps status 'promoted' (keptPromoted). Once the worker is gone
     // (`warm` false) there's nothing left to free, so no button.
     const actions = [];
-    if (s.status === 'active') {
-      actions.push({
-        key: 'pause', label: 'Pause', busy: 'Pausing…', tone: 'quiet',
-        fn: '_sessionListPause', args: [s.id, 'pause'],
-      });
-    }
     if (s.status === 'promoted' && s.warm) {
       actions.push({
         key: 'free', label: 'Free worker', busy: 'Freeing…', tone: 'quiet',
         title: 'Frees the AI worker. The PR stays up for voting.',
         fn: '_sessionListPause', args: [s.id, 'pause'],
-      });
-    }
-    if (s.status === 'paused') {
-      actions.push({
-        key: 'resume', label: 'Resume', busy: 'Resuming…', tone: 'go',
-        fn: '_sessionListPause', args: [s.id, 'resume'],
       });
     }
     if (s.status === 'archived') {
@@ -9166,11 +9159,12 @@ const DevChat = {
         fn: '_sessionListArchive', args: [s.id, title],
       });
     }
+    // A paused session is shown as the active one it is.
+    const shownStatus = s.status === 'paused' ? 'active' : s.status;
     return {
       id: s.id,
-      status: s.status,
-      statusTone: (s.status === 'active' || s.status === 'promoted' || s.status === 'paused')
-        ? s.status : 'other',
+      status: shownStatus,
+      statusTone: (shownStatus === 'active' || shownStatus === 'promoted') ? shownStatus : 'other',
       title,
       branch: s.branch_name || '',
       busy,

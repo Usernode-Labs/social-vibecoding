@@ -728,6 +728,7 @@ async function hydrateAndPush(pool, row) {
               cm.thread_type, cm.thread_ref,
               n.session_id,
               cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+              cs.agent_session_id,
               n.conversation_id, c.kind AS conversation_kind,
               c.title AS conversation_title,
               n.conversation_message_id,
@@ -1060,6 +1061,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             n.conversation_message_id,
@@ -1101,6 +1103,7 @@ async function getForUser(pool, userId, id) {
             cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             n.conversation_message_id,
@@ -1204,6 +1207,23 @@ async function markReadForAction(pool, userId, action, scopeId) {
         SET read_at = NOW()
       WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`,
     [userId, scopeId, def.kinds]
+  );
+  return rowCount || 0;
+}
+
+// #2779: an agent session's changes finish into the bell as session_done
+// rows, and they are worked on in the conversation, not on a dev chat of
+// their own — so opening the conversation is the "user saw it" signal for
+// every one of them, the way opening a dev session is for its own.
+async function markReadForAgentSession(pool, userId, agentSessionId) {
+  if (!userId || !agentSessionId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications n
+        SET read_at = NOW()
+       FROM chat_sessions cs
+      WHERE n.user_id = $1 AND n.kind = 'session_done' AND n.read_at IS NULL
+        AND n.session_id = cs.id AND cs.agent_session_id = $2`,
+    [userId, agentSessionId]
   );
   return rowCount || 0;
 }
@@ -1394,6 +1414,9 @@ function serialize(row) {
     // session has neither a session title nor a PR title yet.
     headlessIssueNumber: isConversation ? null : row.headless_issue_number,
     branchName: isConversation ? null : row.branch_name,
+    // #2779: the agent session a change was started from, so its completion
+    // opens the conversation it is worked on in.
+    agentSessionId: isConversation ? null : (row.agent_session_id || null),
     sourceUsername: row.source_username,
     detail: row.detail,
     // #1688: the line the voter left with their vote, read LIVE off their
@@ -1451,6 +1474,7 @@ module.exports = {
   markRead,
   markReadForSession,
   markReadForAction,
+  markReadForAgentSession,
   markReadForApp,
   markReadForConversation,
   markReadForMessage,

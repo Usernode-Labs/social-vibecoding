@@ -117,11 +117,10 @@ function dispatchStub({ dispatchable = true, outcome = null, onRun = null } = {}
   };
 }
 
-async function runTurn({ steps, stub = dispatchStub(), message = 'Add dark mode', followUp = null, pool = recordingPool(), extra = {} }) {
+async function runTurn({ steps, stub = dispatchStub(), message = 'Add dark mode', followUp = null, pool = recordingPool(), extra = {}, res = fakeRes() }) {
   const model = scriptedModel(steps);
   const spend = [];
   const events = [];
-  const res = fakeRes();
   const deps = {
     llm: { estimateCostCents: () => 4, isEnabled: () => true },
     limits: {
@@ -202,6 +201,44 @@ test('a dispatch runs on the active change, then the Mayor wraps up from its res
     'mayor_reasoning', 'quick_replies', 'usage', 'done',
   ]);
   assert.deepEqual(spend.map((s) => s[2]), [4, 4], 'each Mayor call is billed as it happens');
+});
+
+test('a run that finishes while nobody is watching lands in the bell, once per change', async () => {
+  const steps = [
+    { text: 'Building it.', toolUses: [{ id: 'd1', name: 'dispatch_coding_agent', input: { prompt: 'Add the toggle' } }] },
+    { text: 'Built.' },
+  ];
+  // The user left: this turn's stream is closed and nobody follows the events.
+  const notified = [];
+  const left = fakeRes();
+  left.destroyed = true;
+  await runTurn({ steps, res: left, extra: { notifyDone: async (_pool, changeId) => { notified.push(changeId); } } });
+  assert.deepEqual(notified, [50], 'the dev chat\'s own "Session finished", on the change the run was on');
+
+  // Still watching, through the turn's stream or the conversation's events.
+  const watched = [];
+  await runTurn({ steps, extra: { notifyDone: async (_pool, id) => { watched.push(id); } } });
+  const followed = fakeRes();
+  followed.destroyed = true;
+  await runTurn({
+    steps,
+    res: followed,
+    extra: {
+      notifyDone: async (_pool, id) => { watched.push(id); },
+      sessionBus: { publish() {}, clearSession() {}, subscriberCount: () => 1 },
+    },
+  });
+  assert.deepEqual(watched, [], 'nobody is told what they are looking at');
+
+  // A stopped run is the user's own doing, and says nothing.
+  const stopped = [];
+  await runTurn({
+    steps,
+    res: left,
+    stub: dispatchStub({ outcome: { ran: true, changeId: 50, kind: 'build', isError: false, stopped: true, toolResultText: 'stopped' } }),
+    extra: { notifyDone: async (_pool, id) => { stopped.push(id); } },
+  });
+  assert.deepEqual(stopped, []);
 });
 
 test('one dispatch per turn; one the change cannot take is refused to the model', async () => {

@@ -56,6 +56,9 @@ import type { ProposalEvent, TranscriptMessage } from './transcript-store';
  * "Proposed PR #12 for a vote: Custom tier colors", "PR #12 went live with
  * 2/3 votes: Custom tier colors", "Force-merged PR #12 with 0/2 votes: …".
  * The number always leads; the title follows when the line carried one.
+ * A merge on the platform's own app (`liveSoon`, follow-up to #2897) is
+ * released after it merges, so it reads "PR #12 merged with 2/3 votes and
+ * will be live in a few minutes: …" instead of claiming it is live.
  */
 export function eventText(msg: TranscriptMessage): string {
   const ev = msg.event;
@@ -70,6 +73,10 @@ export function eventText(msg: TranscriptMessage): string {
   if (ev.here && ev.type === 'submitted') return 'Proposed this change for a vote';
   if (ev.here && ev.type === 'merged') {
     if (ev.force) return `Force-merged this change${votes}`;
+    if (ev.liveSoon) {
+      if (ev.credits) return `This change merged and will be live in a few minutes. ${creditsSentence(ev.credits)}`;
+      return `This change merged${votes} and will be live in a few minutes`;
+    }
     if (ev.credits) return `This change is live. ${creditsSentence(ev.credits)}`;
     return `This change went live${votes}`;
   }
@@ -78,6 +85,10 @@ export function eventText(msg: TranscriptMessage): string {
   if (ev.force) return `Force-merged ${pr}${votes}${title}`;
   // #1688: a merge that named its people reads as the sentence it was —
   // the number and the tally move to the muted tail (see EventRow).
+  if (ev.liveSoon) {
+    if (ev.credits) return `${ev.title || pr} merged and will be live in a few minutes. ${creditsSentence(ev.credits)}`;
+    return `${pr} merged${votes} and will be live in a few minutes${title}`;
+  }
   if (ev.credits) return `${ev.title || pr} is live. ${creditsSentence(ev.credits)}`;
   return `${pr} went live${votes}${title}`;
 }

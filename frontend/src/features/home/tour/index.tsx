@@ -177,6 +177,10 @@ import {
 /** How long to keep waiting for Home before giving up on this page load. */
 const HOME_WAIT_TRIES = 60;
 const HOME_WAIT_MS = 300;
+/** How long after the page regains focus the tour waits to start. */
+const FOCUS_GRACE_MS = 400;
+/** The most the tour waits for focus before starting anyway. */
+const FOCUS_WAIT_MAX_MS = 10_000;
 
 const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
@@ -281,6 +285,45 @@ async function whenTermsSettled(): Promise<void> {
   }
 }
 
+/**
+ * In the app, wait until the page has focus. Right after sign-in the phone
+ * can put its own dialog on top (Samsung Pass offering to save the
+ * password), and a tour started under it opens on a step nobody can read.
+ * Bounded, so a WebView that never reports focus still gets the tour.
+ */
+function whenAppFocused(): Promise<void> {
+  const native = (window as unknown as { usernode?: { isNative?: boolean } })
+    .usernode?.isNative === true;
+  if (!native || document.hasFocus()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      window.removeEventListener('focus', onFocus);
+      window.clearTimeout(timer);
+      resolve();
+    };
+    // A beat after focus returns, so the dialog's exit animation is over.
+    const onFocus = () => window.setTimeout(done, FOCUS_GRACE_MS);
+    const timer = window.setTimeout(done, FOCUS_WAIT_MAX_MS);
+    window.addEventListener('focus', onFocus);
+  });
+}
+
+/** The app's top inset (status bar), in px; 0 in a browser tab. */
+function safeTopInset(): number {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue('--un-safe-inset-top');
+  const px = Number.parseFloat(raw);
+  return Number.isFinite(px) ? px : 0;
+}
+
+/** Scroll Home back to its top, where the tour found it. */
+function backToTopOfHome(): void {
+  const home = document.getElementById('home-screen');
+  if (!home || home.classList.contains('hidden')) return;
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  home.scrollIntoView({ block: 'start', behavior: reduced ? 'auto' : 'smooth' });
+}
+
 /** Is a kit surface other than the tour's own two presented right now? */
 function otherSurfacePresented(): boolean {
   for (const el of document.querySelectorAll(KIT_SURFACES)) {
@@ -374,6 +417,8 @@ export function OnboardingTour() {
     let cancelled = false;
     void (async () => {
       await whenTermsSettled();
+      if (cancelled || started.current) return;
+      await whenAppFocused();
       if (cancelled || started.current) return;
       const home = await whenHomeVisible();
       if (cancelled || started.current || !home) return;
@@ -538,7 +583,9 @@ export function OnboardingTour() {
     // three panel steps consult it, so a closed panel's off-screen rect never
     // reaches the arithmetic.
     const panel = stepAt(indexRef.current).needsPanel && panelOpenNow() ? panelBox() : null;
-    const placed = placeCardForPanel(viewport, { width, height: card.offsetHeight }, hole, panel);
+    const placed = placeCardForPanel(
+      viewport, { width, height: card.offsetHeight }, hole, panel, safeTopInset(),
+    );
 
     const painted = JSON.stringify([hole, boxes, placed]);
     if (painted === paintedRef.current) return;
@@ -629,6 +676,9 @@ export function OnboardingTour() {
     clearStep(userId);
     setConfirming(false);
     setOpen(false);
+    // The steps scrolled Home down to Challenges; hand the viewer back the
+    // top of the page they started on.
+    backToTopOfHome();
   }, [userId]);
 
   const goBack = useCallback(() => setIndex(clampIndex(indexRef.current - 1)), []);

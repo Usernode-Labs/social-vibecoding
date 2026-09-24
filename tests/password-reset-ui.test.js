@@ -87,9 +87,11 @@ test('the stale "no email on file" claim is rewritten once the email path exists
   // The frozen markup's lead still carries the pre-email copy; the screen
   // must swap it so the admin path reads as the fallback, not the rule.
   assert.match(tsx, /recovery-admin/, 'admin fallback block is still used');
-  assert.match(tsx, /No confirmed email on your account\?/,
-    'fallback copy repositions the admin path');
-  assert.match(tsx, /resetUi \? ADMIN_LEAD_WITH_EMAIL : ADMIN_LEAD_SHIPPED/,
+  assert.match(tsx, /If you did not confirm your email account, you will not receive the reset email\./,
+    'fallback copy explains the unconfirmed-email gap (#2969)');
+  assert.match(tsx, /ask Homeroom support team to issue you a temporary password \(support@usernodelabs\.org\)\./,
+    'fallback copy points to support instead of a platform admin (#2969)');
+  assert.match(tsx, /ADMIN_LEAD_WITH_EMAIL/,
     'the swap is tied to the same flag that mounts the email form');
 });
 

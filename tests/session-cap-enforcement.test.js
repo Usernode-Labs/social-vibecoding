@@ -6,8 +6,10 @@
 //      cap (5 by default), everyone else the base cap (3). Gating is on
 //      canAdminWrite — a view-only admin must be refused at the base cap
 //      like any regular user.
-//   2. The 429 message must quote the SAME number that was enforced, so a
-//      user is never told "you already have 3" while sitting at 5.
+//   2. At the cap, the requester's own least recently used session is paused
+//      for them (#2779 follow-up: pausing is the platform's bookkeeping, never
+//      the user's), and the 429 comes only when none of theirs can be — so
+//      the tier decides WHEN a slot is freed, which is what is pinned below.
 //
 // Also pinned: the GLOBAL ceiling has NO admin tier. It's the host's coding-
 // worker budget, so a full admin at the platform cap gets the capacity 429
@@ -84,9 +86,15 @@ async function createSession({ user, config }) {
   }
 }
 
-// Keep every side effect of a successful create inert.
+// Keep every side effect of a successful create inert, and record when the
+// route reaches for one of the requester's slots (none frees, so it refuses).
 const restores = [];
+let freeCalls = [];
+test.beforeEach(() => { freeCalls = []; });
 test.before(() => {
+  const lifecycle = require('../src/services/session-lifecycle');
+  restores.push([lifecycle, 'freeUserSlot', lifecycle.freeUserSlot]);
+  lifecycle.freeUserSlot = async (args) => { freeCalls.push(args.userId); return { freed: false }; };
   restores.push([appAccess, 'getAppForUser', appAccess.getAppForUser]);
   appAccess.getAppForUser = async () => ({ ...APP });
   restores.push([github, 'isEnabled', github.isEnabled]);
@@ -99,11 +107,13 @@ test.after(() => {
   for (const [obj, key, val] of restores) obj[key] = val;
 });
 
-test('regular user is refused at the base cap of 3, and the message quotes 3', async () => {
+test('regular user at the base cap of 3 has a slot freed for them, and is refused only when none frees', async () => {
   poolQueryHandler = occupancy({ own: 3, global: 0 });
   const { status, body } = await createSession({ user: USER });
   assert.strictEqual(status, 429);
-  assert.match(body.error, /already have 3 running sessions/);
+  assert.deepEqual(freeCalls, [USER.id], 'their own slot, at their own cap');
+  assert.match(body.error, /busy finishing turns/);
+  assert.doesNotMatch(body.error, /Pause/, 'nobody is asked to pause anything');
 });
 
 test('regular user below the base cap is admitted', async () => {
@@ -118,22 +128,23 @@ test('full admin is admitted at 3 — where a regular user is refused', async ()
   const { status, body } = await createSession({ user: FULL_ADMIN });
   assert.strictEqual(status, 201);
   assert.ok(body.session, 'session created');
+  assert.deepEqual(freeCalls, [], 'under their cap, nothing of theirs is paused');
 });
 
-test('full admin is refused at the raised cap of 5, and the message quotes 5', async () => {
+test('full admin reaches for a slot at the raised cap of 5', async () => {
   poolQueryHandler = occupancy({ own: 5, global: 0 });
-  const { status, body } = await createSession({ user: FULL_ADMIN });
+  const { status } = await createSession({ user: FULL_ADMIN });
   assert.strictEqual(status, 429);
-  assert.match(body.error, /already have 5 running sessions/);
+  assert.deepEqual(freeCalls, [FULL_ADMIN.id]);
 });
 
 // The regression this guards: gating on isAdmin instead of canAdminWrite
 // would silently hand the bump to every view-only admin.
 test('view-only admin is refused at the base cap of 3 like a regular user', async () => {
   poolQueryHandler = occupancy({ own: 3, global: 0 });
-  const { status, body } = await createSession({ user: VIEW_ADMIN });
+  const { status } = await createSession({ user: VIEW_ADMIN });
   assert.strictEqual(status, 429);
-  assert.match(body.error, /already have 3 running sessions/);
+  assert.deepEqual(freeCalls, [VIEW_ADMIN.id], 'at the base cap, not the admin one');
 });
 
 test('a tuned admin cap is enforced and quoted', async () => {
@@ -143,9 +154,10 @@ test('a tuned admin cap is enforced and quoted', async () => {
   assert.strictEqual(admitted.status, 201);
 
   poolQueryHandler = occupancy({ own: 9, global: 0 });
+  assert.deepEqual(freeCalls, [], 'eight is under the tuned cap of nine');
   const refused = await createSession({ user: FULL_ADMIN, config });
   assert.strictEqual(refused.status, 429);
-  assert.match(refused.body.error, /already have 9 running sessions/);
+  assert.deepEqual(freeCalls, [FULL_ADMIN.id], 'nine is at it');
 });
 
 // ── the global ceiling has no admin tier ────────────────────────────────

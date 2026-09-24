@@ -60,7 +60,7 @@ const GET_PROD_STATUS = 'get_prod_status';
 
 const SWITCH_ACTIVE_CHANGE_TOOL = Object.freeze({
   name: 'switch_active_change',
-  description: 'Make one of this conversation\'s earlier changes the active change again, parking the current one. '
+  description: 'Make one of this conversation\'s earlier changes the active change again; the current one keeps its progress. '
     + 'Only changes this conversation started, and only ones still open. Use it when the user wants to go back to '
     + 'earlier work ("the dark-mode one").',
   input_schema: {
@@ -111,6 +111,9 @@ function defaults(deps = {}) {
     tools: deps.tools || require('./tools'),
     dataTools: deps.dataTools || require('./data-tools'),
     debugAccess: deps.debugAccess || require('../debug-access'),
+    // The dev chat's own "Session finished" (routes/sessions.js), read at
+    // call time: that module requires this one at load.
+    notifyDone: deps.notifyDone || ((pool, changeId) => require('../../routes/sessions').notifySessionDone(pool, changeId)),
   };
 }
 
@@ -567,6 +570,23 @@ async function runAgentTurn({
         });
       }
     }
+    // A spec drafted or a build done while nobody is looking is the bell's,
+    // as a dev chat's finished turn is ("Session finished", one unread per
+    // change). Looking means this turn's own stream is still open, or the
+    // conversation screen is following the conversation's events.
+    if (outcome.ran && outcome.changeId && !watching()) {
+      await d.notifyDone(pool, outcome.changeId);
+    }
+  };
+
+  // Is anybody watching this conversation right now?
+  const watching = () => {
+    const streamOpen = !!res && !res.destroyed && !res.writableEnded
+      && !(res.socket && res.socket.destroyed);
+    const following = typeof d.sessionBus.subscriberCount === 'function'
+      ? d.sessionBus.subscriberCount(busKey(agentSessionId)) > 0
+      : false;
+    return streamOpen || following;
   };
 
   // The wrap-up. It answers every tool call of the dispatching round, and it

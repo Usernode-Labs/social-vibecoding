@@ -2678,8 +2678,9 @@ const GroupChat = {
   // The wordings are the server's own (routes/votes.js). A promote or an
   // import posts "<who> promoted PR #N: <title> for voting" as a `vote` row;
   // a merge posts "<title> is live (PR #N). Thanks to everyone who voted
-  // (a/b votes)", or "PR #N: <title> force-merged by admin <who> (a/b votes
-  // at the time)". Every vote row is a submission whatever its wording (the
+  // (a/b votes)" (on the platform's own app, "<title> merged (PR #N) and
+  // will be live in a few minutes. …"), or "PR #N: <title> force-merged by
+  // admin <who> (a/b votes at the time)". Every vote row is a submission whatever its wording (the
   // number comes from _voteRef then); a system row that matches neither
   // merge wording is not an event.
   _proposalEvent(msg, kind) {
@@ -2704,22 +2705,30 @@ const GroupChat = {
     // them read back out of the sentence. `credits` is on the event only
     // when somebody is named, so a row naming nobody keeps its old shape.
     const credits = GroupChat._mergeCredits(msg);
+    // Follow-up to #2897: a merge on the platform's own app posts "<title>
+    // merged (PR #N) and will be live in a few minutes. …" (or "PR #N merged
+    // and will be live in a few minutes. …"), because its release runs after
+    // the merge. Every other merge, and every row stored before that, says
+    // "is live". Both wordings are merges; `liveSoon` says which it was, from
+    // the row's metadata where it rides, else from the wording. It is on the
+    // event only when true, so an "is live" row keeps its old shape.
+    const soonMeta = GroupChat._mergeLiveSoon(msg);
+    const merged = (prNumber, title, sentence, votes, soonText) => {
+      const named = credits || GroupChat._parseCredits(sentence);
+      return {
+        type: 'merged', sessionId, prNumber, title, actor: '', force: false, votes,
+        ...(named ? { credits: named } : {}),
+        ...(soonMeta || soonText ? { liveSoon: true } : {}),
+      };
+    };
     let m = /^([\s\S]*?) is live \(PR #(\d+)\)\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
-    if (m) {
-      const named = credits || GroupChat._parseCredits(m[3]);
-      return {
-        type: 'merged', sessionId, prNumber: m[2], title: m[1], actor: '', force: false, votes: m[4],
-        ...(named ? { credits: named } : {}),
-      };
-    }
+    if (m) return merged(m[2], m[1], m[3], m[4], false);
+    m = /^([\s\S]*?) merged \(PR #(\d+)\) and will be live in a few minutes\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) return merged(m[2], m[1], m[3], m[4], true);
     m = /^PR #(\d+) is live\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
-    if (m) {
-      const named = credits || GroupChat._parseCredits(m[2]);
-      return {
-        type: 'merged', sessionId, prNumber: m[1], title: '', actor: '', force: false, votes: m[3],
-        ...(named ? { credits: named } : {}),
-      };
-    }
+    if (m) return merged(m[1], '', m[2], m[3], false);
+    m = /^PR #(\d+) merged and will be live in a few minutes\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) return merged(m[1], '', m[2], m[3], true);
     m = /^PR #(\d+)(?:: ([\s\S]*?))? force-merged by admin (\S+) \((\d+\/\d+) votes? at the time\)$/.exec(text);
     if (m) return { type: 'merged', sessionId, prNumber: m[1], title: m[2] || '', actor: m[3], force: true, votes: m[4] };
     return null;
@@ -2749,6 +2758,14 @@ const GroupChat = {
         openTotal: Number(w.openTotal) || 0,
       },
     };
+  },
+
+  // True when a merge announcement's metadata says its release is still to
+  // come (routes/votes.js finalizeMerge sets `liveSoon` on a self-hosted
+  // merge); false on a row without it, whose wording then decides.
+  _mergeLiveSoon(msg) {
+    const meta = (msg.metadata || msg.meta || {}).merged;
+    return !!(meta && typeof meta === 'object' && meta.liveSoon === true);
   },
 
   // The names a merge announcement carries as metadata (routes/votes.js

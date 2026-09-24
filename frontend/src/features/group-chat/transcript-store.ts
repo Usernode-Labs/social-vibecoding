@@ -167,6 +167,12 @@ export interface ProposalEvent {
    * force merge, and an announcement from before names were carried.
    */
   credits?: { author: string; backers: string[]; shapers: string[] } | null;
+  /**
+   * A merge on the platform's own app, whose release runs after the merge
+   * (follow-up to #2897): the announcement said it "will be live in a few
+   * minutes" rather than "is live". Absent on every other row.
+   */
+  liveSoon?: boolean;
 }
 
 /**

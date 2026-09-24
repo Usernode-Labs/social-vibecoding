@@ -92,8 +92,10 @@ function statusTone(status: string | null | undefined) {
   switch (status) {
     case 'promoted': return 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200';
     case 'merged': return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200';
-    case 'paused': return 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
-    case 'active': return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200';
+    // A paused change is an active one whose worker was released (#2779
+    // follow-up); it looks the same.
+    case 'active':
+    case 'paused': return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200';
     default: return 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
   }
 }

@@ -793,6 +793,13 @@ const Notifications = {
     // session_done opens the lifecycle-aware detail page around its workspace;
     // auto_solve_done opens the Issues tab with that issue's accordion
     // expanded.
+    // #2779: a change an agent session started is worked on in that
+    // conversation, so its completion opens the conversation.
+    if (item.kind === 'session_done' && item.agentSessionId) {
+      Notifications._dismissSheetForNav();
+      window.location.hash = `#messages/agent/${encodeURIComponent(item.agentSessionId)}`;
+      return;
+    }
     if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
@@ -1624,6 +1631,18 @@ function completionAlertInfo(n) {
   // session_done — #971: the session's own title first, then the PR title,
   // and only then the machine-generated branch name.
   const label = n.sessionTitle || n.prTitle || n.branchName || 'your session';
+  if (n.agentSessionId) {
+    // #2779: a run in an agent session (a spec drafted or a build done).
+    return {
+      kind: 'session_done',
+      appSlug: n.appSlug || null,
+      sessionId: n.sessionId || null,
+      agentSessionId: n.agentSessionId,
+      headlessIssueNumber: null,
+      title: 'The coding agent finished',
+      body: `The coding agent finished on ${appName}: ${label}`,
+    };
+  }
   return {
     kind: 'session_done',
     appSlug: n.appSlug || null,
@@ -2199,7 +2218,8 @@ function rowView(n) {
       wrap: true,
       icon: '✅',
       ...headline(
-        'Session finished',
+        // #2779: a run in an agent session says what finished, not "session".
+        n.agentSessionId ? 'The coding agent finished' : 'Session finished',
         n.sessionTitle || prLabel || n.branchName || 'your session',
       ),
     };

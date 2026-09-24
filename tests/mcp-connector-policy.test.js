@@ -321,8 +321,12 @@ test('resume is on the list only because the route is owner-scoped', () => {
   const SESSIONS_SRC = fs.readFileSync(
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
+  // The route's body is resumePausedSession now (a message to a paused
+  // session resumes it too), and the route hands it the caller.
+  const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("router.post('/api/sessions/:id/resume'"));
+  assert.match(route.slice(0, 600), /resumePausedSession\(\{ pool, config, user: req\.user, sessionId \}\)/);
   const handler = SESSIONS_SRC.slice(
-    SESSIONS_SRC.indexOf("router.post('/api/sessions/:id/resume'")
+    SESSIONS_SRC.indexOf('async function resumePausedSession(')
   );
   assert.ok(handler.length > 0, 'the resume handler exists');
   assert.match(

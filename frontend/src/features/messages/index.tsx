@@ -1226,7 +1226,7 @@ function MayorSessionRow({ session, active }: { session: MayorSession; active: b
   const change = session.activeChange;
   const status = change
     ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${
-      change.status === 'promoted' ? 'In vote' : change.status === 'paused' ? 'Parked' : change.status === 'merged' ? 'Merged' : 'In progress'}`
+      change.status === 'promoted' ? 'In vote' : change.status === 'merged' ? 'Merged' : 'In progress'}`
     : 'No active change';
   return (
     <a

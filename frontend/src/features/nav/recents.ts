@@ -57,6 +57,16 @@ export interface RecentConversation {
   members?: Array<{ id: number; username: string }>;
 }
 
+/** An agent session (#2779): a conversation with the Mayor, by its own clock. */
+export interface RecentAgentSession {
+  id: number;
+  title: string | null;
+  status: string;
+  lastActivityAt: string | null;
+  createdAt?: string | null;
+  activeChange?: unknown;
+}
+
 /** How many rows the list holds (#2878). NOT how many the rail shows: the
  *  list runs down the rest of the rail to the rule above Me and scrolls
  *  inside it (app.css), so a tall window shows more history and a short one
@@ -81,6 +91,8 @@ export function buildRecents(input: {
   conversations: RecentConversation[];
   discussions: AppDiscussion[];
   agents: AgentChat[];
+  /** Agent sessions (#2779 follow-up): conversations too, so recent ones are here. */
+  agentSessions?: RecentAgentSession[];
   viewerId?: number | null;
   limit?: number;
 }): RecentItem[] {
@@ -135,6 +147,19 @@ export function buildRecents(input: {
       label: item.title || 'Untitled chat',
       href: `#chat/${encodeURIComponent(item.id)}`,
       at: item.updatedAt || item.createdAt || null,
+      unread: false,
+    });
+  }
+  for (const item of input.agentSessions || []) {
+    // An untitled one with no change has had nothing said in it yet (the
+    // first message titles it): nothing to go back to.
+    if (item.status !== 'open' || !(item.title || item.activeChange)) continue;
+    items.push({
+      key: `agent-session:${item.id}`,
+      kind: 'agent',
+      label: item.title || 'New session',
+      href: `#messages/agent/${item.id}`,
+      at: item.lastActivityAt || item.createdAt || null,
       unread: false,
     });
   }
