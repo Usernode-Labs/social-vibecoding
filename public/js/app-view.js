@@ -5046,17 +5046,90 @@ const AppView = {
       }
     }, true);
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && AppView._openCardMenu) AppView._closeCardMenu();
+      const open = AppView._openCardMenu;
+      if (!open) return;
+      if (e.key === 'Escape') {
+        // Back to the ⋯ that opened it, so a keyboard user is not dropped
+        // at the top of the document (QA 2026-09-24 Q18).
+        const trigger = open.trigger;
+        AppView._closeCardMenu();
+        if (trigger && trigger.isConnected && trigger.focus) trigger.focus();
+        return;
+      }
+      if (open.el && open.el.contains(e.target)) {
+        AppView._roveMenuFocus(e, open.el, '[data-menu-idx]:not([disabled])', () => {
+          AppView._closeCardMenu();
+          if (open.trigger && open.trigger.isConnected && open.trigger.focus) open.trigger.focus();
+        });
+      }
     });
     // The board scrolls in both axes and the menu is position:fixed, so a
     // scroll would leave it stranded beside nothing. Dismiss rather than
     // re-anchor: a menu is a momentary choice, not a persistent panel.
-    window.addEventListener('scroll', () => {
-      if (AppView._openCardMenu) AppView._closeCardMenu();
+    //
+    // BUT ONLY A SCROLL THAT MOVED THE TRIGGER (QA 2026-09-24 Q4). The topic
+    // hero's action band is `overflow: hidden` and a couple of pixels
+    // shorter than its content, so pressing its ⋯ focuses the button and
+    // the browser nudges the band 1px to reveal it. That scroll arrives a
+    // frame AFTER the menu opened and closed it again, so on the proposal
+    // page the menu never appeared at all. A scroll inside the menu itself,
+    // or one that leaves the trigger where the menu was placed against it,
+    // is not a reason to close; the menu follows the few pixels instead.
+    window.addEventListener('scroll', (e) => {
+      const open = AppView._openCardMenu;
+      if (!open) return;
+      const t = e.target;
+      if (t && t.nodeType === 1 && open.el && open.el.contains(t)) return;
+      if (!AppView._cardMenuTriggerMoved(open)) {
+        if (open.el && open.trigger) AppView._positionCardMenu(open.el, open.trigger);
+        return;
+      }
+      AppView._closeCardMenu();
     }, true);
     window.addEventListener('resize', () => {
       if (AppView._openCardMenu) AppView._closeCardMenu();
     });
+  },
+
+  // How far the open menu's trigger may drift from where the menu was placed
+  // before a scroll counts as the page moving under it. A focus nudge inside
+  // a clipped action band is 1-2px; a wheel or a swipe is far more, and it
+  // accumulates against the ORIGINAL spot, so slow trackpad scrolling still
+  // closes the menu once it has really moved.
+  CARD_MENU_SCROLL_SLOP: 4,
+
+  _cardMenuTriggerMoved(open) {
+    const trigger = open && open.trigger;
+    if (!trigger || !trigger.isConnected || !open.at) return true;
+    const r = trigger.getBoundingClientRect();
+    const slop = AppView.CARD_MENU_SCROLL_SLOP;
+    return Math.abs(r.top - open.at.top) > slop || Math.abs(r.left - open.at.left) > slop;
+  },
+
+  // Arrow keys, Home and End move between a menu's rows; Tab leaves the menu
+  // (the platform menu convention: close, then let Tab carry on from the
+  // trigger). Shared by the card menu, the Workshop "+" menu and the
+  // attribute popover. `onTab` closes the surface and puts focus back on the
+  // trigger; the browser's own Tab then moves on from there.
+  _roveMenuFocus(e, root, selector, onTab) {
+    if (!root) return false;
+    if (e.key === 'Tab') {
+      if (onTab) onTab();
+      return false;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return false;
+    const items = Array.from(root.querySelectorAll(selector))
+      .filter((el) => el.getClientRects().length > 0);
+    if (!items.length) return false;
+    const idx = items.indexOf(document.activeElement);
+    let next;
+    if (e.key === 'Home') next = items[0];
+    else if (e.key === 'End') next = items[items.length - 1];
+    else if (e.key === 'ArrowDown') next = items[idx < 0 ? 0 : (idx + 1) % items.length];
+    else next = items[idx < 0 ? items.length - 1 : (idx - 1 + items.length) % items.length];
+    e.preventDefault();
+    next.focus();
+    return true;
   },
 
   _closeCardMenu() {
@@ -5121,7 +5194,10 @@ const AppView = {
       }
     });
     trigger.setAttribute('aria-expanded', 'true');
-    AppView._openCardMenu = { key, el: menu, trigger, own };
+    // `at` is where the trigger was when the menu was placed against it; the
+    // scroll listener in _cardMenuInit compares against it.
+    const at = trigger.getBoundingClientRect();
+    AppView._openCardMenu = { key, el: menu, trigger, own, at: { top: at.top, left: at.left } };
     const first = menu.querySelector('[data-menu-idx]:not([disabled])');
     if (first && first.focus) first.focus();
   },
@@ -5191,6 +5267,8 @@ const AppView = {
     }
     if (!trigger) { AppView._closeCardMenu(); return; }
     open.trigger = trigger;
+    const at = trigger.getBoundingClientRect();
+    open.at = { top: at.top, left: at.left };
     trigger.setAttribute('aria-expanded', 'true');
     AppView._fillCardMenu(open.el, AppView._cardMenuItems(open.key, open.own));
     AppView._positionCardMenu(open.el, trigger);
@@ -5634,6 +5712,8 @@ const AppView = {
       menu.classList.add('hidden');
       btn.setAttribute('aria-expanded', 'false');
     };
+    // The rows a keyboard can reach (QA 2026-09-24 Q18).
+    const PLUS_ROWS = 'button[data-plus]:not([disabled])';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       // Touch platforms: present the same items as a bottom action
@@ -5691,11 +5771,39 @@ const AppView = {
       // Refresh the App secrets item's "N required missing" state only
       // when the menu actually opens — no fetch on every card-list mount.
       if (open) AppView.refreshDevChatSecretsState();
+      // QA 2026-09-24 Q18: focus goes to the first row, so the arrows below
+      // have somewhere to start from.
+      if (open) {
+        // The same walk the touch sheet makes above, so both idioms agree on
+        // what a row is.
+        const first = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'))
+          .find((el) => el.hasAttribute('data-plus') && !el.disabled
+            && typeof el.getClientRects === 'function' && el.getClientRects().length > 0);
+        if (first) first.focus({ preventScroll: true });
+      }
     }, { signal });
-    // Outside-click dismiss. Scoped to the signal above, NOT to the content
-    // node's lifetime — see the note on this method.
-    content.addEventListener('click', (e) => {
-      if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
+    // Outside-click dismiss, anywhere in the document. It was bound on the
+    // content node only, so a press on the header or the rail left the menu
+    // open (QA 2026-09-24 Q18). Scoped to the signal above, NOT to the
+    // content node's lifetime — see the note on this method.
+    document.addEventListener('click', (e) => {
+      if (menu.classList.contains('hidden')) return;
+      if (!(e.target.closest && e.target.closest('#dev-plus-menu, #dev-plus-btn'))) close();
+    }, { signal });
+    // Escape closes it and hands focus back to the "+"; the arrows, Home and
+    // End move between rows; Tab closes it and carries on from the "+".
+    document.addEventListener('keydown', (e) => {
+      if (menu.classList.contains('hidden')) return;
+      if (e.key === 'Escape') {
+        close();
+        if (btn.isConnected) btn.focus({ preventScroll: true });
+        return;
+      }
+      if (!menu.contains(e.target)) return;
+      AppView._roveMenuFocus(e, menu, PLUS_ROWS, () => {
+        close();
+        if (btn.isConnected) btn.focus({ preventScroll: true });
+      });
     }, { signal });
     // New change lives in Improve (#1490). This menu keeps PR import and app
     // management, and (#1900) filing an issue, which #1490 had folded into
@@ -14706,10 +14814,27 @@ const AppView = {
       if (!inside('#voting-help-popover')) AppView._closeVotingHelpPopover();
     }, true);
     // Escape dismisses either popover (a11y — the help popover is a dialog).
+    // From inside the attribute picker it also hands focus back to the chip
+    // that opened it (QA 2026-09-24 Q18).
     document.addEventListener('keydown', (e) => {
+      const pop = document.getElementById('attr-popover');
+      const inAttr = !!(pop && e.target && e.target.nodeType === 1 && pop.contains(e.target));
       if (e.key === 'Escape') {
+        const ctx = inAttr ? AppView._attrPopover : null;
+        let anchor = ctx && ctx.anchor;
+        // A repaint replaces the chip; its successor is found the same way
+        // _reanchorAttrPopover finds it.
+        if (ctx && !(anchor && anchor.isConnected)) anchor = AppView._attrAnchorFor(ctx.field, ctx.targetType, ctx.targetRef);
         AppView._closeAttrPopover();
         AppView._closeVotingHelpPopover();
+        if (anchor && anchor.isConnected && typeof anchor.focus === 'function') anchor.focus({ preventScroll: true });
+        return;
+      }
+      // The arrows move between the picker's options, its text box and its
+      // Add button; Home and End too, except inside the text box, where they
+      // move the caret.
+      if (inAttr && !(e.target.tagName === 'INPUT' && (e.key === 'Home' || e.key === 'End'))) {
+        AppView._roveMenuFocus(e, pop, '.attr-opt, .attr-suggest-item, .attr-pop-input, .attr-pop-addbtn');
       }
     });
   },
@@ -14749,7 +14874,9 @@ const AppView = {
     // `_closeAttrPopover` removes the node.
     AppView._reactDevBoard()?.mountAttrPopover(pop);
     AppView._publishAttrPopover({ phase: 'loading', field, groups: [], emptyNote: null, add: null, suggestions: [] });
-    AppView._attrPopover = { field, targetType, targetRef, slug };
+    // `anchor` is what Escape returns focus to: the chip, or nothing when the
+    // picker was opened from a ⋯ row and hangs off a stand-in for the card.
+    AppView._attrPopover = { field, targetType, targetRef, slug, anchor: chip && chip.nodeType === 1 ? chip : null };
 
     // Position under the chip, clamped to the viewport.
     AppView._positionAttrPopover(pop, chip);
@@ -14906,7 +15033,18 @@ const AppView = {
 
     // The publish is flushed, so the field exists on the next line — the same
     // contract the `innerHTML` assignment this replaces gave.
-    if (!add) return;
+    if (!add) {
+      // Priority has no text box to focus. Its first option takes focus
+      // instead, so the arrow keys have somewhere to start (QA 2026-09-24
+      // Q18) — but only on the way in: this re-runs after every vote, and a
+      // repaint must not pull focus back from the option just chosen.
+      const host = document.getElementById('attr-popover');
+      if (host && !host.contains(document.activeElement)) {
+        const first = host.querySelector('.attr-opt');
+        if (first) first.focus({ preventScroll: true });
+      }
+      return;
+    }
     const input = document.getElementById(add.inputId);
     if (!input) return;
     if (add.defaultValue) input.select();

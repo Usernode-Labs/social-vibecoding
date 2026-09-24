@@ -10,6 +10,8 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
+import { confirmAction } from '../../lib/confirm';
+import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -21,6 +23,7 @@ import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { UserAvatar } from './format';
 import { MessageRow } from './message-row';
+import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import {
   agentThreadAddress,
@@ -529,6 +532,11 @@ function startNew(choice: NewChoice) {
  * Nothing is rendered until the button is pressed, so the prerendered
  * document holds the button alone and hydration has nothing to disagree
  * about.
+ *
+ * KEYBOARD (QA 2026-09-24 Q18): opening moves focus to the first row, the
+ * arrows move between rows, Escape and Tab close it back onto the "+"
+ * (lib/menu-keys.ts). Before, Enter opened a menu that focus never reached:
+ * it is portalled to the end of <body>, so Tab walked the whole page first.
  */
 function NewMessageButton() {
   const [rect, setRect] = useState<AnchorRect | null>(null);
@@ -537,6 +545,7 @@ function NewMessageButton() {
   const open = !!rect;
   const shut = () => setRect(null);
   useAnchoredDismiss(open, [btnRef, popRef], shut);
+  const menuKeys = useMenuKeyboard(open, popRef, btnRef, shut);
 
   const toggle = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -550,7 +559,10 @@ function NewMessageButton() {
     }
     setRect(anchorRectOf(event.currentTarget));
   };
-  const choose = (choice: NewChoice) => { shut(); startNew(choice); };
+  // Focus goes back to the "+" BEFORE the dialog opens, so the dialog's own
+  // focus restore (the kit records what was focused when it presents) lands
+  // on the button rather than on a row this close is about to unmount.
+  const choose = (choice: NewChoice) => { btnRef.current?.focus({ preventScroll: true }); shut(); startNew(choice); };
   const pos = rect
     ? placeUnderAnchor(rect, { width: 240, height: 164 }, { width: window.innerWidth, height: window.innerHeight })
     : null;
@@ -579,6 +591,7 @@ function NewMessageButton() {
           aria-label="Start a new conversation"
           style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
           onClick={(event) => event.stopPropagation()}
+          onKeyDown={menuKeys.onKeyDown}
         >
           {newChoices().map((item) => (
             <button
@@ -969,10 +982,36 @@ function ThreadHeader() {
   const active = snap.active;
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
+  // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
+  // outside it and on Escape (it used to stay open until its own button was
+  // pressed again), takes focus to its first row when it opens, moves
+  // between rows on the arrow keys, and hands focus back to the ⋯ on
+  // Escape. Hooks before the early return below, so their order is stable.
+  const menuWrapRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const closeMenu = () => setMenu(false);
+  useDismiss(menu, [menuWrapRef], closeMenu);
+  const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
+  // Another conversation is another header: a menu left open does not follow.
+  useEffect(() => { setMenu(false); }, [active?.id]);
   const peer = active ? conversationPeer(active) : null;
   if (!active) return null;
   async function blockPeer() {
-    if (!peer || !window.confirm(`Block @${peer.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
+    if (!peer) return;
+    // The menu goes first and focus returns to the ⋯, so the confirm below
+    // hands focus back there whichever way it is answered.
+    menuBtnRef.current?.focus({ preventScroll: true });
+    setMenu(false);
+    // QA 2026-09-24 Q15: the app's own confirm (lib/confirm.ts), not the
+    // browser's, which some webview hosts suppress.
+    const ok = await confirmAction({
+      title: `Block @${peer.username}?`,
+      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
+      confirmLabel: 'Block',
+      danger: true,
+    });
+    if (!ok) return;
     const conversationId = active?.id;
     if (!conversationId) return;
     setBusy(true);
@@ -997,7 +1036,19 @@ function ThreadHeader() {
         <div className="messages-thread-sub">{subtitle}</div>
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
-      <div className="relative"><button type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>{menu ? <div className="messages-thread-menu">{active.kind === 'group' ? <button type="button" onClick={() => { setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button> : active.kind === 'direct' ? <button type="button" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button> : null}<button type="button" onClick={() => { setMenu(false); void loadConversations(true); }}>Refresh conversation</button></div> : null}</div>
+      <div className="relative" ref={menuWrapRef}>
+        <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
+        {menu ? (
+          <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label="Conversation actions" onKeyDown={menuKeys.onKeyDown}>
+            {active.kind === 'group'
+              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button>
+              : active.kind === 'direct'
+                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>
+                : null}
+            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
+          </div>
+        ) : null}
+      </div>
     </header>
   );
 }

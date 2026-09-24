@@ -966,6 +966,18 @@ html.un-kb .un-action-sheet {
 .un-alert-btn.un-destructive {
   color: var(--un-action-danger);
 }
+/* The alert takes focus now (an initial button, a Tab trap). Its card
+   clips (`overflow: hidden`) and the buttons run edge to edge, so the
+   browser's own ring would be cut off: draw it inside the button. The card
+   itself only takes focus as the trap's last resort and draws nothing. */
+.un-alert-btn:focus-visible {
+  outline: 2px solid var(--un-accent);
+  outline-offset: -3px;
+  border-radius: 10px;
+}
+.un-alert:focus {
+  outline: none;
+}
 
 /* ── Centered modal ────────────────────────────────────────────────────
    unNative.presentModal(): arbitrary content in a centered card over the

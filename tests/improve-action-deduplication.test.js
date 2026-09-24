@@ -146,7 +146,13 @@ function menuHarness(touch) {
   const sandbox = {
     console, AbortController,
     addEventListener() {},
-    document: { getElementById: (id) => ({ 'dev-plus-btn': button, 'dev-plus-menu': menu })[id] || null },
+    document: {
+      getElementById: (id) => ({ 'dev-plus-btn': button, 'dev-plus-menu': menu })[id] || null,
+      // QA 2026-09-24 Q18: _wirePlusMenu now binds its outside-click and
+      // keyboard (Escape, arrows) dismissers on the document rather than on
+      // the content node. Neither is exercised here; the clicks below are.
+      addEventListener() {},
+    },
     PlatformUI: { isTouch: () => touch, actionSheet: (sheet) => sheets.push(sheet) },
     Secrets: { openForCurrentApp: () => calls.push('secrets') },
     // The issue row opens the shared feedback dialog by name, in its

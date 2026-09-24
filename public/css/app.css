@@ -1529,6 +1529,10 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-mention-menu button { display: block; width: 100%; padding: 9px 12px; border-radius: 10px; color: var(--text-primary); font-size: 15px; text-align: left; }
 .messages-mention-menu button:hover { background: var(--messages-surface-2); }
+/* QA 2026-09-24 Q13: the row the arrow keys have highlighted, which Enter or
+   Tab will pick. A tint of the accent rather than the hover grey, so the
+   keyboard's choice still reads when the pointer is resting on another row. */
+.messages-mention-menu button[aria-selected="true"] { background: var(--accent-tint); box-shadow: inset 3px 0 0 var(--accent); }
 .messages-mention-menu .messages-channel-option-name { color: var(--text-muted); font-size: 13px; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay {
