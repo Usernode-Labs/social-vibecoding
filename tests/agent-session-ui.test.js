@@ -478,3 +478,34 @@ test('the unsent address is routed on every surface', () => {
   assert.match(read('frontend/src/features/messages/index.tsx'),
     /const same = id === 'new' \? current\.id === null : current\.id === id;/);
 });
+
+test('QA Q23: opened twice by a cold deep link, a missing session still says it is missing', async () => {
+  // `#agent/<id>` opens the session from the screen's own effect AND from
+  // app.js's router. The second call used to take a new load version and
+  // return, so the first call's 404 belonged to nobody: the full screen stayed
+  // blank while the Messages pane, opened once, said "Agent session not found".
+  globalThis.window = { location: { hash: '#agent/404' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
+  globalThis.EventSource = class { close() {} };
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(url);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return { ok: false, status: 404, json: async () => ({ error: 'Agent session not found' }) };
+  };
+  try {
+    const store = loadTsx('frontend/src/features/agent-session/store.ts');
+    const first = store.openAgentSession({ id: 404, host: 'screen' });
+    const second = store.openAgentSession({ id: 404, host: 'screen', drawer: true });
+    await Promise.all([first, second]);
+    const state = store.getAgentSessionState();
+    assert.equal(state.phase, 'error');
+    assert.equal(state.error, 'Agent session not found');
+    assert.equal(state.drawerOpen, true, 'the second call still carries what it asked for');
+    assert.equal(requests.filter((url) => url === '/api/agent-sessions/404').length, 1,
+      'and it is loaded once, not twice');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+    delete globalThis.EventSource;
+  }
+});
