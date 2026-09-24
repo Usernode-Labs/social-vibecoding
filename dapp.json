@@ -3271,7 +3271,7 @@
     {
       "name": "A deep link into Advanced opens the group it lives in (#1554)",
       "path": "/?demo=cli-empty#settings/cli",
-      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-selected=\"true\"]"
+      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-current=\"page\"]"
     },
     {
       "name": "The Anthropic API key section renders at its deep link",

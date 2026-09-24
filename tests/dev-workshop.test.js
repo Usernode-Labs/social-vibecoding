@@ -1150,7 +1150,9 @@ test('the since heading is styled: each class it emits has a rule, and the count
   assert.deepEqual(classes, ['dev-ws-since-label', 'dev-ws-since-n'], 'the label, then the count, as two elements');
   // #2183: Clear rides the far end of the same row, after the count, and
   // there is still nothing between the label and the count but the gap.
-  assert.match(head[1], /<\/span><span class="dev-ws-since-n">3<\/span><button type="button" class="dev-ws-since-clear" data-ws-since-clear="">Clear<\/button>$/,
+  // `un-touch-target` (QA 2026-09-24 Q19): Clear, Show older and Show past
+  // week wear the kit's hit-slop, so a phone gets a 44px target for a 22px word.
+  assert.match(head[1], /<\/span><span class="dev-ws-since-n">3<\/span><button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="">Clear<\/button>$/,
     'label, count, Clear');
   // Comments stripped: a selector named in prose is not a selector.
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
@@ -4122,7 +4124,7 @@ test('since-your-last-visit shows three and reveals the rest, like the week walk
   // The week walk's own control: centred under a stack of full-width rows,
   // caret DOWN at what it is about to show. Not `.dev-ws-reveal-start`, whose
   // lane indent belongs to a left-aligned column of type.
-  assert.match(html, /class="dev-ws-reveal dev-ws-since-more" data-ws-since-more=""/);
+  assert.match(html, /class="dev-ws-reveal dev-ws-since-more un-touch-target" data-ws-since-more=""/);
   assert.ok(html.includes('Show older'));
   assert.ok(!html.includes('dev-ws-reveal-start'), 'centred, as the week walk is');
   // No "show fewer" — this is one pane with a way to ask for more, not a
@@ -4189,7 +4191,7 @@ test('Clear moves the baseline to now, persists it, and the rows move under Show
   const before = AppView._workshopView();
   assert.equal(before.since.rows.length, 3);
   const html = workshopHtml(AppView);
-  assert.match(html, /<button type="button" class="dev-ws-since-clear" data-ws-since-clear="">Clear<\/button>/,
+  assert.match(html, /<button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="">Clear<\/button>/,
     'live, because there is something to clear');
 
   AppView._workshopClearSince('demo-app', before.since.through);
@@ -4211,7 +4213,7 @@ test('Clear moves the baseline to now, persists it, and the rows move under Show
   assert.equal(AppView._workshopSince['demo-app'], after.since.baseline);
   const cleared = workshopHtml(AppView);
   assert.match(cleared, /data-ws-since-none=""/);
-  assert.match(cleared, /<button type="button" class="dev-ws-since-clear" data-ws-since-clear="" disabled="">Clear<\/button>/,
+  assert.match(cleared, /<button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="" disabled="">Clear<\/button>/,
     'disabled rather than absent, so the row does not reflow');
   assert.match(cleared, /data-ws-since-more=""(?! disabled)/, 'and the way back to what was cleared is live');
 
@@ -4246,7 +4248,7 @@ test('Show older is always drawn: it walks the new rows, then the seen ones, and
   assert.equal(v.since.rows.length, 0);
   assert.equal(v.since.seen.rows.length, 0);
   const html = workshopHtml(bare);
-  assert.match(html, /class="dev-ws-reveal dev-ws-since-more" data-ws-since-more="" disabled=""/,
+  assert.match(html, /class="dev-ws-reveal dev-ws-since-more un-touch-target" data-ws-since-more="" disabled=""/,
     'drawn, and disabled: a control that is sometimes there is one nobody learns to reach for');
   assert.match(html, /data-ws-since-clear="" disabled=""/);
 

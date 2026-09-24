@@ -317,7 +317,9 @@ test('the fold mark: the same two chevrons at both sizes, stretched open on the 
   const open = makeAppView({ search: '?cards=open&demo=1' });
   const n = cardRowsOf(open._kanbanView());
   const openHtml = kanbanHtml(open);
-  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
+  // `un-touch-target` (QA 2026-09-24 Q19): the 16px mark takes the kit's 44px
+  // hit-slop, so folding the card is not a 16px aim on a phone.
+  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
     'one open mark per card, closing the head');
   assert.ok(!openHtml.includes('<span class="dev-fold-mark"'), 'and no closed mark beside it');
   // The button folds through the fold's own toggle: the wrapper's
@@ -1342,7 +1344,9 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.ok(at > 0, 'the band pill rule exists');
   const pill = CSS.slice(at, CSS.indexOf('\n}', at));
   assert.match(pill, /background: var\(--accent-tint\);/);
-  assert.match(pill, /color: var\(--accent\);/);
+  // The ink is the accent one step darker in light (QA 2026-09-24 Q20): the
+  // accent itself is 4.34:1 on its own tint, under AA for these 12px labels.
+  assert.match(pill, /color: var\(--accent-tint-ink\);/);
   assert.match(pill, /border-color: transparent;/);
   assert.match(CSS, /\.dev-vote-btn-yes[^{]*\{ background: var\(--accent-tint\); color: var\(--accent\); \}/, 'the pair the Yes state uses');
   // The ⋯ was a well in the card's top-right rail. The menu is where the

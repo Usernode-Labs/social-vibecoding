@@ -15,7 +15,11 @@
   --border-light: #e3e3e6;
   --text-primary: #0a0a0a;
   --text-secondary: #3a3a3c;
-  --text-muted: #6c6c70;
+  /* #68686c, not the #6c6c70 eyedropped with the rest (QA 2026-09-24 Q20):
+     the same four-step correction tailwind.config.js made to zinc-500, and for
+     the same reason. #6c6c70 is 4.34:1 on the zinc-100 track the theme
+     toggle's idle segments sit in; #68686c clears 4.61. */
+  --text-muted: #68686c;
   --text-faint: #8e8e93;
   --text-code: #3a3a3c;
   /* #0a6ee0, not the #0a7cff eyedropped from the design screenshots.
@@ -39,6 +43,13 @@
      circle needs so its halo reads against it. */
   --accent-wash: #d6e9ff;
   --accent-wash-ink: #0062cc;
+  /* Accent-coloured TEXT sitting on --accent-tint (QA 2026-09-24 Q20). The
+     tint is translucent accent, so it pulls the accent's own contrast down:
+     #0a6ee0 on the 8% tint over white is 4.34:1, under AA for the card band's
+     12px labels ("Start work", "Claim this issue"). One step down the ramp
+     (violet-700) reads at 5.19 and is the same hue. Dark keeps the accent
+     itself, which already clears 5.4 on its tint. */
+  --accent-tint-ink: #0062cc;
   /* Text ON the accent, wherever the shell puts type on a saturated fill.
      It must not follow the page. The outgoing chat bubble used to be the
      headline case and no longer is a fill at all; .messages-state button
@@ -2431,8 +2442,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      label the token paints measured 3.2:1 or worse against the dark ground,
      and the create modal's unselected segment pills 2.7:1 against their track.
      One step up the neutral ramp reads at 6.0 on the ground and 5.3 on a card,
-     and is still plainly quieter than --text-secondary above. */
-  --text-muted: #8e8e93;
+     and is still plainly quieter than --text-secondary above.
+
+     #98989d, not #8e8e93 (QA 2026-09-24 Q20): the ground was measured, the
+     raised surfaces were not. On --bg-tertiary (#2c2c2e), which is what the
+     Workshop tabs, the Messages filter track, the theme toggle and the
+     category cards sit on, #8e8e93 is 4.27:1. Five steps lighter clears
+     4.85 there and stays well under --text-secondary. */
+  --text-muted: #98989d;
   --text-faint: #8e8e93;
   --text-code: #e3e3e6;
   --accent: #5aa9ff;
@@ -2443,6 +2460,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      on screen, and this is a control, not the message. */
   --accent-wash: #00264d;
   --accent-wash-ink: #85bcff;
+  --accent-tint-ink: #5aa9ff;
   --accent-ink: #0b0b0c;
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
@@ -3197,6 +3215,28 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
   overflow-x: hidden;
 }
 
+/* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
+   QA 2026-09-24 Q19. `.un-touch-target` (native.css) grows a control's hit
+   box to 44px, which is right for a lone icon in a bar. In a DENSE row it is
+   wrong: two Revoke buttons stacked 8px apart, or View and Delete sitting over
+   an open file preview, and a 44px box reaches over the neighbour and takes
+   its taps, because the later element's ::after paints on top. This is the
+   same trick at the 32px a phone needs, which fits inside those gaps, and only
+   on a coarse pointer: a mouse is precise enough to hit the control itself.
+   Zero-specificity `position` for the same reason the kit gives. */
+@media (pointer: coarse) {
+  :where(.touch-target-32) { position: relative; }
+  .touch-target-32::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 32px);
+    height: max(100%, 32px);
+    transform: translate(-50%, -50%);
+  }
+}
+
 /* A held launcher tile can select nearby text (such as Discover) even when
    the tile itself is non-selectable. Protect the whole launcher content
    before the long-press timer fires. The search field is outside #home-body
@@ -3513,7 +3553,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   color: #eaeaea; /* zinc-100, the body's dark ink */
   --text-primary: #f5f5f7;
   --text-secondary: #e3e3e6;
-  --text-muted: #8e8e93;
+  --text-muted: #98989d;
   --text-faint: #8e8e93;
   --bg-primary: #0b0b0c;
   --bg-secondary: #1c1c1e;
@@ -3531,7 +3571,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   color: #1c1c1e; /* zinc-900, the body's light ink */
   --text-primary: #0a0a0a;
   --text-secondary: #3a3a3c;
-  --text-muted: #6c6c70;
+  --text-muted: #68686c;
   --text-faint: #8e8e93;
   --bg-primary: #ffffff;
   --bg-secondary: #f5f5f7;
@@ -8683,6 +8723,26 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .gc-msg-system > .gc-msg-save svg,
 .gc-spec-card > .gc-msg-save svg { width: 11px; height: 11px; }
+/* A 32px hit area on a touch screen (QA 2026-09-24 Q19). The mark is 18-20px
+   and rides the END of a line, often straight after a vote row's Yes/No pair
+   with only its 4px margin between them — so the slop is lopsided rather than
+   centred: it reaches back no further than that margin and takes its width
+   from the free side after the mark (the react button beside it is hidden on
+   touch, and the reactions start a new line). It cannot sit under the row's
+   content instead: the resting `opacity` makes the button its own stacking
+   context, so a `z-index` on the slop would stay inside it. */
+@media (pointer: coarse) {
+  .gc-msg-save { position: relative; }
+  .gc-msg-save::after {
+    content: "";
+    position: absolute;
+    left: -4px;
+    width: calc(100% + 18px);
+    top: 50%;
+    height: max(100%, 32px);
+    transform: translateY(-50%);
+  }
+}
 
 /* Edit button inside the long-press reaction bar (touch). */
 .gc-react-bar-edit {
@@ -8998,6 +9058,15 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 32px tall on a touch screen (QA 2026-09-24 Q19). It was the height of its
+   13px line, 20px, and a <select> draws no ::after, so the `.un-touch-target`
+   slop has nothing to hang from; the control grows instead. It has no box of
+   its own to see (no fill, no border), so the only visible change is none:
+   the caret is centred on it by its inline-flex wrapper, and every row it sits
+   in is already taller than 32px. */
+@media (pointer: coarse) {
+  .dc-model-select { min-height: 32px; }
 }
 /* Shared with the proposal-workshop select, which uses this utility to keep
    a long model name from widening its control. */
@@ -11842,6 +11911,29 @@ button.dev-badge { cursor: pointer; }
   background: none;
 }
 button.attr-chip { cursor: pointer; }
+/* A 32px-tall hit area on a touch screen (QA 2026-09-24 Q19). The chips are
+   19px on a card and 24px in a change's hero, and they wrap into rows only a
+   few px apart, so `.un-touch-target`'s 44px box would reach over the chip in
+   the next row and steal its taps (the later chip's ::after paints on top).
+   So the slop sits UNDER every chip: `z-index: -1` puts it in the row's own
+   stacking context, below the chips themselves, which are positioned, and
+   `isolation` makes the row that context. A chip's visible box always wins,
+   and the slop only answers taps that land in the gaps around it. Only the
+   height grows; a chip is never narrower than 32px. */
+@media (pointer: coarse) {
+  :is(.dev-card-meta, .dev-topic-hero-chips) { isolation: isolate; }
+  button.attr-chip { position: relative; }
+  button.attr-chip::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: max(100%, 32px);
+    transform: translateY(-50%);
+  }
+}
 
 /* #489: the assignee initial-avatar inside a chip — a tiny circle carrying
    the assignee's first letter. The tint (bg + text colour) comes from a
@@ -13460,15 +13552,17 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-weight: 600;
   /* The Vote button's "Yes" state (.dev-vote-btn-yes): the accent on its
      tint. The band's pills were the neutral grey fill, which read as a
-     third colour beside the blue Vote and the blue Preview. */
+     third colour beside the blue Vote and the blue Preview.
+     The INK is --accent-tint-ink, the accent one step darker in light, since
+     the accent itself is 4.34:1 on its own tint (QA 2026-09-24 Q20). */
   background: var(--accent-tint);
-  color: var(--accent);
+  color: var(--accent-tint-ink);
   border-color: transparent;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn:hover {
   background: var(--accent-tint);
   border-color: var(--accent-light);
-  color: var(--accent);
+  color: var(--accent-tint-ink);
 }
 /* The menu trigger: a hamburger at the far right of the band, the row's own
    "more" — that is where the pills that do not fit the line go. Preview,
@@ -13487,7 +13581,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   margin-left: auto;
   gap: 5px;
   padding: 0 10px 0 9px;
-  color: var(--accent);
+  color: var(--accent-tint-ink);
   background: var(--accent-tint);
   border-color: transparent;
 }
@@ -13539,6 +13633,21 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   height: 24px;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building + .dev-card-menu-btn { margin-left: 0; }
+/* ── On a touch screen the band is 32px (QA 2026-09-24 Q19) ──
+   The band's pills were 28px, under the 32px a phone needs, and this is the
+   one place the `.un-touch-target` hit-slop cannot fix it: the band clips at
+   one row (`overflow: hidden`, the reserve-and-clip contract above), so a
+   hit area hung off a pill would be cut at the band's edge. On a coarse
+   pointer the ROW is 32px instead and every pill in it fills the row — Start
+   work, Claim, Open card, Preview, ⋯, the kudos pill and the hero's Vote.
+   useFoldedActions reads the band's clientHeight, not a constant, so the
+   fold arithmetic is unchanged. A mouse keeps the 28px band. */
+@media (pointer: coarse) {
+  :is(.dev-card-dense, .dev-card-topic) .gc-card-actions { min-height: 32px; max-height: 32px; }
+  :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > :is(.gc-vote-btn, .dev-vote-btn),
+  :is(.dev-card-dense, .dev-card-topic) .gc-card-actions .kudos-wrap > .gc-vote-btn { height: 32px; }
+  :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn { width: 32px; }
+}
 
 /* Cards with 22px corners want a little more air between them than the
    column's space-y-2 gives. */
@@ -14238,7 +14347,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-muted);
-  background: var(--bg-tertiary);
+  /* A softer pill than --bg-tertiary itself (QA 2026-09-24 Q20): 10px muted
+     type on the full #e3e3e6 is 4.33:1; at 60% over the bubble it is ~4.8 in
+     light and ~5.6 in dark, and it still reads as a tag. */
+  background: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
   padding: 1px 6px;
   border-radius: 999px;
 }
@@ -16545,6 +16657,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   background: var(--state-neutral-bg); font-size: 12px; color: var(--text-muted);
 }
 .dev-ws-cnt b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* The chip's label in dark (QA 2026-09-24 Q20). --state-neutral-bg over a
+   category card lands at #3e3f43, and the muted ink that reads fine on the
+   card itself is 3.66:1 on the chip. One step brighter clears 4.76, and the
+   bold count beside it is still the loudest thing in the chip. Light passes
+   as it is (4.72), so this is dark-only. */
+.dark .dev-ws-cnt { color: #aeaeb2; }
 .dev-ws-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--state-neutral); flex-shrink: 0; }
 .dev-ws-cnt-underway .dev-ws-dot, .dev-ws-lane-underway .dev-ws-dot { background: var(--accent); }
 .dev-ws-cnt-review .dev-ws-dot, .dev-ws-lane-review .dev-ws-dot { background: var(--state-attention); }

@@ -747,14 +747,18 @@ test('the nav components render what the module shapes, and nothing else', () =>
   assert.match(navTsx, /className=\{item\.className\}/,
     'the component renders that string rather than recomputing it');
 
-  // A tab set on desktop, a LIST on mobile. dapp.json line 1660 selects on
-  // [data-settings-nav="cli"][aria-selected="true"], so the first half is a
+  // Section links on desktop, a LIST on mobile. dapp.json selects on
+  // [data-settings-nav="cli"][aria-current="page"], so the first half is a
   // declared check, and the second half is what makes the two differ.
-  assert.match(navTsx, /role="tab"/, 'the sidebar is a tab set');
-  assert.match(navTsx, /aria-selected=\{item\.active \? 'true' : 'false'\}/);
+  // QA 2026-09-24 Q20: the sidebar was `role="tab"` + `aria-selected` with no
+  // tablist parent (axe aria-required-parent); it is the <nav>'s links now.
+  const navRowFn = navTsx.slice(navTsx.indexOf('function NavRow('), navTsx.indexOf('function SettingsLabel('));
+  assert.doesNotMatch(navRowFn, /role="tab"|aria-selected=/, 'the sidebar rows are not orphan tabs');
+  assert.match(navRowFn, /aria-current=\{item\.active \? 'page' : undefined\}/,
+    'the current section is announced as the current page');
   const menuFn = navTsx.slice(navTsx.indexOf('export function SettingsMobileMenu'));
-  assert.doesNotMatch(menuFn, /role="tab"|aria-selected/,
-    'the level-1 menu is a list of rows, not a second tab set');
+  assert.doesNotMatch(menuFn, /role="tab"|aria-selected|aria-current/,
+    'the level-1 menu is a list of rows, with no current marker');
 
   // Both hosts route through one handler; neither re-binds listeners.
   assert.equal((navTsx.match(/onClick=\{\(\) => navClick\(item\.key\)\}/g) || []).length, 2);

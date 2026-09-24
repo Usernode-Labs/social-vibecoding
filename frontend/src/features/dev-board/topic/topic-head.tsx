@@ -371,11 +371,11 @@ function Roster({ r }: { r: RosterView }): ReactNode {
 function HelpLinks({ question }: { question: boolean }): ReactNode {
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button type="button" className="voting-help-link" data-voting-help="">How voting works</button>
+      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">How voting works</button>
       {question ? (
         <button
           type="button"
-          className="voting-help-btn"
+          className="voting-help-btn un-touch-target"
           data-voting-help=""
           aria-label="How voting and merges work"
           title="How voting and merges work"
