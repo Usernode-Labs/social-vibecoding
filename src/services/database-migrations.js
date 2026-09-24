@@ -11,7 +11,7 @@ const invalid = (message, status = 409) => Object.assign(new Error(message), { s
 function publicOperation(o) {
   return { id: o.metadata.name, binding: o.spec.binding, target: o.spec.target,
     revision: o.spec.expectedRevision, requestedBy: o.spec.requestedBy,
-    createdAt: o.metadata.creationTimestamp, phase: o.status?.phase || 'Pending',
+    createdAt: o.metadata.creationTimestamp, phase: o.status?.observedAttempt === o.spec.attempt ? o.status.phase : 'Pending',
     stage: o.status?.stage || 'Queued', command: o.spec.command,
     attempt: o.spec.attempt, ...(o.status?.result ? { result: o.status.result } : {}) };
 }
@@ -76,7 +76,7 @@ function createMigrations({ store, execute, getPolicy = loadPolicy }) {
       || !['resume', 'abort'].includes(body.action) || !Number.isSafeInteger(body.attempt)) throw invalid('Invalid recovery action', 400);
     const o = await store.get(id);
     if (!o) throw invalid('Migration not found', 404);
-    if (o.status?.phase !== 'NeedsAttention' || o.spec.attempt !== body.attempt) throw invalid('Migration changed; refresh before continuing');
+    if (o.status?.phase !== 'NeedsAttention' || o.status?.observedAttempt !== o.spec.attempt || o.spec.attempt !== body.attempt) throw invalid('Migration changed; refresh before continuing');
     return publicOperation(await store.update(o, { ...o.spec, command: body.action, attempt: o.spec.attempt + 1 }));
   }
   return { inventory, plan, submit, action };
