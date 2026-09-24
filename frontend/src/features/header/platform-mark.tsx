@@ -95,6 +95,7 @@ import { improveStore } from '../improve/improve-store.js';
  */
 const WORKING_DOT_CLS =
   'absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+const WORKING_TITLE = 'Green dot: an agent is working on a change right now';
 
 export function PlatformMark() {
   // The trigger reports its surface's state, read from the store rather than
@@ -132,6 +133,9 @@ export function PlatformMark() {
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
       aria-label="Homeroom menu"
+      /* What the green dot means, on hover (#3015). The menu this opens says
+         it too, for a touch screen (../improve/actions.tsx UpdateStatus). */
+      title={working ? WORKING_TITLE : undefined}
       onClick={() => (window as unknown as {
         AppContext?: { toggle?: () => void };
       }).AppContext?.toggle?.()}

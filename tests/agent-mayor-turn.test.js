@@ -221,6 +221,8 @@ test('a write never runs from the model: it becomes a card and the model is told
   assert.equal(told.status, 'pending_confirmation');
   assert.equal(told.actionId, '11111111-2222-3333-4444-555555555555');
   assert.match(told.note, /Nothing has happened yet/);
+  assert.deepEqual(told.input, { slug: 'recipe-box', title: 'Dark mode' },
+    'and it reads back the input the card will run, which the card may have added a request link to');
 });
 
 test('every confirmed tool is a card, and only those', () => {
@@ -460,7 +462,7 @@ test('a card stores only the sealed input, and only for an open session of the u
   });
   assert.equal(card.title, 'Start a change');
   assert.deepEqual(card.input, { slug: 'recipe-box', title: 'Dark mode' });
-  const insert = pool.calls[0];
+  const insert = pool.calls.find((c) => /INSERT INTO agent_session_actions/.test(c.sql));
   assert.match(insert.sql, /FROM agent_sessions s\s+WHERE s\.id = \$2 AND s\.user_id = \$3 AND s\.status = 'open'/);
   assert.doesNotMatch(insert.params[4], /Dark mode/, 'sealed, not plain');
   await assert.rejects(

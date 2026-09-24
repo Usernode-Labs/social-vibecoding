@@ -175,8 +175,13 @@ function SessionBar({ session, about, embedded, action }: {
   const active = session?.activeChange || null;
   const building = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const count = session?.changes?.length || 0;
+  // It wraps on both surfaces (#3016). On a phone its five controls are wider
+  // than the screen, and a bar that cannot wrap made the whole conversation
+  // that wide: the right edge of every message and the Send button were off
+  // screen. Below `sm` the Build picker starts the second row and Changes and
+  // the ⋯ end it; from `sm` up everything fits on one, as before.
   return (
-    <div className={`flex items-center gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800 ${embedded ? 'flex-wrap' : ''}`} data-agent-session-bar>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
         <div className="mr-auto min-w-0 basis-full sm:basis-auto">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
@@ -195,17 +200,17 @@ function SessionBar({ session, about, embedded, action }: {
       </span>
       <span
         data-agent-session-change-pill
-        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
       >
         {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
       </span>
       {/* Siblings of the pills, not a group of their own: a declared check
           reads the bar as focus ~ change pill ~ Changes. */}
-      <VenuePicker disabled={snapshot.phase === 'loading'} className={embedded ? '' : 'ml-auto'} />
+      <VenuePicker disabled={snapshot.phase === 'loading'} className={embedded ? '' : 'sm:ml-auto'} />
       <button
         type="button"
         data-agent-session-changes-button
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 sm:ml-0 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         onClick={() => setDrawerOpen(true)}
         disabled={!session}
         aria-haspopup="dialog"
@@ -992,8 +997,9 @@ function Replies({ replies }: { replies: string[] }) {
  * chat picker's (`dc-model-select`).
  *
  * A model's cost rides along as the dev chat's does (#2570): its note and
- * "about $X for a typical change" after its name in the open list (the
- * chosen one's cost is drawn beside the control by ModelPicker).
+ * "about $X for a typical change" after its name in the open list. Only
+ * there: drawn beside the closed control too, it sat under every message
+ * the user wrote (#3008).
  */
 export function LabeledSelect({ label, ariaLabel, value, options, disabled, muted = false, onChange, dataKey }: {
   label: string;
@@ -1048,26 +1054,20 @@ function ModelPicker() {
   const disabled = archived || snapshot.choosing || snapshot.phase === 'loading';
   const reasoning = offersReasoning(current, catalog);
   const value = choiceValue(current);
-  const cost = options.find((option) => option.value === value)?.cost || '';
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1" data-agent-session-model>
-      <span className="inline-flex min-w-0 items-baseline gap-1">
-        <LabeledSelect
-          label="Model"
-          ariaLabel="Model"
-          dataKey="model"
-          value={value}
-          options={options}
-          disabled={disabled}
-          onChange={(picked) => {
-            const next = choiceFromValue(picked, catalog, current);
-            if (next) void chooseAgent(next);
-          }}
-        />
-        {cost ? (
-          <span className="truncate text-xs text-zinc-500 dark:text-zinc-400" data-agent-session-model-cost>{cost}</span>
-        ) : null}
-      </span>
+      <LabeledSelect
+        label="Model"
+        ariaLabel="Model"
+        dataKey="model"
+        value={value}
+        options={options}
+        disabled={disabled}
+        onChange={(picked) => {
+          const next = choiceFromValue(picked, catalog, current);
+          if (next) void chooseAgent(next);
+        }}
+      />
       {reasoning ? (
         <LabeledSelect
           label="Thinking Level"
@@ -1219,13 +1219,26 @@ function Composer({ id }: { id: string }) {
     clearReturnedText();
   }, [returned]);
 
-  // The field grows with what it holds, typed or put back.
+  const placeholder = archived
+    ? 'This session is archived.'
+    : running ? BUSY_PLACEHOLDER : 'Describe a change to any app in plain English. No coding needed.';
+
+  // The field grows with what it holds, typed or put back. Empty, it is as
+  // tall as its hint, which wraps on a phone and was cut off mid-line under
+  // a one-line box (#3016): the hint is measured as the value for a moment
+  // and taken straight back out, which fires no input event.
   useEffect(() => {
     const field = input.current;
     if (!field) return;
     field.style.height = 'auto';
-    field.style.height = `${Math.min(field.scrollHeight, 144)}px`;
-  }, [value]);
+    let height = field.scrollHeight;
+    if (!field.value && field.placeholder) {
+      field.value = field.placeholder;
+      height = field.scrollHeight;
+      field.value = '';
+    }
+    field.style.height = `${Math.min(height, 144)}px`;
+  }, [value, placeholder]);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -1276,9 +1289,7 @@ function Composer({ id }: { id: string }) {
         maxLength={20_000}
         value={value}
         disabled={archived || snapshot.phase === 'loading'}
-        placeholder={archived
-          ? 'This session is archived.'
-          : running ? BUSY_PLACEHOLDER : 'Describe a change to any app in plain English. No coding needed.'}
+        placeholder={placeholder}
         aria-label="Message the Mayor"
         className="agent-session-composer-input max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
         onChange={(event) => update(event.target.value)}
@@ -1482,7 +1493,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   }, []);
 
   return (
-    <div ref={root} className={`relative flex min-h-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
+    <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
         <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>

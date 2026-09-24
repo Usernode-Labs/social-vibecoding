@@ -86,6 +86,8 @@ export interface AgentAction {
   title: string;
   status: AgentActionStatus;
   result: { ok?: boolean; text?: string; structured?: Record<string, unknown> | null } | null;
+  /** What happened, in plain words: the card's "Confirmed · …" line. */
+  outcome?: string | null;
   expiresAt: string;
 }
 

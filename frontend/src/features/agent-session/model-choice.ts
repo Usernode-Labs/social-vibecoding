@@ -53,8 +53,6 @@ export interface PickerOption {
    * typical change", shown after its name in the open list.
    */
   detail?: string;
-  /** The cost alone, "about $1.55 for a typical change", beside the closed control. */
-  cost?: string;
 }
 
 /** A model's note and the estimate of a typical change on it. */
@@ -95,7 +93,6 @@ function withCost(option: PickerOption, cost: ModelCost): PickerOption {
   return {
     ...option,
     ...(cost.compact ? { detail: cost.compact } : {}),
-    ...(cost.perChange ? { cost: cost.perChange } : {}),
   };
 }
 

@@ -72,7 +72,8 @@ function focusBlock(session) {
   ];
   if (context.issueNumber) {
     lines.push(`They were looking at request #${context.issueNumber} on ${app.slug}. Read it with get_request before `
-      + 'acting on it, and pass linkedIssues when you start a change for it.');
+      + `acting on it. The first change you start on ${app.slug} in this conversation links and claims it unless you `
+      + 'pass linkedIssues yourself: pass [] when that change is for something else.');
   }
   if (context.proposalId) {
     lines.push(`They were looking at proposal ${context.proposalId} on ${app.slug}. Read it with get_proposal before `
@@ -131,6 +132,11 @@ function getAgentMayorPrompt({ username, session, summary = null }) {
       + 'write a short wrap-up: what changed, what to look at, and the natural next step.\n'
       + '- For new work, start a change first (the user confirms it on a card). After they confirm you get a short '
       + 'follow-up turn: if they already asked for the work, dispatch it then without asking again.\n'
+      + '- Who is working on what is shared with the group. When a change is for a request, read it with get_request '
+      + 'first: its inProgress names anyone who has claimed it or is building on it, and somebody else there is '
+      + 'something to tell the user before you start. Then pass the request number in start_change\'s linkedIssues, '
+      + 'including a request you just filed: that links the change and claims the request for the user, so the '
+      + 'board shows it being worked on. update_proposal_issues links a request to a change already open.\n'
       + '- Building on a change that is up for a vote revises it and clears its votes. Say so before you dispatch on '
       + 'one.',
     focusBlock(session),

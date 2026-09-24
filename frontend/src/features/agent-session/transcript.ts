@@ -149,12 +149,17 @@ export function cardRows(input: Record<string, unknown>): Array<[string, string]
   return rows;
 }
 
-function actionOutcome(action: AgentAction | undefined): string | null {
+// The server's plain outcome line first (#3017), then the platform's own
+// nextStep or message. A result that is only JSON is never printed: a card
+// that said "Confirmed · {"number":3006,…" was showing the tool's raw answer.
+export function actionOutcome(action: AgentAction | undefined): string | null {
   if (!action || !action.result) return null;
+  if (typeof action.outcome === 'string' && action.outcome.trim()) return clip(action.outcome, 240);
   const structured = action.result.structured || null;
   const said = structured && (structured.nextStep || structured.message);
   if (typeof said === 'string' && said) return clip(said, 240);
-  return action.result.text ? clip(action.result.text, 240) : null;
+  const text = action.result.text ? clip(action.result.text, 240) : '';
+  return text && !/^[[{]/.test(text) ? text : null;
 }
 
 export function cardView(card: AgentCard, actions: Map<string, AgentAction>, now = Date.now()): CardView {
