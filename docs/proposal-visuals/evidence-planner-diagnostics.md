@@ -6,6 +6,15 @@ configured planner budget. The default is 480,000 ms (8 minutes); an
 environment override can change it. A repair turn has a separate 240,000 ms
 default. The run's default recovery window is 1,440,000 ms (24 minutes).
 
+Before model exploration, `auth_bootstrap` records one fixed-shape event for
+each persona and revision. `responseStatus`, `sessionCookieInstalled`, and
+`sessionCookiePresent` show whether the private preview accepted its
+app-scoped identity and the planner browser retained the resulting session.
+The trace never contains the identity token, cookie, URL, or page content.
+An HTTP preview that issues a Secure session cookie needs the explicit
+private-context exchange used by replay; otherwise the planner sees a sign-in
+screen even when the replay browser could authenticate.
+
 For a timeout, look at the last `events` and the three pending lists:
 
 | Trace field | What it measures | A long pending item suggests |
