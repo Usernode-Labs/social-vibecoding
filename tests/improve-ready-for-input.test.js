@@ -13,12 +13,14 @@
 // routes/sessions.js — pinned in tests/me-active-sessions.test.js). Here the
 // client half is pinned:
 //
-//   1. THE PILL. Rendered, not grepped: "Ready for your input" when the row
-//      is waiting, plain "Ready" when it is not, "Working" while a turn is
-//      in flight whatever the payload said, "Handed off" for a work order.
+//   1. THE PILL. Rendered, not grepped: "Needs you" when the row is waiting
+//      (QA 2026-09-24 Q29 shortened it from "Ready for your input", which
+//      took 144px of a 344px Messages row and cut the title to "[Mock] Yo…"),
+//      plain "Ready" when it is not, "Working" while a turn is in flight
+//      whatever the payload said, "Handed off" for a work order.
 //      Same tone — the words carry the qualification. (The tile badge this
 //      line also named is retired: #1946, #1947.)
-//   2. THE CAPTION AGREES. "Needs you" and "Ready for your input" read ONE
+//   2. THE CAPTION AGREES. The caption's "Needs you" and the pill read ONE
 //      predicate (awaitsInput), so the row cannot say two different things.
 //   3. BUSY WINS LIVE. A push that starts a turn takes "Needs you" down in
 //      the same frame it puts the spinner up (#1958's shape), and the open
@@ -70,8 +72,8 @@ function pill(view) {
   };
 }
 
-test('a finished spec with open questions reads "Ready for your input"', () => {
-  assert.deepEqual(pill({ ...VIEW, awaitingInput: true }), { text: 'Ready for your input', spins: false });
+test('a finished spec with open questions reads "Needs you" (QA 2026-09-24 Q29)', () => {
+  assert.deepEqual(pill({ ...VIEW, awaitingInput: true }), { text: 'Needs you', spins: false });
 });
 
 test('a finished spec with nothing to answer, or a finished build, reads plain "Ready"', () => {
@@ -80,7 +82,7 @@ test('a finished spec with nothing to answer, or a finished build, reads plain "
 
 test('a turn in flight stays "Working", whatever the payload said about waiting', () => {
   // The controller never sets both, but the component still has to put the
-  // spinner first: "Ready for your input" beside an arc is a contradiction.
+  // spinner first: "Needs you" beside an arc is a contradiction.
   assert.deepEqual(pill({ ...VIEW, busy: true, awaitingInput: true }), { text: 'Working', spins: true });
 });
 
@@ -94,14 +96,14 @@ test('the qualification is words, not a fourth state', () => {
   // tests/improve-session-spinner.test.js counts three branches of.
   const start = ROW_TSX.indexOf('function stateOf(');
   const body = ROW_TSX.slice(start, ROW_TSX.indexOf('\n}\n', start));
-  assert.match(body, /label: session\.awaitingInput \? 'Ready for your input' : 'Ready',/);
+  assert.match(body, /label: session\.awaitingInput \? 'Needs you' : 'Ready',/);
   assert.equal((body.match(/bg-emerald-500\/15 text-emerald-700 dark:text-emerald-400/g) || []).length, 1,
     'both labels share the emerald pill');
   // The emerald tile badge that stood beside it was the row's static green
   // dot, and it is retired (#1946) — the tint above is the only emerald the
   // Ready state has left, and it comes with the word that explains it.
   assert.doesNotMatch(body, /badge:/, 'no second renderer for the same state');
-  assert.doesNotMatch(body, /Ready for your input[\s\S]*?spinner: true/,
+  assert.doesNotMatch(body, /'Needs you'[\s\S]*?spinner: true/,
     'a waiting row never spins');
 });
 

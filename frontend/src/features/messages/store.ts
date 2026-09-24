@@ -177,8 +177,17 @@ function currentUser(): { id: number; username: string; avatarUrl?: string | nul
   };
 }
 
+/**
+ * QA 2026-09-24 Q2: the server's answer to a second message into a direct
+ * request the other person has not accepted yet (409 `awaiting_acceptance`).
+ */
+function isAwaitingAcceptance(error: unknown): boolean {
+  return error instanceof api.MessagesApiError && error.status === 409 && error.message === 'awaiting_acceptance';
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof api.MessagesApiError) {
+    if (isAwaitingAcceptance(error)) return 'They need to accept your message request before you can send more.';
     if (error.status === 404) return 'This conversation is no longer available.';
     if (error.status === 429) return 'You’re doing that too quickly. Try again in a moment.';
     return error.message || fallback;
@@ -735,8 +744,22 @@ export function syncChrome(): void {
   app.setHeaderTitle?.(thread
     ? (state.route.appSlug
       ? state.discussionContext?.name || 'Discussion'
-      : state.route.agent ? 'Messages' : state.active?.title || 'Messages')
+      : state.route.agent ? 'Messages' : chromeTitle(state.active))
     : 'Messages');
+}
+
+/**
+ * The bar's name for an open conversation: its title — which for an
+ * accepted direct one is the other person's username. QA 2026-09-24 Q33a: an
+ * unanswered direct request has no peer yet and is titled "Direct message",
+ * so it takes its requester's name instead, as its header and row do.
+ */
+function chromeTitle(active: ConversationDetail | null): string {
+  if (!active) return 'Messages';
+  if (active.kind === 'direct' && active.membershipStatus === 'invited' && active.requester?.username) {
+    return active.requester.username;
+  }
+  return active.title || 'Messages';
 }
 
 /**
@@ -863,6 +886,26 @@ export async function inviteMembers(userIds: number[]): Promise<void> {
   if (!id) return;
   const conversation = await api.addMembers(id, userIds);
   upsertConversation(conversation);
+}
+
+/**
+ * QA 2026-09-24 Q14: rename the open group. The server keeps 1 to 80
+ * characters with the whitespace collapsed (normalizeTitle) and takes the
+ * change from the owner only; the bounds are checked here first so an empty
+ * or overlong name says why rather than coming back as a 404.
+ */
+export async function renameConversation(title: string): Promise<void> {
+  const id = state.route.conversationId;
+  if (!id) return;
+  const next = title.trim().replace(/\s+/g, ' ');
+  if (!next) throw new Error('A group needs a name.');
+  if (next.length > 80) throw new Error('Group names can be up to 80 characters.');
+  if (next === state.active?.title) return;
+  try {
+    upsertConversation(await api.updateConversation(id, { title: next }));
+  } catch (error) {
+    throw new Error(errorMessage(error, 'Couldn’t rename this group.'));
+  }
 }
 
 export async function removeMember(userId: number): Promise<void> {
@@ -1024,6 +1067,19 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
     }
     await loadConversations(true);
   } catch (error) {
+    if (isAwaitingAcceptance(error)) {
+      // QA 2026-09-24 Q2: a send that cannot go through until the other
+      // person accepts is not a failed row — a Retry there could never
+      // succeed, and a reload dropped it. The words go back to the draft
+      // (unless a new one has been started) and the conversation is re-read,
+      // so the thread says who it is waiting for in place of the composer.
+      unsent.delete(key);
+      const scope = scopeKey(conversationId, null);
+      if (!draftFor(scope) && pending.content) setDraft(scope, pending.content);
+      publish({ messages: state.messages.filter((item) => item.clientKey !== key) });
+      if (state.route.conversationId === conversationId) void loadThread(conversationId, true);
+      return;
+    }
     const offline = typeof navigator !== 'undefined' && !navigator.onLine;
     if (offline) {
       const queue = pendingByConversation.get(conversationId) || [];

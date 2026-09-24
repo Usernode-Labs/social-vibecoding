@@ -55,6 +55,9 @@ export interface RecentConversation {
   channelKey?: string | null;
   peer?: { id: number; username: string } | null;
   members?: Array<{ id: number; username: string }>;
+  /** An unanswered request's sender — its only name before it is accepted. */
+  membershipStatus?: string;
+  requester?: { id: number; username: string } | null;
 }
 
 /** An agent session (#2779): a conversation with the Mayor, by its own clock. */
@@ -80,8 +83,12 @@ function stamp(value: string | null | undefined): number {
 }
 
 function directLabel(item: RecentConversation, viewerId: number | null): string {
+  // QA 2026-09-24 Q33a: a request the viewer has not answered carries no
+  // peer and no roster, but it does carry who sent it — name them, as the
+  // Messages list does, rather than "Direct message".
   const peer = item.peer
     || (item.members || []).find((member) => Number(member.id) !== viewerId)
+    || (item.membershipStatus === 'invited' ? item.requester : null)
     || null;
   return peer?.username ? `@${peer.username}` : item.title;
 }

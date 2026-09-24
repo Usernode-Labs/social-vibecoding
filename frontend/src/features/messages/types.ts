@@ -116,6 +116,12 @@ export interface ConversationSummary {
   latestSummary?: string;
   lastActivityAt: string;
   unreadCount: number;
+  /**
+   * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
+   * other person has not accepted yet. One opening message is allowed; after
+   * it `canSend` turns false and the thread says who it is waiting for.
+   */
+  awaitingAcceptance?: boolean;
   canSend: boolean;
   canInvite: boolean;
   canManage: boolean;
