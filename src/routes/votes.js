@@ -2235,10 +2235,19 @@ function voteRoutes(config) {
       // promotion without a generated title, and a NULL pr_title would
       // otherwise render as "Change by <user>" forever. Backfilling it
       // here updates both GitHub and pr_title/session_title.
-      if (!session.pr_number || !session.pr_title) {
+      //
+      // And for a change an agent session started (#2779), always: this is
+      // the moment the group starts reading it, so its title and description
+      // are written again from the change as it now stands (its name, spec
+      // and every build's summary; pr-metadata's gatherSessionContext), not
+      // left as the first build described it. A title a person set is kept.
+      // Best-effort like the backfill: it never blocks the promotion.
+      const refreshAtSubmission = session.agent_session_id != null && !!session.pr_number;
+      if (!session.pr_number || !session.pr_title || refreshAtSubmission) {
         // Distinguish creating a PR (no pr_number → a failure must block
         // promotion) from merely backfilling a missing title on an
-        // existing PR (best-effort — never block promotion on it).
+        // existing PR, or refreshing one (best-effort — never block
+        // promotion on it).
         const isBackfill = !!session.pr_number;
         const { rows: msgRows } = await pool.query(
           `SELECT content FROM chat_session_messages
