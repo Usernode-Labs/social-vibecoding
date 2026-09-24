@@ -6323,6 +6323,15 @@
         if (window.PlatformUI) PlatformUI.toast('Request sent. An admin will release your keys');
         this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
         this._publishUsernode();
+        // #2960: the Android "Set up your device" sheet (exact alarms +
+        // unrestricted background) waits for exactly this moment. Re-run the
+        // first-run trigger now that the account has asked to produce; it
+        // re-reads the queue, and on iOS or an already-answered device it
+        // presents nothing.
+        if (window.NativeChrome &&
+            typeof NativeChrome.maybeShowFirstRunPermissions === 'function') {
+          NativeChrome.maybeShowFirstRunPermissions();
+        }
       } catch (e) {
         if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
       }

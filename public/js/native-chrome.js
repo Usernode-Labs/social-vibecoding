@@ -574,6 +574,16 @@
     // where the marker is not final: the OS prompt itself is one-shot,
     // so an un-asked device must keep its chance. The same rows live
     // permanently in Settings → Homeroom app.
+    //
+    // Android waits for block production (#2960). Both of its rows (exact
+    // alarms, unrestricted background / battery optimization) exist only so
+    // the node can produce blocks, so asking before the account has asked
+    // to produce is asking a stranger for a scary permission with no reason
+    // attached. Until the server's block-producer queue says the account
+    // has requested (or been released for) block production, the Android
+    // sheet is deferred WITHOUT writing the marker, and the Settings
+    // "Ask to produce blocks" action re-runs this trigger the moment the
+    // request lands. See decideFirstRunSheet below.
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
     _firstRunPromise: null,
     _firstRunSheetPresented: false,
@@ -758,6 +768,45 @@
       return caps.indexOf(method) !== -1;
     },
 
+    // What the first-run trigger does once the permission snapshot is in.
+    // Pure, for the same reason decideNotificationTap is. Returns:
+    //   "done"     nothing left to ask; record the one-shot marker
+    //   "defer"    Android, block production not enabled: present nothing
+    //              and record NOTHING, so the sheet can still be offered
+    //              once the account asks to produce blocks (#2960)
+    //   "present"  show the "Set up your device" sheet
+    // iOS never defers: its sheet is the notification prompt, which has
+    // nothing to do with block production (off on iOS since v4).
+    decideFirstRunSheet(state) {
+      const s = state || {};
+      if (!s.needsAlarm && !s.needsBattery) return 'done';
+      if (s.isAndroid === true && s.blockProduction !== true) return 'defer';
+      return 'present';
+    },
+
+    // Whether this account has asked for block production, read from the
+    // same session-authed endpoint Settings' block-production card reads
+    // (GET /challenges-api/bp/state). Requested counts, not only released:
+    // once an admin releases the keys the node starts producing on its
+    // own, so the permissions have to be in place BEFORE that. Anything
+    // that cannot say yes (anonymous, network error, non-2xx) is false,
+    // which defers the Android sheet rather than asking without a reason.
+    async _blockProductionEnabled() {
+      if (!window.App || !App.user) return false;
+      if (typeof window.fetch !== 'function') return false;
+      try {
+        const res = await window.fetch('/challenges-api/bp/state',
+          { credentials: 'same-origin' });
+        if (!res || !res.ok) return false;
+        const body = await res.json();
+        const data = body && body.success !== false ? body.data : null;
+        return !!(data && (data.bp_requested === true ||
+          data.bp_released === true));
+      } catch (_) {
+        return false;
+      }
+    },
+
     // Triggered by anonymous entry and successful native establishment. One
     // shared run keeps repeated session signals from stacking sheets, with a
     // document latch once a sheet was actually presented.
@@ -826,10 +875,19 @@
       }
       // Battery optimization is Android-only; iOS never shows that row.
       const needsBattery = isAndroid && perms.batteryOptDisabled !== true;
-      if (!needsAlarm && !needsBattery) {
+      // The block-production read only happens when it can change the
+      // answer: Android, with something still to ask.
+      const blockProduction = isAndroid && (needsAlarm || needsBattery)
+        ? await NativeChrome._blockProductionEnabled()
+        : false;
+      const decision = NativeChrome.decideFirstRunSheet({
+        isAndroid, needsAlarm, needsBattery, blockProduction,
+      });
+      if (decision === 'done') {
         NativeChrome._markFirstRunDone();
         return;
       }
+      if (decision === 'defer') return;
 
       let settled = null;
       const settledPromise = new Promise((resolve) => { settled = resolve; });
