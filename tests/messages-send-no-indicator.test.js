@@ -194,9 +194,10 @@ test('#2907: no loading row over a visible thread, no "sending…", no busy send
 test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   assert.doesNotMatch(TRANSCRIPT, />Report message<\/button> : null\}\s*\{onReportUser/,
     'no longer three text links in the row\'s action slot');
-  assert.match(TRANSCRIPT, /className="gc-msg-more"[\s\S]*?aria-haspopup="menu"/);
-  assert.match(TRANSCRIPT, /role="menu"[\s\S]*?Report message[\s\S]*?Report @\{username\}[\s\S]*?Block @\{username\}/);
-  assert.match(CSS, /\.gc-msg-more \{[^}]*width: 20px;[^}]*height: 20px;/, 'the bookmark\'s footprint');
+  // #2387: the app chat's rows carry the shared hover bar too, and its ⋯
+  // menu holds report and block after the everyday acts.
+  assert.match(TRANSCRIPT, /<MessageActionBar[\s\S]*?moreClassName="gc-msg-more-action"/);
+  assert.match(TRANSCRIPT, /label: 'Report message'[\s\S]*?label: `Report @\$\{msg\.username\}`[\s\S]*?label: `Block @\$\{msg\.username\}`/);
 
   // #2387: the ⋯ is the shared hover bar's (../message-actions/action-bar.tsx),
   // and it keeps the class and the popup role the declared checks select on.

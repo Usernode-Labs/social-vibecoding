@@ -928,6 +928,33 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    and accented while the pill is up. */
 .messages-message-saved:not(.messages-message-bubble) { box-shadow: inset 3px 0 0 var(--accent); }
 
+/* The app chat's rows place the same bar (#2387): on the row's top edge,
+   trailing side, over the row above, revealed on hover and focus-within. The
+   row's own actions slot is in the header's flow, so the host takes no width
+   and the bar floats out of it. */
+.gc-msg { position: relative; }
+.gc-msg-bar-host { display: contents; }
+.gc-msg-actions {
+  position: absolute;
+  z-index: 6;
+  top: -16px;
+  right: 16px;
+  display: none;
+}
+.gc-msg:hover .gc-msg-actions,
+.gc-msg:focus-within .gc-msg-actions,
+.gc-msg-actions.msgx-bar-open { display: flex; }
+.gc-msg-deleted-text { color: var(--text-muted); font-size: 15px; font-style: italic; }
+.gc-reply-count {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 16px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.gc-reply-count::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--border-light); }
+
 /* ── The message actions, shared (#2387) ─────────────────────────────────
    The pill, the ⋯ menu, the emoji picker and the phone's long-press sheet,
    drawn identically on the Messages screen and in an app's chat
@@ -8631,31 +8658,6 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   transition: opacity 120ms, color 120ms;
 }
 .gc-msg-save svg { width: 12px; height: 12px; display: block; }
-/* #2905: the ⋯ that holds report and block — the bookmark's disc, so a row
-   carries two small marks at most and never a column of words. */
-.gc-msg-more {
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0.45;
-  transition: opacity 120ms;
-}
-.gc-msg-more[aria-expanded="true"] { opacity: 1; }
-@media (hover: hover) {
-  .gc-msg:hover .gc-msg-more { opacity: 0.85; }
-  .gc-msg-more:hover { opacity: 1; }
-}
 .gc-msg-save.gc-msg-saved { opacity: 1; color: var(--accent); }
 @media (hover: hover) {
   .gc-msg:hover .gc-msg-save,

@@ -1322,7 +1322,9 @@ export function handleEvent(raw: ConversationEvent): void {
       // The reader's OWN other tabs, and only those: the event goes to every
       // member, and someone else reaching the end of the thread has cleared
       // nothing of this viewer's.
-      if (api.strictId(event.userId ?? event.user_id) === currentUser().id) {
+      // …and not when the reader marked it UNREAD (#2387): that moved the
+      // cursor back, and nothing in the bell was read by it.
+      if (api.strictId(event.userId ?? event.user_id) === currentUser().id && event.unread !== true) {
         notifyConversationRead(conversationId);
       }
       break;
