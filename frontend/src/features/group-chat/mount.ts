@@ -31,12 +31,18 @@ import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
-import { MentionMenu, RefMenu } from './autocomplete';
+import { EmojiMenu, MentionMenu, RefMenu } from './autocomplete';
 import {
   autocompleteStore,
+  type EmojiOption,
   type MentionOption,
   type RefOption,
 } from './autocomplete-store';
+import {
+  completedShortcodeAt,
+  findShortcodeToken,
+  matchShortcodes,
+} from '../message-actions/emoji-shortcodes';
 import {
   composerStore,
   type ComposerScope,
@@ -196,7 +202,7 @@ reactionBarStore.setFlush(flushSync);
  */
 composerStore.setFlush(flushSync);
 
-// ── The composer's two autocomplete menus ─────────────────────────────
+// ── The composer's autocomplete menus ─────────────────────────────────
 //
 // Same seam, one level smaller: `_ensureMenu` still creates the floating host
 // and appends it to `document.body` — it is `position: fixed`, measured
@@ -233,6 +239,25 @@ export function publishMentionMenu(items: MentionOption[], active: number): void
 export function publishRefMenu(items: RefOption[], active: number): void {
   autocompleteStore.set({ ref: { items, active } });
 }
+
+/** Establish the `:shortcode` menu's contents. */
+export function mountEmojiMenu(host: Element | null): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(EmojiMenu));
+}
+
+/** The rows, the highlight and the `:query` the heading repeats. */
+export function publishEmojiMenu(query: string, items: EmojiOption[], active: number): void {
+  autocompleteStore.set({ emoji: { items, active, query } });
+}
+
+// The emoji menu's matching lives in the bundle, not in group-chat.js: the
+// emoji and their shortcodes are features/message-actions/, which the Messages
+// composer reads directly. Handing the classic script the same three pure
+// functions keeps one definition of what `:th` and `:tada:` mean.
+export const emojiShortcodeToken = findShortcodeToken;
+export const matchEmojiShortcodes = matchShortcodes;
+export const completedEmojiShortcode = completedShortcodeAt;
 
 /**
  * The thread panel's shell — scroller, messages host, typing slot, composer.
@@ -355,6 +380,11 @@ if (typeof window !== 'undefined') {
     mountRefMenu,
     publishMentionMenu,
     publishRefMenu,
+    mountEmojiMenu,
+    publishEmojiMenu,
+    emojiShortcodeToken,
+    matchEmojiShortcodes,
+    completedEmojiShortcode,
     mountSpecPanel,
     publishSpecPanel,
     mountThreadShell,
