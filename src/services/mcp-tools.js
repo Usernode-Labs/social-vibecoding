@@ -1068,7 +1068,7 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     return `Nothing has been built on ${ref} yet. ${words.build}`;
   }
   const paused = status === 'paused'
-    ? ' It is paused, so its worker is released; its branch, preview and pull request are kept.'
+    ? ' It is idle, so its worker is released until it is next used; its branch, preview and pull request are kept.'
     : '';
   const failing = checks.state === 'error' || checks.state === 'failing' || checks.state === 'fail'
     || (Array.isArray(checks.failing) && checks.failing.length > 0);
@@ -3782,7 +3782,7 @@ function registerTools(server, ctx) {
           + `routes you passed were different, so they are now this proposal's.${shotOn}`
           + (result.captureRerun
             ? ' Its checks and screenshots are being re-shot against them right now; use get_proposal to follow them.'
-            : ' It is paused, so the new screenshots are taken when it is reopened.')
+            : ' It is idle, so the new screenshots are taken when it is next opened.')
         : `${named} was already at that commit and the testing routes you passed are the ones it already had, `
           + `so nothing changed and no votes were affected.${shotOn} If you meant to change the code, commit and `
           + 'push first, then submit again.';
@@ -3888,7 +3888,7 @@ function registerTools(server, ctx) {
       // the same payload. `targetKind` already says which this is; the propose
       // branch below reads it for exactly this reason.
       const buildNote = result.resumeRequired
-        ? ' It is paused, so the commit landed and no preview was built — reopen it when you want one.'
+        ? ' It is idle, so the commit landed and no preview was built; opening it builds one.'
         : result.previewRebuilding
           ? ' Its staging preview is rebuilding now; use get_proposal to follow it.'
           : ' No preview build started for this push.';

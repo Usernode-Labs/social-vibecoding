@@ -7,7 +7,7 @@
 // app: "ONE branch and ONE pull request", a spec, a worker. An agent session
 // is a standing conversation that works on any app, one change at a time, so
 // its prompt says where the conversation stands instead: the app it was
-// opened from, the change it is working on, the changes it has parked. The
+// opened from, the change it is working on, its earlier changes. The
 // rules that hold for any reader of the platform's tools come from the
 // connector charter's `agent_mayor` variant (services/mcp-charter.js), so the
 // Mayor and an external client cannot be told different things about them.
@@ -49,7 +49,11 @@ function changeRef(change) {
 function changeLine(change) {
   const title = change.title ? ` ${untrusted(change.title)}` : '';
   const where = change.appSlug ? ` on ${change.appSlug}` : '';
-  return `${changeRef(change)}${where}:${title} (${change.status || 'unknown'})`;
+  // "paused" is the platform's bookkeeping (a worker released, everything
+  // kept, resumed on use), never something to tell the user: it reads as the
+  // work being in progress, which it is.
+  const status = change.status === 'paused' ? 'active' : (change.status || 'unknown');
+  return `${changeRef(change)}${where}:${title} (${status})`;
 }
 
 function focusBlock(session) {
@@ -118,7 +122,7 @@ function getAgentMayorPrompt({ username, session, summary = null }) {
       + 'guessing.\n'
       + '- A change is one proposal on one app: a branch, a staging preview, the checks that gate merge, and a vote. '
       + 'This conversation works on one active change at a time. start_change opens a new change and makes it '
-      + 'active, parking the one before it (its branch and preview are kept). switch_active_change makes one of '
+      + 'active; the one before it keeps its branch, preview and progress. switch_active_change makes one of '
       + 'this conversation\'s earlier changes active again. set_focus_app records which app the user means when '
       + 'they do not say.\n'
       + '- Name a change by its pull request number first when it has one: PR #N (change M).\n'

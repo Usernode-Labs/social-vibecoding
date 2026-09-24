@@ -609,6 +609,21 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - **A drafted spec is a card.** It is the dev chat's spec card. It opens a read-only spec viewer over the conversation, at the version the card names, with the change's other saved versions to switch to. The viewer reads the change's own `GET /api/sessions/:id/spec` and `/specs/:version`. The changes drawer's active change gets a Spec button that opens the latest version. Sharing and mentions stay on the change page's own viewer.
 - **Staging shows both.** The seeded conversation 990801 now carries, on its change 990802, a scout run on Codex, the spec it drafted (two saved versions) and a build run. These are the same rows a real run writes, so the screen folds them the same way. A preview seeded before this gets the rows added on its next boot.
 
+*Follow-up: where your work in progress is, and "paused" goes backend-only.* Four lists answered "what am I working on" with four rules: the Workshop listed a paused session, Messages and the bell hid it, Recents listed no sessions at all, and the platform mark's menu had nothing. They now share one set of rules.
+
+- **Paused is never shown and never asked for.** The status stays in the database, because it is what the caps count, but nothing names it.
+  - The platform pauses a session five idle minutes after it was used.
+  - Starting new work at the per-user cap pauses the user's least recently used session instead of refusing. `session-lifecycle.freeUserSlot` does this, the same step the resume route always took; it is used on create, clone, fork, the CLI hand-off and a connector's share.
+  - Opening, messaging or syncing a session resumes it. `POST /api/sessions/:id/chat` and `sync-main` call `resumePausedSession`, which is extracted from the resume route. A change an agent session owns is refused by the chat route (its conversation is the agent session's) before anything is resumed, because a resume spends a slot and can pause another session.
+  - Gone from the UI: "Parked", the Workshop's "paused" chip, the dev chat's Pause and Resume buttons (Free worker and Archive stay), and "Pause or archive one first".
+  - The issue chip keeps its internal state but reads "Started · <user>", saying when that person last worked on it.
+  - The Mayor's prompt and the MCP tools say "idle" or "keeps its progress" instead.
+  - The one refusal left is "Your other sessions are all busy finishing turns".
+- **A conversation stands for the changes it started.** Messages already listed the conversation rather than its changes. The bell's session rows and the Continue rows now open the conversation too.
+- **Continue under the platform mark.** Up to three of your in-progress items on the menu's app sit directly under Go to workshop, conversations first, then "See all your work", which opens Messages filtered to Agents. Go to workshop still opens the list, as #2761 decided and a declared check pins. The rows are drawn after mount only, so the prerender and the hydrating render match. A conversation nothing was said in yet (no title, since the first message titles it, and no change) is not work in progress and is left out.
+- **The bell.** A scout or build that finishes while nobody is watching creates the dev chat's own `session_done` notification on the change: one unread per change. Watching means the turn's stream is still open, or the conversation screen follows its events (`session-bus.subscriberCount`). The notification carries `agentSessionId`, so it opens the conversation and reads "The coding agent finished". Reading the conversation (`GET /api/agent-sessions/:id`) marks its changes' rows read, however the user got there, as opening a dev session does for its own.
+- **Recents** lists open agent sessions by their last activity, next to your conversations. Like Messages, Recents and Continue read them for any signed-in viewer, whether or not agent sessions are turned on: the flag gates starting one, and turning it off never hides a conversation that already exists. Empty ones are left out of both.
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;

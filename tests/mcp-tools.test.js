@@ -1067,8 +1067,8 @@ test('a push that started no build says so, rather than promising a preview', as
     const res = await handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix' });
     assert.equal(res.structuredContent.previewRebuilding, false);
     assert.equal(res.structuredContent.resumeRequired, true);
-    assert.match(res.structuredContent.nextStep, /paused/,
-      'a paused session takes the commit and deliberately does not build');
+    assert.match(res.structuredContent.nextStep, /idle, so the commit landed and no preview was built/,
+      'a paused session takes the commit and deliberately does not build (said without "paused")');
     assert.doesNotMatch(res.structuredContent.nextStep, /rebuilding now/);
   } finally {
     restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
