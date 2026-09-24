@@ -152,6 +152,30 @@ test('a conversation row is named by its thread, not by the surface', async () =
     'and the thread is not repeated under itself');
 });
 
+test('a direct message is headed by who sent it, not by "Messages" (QA 2026-09-24 Q33a)', async () => {
+  // A direct conversation has no title of its own (the column is NULL), so a
+  // DM's row read "Messages" over the snippet — the surface, which the meta
+  // line already names — and a request's "Invite" row named nobody.
+  const msg = await lines({
+    kind: 'conversation_message', appName: null, conversationId: 7, conversationKind: 'direct',
+    conversationTitle: null, messageContent: 'are you around?',
+  });
+  assert.equal(msg.label, '@ada');
+  assert.equal(msg.subject, 'are you around?');
+  const invite = await lines({
+    kind: 'conversation_invite', appName: null, conversationId: 7, conversationKind: 'direct',
+    conversationTitle: null,
+  });
+  assert.equal(invite.label, 'Invite');
+  assert.equal(invite.subject, '@ada');
+  // With no sender to name, the row still has a heading.
+  const anonymous = await lines({
+    kind: 'conversation_message', appName: null, conversationId: 7, conversationKind: 'direct',
+    conversationTitle: null, sourceUsername: null, messageContent: 'hi',
+  });
+  assert.equal(anonymous.label, 'Messages');
+});
+
 test('the three conversation verbs lost their trailing preposition', async () => {
   // They read "Mentioned you in <conversation>" across one line. Broken in
   // two, "Mentioned you in" sits alone above its object — a sentence cut in

@@ -816,15 +816,31 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-message-failed-note button.messages-discard { color: var(--text-muted); font-weight: 400; }
 .messages-message-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 0 8px;
+  min-width: 0;
   min-height: 22px;
   color: var(--text-primary);
   font-size: 17px;
   font-weight: 700;
 }
 .messages-message-head time,
-.messages-message-head time ~ span { color: var(--text-muted); font-size: 15px; font-weight: 400; }
+.messages-message-head time ~ span { color: var(--text-muted); font-size: 15px; font-weight: 400; white-space: nowrap; }
+/* QA 2026-09-24 Q22: a long name gives way before the time does. The name
+   takes what the line has left, up to its own width, and ends in an ellipsis
+   rather than breaking at a hyphen; the time never wraps inside itself. The
+   6em basis is the point at which they stop sharing a line — below it the
+   time drops to a second line of the head instead of squeezing the name to
+   a stub. */
+.messages-message-author {
+  flex: 1 1 6em;
+  min-width: 0;
+  max-width: max-content;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The body at the language's reading size. Doubled up with .gc-msg-content
    because format.tsx puts both classes on the node — that one is the
    markdown vocabulary (its list, code and table rules), and it sets 13px
@@ -1389,6 +1405,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .messages-composer-card { transition: none; }
 }
 .messages-composer-disabled { padding: 14px 16px; color: var(--text-muted); font-size: 15px; text-align: center; }
+/* QA 2026-09-24 Q2: a direct request the other person has not accepted yet.
+   Before the opening message, one muted line over the card says what it will
+   be; after it, the card itself gives way to the invitation banner's tinted
+   panel, which names who the thread is waiting for. */
+.messages-composer-hint { margin: 0 4px 6px; color: var(--text-muted); font-size: 13px; line-height: 1.35; }
+.messages-awaiting {
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--accent-tint);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.messages-awaiting strong { display: block; color: var(--accent); font-size: 15px; font-weight: 600; }
+.messages-awaiting p { margin-top: 2px; color: var(--text-muted); }
 .messages-composer-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -13053,11 +13083,28 @@ body.is-offline [data-offline-disabled] {
 .dev-feed-msg-mine .dev-feed-msg-bubble { background: var(--accent-tint); }
 .dev-feed-msg-head {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 0 6px;
   align-items: baseline;
+  min-width: 0;
   margin-bottom: 1px;
 }
-.dev-feed-msg-author { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+/* QA 2026-09-24 Q22: the head stays inside its bubble. A GitHub comment's
+   head is a name, a tag and a stamp that can carry a year ("Mar 5, 2024,
+   09:15 AM"), and on a 360px phone the three in one unbreakable row ran past
+   the bubble and widened the page. Now the name ends in an ellipsis before
+   the stamp is pushed out, and past the 6em basis the stamp takes a second
+   line of the head rather than leaving it. */
+.dev-feed-msg-author {
+  flex: 1 1 6em;
+  min-width: 0;
+  max-width: max-content;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
 .dev-feed-msg-time { color: var(--text-muted); white-space: nowrap; }
 .dev-feed-msg-text { color: var(--text-primary); }
 /* The reply box: a 36px white pill field and the dev session's send disc

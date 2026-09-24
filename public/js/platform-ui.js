@@ -144,7 +144,9 @@
     },
 
     /** Single-field prompt (replaces window.prompt — the kit alert's
-        inset text field). Resolves the string, or null on cancel. */
+        inset text field). Resolves the string, or null on cancel. Enter
+        in the field confirms, as it does in any one-field form, and an
+        optional `maxLength` caps it. */
     prompt(opts) {
       const o = typeof opts === 'string' ? { title: opts } : (opts || {});
       const un = kit();
@@ -157,7 +159,12 @@
         .alert({
           title: o.title || '',
           message: o.message || undefined,
-          field: { placeholder: o.placeholder || '', value: o.value || '' },
+          field: {
+            placeholder: o.placeholder || '',
+            value: o.value || '',
+            submitOnEnter: true,
+            ...(o.maxLength > 0 ? { maxLength: o.maxLength } : {}),
+          },
           buttons: [
             { label: o.cancelLabel || 'Cancel', style: 'cancel' },
             { label: o.confirmLabel || 'OK', style: 'default' },

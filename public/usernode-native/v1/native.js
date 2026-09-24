@@ -4043,10 +4043,14 @@
    * { button, value } — value is the field text when a field was shown.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // alert({ title, message?, field?: { placeholder?, value? },
-  // buttons?: [{ label, style?: 'cancel'|'default'|'destructive',
-  // handler? }] }) — returns a Promise. Named alertDialog internally so it
-  // can't be confused with window.alert; exposed as unNative.alert.
+  // alert({ title, message?, field?: { placeholder?, value?, maxLength?,
+  // submitOnEnter? }, buttons?: [{ label, style?: 'cancel'|'default'|
+  // 'destructive', handler? }] }) — returns a Promise. Named alertDialog
+  // internally so it can't be confused with window.alert; exposed as
+  // unNative.alert. `maxLength` caps the field; `submitOnEnter` makes Enter
+  // in it press the last button that is not a cancel, the way a one-field
+  // form submits. Both are opt-in: a caller that passes neither gets the
+  // field it always got.
   function alertDialog(options) {
     var opts = options || {};
     var buttons = opts.buttons && opts.buttons.length
@@ -4085,6 +4089,7 @@
         field.className = 'un-alert-field';
         if (opts.field.placeholder) field.placeholder = opts.field.placeholder;
         if (opts.field.value != null) field.value = opts.field.value;
+        if (opts.field.maxLength > 0) field.maxLength = opts.field.maxLength;
         card.appendChild(field);
       }
 
@@ -4107,8 +4112,10 @@
         trap: card,
       };
       modalStack.push(entry);
+      var submitBtn = null;
       buttons.forEach(function (button) {
         var btn = document.createElement('button');
+        if (button.style !== 'cancel') submitBtn = btn;
         btn.type = 'button';
         btn.className = 'un-alert-btn' +
           (button.style === 'cancel' ? ' un-cancel' : '') +
@@ -4135,6 +4142,13 @@
         row.appendChild(btn);
       });
       card.appendChild(row);
+      if (field && opts.field.submitOnEnter && submitBtn) {
+        field.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' || e.isComposing) return;
+          e.preventDefault();
+          submitBtn.click();
+        });
+      }
 
       // Which control starts with focus: the text field when there is one;
       // otherwise Cancel when another answer is destructive (the safe

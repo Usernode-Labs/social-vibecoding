@@ -39,10 +39,15 @@ function sendNotFound(res) {
 // conversation (400) and a change to a deleted message (409).
 const THREADS_NOT_SUPPORTED = Object.freeze({ error: 'threads_not_supported' });
 const MESSAGE_DELETED = Object.freeze({ error: 'message_deleted' });
+// QA 2026-09-24 Q2: a second message into a direct request the other person
+// has not accepted yet. The conversation exists and the sender is in it; the
+// send is refused until they accept, so it is a conflict, not a 404.
+const AWAITING_ACCEPTANCE = Object.freeze({ error: 'awaiting_acceptance' });
 
 function sendMessageError(res, error) {
   if (error === 'threads_not_supported') return res.status(400).json(THREADS_NOT_SUPPORTED);
   if (error === 'message_deleted') return res.status(409).json(MESSAGE_DELETED);
+  if (error === 'awaiting_acceptance') return res.status(409).json(AWAITING_ACCEPTANCE);
   return sendNotFound(res);
 }
 

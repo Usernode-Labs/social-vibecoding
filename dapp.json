@@ -5131,6 +5131,29 @@
       "expectText": "more"
     },
     {
+      "name": "QA 2026-09-24 Q29: a change waiting on you says \"Needs you\" in its Messages row, short enough to leave the title room",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"] > span.inline-flex.rounded-full",
+      "expectText": "Needs you"
+    },
+    {
+      "name": "QA 2026-09-24 Q14: a group invitation's header reads \"Invitation pending\", not a member count the invitee is not shown",
+      "path": "/?demo=1#messages/910003",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-thread-header .messages-thread-sub",
+      "expectText": "Invitation pending"
+    },
+    {
+      "name": "QA 2026-09-24 Q14: ...and its row in the list carries no member-count tag",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) a.messages-conversation-row[href=\"#messages/910003\"]:not(:has(.messages-group-tag)) .messages-row-preview-invited",
+      "expectText": "Group invitation"
+    },
+    {
+      "name": "QA 2026-09-24 Q22: a Messages head names its author in its own span, which truncates before the time wraps",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100405 .messages-message-head > span.messages-message-author + time[datetime]"
+    },
+    {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-drawer] [data-agent-session-active-change] a[href$=\"/dev/proposals/990802\"]"

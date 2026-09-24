@@ -115,7 +115,7 @@ export function topicBackHref({ slug, tab, subTab, boardView }) {
  * @property {boolean} awaitingInput
  *   The session is waiting on the user (#1959): answer chips still up, or a
  *   finished spec with open Questions. Never true while busy; never true
- *   for a task. The pill reads "Ready for your input" from it.
+ *   for a task. The pill reads "Needs you" from it.
  * @property {number} sortAt      Recency, ms since epoch. Mixed-kind ordering.
  */
 

@@ -40,6 +40,7 @@ import {
   messagesController,
   open as openConversation,
   openAgentThread,
+  renameConversation,
   respond,
   setUserBlocked,
   selectConversation,
@@ -119,8 +120,23 @@ function conversationPeer(conversation: ConversationSummary) {
     : null);
 }
 
+/**
+ * QA 2026-09-24 Q33a: who a direct conversation is WITH, for its name and
+ * face. An accepted one is its peer. A request the viewer has not answered
+ * yet carries no peer — the roster stays hidden until acceptance — but it
+ * does carry its requester, deliberately, "so the recipient can decide"
+ * (services/conversations.js serializeConversation). That requester IS the
+ * other person of a direct request, so the row and the header name them
+ * rather than reading "Direct message" over an anonymous "DM" tile.
+ */
+function directPerson(conversation: ConversationSummary) {
+  if (conversation.kind !== 'direct') return null;
+  return conversationPeer(conversation)
+    || (conversation.membershipStatus === 'invited' ? conversation.requester || null : null);
+}
+
 function ConversationRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
-  const peer = conversationPeer(conversation);
+  const peer = directPerson(conversation);
   const invited = conversation.membershipStatus === 'invited';
   const unread = conversation.unreadCount > 0;
   // #1808: the shared ago ladder, which stops being relative at a week — a
@@ -139,7 +155,7 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
       className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
     >
-      <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={conversation.title} size="lg" shape="square" />
+      <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="lg" shape="square" />
       <div className="min-w-0 flex-1">
         {/* Two lines, the row's own geometry: the name with the time on its
             trailing edge, then the preview with the unread count on its. The
@@ -147,7 +163,7 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
             unread row state itself three ways — bold name, accent time, count
             pill — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}{conversation.kind === 'group' ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
+          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}{conversation.kind === 'group' && !invited ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
@@ -747,7 +763,7 @@ function ConversationList() {
     if (entry.kind === 'person') {
       const c = byConversation.get(entry.key.slice('person:'.length));
       if (!c) return false;
-      const peer = conversationPeer(c);
+      const peer = directPerson(c) || conversationPeer(c);
       return inboxMatches(c.title, q)
         || inboxMatches(peer?.username, q)
         || inboxMatches(peer?.displayName, q);
@@ -1019,20 +1035,47 @@ function ThreadHeader() {
     catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : 'Couldn’t block this user.'); }
     finally { setBusy(false); setMenu(false); }
   }
+  // QA 2026-09-24 Q14: rename, for whoever the server lets rename — the
+  // group's owner (`canManage`, the same gate PATCH /api/conversations/:id
+  // applies). The kit's own one-field dialog, pre-filled with the name.
+  async function renameGroup() {
+    setMenu(false);
+    const current = active?.title || '';
+    // PlatformUI.prompt (public/js/platform-ui.js) is the kit alert's inset
+    // text field, resolving the string or null on Cancel.
+    const ui = window.PlatformUI as undefined | {
+      prompt?: (opts: { title: string; value?: string; placeholder?: string; confirmLabel?: string; maxLength?: number }) => Promise<string | null>;
+      toast?: (message: string) => void;
+    };
+    if (!ui?.prompt) return;
+    const next = await ui.prompt({ title: 'Rename group', value: current, placeholder: 'Group name', confirmLabel: 'Save', maxLength: 80 });
+    if (next == null) return;
+    try { await renameConversation(next); }
+    catch (err) { ui.toast?.(err instanceof Error ? err.message : 'Couldn’t rename this group.'); }
+  }
   const channel = active.kind === 'channel';
+  const invited = active.membershipStatus === 'invited';
+  // QA 2026-09-24 Q33a: an unanswered request names its requester.
+  const person = directPerson(active);
+  const count = (n: number) => `${n} ${n === 1 ? 'member' : 'members'}`;
+  // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
+  // the roster until they accept, so the count the server gives them is 0 —
+  // they read the invitation's state instead of "0 members".
   const subtitle = channel
-    ? `Everyone on Homeroom · ${active.memberCount} ${active.memberCount === 1 ? 'member' : 'members'}`
-    : active.kind === 'group'
-      ? `${active.memberCount} members${active.myRole === 'owner' ? ' · you own this group' : ''}`
-      : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message';
+    ? `Everyone on Homeroom · ${count(active.memberCount)}`
+    : invited
+      ? 'Invitation pending'
+      : active.kind === 'group'
+        ? `${count(active.memberCount)}${active.myRole === 'owner' ? ' · you own this group' : ''}`
+        : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
       <ListToggle />
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
-        : <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} shape="square" />}
+        : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
       <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
-        <div className="messages-thread-name">{active.kind === 'direct' && peer ? `@${peer.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
+        <div className="messages-thread-name">{active.kind === 'direct' && person ? `@${person.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
         <div className="messages-thread-sub">{subtitle}</div>
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
@@ -1040,6 +1083,9 @@ function ThreadHeader() {
         <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
         {menu ? (
           <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label="Conversation actions" onKeyDown={menuKeys.onKeyDown}>
+            {active.kind === 'group' && active.canManage
+              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>Rename group</button>
+              : null}
             {active.kind === 'group'
               ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button>
               : active.kind === 'direct'

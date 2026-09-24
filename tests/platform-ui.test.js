@@ -234,6 +234,17 @@ test('kit present: prompt returns the field value on OK, null on cancel', async 
   assert.equal(await P2.prompt({ title: 'Set KEY' }), null);
 });
 
+test('kit present: prompt submits on Enter and passes an optional length cap (QA 2026-09-24 Q14)', async () => {
+  const { kit } = stubKit();
+  let seen = null;
+  kit.alert = (opts) => { seen = opts; return Promise.resolve({ button: opts.buttons[1], value: 'Launch crew' }); };
+  const { PlatformUI } = makeSandbox({ kit });
+  assert.equal(await PlatformUI.prompt({ title: 'Rename group', value: 'Old', maxLength: 80 }), 'Launch crew');
+  assert.deepEqual({ ...seen.field }, { placeholder: '', value: 'Old', submitOnEnter: true, maxLength: 80 });
+  await PlatformUI.prompt({ title: 'Set KEY' });
+  assert.equal('maxLength' in seen.field, false, 'no cap unless one is asked for');
+});
+
 test('kit present: transition forwards the type and runs the mutation', () => {
   const { kit, seen } = stubKit();
   const { PlatformUI } = makeSandbox({ kit });

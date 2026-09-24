@@ -304,7 +304,7 @@ export function MessageRow({
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className="min-w-0 flex-1">
-        {grouped ? null : <div className="messages-message-head"><span className={mine ? 'text-violet-700 dark:text-violet-300' : ''}>{message.sender.id ? '@' : ''}{message.sender.username}</span><time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{message.sender.id ? '@' : ''}{message.sender.username}</span><time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {body}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}

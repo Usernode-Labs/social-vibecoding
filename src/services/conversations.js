@@ -584,15 +584,20 @@ async function conversationRow(db, user, conversationId) {
             me.last_read_message_id,
             inviter.username AS requester_username,
             inviter_avatar.id AS requester_avatar_id,
-            peer.user_id AS peer_id, peer_user.username AS peer_username,
+            peer.user_id AS peer_id, peer.status AS peer_status, peer_user.username AS peer_username,
             peer_avatar.id AS peer_avatar_id,
-            latest.id AS latest_message_id
+            latest.id AS latest_message_id,
+            -- QA 2026-09-24 Q2: a pending direct request allows ONE opening
+            -- message, deleted or not (sendMessage counts every row), so the
+            -- requester's canSend needs to know whether it has been spent.
+            EXISTS (SELECT 1 FROM conversation_messages any_message
+                     WHERE any_message.conversation_id = c.id) AS has_messages
        FROM conversations c
        JOIN conversation_members me ON me.conversation_id = c.id AND me.user_id = $2
        LEFT JOIN users inviter ON inviter.id = me.invited_by
        LEFT JOIN user_avatars inviter_avatar ON inviter_avatar.user_id = inviter.id
        LEFT JOIN LATERAL (
-         SELECT other.user_id FROM conversation_members other
+         SELECT other.user_id, other.status FROM conversation_members other
           WHERE other.conversation_id = c.id AND other.user_id <> $2
           ORDER BY other.created_at LIMIT 1
        ) peer ON c.kind = 'direct'
@@ -667,6 +672,12 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     avatarUrl: row.requester_avatar_id ? `/avatars/${row.requester_avatar_id}` : null,
   } : null;
   const title = row.kind === 'direct' ? (peer?.username || (row.deleted_peer ? 'Deleted user' : 'Direct message')) : row.title;
+  // QA 2026-09-24 Q2: the requester's side of a direct request the other
+  // person has not accepted yet. They may send the one opening message and
+  // nothing more (sendMessage answers `awaiting_acceptance` after that), so
+  // the client says so instead of drawing a composer whose sends all fail.
+  const awaitingAcceptance = row.kind === 'direct' && accepted && row.status === 'active'
+    && row.peer_status === 'invited';
   return {
     id: row.id,
     kind: row.kind,
@@ -689,7 +700,9 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     // posting. Invitations still use their own update timestamp.
     lastActivityAt: accepted ? (latest?.createdAt || row.created_at) : (row.updated_at || row.created_at),
     unreadCount: unread,
-    canSend: row.membership_status === 'member' && row.status === 'active',
+    awaitingAcceptance,
+    canSend: row.membership_status === 'member' && row.status === 'active'
+      && !(awaitingAcceptance && row.has_messages),
     canInvite: row.kind === 'group' && row.membership_status === 'member' && row.status === 'active',
     canManage: row.kind === 'group' && row.my_role === 'owner' && row.membership_status === 'member',
   };
@@ -1202,7 +1215,11 @@ async function sendMessage(pool, user, conversationId, input) {
           `SELECT 1 FROM conversation_messages WHERE conversation_id = $1 LIMIT 1`,
           [conversationId]
         );
-        if (existingMessages.rows.length) return null;
+        // QA 2026-09-24 Q2: the opening message is spent. This is a refusal
+        // the requester can do nothing about until the other person accepts,
+        // not a missing conversation, so it gets its own answer (409) rather
+        // than the 404 that drew a Retry which could never succeed.
+        if (existingMessages.rows.length) return { error: 'awaiting_acceptance' };
       }
     }
     if (replyId) {

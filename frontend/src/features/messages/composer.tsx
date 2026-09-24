@@ -256,10 +256,36 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
+
+  // QA 2026-09-24 Q2: a direct request the other person has not accepted
+  // yet. It carries ONE opening message; once that is sent (or in flight —
+  // the optimistic row counts, so a quick second Enter cannot slip in) the
+  // composer gives way to a plain statement of what the thread is waiting
+  // for. Every later send used to come back "Not sent · Retry", and the
+  // Retry could never work.
+  const awaiting = !inThread && !!active.awaitingAcceptance;
+  const waitingOn = awaiting
+    ? active.peer?.username || active.members.find((member) => member.status === 'invited')?.username || ''
+    : '';
+  const who = waitingOn ? `@${waitingOn}` : 'them';
+  if (awaiting && (!active.canSend || snap.messages.length > 0)) {
+    return (
+      <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">
+        <div className="messages-awaiting" role="status">
+          <strong>Message request sent</strong>
+          <p>Waiting for {who} to accept your message request. You can send more once they do.</p>
+        </div>
+      </div>
+    );
+  }
   if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">You can’t send messages in this conversation.</div>;
 
   return (
     <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles([...event.dataTransfer.files]); }}>
+      {/* QA 2026-09-24 Q2: before the opening message of a request, what it
+          will be — so the composer turning into a notice after it is no
+          surprise. */}
+      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingOn ? `@${waitingOn} gets` : 'They get'} your first message as a message request. You can send more once they accept.</p> : null}
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
