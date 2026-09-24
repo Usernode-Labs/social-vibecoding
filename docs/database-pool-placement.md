@@ -20,6 +20,54 @@ remains useful as the execution engine; a dedicated cluster tier is deferred.
 - Dedicated per-app clusters and the product flow to promote/demote into that
   tier are deferred. Shared-to-shared maintenance moves remain useful internally.
 
+## Reproducibility and reuse
+
+Pool setup must be declarative and reusable. Keep approved pool profiles and
+fleet definitions in infra, with environment-specific values for names, storage,
+resources, replica counts and secret references. An admin-created pool must be
+representable in that same declarative format; recreating an environment must not
+require manually clicking through pool creation again. Reconciliation must reuse
+matching managed resources and reject conflicting identities rather than adopt
+arbitrary databases by name.
+
+Keep logical pool IDs, app assignments, reservations and migration checkpoints
+as durable environment intent. The active intent records have one authority;
+versioned exports/backups outside the workload cluster are recovery copies, not
+an independent competing writer. Kubernetes Jobs and local workstation files
+must not be the only records. Before production source deletion, the completed
+assignment/checkpoint must be durably recoverable outside that cluster. Export
+secret references, never plaintext credentials. This metadata recovery requirement
+is part of the deferred backup/restore workstream and must be tested before the
+production migration.
+
+Separate these cases explicitly:
+
+- **Register existing apps:** inventory their existing SQL databases and attach
+  verified bindings. Do not recreate databases, reseed schemas, or rotate working
+  credentials simply to bring an app under placement management.
+- **Reapply pool configuration or redeploy SV:** reconcile the existing pool and
+  app identities. Existing assignments win; do not rerun the allocation heuristic
+  or issue fresh database creation for already provisioned apps.
+- **Retry a migration batch:** load its frozen mapping and checkpoints. Skip fully
+  completed apps, retry only outstanding cleanup for cleanup-pending apps, and
+  resume the interrupted move. Reuse a destination only when its recorded identity,
+  ownership and copy state match. A same-named unrelated database is a conflict.
+  Incomplete logical imports may need to be restarted in the operation-owned
+  destination; never append blindly to a partially restored schema or live DB.
+- **Move to a different pool or environment:** reuse destination pools that already
+  exist. A moved app still needs a destination database containing its data: create
+  it once if absent, or continue the verified operation-owned copy. PostgreSQL
+  databases cannot be reassigned between servers by changing a binding alone.
+- **Rebuild after storage/cluster loss:** restore persistent app data from backups
+  and restore its assignments. Desired-state configuration alone cannot recreate
+  the data. Changed Kubernetes/SQL identities require an explicit recovery binding
+  step before reconcilers resume; never silently replace a persistent pool with an
+  empty cluster. Only disposable previews may be rebuilt empty automatically.
+
+The batch plan therefore describes how to move the existing inventory, not how to
+recreate every app from its starter template. Reusable fleet configuration and
+idempotent reconciliation are separate from restoring actual database contents.
+
 ## One reviewed bulk migration
 
 The admin flow is: select eligible shared pools, generate a dry-run distribution,
@@ -94,15 +142,19 @@ no unmeasured numeric defaults are being enabled by this document.
 
 ## Implementation order and acceptance
 
-1. Pool creation/profile and capacity inventory controls.
+1. Declarative fleet/profile import/export, existing-resource registration and
+   pool creation/capacity inventory controls.
 2. Durable capacity reservations and placement decisions, then opt-in new-app
    provisioning on shared pools. Generalize the current static binding allowlist
    and central-origin assumptions before enabling it.
 3. Reviewed bulk planner and resumable batch execution with verified source cleanup.
 4. Staging tests covering unequal pool sizes, insufficient/stale capacity,
    concurrent creates, retries, partial provisioning, worker restarts during a
-   batch and during cleanup, and preserving the platform DB.
-5. Backup/restore workstream and separately scheduled production migration.
+   batch and during cleanup, repeated fleet configuration with no duplicate pools
+   or databases, existing-app registration without SQL creation, and preserving
+   the platform DB.
+5. Backup/restore of data plus intent/checkpoints, explicit identity recovery and
+   a reconstruction test, then the separately scheduled production migration.
 
 The installed staging release still creates unselected apps centrally, exposes
 single-app moves, and retains their sources. It has no bulk-run API or automatic
