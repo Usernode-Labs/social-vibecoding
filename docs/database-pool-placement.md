@@ -207,7 +207,7 @@ no unmeasured numeric defaults are being enabled by this document.
 5. Backup/restore of data plus intent/checkpoints, explicit identity recovery and
    a reconstruction test, then the separately scheduled production migration.
 
-The next candidate enables opt-in new-app placement through durable SQL reservations.
+Staging now enables opt-in new-app placement through durable SQL reservations.
 Existing apps keep their assignments; single-app moves still retain their sources.
 The bulk-run API and automatic source cleanup remain outstanding. The one-off cleanup recorded in infra removes existing retired
 copies; automatic post-verification deletion is part of the next executor change.
