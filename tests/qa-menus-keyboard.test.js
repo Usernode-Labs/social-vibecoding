@@ -259,7 +259,9 @@ test('Q15: confirmAction goes through ConfirmModal.show and resolves its boolean
 
 test('Q13: Enter, Tab and the arrows belong to an open suggestion list before they send', () => {
   const src = read('frontend/src/features/messages/composer.tsx');
-  assert.match(src, /onKeyDown=\{\(event\) => \{ if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter'/,
+  // The :emoji menu (#2985) takes its keys ahead of this list; the two never
+  // show together, since that menu opens only with no @ or # list up.
+  assert.match(src, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter'/,
     'the list gets the key first; Enter sends only when no list took it');
   const keys = src.slice(src.indexOf('function suggestionKeys('), src.indexOf('function insertChannel('));
   assert.match(keys, /event\.key === 'ArrowDown' \|\| event\.key === 'ArrowUp'/);
