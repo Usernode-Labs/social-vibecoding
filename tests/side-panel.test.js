@@ -509,7 +509,7 @@ test('the panel never runs an app: the running one is asked for nothing, another
 
 // ── 5. The panel's own document ──────────────────────────────────────────
 
-function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1', navigation = false } = {}) {
+function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1', navigation = false, nested = false } = {}) {
   let url = new URL(href);
   const listeners = {};
   const docListeners = {};
@@ -575,7 +575,11 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
     navListeners.forEach((fn) => fn(e));
     return e.defaultPrevented;
   };
-  globalThis.document = { documentElement: { classList: { contains: (c) => c === 'in-side-panel' } } };
+  win.top = nested ? {
+    get UsernodeReact() { throw new Error('SecurityError: cross-origin preview host'); },
+  } : win.parent;
+  const embedded = runHeadCheck({ nested });
+  globalThis.document = { documentElement: { classList: { contains: (c) => embedded && c === 'in-side-panel' } } };
   if (typeof globalThis.PopStateEvent === 'undefined') {
     globalThis.PopStateEvent = class { constructor(type, init) { this.type = type; this.state = init && init.state; } };
   }
@@ -589,6 +593,26 @@ test('the runtime installs only in the panel\'s document', () => {
   globalThis.document = { documentElement: { classList: { contains: () => false } } };
   assert.equal(api.installEmbeddedRuntime({}), null, 'the top document is left alone');
   delete globalThis.document;
+});
+
+test('a panel inside Preview reports readiness and navigation to its immediate parent', async () => {
+  const p = panelWindow({ nested: true, href: 'https://homeroom.test/?panel=1#messages/app/notes-ab12' });
+  try {
+    assert.notEqual(p.win.parent, p.win.top, 'Preview is itself framed');
+    assert.ok(p.runtime, 'the head check enables the embedded runtime');
+    p.boot();
+    await tick();
+    assert.equal(p.runtime.isBooted(), true);
+    assert.deepEqual(p.reports[0], ['ready', 'messages/app/notes-ab12', ''],
+      'the Preview can reveal Discussion instead of keeping its loading cover');
+    p.runtime.go('app/notes-ab12/dev/sessions/new', { proposalHint: true });
+    await tick();
+    assert.equal(p.win.AppView._proposalHint, true);
+    assert.deepEqual(p.reports.at(-1), ['navigated', 'app/notes-ab12/dev/sessions/new', '', false]);
+    assert.deepEqual(p.history.pushes, [], 'New change reuses the same panel');
+  } finally {
+    delete globalThis.document;
+  }
 });
 
 test('the panel\'s document adds no history entry, and reports each page to the top', async () => {
@@ -898,14 +922,16 @@ function runHeadCheck({ search = '?panel=1', framed = true, sameOrigin = true, n
   const code = HEAD.slice(start, end) + "if (inSidePanel) document.documentElement.classList.add('in-side-panel');";
   const classes = new Set();
   const win = { location: { search, origin: 'https://homeroom.test' } };
-  const top = framed ? {
+  const parent = framed ? {
     get location() {
       if (!sameOrigin) throw new Error('SecurityError: cross-origin');
       return { origin: 'https://homeroom.test' };
     },
   } : win;
-  win.top = top;
-  win.parent = nested ? {} : top;
+  win.parent = parent;
+  win.top = nested ? {
+    get location() { throw new Error('SecurityError: cross-origin preview host'); },
+  } : parent;
   const context = vm.createContext({
     window: win, URLSearchParams,
     document: { documentElement: { classList: { add: (c) => classes.add(c) } } },
@@ -914,11 +940,12 @@ function runHeadCheck({ search = '?panel=1', framed = true, sameOrigin = true, n
   return classes.has('in-side-panel');
 }
 
-test('embedded mode needs panel=1 AND a same-origin top window framing it directly', () => {
+test('embedded mode needs panel=1 AND a same-origin parent, including inside Preview', () => {
   assert.equal(runHeadCheck(), true, 'the panel\'s frame');
   assert.equal(runHeadCheck({ framed: false }), false, 'a ?panel=1 address opened in a tab of its own');
   assert.equal(runHeadCheck({ sameOrigin: false }), false, 'framed by another site');
-  assert.equal(runHeadCheck({ nested: true }), false, 'framed inside something else');
+  assert.equal(runHeadCheck({ nested: true }), true, 'same-origin panel inside a cross-origin Preview host');
+  assert.equal(runHeadCheck({ nested: true, sameOrigin: false }), false, 'a foreign immediate parent is still refused');
   assert.equal(runHeadCheck({ search: '?demo=1' }), false, 'no panel=1');
   const block = HEAD.slice(HEAD.indexOf('var inSidePanel = false;') - 2000, HEAD.indexOf('var inSidePanel = false;'));
   assert.match(block, /before the first\s*(?:\/\/\s*)?paint/i, 'decided before the first paint');

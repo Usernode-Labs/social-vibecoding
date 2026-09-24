@@ -10,7 +10,8 @@
  *
  * The answer is a class on <html>, put there by the head-blocking inline
  * script in frontend/src/head.html before anything paints, and only when the
- * document really is framed by a same-origin top window — a `?panel=1`
+ * document really is framed by a same-origin parent, including when that
+ * parent is itself inside Preview. A `?panel=1`
  * address opened in a tab of its own is the ordinary platform. Reading the
  * class rather than re-deriving it keeps exactly one decision about what
  * "embedded" means.
