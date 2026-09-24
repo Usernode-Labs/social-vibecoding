@@ -14,10 +14,11 @@ function registerDatabaseRoutes(router, { requireAdminWrite, getPolicy = loadPol
       const store = getStore();
       const requests = await store.list(policy.namespace);
       const pools = policy.operatorManaged ? await require('../services/database-pools').inventory(policy, store) : [];
+      const allocation = await require('../services/database-allocation').summary(policy, pools);
       const placement = require('../services/database-placement');
       const selected = placement.loadSelection();
       const bindings = selected ? await placement.resolvePlacements([], { all: true }) : null;
-      return res.json({ ...(bindings ? { bindings } : {}), enabled: true, operatorManaged: policy.operatorManaged === true, placementEnabled: false, pools, targets: policy.targets.map(({ id, profile, displayName }) => ({ id, profile, ...(displayName ? { displayName } : {}) })),
+      return res.json({ ...(bindings ? { bindings } : {}), enabled: true, operatorManaged: policy.operatorManaged === true, placementEnabled: allocation.enabled, allocation, pools, targets: policy.targets.map(({ id, profile, displayName }) => ({ id, profile, ...(displayName ? { displayName } : {}) })),
         requests: requests.map(publicRequest) });
     } catch { return res.status(503).json({ error: 'Database control plane is unavailable' }); }
   });
