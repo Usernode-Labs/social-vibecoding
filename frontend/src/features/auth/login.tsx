@@ -81,6 +81,11 @@ import {
 /** Which of the four views on this screen is showing. */
 type LoginView = 'base' | 'otp' | 'recovery' | 'reset';
 
+/** The forgot-password view's own address (QA 2026-09-24 Q16). */
+const RECOVERY_ROUTE = 'login/forgot';
+/** Marks the history entry the card pushed for it. */
+const RECOVERY_ENTRY = 'loginRecovery';
+
 /** Step within `#otp-view`. */
 type OtpStep = 'email' | 'code' | 'password';
 
@@ -546,6 +551,35 @@ export function LoginScreen() {
   }, [ensureResetUi, st]);
 
   /**
+   * "Forgot password?" is a PLACE, `#login/forgot` (QA 2026-09-24 Q16). It
+   * used to swap the card's view on the same `#login` entry, so the browser's
+   * Back had no Sign in to return to and skipped straight past it to the
+   * landing page. Pushed rather than routed: the card is already on screen,
+   * and the router only has to answer the address when it is loaded or
+   * traversed to (loginOnShow's `seg`). The state marks the entry as the one
+   * this card pushed, which is what lets "Back to login" undo it.
+   */
+  const openRecovery = useCallback(() => {
+    try {
+      history.pushState({ [RECOVERY_ENTRY]: true }, '', `#${RECOVERY_ROUTE}`);
+    } catch { /* an address that will not move still gets the view */ }
+    showRecovery();
+  }, [showRecovery]);
+
+  /** "Back to login": the entry openRecovery pushed, or the bare route. */
+  const leaveRecovery = useCallback(() => {
+    const state = history.state as Record<string, unknown> | null;
+    if (state && state[RECOVERY_ENTRY] && typeof history.back === 'function') {
+      history.back();
+      return;
+    }
+    if (window.location.hash === `#${RECOVERY_ROUTE}`) {
+      try { history.replaceState(null, '', '#login'); } catch { /* the view still changes */ }
+    }
+    showLoginBaseView();
+  }, [showLoginBaseView]);
+
+  /**
    * Per-route side effect for `#reset-password/<token>`. The inputs it clears
    * may not be mounted yet on the first call — `ensureResetUi()` has only just
    * queued their render — and that is fine: a fresh mount is empty, and a
@@ -634,6 +668,9 @@ export function LoginScreen() {
       // (issue #1158). Same idiom as ?shot=waitlist-joined; display-only,
       // no writes, so it works in every environment.
       const shot = currentShot();
+      // `#login/forgot`: the recovery view has its own address (see
+      // openRecovery), reached here by a reload or a Back / Forward to it.
+      if (!openSignup && seg === 'forgot') showRecovery();
       // The terminal state after the magic-link form succeeds. A real reset
       // reaches this through onResetConfirm; the shot paints the same state
       // without consuming a token, so proposal checks can see it.
@@ -1517,11 +1554,11 @@ export function LoginScreen() {
           <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
             <a
               id="forgot-password-link"
-              href="#"
+              href={`#${RECOVERY_ROUTE}`}
               className={PILL_LINK}
               onClick={(e) => {
                 e.preventDefault();
-                showRecovery();
+                openRecovery();
               }}
             >
               Forgot password?
@@ -1941,7 +1978,7 @@ export function LoginScreen() {
               id="btn-recovery-back"
               type="button"
               className="w-full text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300"
-              onClick={showLoginBaseView}
+              onClick={leaveRecovery}
             >
               Back to login
             </button>

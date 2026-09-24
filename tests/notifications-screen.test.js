@@ -58,9 +58,24 @@ test('the bell opens it in place, and the hash stays a deep link', () => {
   // hand-built `#app/<slug>/app` was wrong the moment the screen underneath
   // was a dev session: it claimed the app's default view and threw the
   // session's own address away.
-  assert.match(app, /_restoreAddressUnderSheet\(\) \{[\s\S]{0,900}App\.updateHash\(\)/);
-  assert.match(app, /_restoreAddressUnderSheet\(\) \{[\s\S]{0,900}setTimeout\(/,
+  //
+  // QA 2026-09-24 Q16: it REPLACES, and the sheet presents only after it. The
+  // sheet claims the back button when it presents, which records the address
+  // in the bar at that moment; presented first, that was `#notifications`,
+  // and the rewrite then pushed the screen's own address over it, so Back
+  // closed the sheet onto an address that opened it again.
+  assert.match(app, /_restoreAddressUnderSheet\(present\) \{[\s\S]{0,900}App\.updateHash\(\{ replace: true \}\)/);
+  assert.match(app, /_restoreAddressUnderSheet\(present\) \{[\s\S]{0,900}setTimeout\(/,
     'deferred one tick, because updateHash refuses to run while _isRestoring');
+  assert.match(app,
+    /App\.updateHash\(\{ replace: true \}\);[^\n]*\n\s*if \(typeof present === 'function'\) present\(\);/,
+    'the sheet presents after the address is put back, in the same task');
+  assert.match(app, /openNotificationsSheet\(\) \{\s*App\._restoreAddressUnderSheet\(\(\) => App\.openNotifications\(\)\);/);
+  // QA 2026-09-24 Q30a: the PRERENDERED home under a cold #notifications is
+  // settled like the bare root settles it, title included, rather than left
+  // with whatever title the boot snapshot remembered (the last app's).
+  assert.match(app,
+    /_restoreAddressUnderSheet\(present\) \{[\s\S]{0,400}else if \(!App\.currentApp && App\._isScreenVisible\('home-screen'\)\) \{\s*App\._ensureHomeVisible\(\);\s*App\.setHeaderTitle\('Homeroom'\);/);
   // One declared check still renders it from that deep link.
   assert.ok(dapp.tests.some((entry) => entry.path === '/?demo=1#notifications'
     && /#notifications-sheet\[data-open\]/.test(entry.expectSelector)));

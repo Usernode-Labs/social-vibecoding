@@ -19326,9 +19326,20 @@ const AppView = {
     // #2813: in the Messages pane there is no Board to fall back to — the
     // pane says the session could not be opened instead — and a redirect
     // to another Dev surface goes through that surface's own address.
+    // Off the Messages pane it falls back to the Workshop, and SAYS SO
+    // (QA 2026-09-24 Q30b): landing on the board with nothing on screen about
+    // the link that was followed read as the link being wrong, or as the
+    // session having been opened somewhere out of sight. The server does not
+    // say which of private or gone it was (the 404 is the same on purpose),
+    // so the note names both.
     const unavailable = () => {
       if (embedded) return 'unavailable';
       if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
+        // Longer than the kit's 2.2s default: it arrives as the page does,
+        // while the eye is still finding its way round the board.
+        PlatformUI.toast('That session is private or no longer exists.', { duration: 6000 });
+      }
       return undefined;
     };
     if (!restoreSessionId) {

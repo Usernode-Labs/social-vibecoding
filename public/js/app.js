@@ -3802,6 +3802,12 @@ const App = {
 
       if (!hash) {
         App.setChromeless(false);
+        // Every screen that sets an `_inX` flag on entry is listed here: one
+        // left out takes the "already on home" branch below, which reveals
+        // home without hiding the screen it was on. Messages and the Workshop
+        // were left out (QA 2026-09-24 Q1), so Back from either to "/" drew
+        // Home over the list or the panel, with that tab still lit and the
+        // phone's bar floating mid-page.
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
@@ -3810,6 +3816,8 @@ const App = {
         else if (App._inBrowse) App.navigateHome();
         else if (App._inGlobalChat) App.navigateHome();
         else if (App._inAgentSession) App.navigateHome();
+        else if (App._inMessages) App.navigateHome();
+        else if (App._inWorkshop) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -3833,9 +3841,11 @@ const App = {
         // home feed. Doubles as the addressable route the dapp.json
         // regression test for the mode toggle uses (#748).
         App.setChromeless(false);
+        // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings || App._inBrowse
-          || App._inGlobalChat || App._inAgentSession) {
+          || App._inGlobalChat || App._inAgentSession
+          || App._inMessages || App._inWorkshop) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -5974,20 +5984,37 @@ const App = {
   // cannot fight the address it is currently reading. The flag clears in that
   // function's `finally`, so a task scheduled here is the first moment the
   // rewrite is allowed to land.
-  _restoreAddressUnderSheet() {
+  //
+  // THE ADDRESS IS PUT BACK FIRST, AND REPLACED (QA 2026-09-24 Q16). The
+  // sheet claims the back button when it presents (lib/sheet-controller.js),
+  // which pushes a record at whatever address is in the bar at that moment.
+  // Presented first, that was `#notifications`, and the rewrite then PUSHED
+  // the screen's address on top of it, so Back closed the sheet onto an
+  // address that reopened it. So `present` runs after the rewrite, in the same
+  // task, and the rewrite replaces: `#notifications` names nothing a Back
+  // press should return to.
+  //
+  // AND HOME UNDERNEATH IS SETTLED THE WAY THE `!hash` BRANCH SETTLES IT (Q30a).
+  // A cold boot straight to #notifications finds the PRERENDERED home already
+  // showing, so it never calls navigateHome, and the header kept whatever
+  // title the boot snapshot carried: open an app, then load /#notifications,
+  // and Home sat under the sheet titled with the app's name.
+  _restoreAddressUnderSheet(present) {
     const onAScreen = App.currentApp || App.SCREEN_IDS.some(App._isScreenVisible);
     if (!onAScreen) {
       App.navigateHome();
-      return;
+    } else if (!App.currentApp && App._isScreenVisible('home-screen')) {
+      App._ensureHomeVisible();
+      App.setHeaderTitle('Homeroom');
     }
     setTimeout(() => {
-      try { App.updateHash(); } catch (err) { /* opaque origin — the sheet still opens */ }
+      try { App.updateHash({ replace: true }); } catch (err) { /* opaque origin — the sheet still opens */ }
+      if (typeof present === 'function') present();
     }, 0);
   },
 
   openNotificationsSheet() {
-    App._restoreAddressUnderSheet();
-    App.openNotifications();
+    App._restoreAddressUnderSheet(() => App.openNotifications());
   },
 
   /** Present the sheet. The one call every entry point funnels through. */

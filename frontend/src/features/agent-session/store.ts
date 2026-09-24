@@ -331,19 +331,30 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   drawer?: boolean;
 }) {
   if (id === 'new') return openDraft(host);
+  // THE SAME SESSION AGAIN changes where it is drawn and nothing else — and in
+  // particular does not claim the load (QA 2026-09-24 Q23). A cold deep link
+  // opens it twice (the screen's own effect, then app.js's router), and the
+  // second call used to take a new `navigation` version and return. The first
+  // call's answer then belonged to nobody: a session that does not exist left
+  // the full screen blank, with no "Agent session not found" and no spinner,
+  // while the Messages pane, opened once, said so. It also used to clear the
+  // error it would never set again.
+  if (state.id === id && state.open) {
+    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
+    syncTitle();
+    return;
+  }
   const version = ++navigation;
-  const same = state.id === id && state.open;
   publish({
     open: true,
     host,
     id,
-    phase: same ? state.phase : 'loading',
+    phase: 'loading',
     error: '',
-    drawerOpen: drawer || (same ? state.drawerOpen : false),
-    ...(same ? {} : { session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null }),
+    drawerOpen: drawer,
+    session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null,
   });
   syncTitle();
-  if (same) return;
   seen.clear();
   closeEvents();
   try {

@@ -17809,10 +17809,15 @@ html.un-kb #platform-parked {
 
      #app-view is deliberately absent: an app covers the rail, which is what
      "the app is the whole window" means, and the rail is hidden there anyway
-     so the token would be 0 even if it were listed. */
+     so the token would be 0 even if it were listed.
+
+     #agent-session-screen was absent by omission (QA 2026-09-24 Q23): it
+     arrived after this list, drew from the window's left edge, and its app
+     and change chips, the reply suggestions and the start of the composer sat
+     under the rail where they could not be clicked. */
   :is(#home-screen, #browse-screen, #workshop-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
-      #global-chat-screen) {
+      #global-chat-screen, #agent-session-screen) {
     /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
        The rail's hairline was the content's left margin, so a card began
        where the rail ended and the page had air on the right and none on the
