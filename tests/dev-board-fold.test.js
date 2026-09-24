@@ -1210,7 +1210,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // conversation 990801. It had four; the manifest keeps 20 slots clear, so
   // they were folded into two with :has() once main's three landed.
   // Exactly 20 slots left under the 810 ceiling.
-  assert.equal(DAPP.tests.length, 790);
+  //
+  // 790 → 792: +2 (#2386): mutual friends. A person who asked you gets Accept
+  // and Decline under their name, and Me's private Friends section lists the
+  // requests to answer and then your friends. Five were folded into two with
+  // :has(); the button's other three states are rendered in
+  // tests/friends-ui.test.js. 790 was the floor already, so the ceiling moved
+  // to 830 (services/app-manifest.js), leaving 38 slots.
+  assert.equal(DAPP.tests.length, 792);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
