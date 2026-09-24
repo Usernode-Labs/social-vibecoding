@@ -98,10 +98,19 @@ test('evidence timing separates provider wait, first byte, and stream completion
   });
   const response = await request(instance, {
     model: MODEL, stream: true, input: [{ role: 'user', content: 'private input' }],
+    instructions: 'private instructions', previous_response_id: 'private-response-id',
   });
   assert.equal(response.status, 200);
   assert.match(await response.text(), /private model output/);
   assert.equal(events[0].kind, 'provider_request_start');
+  assert.ok(events[0].payloadBytes > events[0].inputBytes + events[0].instructionBytes);
+  assert.equal(events[0].inputBytes, Buffer.byteLength(JSON.stringify([
+    { role: 'user', content: 'private input' },
+  ])));
+  assert.equal(events[0].instructionBytes, Buffer.byteLength(JSON.stringify('private instructions')));
+  assert.equal(events[0].inputItems, 1);
+  assert.equal(events[0].previousResponseLinked, true);
+  assert.equal(events[0].maxOutputTokens, 32000);
   assert.ok(events.some(event => event.kind === 'provider_request_pending'
     && event.stage === 'await_headers'));
   assert.ok(events.some(event => event.kind === 'provider_request_pending'
@@ -115,7 +124,7 @@ test('evidence timing separates provider wait, first byte, and stream completion
   assert.ok(events.at(-1).durationMs >= events.find(event => event.kind === 'provider_response_first_byte').durationMs);
   assert.ok(events.at(-1).responseBytes > 0);
   assert.equal(events.at(-1).httpStatus, 200);
-  assert.doesNotMatch(JSON.stringify(events), /private|input|output|model|api\/v1/i);
+  assert.doesNotMatch(JSON.stringify(events), /private|api\/v1/i);
 });
 
 test('a real HTTP refusal is retried with the smaller limit on the wire and safe ledger evidence', async t => {
