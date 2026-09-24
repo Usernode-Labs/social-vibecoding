@@ -5,6 +5,14 @@ allocator or authorization to migrate production. It supersedes dedicated-app
 promotion as the next milestone. The existing staging move/recovery machinery
 remains useful as the execution engine; a dedicated cluster tier is deferred.
 
+## Implemented staging foundation
+
+The [operator workflow and read-only capacity inventory](database-pool-operations.md)
+are deployed in staging. SV pool creation is disabled and its provisioner is stopped;
+existing pools are retained. A second shared pool was created through the operator
+CLI and verified under repeated reconciliation. New-app placement, reservations and
+bulk execution remain the next increments; capacity observations do not admit apps.
+
 ## Target shape
 
 - Keep the SV platform database in its Argo-managed central CNPG cluster.
@@ -56,11 +64,10 @@ additional independent writer for new-app placement. New capacity increases
 headroom for new apps; redistributing existing demand requires a separately planned
 migration and is not triggered by an alert.
 
-The current staging prototype still has pool-create controls and a provisioning
-worker with Crossplane request permissions. Retiring that SV creation path and its
-unused permissions is part of the next implementation. Retain existing clusters,
-composites and data while changing their management interface; do not delete them
-as a side effect of removing UI controls or worker permissions.
+Staging now has read-only pool controls, an operator-local provisioning CLI and
+no SV pool-creation permissions. The prototype provisioning Deployment is stopped;
+its identity and existing pool resources are retained. Crossplane continues managing
+operator-created composites. Other environments retain their existing opt-in defaults.
 
 ## Reproducibility and reuse
 

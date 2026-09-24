@@ -2,8 +2,9 @@
 
 The next scope is [operator-managed shared pools, bulk migration and capacity-based new-app placement](database-pool-placement.md). Operators own pool lifecycle;
 SV selects existing pools for new apps and reports capacity warnings. Dedicated
-per-app clusters are deferred. The sections below describe the currently deployed
-staging prototype, including creation controls to retire in the next implementation.
+per-app clusters are deferred. The [operator-managed pool foundation](database-pool-operations.md)
+is now deployed on staging. Earlier sections below document the prototype creation
+workflow; its SV provisioning API/worker are disabled in operator-managed mode.
 
 The database worker is a separate Deployment using the platform image. The
 existing admin console exposes **Platform → Database clusters**. The web
