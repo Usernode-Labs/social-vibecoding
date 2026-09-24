@@ -165,10 +165,10 @@
     },
     {
       "source": "src/routes/chat.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "a8b771920b8319e47251",
+      "kind": "structural-template",
+      "fingerprint": "a8088914fba97dc374b7",
       "count": 1,
-      "preview": "query"
+      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at FROM "
     },
     {
       "source": "src/routes/cli-auth.js",

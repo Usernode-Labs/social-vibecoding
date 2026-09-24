@@ -105,8 +105,9 @@ test('closed database kind registry matches the reviewed service mapping and def
   // weekly_digest). The deepEqual above is the real assertion; this count is
   // the guard against the seed and the service policy drifting by an
   // equal-and-opposite edit that leaves both lists the same length.
-  // 29 → 30: #2387's conversation_thread_reply, under messages.
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 30);
+  // 29 → 31: #2387's two — conversation_thread_reply (under messages) and
+  // thread_reply (an app-chat reply-thread reply, direct_interactions).
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 31);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });

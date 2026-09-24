@@ -10,7 +10,10 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     label: 'Direct interactions',
     description: 'Mentions and replies to your messages.',
     defaultEnabled: true,
-    kinds: Object.freeze(['mention', 'reply']),
+    // #2387: a reply in an app-chat reply thread you started or joined is a
+    // reply to your message in all but name. Kept in lockstep with the seed
+    // in db/schema.sql.
+    kinds: Object.freeze(['mention', 'reply', 'thread_reply']),
   }),
   Object.freeze({
     key: 'invitations',

@@ -37,6 +37,9 @@ const CURRENT_KINDS = [
   // #1688's two, both proposal lifecycle: the re-confirm ask after a
   // proposal you backed gets a new version, and the weekly card.
   'revision_recheck', 'weekly_digest',
+  // #2387: a reply in an app-chat reply thread you started or joined. A
+  // direct interaction, beside mention and reply.
+  'thread_reply',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {

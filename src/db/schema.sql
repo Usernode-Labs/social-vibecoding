@@ -1715,6 +1715,34 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
   ON chat_messages (app_id, thread_type, thread_ref, id)
   WHERE thread_type IS NOT NULL;
 
+-- #2387 (messages overhaul), app channels.
+--
+-- Soft delete: the author takes back one of their own messages. The row
+-- stays so the transcript keeps its shape (a placeholder where the message
+-- was, and a reply thread under it keeps its root), but its content is
+-- cleared on the row itself and its attachments, reactions, bookmarks and
+-- notifications are removed in the same transaction
+-- (services/app-chat.js deleteOwnMessage). NULL = live, every existing row.
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- Reply threads reuse the #194 thread scoping: thread_type 'message' with
+-- thread_ref = the root chat_messages.id, a general-stream row of the same
+-- app. idx_chat_messages_thread above already serves "one thread's
+-- replies" and "the replies under this page of roots".
+--
+-- The general stream had no index of its own: history pages, the Messages
+-- list's latest-message preview and the per-viewer unread count all read
+-- "this app's general stream above/below an id", which is exactly this.
+CREATE INDEX IF NOT EXISTS idx_chat_messages_general
+  ON chat_messages (app_id, id)
+  WHERE thread_type IS NULL;
+
+-- "Apps this person has posted in" — one of the activity sources that puts
+-- a non-member app in the Messages list's "more" section (#2967).
+CREATE INDEX IF NOT EXISTS idx_chat_messages_author
+  ON chat_messages (user_id, app_id)
+  WHERE user_id IS NOT NULL;
+
 -- #25: emoji reactions on group-chat messages (WhatsApp-style, but
 -- Slack-model: a user may add multiple distinct emoji to one message,
 -- hence UNIQUE(message_id, user_id, emoji) rather than per-user). Toggled
@@ -1728,6 +1756,10 @@ CREATE TABLE IF NOT EXISTS message_reactions (
   UNIQUE(message_id, user_id, emoji)
 );
 CREATE INDEX IF NOT EXISTS message_reactions_message_idx ON message_reactions(message_id);
+-- #2967: "apps this person has reacted in", the other chat activity source
+-- for the Messages list's "more" section. The UNIQUE index leads with
+-- message_id, so it cannot answer a per-user read.
+CREATE INDEX IF NOT EXISTS message_reactions_user_idx ON message_reactions(user_id);
 
 -- #1280: personal bookmarks on group-chat messages. A user saves any
 -- message they can read (the bookmark button in the message header,
@@ -1753,6 +1785,35 @@ CREATE TABLE IF NOT EXISTS message_bookmarks (
 -- exactly this index; the message-side lookup rides the UNIQUE index.
 CREATE INDEX IF NOT EXISTS message_bookmarks_user_idx
   ON message_bookmarks (user_id, created_at DESC);
+
+-- #2387: one person's read position in one app's general stream. A
+-- watermark, not a per-message receipt: every general-stream message with
+-- an id above `last_read_message_id`, from somebody else, not deleted and
+-- not from someone the reader blocked, is unread (services/app-chat.js).
+--
+--   POST /api/apps/:slug/messages/read    moves it FORWARD only;
+--   POST /api/apps/:slug/messages/unread  moves it BACK, to just before
+--                                         the message named;
+--   posting in the general stream moves the poster's forward to their own
+--   message, the way sending in Slack marks the channel read.
+--
+-- A missing row is created lazily at the app's newest general-stream id the
+-- first time the Messages list reads it, so the feature starts at zero
+-- unread for everybody instead of at "everything ever said". No FK to the
+-- message: a cursor is a position, and ids are monotonic.
+--
+-- staging:private (below): where each person has read up to is personal
+-- reading history, the same reason `notifications` and `message_bookmarks`
+-- are. Private-to-public FKs (apps, users) are the permitted direction.
+CREATE TABLE IF NOT EXISTS app_chat_reads (
+  app_id               INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_message_id INTEGER NOT NULL DEFAULT 0,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_chat_reads_user ON app_chat_reads (user_id);
+COMMENT ON TABLE app_chat_reads IS 'staging:private';
 
 -- Issues (mirrored to GitHub Issues). `kind` discriminates general issues from
 -- structured proposals like 'rename' (see src/routes/issues.js). `payload`
@@ -2249,6 +2310,9 @@ END $$;
 -- spec | code | spec_code | question | failed) and 'spec_shared' (#86 —
 -- someone privately shared a spec version with you; session_id points
 -- to the dev session, `detail` holds the version number as a string).
+-- #2387 adds 'thread_reply': somebody replied in an app-chat reply thread
+-- you started or replied in; chat_message_id is the new reply, whose
+-- thread_ref is the thread's root message.
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -4838,6 +4902,9 @@ END $$;
 INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('mention', 'direct_interactions', TRUE),
   ('reply', 'direct_interactions', TRUE),
+  -- #2387: a reply in an app-chat reply thread you started or joined. A
+  -- direct interaction like a reply to your message, so the same category.
+  ('thread_reply', 'direct_interactions', TRUE),
   ('collab_invite', 'invitations', TRUE),
   ('collab_invite_accepted', 'invitations', TRUE),
   ('approver_invite', 'invitations', TRUE),
@@ -4881,7 +4948,7 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',

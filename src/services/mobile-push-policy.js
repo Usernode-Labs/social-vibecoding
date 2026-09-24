@@ -144,6 +144,13 @@ function buildCopy(kind, context, now) {
           ? `@${actor} replied in ${quotedTitle}` : `@${actor} replied to you`),
         body: message,
       };
+    // #2387: somebody answered in an app-chat reply thread you are in. The
+    // reply itself is the body, like a reply to you.
+    case 'thread_reply':
+      return actor && {
+        title: withApp(`@${actor} replied in a thread`),
+        body: message,
+      };
     case 'reaction':
       return actor && {
         title: withApp(detail

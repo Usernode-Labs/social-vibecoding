@@ -34,17 +34,30 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
       CREATE TABLE users (id int PRIMARY KEY, username text NOT NULL);
       CREATE TABLE apps (
         id int PRIMARY KEY, slug text NOT NULL, name text NOT NULL,
-        icon_image_id int, icon_emoji text, self_hosted boolean NOT NULL DEFAULT false
+        icon_image_id int, icon_emoji text, self_hosted boolean NOT NULL DEFAULT false,
+        view_visibility text NOT NULL DEFAULT 'public'
       );
       CREATE TABLE app_collaborators (app_id int, user_id int, status text);
       CREATE TABLE user_blocks (blocker_id int, blocked_user_id int,
         PRIMARY KEY (blocker_id, blocked_user_id));
+      -- #2387: soft delete.
       CREATE TABLE chat_messages (
         id int PRIMARY KEY, app_id int NOT NULL, user_id int, content text NOT NULL,
         msg_type text NOT NULL DEFAULT 'message', metadata jsonb NOT NULL DEFAULT '{}',
         thread_type text, thread_ref int, created_at timestamptz NOT NULL DEFAULT now(),
-        edited_at timestamptz, posted_via text
+        edited_at timestamptz, posted_via text, deleted_at timestamptz
       );
+      -- #2967: the tables the Messages list's "yours"/"more" sections and
+      -- #2387's unread count read. Empty here: this test is about blocks.
+      CREATE TABLE app_favorites (app_id int, user_id int, hidden boolean NOT NULL DEFAULT false);
+      CREATE TABLE message_reactions (message_id int, user_id int, emoji text);
+      CREATE TABLE chat_sessions (id int PRIMARY KEY, app_id int, user_id int,
+        is_headless boolean NOT NULL DEFAULT false, promoted_at timestamptz, status text);
+      CREATE TABLE pr_votes (session_id int, user_id int);
+      CREATE TABLE issues (id int PRIMARY KEY, app_id int, created_by int);
+      CREATE TABLE issue_votes (issue_id int, user_id int);
+      CREATE TABLE app_chat_reads (app_id int, user_id int, last_read_message_id int NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (app_id, user_id));
       INSERT INTO users VALUES (1, 'reader'), (2, 'blocked'), (3, 'visible');
       INSERT INTO apps (id, slug, name) VALUES (7, 'demo', 'Demo');
       INSERT INTO app_collaborators VALUES (7, 1, 'member');
@@ -100,6 +113,11 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
     const topic = await (await fetch(`${url}?thread_type=issue&thread_ref=20&limit=2`)).json();
     assert.deepEqual(topic.messages.map((message) => message.content), ['thread visible']);
 
+    // #2387: a message its author deleted is not a preview either.
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, deleted_at)
+       VALUES (7, 7, 3, '', now())`
+    );
     const { rows } = await pool.query(DISCUSSIONS_SQL, [1, false]);
     assert.equal(rows[0].last_message, 'visible newest');
     assert.equal(rows[0].last_by, 'visible');
