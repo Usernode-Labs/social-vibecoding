@@ -60,7 +60,7 @@
 
 import { useRef } from 'react';
 
-import { ChevronDownIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -190,9 +190,7 @@ export function PlatformMark() {
           className={working ? WORKING_DOT_CLS : `hidden ${WORKING_DOT_CLS}`}
           aria-hidden="true"
         >
-          <svg className="w-3 h-3 animate-spin motion-reduce:animate-none" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeDasharray="40 57" />
-          </svg>
+          <SpinnerRingIcon className="w-3 h-3 animate-spin motion-reduce:animate-none" />
         </span>
       </span>
       <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />

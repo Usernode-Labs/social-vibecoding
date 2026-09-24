@@ -16,7 +16,7 @@
 
 import { type ReactNode, useEffect, useState } from 'react';
 
-import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { ArrowPathIcon, SpinnerArcIcon, SpinnerRingIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -195,9 +195,7 @@ function UpdateStatus(): ReactNode {
         className="flex items-center gap-3 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400"
       >
         <span className="inline-flex w-4 shrink-0 justify-center text-violet-600 dark:text-violet-400" aria-hidden="true">
-          <svg className="w-3 h-3 animate-spin motion-reduce:animate-none" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeDasharray="40 57" />
-          </svg>
+          <SpinnerRingIcon className="w-3 h-3 animate-spin motion-reduce:animate-none" />
         </span>
         <span className="min-w-0 flex-1">{WORKING_NOTE}</span>
       </div>

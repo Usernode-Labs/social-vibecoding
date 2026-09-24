@@ -1186,7 +1186,7 @@ function Composer({ id }: { id: string }) {
   // tall as its hint, which wraps on a phone and was cut off mid-line under
   // a one-line box (#3016): the hint is measured as the value for a moment
   // and taken straight back out, which fires no input event.
-  useEffect(() => {
+  const fitField = useCallback(() => {
     const field = input.current;
     if (!field) return;
     field.style.height = 'auto';
@@ -1197,7 +1197,25 @@ function Composer({ id }: { id: string }) {
       field.value = '';
     }
     field.style.height = `${Math.min(height, 144)}px`;
-  }, [value, placeholder]);
+  }, []);
+  useEffect(() => { fitField(); }, [value, placeholder, fitField]);
+  // And again whenever its width changes. The composer mounts with its
+  // screen, often while that screen is still hidden, where every measure is
+  // 0: the box then kept a one-line height and clipped the hint's second
+  // line until something was typed. Width only, so the height this sets
+  // cannot call it again.
+  useEffect(() => {
+    const field = input.current;
+    if (!field || typeof ResizeObserver === 'undefined') return undefined;
+    let width = field.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (field.clientWidth === width) return;
+      width = field.clientWidth;
+      fitField();
+    });
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, [fitField]);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();

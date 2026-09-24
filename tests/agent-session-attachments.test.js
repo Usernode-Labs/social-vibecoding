@@ -283,10 +283,14 @@ test('the pill is gray in every state and only its ink changes; the ring empties
 
   const ring = (credit) => renderToHtml(createElement(parts.CreditRing, { credit }, createElement('button', null, 'Send')));
   const half = ring(view(2500));
-  assert.match(half, /<svg class="pointer-events-none absolute inset-0 -scale-x-100"/, 'mirrored: it empties clockwise');
+  assert.match(half, /<svg class="pointer-events-none -scale-x-100 absolute inset-0"/, 'mirrored: it empties clockwise');
   assert.match(half, /transform="rotate\(-90 24 24\)"/, 'from twelve o\'clock');
   const circumference = 2 * Math.PI * 22;
-  assert.ok(half.includes(`stroke-dasharray="${(circumference / 2).toFixed(1)} ${circumference.toFixed(1)}"`), 'the arc is what is left');
+  assert.equal(circumference.toFixed(2), '138.23', 'the primitive\'s written-out circumference agrees with its radius');
+  assert.ok(half.includes(`stroke-dasharray="${(circumference / 2).toFixed(1)} 138.23"`), 'the arc is what is left');
+  assert.match(half, /class="stroke-emerald-500 dark:stroke-emerald-400"/, 'in the tone\'s colour');
+  assert.match(read('frontend/src/features/agent-session/composer-parts.tsx'), /import \{ ProgressHalo \} from '@\/components\/ui\/progress-ring';/,
+    'drawn by the shell primitive: a raw <svg> in a feature file is refused (tests/shell-icon-set.test.js)');
   assert.match(half, /<button>Send<\/button><\/span>$/, 'Send sits inside it');
   assert.doesNotMatch(ring(view(0)), /stroke-dasharray/, 'nothing left: the track alone');
   assert.equal(ring(null), '<button>Send</button>', 'no allowance: a bare Send');
@@ -380,4 +384,14 @@ test('the pending bubble goes when a newer user row lands, from any refresh', ()
   } finally {
     delete globalThis.window;
   }
+});
+
+test('the message box re-fits its hint when it gets its width, not only when its text changes', () => {
+  // Mounted while its screen is hidden, the box measured 0 and kept one line,
+  // clipping the hint's second line on a phone until something was typed.
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /useEffect\(\(\) => \{ fitField\(\); \}, \[value, placeholder, fitField\]\);/);
+  assert.match(panel, /new ResizeObserver\(\(\) => \{\s*if \(field\.clientWidth === width\) return;\s*width = field\.clientWidth;\s*fitField\(\);/,
+    'on a width change only, so the height it sets cannot loop');
+  assert.match(panel, /return \(\) => observer\.disconnect\(\);/);
 });

@@ -46,7 +46,8 @@ test('#3016: the session bar wraps on every surface, and the panel cannot outgro
 test('#3016: an empty message box is sized to its hint, measured without an input event', () => {
   const composer = panel.slice(panel.indexOf('// The field grows with what it holds'), panel.indexOf('function submit('));
   assert.match(composer, /if \(!field\.value && field\.placeholder\) \{\s*field\.value = field\.placeholder;\s*height = field\.scrollHeight;\s*field\.value = '';\s*\}/);
-  assert.match(composer, /\}, \[value, placeholder\]\);/, 're-measured when the hint changes (working, archived)');
+  assert.match(composer, /useEffect\(\(\) => \{ fitField\(\); \}, \[value, placeholder, fitField\]\);/,
+    're-measured when the hint changes (working, archived), and on a width change (tests/agent-session-attachments.test.js)');
   assert.match(panel, /placeholder=\{placeholder\}/);
 });
 

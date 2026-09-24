@@ -12,6 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefO
 import { createPortal } from 'react-dom';
 
 import { CheckIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
+import { ProgressHalo } from '@/components/ui/progress-ring';
 
 import type { AiBudgetFigures } from '../header/ai-budget';
 import { attachmentUrl, type AgentAttachment } from './api';
@@ -78,6 +79,11 @@ const RING_INK: Record<CreditTone, string> = {
   yellow: 'text-amber-500 dark:text-amber-400',
   red: 'text-red-500 dark:text-red-400',
 };
+const RING_STROKE: Record<CreditTone, string> = {
+  green: 'stroke-emerald-500 dark:stroke-emerald-400',
+  yellow: 'stroke-amber-500 dark:stroke-amber-400',
+  red: 'stroke-red-500 dark:stroke-red-400',
+};
 
 /** "$38 left" in a gray pill beside Send; it opens the model sheet, which spells it out. */
 export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () => void }) {
@@ -95,36 +101,15 @@ export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () 
   );
 }
 
-const RING_R = 22;
-const RING_C = 2 * Math.PI * RING_R;
-
 /**
- * Send, Stop or Save inside a ring of what is left. The ring starts at
- * twelve o'clock and empties clockwise, like a timer: drawn anticlockwise
- * from the top and mirrored.
+ * Send, Stop or Save inside a ring of what is left, which empties clockwise
+ * from twelve o'clock (@/components/ui/progress-ring.tsx ProgressHalo).
  */
 export function CreditRing({ credit, children }: { credit: CreditView | null; children: ReactNode }) {
   if (!credit) return <>{children}</>;
-  const filled = Math.max(0, Math.min(1, credit.fraction)) * RING_C;
   return (
     <span className="relative inline-flex h-12 w-12 shrink-0 items-center justify-center" data-agent-session-credit-ring={credit.tone}>
-      <svg className="pointer-events-none absolute inset-0 -scale-x-100" width="48" height="48" viewBox="0 0 48 48" aria-hidden="true">
-        <circle cx="24" cy="24" r={RING_R} fill="none" strokeWidth="3" className="stroke-zinc-200 dark:stroke-zinc-700" />
-        {filled > 0 ? (
-          <circle
-            cx="24"
-            cy="24"
-            r={RING_R}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeDasharray={`${filled.toFixed(1)} ${RING_C.toFixed(1)}`}
-            transform="rotate(-90 24 24)"
-            className={RING_INK[credit.tone]}
-          />
-        ) : null}
-      </svg>
+      <ProgressHalo fraction={credit.fraction} arcClassName={RING_STROKE[credit.tone]} className="absolute inset-0" />
       {children}
     </span>
   );
