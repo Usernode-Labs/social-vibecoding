@@ -1495,7 +1495,14 @@ function ConversationThread() {
             is one — re-reads it silently: this row drawn above the messages
             pushed the whole transcript down on each message sent. */}
         {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
-        {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p><button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button></div> : null}
+        {/* QA 2026-09-24 Q16: a conversation that cannot come back offers the
+            way out, not a Try again that reads the same answer. Leaving it
+            here is said plainly, in the ordinary state colour: it is what
+            the viewer asked for, not an error. */}
+        {snap.threadGone === 'left' ? <div className="messages-state" data-thread-gone="left"><p>You left this group.</p><button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button></div> : null}
+        {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p>{snap.threadGone === 'missing'
+          ? <button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button>
+          : <button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button>}</div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
         {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button></div> : null}
         {rows}
