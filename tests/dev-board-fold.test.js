@@ -1226,7 +1226,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the list toggle; the same bar, chip and placeholder in an app channel; a
   // link to an app-channel reply opening its thread; and #2967's "Show N
   // more". Ten were folded into six with :has(). 32 slots left under 830.
-  assert.equal(DAPP.tests.length, 798);
+  //
+  // 798 → 805: +7 (QA 2026-09-24): the sweep's user-visible fixes. The
+  // Messages "Add" pill and the thread ⋯ menu button (Q10, Q18), the skip
+  // link (Q18), sign-in's Back disc and the username rule under the field
+  // (Q8, Q11), the Workshop's "Needs you" tab (Q29) and a pending group
+  // invitation's "Invitation pending" row (Q14). Six more were drafted and
+  // left to unit tests to keep the 20 free slots the proposal suites
+  // require. 25 slots left under 830.
+  assert.equal(DAPP.tests.length, 805);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
