@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 
 import { groupsWithPrevious } from '@/components/ui/chat';
 import {
-  ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SidebarIcon, SparklesIcon,
-  UserGroupIcon, XIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
+  SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
@@ -944,16 +944,31 @@ function InvitationBanner() {
 }
 
 /**
- * #2387: SINGLE-PANEL MODE. On a desktop the list and the open chat sit side
- * by side; this folds the list away so the chat (and a thread beside it) has
- * the whole width, and brings it back. It leads the chat's own title row,
- * next to the pane it changes, and is remembered on this device. A phone
- * shows one pane at a time already, so there it is not drawn (app.css).
+ * #2387: FULL WIDTH. On a desktop the list and the open discussion sit side
+ * by side; this folds the list away so the discussion (and a thread beside
+ * it) has the whole width, and brings it back. Only the list: the platform's
+ * own sidebar is navigation and stays. It is remembered on this device.
+ *
+ * ONE CONTROL, ONE PLACE, EVERY PANE. It sits at the right of the header,
+ * just before ⋯ where a pane has one — where a video player or a document
+ * editor puts its full-screen control — on a conversation, #general, an
+ * app's channel, an agent chat and both kinds of session alike. The agent
+ * panels are drawn by their own features, so they take it as `headerAction`
+ * rather than importing this store.
+ *
+ * The glyph is the verb a press performs: arrows out while the list is
+ * shown, arrows in once it is hidden. A phone shows one pane at a time
+ * already, so there it is not drawn (app.css).
  */
-function ListToggle() {
+function FullWidthToggle() {
   const snap = useMessagesSnapshot();
+  // A Mayor session's spec open beside its chat has already moved the list
+  // aside (ConversationList), so here the control would do nothing. It is
+  // not drawn, as app.css does for an open reply thread below 1600px.
+  const specBeside = useSpecBeside('messages');
   const collapsed = snap.listCollapsed;
-  const label = collapsed ? 'Show conversation list' : 'Hide conversation list';
+  if (specBeside) return null;
+  const label = collapsed ? 'Show the conversation list' : 'Full width';
   return (
     <button
       type="button"
@@ -963,7 +978,7 @@ function ListToggle() {
       title={label}
       onClick={() => setListCollapsed(!collapsed)}
     >
-      <SidebarIcon aria-hidden="true" />
+      {collapsed ? <ArrowsPointingInIcon aria-hidden="true" /> : <ArrowsPointingOutIcon aria-hidden="true" />}
     </button>
   );
 }
@@ -998,7 +1013,6 @@ function ThreadHeader() {
       : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
-      <ListToggle />
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} shape="square" />}
@@ -1007,6 +1021,7 @@ function ThreadHeader() {
         <div className="messages-thread-sub">{subtitle}</div>
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
+      <FullWidthToggle />
       <div className="relative"><button type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>{menu ? <div className="messages-thread-menu">{active.kind === 'group' ? <button type="button" onClick={() => { setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button> : active.kind === 'direct' ? <button type="button" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button> : null}<button type="button" onClick={() => { setMenu(false); void loadConversations(true); }}>Refresh conversation</button></div> : null}</div>
     </header>
   );
@@ -1145,7 +1160,6 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           once per browser and then never again. The conversation pane beside
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
-        <ListToggle />
         <span
           data-icon={appIconKind(iconRecord as never)}
           className="app-icon-tile messages-inbox-tile"
@@ -1157,6 +1171,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           <span className="messages-thread-name block">{name}</span>
           <span className="messages-thread-sub block">{handle ? `#${handle} · ` : ''}Everyone building this app</span>
         </span>
+        <FullWidthToggle />
       </header>
       {/* NO `dc-lift dc-lift-session` HERE, unlike the conversation pane
           beside it: features/group-chat/general-chat.tsx opens with exactly
@@ -1218,7 +1233,7 @@ function MayorSessionThread({ id }: { id: number | 'new' }) {
       aria-label="Agent session"
       data-agent-session-thread={id}
     >
-      <AgentSessionPanel embedded />
+      <AgentSessionPanel embedded headerAction={<FullWidthToggle />} />
     </section>
   );
 }
@@ -1286,7 +1301,7 @@ function AgentChatThread({ id }: { id: string }) {
       aria-label="Agent chat"
       data-agent-chat={id}
     >
-      <GlobalChatPanel embedded />
+      <GlobalChatPanel embedded headerAction={<FullWidthToggle />} />
     </section>
   );
 }
@@ -1356,6 +1371,7 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
     >
       <div className="messages-session-bar">
         <a className="messages-session-full" href={full}>Open full view</a>
+        <FullWidthToggle />
       </div>
       {phase === 'unavailable' ? (
         <div className="messages-state messages-state-error">
@@ -1758,10 +1774,13 @@ export function MessagesScreen() {
     // discussion kept the previous thread's name.
     [snap.active?.title, snap.route.open, snap.route.conversationId,
       snap.route.appSlug, snap.route.agent, snap.discussionContext?.name, snap.route.threadRootId]);
-  // #2387: single-panel mode applies to an open chat — a conversation or an
-  // app channel. With nothing open, or an agent thread, the list is there.
+  // #2387: full width applies to any open discussion — a conversation, an
+  // app channel, or an agent thread (every one carries the toggle). With
+  // nothing open the list is there: it is the only thing to show. Reply
+  // threads hang off conversations and channels alone.
   const chatOpen = !!(snap.route.conversationId || snap.route.appSlug);
-  const layout = `messages-layout dc-lift dc-lift-strip${snap.listCollapsed && chatOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
+  const discussionOpen = chatOpen || !!snap.route.agent;
+  const layout = `messages-layout dc-lift dc-lift-strip${snap.listCollapsed && discussionOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
