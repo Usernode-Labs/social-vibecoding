@@ -3836,6 +3836,20 @@ const AppView = {
     if (!head) return;
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
+    // #gc-thread-head is TWO nodes: the thread panel's empty slot (the host
+    // this paint mounts an issue's or a governance topic's head into) and the
+    // change page's (mountChangePage), which React renders WITH its own
+    // TopicHead inside. Opening an issue from a change page leaves the change
+    // page in #dev-topic-thread until _mountTopicThread swaps it, after the
+    // `await _loadDevData()` in _renderTopicSubView. A repaint inside that
+    // window (a thread badge, a session-state push, a roster load) would adopt
+    // the change page's head: mountLegacyPortal's first-mount replaceChildren()
+    // pulls another portal's DOM out from under React, and the publish below
+    // then removeChild()s a node that is gone — a NotFoundError caught by the
+    // `portal:dev-topic-thread` island, which then renders nothing, so the
+    // issue's discussion never appears. _renderTopicSubView paints this topic
+    // itself right after the swap, so skipping here loses nothing.
+    if (!changePage && head.closest && head.closest('.dev-change-overview')) return;
 
     // #665: while the inline title editor is open, skip the repaint — the
     // publish below remounts the head, which discards the editor and any

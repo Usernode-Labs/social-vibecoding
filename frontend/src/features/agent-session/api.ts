@@ -305,6 +305,61 @@ export async function deleteDraft(id: number, draftId: string): Promise<SavedDra
   return body.drafts || [];
 }
 
+export async function renameSession(id: number, title: string): Promise<AgentSession> {
+  const body = await json<{ session: AgentSession }>(
+    await request(`/api/agent-sessions/${id}/title`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+    'Could not rename this session.',
+  );
+  return body.session;
+}
+
+export async function archiveSession(id: number): Promise<AgentSession> {
+  const body = await json<{ session: AgentSession }>(
+    await request(`/api/agent-sessions/${id}/archive`, { method: 'POST' }),
+    'Could not archive this session.',
+  );
+  return body.session;
+}
+
+export async function unarchiveSession(id: number): Promise<AgentSession> {
+  const body = await json<{ session: AgentSession }>(
+    await request(`/api/agent-sessions/${id}/unarchive`, { method: 'POST' }),
+    'Could not unarchive this session.',
+  );
+  return body.session;
+}
+
+/**
+ * Where a hand-off to Claude Code or Codex on the web stands for this
+ * person and app (GET /api/apps/:slug/dev-flow/status, the dev chat's own
+ * walkthrough): GitHub linked, the fork, the connector, and the instructions
+ * to paste. `changeId` names the change the hand-off continues.
+ */
+export interface HandoffStatus {
+  available?: boolean;
+  reason?: string | null;
+  github?: { linked?: boolean; login?: string | null };
+  connectors?: { count?: number };
+  fork?: { state?: string; owner?: string; repo?: string; url?: string; pageUrl?: string } | null;
+  targetKind?: 'session' | 'proposal' | null;
+  instructions?: string;
+  [key: string]: unknown;
+}
+
+export async function handoffStatus(slug: string, change: { id: number; kind: 'session' | 'proposal' } | null): Promise<HandoffStatus> {
+  const query = new URLSearchParams();
+  if (change) {
+    query.set('sessionId', String(change.id));
+    query.set('proposalId', String(change.id));
+    query.set('targetKind', change.kind);
+  }
+  const suffix = query.toString() ? `?${query}` : '';
+  return json(
+    await request(`/api/apps/${encodeURIComponent(slug)}/dev-flow/status${suffix}`),
+    'Could not check where the hand-off stands.',
+  );
+}
+
 export async function listSessions(): Promise<AgentSession[]> {
   const body = await json<{ sessions: AgentSession[] }>(await request('/api/agent-sessions'), 'Could not load agent sessions.');
   return body.sessions || [];

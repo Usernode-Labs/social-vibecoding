@@ -1256,6 +1256,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // unit tests (the conversation ⋯ as a menu button among them, pinned in
   // tests/qa-menus-keyboard.test.js) to keep the 20 free slots the proposal
   // suites require. 20 slots left under 830, the floor those suites allow.
+  //
+  // 810, unchanged (#2779): an agent session's "Build: Homeroom" and ⋯ ride
+  // on the saved-draft check over conversation 990801 as a :has(), since
+  // the floor above leaves no slot for a check of their own.
   assert.equal(DAPP.tests.length, 810);
 });
 

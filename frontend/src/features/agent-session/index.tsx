@@ -17,13 +17,17 @@ import {
   DraftEditIcon,
   DraftSendIcon,
   DraftTrashIcon,
+  EllipsisHorizontalIcon,
   SaveDraftIcon,
   SparklesIcon,
   SpinnerArcIcon,
   XIcon,
 } from '@/components/ui/icons';
 
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { AiBudgetMeter, type AiBudgetState } from '../header/ai-budget';
+import { aiBudgetStore } from '../header/ai-budget-store.js';
 import { Attached } from '../dev-chat/transcript';
 import { nowStore, type TranscriptRow } from '../dev-chat/transcript-store';
 import type { AgentChange, AgentSession, SavedDraft } from './api';
@@ -55,6 +59,7 @@ import {
   clearReturnedText,
   closeSpec,
   composerId,
+  archiveCurrentSession,
   decideCard,
   deleteSavedDraft,
   editSavedDraft,
@@ -68,7 +73,10 @@ import {
   dockPreview,
   openPreview,
   proposeChange,
+  recheckChange,
+  renameCurrentSession,
   retryStaging,
+  unarchiveCurrentSession,
   PREVIEW_SLOT_ID,
   saveComposerDraft,
   sendSavedDraft,
@@ -94,6 +102,7 @@ import {
   type SpecSplit,
 } from './spec-layout';
 import { readUnsent, writeUnsent } from './unsent';
+import { CreditsCard, HandoffDialog, VenuePicker } from './handoff';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -190,10 +199,13 @@ function SessionBar({ session, about, embedded, action }: {
       >
         {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
       </span>
+      {/* Siblings of the pills, not a group of their own: a declared check
+          reads the bar as focus ~ change pill ~ Changes. */}
+      <VenuePicker disabled={snapshot.phase === 'loading'} className={embedded ? '' : 'ml-auto'} />
       <button
         type="button"
         data-agent-session-changes-button
-        className={`${embedded ? '' : 'ml-auto '}inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800`}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         onClick={() => setDrawerOpen(true)}
         disabled={!session}
         aria-haspopup="dialog"
@@ -201,7 +213,50 @@ function SessionBar({ session, about, embedded, action }: {
         Changes · {count}
       </button>
       {action}
+      <SessionMenu session={session} />
     </div>
+  );
+}
+
+/**
+ * The session's own actions, the dev chat's ⋯: Rename, and Archive or
+ * Unarchive. Nothing to act on while the conversation is unsent.
+ */
+function SessionMenu({ session }: { session: AgentSession | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <button
+      type="button"
+      data-agent-session-menu
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+      aria-label="Session actions"
+      title="Session actions"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      disabled={!session}
+      onClick={(event) => {
+        const menu = window.PlatformUI?.menu;
+        if (!session || open || typeof menu !== 'function') return;
+        const archived = session.status === 'archived';
+        setOpen(true);
+        void menu.call(window.PlatformUI, {
+          anchorEl: event.currentTarget,
+          items: [
+            { label: 'Rename…', handler: () => { void renameCurrentSession(); } },
+            archived
+              ? { label: 'Unarchive', title: 'Bring this session back to your lists', handler: () => { void unarchiveCurrentSession(); } }
+              : {
+                label: 'Archive',
+                title: 'Hide this session from your lists and pause its change',
+                destructive: true,
+                handler: () => { void archiveCurrentSession(); },
+              },
+          ],
+        }).finally(() => setOpen(false));
+      }}
+    >
+      <EllipsisHorizontalIcon className="h-4 w-4" aria-hidden="true" />
+    </button>
   );
 }
 
@@ -406,7 +461,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
   item: PreviewItem;
   change: AgentChange | null;
   wide: boolean;
-  action: 'propose' | 'retry' | null;
+  action: 'propose' | 'retry' | 'recheck' | null;
   busy: boolean;
 }) {
   const prNumber = item.prNumber || change?.prNumber || null;
@@ -438,12 +493,18 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
           </span>
         ) : null}
         {checks ? (
-          <span className={`ml-auto inline-flex items-center gap-1 text-xs ${CHECK_TONE[checks.key]}`} data-agent-session-checks={checks.key}>
+          <button
+            type="button"
+            className={`ml-auto inline-flex items-center gap-1 rounded text-xs hover:underline ${CHECK_TONE[checks.key]}`}
+            data-agent-session-checks={checks.key}
+            title="See each check and its result"
+            onClick={() => { if (item.changeId != null) window.AppView?.openSessionChecks?.(item.changeId); }}
+          >
             {checks.key === 'running'
               ? <SpinnerArcIcon className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
               : checks.key === 'passing' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
             {checks.text}
-          </span>
+          </button>
         ) : null}
       </div>
       {item.failed && item.error ? <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{item.error}</p> : null}
@@ -478,6 +539,18 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
         {proposable && item.changeId != null ? (
           <button type="button" className={CARD_PRIMARY} disabled={busy} onClick={() => void proposeChange(item.changeId as number)} data-agent-session-preview-propose>
             {action === 'propose' ? 'Proposing…' : 'Propose to group'}
+          </button>
+        ) : null}
+        {checks && (checks.key === 'failing' || checks.key === 'error') && item.changeId != null && !merged ? (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={busy}
+            title="Rebuild the preview if needed and run the automated checks again, on the same commit"
+            onClick={() => void recheckChange(item.changeId as number)}
+            data-agent-session-preview-recheck
+          >
+            {action === 'recheck' ? 'Re-running…' : 'Re-run checks'}
           </button>
         ) : null}
       </div>
@@ -1011,6 +1084,24 @@ function ModelPicker() {
   );
 }
 
+/**
+ * What is left of the viewer's AI credits, beside the model picker: the
+ * header's own meter (features/header/ai-credit.js publishes it, and the
+ * server's `budget_updated` pushes keep it moving while the Mayor works).
+ * Drawn after mount only: the prerender has no figures.
+ */
+function CreditsMeter() {
+  const { view } = useStoreState<AiBudgetState>(aiBudgetStore);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted || !view) return null;
+  return (
+    <span className="min-w-0 text-xs" data-agent-session-credits-meter>
+      <AiBudgetMeter view={view} />
+    </span>
+  );
+}
+
 const BUSY_PLACEHOLDER = 'The Mayor is working. Type your next message and save it for later.';
 const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
 
@@ -1167,6 +1258,12 @@ function Composer({ id }: { id: string }) {
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
     <div className="platform-safe-bar shrink-0 px-3 pt-1">
+    {archived ? (
+      <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
+        <span className="min-w-0 flex-1">This session is archived. Unarchive it to keep going.</span>
+        <button type="button" className={CARD_BUTTON} onClick={() => void unarchiveCurrentSession()}>Unarchive</button>
+      </p>
+    ) : null}
     <SavedDrafts drafts={snapshot.drafts} busy={running} onSend={onSendDraft} onEdit={onEditDraft} />
     <form
       className="agent-session-composer flex flex-col gap-1 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
@@ -1193,7 +1290,10 @@ function Composer({ id }: { id: string }) {
         }}
       />
       <div className="flex items-center gap-2">
-      <div className="min-w-0 flex-1"><ModelPicker /></div>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+        <ModelPicker />
+        <CreditsMeter />
+      </div>
       {kind === 'save' ? (
         <Button
           key="save"
@@ -1392,6 +1492,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
           {empty ? <EmptyState about={about} /> : null}
           {items.map((item) => <Item key={item.key} item={item} />)}
           <LiveTurn runShown={runShown} />
+          {snapshot.credits ? <CreditsCard refusal={snapshot.credits} /> : null}
           {snapshot.error ? (
             <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
           ) : null}
@@ -1399,6 +1500,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
         <Replies replies={empty ? starters(about) : replies} />
         <Composer id={composerId(embedded ? 'messages' : 'screen')} />
         {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
+        {snapshot.handoff ? <HandoffDialog /> : null}
       </div>
       {beside ? (
         <SidePane sheet={snapshot.specSheet} preview={snapshot.preview} tab={snapshot.paneTab} containerRef={root} />
