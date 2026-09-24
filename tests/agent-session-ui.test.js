@@ -155,3 +155,38 @@ test('the screen is reachable by address, on a phone and in the desktop Messages
   // for the full screen on a phone.
   assert.match(read('frontend/src/features/agent-session/store.ts'), /#messages\/agent\/\$\{id\}/);
 });
+
+test('starting a session beside a running app opens it in the side panel; elsewhere it navigates as before', async () => {
+  // The panel's own rules (an app on its App tab, a desktop-width window, the
+  // top document) are tests/side-panel.test.js's; here the store only has to
+  // ASK it first, and navigate as it always has when it declines.
+  const taken = [];
+  let accept = true;
+  const win = {
+    location: { hash: '' },
+    UsernodeReact: { sidePanel: { take: (route) => { taken.push(route); return accept; } } },
+    App: {},
+    PlatformUI: { toast: () => {} },
+  };
+  const session = { id: 7, title: null, status: 'open', focusApp: null, focusContext: {}, activeChange: null, busy: false, lastActivityAt: null, createdAt: null };
+  const posted = [];
+  globalThis.window = win;
+  globalThis.fetch = async (url, init) => {
+    posted.push([url, init && init.method]);
+    return { ok: true, status: 201, json: async () => ({ session }) };
+  };
+  try {
+    const store = loadTsx('frontend/src/features/agent-session/store.ts');
+    await store.startAgentSession({ slug: 'notes-ab12', entry: 'improve' });
+    assert.deepEqual(posted, [['/api/agent-sessions', 'POST']]);
+    assert.deepEqual(taken, ['messages/agent/7'], 'the panel is asked first, with the conversation\'s address');
+    assert.equal(win.location.hash, '', 'and the top window stays on the running app');
+
+    accept = false;
+    await store.startAgentSession({ slug: 'notes-ab12', entry: 'improve' });
+    assert.equal(win.location.hash, '#messages/agent/7', 'declined: the address is followed as before');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+  }
+});

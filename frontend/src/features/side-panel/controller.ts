@@ -31,7 +31,8 @@
  *     Navigation API) a script's `location.hash = …`. Both refuse the
  *     navigation, so the top window's history is untouched — reverting a hash
  *     after the fact leaves a dead Back entry. The JavaScript entry points
- *     (App.openAppTab, the Messages store, New change) call `take` directly.
+ *     (App.openAppTab, the Messages store, New change, the agent-session
+ *     store) call `take` directly.
  *   - The panel's own history: a stack of the pages opened in it, then the
  *     climb to the list a page belongs to (./routes.ts parentRoute). It is kept
  *     HERE rather than in the browser's session history, because an iframe's
@@ -46,6 +47,7 @@
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import {
+  expandRoute,
   frameUrl,
   isPanelRoute,
   isPointer,
@@ -284,7 +286,8 @@ function navigateTop(route: string): void {
 }
 
 /**
- * Expand: the page, full width. That leaves the app — which parks it in the
+ * Expand: the page, full width (an agent session: beside the inbox, see
+ * ./routes.ts expandRoute). That leaves the app — which parks it in the
  * recent-app strip, so Resume brings it back (App._syncParkedApp) — and the
  * router's own leave drops the panel in the same transition
  * (App._syncPlatformTabs → appPresence). The drop below covers a route that,
@@ -292,7 +295,7 @@ function navigateTop(route: string): void {
  */
 export function expand(): void {
   const route = sidePanelStore.get().route;
-  if (route) navigateTop(route);
+  if (route) navigateTop(expandRoute(route));
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
 }
 
