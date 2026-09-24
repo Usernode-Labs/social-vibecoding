@@ -40,6 +40,7 @@ const assert = require('node:assert/strict');
 const {
   runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf,
   hashGroupCap, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, assertMaxMs,
+  makeConsoleErrorSink,
 } = require('../capture/capture');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -499,6 +500,7 @@ function makeEventPage({ onGoto, onHash } = {}) {
       if (!handlers.has(ev)) handlers.set(ev, []);
       handlers.get(ev).push(fn);
     },
+    consoleHandlers() { return handlers.get('console') || []; },
     emitError(text) {
       for (const fn of handlers.get('console') || []) {
         fn({ type: () => 'error', text: () => text, location: () => ({ url: 'app.js', lineNumber: 1 }) });
@@ -591,6 +593,102 @@ test('a hash cohort owns its own console errors, and load errors are shared', as
     'but the error raised after the hash switch belongs to that cohort alone');
   assert.match(a.failureReason, /1 console error/);
   assert.match(b.failureReason, /2 console errors/);
+});
+
+// An Error argument reaches the listener as the text "JSHandle@error"; the
+// handle's `evaluate` is how the runner reads the real error in the page.
+function errorHandleMessage(error, delayMs = 0) {
+  return {
+    type: () => 'error',
+    text: () => 'JSHandle@error',
+    location: () => ({ url: 'http://s/shell/assets/shell.js', lineNumber: 48 }),
+    args: () => [{
+      evaluate: async (fn) => {
+        if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+        return fn(error);
+      },
+    }],
+  };
+}
+
+test('an Error logged by console.error is recorded by its message and island, not as JSHandle@error', async () => {
+  const pushed = [];
+  const sink = makeConsoleErrorSink((kind, message, source) => pushed.push({ kind, message, source }));
+  const prevWindow = globalThis.window;
+  globalThis.window = { UsernodeReact: { islandErrors: [{ island: 'portal:gc-thread-messages', message: 'x is undefined' }] } };
+  try {
+    sink.onConsole(errorHandleMessage(new TypeError('x is undefined')));
+    sink.onConsole(errorHandleMessage(new Error('other failure')));
+    sink.onConsole({ type: () => 'error', text: () => 'plain text', location: () => null });
+    await sink.settle();
+  } finally {
+    globalThis.window = prevWindow;
+  }
+  assert.equal(pushed.length, 3, 'two different Errors are two entries, not one deduped placeholder');
+  const typeError = pushed.find((p) => p.message.startsWith('TypeError'));
+  const other = pushed.find((p) => p.message.startsWith('Error: other'));
+  assert.match(typeError.message, /^TypeError: x is undefined \[island portal:gc-thread-messages\]/);
+  assert.match(typeError.message, /\n\s+at /, 'the stack frames follow the head');
+  assert.match(other.message, /^Error: other failure(\n|$)/, 'no island tag when no boundary recorded it');
+  assert.ok(pushed.some((p) => p.message === 'plain text'), 'text messages are recorded unchanged');
+  assert.equal(typeError.source, 'http://s/shell/assets/shell.js:48');
+});
+
+test('an Error is resolved even when the console text already reads as its message', async () => {
+  const pushed = [];
+  const sink = makeConsoleErrorSink((kind, message) => pushed.push(message));
+  const error = new RangeError('bad index');
+  sink.onConsole({
+    type: () => 'error',
+    text: () => 'RangeError: bad index',
+    location: () => null,
+    args: () => [{ remoteObject: () => ({ type: 'object', subtype: 'error' }), evaluate: async (fn) => fn(error) }],
+  });
+  await sink.settle();
+  assert.equal(pushed.length, 1);
+  assert.match(pushed[0], /^RangeError: bad index\n\s+at /, 'the stack is kept, not just the message');
+});
+
+test('an Error that fails to resolve in the page is still recorded', async () => {
+  const pushed = [];
+  const sink = makeConsoleErrorSink((kind, message) => pushed.push(message));
+  sink.onConsole({
+    type: () => 'error',
+    text: () => 'JSHandle@error',
+    location: () => null,
+    args: () => [{ evaluate: async () => { throw new Error('Execution context was destroyed'); } }],
+  });
+  await sink.settle();
+  assert.deepEqual(pushed, ['JSHandle@error']);
+});
+
+test('an Error still resolving at a hash switch counts against the cohort it fired in', async () => {
+  const read = collect();
+  const timers = [];
+  const page = makeEventPage({
+    onHash: (p, h) => {
+      if (h === '#/a') {
+        timers.push(setTimeout(() => {
+          for (const fn of p.consoleHandlers()) fn(errorHandleMessage(new Error('a broke'), 150));
+        }, 20));
+      }
+    },
+  });
+  const group = [
+    { index: 0, name: 'bare', path: '/dev', url: 'http://s/dev' },
+    { index: 1, name: 'a', path: '/dev', url: 'http://s/dev#/a' },
+    { index: 2, name: 'b', path: '/dev', url: 'http://s/dev#/b' },
+  ];
+  try {
+    await runTestGroup({ newPage: async () => page }, group,
+      { settleQuietMs: 60, settleMaxMs: 400 });
+  } finally {
+    for (const t of timers) clearTimeout(t);
+  }
+  const byIndex = new Map(read().frames.map((f) => [f.index, f]));
+  assert.equal(byIndex.get(0).status, 'pass');
+  assert.deepEqual(byIndex.get(1).consoleErrors.map((e) => e.message.split('\n')[0]), ['Error: a broke']);
+  assert.equal(byIndex.get(2).status, 'pass', 'the slow resolution did not land in the next cohort');
 });
 
 test('a cohort that breaks does not fail the cohorts it shares a document with', async () => {
