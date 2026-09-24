@@ -915,7 +915,20 @@ function observeCodingProviderTiming(event, onProgress, state) {
     if (!Number.isSafeInteger(durationMs) || durationMs > 86_400_000) return;
     if (durationMs < 60_000 || !Number.isSafeInteger(event.activeRequests)
         || event.activeRequests < 0 || event.activeRequests > 1000) return;
-    onProgress(`Codex produced no output for ${Math.round(durationMs / 1000)}s; ${event.activeRequests} OpenRouter requests active`);
+    const seconds = Math.round(durationMs / 1000);
+    // Codex prints nothing while a command or tool runs, so a quiet stretch
+    // is only suspicious when nothing is open. A slow model request already
+    // reports itself on its own lines.
+    const open = [...(state.codexOpenTools?.values() || [])];
+    if (open.length) {
+      const latest = open[open.length - 1];
+      const more = open.length > 1 ? ` (and ${open.length - 1} more)` : '';
+      onProgress(latest.kind === 'command'
+        ? `Waiting on a command for ${seconds}s${latest.label ? `: ${latest.label}` : ''}${more}`
+        : `Waiting on ${latest.label} for ${seconds}s${more}`);
+    } else if (event.activeRequests === 0) {
+      onProgress(`Codex has been silent for ${seconds}s with no command or model request open`);
+    }
     return;
   }
   const ordinal = event?.requestOrdinal;
@@ -940,14 +953,11 @@ function observeCodingProviderTiming(event, onProgress, state) {
     const stage = {
       await_headers: 'no response headers',
       await_first_byte: 'headers received, no response bytes',
-      streaming: 'response streaming',
+      streaming: 'still responding',
     }[event.stage];
     const bytes = Number.isSafeInteger(event.responseBytes) && event.responseBytes >= 0
       && event.responseBytes <= 10_000_000 ? event.responseBytes : null;
-    const chunks = Number.isSafeInteger(event.chunkCount) && event.chunkCount >= 0
-      && event.chunkCount <= 1000 ? event.chunkCount : null;
-    const transfer = event.stage === 'streaming' && bytes != null && chunks != null
-      ? `, ${bytes} bytes in ${chunks} chunks` : '';
+    const transfer = event.stage === 'streaming' && bytes != null ? `, ${bytes} bytes so far` : '';
     onProgress(`OpenRouter request #${ordinal}: ${stage} after ${seconds}s${transfer}`);
     return;
   }
@@ -1120,6 +1130,13 @@ function parseLine(line, onProgress, state) {
               || ['failed', 'error', 'cancelled'].includes(String(ev.status || '').toLowerCase()),
           });
         }
+        if (ev.itemId && (ev.kind === 'command_started' || ev.kind === 'mcp_started')) {
+          const open = state.codexOpenTools || (state.codexOpenTools = new Map());
+          open.set(ev.itemId, ev.kind === 'command_started'
+            ? { kind: 'command', label: ev.text && ev.text.startsWith('$ ') ? ev.text.slice(2) : null }
+            : { kind: 'mcp', label: ev.toolName });
+        }
+        if (ev.itemId && isToolCompletion) state.codexOpenTools?.delete(ev.itemId);
         if (ev.kind === 'error') {
           emitEvidenceDiagnostic(state, { kind: 'provider_notice' });
         }

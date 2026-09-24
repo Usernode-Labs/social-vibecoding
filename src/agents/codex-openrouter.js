@@ -401,7 +401,8 @@ function normalizeCodexLine(line, state) {
   if (ev.type === 'thread.started') {
     const tid = ev.thread_id || ev.id;
     if (tid) state.agentThreadId = tid;
-    return [{ kind: 'thread_started', text: '[agent]', threadId: tid || null }];
+    // turn.started, which follows, prints the turn's marker.
+    return [{ kind: 'thread_started', text: null, threadId: tid || null }];
   }
   if (ev.type === 'turn.started') {
     return [{ kind: 'phase', text: '[agent]', lifecycle: 'turn_started' }];
