@@ -1195,12 +1195,84 @@ const TopochainChallenges = {
   // decision stays here, in the shaping module, precisely so that the
   // renderer has no branch to get wrong: it is handed either a href or not
   // one, and `kind: 'text'` has no href field at all to reach for.
-  ctaView(dm) {
+  //
+  // AN IN-APP DESTINATION IS A ROUTE, NOT A NEW TAB (#2893). A CTA that names
+  // one of the shell's own screens — a bare `#settings/usernode`, or the
+  // platform's own origin with that fragment — becomes `kind: 'route'`, whose
+  // href is ONLY the fragment and which the pane renders without
+  // target="_blank". As a new tab it cold-booted a second document, and in
+  // the Homeroom app a target="_blank" tap is handed to the system browser,
+  // where there is no native bridge and so no "Homeroom app" section: the
+  // block-production challenge's "Open block production settings" landed on
+  // the Settings root either way. A fragment cannot carry a scheme, so it
+  // needs no safeHref; _inAppRoute admits only the route shape.
+  //
+  // `challenge` (optional) is the list row the page is for. On a
+  // block-production challenge a CTA aimed at bare Settings is aimed at the
+  // one section where block production lives: the root has nothing about
+  // it, and the button's own label promises the section.
+  ctaView(dm, challenge) {
     const label = TopochainChallenges.str(dm.cta_label || dm.cta_button || 'Go');
     if (!dm.cta_link) return null;
+    const route = TopochainChallenges._inAppRoute(dm.cta_link);
+    if (route) {
+      const href = route === '#settings' && TopochainChallenges._isBlockProduction(challenge)
+        ? TopochainChallenges.BLOCK_PRODUCTION_ROUTE : route;
+      return { kind: 'route', href, label };
+    }
     const href = TopochainChallenges.safeHref(dm.cta_link);
     if (!href) return { kind: 'text', label };
     return { kind: 'link', href, label };
+  },
+
+  // Settings › Homeroom app, whose "Homeroom app: block production" group is
+  // where block production is asked for (sections/usernode.tsx).
+  BLOCK_PRODUCTION_ROUTE: '#settings/usernode',
+
+  // A shell hash route: a screen word, optional path segments, an optional
+  // query. Nothing that could leave the document or run anything.
+  IN_APP_ROUTE: /^#[a-z][a-z0-9-]*(?:\/[A-Za-z0-9._~-]+)*\/?(?:\?[A-Za-z0-9=&._~%-]*)?$/,
+
+  // The platform shell's own hosts, besides whichever one this document is
+  // on. Organiser CTA data is stored as ABSOLUTE URLs, and the rows written
+  // before the domain move say `https://my.onhomeroom.com/#…` while the shell
+  // now runs on app.onhomeroom.com (my. redirects there), so matching only
+  // this document's origin would miss every real link. NOT the bare
+  // onhomeroom.com: that is the marketing site, not the shell.
+  SHELL_HOSTS: ['my.onhomeroom.com', 'app.onhomeroom.com'],
+
+  // The fragment a CTA link names when it points INSIDE the shell, else null:
+  // `#route`, `/#route`, or an absolute http(s) URL on this document's host or
+  // one of SHELL_HOSTS whose path is the root and whose only address is its
+  // fragment. A trailing slash is dropped so `#settings/` reads as `#settings`.
+  _inAppRoute(url) {
+    if (typeof url !== 'string') return null;
+    const s = url.trim();
+    let hash = null;
+    if (s.startsWith('#')) hash = s;
+    else if (s.startsWith('/#')) hash = s.slice(1);
+    else if (/^https?:\/\//i.test(s)) {
+      let u;
+      try { u = new URL(s); } catch { return null; }
+      const here = typeof location !== 'undefined' && location ? location.hostname : null;
+      const host = u.hostname.toLowerCase();
+      const ours = (!!here && host === String(here).toLowerCase() && u.origin === location.origin)
+        || (u.protocol === 'https:' && !u.port && TopochainChallenges.SHELL_HOSTS.includes(host));
+      if (!ours || u.pathname !== '/' || u.search || !u.hash) return null;
+      hash = u.hash;
+    }
+    if (!hash || !TopochainChallenges.IN_APP_ROUTE.test(hash)) return null;
+    return hash.replace(/\/(?=\?|$)/, '');
+  },
+
+  // Whether a list row is a block-production challenge: its metric (the
+  // signal the server's breakdown route keys on, `blocks_produced`), else
+  // its template's metric, else its artwork.
+  _isBlockProduction(c) {
+    if (!c) return false;
+    const kind = (c.metric && c.metric.kind) || (c.activity_type && c.activity_type.metric_type) || null;
+    if (kind === 'blocks_produced') return true;
+    return !!(c.card_preview && c.card_preview.illustration === 'block-production');
   },
 
   _renderDetailOverlay() {
@@ -1299,7 +1371,7 @@ const TopochainChallenges = {
       stateLabel: rail.stateLabel,
       fill: rail.fill,
       counted: !!rail.counted,
-      cta: TopochainChallenges.ctaView(dm),
+      cta: TopochainChallenges.ctaView(dm, challenge),
       description: dm.description ? str(dm.description) : null,
       requirements: dm.requirements ? str(dm.requirements) : null,
       scoring: dm.reward_logic ? str(dm.reward_logic) : null,

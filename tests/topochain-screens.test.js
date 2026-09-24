@@ -480,7 +480,7 @@ test('the challenge CTA link is scheme-guarded before it ever reaches an href', 
   assert.ok(safeHrefFn.length > 0, 'safeHref located');
   assert.ok(safeHrefFn.includes('/^https?:\\/\\//i.test(url)'),
     'safeHref validates the URL scheme with an http(s)-only regex');
-  const ctaFn = challengesJs.slice(challengesJs.indexOf('ctaView(dm) {'), challengesJs.indexOf('_renderDetailOverlay() {'));
+  const ctaFn = challengesJs.slice(challengesJs.indexOf('ctaView(dm, challenge) {'), challengesJs.indexOf('_renderDetailOverlay() {'));
   assert.ok(ctaFn.length > 0, 'ctaView located');
   assert.match(ctaFn, /TopochainChallenges\.safeHref\(dm\.cta_link\)/,
     'the cta_link is run through safeHref before being used as an href');

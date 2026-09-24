@@ -144,7 +144,12 @@ type EntriesView =
   | { kind: 'empty' }
   | { kind: 'list'; hasMore: boolean; rows: EntryRow[] };
 
-type CtaView = { kind: 'link'; href: string; label: string } | { kind: 'text'; label: string };
+// `route` is one of the shell's own hash routes (#2893): it navigates in
+// place, never in a new tab — see TopochainChallenges.ctaView.
+type CtaView =
+  | { kind: 'link'; href: string; label: string }
+  | { kind: 'route'; href: string; label: string }
+  | { kind: 'text'; label: string };
 
 type DetailView = {
   key: string;
@@ -411,10 +416,21 @@ function Cta({ view }: { view: CtaView }): ReactNode {
     );
   }
   // `href` reached here only by passing TopochainChallenges.safeHref — an
-  // http(s)-only scheme check. There is deliberately no fallback branch: a
-  // link that failed it is a different descriptor kind, handled above.
+  // http(s)-only scheme check — or, for `route`, its in-app route shape, which
+  // is a bare fragment. There is deliberately no fallback branch: a link that
+  // failed both is a different descriptor kind, handled above.
+  //
+  // A route stays in this document (#2893). In the Homeroom app a
+  // target="_blank" tap goes to the system browser, which has no native
+  // bridge and therefore no Settings › Homeroom app to land on.
+  const external = view.kind === 'link';
   return (
-    <a href={view.href} target="_blank" rel="noopener" className={CTA_LINK}>
+    <a
+      href={view.href}
+      target={external ? '_blank' : undefined}
+      rel={external ? 'noopener' : undefined}
+      className={CTA_LINK}
+    >
       {view.label}
     </a>
   );
