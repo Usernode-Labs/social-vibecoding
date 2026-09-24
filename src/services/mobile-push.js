@@ -3,11 +3,13 @@
 const { getPool } = require('../db/pool');
 const { createFirebaseProvider, parseServiceAccount } = require('./mobile-push-provider');
 const { MobilePushWorker } = require('./mobile-push-worker');
+const { MobilePushBadgeSync } = require('./mobile-push-badge');
 const { isPushEnvironment } = require('./mobile-push-policy');
 const log = require('./logger');
 
 let worker = null;
 let provider = null;
+let badgeSync = null;
 
 function isFirebaseProjectId(value) {
   return typeof value === 'string'
@@ -210,6 +212,19 @@ async function initialize(config, dependencies = {}) {
     provider,
     options: dependencies.options,
   });
+  badgeSync = new MobilePushBadgeSync({
+    pool,
+    config,
+    provider,
+    options: dependencies.badgeOptions,
+  });
+}
+
+// #2904: called for every `notifications_changed` fan-out (./ws.js
+// pushToUser) so a read anywhere re-badges the user's iPhone. A no-op until
+// push is initialized and enabled on this instance.
+function scheduleBadgeSync(userId) {
+  return badgeSync ? badgeSync.schedule(userId) : false;
 }
 
 function start() {
@@ -221,15 +236,19 @@ async function stop({ timeoutMs = 5000 } = {}) {
   if (!drained) {
     log.warn('mobile-push', 'sender did not drain before shutdown deadline');
   }
+  badgeSync?.stop();
   if (provider?.close) await provider.close().catch(() => {});
   worker = null;
   provider = null;
+  badgeSync = null;
   return drained;
 }
 
 function resetForTests() {
+  badgeSync?.stop();
   worker = null;
   provider = null;
+  badgeSync = null;
 }
 
 module.exports = {
@@ -241,5 +260,6 @@ module.exports = {
   initialize,
   start,
   stop,
+  scheduleBadgeSync,
   resetForTests,
 };

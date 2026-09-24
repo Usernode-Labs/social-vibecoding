@@ -187,19 +187,26 @@ async function preparePair(config, { pool = getPool(config), run, session, app, 
   const headSha = exactSha(run.head_sha || run.headSha, 'head SHA');
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), `usernode-evidence-${run.id.slice(0, 8)}-`));
   let prepared = null;
+  const stage = (name) => {
+    if (typeof onProgress === 'function') onProgress({ stage: name });
+  };
   try {
+    stage('checkout_revisions');
     const [baseCheckout, headCheckout] = await allSettledValues([
       checkoutExactRevision({ app, session, sha: baseSha, side: 'base', parentDir: rootDir }),
       checkoutExactRevision({ app, session, sha: headSha, side: 'head', parentDir: rootDir }),
     ]);
+    stage('resolve_staging_env');
     const [baseEnv, headEnv] = await allSettledValues([
       resolvedStagingEnv(config, pool, session, app, baseCheckout.dir),
       resolvedStagingEnv(config, pool, session, app, headCheckout.dir),
     ]);
+    stage('prepare_fixture');
     const source = await dbManager.prepareStagingCloneSource(
       dbManager.appDbName(app.slug), { sourceId: run.id }
     );
     prepared = source;
+    stage('build_revisions');
     const [baseImage, headImage] = await allSettledValues([
       buildRevision(config, { app, session, checkout: baseCheckout, onProgress }),
       buildRevision(config, {

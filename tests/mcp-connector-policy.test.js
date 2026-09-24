@@ -82,6 +82,10 @@ test('the allowlist permits exactly the routes the tools need', () => {
     ['POST', '/api/apps/recipe-box/issues/12/headless-session'],
     ['POST', '/api/sessions/412/clone-headless'],
     ['POST', '/api/sessions/412/promote'],
+    // #2779 — recheck_change: the "Re-run checks" button, on the commit the
+    // proposal already has. The handler refuses anyone but the owner or a
+    // write-admin; no code or vote moves.
+    ['POST', '/api/sessions/412/recheck'],
   ];
   for (const [method, target] of allowed) {
     assert.equal(
@@ -259,18 +263,38 @@ test('every route the tools call is on the allowlist', () => {
   // the tool module calls and check each one.
   const calls = [...TOOLS_SRC.matchAll(/callPlatform\(\s*baseUrl,\s*accessToken,\s*'([A-Z]+)',\s*[`']([^`']*)[`']/g)];
   assert.ok(calls.length >= 6, 'found the tool call sites');
-  for (const [, method, rawPath] of calls) {
+  // #2779: the four change-lifecycle tools are registered only for an agent
+  // session's Mayor, so their calls are held to the Mayor's own list instead.
+  const { DELEGATED_ONLY_TOOLS } = require('../src/services/mcp-audiences');
+  const delegatedBlocks = DELEGATED_ONLY_TOOLS.map((name) => {
+    const start = TOOLS_SRC.indexOf(`server.registerTool('${name}'`);
+    assert.ok(start > 0, `${name} is registered`);
+    const end = TOOLS_SRC.indexOf('server.registerTool(', start + 10);
+    return [start, end > 0 ? end : TOOLS_SRC.length];
+  });
+  let delegatedCalls = 0;
+  for (const match of calls) {
+    const [, method, rawPath] = match;
     // Template literals interpolate the slug / proposal id; substitute a
     // concrete segment so the pattern matcher sees a real path. The query
     // string is dropped for the same reason the middleware never sees one:
     // routes/cli-auth.js matches on `req.path`, which express has already
     // stripped it from (#1196 added `?include_imported=1` to one call).
     const target = rawPath.replace(/\$\{[^}]*\}/g, 'x').split('?')[0];
+    if (delegatedBlocks.some(([start, end]) => match.index > start && match.index < end)) {
+      delegatedCalls += 1;
+      assert.equal(
+        policy.isDelegatedApiRequest('agent_mayor', method, target), true,
+        `${method} ${target} (called by a Mayor-only tool) is on the Mayor's allowlist`
+      );
+      continue;
+    }
     assert.equal(
       policy.isConnectorApiRequest(method, target), true,
       `${method} ${target} (called by a tool) is on the allowlist`
     );
   }
+  assert.ok(delegatedCalls >= 4, 'found the Mayor-only call sites');
 });
 
 // ── #967 pass 2: the write half ────────────────────────────────────────

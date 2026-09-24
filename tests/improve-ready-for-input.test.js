@@ -144,11 +144,22 @@ function load(answers) {
     slug: 'demo', name: 'Demo app', open: false, working: false,
     sessions: [], otherSessions: [], sessionsLoaded: false, loadingSessions: false,
   });
+  // The one surface still listing these sessions. Flip `sheet.open` in a
+  // test that needs the reload gate open; it is the notifications sheet's
+  // flag, not the Improve panel's — that panel retired (#2718 review).
+  const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor: (app) => ({ kind: 'letter', letter: app.name[0] }) },
-      '../../lib/kit-surface': { adoptKitSurface: () => null },
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
+      // Improve panel's root through lib/kit-surface and swept the other
+      // sheets through lib/sheet-controller; the panel retired, `open()`
+      // forwards to the app-context sheet, and both stubs went with it. What
+      // it does import is the notifications sheet's own open flag — the one
+      // surface still listing these sessions, and the gate on reloading them.
+      '../notifications/notifications-sheet-store.js': {
+        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
+      },
       './improve-store.js': { improveStore: store },
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
@@ -158,6 +169,7 @@ function load(answers) {
     Improve: sandbox.__improve,
     SessionState: sandbox.window.SessionState,
     store,
+    sheet,
     fetches,
     tick: (ms) => { clock += ms; },
   };
@@ -212,17 +224,19 @@ test('a push that starts a turn takes "Needs you" down in the same frame', async
   assert.equal(fetches.length, 1, 'no refetch while the panel is shut');
 });
 
-test('the open panel refetches when the turn ends, and the row takes the new verdict', async () => {
+test('the open sheet refetches when the turn ends, and the row takes the new verdict', async () => {
   // Three answers for three requests: the open, the mid-turn reload the
   // starting push triggers, and the reload the ending push triggers — the
   // one that carries the verdict on the answered spec.
-  const { Improve, SessionState, store, fetches } = load([
+  const { Improve, SessionState, store, sheet, fetches } = load([
     payload({ busy: false, awaiting_input: true }),
     payload({ busy: true, awaiting_input: false }),
     payload({ busy: false, awaiting_input: false }),
   ]);
   await Improve.loadSessions();
-  store.state.open = true;
+  // The Improve panel's own flag until #2718's review retired the panel; the
+  // sheet that lists these rows is the notifications one now.
+  sheet.open = true;
   SessionState.applyEvent({ sessionId: 5, busy: true, phase: 'cc', status: 'active' });
   Improve.onSessionStateChanged();
 

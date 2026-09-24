@@ -388,9 +388,9 @@ test('execInWorker keeps the journal and the record when holdTurnRecord is set',
 
 // ── 3. Both dispatch tools opt in and release ───────────────────────────
 
-const SESSIONS_SRC = fs.readFileSync(
-  path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
-);
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+const SESSIONS_SRC = ['../src/services/mayor/turn.js', '../src/routes/sessions.js']
+  .map((rel) => fs.readFileSync(path.join(__dirname, rel), 'utf8')).join('\n');
 
 test('build and scout keep one owner through their complete tail', () => {
   const holds = SESSIONS_SRC.match(/holdTurnRecord: true/g) || [];

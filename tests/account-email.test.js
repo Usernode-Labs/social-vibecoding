@@ -29,7 +29,10 @@ test('account email linking: ownership, expiry, retry limits and atomic replacem
     password_reset_token_hash TEXT, password_reset_expires_at TIMESTAMPTZ
   ); CREATE UNIQUE INDEX users_email_lower_unique ON users(lower(email)) WHERE email IS NOT NULL;`);
   const ddl = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(ddl.slice(ddl.indexOf('-- #1841: private, user-bound')));
+  // Only the #1841 block: everything after it in schema.sql assumes the full
+  // schema (apps, chat_sessions, ...), which this fixture does not build.
+  const block = ddl.indexOf('-- #1841: private, user-bound');
+  await pool.query(ddl.slice(block, ddl.indexOf('\n-- ── Demo mode', block)));
   const passwordHash = await bcrypt.hash('current-password', 4);
   const originalSend = mail.send;
   const sent = [];

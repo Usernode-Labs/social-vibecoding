@@ -409,6 +409,7 @@ async function updateProposalFromForkBranch(deps, params) {
     try {
       const ctx = {
         pool, config, gh, head, votes, prImportSync, githubPublic,
+        prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
         testing: normalizeTesting(params.testing),
@@ -1248,7 +1249,7 @@ function defaultBusyCheck(session) {
 // under a lease.
 async function advanceAppRepoBranch(ctx) {
   const {
-    pool, config, gh, head, votes, prImportSync, githubPublic, session,
+    pool, config, gh, head, votes, prImportSync, githubPublic, prMetadata, username, session,
     owner, repo, forkOwner, forkRepo, branch, expectedLogin, expectedHeadSha, sessionId,
   } = ctx;
   // The session tails talk to three modules that do real work — a staging
@@ -1397,6 +1398,25 @@ async function advanceAppRepoBranch(ctx) {
   const linkedApplied = await applyLinkedIssues({
     pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
   });
+
+  // A shared session has just gained its first pushed diff (or another
+  // revision). Give the group a stable draft PR link before its card is
+  // published. A transient GitHub failure does not discard the pushed code;
+  // the next update or promotion can adopt/create the same PR.
+  if (kind === 'session' && session.source !== 'imported' && !session.pr_number) {
+    try {
+      await prMetadata.applyPrMetadata({
+        pool, session, repoOwner: owner, repoName: repo,
+        userMessage: '', ccSummary: '', username,
+        userId: session.user_id, allowModelGeneration: false,
+        preferredTitle: session.proposed_pr_title || session.session_title || null,
+      });
+    } catch (err) {
+      log.warn('proposal-update', 'Draft PR creation deferred after branch push', {
+        sessionId, code: err.code || null, err: err.message,
+      });
+    }
+  }
 
   // Everything the three tails agree on. They differ only in what they do to
   // the session afterwards and in the three booleans that describe it.

@@ -154,7 +154,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, agentSessionsEnabled: false, agentSessionsChoosable: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -262,6 +262,7 @@
       { key: 'username', label: 'Username', group: 'Account' },
       { key: 'email', label: 'Email & recovery', group: 'Account' },
       { key: 'password', label: 'Password', group: 'Account' },
+      { key: 'delete-account', label: 'Delete account', group: 'Account' },
       { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
 
       { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & agents' },
@@ -518,6 +519,13 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
+      // #2779: agent sessions, same shape again. Where new work starts is
+      // read from App.user by the entry points, so it moves with the save.
+      const agentSessionsToggle = document.getElementById('agent-sessions-enabled');
+      if (agentSessionsToggle) {
+        agentSessionsToggle.addEventListener('change', (e) => this._saveAgentSessions(e.target.checked));
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -654,6 +662,8 @@
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
+        this.state.agentSessionsEnabled = !!j.user?.agentSessionsEnabled;
+        this.state.agentSessionsChoosable = !!j.user?.agentSessionsChoosable;
         this.state.locale = j.user?.locale || null;
         this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
@@ -675,6 +685,7 @@
         // all, and it lands here too — a cold-boot deep link paints before
         // this resolves. Same reasoning as the two rows above.
         this._renderLanguageSection();
+        this._renderAgentSessionsRow();
         this._renderNavIfOpen();
       } catch {}
     },
@@ -1165,7 +1176,11 @@
         label: Settings.str(s.label),
         active: s.key === active,
         className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
-          + (s.key === active
+          + (s.key === 'delete-account'
+            ? (s.key === active
+              ? 'bg-red-500/10 text-red-700 dark:text-red-400'
+              : 'text-red-700 dark:text-red-400 hover:bg-red-500/10')
+            : s.key === active
             ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
             : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
       });
@@ -1384,16 +1399,19 @@
       // unless the viewer arrived from elsewhere in the app (#1565, see
       // _upHref), so that is its href.
       //
-      // LEVEL 2 ONLY. The mobile drill-in keeps its chevron because that is
-      // not a way BACK to another screen, it is the only way up a level
-      // INSIDE this one — without it a phone viewer is stranded in a section.
-      // Level 1 no longer draws one: Settings is one of the three account
-      // screens the owner asked to lose the arrow (see the note beside
-      // App.navigateToProfile), reached from the Home account row and left
-      // through it, with the header's own title saying where you are. A
-      // second affordance pointing at the row you just came from was chrome.
-      // `'home'` means "hidden" to setBackIcon.
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? Settings._upHref() : undefined);
+      // TWO LEVELS, ONE GLYPH. The mobile drill-in's chevron is the only way
+      // up a level INSIDE this screen — without it a phone viewer is stranded
+      // in a section — and since #2718's review the ROOT draws one too.
+      //
+      // Level 1 spent two rounds hiding it. That was right while Settings was
+      // reached from Home's account row: the row you came from was one tap
+      // behind you and a second affordance pointing at it was chrome. The Me
+      // tab replaced that row, and `'home'` sends you to a screen the bar's
+      // own Home tab already reaches while the tab still lit is Me — so the
+      // root's arrow points at #profile, the level it is genuinely under.
+      // App._BACK_SLOT['settings-screen'] says the same thing on the screen
+      // reveal; this is the second writer, and the later one wins.
+      if (App.setBackIcon) App.setBackIcon('arrow', inSection ? Settings._upHref() : '#profile');
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);
@@ -1434,7 +1452,20 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
+      this._renderAgentSessionsRow();
+      const agentStatus = document.getElementById('agent-sessions-status');
+      if (agentStatus) { agentStatus.classList.add('hidden'); agentStatus.textContent = ''; }
       this._renderLocalAgentsSection();
+    },
+
+    // #2779: offered only to a user the server lets choose. Painted again by
+    // refresh(), because a cold deep link to #settings/experimental paints
+    // the pane before /api/auth/me has answered.
+    _renderAgentSessionsRow() {
+      const agentRow = document.getElementById('settings-agent-sessions-row');
+      if (agentRow) agentRow.classList.toggle('hidden', !this.state.agentSessionsChoosable);
+      const agentToggle = document.getElementById('agent-sessions-enabled');
+      if (agentToggle) agentToggle.checked = !!this.state.agentSessionsEnabled;
     },
 
     // #907: the machines currently attached to one of this account's dev
@@ -2697,6 +2728,38 @@
       }
     },
 
+    // #2779: where new work starts. The server decides who may choose (403
+    // otherwise) and answers with the effective value; a failed save puts
+    // the checkbox back, as the two toggles above do.
+    async _saveAgentSessions(enabled) {
+      const toggle = document.getElementById('agent-sessions-enabled');
+      const status = document.getElementById('agent-sessions-status');
+      const fail = (msg) => {
+        if (toggle) toggle.checked = !!this.state.agentSessionsEnabled;
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/agent-sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled: !!enabled }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return fail(j.error || 'Failed to save.');
+        this.state.agentSessionsEnabled = !!j.enabled;
+        if (toggle) toggle.checked = !!j.enabled;
+        if (typeof App !== 'undefined' && App.user) App.user.agentSessionsEnabled = !!j.enabled;
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
+    },
+
     // Show the admin-preview section only when the server reports the
     // user as a *real* admin. App._realIsAdmin is the un-masked value
     // captured in app.js before the localStorage override gets
@@ -3639,7 +3702,7 @@
       }
     },
 
-    async logout() {
+    async logout({ accountDeleted = false } = {}) {
       const btn = document.getElementById('settings-logout');
       if (btn) btn.disabled = true;
 
@@ -3682,7 +3745,7 @@
       try {
         if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
         controller = typeof AbortController === 'function' ? new AbortController() : null;
-        const request = fetch('/api/auth/logout', {
+        const request = accountDeleted ? Promise.resolve({ ok: true }) : fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
           ...(controller ? { signal: controller.signal } : {}),
         });

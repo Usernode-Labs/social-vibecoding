@@ -262,16 +262,18 @@ test('edit still writes only the override keys the API reports back', () => {
     goal: 'Send two transactions',
     reward: '',
     kind: 'SEND_TRANSACTION_CHALLENGE',
+    schedule_start: '',
+    schedule_end: '',
     task: '',
     description: '',
     display_order: '2',
   };
   const body = buildChallengeBody({ isCreate: false, values, template: null });
   assert.deepEqual(Object.keys(body).sort(),
-    ['description', 'display_order', 'goal', 'kind', 'reward', 'task']);
+    ['description', 'display_order', 'goal', 'kind', 'reward', 'schedule_end', 'schedule_start', 'task']);
   assert.equal(body.goal, 'Send two transactions', 'the edit form shows and saves the override');
   assert.deepEqual(CH_EDIT_FIELDS.slice().sort(),
-    ['description', 'goal', 'kind', 'reward', 'task'],
+    ['description', 'goal', 'kind', 'reward', 'schedule_end', 'schedule_start', 'task'],
     'the metric and CTA fields are NOT editable there: the list endpoint reports no '
     + "challenge-level values for them, so showing the template's would save it as an override");
   // The rendered form has to agree with that list, or a field would be
@@ -279,11 +281,33 @@ test('edit still writes only the override keys the API reports back', () => {
   const src = fs.readFileSync(
     path.join(root, 'frontend/src/features/admin/topochain/challenges.tsx'), 'utf8');
   const editBranch = src.slice(src.indexOf('{existing ? ('), src.indexOf(') : ('));
-  for (const key of ['metric_type', 'metric_target', 'cta_type', 'schedule_start']) {
+  for (const key of ['metric_type', 'metric_target', 'cta_type']) {
     assert.ok(!editBranch.includes(`'${key}'`), `${key} is not rendered on the edit form`);
+  }
+  for (const key of ['schedule_start', 'schedule_end']) {
+    assert.ok(editBranch.includes(`dateField('${key}'`), `${key} is rendered on the edit form`);
   }
   assert.ok(!editBranch.includes('admin-topo-ch-f-template'),
     'no template picker on an existing challenge');
+});
+
+test("an existing challenge's dates can be moved, and cleared back to inheriting", () => {
+  // Pre Season 2's nine challenges carried no dates of their own, so every
+  // one of them closed on its template's schedule_end. The edit form is where
+  // one event's window moves without dragging every other event along.
+  const edit = (schedule_start, schedule_end) => buildChallengeBody({
+    isCreate: false,
+    values: { goal: '', reward: '', kind: '', task: '', description: '', display_order: '0',
+      schedule_start, schedule_end },
+    template: null,
+  });
+  const moved = edit('', '2026-10-04T23:59');
+  assert.match(moved.schedule_end, /^\d{4}-\d{2}-\d{2}T/, 'a new deadline goes out as an instant');
+  assert.equal(new Date(moved.schedule_end).getTime(), new Date('2026-10-04T23:59').getTime(),
+    'read as the viewer\'s local wall clock, the same as the add form');
+  assert.equal(moved.schedule_start, null, 'the untouched start keeps inheriting');
+  const cleared = edit('', '');
+  assert.equal(cleared.schedule_end, null, 'a cleared deadline saves null and follows the template again');
 });
 
 // ── The template's illustration ────────────────────────────────────────

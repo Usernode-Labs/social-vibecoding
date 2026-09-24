@@ -1,5 +1,5 @@
 /**
- * The "Mobile app version" row — the Improve panel's reference footer (#improve-footer), which is where #1443 put the version rows back.
+ * The "Mobile app version" row. #1443 put the version rows in the Improve panel's reference footer; the panel retired (#2718 review) and the rows are Settings' About pane, which is the screen you consult rather than act from.
  * See ./native-app-version-store.ts for what the seam carries.
  *
  * It was the hamburger drawer's footer until the Streamlined Concept board

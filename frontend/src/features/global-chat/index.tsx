@@ -12,6 +12,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { GlobalChatResultBlock } from './renderers';
 import {
   closeGlobalChat,
+  globalChatComposerId,
   loadOlderGlobalChatMessages,
   openGlobalChat,
   requestMoreSuggestions,
@@ -250,7 +251,7 @@ function FirstUse({ presentation }: { presentation: GlobalChatPresentation }) {
   );
 }
 
-function Composer() {
+function Composer({ id }: { id: string }) {
   const snapshot = useGlobalChatState();
   const [value, setValue] = useState('');
   const textarea = useRef<HTMLTextAreaElement | null>(null);
@@ -266,9 +267,17 @@ function Composer() {
   }
 
   return (
-    <form className="global-chat-composer" onSubmit={submit}>
+    // `platform-safe-bar` (app.css, the safe-area contract at the top of the
+    // file): this form is the bottom of a column that reaches the viewport,
+    // and on a phone #global-chat-screen keeps the platform tab bar up — so
+    // the bar has to clear whichever of the tab bar and the home-indicator
+    // strip is taller. It cleared the strip alone, and "Ask Homeroom…" sat
+    // under the tab bar. The transcript above no longer reserves that band:
+    // the composer is always below it, so the band is the composer's to
+    // clear, once (the rule Messages' thread follows for its own composer).
+    <form className="global-chat-composer platform-safe-bar" onSubmit={submit}>
       <textarea
-        id="global-chat-composer"
+        id={id}
         ref={textarea}
         rows={1}
         maxLength={12_000}
@@ -319,15 +328,107 @@ function Unavailable() {
   );
 }
 
-export function GlobalChatScreen() {
+/**
+ * The chat itself — toolbar, transcript and composer — drawn on either of
+ * its two surfaces (#2813): its own screen at `#chat/<id>`, or the Messages
+ * pane beside the inbox on a desktop. One component, so the two cannot
+ * drift; `embedded` changes only what is the surface's rather than the
+ * chat's — the pane's composer id (ids are document-wide) and the Close
+ * button, which the pane does not need because the inbox is right there.
+ */
+export function GlobalChatPanel({ embedded = false }: { embedded?: boolean }) {
   const snapshot = useGlobalChatState();
-  const screenRef = useRef<HTMLElement | null>(null);
   const scroll = useRef<HTMLDivElement | null>(null);
-  useVisibilityHiddenClass(screenRef, 'global-chat-screen', false);
   const assistantIds = useMemo(() => snapshot.messages
     .filter((message) => message.role === 'assistant')
     .map((message) => message.id), [snapshot.messages]);
   const latestAssistantId = assistantIds.at(-1) || null;
+
+  useEffect(() => {
+    if (!snapshot.open || !scroll.current) return;
+    scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, [snapshot.open, snapshot.messages.length, Object.keys(snapshot.results).length, snapshot.activity]);
+
+  return (
+    <div className={embedded ? 'global-chat-shell global-chat-embedded' : 'global-chat-shell dc-lift dc-lift-strip'}>
+      <header className="global-chat-toolbar">
+        <div className="min-w-0">
+          <h2>Chat <span>(experimental)</span></h2>
+          <p>Saved in Messages.</p>
+        </div>
+        <BudgetLabel />
+        {embedded ? null : (
+          <button
+            type="button"
+            className="global-chat-new"
+            onClick={() => closeGlobalChat()}
+            aria-label="Close chat"
+            title="Close chat"
+          >
+            <XIcon className="w-4 h-4" aria-hidden="true" />
+            <span>Close</span>
+          </button>
+        )}
+        <button
+          type="button"
+          className="global-chat-new"
+          disabled={snapshot.phase === 'sending'}
+          onClick={() => void startNewGlobalChat()}
+          aria-label="Start a new chat"
+          title="New chat"
+        >
+          <PlusIcon className="w-4 h-4" aria-hidden="true" />
+          <span>New</span>
+        </button>
+      </header>
+
+      {/* No `platform-safe-scroll`: the composer below clears the tab bar and
+          the home-indicator strip (see Composer), so reserving the band here
+          too put it on the wrong element — a blank band at the end of the
+          transcript — and, on a desktop, zeroed the transcript's own 18px of
+          bottom padding with the class's `!important` 0px. */}
+      <div ref={scroll} className="global-chat-transcript" aria-live="polite">
+        {snapshot.hasMoreHistory ? (
+          <button type="button" className="global-chat-history" onClick={() => void loadOlderGlobalChatMessages()}>
+            Earlier messages
+          </button>
+        ) : null}
+        {snapshot.phase === 'booting' || (snapshot.phase === 'loading' && !snapshot.messages.length) ? (
+          <div className="global-chat-loading"><SpinnerArcIcon className="w-5 h-5 animate-spin" aria-hidden="true" /> Loading…</div>
+        ) : null}
+        {snapshot.bootstrap && !snapshot.bootstrap.available ? <Unavailable /> : null}
+        {snapshot.bootstrap && !snapshot.messages.length && snapshot.phase !== 'loading' ? (
+          <FirstUse presentation={snapshot.bootstrap.firstUse} />
+        ) : null}
+        {snapshot.messages.map((message) => message.role === 'user' ? (
+          <article key={message.id} className="global-chat-turn global-chat-turn-user">
+            <p>{message.text}</p>
+          </article>
+        ) : (
+          <AssistantTurn key={message.id} message={message} latest={message.id === latestAssistantId} />
+        ))}
+        {snapshot.progress ? <TurnProgress progress={snapshot.progress} /> : snapshot.activity ? (
+          <div className="global-chat-activity">
+            <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" /> {snapshot.activity}
+          </div>
+        ) : null}
+        {snapshot.error ? (
+          <div className="global-chat-error" role="alert">
+            <span>{snapshot.error}</span>
+            <button type="button" onClick={() => void retryLastGlobalChatRequest()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /> Retry</button>
+          </div>
+        ) : null}
+      </div>
+
+      <Composer id={globalChatComposerId(embedded ? 'messages' : 'screen')} />
+    </div>
+  );
+}
+
+export function GlobalChatScreen() {
+  const snapshot = useGlobalChatState();
+  const screenRef = useRef<HTMLElement | null>(null);
+  useVisibilityHiddenClass(screenRef, 'global-chat-screen', false);
 
   // app.js normally dispatches the route after authentication. On a cold
   // deep link the boot-screen hint can reveal this island before that bridge
@@ -340,11 +441,10 @@ export function GlobalChatScreen() {
     void openGlobalChat({ threadId });
   }, [snapshot.open]);
 
-  useEffect(() => {
-    if (!snapshot.open || !scroll.current) return;
-    scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [snapshot.open, snapshot.messages.length, Object.keys(snapshot.results).length, snapshot.activity]);
-
+  // While the Messages pane is drawing the chat (#2813) this screen is
+  // hidden and draws nothing: one transcript on the page, not a second copy
+  // of it behind the first. The host starts as 'screen', so the prerendered
+  // markup — and hydration — are exactly what they were.
   return (
     <main
       ref={screenRef}
@@ -352,75 +452,9 @@ export function GlobalChatScreen() {
       className="hidden flex flex-1 min-h-0 overflow-hidden"
       aria-label="Chat (experimental)"
     >
-      <div className="global-chat-shell dc-lift dc-lift-strip">
-        <header className="global-chat-toolbar">
-          <div className="min-w-0">
-            <h2>Chat <span>(experimental)</span></h2>
-            <p>Saved in Improve.</p>
-          </div>
-          <BudgetLabel />
-          <button
-            type="button"
-            className="global-chat-new"
-            onClick={() => closeGlobalChat()}
-            aria-label="Close chat"
-            title="Close chat"
-          >
-            <XIcon className="w-4 h-4" aria-hidden="true" />
-            <span>Close</span>
-          </button>
-          <button
-            type="button"
-            className="global-chat-new"
-            disabled={snapshot.phase === 'sending'}
-            onClick={() => void startNewGlobalChat()}
-            aria-label="Start a new chat"
-            title="New chat"
-          >
-            <PlusIcon className="w-4 h-4" aria-hidden="true" />
-            <span>New</span>
-          </button>
-        </header>
-
-        <div ref={scroll} className="global-chat-transcript platform-safe-scroll" aria-live="polite">
-          {snapshot.hasMoreHistory ? (
-            <button type="button" className="global-chat-history" onClick={() => void loadOlderGlobalChatMessages()}>
-              Earlier messages
-            </button>
-          ) : null}
-          {snapshot.phase === 'booting' || (snapshot.phase === 'loading' && !snapshot.messages.length) ? (
-            <div className="global-chat-loading"><SpinnerArcIcon className="w-5 h-5 animate-spin" aria-hidden="true" /> Loading…</div>
-          ) : null}
-          {snapshot.bootstrap && !snapshot.bootstrap.available ? <Unavailable /> : null}
-          {snapshot.bootstrap && !snapshot.messages.length && snapshot.phase !== 'loading' ? (
-            <FirstUse presentation={snapshot.bootstrap.firstUse} />
-          ) : null}
-          {snapshot.messages.map((message) => message.role === 'user' ? (
-            <article key={message.id} className="global-chat-turn global-chat-turn-user">
-              <p>{message.text}</p>
-            </article>
-          ) : (
-            <AssistantTurn key={message.id} message={message} latest={message.id === latestAssistantId} />
-          ))}
-          {snapshot.progress ? <TurnProgress progress={snapshot.progress} /> : snapshot.activity ? (
-            <div className="global-chat-activity">
-              <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" /> {snapshot.activity}
-            </div>
-          ) : null}
-          {snapshot.error ? (
-            <div className="global-chat-error" role="alert">
-              <span>{snapshot.error}</span>
-              <button type="button" onClick={() => void retryLastGlobalChatRequest()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /> Retry</button>
-            </div>
-          ) : null}
-        </div>
-
-        <Composer />
-      </div>
+      {snapshot.host === 'messages' ? null : <GlobalChatPanel />}
     </main>
   );
 }
 
-export { GlobalChatNewChatButton } from './new-chat-button';
-export { GlobalChatImproveSection } from './improve-section';
 export { useGlobalChatState } from './store';

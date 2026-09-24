@@ -1,8 +1,8 @@
 /**
  * Mobile browsers collapse their toolbars when the document scrolls. The
  * native/installed shell and viewport-bound surfaces (app frames and chats)
- * keep their element scrollers. Only <html> is written here; React continues
- * to own the screen roots. Controllers use PlatformUI.scrollElement() when
+ * keep their element scrollers. Only <html> is written here (and <body>'s
+ * offset, to undo a stranded pan); React continues to own the screen roots. Controllers use PlatformUI.scrollElement() when
  * reading or restoring a page's position.
  */
 export const MOBILE_PAGE_QUERY = '(max-width: 767px), (hover: none) and (pointer: coarse)';
@@ -45,6 +45,72 @@ export function allowsPageScroll(win: Window, doc: Document): boolean {
     && !doc.documentElement.classList.contains('in-native-webview');
 }
 
+// The kit's own threshold for "a keyboard is up" (native.js KB_MIN_INSET):
+// no real keyboard is shorter, and URL-bar transients are.
+const KEYBOARD_MIN = 50;
+
+// Input types that never raise a keyboard.
+const NO_KEYBOARD = /^(button|checkbox|radio|range|color|file|submit|reset|image|hidden)$/i;
+
+/**
+ * #2823: could a keyboard be up at all? Only while something that takes text
+ * has focus. An iframe counts, because an app's field is focused inside it
+ * and this document cannot see which. Without this, a visual viewport iOS
+ * left short after the keyboard went read as "keyboard still up" for good,
+ * and the pan it left behind was never put back.
+ */
+export function textFocused(doc: Document): boolean {
+  const el = doc.activeElement as (HTMLElement & { type?: string }) | null;
+  if (!el || el === doc.body || el === doc.documentElement) return false;
+  if (el.isContentEditable) return true;
+  const tag = (el.tagName || '').toUpperCase();
+  if (tag === 'IFRAME' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  return tag === 'INPUT' && !NO_KEYBOARD.test(el.type || 'text');
+}
+
+/**
+ * How far the bounded shell has been panned, by every measure iOS keeps one
+ * in (#2823). #2771 read the root's offset and `scrollY`; iOS can also leave
+ * <body> scrolled (it is `overflow: hidden`, which stops the user, not a
+ * focus reveal) or the visual viewport sitting below the layout viewport's
+ * top. Any of them lifts the fixed tab bar off the bottom edge.
+ */
+export function panOffset(win: Window, doc: Document): number {
+  const root = (doc.scrollingElement || doc.documentElement) as HTMLElement | null;
+  return Math.max(
+    root?.scrollTop || 0,
+    doc.body?.scrollTop || 0,
+    win.scrollY || 0,
+    win.visualViewport?.offsetTop || 0,
+  );
+}
+
+/**
+ * #2771: is the bounded shell's document left panned with nothing to justify
+ * it? Installed apps and the native WebView never scroll the document —
+ * html and body are 100dvh and `overflow: hidden` — but iOS pans it anyway to
+ * reveal a focused field and does not always pan it back when the keyboard
+ * goes. The whole shell then sits shifted up: the tab bar, fixed to that
+ * viewport, rides off the bottom edge and the page's foot shows beneath it.
+ *
+ * Only on a phone-sized, top-level load that is NOT paging the document
+ * (`active` covers that), and never while a keyboard is up or the page is
+ * pinch-zoomed: those pans are the browser doing its job. A short visual
+ * viewport only counts as a keyboard while a text field has focus (#2823).
+ */
+export function strandedPan(win: Window, doc: Document, top: number): boolean {
+  if (!(top > 0) || win.self !== win.top) return false;
+  if (!win.matchMedia(MOBILE_PAGE_QUERY).matches) return false;
+  if (doc.documentElement.classList.contains('un-kb')) return false;
+  const vv = win.visualViewport;
+  if (vv) {
+    if (Math.abs(vv.scale - 1) > 0.01) return false;
+    const layout = Math.max(win.innerHeight || 0, doc.documentElement.clientHeight || 0);
+    if (layout - vv.height >= KEYBOARD_MIN && textFocused(doc)) return false;
+  }
+  return true;
+}
+
 export function createBrowserScroll(doc: Document, win: Window) {
   let active: HTMLElement | null = null;
   let lastTop = 0;
@@ -84,9 +150,19 @@ export function createBrowserScroll(doc: Document, win: Window) {
     // Notify effects which also follow the page when the offset stays at 0.
     win.dispatchEvent(new Event('usernode:page-scroll'));
   };
+  // Put a stranded pan back (#2771, #2823). `scrollTo` as well as the root's
+  // offset because iOS keeps the pan on the window, and <body> as well
+  // because a focus reveal can scroll it past its `overflow: hidden`.
+  const settle = () => {
+    if (active || !strandedPan(win, doc, panOffset(win, doc))) return;
+    root().scrollTop = 0;
+    if (doc.body && doc.body.scrollTop) doc.body.scrollTop = 0;
+    win.scrollTo?.(0, 0);
+  };
   return {
     capture,
     sync,
+    settle,
     scrollElement(el: HTMLElement | null) {
       // Callers can restore immediately after a synchronous screen render,
       // before the MutationObserver has received the visibility change.
@@ -94,7 +170,8 @@ export function createBrowserScroll(doc: Document, win: Window) {
       return el && el === active ? root() : el;
     },
     onScroll(event: Event) {
-      if (event.target === doc && active === pageScroller(doc, preferred())) capture();
+      if (event.target === doc && !active) settle();
+      else if (event.target === doc && active === pageScroller(doc, preferred())) capture();
       else if (!active && event.target === pageScroller(doc, preferred())) {
         const el = event.target as HTMLElement;
         positions.set(el.id, el.scrollTop);
@@ -116,5 +193,27 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined') {
   window.addEventListener('resize', controller.sync);
   window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)')
     .addEventListener('change', controller.sync);
+  // The keyboard closing is a visual-viewport resize, and it is the moment a
+  // pan iOS left behind stops being justified. A frame later, so the kit's
+  // own tracker has dropped `un-kb` by then. Blur covers a keyboard that
+  // closes without resizing anything this page can see.
+  const settleSoon = () => requestAnimationFrame(controller.settle);
+  window.visualViewport?.addEventListener('resize', settleSoon, { passive: true });
+  document.addEventListener('focusout', () => setTimeout(controller.settle, 350));
+  // #2823: the pan does not always arrive with one of the three moments
+  // above. A visual-viewport pan fires no document scroll; a rubber-band
+  // drag ends in a touchend; and an installed app resumed from the
+  // background, rotated, or moved to another tab is a fresh chance to find
+  // the bar off the edge. Each is a few reads when nothing is stranded.
+  const settleLater = () => setTimeout(controller.settle, 400);
+  window.visualViewport?.addEventListener('scroll', settleSoon, { passive: true });
+  document.addEventListener('touchend', settleLater, { passive: true });
+  window.addEventListener('pageshow', settleSoon);
+  window.addEventListener('orientationchange', settleLater);
+  window.addEventListener('hashchange', settleSoon);
+  window.addEventListener('popstate', settleSoon);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') settleSoon();
+  });
   controller.sync();
 }

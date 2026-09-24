@@ -61,19 +61,22 @@ function clip(value, max = MAX_DIAGNOSTIC_CHARS) {
 }
 
 function safeDiagnosticText(value, max = MAX_DIAGNOSTIC_CHARS) {
-  return clip(value, max)
-    .replace(/([?&]token=)[^&\s"'<>)]*/gi, '$1[redacted]')
+  const redacted = String(value == null ? '' : value)
+    .replace(/(\b(?:token|access_token|auth|authorization|password|secret|api[_-]?key|code|session)\s*=\s*)[^&\s"'<>)]*/gi, '$1[redacted]')
     .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
-    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[redacted]');
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
+    .replace(/\b(?:sk-(?:proj-)?|ghp_|gho_|github_pat_)[A-Za-z0-9_-]{16,}\b/gi, '[redacted]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]');
+  return clip(redacted, max);
 }
 
 function boundedFailureDetail(value, depth = 0) {
   if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
   if (typeof value === 'string') return safeDiagnosticText(value, 200);
-  if (depth >= 3) return '[nested detail omitted]';
-  if (Array.isArray(value)) return value.slice(0, 3).map((item) => boundedFailureDetail(item, depth + 1));
+  if (depth >= 6) return '[nested detail omitted]';
+  if (Array.isArray(value)) return value.slice(0, 12).map((item) => boundedFailureDetail(item, depth + 1));
   if (typeof value !== 'object') return null;
-  return Object.fromEntries(Object.entries(value).slice(0, 16)
+  return Object.fromEntries(Object.entries(value).slice(0, 24)
     .filter(([key]) => !/^(?:token|authorization|cookie|password|secret|payload|data)$/i.test(key))
     .map(([key, item]) => [key, boundedFailureDetail(item, depth + 1)]));
 }
@@ -118,6 +121,18 @@ function validateInput(raw) {
   const plan = planContract.parseReplayPlan(raw.plan);
   const pass = Number(raw.pass);
   if (![1, 2].includes(pass)) throw new ReplayFailure('invalid_pass', 'Replay pass must be 1 or 2.');
+  let selection = null;
+  if (raw.selection != null) {
+    if (!raw.selection || typeof raw.selection !== 'object'
+        || Object.keys(raw.selection).sort().join(',') !== 'storyId,viewport') {
+      throw new ReplayFailure('invalid_selection', 'Replay selection must name one declared story and viewport.');
+    }
+    const story = plan.stories.find((item) => item.id === raw.selection.storyId);
+    if (!story?.viewports.some((item) => item.name === raw.selection.viewport)) {
+      throw new ReplayFailure('invalid_selection', 'Replay selection must name one declared story and viewport.');
+    }
+    selection = { storyId: raw.selection.storyId, viewport: raw.selection.viewport };
+  }
   const baseOrigin = parseOrigin(raw.origins?.base, 'Base');
   const headOrigin = parseOrigin(raw.origins?.head, 'Head');
   if (baseOrigin === headOrigin) throw new ReplayFailure('identical_origins', 'Base and head origins must be distinct.');
@@ -144,6 +159,7 @@ function validateInput(raw) {
     publishArtifacts: raw.publishArtifacts === true && pass === 2,
     plan,
     planHash: planContract.planHash(plan),
+    selection,
     origins: { base: baseOrigin, head: headOrigin },
     cookies: raw.cookies && typeof raw.cookies === 'object' ? raw.cookies : {},
     authTokens,
@@ -164,10 +180,13 @@ function validateInput(raw) {
   };
 }
 
-function locatorFor(page, spec) {
+function locatorFor(page, spec, { includeHidden = false } = {}) {
   switch (spec.by) {
     case 'testId': return page.getByTestId(spec.value);
-    case 'role': return page.getByRole(spec.role, spec.name == null ? {} : { name: spec.name, exact: spec.exact !== false });
+    case 'role': return page.getByRole(spec.role, {
+      ...(spec.name == null ? {} : { name: spec.name, exact: spec.exact !== false }),
+      ...(includeHidden ? { includeHidden: true } : {}),
+    });
     case 'label': return page.getByLabel(spec.value, { exact: spec.exact !== false });
     case 'placeholder': return page.getByPlaceholder(spec.value, { exact: spec.exact !== false });
     case 'text': return page.getByText(spec.value, { exact: spec.exact !== false });
@@ -178,8 +197,135 @@ function locatorFor(page, spec) {
 
 async function requireOne(locator, description) {
   const count = await locator.count();
-  if (count !== 1) throw new ReplayFailure('ambiguous_locator', `${description} matched ${count} elements; exactly one is required.`);
+  if (count !== 1) {
+    throw new ReplayFailure(
+      'ambiguous_locator',
+      `${description} matched ${count} elements; exactly one is required.`,
+      { matchedCount: count }
+    );
+  }
   return locator;
+}
+
+async function roleCandidateHints(page, spec) {
+  if (spec.by !== 'role' || !spec.name) return null;
+  try {
+    // A missing exact accessible name is often a stale recipe. Read only
+    // short, redacted names of controls with the requested role; never dump
+    // the DOM, input values, or the whole accessibility tree.
+    const candidates = page.getByRole(spec.role, { includeHidden: true });
+    const count = await candidates.count();
+    const sample = await Promise.all(Array.from({ length: Math.min(count, 12) }, async (_, index) => {
+      const candidate = candidates.nth(index);
+      if (typeof candidate.ariaSnapshot !== 'function') return null;
+      const [snapshot, visible] = await Promise.all([
+        candidate.ariaSnapshot({ timeout: 1000 }).catch(() => ''),
+        candidate.isVisible().catch(() => false),
+      ]);
+      const name = safeDiagnosticText(String(snapshot).split('\n')[0], 120);
+      return name ? { name, visible } : null;
+    }));
+    return { candidateCount: count, candidates: sample.filter(Boolean).slice(0, 12) };
+  } catch { return null; }
+}
+
+async function locatorSnapshot(page, spec, { includeCandidates = false } = {}) {
+  const locator = locatorFor(page, spec);
+  const attachedLocator = spec.by === 'role'
+    ? locatorFor(page, spec, { includeHidden: true })
+    : locator;
+  const matchedCount = await locator.count().catch(() => null);
+  const attachedCount = attachedLocator === locator
+    ? matchedCount
+    : await attachedLocator.count().catch(() => null);
+  let visibleCount = null;
+  if (Number.isInteger(attachedCount) && attachedCount <= 20) {
+    visibleCount = 0;
+    for (let index = 0; index < attachedCount; index++) {
+      if (await attachedLocator.nth(index).isVisible().catch(() => false)) visibleCount += 1;
+    }
+  }
+  return {
+    kind: spec.by,
+    ...(spec.by === 'role' ? { role: spec.role } : {}),
+    matchedCount,
+    attachedCount,
+    visibleCount,
+    ...(includeCandidates ? { roleHints: await roleCandidateHints(page, spec) } : {}),
+  };
+}
+
+async function resolveOne(page, spec, description, {
+  state = 'attached', timeoutMs = planContract.MAX_WAIT_MS,
+} = {}) {
+  const locator = locatorFor(page, spec);
+  try {
+    // Playwright locators are intentionally lazy and auto-wait. Counting
+    // before this wait defeats that contract: a React/auth boot that has not
+    // exposed the element yet is reported as zero matches immediately.
+    await locator.first().waitFor({ state, timeout: timeoutMs });
+  } catch (error) {
+    const snapshot = await locatorSnapshot(page, spec, { includeCandidates: true });
+    const count = snapshot.attachedCount;
+    if (!Number.isInteger(count) && !Number.isInteger(snapshot.matchedCount)) throw error;
+    if (Number.isInteger(count) && count > 1) {
+      throw new ReplayFailure(
+        'ambiguous_locator',
+        `${description} matched ${count} elements; exactly one is required.`,
+        { ...snapshot, waitState: state, timeoutMs }
+      );
+    }
+    if (count === 1) {
+      throw new ReplayFailure(
+        'locator_not_visible',
+        `${description} matched one element but it did not become ${state} within ${timeoutMs} ms.`,
+        { ...snapshot, waitState: state, timeoutMs }
+      );
+    }
+    throw new ReplayFailure(
+      'locator_not_found',
+      `${description} did not match an element within ${timeoutMs} ms.`,
+      { ...snapshot, waitState: state, timeoutMs }
+    );
+  }
+  const snapshot = await locatorSnapshot(page, spec);
+  if (snapshot.matchedCount !== 1) {
+    throw new ReplayFailure(
+      'ambiguous_locator',
+      `${description} matched ${snapshot.matchedCount} elements; exactly one is required.`,
+      { ...snapshot, waitState: state, timeoutMs }
+    );
+  }
+  return locator;
+}
+
+// A readiness wait only asks whether any matching element is visible. Keep
+// interactions and checkpoint assertions strict, but do not reject a page
+// because it has two headings or controls with the same accessible name.
+async function waitForAnyVisible(page, spec, description, timeoutMs) {
+  const locator = locatorFor(page, spec).filter({ visible: true });
+  try {
+    await locator.first().waitFor({ state: 'visible', timeout: timeoutMs });
+  } catch (error) {
+    // The element may have appeared between Playwright's timeout and this
+    // diagnostic read. A visible match satisfies the wait even in that race.
+    if (await locator.count().catch(() => 0)) return;
+    const snapshot = await locatorSnapshot(page, spec, { includeCandidates: true });
+    if (!Number.isInteger(snapshot.attachedCount)
+        && !Number.isInteger(snapshot.matchedCount)) throw error;
+    const present = Number(snapshot.attachedCount) > 0;
+    throw new ReplayFailure(
+      present ? 'locator_not_visible' : 'locator_not_found',
+      present
+        ? `${description} did not become visible within ${timeoutMs} ms.`
+        : `${description} did not match an element within ${timeoutMs} ms.`,
+      { ...snapshot, waitState: 'visible', timeoutMs }
+    );
+  }
+}
+
+async function waitForVisibleText(page, text, description, timeoutMs) {
+  return waitForAnyVisible(page, { by: 'text', value: text, exact: false }, description, timeoutMs);
 }
 
 function joinedUrl(origin, relativePath) {
@@ -206,6 +352,98 @@ function redactedUrl(value) {
     if (url.searchParams.has('token')) url.searchParams.set('token', '[redacted]');
     return url.toString();
   } catch { return clip(value, 300); }
+}
+
+function diagnosticLocation(value, origin) {
+  try {
+    const url = new URL(value);
+    if (url.origin !== origin) return { sameOrigin: false };
+    return {
+      sameOrigin: true,
+      pathname: safeDiagnosticText(url.pathname, 160),
+      hash: safeDiagnosticText(url.hash, 160),
+      queryKeys: [...new Set([...url.searchParams.keys()])]
+        .filter((key) => key.toLowerCase() !== 'token')
+        .slice(0, 20)
+        .map((key) => safeDiagnosticText(key, 80)),
+    };
+  } catch { return { sameOrigin: false }; }
+}
+
+async function failurePageState(page, context, origin, navigation = null) {
+  const url = typeof page.url === 'function' ? page.url() : '';
+  const location = diagnosticLocation(url, origin);
+  const dom = await page.evaluate(() => {
+    const visible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden'
+        && Number(style.opacity || 1) !== 0 && rect.width > 0 && rect.height > 0;
+    };
+    const landmarks = [...document.querySelectorAll(
+      'main[id], [role="main"][id], [role="dialog"][id], [id$="-screen"]'
+    )].filter(visible).map((element) => element.id)
+      .filter((id) => /^[A-Za-z0-9_-]{1,80}$/.test(id)).slice(0, 12);
+    const controls = [...document.querySelectorAll(
+      'button, a[href], input:not([type="hidden"]), [role="button"], [role="link"], [role="tab"]'
+    )].filter(visible).slice(0, 80);
+    return {
+      readyState: document.readyState,
+      bodyChildCount: document.body?.children.length ?? 0,
+      visibleLandmarkIds: landmarks,
+      visibleMainCount: [...document.querySelectorAll('main, [role="main"]')].filter(visible).length,
+      visibleDialogCount: [...document.querySelectorAll('[role="dialog"]')].filter(visible).length,
+      visibleButtonCount: [...document.querySelectorAll('button')].filter(visible).length,
+      visibleLinkCount: [...document.querySelectorAll('a[href]')].filter(visible).length,
+      visibleIds: [...document.querySelectorAll('[id]')].filter(visible)
+        .map((element) => element.id)
+        .filter((id) => /^[A-Za-z0-9_-]{1,80}$/.test(id)).slice(0, 30),
+      visibleControlIds: controls.map((element) => element.id)
+        .filter((id) => /^[A-Za-z0-9_-]{1,80}$/.test(id)).slice(0, 20),
+      visibleTestIds: [...document.querySelectorAll('[data-testid]')].filter(visible)
+        .map((element) => element.getAttribute('data-testid'))
+        .filter((id) => /^[A-Za-z0-9_-]{1,80}$/.test(id || '')).slice(0, 20),
+    };
+  }).catch(() => null);
+  const cookies = typeof context.cookies === 'function'
+    ? await context.cookies(origin).catch(() => [])
+    : [];
+  return {
+    ...location,
+    navigationStatus: Number.isInteger(navigation?.status) ? navigation.status : null,
+    readyState: dom?.readyState || null,
+    bodyChildCount: Number.isInteger(dom?.bodyChildCount) ? dom.bodyChildCount : null,
+    visibleLandmarkIds: Array.isArray(dom?.visibleLandmarkIds) ? dom.visibleLandmarkIds : [],
+    visibleMainCount: Number.isInteger(dom?.visibleMainCount) ? dom.visibleMainCount : null,
+    visibleDialogCount: Number.isInteger(dom?.visibleDialogCount) ? dom.visibleDialogCount : null,
+    visibleButtonCount: Number.isInteger(dom?.visibleButtonCount) ? dom.visibleButtonCount : null,
+    visibleLinkCount: Number.isInteger(dom?.visibleLinkCount) ? dom.visibleLinkCount : null,
+    visibleIds: Array.isArray(dom?.visibleIds) ? dom.visibleIds.slice(0, 30) : [],
+    visibleControlIds: Array.isArray(dom?.visibleControlIds) ? dom.visibleControlIds.slice(0, 20) : [],
+    visibleTestIds: Array.isArray(dom?.visibleTestIds) ? dom.visibleTestIds.slice(0, 20) : [],
+    cookieCount: cookies.length,
+    sessionCookiePresent: cookies.some((cookie) => cookie?.name === 'session'),
+  };
+}
+
+function failureBrowserDiagnostics(diagnostics) {
+  return {
+    consoleErrorCount: diagnostics.consoleErrors.length,
+    pageErrorCount: diagnostics.pageErrors.length,
+    failedRequestCount: diagnostics.failedRequests.length,
+    blockedRequestCount: diagnostics.blockedRequests.length,
+    httpErrorCount: diagnostics.httpErrors.length,
+    firstConsoleError: diagnostics.consoleErrors[0]?.message || null,
+    firstPageError: diagnostics.pageErrors[0]?.message || null,
+    firstFailedRequest: diagnostics.failedRequests[0] || null,
+    firstBlockedRequest: diagnostics.blockedRequests[0] || null,
+    firstHttpError: diagnostics.httpErrors[0] || null,
+    consoleErrors: diagnostics.consoleErrors.slice(0, 5),
+    pageErrors: diagnostics.pageErrors.slice(0, 5),
+    failedRequests: diagnostics.failedRequests.slice(0, 5),
+    blockedRequests: diagnostics.blockedRequests.slice(0, 5),
+    httpErrors: diagnostics.httpErrors.slice(0, 10),
+  };
 }
 
 function expectedFinalPath(startPath, pageUrl, origin, side = 'page', { allowDeclaredHome = false } = {}) {
@@ -259,40 +497,40 @@ async function executeAction(page, action, origin, network, authToken = '') {
       await page.goto(authorizedUrl(origin, action.path, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
       break;
     case 'click':
-      await (await requireOne(locatorFor(page, action.target), action.id)).click({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).click({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'fill':
-      await (await requireOne(locatorFor(page, action.target), action.id)).fill(action.value, { timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).fill(action.value, { timeout: planContract.MAX_WAIT_MS });
       break;
     case 'press': {
-      const target = action.target ? await requireOne(locatorFor(page, action.target), action.id) : page.keyboard;
+      const target = action.target ? await resolveOne(page, action.target, action.id) : page.keyboard;
       await target.press(action.key, { timeout: planContract.MAX_WAIT_MS });
       break;
     }
     case 'select':
-      await (await requireOne(locatorFor(page, action.target), action.id)).selectOption(action.value, { timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).selectOption(action.value, { timeout: planContract.MAX_WAIT_MS });
       break;
     case 'check':
-      await (await requireOne(locatorFor(page, action.target), action.id)).check({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).check({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'uncheck':
-      await (await requireOne(locatorFor(page, action.target), action.id)).uncheck({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).uncheck({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'hover':
-      await (await requireOne(locatorFor(page, action.target), action.id)).hover({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).hover({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'drag':
-      await (await requireOne(locatorFor(page, action.from), `${action.id}.from`))
-        .dragTo(await requireOne(locatorFor(page, action.to), `${action.id}.to`), { timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.from, `${action.id}.from`))
+        .dragTo(await resolveOne(page, action.to, `${action.id}.to`), { timeout: planContract.MAX_WAIT_MS });
       break;
     case 'clickPoint': {
-      const box = await (await requireOne(locatorFor(page, action.surface), action.id)).boundingBox();
+      const box = await (await resolveOne(page, action.surface, action.id)).boundingBox();
       if (!box || box.width <= 0 || box.height <= 0) throw new ReplayFailure('surface_not_visible', `${action.id} surface is not visible.`);
       await page.mouse.click(box.x + box.width * action.xRatio, box.y + box.height * action.yRatio);
       break;
     }
     case 'dragPoints': {
-      const box = await (await requireOne(locatorFor(page, action.surface), action.id)).boundingBox();
+      const box = await (await resolveOne(page, action.surface, action.id)).boundingBox();
       if (!box || box.width <= 0 || box.height <= 0) throw new ReplayFailure('surface_not_visible', `${action.id} surface is not visible.`);
       await page.mouse.move(box.x + box.width * action.from.xRatio, box.y + box.height * action.from.yRatio);
       await page.mouse.down();
@@ -301,14 +539,14 @@ async function executeAction(page, action, origin, network, authToken = '') {
       break;
     }
     case 'scrollIntoView':
-      await (await requireOne(locatorFor(page, action.target), action.id)).scrollIntoViewIfNeeded({ timeout: planContract.MAX_WAIT_MS });
+      await (await resolveOne(page, action.target, action.id)).scrollIntoViewIfNeeded({ timeout: planContract.MAX_WAIT_MS });
       break;
     case 'scrollBy':
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
     case 'waitFor':
-      if (action.target) await (await requireOne(locatorFor(page, action.target), action.id)).waitFor({ state: 'visible', timeout: action.timeoutMs });
-      else if (action.text) await page.getByText(action.text, { exact: true }).first().waitFor({ state: 'visible', timeout: action.timeoutMs });
+      if (action.target) await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
+      else if (action.text) await waitForVisibleText(page, action.text, action.id, action.timeoutMs);
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
       break;
@@ -358,6 +596,11 @@ async function evaluateAssertion(page, assertion, origin) {
     throw new ReplayFailure('assertion_failed', `${assertion.type} assertion failed.`, { assertion, count, actual });
   }
   return { type: assertion.type, passed: true, count, ...(actual == null ? {} : { actual }) };
+}
+
+function actionLocatorSpecs(action) {
+  return [action?.target, action?.from, action?.to, action?.surface]
+    .filter((spec) => spec && typeof spec === 'object');
 }
 
 function paddedRect(rect, viewport, padding = FOCUS_PADDING) {
@@ -464,12 +707,21 @@ async function encodeWebm(frames, { fps, targetBytes, maxBytes }) {
     let result = null;
     for (const crf of [36, 42, 48]) {
       const output = path.join(dir, `animation-${crf}.webm`);
-      await execFileAsync('ffmpeg', [
-        '-hide_banner', '-loglevel', 'error', '-y', '-framerate', String(fps),
-        '-i', path.join(dir, 'frame-%04d.png'), '-an', '-c:v', 'libvpx-vp9',
-        '-deadline', 'good', '-cpu-used', '3', '-crf', String(crf), '-b:v', '0',
-        '-pix_fmt', 'yuv420p', '-row-mt', '1', output,
-      ], { timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+      try {
+        await execFileAsync('ffmpeg', [
+          '-hide_banner', '-loglevel', 'error', '-y', '-framerate', String(fps),
+          '-i', path.join(dir, 'frame-%04d.png'), '-an', '-c:v', 'libvpx-vp9',
+          '-deadline', 'good', '-cpu-used', '3', '-crf', String(crf), '-b:v', '0',
+          '-pix_fmt', 'yuv420p', '-row-mt', '1', output,
+        ], { timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+      } catch (error) {
+        throw new ReplayFailure('animation_encode_failed', 'The evidence video encoder failed.', {
+          frameCount: capped.length, fps, crf,
+          exitCode: Number.isInteger(error.code) ? error.code : null,
+          killed: error.killed === true,
+          stderr: safeDiagnosticText(error.stderr || error.message, 300),
+        });
+      }
       result = await fsp.readFile(output);
       if (result.length <= targetBytes) break;
     }
@@ -489,7 +741,10 @@ async function installOriginFence(context, allowedOrigins, diagnostics) {
     try { origin = new URL(url).origin; } catch { origin = null; }
     if (origin && allowedOrigins.has(origin)) return route.continue();
     if (diagnostics.blockedRequests.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.blockedRequests.push({ url: clip(redactedUrl(url), 300), resourceType: request.resourceType() });
+      diagnostics.blockedRequests.push({
+        origin: safeDiagnosticText(origin || 'invalid', 120),
+        resourceType: safeDiagnosticText(request.resourceType(), 40),
+      });
     }
     return route.abort('blockedbyclient');
   });
@@ -508,6 +763,72 @@ async function addCookies(context, origin, values) {
     sameSite: ['Strict', 'Lax', 'None'].includes(cookie.sameSite) ? cookie.sameSite : 'Lax',
   })).filter((cookie) => cookie.name && cookie.value);
   if (cookies.length) await context.addCookies(cookies);
+}
+
+function sessionCookieValue(headers) {
+  for (const header of headers || []) {
+    if (String(header?.name || '').toLowerCase() !== 'set-cookie') continue;
+    const first = String(header.value || '').split(';', 1)[0];
+    const separator = first.indexOf('=');
+    if (separator < 0 || first.slice(0, separator).trim() !== 'session') continue;
+    const value = first.slice(separator + 1).trim();
+    // RFC 6265 cookie-octet, bounded before the value ever reaches
+    // Playwright. Never include the rejected value in an error.
+    if (!value || value.length > 4096
+        || !/^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value)) {
+      throw new ReplayFailure('invalid_session_cookie', 'The evidence origin returned an invalid session cookie.');
+    }
+    return value;
+  }
+  return null;
+}
+
+async function bootstrapInternalSession(context, origin, startPath, authToken, diagnostic = null) {
+  if (diagnostic) diagnostic.attempted = origin.startsWith('http:');
+  if (!origin.startsWith('http:')) return false;
+  const existing = await context.cookies(origin);
+  if (existing.some((cookie) => cookie.name === 'session')) {
+    if (diagnostic) diagnostic.cookieAlreadyPresent = true;
+    return false;
+  }
+
+  let response;
+  try {
+    // The request cannot follow a redirect to another origin. Its only job
+    // is to let a staging self-app exchange the short-lived, app-scoped JWT
+    // for a local session row before page JavaScript starts cookie-only API
+    // calls. Ordinary apps that do not set a session cookie remain on the
+    // x-usernode-token path below.
+    response = await context.request.get(authorizedUrl(origin, startPath, authToken), {
+      headers: { 'x-usernode-token': authToken },
+      failOnStatusCode: false,
+      maxRedirects: 0,
+      timeout: planContract.MAX_WAIT_MS,
+    });
+    if (diagnostic) diagnostic.responseStatus = response.status();
+    const value = sessionCookieValue(await Promise.resolve(response.headersArray()));
+    if (!value) return false;
+    try {
+      // The app deliberately emitted Secure because it runs in production
+      // mode. Evidence reaches the same private service directly over HTTP,
+      // so install the already-authenticated clone-local session with the
+      // transport bit adjusted only for this isolated browser context.
+      await context.addCookies([{
+        name: 'session', value, url: origin, httpOnly: true,
+        secure: false, sameSite: 'Lax',
+      }]);
+    } catch (_) {
+      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser could not install its private session cookie.');
+    }
+    const installed = await context.cookies(origin);
+    if (!installed.some((cookie) => cookie.name === 'session')) {
+      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser did not retain its private session cookie.');
+    }
+    if (diagnostic) diagnostic.sessionCookieInstalled = true;
+    return true;
+  } finally {
+    await response?.dispose?.().catch(() => {});
+  }
 }
 
 async function startMotionCapture(page) {
@@ -546,59 +867,125 @@ function screenshotFingerprint(result) {
 async function runSide(browser, scratchPage, input, story, viewport, side) {
   const origin = input.origins[side];
   const authToken = input.authTokens[story.persona] || '';
+  const sidePlan = story.replay[side === 'head' ? 'after' : 'before'];
   const animation = story.replay.checkpoint.animation;
   const motion = animation === 'motion';
   const recordInteraction = animation === 'steps';
-  const diagnostics = { consoleErrors: [], pageErrors: [], failedRequests: [], blockedRequests: [] };
-  const context = await browser.newContext({
-    viewport: { width: viewport.width, height: viewport.height },
-    deviceScaleFactor: input.browser.deviceScaleFactor,
-    locale: input.browser.locale,
-    timezoneId: input.browser.timezoneId,
-    colorScheme: input.browser.colorScheme,
-    reducedMotion: motion ? 'no-preference' : 'reduce',
-    serviceWorkers: 'block',
-  });
-  // A side may never fetch from or navigate to its counterpart. Keeping the
-  // origins in one input is an orchestration convenience, not a permission
-  // for base and head to observe each other.
-  const allowedOrigins = new Set([origin]);
-  await installOriginFence(context, allowedOrigins, diagnostics);
-  await addCookies(context, origin, input.cookies[side]);
-  if (!motion) {
-    await context.addInitScript(() => {
-      const style = document.createElement('style');
-      style.dataset.usernodeEvidence = '1';
-      style.textContent = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;caret-color:transparent!important}';
-      const attach = () => document.documentElement?.appendChild(style);
-      if (document.documentElement) attach(); else document.addEventListener('DOMContentLoaded', attach, { once: true });
+  const diagnostics = {
+    consoleErrors: [], pageErrors: [], failedRequests: [], blockedRequests: [], httpErrors: [],
+  };
+  const bootstrap = { attempted: false, cookieAlreadyPresent: false, sessionCookieInstalled: false, responseStatus: null };
+  const eventBase = {
+    runId: input.runId, pass: input.pass, storyId: story.id,
+    viewport: viewport.name, side,
+  };
+  const sideStartedAt = Date.now();
+  emitEvent({ type: 'side_started', ...eventBase });
+  let context;
+  let page;
+  let setupPhase = 'create_context';
+  try {
+    context = await browser.newContext({
+      viewport: { width: viewport.width, height: viewport.height },
+      deviceScaleFactor: input.browser.deviceScaleFactor,
+      locale: input.browser.locale,
+      timezoneId: input.browser.timezoneId,
+      colorScheme: input.browser.colorScheme,
+      reducedMotion: motion ? 'no-preference' : 'reduce',
+      serviceWorkers: 'block',
+      // Evidence environments are deliberately reachable only over their
+      // private in-cluster HTTP origins. A production-mode self-app answers
+      // the initial token-bearing request with a Secure session cookie, which
+      // Chromium must reject on HTTP. Forward the same app-scoped credential
+      // through the standard app request header as well, so later API requests
+      // stay authenticated even when that cookie cannot be stored. The origin
+      // fence installed below prevents this context from sending any request
+      // outside the one evidence side.
+      extraHTTPHeaders: { 'x-usernode-token': authToken },
+    });
+    // A side may never fetch from or navigate to its counterpart. Keeping the
+    // origins in one input is an orchestration convenience, not a permission
+    // for base and head to observe each other.
+    const allowedOrigins = new Set([origin]);
+    setupPhase = 'install_origin_fence';
+    await installOriginFence(context, allowedOrigins, diagnostics);
+    setupPhase = 'install_cookies';
+    await addCookies(context, origin, input.cookies[side]);
+    setupPhase = 'bootstrap_session';
+    await bootstrapInternalSession(context, origin, sidePlan.startPath, authToken, bootstrap);
+    emitEvent({ type: 'session_bootstrap', ...eventBase, ...bootstrap });
+    setupPhase = 'install_capture_style';
+    if (!motion) {
+      await context.addInitScript(() => {
+        const style = document.createElement('style');
+        style.dataset.usernodeEvidence = '1';
+        style.textContent = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;caret-color:transparent!important}';
+        const attach = () => document.documentElement?.appendChild(style);
+        if (document.documentElement) attach(); else document.addEventListener('DOMContentLoaded', attach, { once: true });
+      });
+    }
+    setupPhase = 'new_page';
+    page = await context.newPage();
+  } catch (error) {
+    emitEvent({
+      type: 'side_failed', ...eventBase, phase: setupPhase,
+      code: String(error?.code || 'replay_failed').slice(0, 64),
+    });
+    await context?.close().catch(() => {});
+    throw contextualFailure(error, {
+      storyId: story.id, viewport: viewport.name, side, phase: setupPhase, bootstrap,
     });
   }
-  const page = await context.newPage();
   const network = networkTracker(page);
   page.on('console', (message) => {
     if (message.type() === 'error' && diagnostics.consoleErrors.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.consoleErrors.push({ message: clip(message.text()), source: clip(redactedUrl(message.location()?.url || ''), 200) });
+      diagnostics.consoleErrors.push({
+        message: safeDiagnosticText(message.text()),
+        source: diagnosticLocation(message.location()?.url || '', origin),
+      });
     }
   });
   page.on('pageerror', (error) => {
-    if (diagnostics.pageErrors.length < MAX_CONSOLE_ITEMS) diagnostics.pageErrors.push({ message: clip(error.message) });
+    if (diagnostics.pageErrors.length < MAX_CONSOLE_ITEMS) {
+      diagnostics.pageErrors.push({ message: safeDiagnosticText(error.message) });
+    }
   });
   page.on('requestfailed', (request) => {
     let sameOrigin = false;
     try { sameOrigin = new URL(request.url()).origin === origin; } catch {}
     if (sameOrigin && diagnostics.failedRequests.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.failedRequests.push({ url: clip(redactedUrl(request.url()), 300), error: clip(request.failure()?.errorText || '') });
+      diagnostics.failedRequests.push({
+        location: diagnosticLocation(request.url(), origin),
+        error: safeDiagnosticText(request.failure()?.errorText || '', 120),
+      });
     }
   });
+  page.on('response', (response) => {
+    const status = response.status();
+    if (status < 400 || diagnostics.httpErrors.length >= MAX_CONSOLE_ITEMS) return;
+    const location = diagnosticLocation(response.url(), origin);
+    if (location.sameOrigin) diagnostics.httpErrors.push({ status, location });
+  });
 
-  const sidePlan = story.replay[side === 'head' ? 'after' : 'before'];
   const stages = [];
   let motionCapture = null;
+  let navigation = null;
+  let failureLocatorSpecs = [];
   let failureStage = { phase: 'navigate_start' };
   try {
-    await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
+    emitEvent({ type: 'navigation_started', ...eventBase });
+    const response = await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), {
+      waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS,
+    });
+    navigation = {
+      status: typeof response?.status === 'function' ? response.status() : null,
+    };
     await settlePage(page, { motion });
+    emitEvent({
+      type: 'navigation_completed', ...eventBase,
+      status: navigation.status,
+      location: diagnosticLocation(page.url(), origin),
+    });
     failureStage = { phase: 'capture_start' };
     stages.push({ stage: '__start__', image: await page.screenshot({ type: 'png' }) });
     failureStage = { phase: 'start_recording' };
@@ -608,10 +995,20 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     const sideDeadline = Date.now() + planContract.MAX_SIDE_MS;
     for (const action of sidePlan.actions) {
       failureStage = { phase: 'action', actionId: action.id, actionStage: action.stage, actionType: action.type };
+      failureLocatorSpecs = actionLocatorSpecs(action);
+      emitEvent({
+        type: 'action_started', ...eventBase,
+        actionId: action.id, actionStage: action.stage, actionType: action.type,
+      });
       if (Date.now() >= sideDeadline) throw new ReplayFailure('side_timeout', `${side} exceeded its ${planContract.MAX_SIDE_MS} ms budget.`);
       const durationMs = await executeAction(page, action, origin, network, authToken);
       await settlePage(page, { motion });
       actionResults.push({ id: action.id, stage: action.stage, type: action.type, durationMs, passed: true });
+      emitEvent({
+        type: 'action_completed', ...eventBase,
+        actionId: action.id, actionStage: action.stage, actionType: action.type,
+        durationMs, location: diagnosticLocation(page.url(), origin),
+      });
       if (story.replay.checkpoint.animation === 'steps') {
         stages.push({ stage: action.stage, image: await page.screenshot({ type: 'png' }) });
       }
@@ -628,11 +1025,15 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     const assertions = [];
     for (const [assertionIndex, assertion] of assertionList.entries()) {
       failureStage = { phase: 'assertion', assertionIndex, assertionType: assertion.type };
+      failureLocatorSpecs = assertion.target ? [assertion.target] : [];
+      emitEvent({ type: 'assertion_started', ...eventBase, assertionIndex, assertionType: assertion.type });
       assertions.push(await evaluateAssertion(page, assertion, origin));
+      emitEvent({ type: 'assertion_completed', ...eventBase, assertionIndex, assertionType: assertion.type });
     }
 
     failureStage = { phase: 'focus' };
     const focusSpec = story.replay.checkpoint.focus[side === 'head' ? 'after' : 'before'];
+    failureLocatorSpecs = [focusSpec];
     const focus = await requireOne(locatorFor(page, focusSpec), `${story.id} ${side} focus`);
     if (!await focus.isVisible()) throw new ReplayFailure('focus_not_visible', `${story.id} ${side} focus is not visible.`);
     const focusRect = await focus.boundingBox();
@@ -669,10 +1070,34 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     // bits between clean Chromium runs.
     result.contextHash = perceptualHash(contextPng);
     result.fingerprint = screenshotFingerprint(result);
+    emitEvent({
+      type: 'side_finished', ...eventBase,
+      durationMs: Date.now() - sideStartedAt,
+      actionCount: actionResults.length, assertionCount: assertions.length,
+      recordedFrameCount: result.recordedFrameCount,
+      location: diagnosticLocation(page.url(), origin),
+      httpErrorCount: diagnostics.httpErrors.length,
+    });
     return result;
   } catch (error) {
+    const [pageState, targetStates] = await Promise.all([
+      failurePageState(page, context, origin, navigation),
+      Promise.all(failureLocatorSpecs.slice(0, 4).map((spec) =>
+        locatorSnapshot(page, spec, { includeCandidates: true })))
+        .catch(() => []),
+    ]);
+    emitEvent({
+      type: 'side_failed', ...eventBase, ...failureStage,
+      code: String(error?.code || 'replay_failed').slice(0, 64),
+      message: safeDiagnosticText(error?.message || error, 200),
+      location: diagnosticLocation(page.url(), origin),
+    });
     throw contextualFailure(error, {
       storyId: story.id, viewport: viewport.name, side, ...failureStage,
+      pageState,
+      bootstrap,
+      targetStates,
+      browserDiagnostics: failureBrowserDiagnostics(diagnostics),
     });
   } finally {
     if (motionCapture) await motionCapture.stop().catch(() => {});
@@ -746,7 +1171,13 @@ async function buildMotionAnimation(scratchPage, base, head, crops, viewport, ch
   }
   if (!changed) {
     throw new ReplayFailure('no_visible_motion',
-      'The motion flow did not record changing visual frames; use screenshots for a static claim.');
+      'The motion flow did not record changing visual frames; use screenshots for a static claim.',
+      {
+        baseFrames: base.recordedFrameCount,
+        headFrames: head.recordedFrameCount,
+        sampledFrames: frames.length,
+        durationMs: maxAt,
+      });
   }
   return {
     data: await encodeWebm(frames, { fps: MOTION_FPS, targetBytes: MOTION_TARGET_BYTES, maxBytes: MOTION_MAX_BYTES }),
@@ -757,11 +1188,17 @@ async function buildMotionAnimation(scratchPage, base, head, crops, viewport, ch
 async function runReplay(browser, input) {
   const stories = [];
   const artifacts = [];
+  emitEvent({ type: 'scratch_context_started', runId: input.runId, pass: input.pass });
   const scratchContext = await browser.newContext({ viewport: { width: 960, height: 640 }, deviceScaleFactor: 1 });
-  const scratchPage = await scratchContext.newPage();
+  let scratchPage;
+  try { scratchPage = await scratchContext.newPage(); }
+  catch (error) { await scratchContext.close().catch(() => {}); throw error; }
+  emitEvent({ type: 'scratch_context_ready', runId: input.runId, pass: input.pass });
   try {
     for (const story of input.plan.stories) {
       for (const viewport of story.viewports) {
+        if (input.selection && (input.selection.storyId !== story.id
+            || input.selection.viewport !== viewport.name)) continue;
         emitEvent({ type: 'viewport_started', runId: input.runId, pass: input.pass, storyId: story.id, viewport: viewport.name });
         let phase = 'base';
         try {
@@ -790,6 +1227,12 @@ async function runReplay(browser, input) {
             );
             if (story.replay.checkpoint.animation !== 'none') {
               phase = 'encode_animation';
+              emitEvent({
+                type: 'animation_started', runId: input.runId, pass: input.pass,
+                storyId: story.id, viewport: viewport.name,
+                animation: story.replay.checkpoint.animation,
+                baseFrames: base.recordedFrameCount, headFrames: head.recordedFrameCount,
+              });
               const animation = story.replay.checkpoint.animation === 'motion'
                 ? await buildMotionAnimation(scratchPage, base, head, crops, viewport, story.replay.checkpoint)
                 : await buildStepsAnimation(scratchPage, base, head, viewport, story.replay.checkpoint);
@@ -798,6 +1241,12 @@ async function runReplay(browser, input) {
                 media: 'webm', contentType: 'video/webm', width: 960, height: null,
                 focusRect: { base: crops.base, head: crops.head }, stageLabels: animation.labels,
                 data: animation.data,
+              });
+              emitEvent({
+                type: 'animation_completed', runId: input.runId, pass: input.pass,
+                storyId: story.id, viewport: viewport.name,
+                animation: story.replay.checkpoint.animation,
+                bytes: animation.data?.length || 0,
               });
             }
           }
@@ -828,11 +1277,13 @@ async function main({ chromium: injectedChromium, rawInput = null } = {}) {
   const input = validateInput(rawInput || await readInput());
   const chromium = injectedChromium || require('playwright-core').chromium;
   emitEvent({ type: 'started', runId: input.runId, pass: input.pass, planHash: input.planHash });
+  emitEvent({ type: 'browser_launch_started', runId: input.runId, pass: input.pass });
   const browser = await chromium.launch({
     executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     headless: true,
     args: CHROMIUM_ARGS,
   });
+  emitEvent({ type: 'browser_launch_completed', runId: input.runId, pass: input.pass });
   try {
     const result = await runReplay(browser, input);
     for (const artifact of result.artifacts) {
@@ -856,7 +1307,7 @@ if (require.main === module) {
     emitEvent({
       type: 'result', runId: rawIdentity.runId, pass: rawIdentity.pass,
       passed: false, code: err.code || 'replay_failed',
-      message: clip(err.message || err), detail: err.detail || null,
+      message: safeDiagnosticText(err.message || err), detail: err.detail || null,
     });
     process.exitCode = 1;
   });
@@ -866,9 +1317,16 @@ module.exports = {
   ReplayFailure,
   validateInput,
   locatorFor,
+  locatorSnapshot,
+  resolveOne,
+  waitForAnyVisible,
+  waitForVisibleText,
   authorizedUrl,
   publicRelativePath,
   redactedUrl,
+  sessionCookieValue,
+  bootstrapInternalSession,
+  failurePageState,
   expectedFinalPath,
   paddedRect,
   centeredRect,

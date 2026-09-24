@@ -21,11 +21,11 @@ const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const VIEW = read('public/js/app-view.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
-const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+const PANEL = read('frontend/src/features/improve/actions.tsx');
 // The "+" menu moved out of the frame into its own row component, which the
 // Board and the Workshop render one-at-a-time — so the menu's rows are
 // rendered from there now. Same markup, same props, one level less chrome.
-const { DevActionsRow } = loadTsx('frontend/src/features/dev-board/actions-row.tsx');
+const { DevActionsRow, DevPlusMenu } = loadTsx('frontend/src/features/dev-board/actions-row.tsx');
 const BASE = {
   selfHosted: false, readOnly: false, canCollaborate: true, showsMembers: true,
   cardCls: '', cardHoverCls: '',
@@ -47,7 +47,16 @@ test('read-only viewers still get only Fork, and no + button on the platform app
   assert.deepEqual(actions(board({ readOnly: true, canCollaborate: false })), ['fork']);
   const platform = board({ selfHosted: true, readOnly: true, canCollaborate: false });
   assert.deepEqual(actions(platform), []);
-  assert.match(platform, /class="relative ml-auto hidden"><button id="dev-plus-btn"/);
+  // The wrapper is `.dev-ws-plus` now — the "+" closes the Workshop's tab
+  // strip, and app.css positions it there — and it is still hidden outright.
+  assert.match(platform, /class="dev-ws-plus hidden"><button id="dev-plus-btn"/);
+  // The same component is what the Workshop's strip renders, so the gate
+  // holds there too, not only in the Board's row.
+  const strip = renderToHtml(createElement(DevPlusMenu, {
+    ...BASE, selfHosted: true, readOnly: true, canCollaborate: false,
+  }));
+  assert.match(strip, /^<div class="dev-ws-plus hidden"><button id="dev-plus-btn"/);
+  assert.deepEqual(actions(strip), []);
 });
 
 test('hiding import leaves File an issue under the heading, so neither the heading nor the divider goes', () => {
@@ -199,14 +208,29 @@ for (const touch of [false, true]) {
   });
 }
 
-test('Improve retains one wired quick action per feature and the New change read-only gate', () => {
-  for (const [id, label, handler] of [
-    ['feedback', 'Give feedback', 'giveFeedback'],
-    ['new-session', 'New change', 'startSession'],
-  ]) {
-    assert.equal(PANEL.split(`id="improve-row-${id}"`).length - 1, 1);
-    assert.match(PANEL, new RegExp(`id="improve-row-${id}"\\s+label="${label}"\\s+onClick=\\{\\(\\) => Improve\\.${handler}\\(\\)\\}`));
-  }
+test('Improve retains its two wired quick actions, and the New change read-only gate', () => {
+  // TWO AGAIN (#2718 review). #2718 moved "Give feedback" to the mark's
+  // menu, where it led — the row somebody who is NOT a developer of this app
+  // wants, in a panel that assumes you are. True of the reader, and it cost
+  // the action its shape: a filled button that says what it DOES became the
+  // first of eight rows in a place you go to navigate. It is a button again.
+  //
+  // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
+  // ONE method, whichever surface it is on.
+  assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 1);
+  assert.match(PANEL, /id="improve-row-new-session"\s+label="New change"\s+onClick=\{\(\) => Improve\.startSession\(\)\}/);
+  assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 1,
+    'feedback is here');
+  assert.match(PANEL, /id="improve-row-feedback"\s+label="Give feedback"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  const MENU = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.equal(MENU.split('id="improve-row-feedback"').length - 1, 0,
+    'and not in two places — that id is what the outbox dot\'s writer selects');
+  assert.ok(!MENU.includes('giveFeedback'),
+    'the menu does not keep a second caller of the same method');
+  // IT LEADS, and it is the only thing in the well for a read-only viewer:
+  // it needs nothing of them — no collaborator bit, no session, no repo —
+  // while "New change" has nothing to offer.
+  assert.ok(PANEL.indexOf('id="improve-row-feedback"') < PANEL.indexOf('id="improve-row-new-session"'));
   assert.match(PANEL, /state\.readOnly \? null : \(\s*<QuickAction\s+id="improve-row-new-session"/);
   assert.doesNotMatch(VIEW, /querySelector\('\[data-plus="proposal"\]'\)/);
 });
@@ -274,11 +298,22 @@ function improveHarness(currentApp = 'demo') {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
+  // The one surface still listing these sessions. Flip `sheet.open` in a
+  // test that needs the reload gate open; it is the notifications sheet's
+  // flag, not the Improve panel's — that panel retired (#2718 review).
+  const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor() {} },
-      '../../lib/kit-surface': { adoptKitSurface: () => null },
-      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
+      // Improve panel's root through lib/kit-surface and swept the other
+      // sheets through lib/sheet-controller; the panel retired, `open()`
+      // forwards to the app-context sheet, and both stubs went with it. What
+      // it does import is the notifications sheet's own open flag — the one
+      // surface still listing these sessions, and the gate on reloading them.
+      '../notifications/notifications-sheet-store.js': {
+        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
+      },
       './improve-store.js': { improveStore: store },
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
@@ -290,7 +325,7 @@ function improveHarness(currentApp = 'demo') {
   let navigation;
   const withApp = sandbox.Improve._withApp;
   sandbox.Improve._withApp = (...args) => (navigation = withApp(...args));
-  return { Improve: sandbox.Improve, App: sandbox.App, calls, get navigation() { return navigation; } };
+  return { Improve: sandbox.Improve, App: sandbox.App, sandbox, calls, get navigation() { return navigation; } };
 }
 
 test('Give feedback still opens the shared dialog for the current app', () => {
@@ -299,29 +334,24 @@ test('Give feedback still opens the shared dialog for the current app', () => {
   assert.deepEqual(calls, [['close'], ['feedback', true]]);
 });
 
+// #2770 REVERSED THE ROUTE: New change used to open the app's Workshop and
+// then hop to the unsent-change screen through AppView.createProposal, so a
+// phone showed the Workshop tab first and back led to the board. A change is
+// an agent conversation now, so it goes STRAIGHT to /dev/sessions/new (which
+// lights Messages) with Messages recorded as where it hangs off.
 for (const currentApp of ['demo', 'other']) {
-  test(`New change starts one session on the target app from ${currentApp}`, async () => {
+  test(`New change goes straight to the unsent change on the target app from ${currentApp}, off Messages`, async () => {
     const h = improveHarness(currentApp);
     const { Improve, calls } = h;
     Improve.startSession();
     await h.navigation;
     assert.deepEqual(calls, [
       ['close'],
-      currentApp === 'demo' ? ['switch', 'dev', null, 'forum'] : ['navigate', 'demo', 'dev', null, 'forum'],
-      ['new-change', 'demo'],
-    ]);
+      currentApp === 'demo' ? ['switch', 'dev', 'new', 'sessions'] : ['navigate', 'demo', 'dev', 'new', 'sessions'],
+    ], 'no board on the way, and nothing is created by the click (#2241)');
+    assert.equal(Improve._nextSessionOrigin, '#messages',
+      'back from the new change goes up to Messages');
+    assert.equal(h.sandbox.AppView._proposalHint, true,
+      'the one-shot hint createProposal set on this same path still shows');
   });
 }
-
-test('New change does not create a session if the viewer navigates away first', async () => {
-  const h = improveHarness();
-  const { Improve, App, calls } = h;
-  let finishRoute;
-  App.switchTab = () => new Promise((resolve) => { finishRoute = resolve; });
-  Improve.startSession();
-  assert.deepEqual(calls, [['close']]);
-  App.currentApp = 'other';
-  finishRoute();
-  await h.navigation;
-  assert.deepEqual(calls, [['close']]);
-});

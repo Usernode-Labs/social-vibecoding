@@ -455,8 +455,9 @@ test('bytesEqual compares whole bodies', () => {
 });
 
 test('a stale API answer that turns out to be wrong notifies the page', () => {
-  const api = SW_SRC.slice(SW_SRC.indexOf('async function networkFirstApi('));
-  const body = api.slice(0, 2600);
+  // The whole strategy, bounded by its neighbour rather than a character
+  // count that a new guard line would push matchCache past.
+  const body = strategyBody('networkFirstApi');
   // The "did we serve stale?" flag is set inside matchCache, which resolves
   // before raceNetworkAndCache returns. Reading the returned `fromCache`
   // instead would leave a window in which a just-missed network response
@@ -580,7 +581,7 @@ test('serving a stale boot read is only safe because the page is told', () => {
   // App._onApiUpdated re-running the visible screen's loader. If either
   // goes, the fast lane must go with it.
   const body = strategyBody('networkFirstApi');
-  assert.match(body, /const timeoutMs = laned \? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS/,
+  assert.match(body, /const timeoutMs = [\s\S]*?laned \? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;/,
     'the deadline is chosen per request');
   assert.match(body, /notifyClients\(\{ type: 'api-updated'/,
     'a late answer that disagrees is announced');
@@ -620,6 +621,30 @@ test('a correction does not answer itself from the cache it is correcting', () =
   assert.match(body, /if \(laned\) \{[\s\S]*?correcting\.add\(event\.request\.url\)/,
     'and set only by a LANE serve — a slow answer on the 1s deadline is not a loop');
   assert.match(body, /correcting\.size >= CORRECTING_MAX/, 'and the set is bounded');
+});
+
+test('a slow endpoint that differs every time is re-pulled from the network, not raced again', () => {
+  // The loop the lane guard does not cover: an answer that loses the
+  // ORDINARY deadline and differs on every request. The Workshop's /promoted
+  // list carries each running check's live progress, so under load every
+  // board re-pull was served stale, corrected, and re-pulled again — about
+  // nine requests a second per visible tab, until Chrome refused new ones
+  // (net::ERR_INSUFFICIENT_RESOURCES). A time-based cooldown is the wrong
+  // cure: a second tab booting inside it would keep a stale screen with no
+  // correction at all.
+  assert.match(SW_SRC, /const awaitingNetwork = new Set\(\);/);
+  assert.match(SW_SRC, /const CORRECTION_WAIT_MS = \d+;/);
+  const body = strategyBody('networkFirstApi');
+  assert.match(body, /const settling = awaitingNetwork\.delete\(event\.request\.url\);/,
+    'the mark is consumed when the deadline is chosen');
+  assert.match(body, /const timeoutMs = settling \? CORRECTION_WAIT_MS/,
+    'and that request waits for the network instead of racing the cache');
+  assert.match(body, /&& !settling\s*&& bootLaneApplies/, 'a settling request is never laned');
+  assert.match(body, /\} else \{[\s\S]*?awaitingNetwork\.add\(event\.request\.url\)/,
+    'set by a correction on the ordinary deadline, the case the lane guard skips');
+  assert.match(body, /awaitingNetwork\.size >= CORRECTING_MAX/, 'and the set is bounded');
+  assert.ok(!/lastCorrectionAt|CORRECTION_COOLDOWN_MS/.test(SW_SRC),
+    'no time-based cooldown: it would strand a second tab on stale data');
 });
 
 test('a full API cache evicts ordinary entries before a screen\'s standing state', async () => {
@@ -833,4 +858,26 @@ test('the board does not wait on a token it never uses', () => {
   // iframe token-less.
   assert.match(app,
     /AppView\.open\(slug, \{ needsToken: !\(tab && initialRoute\.tab === 'dev'\) \}\)/);
+});
+
+test('a refresh of a board already on screen tells the worker it is not a boot', () => {
+  // The boot lane answers a boot read from cache on a zero deadline and
+  // corrects it later. Only pull-to-refresh used to say "this is a refresh",
+  // so a correction's own re-pull and every live board refresh (a session or
+  // checks event over the WS, the 20s checks poll) were laned too: served
+  // stale, found different, corrected, re-pulled — the Workshop's /promoted
+  // list carries live check progress, so under load that never settled and
+  // each visible tab re-pulled its board about once a second until Chrome
+  // refused new requests (net::ERR_INSUFFICIENT_RESOURCES).
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const view = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  const refreshActive = app.slice(app.indexOf('  refreshActiveScreen() {'));
+  assert.match(refreshActive.slice(0, 1200),
+    /if \(document\.hidden\) return;[\s\S]*?App\._announceRefreshIntent\(\);[\s\S]*?const visible =/,
+    'a correction re-pull announces refresh intent before any loader runs');
+  const refreshDev = view.slice(view.indexOf('  refreshDevData(kind) {'));
+  assert.match(refreshDev.slice(0, 800), /App\._announceRefreshIntent\?\.\(\);/,
+    'every live board refresh announces refresh intent');
+  // And the worker honours it: an announced refresh is never laned.
+  assert.match(SW_SRC, /function bootLaneApplies\(url, selfOrigin, now, refreshUntil\) \{\s*if \(refreshUntil && now < refreshUntil\) return false;/);
 });

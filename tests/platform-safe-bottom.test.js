@@ -81,20 +81,45 @@ test('the token is defined on :root so screens OUTSIDE #app-view get it', () => 
 
 // ── 2. The utilities ─────────────────────────────────────────────────
 
+// ── What #2718 changed in these two, and what it did not ────────────
+//
+// The tab bar is `position: fixed` at the bottom of the screen, so a surface
+// that used to end at the viewport's edge now ends at the bar's top edge on
+// every route the bar is up. Both utilities therefore clear
+// `max(--platform-tabs-h, --platform-safe-bottom)` rather than the inset
+// alone.
+//
+// `max()` AND NOT A SUM, which is the whole of why this is still one
+// assertion and not two: the bar is fused to the bottom edge and spends the
+// home-indicator inset itself, as its own lower padding, so
+// `--platform-tabs-h` is the bar's FULL outer height. Adding the inset on top
+// would reserve the strip twice — the #4149 bug, which `--ws-bar`'s comment
+// in app.css documents from the other side. Taking the larger of the two
+// reserves each exactly once, in both states.
+//
+// EVERYTHING THESE TESTS ORIGINALLY PINNED STILL HOLDS, and is still
+// asserted: the inset is named through the token and never a second `env()`,
+// `!important` survives (app.css loses the cascade to tailwind.css without
+// it), and the composer keeps its own 0.5rem base gap rather than having it
+// replaced. With no tab bar on screen `--platform-tabs-h` is 0px and both
+// declarations compute to exactly what they were.
+
+const CLEARANCE = /max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)/;
+
 test('.platform-safe-scroll pads a scroller by the bottom inset', () => {
-  const m = /\.platform-safe-scroll\s*\{([^}]*)\}/.exec(APP_CSS);
+  const m = /\.platform-safe-scroll\s*\{([\s\S]*?)\}/.exec(APP_CSS);
   assert.ok(m, 'app.css must define .platform-safe-scroll');
-  assert.match(m[1], /padding-bottom:\s*var\(--platform-safe-bottom\)\s*!important/,
+  assert.match(m[1], new RegExp(`padding-bottom:\\s*${CLEARANCE.source}\\s*!important`),
     'block-end padding on a scroller is part of its scrollable overflow — '
     + 'that is what makes the last row reachable while the background still '
     + 'paints through the strip');
 });
 
 test('.platform-safe-bar adds the inset to a bar\'s own p-2 gap', () => {
-  const m = /\.platform-safe-bar\s*\{([^}]*)\}/.exec(APP_CSS);
+  const m = /\.platform-safe-bar\s*\{([\s\S]*?)\}/.exec(APP_CSS);
   assert.ok(m, 'app.css must define .platform-safe-bar');
-  assert.match(m[1], /padding-bottom:\s*calc\(0\.5rem \+ var\(--platform-safe-bottom\)\)\s*!important/,
-    'the composer keeps its 8px base gap and the inset is added BELOW it — '
+  assert.match(m[1], new RegExp(`padding-bottom:\\s*calc\\(0\\.5rem \\+ ${CLEARANCE.source}\\)\\s*!important`),
+    'the composer keeps its 8px base gap and the clearance is added BELOW it — '
     + "unlike the kit's .un-safe-bottom, which would replace the gap");
 });
 
@@ -240,10 +265,17 @@ test('Messages insets both of its independent scrollers and its composer', () =>
 test('#home-screen reads the token instead of a second env() of its own', () => {
   // Home already got this right via .home-body-fill; it just had its own
   // bare env(). One source of truth.
-  const m = /\.home-body-fill\s*\{([^}]*)\}/.exec(APP_CSS);
+  const m = /\.home-body-fill\s*\{([\s\S]*?)\}/.exec(APP_CSS);
   assert.ok(m, '.home-body-fill is missing');
-  assert.match(m[1], /padding-bottom:\s*var\(--platform-safe-bottom\)/,
+  assert.match(m[1], CLEARANCE,
     '.home-body-fill must resolve through the token');
+  // #home-screen is the one screen root with no `.platform-safe-scroll`, so
+  // this is also where it clears the tab bar — and it matters more here than
+  // anywhere else, because Home's trailing sections are BOTTOM-ANCHORED to
+  // this box: under-reserving parks Create and Challenges behind the bar
+  // rather than merely cropping a last card.
+  assert.match(m[1], /--platform-tabs-h/,
+    '.home-body-fill must clear #platform-tabs too — nothing else on Home does');
 });
 
 test('no bare env(safe-area-inset-bottom) survives in app.css', () => {

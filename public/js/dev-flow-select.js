@@ -389,15 +389,24 @@
 
     // The server counts the user's connectors across every Claude and
     // ChatGPT account, so a non-zero count says nothing about the ONE account
-    // the paste is going to — hence the per-account caveat, with the same
-    // link the zero-connector note on the hand-off step carries.
+    // the paste is going to — hence the per-account caveat.
+    //
+    // #2706: the steps it offers are the ones on THIS page now. It used to
+    // be an anchor to Settings → Connectors; a reader who already has a
+    // connector and is adding a second is the case that sent people off the
+    // screen for six lines they could have read here. A button, not an
+    // anchor, because it opens a card rather than navigating — and it
+    // carries a data-flow-action, so the card's existing delegated handler
+    // picks it up with no new wiring. Settings is still one tap away, from
+    // the card the button opens.
     var connectors = s.status.connectors && s.status.connectors.count
       ? '<div class="dc-flow-card-hint">You already have ' + escapeHtml(String(s.status.connectors.count))
         + ' Claude / ChatGPT connector' + (s.status.connectors.count === 1 ? '' : 's')
         + ' connected. You can also just ask it to pick this task up.'
         + ' A connector belongs to the ' + escapeHtml(connectorProduct(agent))
-        + ' account it was added in, so pasting into a different account needs its own:'
-        + ' <a href="#settings/connectors">Settings → Connectors</a> has the steps.</div>'
+        + ' account it was added in, so pasting into a different account needs its own: '
+        + '<button type="button" class="dc-flow-hint-link" data-flow-action="link-connector">'
+        + 'show the steps</button>.</div>'
       : '';
 
     return ''
@@ -410,7 +419,7 @@
       + order
       + connectors
       + '<div class="dc-flow-actions dc-flow-actions-footer">'
-      + actionHtml({ action: 'cancel', label: 'Build on Homeroom instead' }, !!s.busy)
+      + actionHtml({ action: 'cancel', label: 'Build on the Homeroom platform instead' }, !!s.busy)
       + '</div>'
       + '</div>';
   }

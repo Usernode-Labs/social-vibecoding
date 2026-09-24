@@ -209,11 +209,7 @@ function publicProfileRoutes(config) {
     }
   );
 
-  router.post(
-    '/api/profiles/:username/report',
-    requireUser,
-    profileReportLimiter,
-    async (req, res) => {
+  const reportAccount = async (req, res) => {
       res.set('Cache-Control', NO_STORE);
       const reason = typeof req.body?.reason === 'string' ? req.body.reason : '';
       if (!REPORT_REASONS.has(reason)) {
@@ -236,11 +232,7 @@ function publicProfileRoutes(config) {
         // report could otherwise be inserted immediately after takedown and
         // remain pending forever. Both paths now lock this user row.
         const { rows } = await client.query(
-          `SELECT id FROM users
-            WHERE username = $1
-              AND profile_published = TRUE
-              AND profile_disabled_at IS NULL
-            FOR UPDATE`,
+          `SELECT id FROM users WHERE username = $1 FOR UPDATE`,
           [username]
         );
         if (rows.length) {
@@ -255,7 +247,8 @@ function publicProfileRoutes(config) {
           );
         }
         await client.query('COMMIT');
-        // Generic for missing, unpublished, disabled and duplicate targets.
+        // Generic for missing and duplicate targets. Account reporting does
+        // not depend on whether the account has published a public profile.
         return res.status(202).json({ ok: true });
       } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
@@ -266,6 +259,34 @@ function publicProfileRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       } finally {
         if (client) client.release();
+      }
+    };
+  router.post('/api/profiles/:username/report', requireUser, profileReportLimiter, reportAccount);
+  router.post('/api/users/:username/report', requireUser, profileReportLimiter, reportAccount);
+
+  router.post(
+    '/api/admin/profile-reports/:id/resolve',
+    adminMiddleware,
+    requireAdminWrite,
+    async (req, res) => {
+      res.set('Cache-Control', NO_STORE);
+      const id = Number(req.params.id);
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid report id' });
+      }
+      try {
+        const { rows } = await pool.query(
+          `UPDATE profile_reports
+              SET status = 'resolved', resolved_at = NOW(), resolved_by = $1
+            WHERE id = $2 AND status = 'pending'
+            RETURNING id, status`,
+          [req.user.id, id]
+        );
+        return rows.length ? res.json({ report: rows[0] })
+          : res.status(404).json({ error: 'Pending report not found' });
+      } catch (err) {
+        log.error('profiles', 'User report resolution failed', { reportId: id, message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
       }
     }
   );

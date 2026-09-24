@@ -9,7 +9,7 @@
 // Two things are pinned here, and the second is the one that keeps this true
 // next year:
 //
-//   1. Every kind is framed — wordmark, card, footer.
+//   1. Every kind is framed — logo, card, footer.
 //   2. The frame is applied in ONE place. Templates return fragments and
 //      `buildMessage` wraps them, so a seventh template cannot ship unbranded
 //      by copying the wrong neighbour, and no mail can be wrapped twice.
@@ -44,7 +44,8 @@ test('every kind is framed, and framed exactly once', () => {
   for (const kind of templates.KINDS) {
     const { html } = templates.buildMessage(kind, PAYLOAD);
     assert.equal((html.match(/<!doctype html>/gi) || []).length, 1, `${kind}: one document`);
-    assert.match(html, />Homeroom<\/div>/, `${kind}: carries the wordmark`);
+    assert.match(html, /<img\s+src="[^"]*\/brand\/homeroom-logotype-black\.png"[^>]*alt="Homeroom"/,
+      `${kind}: carries the logo`);
     assert.match(html, /Homeroom<br>You are receiving this because/, `${kind}: carries the footer`);
     assert.match(html, /activity on your account or your place on the waitlist/,
       `${kind}: says why it arrived`);
@@ -77,13 +78,23 @@ test('KINDS is derived from the templates, so the two cannot drift', () => {
   }
 });
 
-test('no remote image, no <style> block, no class attributes', () => {
-  // A remote <img> is a tracking pixel to every mail client and arrives
-  // blocked; <style> and classes are stripped by Gmail's clipper and Outlook.
-  // The identity has to be type and inline styles or it is not identity.
+test('the logo is same-origin, not a third party, and there is still no <style>/class (#2673)', () => {
+  // #2673 asks for an actual logo image, reversing #1555's "type only"
+  // stance. What #1555 still gets right: the risk of a REMOTE image was
+  // that it names a third party for a mail client's warning to be right
+  // about. Hosting the asset on the platform's own origin (the same
+  // unauthenticated /brand/ tier /icons/ and /illustrations/ already use)
+  // removes that risk without going back to a text-only wordmark.
+  // <style> and classes are still stripped by Gmail's clipper and Outlook,
+  // so those stay banned.
   for (const kind of templates.KINDS) {
     const { html } = templates.buildMessage(kind, PAYLOAD);
-    assert.doesNotMatch(html, /<img\b/i, `${kind}: no image`);
+    const imgTags = html.match(/<img\b[^>]*>/gi) || [];
+    assert.equal(imgTags.length, 1, `${kind}: exactly one image, the logo`);
+    assert.match(imgTags[0], /src="https:\/\/[^"/]+\/brand\/homeroom-logotype-black\.png"/,
+      `${kind}: the logo is same-origin, absolute, and never a third-party host`);
+    assert.doesNotMatch(imgTags[0], /src="(?!https:\/\/[^"/]+\/brand\/)/,
+      `${kind}: no other image host sneaks in`);
     assert.doesNotMatch(html, /<style\b/i, `${kind}: no style block`);
     assert.doesNotMatch(html, /\sclass=/i, `${kind}: no classes`);
   }

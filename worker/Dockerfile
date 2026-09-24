@@ -135,7 +135,9 @@ ARG PLAYWRIGHT_MCP_VERSION=0.0.41
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && cd /usr/local/lib/node_modules/@playwright/mcp \
-  && npx playwright install --with-deps chromium
+  && npx playwright install --with-deps chromium \
+  && command -v mcp-server-playwright \
+  && mcp-server-playwright --version
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
@@ -144,8 +146,14 @@ COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
 COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
 COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js
+COPY evidence-browser-observer.js /usr/local/bin/evidence-browser-observer.js
 COPY evidence-browser-bootstrap.js /usr/local/bin/evidence-browser-bootstrap.js
 COPY write-evidence-mcp-config.js /usr/local/bin/write-evidence-mcp-config.js
+# #2779: the coding agent's read-only Homeroom tools. The config carries no
+# secret: the bridge reads its per-turn grant from the environment.
+COPY homeroom-read-mcp.js /usr/local/bin/homeroom-read-mcp.js
+COPY homeroom-mcp.json /usr/local/share/usernode/homeroom-mcp.json
+COPY verify-evidence-browser-mcp.js /usr/local/bin/verify-evidence-browser-mcp.js
 COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
 COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # usernode-push is the worker's only path to writing anything back to
@@ -203,8 +211,10 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/evidence-mcp.js \
               /usr/local/bin/build-evidence-mcp.js \
               /usr/local/bin/evidence-origin-proxy.js \
+              /usr/local/bin/evidence-browser-observer.js \
               /usr/local/bin/evidence-browser-bootstrap.js \
               /usr/local/bin/write-evidence-mcp-config.js \
+              /usr/local/bin/homeroom-read-mcp.js \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \
@@ -218,13 +228,18 @@ USER node
 WORKDIR /home/node/workspace
 
 # Build-time smoke test: launch the MCP's bundled Chromium headless (as
-# node, same channel + SwiftShader flags worker-run.sh seeds) and close
+# node, same channel + sandbox setting + SwiftShader flags worker-run.sh seeds) and close
 # it. A future MCP pin bump that reintroduces a channel/revision mismatch
 # — the failure mode behind #688 — fails the image build loudly here,
 # instead of silently degrading every build turn to "skipped the
 # screenshot check".
 RUN cd /usr/local/lib/node_modules/@playwright/mcp \
-  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})"
+  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})"
+
+# Validate the actual evidence MCP config against the installed package.
+# This catches a missing/renamed command, rejected CLI flags, or failed
+# Chromium startup through the actual MCP tool before deploy.
+RUN node /usr/local/bin/verify-evidence-browser-mcp.js
 
 # The worker is "warm-by-default": MODE=warm clones the repo + restores
 # CC config + sleeps forever, and the host drives per-turn work via

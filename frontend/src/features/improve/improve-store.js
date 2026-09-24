@@ -40,8 +40,9 @@ import { createStore } from '../../lib/plain-store.js';
  * block in app.js's `restoreFromHash`, which also applies it. So "go to the
  * board" is not a fixed address, and the two places that answer it have to
  * agree: `Improve._routeHref` (what a session captures as its origin) and
- * `appRouteUpHref` in ../header/platform-header.tsx (where the back arrow
- * points from a topic or the general chat). One expression, imported by both.
+ * `topicBackHref` below (where a topic's back control points: the header's
+ * arrow until #2916, the in-pane "‹ Workshop" chip since). One expression,
+ * used by both.
  *
  * Anything that is not 'kanban' is the Workshop, matching
  * `AppView._getViewMode()`'s own terminal fallback.
@@ -52,6 +53,32 @@ import { createStore } from '../../lib/plain-store.js';
  */
 export function boardHref(slug, boardView) {
   return `#app/${slug}/${boardView === 'kanban' ? 'board' : 'workshop'}`;
+}
+
+/**
+ * Where a Workshop TOPIC's back control goes, or null off a topic route.
+ *
+ * A topic is an issue, a proposal, a governance vote or a shared session
+ * opened full-screen from the Workshop (`#app/<slug>/dev/{issues|proposals|
+ * governance|shared}/<id>`, subTab 'topic'). It is still the Workshop's
+ * content, so its level up is the board it was opened from, in the layout
+ * that was on screen: `boardHref`.
+ *
+ * #2916 MOVED THAT CONTROL INTO THE PANE. It was the header's chevron; it is
+ * the "‹ Workshop" chip at the top of the topic now
+ * (../dev-board/topic/topic-back.tsx), and the header draws no back control
+ * on these routes (../header/platform-header.tsx). Both read THIS function,
+ * so the chip showing and the bar's arrow hiding are one fact rather than two
+ * call sites that have to agree: a topic page has exactly one back control.
+ *
+ * Dev SESSIONS are not topics (subTab 'sessions'). A change is an agent
+ * conversation, a thread of Messages, and keeps the header's arrow (#2770).
+ *
+ * @param {{ slug: string|null, tab: string|null, subTab: string|null, boardView: string }} route
+ * @returns {string|null}
+ */
+export function topicBackHref({ slug, tab, subTab, boardView }) {
+  return slug && tab === 'dev' && subTab === 'topic' ? boardHref(slug, boardView) : null;
 }
 
 /**
@@ -94,12 +121,11 @@ export function boardHref(slug, boardView) {
 
 /**
  * @typedef {object} ImproveState
- * @property {boolean} open
- * @property {boolean} adopted
  * @property {'app'|'platform'|null} target
  * @property {string|null} slug
  * @property {string} name
  * @property {boolean} selfHosted
+ * @property {boolean} restricted
  * @property {string|null} repoUrl
  * @property {string|null} iconUrl
  * @property {string|null} iconEmoji
@@ -115,7 +141,14 @@ export function boardHref(slug, boardView) {
  * @property {boolean} loadingSessions
  * @property {boolean} sessionsLoaded
  * @property {boolean} working
- * @property {'idle'|'deploying'|'stale'} versionState
+ * @property {'idle'|'deploying'|'downloading'|'ready'|'failed'} versionState
+ *   Every value Improve.setVersionState() can publish. It read
+ *   `'idle'|'deploying'|'stale'` until #2718, which is the vocabulary from
+ *   BEFORE that method split 'stale' into downloading / ready / failed — the
+ *   three states the panel has branched on ever since, and which this typedef
+ *   had never caught up with. Nothing changed about the values; only the
+ *   annotation, which had been quietly wrong for as long as a consumer
+ *   happened to read the store in a way that widened it to `string`.
  * @property {boolean} appUpdateReady
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
  * @property {'workshop'|'kanban'} boardView
@@ -127,19 +160,20 @@ export function boardHref(slug, boardView) {
 
 /** @type {ImproveState} */
 const INITIAL = {
-  /** Whether the panel is presented. `hidden` on the root is derived from it. */
-  open: false,
-  /**
-   * Whether the presentation is a KIT sheet (touch) rather than the CSS
-   * slide-over. The kit brings its own backdrop, so #improve-overlay only
-   * raises when this is false — see ./improve-controller.js.
+  /*
+   * `open` AND `adopted` USED TO LEAD THIS LIST, and they retired with the
+   * surface they described (#2718 review). They were the Improve panel's
+   * presentation — is it up, and is it up as a KIT sheet — and the panel is
+   * gone: its two actions, its build notice and its view strip are rows of
+   * the app-context sheet, whose own store holds those two flags for the one
+   * surface that has them. Left here they would have been read by
+   * `Improve.toggle()` and `Improve.dismissForNav()` and written by nobody.
    */
-  adopted: false,
   /**
-   * What the panel is ABOUT.
+   * What Improve is ABOUT.
    *
-   * `null` means there is nothing improvable on screen and the header button is
-   * hidden; the panel can never be opened in that state.
+   * `null` means there is nothing improvable on screen, so the controls that
+   * act on it have no subject.
    */
   target: null,
   /**
@@ -172,6 +206,15 @@ const INITIAL = {
   name: '',
   /** True when the target is the platform's own self-hosted row. */
   selfHosted: false,
+  /**
+   * The target is Homeroom, for a viewer who is NOT served its self-hosted
+   * row (SELF_APP_PUBLIC_VOTING off, not an admin). The platform they are
+   * standing in is still the menu's subject — feedback on it and About it
+   * work for everyone — but its workshop and discussion answer 404, so the
+   * rows that go there are hidden rather than left leading nowhere.
+   * Published by ../app-context/platform-target.js through Home.
+   */
+  restricted: false,
   /** `appData.repo_url`, or null — gates the "View on GitHub" row. */
   repoUrl: null,
   /** The open app's own artwork, for the header cluster's 28px tile. Both
@@ -212,15 +255,18 @@ const INITIAL = {
   // SessionState's live entries and the platform version pill.
   //
   // There used to be a third and a fourth, `sessionUnread` / `sessionDone`:
-  // the unread session count Notifications._renderBadge published so this
-  // button could render it. #1610 retired both. The count is on the bell now,
-  // because the bell's list is the only surface that can mark a session
-  // notification read, and a number on a control that cannot clear it is what
-  // sent the reporter back to press Improve a second time.
+  // the unread session count Notifications._renderBadge published so the
+  // header's Improve button could render it. #1610 retired both. The count is
+  // on the bell now, because the bell's list is the only surface that can mark
+  // a session notification read, and a number on a control that cannot clear
+  // it is what sent the reporter back to press Improve a second time.
 
   /**
    * A dev session the viewer can see is mid-turn. Drives #improve-working-dot,
-   * so "something is running" is legible without opening anything.
+   * so "something is running" is legible without opening anything — which is
+   * why that dot followed the control it sat on rather than going with it when
+   * #2718 retired #improve-btn: it is on the Homeroom mark now
+   * (../header/platform-mark.tsx), the one thing on screen on every route.
    * From `SessionState.anyActive()`.
    */
   working: false,

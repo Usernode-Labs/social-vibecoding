@@ -219,7 +219,36 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 650s TESTS_DEADLINE_MS clears the 2x margin by ~284s. The deadline and
 // RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 19
 // slots over the 711 declared here.
-const MAX_DECLARED_TESTS = 750;
+//
+// Raised 750 → 770 by #2760 and #2748 (PR #2750), landing beside each
+// other: #2760's one check on the fifth tab carrying the signed-in user's
+// name and #2748's one check on the waitlist analytics dashboard put the
+// manifest at 732 against the 730 floor. Tenth crossing, and the floor was
+// ALREADY met before either check landed: the #2718 follow-ups landing
+// beside each other (#2773, #2774, #2780, #2781) left main at 730 exactly,
+// so any proposal declaring a single check was red before it started.
+//
+// STILL NOT A COUPLED MOVE, same arithmetic as the four bumps above: the
+// pool is 16, so 770 checks at ~3.9s over 16 is ~188s, and the UNCHANGED
+// 650s TESTS_DEADLINE_MS clears the 2x margin by ~274s. The deadline and
+// RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 18
+// slots over the 732 declared here.
+//
+// 770 → 790 (#2802, #2798): the sidebar recents proposal's two checks put
+// the merged manifest at 751 against the 750 floor. Eleventh crossing, same
+// arithmetic: 790 checks at ~3.9s over the pool of 16 is ~193s, and the
+// unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~264s, so
+// neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 39 slots over
+// the 751 declared here.
+//
+// 790 → 810 (Homeroom task 598, the navigation prototype's remaining gaps):
+// its fifteen checks put the merged manifest at 775 against the 770 floor,
+// landing on main's own growth to 760. Twelfth crossing, same arithmetic:
+// 810 checks at ~3.9s over the pool of 16 is ~197s, and the unchanged 650s
+// TESTS_DEADLINE_MS still clears the 2x margin by ~255s, so neither the
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 35 slots over the 775
+// declared here.
+const MAX_DECLARED_TESTS = 810;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

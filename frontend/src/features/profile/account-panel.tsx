@@ -1,96 +1,101 @@
 /**
- * The account group on the Profile screen — native status and logout.
+ * The "More" list on the Me screen — the prototype's three rows, each with a
+ * line that says what is behind it.
  *
- * ── What it used to hold, and where that went ─────────────────────────
+ * ── How the rows got here ──────────────────────────────────────────────
  *
- * #1431 put Settings and Admin & moderation here, because the drawer it
+ * #1431 put Settings and Admin & moderation on Profile, because the drawer it
  * retired was their only entrance and Profile was the nearest screen that is
- * about the VIEWER rather than about an app. That reasoning was right for a
- * shell with nowhere else to put them.
+ * about the VIEWER rather than about an app. #1443 moved them into the app
+ * chip's menu, on the rule that the menu lists every destination with its own
+ * page. #2718 took that rule apart — the tab bar carries the platform's
+ * places now — and put Challenges, Settings and the Admin console back here as
+ * rows, with the native node, wallet and staking readouts and Log out under
+ * them.
  *
- * #1443 gave the shell somewhere else: the chip's menu lists every
- * destination with its own page, and Settings and Admin both have one. So
- * they are rows of ../app-context/app-context-sheet.tsx now
- * (#switcher-row-settings, #switcher-row-admin), with the BYOK dot
- * (#switcher-byok-dot) following Settings and the same isAdmin publisher
- * behind Admin — the writers are unchanged, only the parent is.
+ * The navigation prototype's Me settles it the other way round, and this is
+ * that: three rows under "More" — Challenges & standings, Kudos, Settings —
+ * and everything ELSE the account group held inside Settings, which is what
+ * the spec's retired-chip table says ("Me, with Admin and Validator inside
+ * Settings"). Admin & moderation, the node, the wallet, staking and Log out
+ * render in Settings' own account block now
+ * (features/settings/account-rows.tsx); Settings already had Log out.
  *
- * ── Why the native rows STAYED, and what #2382 added beside them ──────
+ * The row ids are the ones #2718 gave them, because dapp.json's checks and the
+ * home tour select on them: #profile-row-challenges still leads to
+ * #leaderboard/challenges, #profile-row-settings to #settings.
+ * #profile-row-kudos is new; #profile-row-admin left with its row.
  *
- * The node and the wallet are not destinations. They are status readouts —
- * "your node is producing", "this is your balance" — with no page behind
- * them, and the menu's rule is that everything in it goes somewhere. That is
- * why #1443 left them on the screen that is already about the viewer, and
- * they are still here, readouts and all.
+ * Real anchors, not buttons: cmd/ctrl-click, middle-click, "open in new tab",
+ * the context menu and drag-to-bookmark are the browser's to give, and only an
+ * anchor with an href gets them. Every one is a plain hash route the shell's
+ * router already resolves, so there is no click handler to write.
  *
- * #2382 reversed the other half of that call: an admin asked for Wallet and
- * the validator under the app chip too, so the menu now ALSO carries
- * #switcher-row-wallet (the same WalletSheet.openFromRow() this row calls)
- * and #switcher-row-validator (Settings › Homeroom app, where block
- * production lives), gated on the same two stores. They are extra entrances
- * without the readouts, not a move — see the sheet's header for the bargain.
- *
- * The native rows ship hidden until the bridge reports the capability.
- * Logout is available on every surface through the shared Settings flow.
+ * Nothing here is in the prerendered shell: ProfileRoot returns null until its
+ * store has data, so the admin flag read below cannot disagree with a first
+ * render.
  */
 
-import { useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { ensureSettings } from '../settings/facade.js';
-import { NodePillRow } from '../header/node-pill-row';
-import { WalletRow } from '../header/wallet-row';
-import { StakingRow } from './staking-sheet';
+import { type ReactNode } from 'react';
 
-export function AccountPanel() {
-  const pending = useRef(false);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [error, setError] = useState('');
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { IconTile } from '@/components/ui/icon-tile';
+import { CogIcon, ThumbsUpIcon, TrophyIcon } from '@/components/ui/icons';
+import { useStoreState } from '../../lib/use-store-state';
+import { useVisibility } from '../../lib/visibility-store';
+import { walletSheetStore } from '../header/wallet-sheet-store';
 
-  async function logout() {
-    if (pending.current) return;
-    pending.current = true;
-    setLoggingOut(true);
-    setError('');
-    try {
-      const settings = await ensureSettings();
-      if (!settings) throw new Error('Settings unavailable');
-      const result = await settings.logout();
-      // Success leaves this document, including native WebView teardown.
-      // Only a failed logout should make this control usable again.
-      if (result !== false) return;
-    } catch {
-      setError('Could not sign out. Check your connection and try again.');
-    }
-    pending.current = false;
-    setLoggingOut(false);
-  }
+/** The rows' two lines are the primitive's, a size down, as the prototype sets them. */
+const TITLE = 'text-base font-semibold';
+const SUBTITLE = 'text-[0.8125rem]';
 
+export function MorePanel({ rows }: { rows: { challenges: string | null; kudos: string | null } }): ReactNode {
+  // A CAPABILITY, published rather than fetched: App.renderAdminButton in
+  // public/js/app.js writes it after the session resolves. The Admin console
+  // is a Settings row now; the flag only decides whether the Settings row's
+  // own line mentions it.
+  const isAdmin = useVisibility('switcher-row-admin', false);
+  // The wallet is a Settings row only in the native app (its store reveals
+  // it with the bridge's capability), so the line names it only there.
+  const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
+  const settingsLine = ['Account', 'alerts', 'keys']
+    .concat(wallet ? ['wallet'] : [], isAdmin ? ['admin'] : [])
+    .join(', ');
   return (
-    <section id="profile-account" className="mt-6">
-      <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mb-2">
-        Account
-      </div>
-      {/*
-          Native only — these ship hidden and their stores reveal them when the
-          bridge reports the capability.
-      */}
-      <NodePillRow />
-      <WalletRow />
-      <StakingRow />
-      <Button
-        type="button"
-        layout="full"
-        variant="pillDanger"
-        size="none"
-        ink="dangerTint"
-        className="mt-2 min-h-[44px] px-4 py-2.5 text-[17px] font-semibold disabled:opacity-50"
-        disabled={loggingOut}
-        aria-busy={loggingOut}
-        onClick={() => { void logout(); }}
-      >
-        {loggingOut ? 'Logging out…' : 'Log out'}
-      </Button>
-      {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
+    <section id="profile-more" className="mt-2">
+      <SectionHeader className="px-1">More</SectionHeader>
+      <GroupedList className="mx-0">
+        <ListRow
+          as="a"
+          id="profile-row-challenges"
+          href="#leaderboard/challenges"
+          leading={<IconTile size="sm"><TrophyIcon /></IconTile>}
+          title="Challenges & standings"
+          titleClassName={TITLE}
+          subtitle={rows.challenges || 'This season’s challenges and standings'}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-kudos"
+          href="#leaderboard/kudos"
+          leading={<IconTile size="sm"><ThumbsUpIcon /></IconTile>}
+          title="Kudos"
+          titleClassName={TITLE}
+          subtitle={rows.kudos || 'Kudos on your proposals'}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-settings"
+          href="#settings"
+          leading={<IconTile size="sm"><CogIcon /></IconTile>}
+          title="Settings"
+          titleClassName={TITLE}
+          subtitle={settingsLine}
+          subtitleClassName={SUBTITLE}
+        />
+      </GroupedList>
     </section>
   );
 }

@@ -38,9 +38,9 @@ const CHALLENGES_SRC = fs.readFileSync(
   path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8'
 );
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-// #1191 slice 6 split the profile screen into a shaping module and a view:
-// the address is built in profile-store.js's completedView, and the anchor
-// that carries it is rendered in profile-view.tsx.
+// #1191 slice 6 split the profile screen into a shaping module and a view.
+// Me no longer builds a completion address at all (see the last tests below);
+// both are read to pin that.
 const profileStoreJs = fs.readFileSync(
   path.join(root, 'frontend/src/features/profile/profile-store.js'), 'utf8');
 const profileViewTsx = fs.readFileSync(
@@ -865,12 +865,32 @@ test('participants: count and total in the heading row, "Show all" only when one
   assert.equal(d.pointsTotal, null);
 });
 
+// App.LEADERBOARD_TITLES, parsed from public/js/app.js rather than copied:
+// the stub below stands in for the router's own naming, and a copy would let
+// the two disagree silently.
+const LEADERBOARD_TITLES = (() => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = src.indexOf('  LEADERBOARD_TITLES: {');
+  assert.ok(at > 0, 'App.LEADERBOARD_TITLES went missing');
+  const body = src.slice(at, src.indexOf('  },', at));
+  const out = {};
+  for (const [, k, v] of body.matchAll(/(\w+): '([^']+)'/g)) out[k] = v;
+  assert.ok(Object.keys(out).length >= 3, 'the table parsed empty');
+  return out;
+})();
+
 test('the page is a level of the screen: the platform header is its nav bar', () => {
   const { pane, store, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
   const calls = [];
   sandbox.window.App = {
     setBackIcon: (mode, href) => calls.push(['back', mode, href ?? null]),
     setHeaderTitle: (title) => calls.push(['title', title]),
+    // THE REAL TABLE, read out of app.js rather than retyped here (#2718
+    // review). The screen is titled after the SECTION it is showing, and the
+    // pane asks App for that name rather than knowing it — a stub that
+    // answered `undefined` would have this test passing on the fallback while
+    // the screen said the wrong word.
+    _leaderboardTitle: (sub) => LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard',
   };
   sandbox.window.Leaderboard = { isOpen: () => true, section: 'challenges' };
   pane._openIdx(0);
@@ -878,8 +898,11 @@ test('the page is a level of the screen: the platform header is its nav bar', ()
     'the header chevron points up to the grid and the title is the generic word; the page names the challenge');
   assert.equal(pane.handleBack(), true, 'on a page the header chevron is claimed');
   assert.equal(store.get().detail, null, 'and goes up a level');
-  assert.deepEqual(calls.splice(0), [['back', 'home', null], ['title', 'Leaderboard']],
-    'the screen gets its own chrome back');
+  // #2718 review: the screen's own slot is an arrow to the Me tab, not the
+  // house. Challenges is reached from Me's Challenges row, and a house there
+  // sent you two levels up from a page you had gone one level into.
+  assert.deepEqual(calls.splice(0), [['back', 'arrow', '#profile'], ['title', 'Challenges']],
+    'the screen gets its own chrome back — its tab, and its own name');
   assert.equal(pane.handleBack(), false, 'on the grid the chevron is not the page’s to claim');
 });
 
@@ -974,13 +997,19 @@ test('the pane is told BEFORE the section mounts', () => {
 
 // ─── 3. Static: the anchors point at that address ───────────────────────
 
-test('the profile links each completed challenge to <event>/<challenge>', () => {
-  assert.match(profileStoreJs,
-    /href: '#leaderboard\/challenges\/'\s*\n\s*\+ `\$\{encodeURIComponent\(c\.season_event_id\)\}\/\$\{encodeURIComponent\(c\.id\)\}`/,
-    'both ids, in that order — the event id is what makes the challenge id resolvable');
-  assert.match(profileViewTsx, /href=\{row\.href\}/,
-    'the row renders as a real anchor to that address, not a click handler');
-  assert.match(profileViewTsx, /data-completed-challenge=\{row\.id\}/);
+test('Me no longer lists completions; its row lands on the Challenges tab', () => {
+  // The profile used to link each completed challenge to
+  // #leaderboard/challenges/<event>/<challenge>. The prototype's Me counts
+  // them instead (the "challenges" stat card) and leads to the Challenges
+  // tab, where every challenge, completed or not, is a card that opens this
+  // same detail page. The ADDRESS is unchanged and still resolves — the tests
+  // above pin that — it just has no Me row pointing at it.
+  assert.doesNotMatch(profileStoreJs, /#leaderboard\/challenges\/'/,
+    'no completion row is shaped on Me any more');
+  assert.doesNotMatch(profileViewTsx, /data-completed-challenge/);
+  const mePanel = fs.readFileSync(
+    path.join(root, 'frontend/src/features/profile/account-panel.tsx'), 'utf8');
+  assert.match(mePanel, /id="profile-row-challenges"[\s\S]{0,120}href="#leaderboard\/challenges"/);
 });
 
 test('the header back chevron asks the Challenges page first', () => {

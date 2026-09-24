@@ -43,7 +43,6 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -69,9 +68,8 @@ import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { devWorkshopStore } from '../card/cards-store';
-import { CardIcon, Chevron, metaLineNodes } from '../card/dev-card';
 import { DevKanban } from '../card/dev-kanban';
-import { DevActionsRow } from '../actions-row';
+import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { CardRowView, callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
@@ -79,6 +77,7 @@ import type { DevCardModel, DevWorkshopView, WorkshopTheme } from '../card/model
 import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
+import { AppWorkshopScope } from '../../workshop/workshop-chrome';
 import { readAskStream } from './ask-stream';
 
 type SortKey = 'people' | 'activity' | 'open';
@@ -409,8 +408,40 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * undo the search left the screen with the rows, and the viewer was stuck on
  * a board they could not widen back out. Now the pane stays, and this note
  * takes the rows' place beneath the box it is talking about.
+ *
+ * ── It says only what the screen can do ──────────────────────────────
+ *
+ * It read "Press + to propose a change or file an issue", and both halves had
+ * stopped being true: the "+" was only in All items' search row, so on
+ * Current status it pointed at nothing on screen, and it has had no propose
+ * row since New change moved to Improve (#1490) and then to the Homeroom
+ * menu's New change button (#2740 review) — an owner decision this note does
+ * not undo. The "+" is at the end of the tab strip on every tab now, so the
+ * note names what it holds, and sends "start a change" to the button that
+ * does it, by the name the header gives that menu ("Homeroom menu", the
+ * mark's own aria-label).
+ *
+ * Gated on the same facts as what it names: "import a PR" only where the "+"
+ * carries that row (`canCollaborate`), and nothing to press at all for a
+ * read-only viewer, whose "+" holds Fork alone and whose menu has no New
+ * change (both from `AppView.readOnly`, the flag the menu's New change and
+ * the "+"'s writable rows are each gated on).
+ *
+ * UNDER THE START-HERE BANNER it stops at the "+". On Current status an empty
+ * board is nearly always an app nobody has started, and #2573's banner right
+ * above the note carries its own New change button — so sending the reader
+ * to the Homeroom menu for the same button would be the note talking past
+ * the screen it is on. All items has no banner, so there it says the whole
+ * thing.
  */
-function EmptyNote({ filtered, loadFailed }: { filtered: boolean; loadFailed: boolean }): ReactNode {
+function EmptyNote({ filtered, loadFailed, underStartHere = false }: {
+  filtered: boolean;
+  loadFailed: boolean;
+  underStartHere?: boolean;
+}): ReactNode {
+  const { readOnly, canCollaborate } = useDevActions();
+  const adds = canCollaborate ? ' to file an issue or import a PR' : ' to file an issue';
+  const start = underStartHere ? '.' : '; to start a change, use New change in the Homeroom menu.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
@@ -418,9 +449,13 @@ function EmptyNote({ filtered, loadFailed }: { filtered: boolean; loadFailed: bo
       ) : (
         <>
           {loadFailed ? "Couldn't load open issues right now. " : ''}
-          {'Nothing on the board yet. Press '}
-          <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
-          {' to propose a change or file an issue.'}
+          {readOnly ? 'Nothing on the board yet.' : (
+            <>
+              {'Nothing on the board yet. Press '}
+              <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
+              {adds + start}
+            </>
+          )}
         </>
       )}
     </div>
@@ -441,11 +476,11 @@ function EmptyNote({ filtered, loadFailed }: { filtered: boolean; loadFailed: bo
  * not `shippedWeek` — see the model — because a quiet week on a busy app
  * zeroes the week count and would otherwise put this banner on it.
  *
- * `meta.filtered` is the third condition and it is not about the app at all:
- * `dashboard.open` counts the entries that survived the shared filter bar,
- * so a search matching nothing reads as "no open items" on a board that has
- * plenty. The prompt is a claim about the APP, so it stands down while the
- * viewer is looking through a filter rather than at everything.
+ * There was a third condition, `meta.filtered`, because `dashboard.open`
+ * used to count only the entries that survived the shared filter bar, so a
+ * search matching nothing read as "no open items" on a board with plenty.
+ * The search and filters narrow All items alone now (#2915) and the count is
+ * the whole app's, so the two conditions above are the whole claim.
  *
  * ── Why the button is not a second "New change" ─────────────────────────
  *
@@ -557,52 +592,6 @@ function pace(d: Dash): string {
  * the number is then a floor and not a total. That is the same fact `pace()`
  * refuses to compare on, said in one character.
  */
-/**
- * The general discussion, as one row at the foot of the dashboard pane.
- *
- * It replaces a whole section — eyebrow, frosted surface, and a `DevCard`
- * inside it — whose only job was to navigate to the chat. The card's own
- * model is still what supplies it, node for node (the same glyph, the same
- * meta line naming who spoke last and when), so the row and the screen it
- * opens cannot drift apart; what it drops is the three surfaces that were
- * wrapped around that one line.
- *
- * `data-discussion-row` is load-bearing and not decoration: the delegated
- * handler on `#dev-body` (app-view.js) selects on it to switch to the chat
- * sub-view. A `<button>` carries it rather than the card's `div`, because
- * with the card gone this row IS the control.
- *
- * The chevron is the one the card wore (`DEV_CARD_CHEVRON` / `Chevron`),
- * kept deliberately. Every other rounded surface on this tab is something
- * you read, so without a mark the only thing saying this one is a door was
- * the cursor — which a phone does not have.
- */
-function DiscussionRow({ card }: { card: DevCardModel }): ReactNode {
-  return (
-    <button
-      type="button"
-      className="dev-ws-chat-row"
-      data-ws-chat-row=""
-      data-discussion-row="1"
-      title={card.title.title}
-    >
-      {card.icon ? <CardIcon spec={{ ...card.icon, small: true }} /> : null}
-      {/* TWO LINES: what this is, then the last thing said in it. The row
-          drew only the meta line, which meant the one block on the pane
-          that opens a different screen was identified by somebody else's
-          sentence — and on a quiet app by the placeholder "Talk with
-          everyone building this app", which reads as a caption rather than
-          a name. The title is the card's own (app-view.js
-          `_discussionCardModel`), so the row and the screen it opens
-          cannot drift apart on what they are called. */}
-      <span className="dev-ws-chat-text">
-        <span className="dev-ws-chat-title">{card.title.text}</span>
-        <span className="dev-ws-chat-said">{metaLineNodes(card)}</span>
-      </span>
-      <Chevron />
-    </button>
-  );
-}
 
 /**
  * The four figures.
@@ -2150,8 +2139,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
 /**
  * The grouping strip — "By category" / "By stage".
  *
- * ONE NODE, RENDERED IN ONE OF TWO PLACES, which is the arrangement the tab
- * bar above it already uses (see `useRailHost`). Below 768px it is a row of
+ * ONE NODE, RENDERED IN ONE OF TWO PLACES. Below 768px it is a row of
  * the pane's sticky head, full width, as it has always been. From 768px up it
  * moves into `.dev-ws-ear` — a surface hanging off the pane's top-right
  * corner, beside the lander's tab pill — and app.css shrinks it to its labels
@@ -2218,10 +2206,8 @@ function matchesQuery(query: string): boolean {
 /**
  * Is this the wide layout?
  *
- * READ AT MOUNT, not in an effect — which is the opposite of `useRailHost`
- * below, and the difference is worth stating. That hook returns null until
- * after mount because the node it moves has to agree with markup that may
- * have been prerendered. NOTHING here is: the Workshop mounts client-side
+ * READ AT MOUNT, not in an effect. Nothing here is prerendered: the Workshop
+ * mounts client-side
  * into a host `_repaintDevBody()` creates, so there is no first paint to
  * disagree with, and the component's own header says so. The seed matters
  * because the composer's resting state differs by width: a collapsed frame
@@ -2412,32 +2398,6 @@ function useEarInset(
 }
 
 /**
- * WHERE THE PHONE'S TAB BAR RENDERS.
- *
- * It has to pin to the real viewport, and it cannot do that in place:
- * `position: fixed` resolves against the nearest ancestor that establishes a
- * containing block, and the Dev board's frame wears `.dc-lift-strip`, whose
- * `backdrop-filter` is one — so `bottom: 0` there means the bottom of a
- * frosted panel, not of the screen. Walking the rail's real ancestor chain,
- * that wrapper is the ONLY blocker, and it is shared with the chat and topic
- * frames and three panels, so the bar comes out to #dev-ws-rail-host — an
- * empty anchor the shell keeps outside the frost (Shell.tsx) — rather than
- * the blur coming off.
- *
- * TWO RULES THIS HOOK EXISTS TO KEEP:
- *
- * 1. IT RETURNS null UNTIL AFTER MOUNT, so the first render is always the
- *    in-place one and never disagrees with markup that was prerendered. A
- *    hydration mismatch is a console error, and a console error on any route
- *    fails proposal checks.
- *
- * 2. IT ONLY PORTALS BELOW THE BREAKPOINT. Above 700px the strip is the
- *    segmented control at the head of the column — in flow, in place, not
- *    fixed — so there is nothing to lift out. This query and app.css's
- *    `@media (min-width: 700px)` are one decision in two places and have to
- *    move together.
- */
-/**
  * THE SLIDING SELECTION MARKER.
  *
  * The selected tab used to draw its own fill, so the selection jumped between
@@ -2523,30 +2483,30 @@ function useTabMarker(
     measure(true);
     const ro = new ResizeObserver(() => measure(false));
     ro.observe(bar);
+    // ...AND THE TAB LIST, which can resize while the bar does not: on a phone
+    // the "+" shares the pill with it, so the "+" arriving or leaving (it is
+    // hidden for a read-only viewer of the self-hosted app) moves every tab
+    // inside a bar of unchanged size, and an observer on the bar alone would
+    // leave the marker where the tabs used to be.
+    const list = bar.querySelector<HTMLElement>('.dev-ws-tablist');
+    if (list) ro.observe(list);
+    // ...AND EACH TAB, which can resize while the list does not (#2915). The
+    // All items dot comes and goes with the search: on a phone the list is
+    // the pill's fixed width and the three tabs share it out, so the dot
+    // re-divides the tabs inside a list and a bar that both kept their size.
+    for (const el of bar.querySelectorAll<HTMLElement>('[data-ws-tab-btn]')) ro.observe(el);
     return () => ro.disconnect();
   }, [bar, tab]);
   return box;
 }
 
-function useRailHost(): HTMLElement | null {
-  const [host, setHost] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    const mq = window.matchMedia(WIDE_QUERY);
-    const apply = () => {
-      setHost(mq.matches ? null : document.getElementById('dev-ws-rail-host'));
-    };
-    apply();
-    // `change` rather than a resize listener: it fires once per crossing
-    // instead of on every intermediate width, and it is what the breakpoint
-    // actually means.
-    mq.addEventListener('change', apply);
-    return () => mq.removeEventListener('change', apply);
-  }, []);
-  return host;
-}
-
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
+  // THE OPEN APP'S NAME AND ARTWORK, for the scope chip below. The same
+  // store the header's own tile draws from, so the two cannot disagree about
+  // which app this is, and no second fetch: the controller publishes both
+  // `app_icon_*` columns here already.
+  const app = useStoreState(improveStore);
   const hostRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<SortKey>('people');
   // HOW FAR THE WEEK WALK IS OPEN, held here rather than inside WeekWalk
@@ -2582,7 +2542,6 @@ export function DevWorkshop(): ReactNode {
   // link paints the right one on the FIRST frame rather than showing Current
   // status and then swapping — the same reason `openThemes` is seeded from
   // `autoExpand` rather than from an effect.
-  const railHost = useRailHost();
   // A CALLBACK REF, NOT `useRef`, AND THAT IS THE WHOLE BUG IT FIXES. While the
   // board is loading this component returns a skeleton, so the bar does not
   // exist: the marker's effect ran, found nothing and returned. When the data
@@ -2591,9 +2550,7 @@ export function DevWorkshop(): ReactNode {
   // selection was simply invisible the first time the Workshop was opened.
   //
   // State re-renders when the node arrives, which wakes the effect exactly
-  // then. It also makes `railHost` unnecessary as a dependency: the portal
-  // remount unmounts the bar and mounts a new one, so this fires twice on its
-  // own, with the right node each time.
+  // then.
   const [bar, setBar] = useState<HTMLElement | null>(null);
   const [tab, setTab] = useState<TabKey>(() => v.tab || 'status');
   const markerBox = useTabMarker(bar, tab);
@@ -2723,31 +2680,56 @@ export function DevWorkshop(): ReactNode {
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
+  // #2573's start-here banner: nothing open and nothing ever shipped. (All
+  // items' search no longer narrows the count, so it is not a condition:
+  // #2915.) Named once because the empty note under it reads it too — see
+  // EmptyNote.
+  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
 
   /* ── The three destinations ──
-     ONE NODE, RENDERED IN ONE OF TWO PLACES. Above the breakpoint it stays
-     here, in flow at the head of the column, as the segmented control. Below
-     it, `useRailHost` hands back the shell's out-of-frost anchor and the same
-     element is portalled there so it can be `position: fixed` to the real
-     viewport — see app.css, and the hook for why the frost forces it out.
+     AT THE HEAD OF THE PAGE, AT EVERY WIDTH (#2767). Above 700px it is the
+     segmented control it has been; below it, it is the full-width pill under
+     the scope panel, where the header's app switcher drops it down.
 
-     It LEADS the markup either way. Focus follows the DOM rather than the
-     painting, so a nav announced before the content it navigates is the
-     better half of that trade, and on the narrow width the portal puts it
-     last in the body — which is the same answer, reached the other way.
+     It used to float at the FOOT of a phone's window instead, `position:
+     fixed`, and to get there it was portalled out of this tree into an anchor
+     the shell kept outside the Dev frame's frost (whose `backdrop-filter`
+     makes it a containing block for fixed descendants). That portal is what
+     #2769 was: the anchor sits outside #app-view, so when the app view was
+     hidden for Messages, Discover or Me the pill stayed on screen over them.
+     In flow it is part of the Workshop's own subtree and leaves with it.
 
-     NO `.platform-safe-bar` HERE, deliberately. That rule adds the
-     home-indicator inset to the element's own bottom PADDING, which on this
-     pill landed 8px under the tabs against 6px over them. The bar floats — a
-     rounded pill with air beneath it — so the inset belongs in the offset
-     that positions it, not inside it. */
+     It LEADS the markup, so focus order and reading order agree at every
+     width: the nav is announced before the content it navigates.
+
+     ── The "+" closes the strip ──
+     Current status · Needs you · All items · +, on all three tabs: the
+     prototype's `wsTabs` ends its `.tabs` row with a `.tplus`, and the spec
+     puts "a plus at the end of the tab strip". It sat at the end of All
+     items' search row, so on the other two tabs there was no way to file an
+     issue or reach the app's settings — while their empty-state notes told
+     the viewer to press it. It is ONE node (`DevPlusMenu`, ../actions-row.tsx)
+     rendered here and nowhere else on this surface, which is what keeps
+     `#dev-plus-btn` / `#dev-plus-menu` unique for `_wirePlusMenu`.
+
+     It is the strip's last item, INSIDE the pill: on a phone the nav itself
+     is the full-width pill and the "+" takes a 40px cell at its end; above
+     700px the track is the pill and the "+" is its last segment. Either way
+     it is drawn on the tabs' own metrics and ink (app.css
+     `.dev-ws-plus-btn`), so it reads as part of the bar rather than as the
+     violet floating action it was.
+
+     WHY THE TAB LIST MOVED IN A LEVEL. The nav carried `role="tablist"`, and
+     a tab list owns tabs: a menu button inside it is announced as a fourth
+     tab that selects nothing. So the three tabs sit in `.dev-ws-tablist`,
+     which carries the role and the name, and the "+" is its sibling. The
+     outer box is a plain container now, as a `div` — a `nav` without the
+     role would have added a landmark the page did not have. */
   const railNode = (
-        <nav
+        <div
           ref={setBar}
           className="dev-ws-tabs"
           data-ws-tabs=""
-          role="tablist"
-          aria-label="Workshop sections"
         >
           {/* THE SELECTION, drawn once and moved, rather than redrawn per tab.
               It is `aria-hidden` and not focusable: `aria-selected` on the tab
@@ -2784,18 +2766,25 @@ export function DevWorkshop(): ReactNode {
             } : undefined}
           />
           {/* The TRACK, separate from the nav, and `display: contents` on a
-              phone so the bar there is byte-identical to what it was: the nav
-              itself is the pill, edge to edge.
+              phone so the bar there is what it was: the nav itself is the
+              pill, edge to edge, with the tab list and the "+" its two items.
 
               Above 700px the two have different jobs. The nav is the POSITIONING
               box — it inherits the 760px reading column and its centring, which
               is what keeps the strip anchored to the same left edge whether the
               pane beside it is the 760px category list or the full-bleed board.
-              The track is the pill, and it hugs its three labels: a segmented
-              control spanning the reading column would read as a header bar
-              rather than as a control, which is the same reason
-              @/components/ui/tabs.tsx makes SECTION_TABS_LIST `inline-flex`. */}
+              The track is the pill, and it hugs its three labels and the "+": a
+              segmented control spanning the reading column would read as a
+              header bar rather than as a control, which is the same reason
+              @/components/ui/tabs.tsx makes SECTION_TABS_LIST `inline-flex`.
+              Because the "+" is INSIDE the track, the ear's measured inset
+              (useEarInset reads the track's right edge) clears it with no
+              change of its own. */}
           <div className="dev-ws-tabtrack">
+          {/* The tab list: the three tabs and nothing else — a real box at
+              both widths, so the role never sits on a `display: contents`
+              node, which some screen readers drop from the tree. */}
+          <div className="dev-ws-tablist" role="tablist" aria-label="Workshop sections">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -2814,15 +2803,54 @@ export function DevWorkshop(): ReactNode {
                   lives in app.css beside its neighbours. */}
               <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
               <span className="dev-ws-tab-label">{t.label}</span>
+              {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. They
+                  narrow that tab alone, so from the other two a search the
+                  viewer typed there is out of sight, and this dot is what
+                  says it is still on. Drawn on whichever tab is up, since it
+                  is about All items rather than about where you are.
+                  The dot is decoration; the words are for a screen reader,
+                  and they join the tab's name ("All items (filtered)") so
+                  the visible label still leads it. */}
+              {t.key === 'all' && v.meta.filtered ? (
+                <>
+                  <span className="dev-ws-tab-dot" data-ws-tab-filtered="" aria-hidden="true" />
+                  <span className="sr-only"> (filtered)</span>
+                </>
+              ) : null}
             </button>
           ))}
           </div>
-        </nav>
+          <DevPlusMenu
+            illustrationApp={actions.illustrationApp}
+            canManageIllustration={actions.canManageIllustration}
+            selfHosted={actions.selfHosted}
+            readOnly={actions.readOnly}
+            canCollaborate={actions.canCollaborate}
+            showsMembers={actions.showsMembers}
+          />
+          </div>
+        </div>
   );
 
   return (
     <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
-      {railHost ? null : railNode}
+      {/* WHICH WORKSHOP YOU ARE IN, and the way to another (#2718 review).
+          It names this app and its panel offers the others — and All apps,
+          which is the way back up.
+
+          ABOVE THE RAIL in the markup, so the panel drops down over the tabs
+          rather than under them. On a phone the chip itself is hidden
+          (app.css) and the header's tile and name open the same panel
+          (#2768), so there it is the panel alone, right under the header. */}
+      {slug ? (
+        <AppWorkshopScope
+          slug={slug}
+          name={app.name || undefined}
+          iconUrl={app.iconUrl}
+          iconEmoji={app.iconEmoji}
+        />
+      ) : null}
+      {railNode}
       {/* Everything but the rail lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
           beneath it while you scroll, so the content needs a rail's worth of
@@ -2839,11 +2867,13 @@ export function DevWorkshop(): ReactNode {
           and points at the "+"; this says what to do about an app nobody
           has started on, and the product decision put it at the top of the
           tab. See StartHereBanner for the three conditions. */}
-      {v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped && !v.meta.filtered ? (
-        <StartHereBanner />
-      ) : null}
+      {startHere ? <StartHereBanner /> : null}
       {v.emptyNote ? (
-        <EmptyNote filtered={!!v.emptyNote.filtered} loadFailed={v.emptyNote.loadFailed} />
+        <EmptyNote
+          filtered={!!v.emptyNote.filtered}
+          loadFailed={v.emptyNote.loadFailed}
+          underStartHere={startHere}
+        />
       ) : null}
 
       {/* ── One pane: where the app is, and what moved while you were away ──
@@ -2974,9 +3004,18 @@ export function DevWorkshop(): ReactNode {
               pane is a shape inside a shape, and this pane already has an
               internal rhythm — hairline, block, hairline — that the weeks
               above it use. The row joins that rhythm. */}
-          {v.discussion && v.discussion.t === 'card' ? (
-            <DiscussionRow card={v.discussion.card} />
-          ) : null}
+          {/* …AND IT IS NOT HERE ANY MORE (#2718 review). "General discussion
+              for <app>" sat at the foot of this pane, which is the pane about
+              WHERE THE APP IS — and a door out to a chat screen is not a fact
+              about where the app is. It had a second home from the moment
+              Messages became the platform's one inbox: the app's discussion
+              is a row there, in the list somebody looking for "what was said"
+              actually opens, beside the people and the agent chats. One
+              destination, one place that offers it.
+
+              The card MODEL stays published (app-view.js
+              `_discussionCardModel`) because the board's own surfaces draw
+              from it; what goes is this screen's copy of the door. */}
         </section>
       ) : null}
 
@@ -2995,10 +3034,22 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-lane" data-ws-lane="mine">
             {/* #2182: the strip does not leave when the viewer has nothing
                 underway. It says so instead, so the pane keeps one shape
-                and the place your work will appear is always the same. */}
+                and the place your work will appear is always the same.
+
+                The way in is NEW CHANGE, by the name the Homeroom menu
+                gives it. This said "start something from the + button",
+                and the "+" has no propose row — starting a change is that
+                menu's New change, an owner decision (#2740 review) — so
+                the line sent a viewer to a menu that could not do what it
+                promised. A read-only viewer has neither door, so is told
+                the fact and nothing to press — and so is a viewer under the
+                start-here banner, whose New change is at the top of this
+                very tab and whose board has no open item to pick up. */}
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                You have no work going on. Pick up an open item below, or start something from the + button.
+                {actions.readOnly || startHere
+                  ? 'You have no work going on.'
+                  : 'You have no work going on. Pick up an open item below, or start a change with New change in the Homeroom menu.'}
               </p>
             ) : null}
             {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
@@ -3037,9 +3088,9 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* The general discussion had its own section here. It is a row at the
-          foot of the dashboard pane now (DiscussionRow) — same subject as
-          that pane, and one row does not earn a section. */}
+      {/* The general discussion had its own section here, then a row at the
+          foot of the dashboard pane, and now neither (#2718 review): it is a
+          row in Messages, which is the platform's one inbox. */}
       {/* ── What moved while you were away ──
           SHOWN, not offered. It was one collapsed line — the label, the count
           and a caret — on the reasoning that most visits do not need the
@@ -3195,9 +3246,12 @@ export function DevWorkshop(): ReactNode {
               how you happen to be sorting it. */}
           <section className="dev-ws-pane" data-ws-pane="">
           {/* ── The sticky head: the controls that act on what is below ──
-              The search, the filters and the "+" used to sit in the frame's
-              chrome above the scroller, two strips away from the list they
-              narrow. They belong WITH it — and with the tab strip, because
+              The search and the filters used to sit in the frame's chrome
+              above the scroller, two strips away from the list they narrow.
+              (So did the "+", which is not a narrowing control: it adds to
+              the board and manages the app, so it closes the view-tab strip
+              on every tab instead — see the rail above.) They belong WITH
+              the list — and with the tab strip, because
               "which grouping" and "narrowed to what" are one question asked
               twice. Both pin together: filtering a long list is exactly what
               you are doing when you are scrolled down, and a tab strip that
@@ -3238,6 +3292,8 @@ export function DevWorkshop(): ReactNode {
           {/* The strip's narrow home. Above the breakpoint it is in the ear
               instead — one node, two places. */}
           {earUp ? null : <GroupStrip group={group} />}
+            {/* The search and the filters. NOT the "+": that closes the tab
+                strip above, on every tab, so the row draws none of its own. */}
             <DevActionsRow
               illustrationApp={actions.illustrationApp}
               canManageIllustration={actions.canManageIllustration}
@@ -3245,6 +3301,7 @@ export function DevWorkshop(): ReactNode {
               readOnly={actions.readOnly}
               canCollaborate={actions.canCollaborate}
               showsMembers={actions.showsMembers}
+              withPlus={false}
             />
           </div>
           {/* The pane's face is painted by its two PARTS, not by the pane —
@@ -3320,11 +3377,6 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       </div>
-
-      {/* The same node, lifted out of the frost. `railHost` is null above the
-          breakpoint and until after mount, so in both of those cases the rail
-          renders in place above and this is nothing. */}
-      {railHost ? createPortal(railNode, railHost) : null}
     </div>
   );
 }

@@ -6424,6 +6424,63 @@
   })();
   /* __USERNODE_BACKGROUND_END__ */
 
+  // #2902: the shell keeps the last few apps loaded in hidden frames so that
+  // coming back to one shows it exactly as it was left. A hidden app must not
+  // keep playing into the room, so on `hidden` this pauses every <audio> and
+  // <video> that is playing and, on `visible`, resumes exactly those — the
+  // ones the viewer had playing, not ones they had paused themselves. Anything
+  // else an app wants to stop (Web Audio, animation loops, polling) hangs off
+  // the `usernode:visibility-changed` event, whose `detail` is `{ hidden }`.
+  /* __USERNODE_VISIBILITY_BEGIN__ */
+  (function () {
+    if (window === window.parent) return;
+    var hidden = false;
+    var paused = [];
+
+    function pauseMedia() {
+      var media = document.querySelectorAll("audio, video");
+      for (var i = 0; i < media.length; i++) {
+        var m = media[i];
+        try {
+          if (!m.paused && !m.ended) {
+            m.pause();
+            paused.push(m);
+          }
+        } catch (_) {}
+      }
+    }
+
+    function resumeMedia() {
+      var list = paused;
+      paused = [];
+      for (var i = 0; i < list.length; i++) {
+        try {
+          if (!list[i].isConnected) continue;
+          var played = list[i].play();
+          if (played && typeof played.catch === "function") played.catch(function () {});
+        } catch (_) {}
+      }
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data) return;
+      var state = data.__usernode_visibility;
+      if (state !== "hidden" && state !== "visible") return;
+      var next = state === "hidden";
+      if (next === hidden) return;
+      hidden = next;
+      if (hidden) pauseMedia(); else resumeMedia();
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:visibility-changed", {
+          detail: { hidden: hidden },
+        }));
+      } catch (_) {}
+    });
+  })();
+  /* __USERNODE_VISIBILITY_END__ */
+
   // Rendering invariants (issue #360) — additive within v1.
   //
   // Opt-in, no-op-by-default self-checks an app registers to catch
@@ -6706,53 +6763,94 @@
   /* __USERNODE_OFFLINE_READY_END__ */
 
   /* __USERNODE_PLATFORM_LINK_START__ */
-  // ── Floating "Open in Homeroom" pill (chromeless share views) ─────────
+  // ── Floating Homeroom mark (chromeless share views) ───────────────────
   //
   // Apps shared via their bare production subdomain
   // (<slug>.<platform-host>) render with no platform chrome at all —
-  // there's no visible path from the app back to its in-platform page.
-  // The bridge is the one piece of platform code every dapp loads, so it
-  // injects a small dismissible pill in the bottom-right corner that
-  // deep-links back to https://<platform-host>/app/<slug> — the clean,
-  // canonical App route the shell restores on a cold visit.
+  // nothing on the page says it IS a Homeroom app, and there is no
+  // visible path from it back to the app's in-platform page. The bridge
+  // is the one piece of platform code every dapp loads, so it injects a
+  // small mark in the bottom-left corner that deep-links back to
+  // https://<platform-host>/app/<slug> — the clean, canonical App route
+  // the shell restores on a cold visit.
   //
   // Shown ONLY when ALL of these hold:
-  //   * top frame         — inside the platform, apps render in iframes
-  //                         and the chrome is already present;
+  //   * top frame         — inside the platform an app renders in an
+  //                         iframe and the shell draws its own affordance
+  //                         (features/header/chromeless-pill.tsx), so a
+  //                         mark here would be the SECOND one on screen;
   //   * no native channel — the Flutter WebView has its own navigation,
   //                         a web link to the platform origin is wrong
   //                         there;
-  //   * location.host is exactly <label>.<platform-host> with no "--" in
-  //     the label — i.e. a production app subdomain. That excludes the
-  //     platform shell itself (same host, loads the bridge same-origin),
-  //     staging previews (<slug>--s<id>), localhost dev, and foreign
-  //     embeds. The platform host is derived from this script's own src,
-  //     so self-hosted forks serving their own bridge get the right
-  //     origin for free.
+  //   * not the platform's own document — the shell loads this same
+  //                         bridge in the TOP frame from its apex, and
+  //                         says so with window.__usernodePlatformShell
+  //                         (frontend/src/head.html);
+  //   * location.host is <label>.<registrable-domain> with no "--" in
+  //     the label — i.e. a production app subdomain, which is exactly
+  //     the shape the platform's routing gives an app (the
+  //     `*.{$USERNODE_DOMAIN}` site in the Caddyfile; one Ingress host
+  //     per app in services/kubernetes.js). That excludes staging
+  //     previews (<slug>--s<id>), `<slug>.localhost` and other dev hosts.
   //
-  // The × only hides the pill for the current page load — no storage
-  // flag is kept, so the pill reappears on every refresh.
+  // WHY THE HOSTNAME AND NOT THIS SCRIPT'S SRC. This used to derive the
+  // platform host from `document.currentScript.src` and bail when it
+  // came out equal to location.host. That is only ever unequal for an
+  // app that names the platform's hostname in the tag — and the
+  // conventions tell every app to load the bridge at the RELATIVE path
+  // /usernode-bridge/v1/bridge.js, which the platform serves on the
+  // app's OWN hostname precisely so that no app carries a hostname. So
+  // for every app that follows them the derived host WAS location.host
+  // and the pill returned null: it never rendered on a single shared
+  // link. The src still gets a say where an app does name a host — then
+  // it has to agree with the one the subdomain implies, which is what
+  // keeps a foreign page that embeds this bridge from drawing a mark.
+  //
+  // NOT DISMISSIBLE, and icon-sized rather than a labelled pill. Both
+  // follow from the same constraint: apps own their corners (a compose
+  // button, a floating control, the kit's own chrome), so an affordance
+  // that cannot be dismissed has to be small enough and far enough out
+  // of the way to be worth its permanence. Bottom-LEFT for that reason
+  // too — bottom-right is where a floating control conventionally goes,
+  // and is where the in-shell pill already sits.
   (function () {
     // document.currentScript is only valid during synchronous script
     // evaluation — which is exactly when this capture runs.
     var _script = document.currentScript;
 
+    // Served under one of the three centrally hosted asset prefixes, so
+    // this resolves on the app's own origin and carries no hostname —
+    // the same contract as the bridge itself. See mark.svg's header.
+    var MARK_SRC = "/usernode-bridge/v1/mark.svg";
+
+    // The platform host as NAMED BY THE TAG, or null when the tag is
+    // relative (the conventional form) and so names nothing at all.
+    function taggedPlatformHost() {
+      if (!_script || !_script.src) return null;
+      var host;
+      try {
+        host = new URL(_script.src, location.href).host;
+      } catch (_) { return null; }
+      return host && host !== location.host ? host : null;
+    }
+
     function platformLinkTarget() {
       if (_inIframe || _hasNativeChannel || window.Usernode) return null;
-      if (!_script || !_script.src) return null;
-      var platformHost;
-      try {
-        platformHost = new URL(_script.src, location.href).host;
-      } catch (_) { return null; }
-      if (!platformHost || location.host === platformHost) return null;
-      var suffix = "." + platformHost;
-      if (location.host.length <= suffix.length) return null;
-      if (location.host.slice(-suffix.length) !== suffix) return null;
-      var label = location.host.slice(0, -suffix.length);
+      if (window.__usernodePlatformShell) return null;
+
+      var dot = location.host.indexOf(".");
+      if (dot <= 0) return null;
+      var label = location.host.slice(0, dot);
+      var platformHost = location.host.slice(dot + 1);
       // A single clean label only: staging previews (<slug>--s<id>) and
-      // deeper/odd hostnames don't get the pill.
+      // deeper/odd hostnames don't get the mark.
       if (!/^[a-z0-9-]+$/i.test(label)) return null;
       if (label.indexOf("--") !== -1) return null;
+      // What is left has to be a registrable domain. `<slug>.localhost`
+      // and other single-label hosts are dev, not a shared app link.
+      if (platformHost.indexOf(".") === -1) return null;
+      var tagged = taggedPlatformHost();
+      if (tagged && tagged !== platformHost) return null;
       return {
         slug: label,
         href: "https://" + platformHost + "/app/" + label,
@@ -6769,14 +6867,13 @@
         style.id = "__usernode-platform-link-styles";
         style.textContent = [
           // z-index one below the QR overlay (999999) so a transaction
-          // prompt still covers the pill. safe-area insets keep it clear
-          // of iPhone home indicators.
-          ".__un-platform-link{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:flex;align-items:center;background:rgba(15,20,32,0.82);color:#e7edf7;border-radius:999px;padding:6px 6px 6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85}",
-          ".__un-platform-link:hover{opacity:1}",
-          ".__un-platform-link-glyph{font-size:11px;opacity:0.75;margin-left:4px}",
-          ".__un-platform-link-close{background:none;border:none;color:inherit;font:14px/1 -apple-system,system-ui,sans-serif;padding:2px 6px;margin-left:2px;cursor:pointer;opacity:0.6;border-radius:999px}",
-          ".__un-platform-link-close:hover{opacity:1}",
-          "@media(prefers-color-scheme:light){.__un-platform-link{background:rgba(255,255,255,0.9);color:#0b1220;box-shadow:0 2px 10px rgba(0,0,0,0.18)}}",
+          // prompt still covers the mark. safe-area insets keep it clear
+          // of iPhone home indicators and the left-edge rounding.
+          ".__un-platform-link{position:fixed;left:calc(12px + env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:block;width:28px;height:28px;border-radius:7px;line-height:0;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.9}",
+          ".__un-platform-link:hover,.__un-platform-link:focus-visible{opacity:1}",
+          // No radius here: the tile carries its own rounded corners, and a
+          // CSS clip at a different one would shave them.
+          ".__un-platform-link img{display:block;width:28px;height:28px}",
         ].join("\n");
         document.head.appendChild(style);
       }
@@ -6785,32 +6882,26 @@
       link.id = "__un-platform-link";
       link.className = "__un-platform-link";
       link.href = target.href;
+      link.title = "Open this app on Homeroom";
       link.setAttribute("aria-label", "Open this app on Homeroom");
 
-      var label = document.createElement("span");
-      label.textContent = "Open in Homeroom";
-
-      var glyph = document.createElement("span");
-      glyph.className = "__un-platform-link-glyph";
-      glyph.textContent = "\u2197"; // ↗ (escaped: robust to mis-declared page charsets)
-      glyph.setAttribute("aria-hidden", "true");
-
-      var close = document.createElement("button");
-      close.className = "__un-platform-link-close";
-      close.type = "button";
-      close.textContent = "\u00d7"; // × (escaped, same reason)
-      close.setAttribute("aria-label", "Hide");
-      close.onclick = function (ev) {
-        // The button lives inside the anchor: cancel the navigation the
-        // bubbled click would otherwise trigger.
-        ev.preventDefault();
-        ev.stopPropagation();
+      var mark = document.createElement("img");
+      // A broken image is worse than no mark: an origin that does not
+      // route the platform asset prefixes — a self-hosted fork part-way
+      // through the migration — would otherwise leave a torn-image box
+      // sitting in the corner of somebody's app. Attached BEFORE src,
+      // which is what starts the load.
+      mark.onerror = function () {
         if (link.parentNode) link.parentNode.removeChild(link);
       };
+      mark.src = MARK_SRC;
+      // The anchor carries the accessible name; a second one here would
+      // have a screen reader read the same link twice.
+      mark.alt = "";
+      mark.width = 28;
+      mark.height = 28;
 
-      link.appendChild(label);
-      link.appendChild(glyph);
-      link.appendChild(close);
+      link.appendChild(mark);
       document.body.appendChild(link);
     }
 

@@ -118,8 +118,12 @@ test('the header keeps navigation + alerting only, hamburger first', () => {
   // #feedback-btn, #work-drawer-btn and #dev-console-btn — and put the whole
   // of what they did behind #improve-btn. The hamburger then went too: the
   // board's header leads with the app glyph and the title as ONE switcher
-  // cluster, so the bar reads back-slot → title → Improve.
-  const order = ['back-btn', 'header-title', 'improve-btn'];
+  // cluster, so the bar read back-slot → title → Improve.
+  //
+  // #2718 retired #improve-btn in turn, and the rule it was an instance of is
+  // what survives: the bar ends on the control that opens the menu holding
+  // everything those five did. That is the Homeroom mark now.
+  const order = ['back-btn', 'header-title', 'platform-mark-btn'];
   let prev = -1;
   for (const id of order) {
     const at = header.indexOf(`id="${id}"`);
@@ -137,7 +141,7 @@ test('the header keeps navigation + alerting only, hamburger first', () => {
   // board gives the bell back its own control in the right group, because the
   // drawer it used to live in is the APP's surface now.
   for (const id of ['app-mode-switch', 'feedback-btn', 'work-drawer-btn',
-    'dev-console-btn']) {
+    'dev-console-btn', 'improve-btn']) {
     assert.equal(header.indexOf(`id="${id}"`), -1,
       `#${id} was retired and must not return to the header`);
   }
@@ -155,8 +159,9 @@ test('there is ONE badge in the header, and the Improve corner is a dot', () => 
   //
   // There is one number now. The green count moved into the bell (nothing
   // behind #improve-btn could mark a session notification read, so the badge
-  // pointed at the one control that could not clear it), and what is left in
-  // that corner is a bare pulse: no text, no count, nothing to dismiss. So
+  // pointed at the one control that could not clear it), and what was left in
+  // that corner is a bare pulse: no text, no count, nothing to dismiss — it
+  // outlived the button itself and is on the Homeroom mark now (#2718). So
   // the rule this test pins is the SHAPE distinction rather than a geometry
   // equality — a count is a badge on the bell, a live state is a dot.
   const bellBadge = header.match(/<span id="notifications-badge"[^>]*>/);
@@ -166,10 +171,10 @@ test('there is ONE badge in the header, and the Improve corner is a dot', () => 
   assert.match(bellBadge[0], /data-session-done="0"/,
     'and carries the completed-session attribute the declared check selects on');
   assert.ok(!header.includes('id="notifications-badge-ai"'),
-    'the green count on #improve-btn is retired, not merely emptied');
+    'the green count is retired, not merely emptied');
 
   const dot = header.match(/<span id="improve-working-dot"[^>]*>[\s\S]*?<\/span>/);
-  assert.ok(dot, '#improve-working-dot is on the Improve button');
+  assert.ok(dot, '#improve-working-dot is in the bar — on the mark since #2718');
   assert.match(dot[0], /-top-1 -right-1/, 'same corner the count used to hold');
   assert.match(dot[0], /w-2 h-2/, 'dot-sized: it can never become a number');
   assert.match(dot[0], /bg-emerald-500/, 'and keeps the work colour');
@@ -191,37 +196,46 @@ test('the version state is the glyph, not a second dot beside it', () => {
   assert.ok(!html.includes('id="improve-version-dot"'), 'the dot is gone');
   assert.ok(!html.includes('id="header-menu-deploy-dot"'),
     'and so is the hamburger-era copy — this is a retirement, not a move');
-  const button = fs.readFileSync(
-    path.join(root, 'frontend/src/features/improve/improve-button.tsx'), 'utf8');
-  assert.match(button, /BUSY_STATES = \['deploying', 'downloading'\]/);
-  assert.match(button, /READY_STATES = \['ready', 'failed'\]/);
-  assert.match(button, /versionState: string/,
-    'the glyph still reads the state the dot used to colour');
-  assert.doesNotMatch(button, /VERSION_DOT/, 'and the colour table went with it');
+  // AND SO IS THE GLYPH THAT REPLACED IT (#2718 review). It led
+  // #app-menu-row-improve, which opened the Improve panel; the panel retired
+  // and the row with it. What reads `versionState` now is the menu's own
+  // update row, which says the state in WORDS rather than colouring a mark —
+  // and it is no further away than the glyph was, because the glyph was
+  // inside this same closed menu. A cue inside a closed menu is not a cue;
+  // neither was the one it replaced, which is why the dots below are the
+  // header's whole at-rest budget.
+  const actions = fs.readFileSync(
+    path.join(root, 'frontend/src/features/improve/actions.tsx'), 'utf8');
+  assert.match(actions, /const \{ versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
+  assert.match(actions, /id="improve-update-ready"/, 'the ready state offers the reload');
+  assert.doesNotMatch(actions, /VERSION_DOT/, 'and the colour table is long gone');
 
-  const improve = header.match(/<button id="improve-btn"[^>]*>[\s\S]*?<\/button>/)[0];
-  assert.match(header.match(/<button id="improve-btn"[^>]*>/)[0], /relative/,
-    'the Improve button is a positioning context for its corners');
-  // The LIVE indicators cluster on the control whose panel holds the work;
-  // the COUNTS are the bell's (#1610).
-  assert.ok(improve.includes('id="improve-working-dot"'),
-    'a turn running right now shows as a pulse on the Improve button');
-  assert.ok(improve.includes('id="feedback-queue-dot"'),
-    'beside its own outbox dot');
+  // THE TWO LIVE DOTS OUTLIVED THE BUTTON. They are on the mark, which is
+  // what the header has where the pill used to be — and it had to be a
+  // control that is on screen on every route, because a cue inside a closed
+  // menu is not a cue. The COUNTS are still the bell's (#1610).
+  const mark = header.match(/<button id="platform-mark-btn"[\s\S]*?<\/button>/)[0];
+  assert.match(mark, /<span class="relative shrink-0 inline-flex">/,
+    'the mark TILE is the positioning context for the corners — a dot pinned '
+    + 'to the button would hang off the disclosure chevron');
+  assert.ok(mark.includes('id="improve-working-dot"'),
+    'a turn running right now shows as a pulse on the mark');
+  assert.ok(mark.includes('id="feedback-queue-dot"'),
+    'beside the outbox dot, in the opposite corner');
   const bell = header.match(/<a id="notifications-btn"[^>]*>[\s\S]*?<\/a>/)[0];
   assert.ok(bell.includes('id="notifications-badge"'),
     'the unread badge rides the bell itself');
-  assert.ok(!/id="notifications-badge/.test(improve),
-    'and never the Improve button — a number there points at a control that '
-    + 'cannot clear it, which is exactly what #1610 fixed');
+  assert.ok(!/id="notifications-badge/.test(mark),
+    'and never the mark — a number there points at a control that cannot '
+    + 'clear it, which is exactly what #1610 fixed');
 });
 
 
 test('the deploy dot is derived from a named state, not sniffed out of the DOM', () => {
   // #1079 chunk B moved it into the React bundle; app.js keeps a forwarder for
   // its call sites. It is ImproveStatus now, in the improve feature — its two
-  // publishers are both about the Improve button, and the drawer it was named
-  // after no longer has anything to do with either.
+  // publishers are both about the Improve panel's own state, and the drawer
+  // it was named after no longer has anything to do with either.
   const headerMenuJs = fs.readFileSync(
     path.join(root, 'frontend/src/features/improve/improve-status.js'), 'utf8');
   assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'ImproveStatus.refreshDeployDot is defined');

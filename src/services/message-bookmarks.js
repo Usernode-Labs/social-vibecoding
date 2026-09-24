@@ -103,7 +103,7 @@ async function listForUser(pool, userId, { isAdmin = false, limit = MAX_SAVED } 
   if (!userId) return [];
   const { rows } = await pool.query(
     `SELECT b.message_id, b.created_at AS saved_at,
-            m.content, m.thread_type, m.thread_ref, m.created_at AS message_created_at,
+            m.content, m.msg_type, m.thread_type, m.thread_ref, m.created_at AS message_created_at,
             a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
             u.username AS author
        FROM message_bookmarks b
@@ -111,6 +111,10 @@ async function listForUser(pool, userId, { isAdmin = false, limit = MAX_SAVED } 
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN users u ON u.id = m.user_id
       WHERE b.user_id = $1 AND ${VIEW_ACCESS_SQL}
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = m.user_id
+        )
       ORDER BY b.created_at DESC, b.message_id DESC
       LIMIT $3`,
     [userId, !!isAdmin, limit]
@@ -124,7 +128,7 @@ function serialize(row) {
     appId: row.app_id,
     appSlug: row.app_slug,
     appName: row.app_name,
-    author: row.author,
+    author: row.author || (row.msg_type === 'message' ? 'Deleted user' : row.author),
     content: row.content,
     threadType: row.thread_type,
     threadRef: row.thread_ref,
@@ -168,6 +172,9 @@ const CONVERSATION_ACCESS_SQL = `EXISTS (
    WHERE cm.conversation_id = m.conversation_id
      AND cm.user_id = $1
      AND cm.status = 'member'
+) AND NOT EXISTS (
+  SELECT 1 FROM user_blocks b
+   WHERE b.blocker_id = $1 AND b.blocked_user_id = m.sender_id
 )`;
 
 // Save a conversation message. Idempotent, like save() above: the original
@@ -225,7 +232,7 @@ async function listConversationsForUser(pool, userId, { limit = MAX_SAVED } = {}
             m.content, m.conversation_id, m.created_at AS message_created_at,
             c.kind AS conversation_kind, c.title AS conversation_title,
             u.username AS author,
-            peer.username AS peer_username
+            peer.username AS peer_username, c.deleted_peer
        FROM conversation_message_bookmarks b
        JOIN conversation_messages m ON m.id = b.message_id
        JOIN conversations c ON c.id = m.conversation_id
@@ -259,8 +266,8 @@ function serializeConversation(row) {
     conversationId: row.conversation_id,
     conversationKind: row.conversation_kind,
     conversationTitle: row.conversation_title
-      || (row.peer_username ? `@${row.peer_username}` : 'Conversation'),
-    author: row.author,
+      || (row.peer_username ? `@${row.peer_username}` : row.deleted_peer ? 'Deleted user' : 'Conversation'),
+    author: row.author || 'Deleted user',
     content: row.content,
     savedAt: row.saved_at,
     messageCreatedAt: row.message_created_at,

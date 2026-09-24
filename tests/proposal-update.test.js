@@ -163,6 +163,7 @@ function deps(over = {}, log = {}) {
       },
     }, over.prImportSync),
     githubPublic: over.githubPublic || { marker: 'public-reader' },
+    prMetadata: over.prMetadata || { applyPrMetadata: async () => null },
     // Both of these are real behaviours elsewhere; here they only have to be
     // observable, so a test can assert the update ran INSIDE them.
     serialize: over.serialize || (async (id, fn) => {
@@ -661,6 +662,27 @@ test('a first landing on an active session ends in the SAME tail as any other pu
   assert.equal(log.mirror[0].targetBranch, 'usernode/from-u7-s1a2b3c4d');
   // pr_votes is never read for a row that cannot have any.
   assert.equal(sqlsOf(log).some((sql) => sql.includes('FROM pr_votes')), false);
+});
+
+test('a shared first landing opens a draft PR before publishing its session card', async () => {
+  const log = {};
+  const session = sharedRow({ status: 'active' });
+  let metadataCall = null;
+  const result = await runSession('active', {
+    session, gh: missingBranch,
+    prMetadata: { applyPrMetadata: async (args) => {
+      metadataCall = args;
+      assert.equal(log.started, undefined, 'the session tail has not started');
+      session.pr_number = 92;
+      session.pr_url = 'https://github.com/o/r/pull/92';
+      return { prNumber: 92, prUrl: session.pr_url };
+    } },
+  }, log);
+  assert.equal(result.ok, true);
+  assert.equal(metadataCall.repoOwner, 'o');
+  assert.equal(metadataCall.allowModelGeneration, false);
+  assert.equal(result.prNumber, 92);
+  assert.equal(result.prUrl, session.pr_url);
 });
 
 test('the mirror is the existing rung, not a second push implementation', () => {

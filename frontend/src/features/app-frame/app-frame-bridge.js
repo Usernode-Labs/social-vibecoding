@@ -23,7 +23,9 @@
  * pin. The difference is the point of the chunk, not a leak.
  */
 
-import { appFrameRefs, appFrameStore, COVER_DEFAULTS } from './app-frame-store.js';
+import {
+  appFrameRefs, appFrameStore, COVER_DEFAULTS, keepAliveLimit, liveAppSlugs,
+} from './app-frame-store.js';
 import { allowAttribute, BASE_ALLOW, isSafeAppFrameSrc } from './app-frame-policy.js';
 
 /** Frames created. A tab switch must NEVER move this. */
@@ -38,6 +40,40 @@ let mounts = 0;
  * same element.
  */
 let navigations = 0;
+/** #2902: the last `seq` handed out — see `seq` in ./app-frame-store.js. */
+let frames = 0;
+
+/**
+ * #2902: the slug whose mounted frame was RESUMED — brought back from being
+ * kept alive, document untouched — and has not navigated since. renderAppTab
+ * adopts such a frame even though the src it would build carries a newer
+ * token than the one the document booted with; see `resumed()`.
+ */
+let resumedSlug = '';
+
+/** The mounted frame, as a kept-alive record (#2902). */
+const keptRecord = (s) => ({
+  slug: s.slug,
+  seq: s.seq,
+  background: s.background,
+  sandboxReady: s.sandboxReady,
+  allow: s.allow,
+  navigatedAt: s.navigatedAt,
+});
+
+/**
+ * Tell an app's document it has been hidden, or shown again (#2902). The
+ * shared bridge (public/usernode-bridge/v1/bridge.js) pauses the page's audio
+ * and video on `hidden` and resumes what it paused on `visible`, and fires
+ * `usernode:visibility-changed` for anything else an app wants to stop. A
+ * frame kept alive behind the one on screen must not keep playing into the
+ * room. Best-effort: a document without the bridge simply ignores it.
+ */
+function announce(el, visible) {
+  try {
+    el?.contentWindow?.postMessage({ __usernode_visibility: visible ? 'visible' : 'hidden' }, '*');
+  } catch { /* a frame mid-teardown has nothing to tell */ }
+}
 
 const srcOf = (el) => (el && typeof el.getAttribute === 'function' ? el.getAttribute('src') : null) || '';
 
@@ -56,21 +92,92 @@ export const appFrameBridge = {
     if (!slug) return false;
     const current = appFrameStore.get();
     const sameFrame = current.slug === slug;
-    if (!sameFrame) mounts += 1;
+    if (sameFrame) {
+      appFrameStore.set({
+        active: true,
+        faded: !!faded,
+        cover: cover ? { ...COVER_DEFAULTS, ...cover } : null,
+      });
+      return !!appFrameRefs.iframe;
+    }
+    // #2902: a DIFFERENT app. The one mounted now is not dropped — if it ever
+    // loaded a document it is kept alive, hidden, at the front of the kept
+    // list, and the least recently used beyond the limit are let go. If the
+    // app being mounted is itself kept, its element comes back (same `key`, so
+    // React keeps the node) with the attributes its document was loaded with.
+    const restored = current.kept.find((k) => k.slug === slug) || null;
+    let kept = current.kept.filter((k) => k.slug !== slug);
+    if (current.slug && current.navigatedAt) kept = [keptRecord(current), ...kept];
+    kept = kept.slice(0, Math.max(0, keepAliveLimit() - 1));
+    if (!restored) mounts += 1;
+    const outgoing = current.slug ? appFrameRefs.iframe : null;
+    resumedSlug = '';
     appFrameStore.set({
       slug,
+      seq: restored ? restored.seq : (frames += 1),
       active: true,
       faded: !!faded,
-      background: sameFrame ? current.background : '',
-      sandboxReady: sameFrame ? current.sandboxReady : false,
       // A DIFFERENT app starts from the ungated base. setSrc recomputes it
       // before the navigation that would use it, so this is belt-and-braces
       // rather than the gate — but the belt is one line and what it guards
       // against is one app's camera grant sitting on another app's frame.
-      allow: sameFrame ? current.allow : BASE_ALLOW,
+      background: restored ? restored.background : '',
+      sandboxReady: restored ? restored.sandboxReady : false,
+      allow: restored ? restored.allow : BASE_ALLOW,
+      navigatedAt: restored ? restored.navigatedAt : 0,
       cover: cover ? { ...COVER_DEFAULTS, ...cover } : null,
+      kept,
     });
+    if (outgoing && kept.some((k) => k.slug === current.slug)) announce(outgoing, false);
     return !!appFrameRefs.iframe;
+  },
+
+  /**
+   * #2902: bring `slug`'s frame back exactly as it was left — no cover, no
+   * navigation, the same document. True when there was one to bring back:
+   * the app's frame is mounted or kept, it has loaded a document, and that
+   * load is younger than `maxAgeMs` (the caller passes the token refresh
+   * period, past which the document's token is due a refresh anyway and a
+   * reload is what would have happened had it stayed on screen). False
+   * leaves everything as it was, and the caller launches the ordinary way.
+   */
+  resume(slug, { maxAgeMs = 0 } = {}) {
+    if (!slug) return false;
+    const current = appFrameStore.get();
+    const fresh = (at) => at > 0 && (!maxAgeMs || Date.now() - at < maxAgeMs);
+    if (current.slug === slug) {
+      if (!appFrameRefs.iframe || !current.sandboxReady || !fresh(current.navigatedAt)) return false;
+      appFrameStore.set({ active: true, faded: false, cover: null });
+    } else {
+      const kept = current.kept.find((k) => k.slug === slug);
+      if (!kept || !kept.sandboxReady || !fresh(kept.navigatedAt)) return false;
+      appFrameBridge.mount({ slug, faded: false });
+      if (appFrameStore.get().slug !== slug || !appFrameRefs.iframe) return false;
+    }
+    resumedSlug = slug;
+    announce(appFrameRefs.iframe, true);
+    return true;
+  },
+
+  /**
+   * #2902: was the mounted frame for `slug` resumed, and has it not navigated
+   * since? Such a frame is the user's document as they left it, and a render
+   * must adopt it rather than rebuild it — see renderAppTab.
+   */
+  resumed(slug) {
+    return !!slug && resumedSlug === slug && appFrameStore.get().slug === slug
+      && !!appFrameRefs.iframe;
+  },
+
+  /** #2902: every app with a live frame, mounted first. */
+  liveSlugs() {
+    return liveAppSlugs(appFrameStore.get());
+  },
+
+  /** #2902: ms since the mounted frame last navigated; 0 if it has not. */
+  navigatedAgo() {
+    const at = appFrameStore.get().navigatedAt;
+    return at ? Math.max(0, Date.now() - at) : 0;
   },
 
   /**
@@ -101,12 +208,85 @@ export const appFrameBridge = {
   isActive() {
     return appFrameStore.get().active;
   },
-  /** Drop the frame entirely: the app is being left, not parked. */
+  /**
+   * Drop the mounted frame entirely: there is no running app behind it worth
+   * keeping (a placeholder, a screenshot state). Frames kept alive for OTHER
+   * apps stay as they are.
+   */
   unmount() {
+    resumedSlug = '';
     appFrameStore.set({
       slug: '', active: false, faded: true, background: '', sandboxReady: false,
-      allow: BASE_ALLOW, cover: null,
+      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0,
     });
+  },
+
+  /**
+   * #2902: the app is being LEFT (backing out to Home). Its frame is kept
+   * alive, hidden, so reopening it is instant and exactly as it was — unless
+   * it never loaded a document, in which case there is nothing to keep and it
+   * is dropped like `unmount`.
+   */
+  retire() {
+    const current = appFrameStore.get();
+    const el = appFrameRefs.iframe;
+    if (!current.slug || !current.navigatedAt || !el) {
+      appFrameBridge.unmount();
+      return false;
+    }
+    const kept = [keptRecord(current), ...current.kept.filter((k) => k.slug !== current.slug)]
+      .slice(0, keepAliveLimit());
+    resumedSlug = '';
+    appFrameStore.set({
+      slug: '', active: false, faded: true, background: '', sandboxReady: false,
+      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, kept,
+    });
+    announce(el, false);
+    return true;
+  },
+
+  /**
+   * #2902: let one app's frame go — a kept one, or the mounted one. For an app
+   * whose build just changed underneath it: the next open loads the new one.
+   */
+  evict(slug) {
+    if (!slug) return false;
+    const current = appFrameStore.get();
+    if (current.slug === slug) {
+      appFrameBridge.unmount();
+      return true;
+    }
+    if (!current.kept.some((k) => k.slug === slug)) return false;
+    appFrameStore.set({ kept: current.kept.filter((k) => k.slug !== slug) });
+    return true;
+  },
+
+  /**
+   * #2902: `?shot=apps-kept` only. Stand up kept records for `slugs` as the
+   * fully restricted pending frame — `sandboxReady: false`, never navigated
+   * — so the dot and the hidden frames can be pictured and checked. Such a
+   * record cannot be resumed (resume requires a sandboxed, loaded document);
+   * opening the app launches it the ordinary way.
+   */
+  keepForShot(slugs = []) {
+    const current = appFrameStore.get();
+    const fresh = slugs.filter((slug) => slug && slug !== current.slug
+      && !current.kept.some((k) => k.slug === slug));
+    const kept = [
+      ...fresh.map((slug) => ({
+        slug, seq: (frames += 1), background: '', sandboxReady: false,
+        allow: BASE_ALLOW, navigatedAt: Date.now(),
+      })),
+      ...current.kept,
+    ].slice(0, keepAliveLimit());
+    appFrameStore.set({ kept });
+    return kept.length;
+  },
+
+  /** #2902: let every frame go — sign-out. Nothing of one viewer's apps outlives them. */
+  evictAll() {
+    appFrameBridge.unmount();
+    appFrameStore.set({ kept: [] });
   },
 
   slug() {
@@ -148,7 +328,8 @@ export const appFrameBridge = {
     if (!isSafeAppFrameSrc(src, platformOrigin)) return false;
     // flushSync updates the sandbox AND the permission policy on this same
     // element before the navigation.
-    appFrameStore.set({ sandboxReady: true, allow: allowAttribute(granted) });
+    appFrameStore.set({ sandboxReady: true, allow: allowAttribute(granted), navigatedAt: Date.now() });
+    resumedSlug = '';
     navigations += 1;
     el.src = src;
     return true;

@@ -216,9 +216,9 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(DevChatSubView));
   },
 
-  // Like the chat sub-view above, and now for the same reason: the topic
-  // page's own back bar retired in favour of the platform header's chevron,
-  // so this takes no back-bar props either.
+  // Like the chat sub-view above: the frame takes no back-bar props. The
+  // topic page's back control is the "‹ Workshop" chip at the top of its
+  // head (#2916, topic/topic-back.tsx), rendered by TopicHead, not this frame.
   mountTopicSubView(host) {
     mountLegacyPortal(host, createElement(DevTopicSubView));
   },

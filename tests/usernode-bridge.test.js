@@ -251,29 +251,41 @@ test('the LLM relay answers every frame the shell owns, and always answers', () 
   assert.match(relay, /credentials: 'same-origin'/);
 });
 
-// Floating "Open in Usernode" pill on chromeless share views — additive
-// within v1. Shown only on a production app subdomain
-// (<label>.<platformHost>, no "--" in the label, platform host derived
-// from the bridge's own script src), top frame, no native channel;
-// links back to the in-chrome App tab. Dismissing via × only hides the
-// pill for the current page load — no storage flag, so it reappears on
-// every refresh.
-test('hosted bridge injects the back-to-platform pill on share views', () => {
+// Floating Homeroom mark on chromeless share views — additive within v1.
+// Shown only on a production app subdomain (<label>.<platformHost>, no
+// "--" in the label), top frame, no native channel, not the platform's
+// own document; links back to the in-chrome App tab. Persistent, with no
+// dismiss control (#2705) — the affordance is an icon rather than a
+// labelled pill precisely so it can afford to stay.
+//
+// These are source-text assertions, which is exactly what let the
+// original defect through: every one of them passed while the pill
+// rendered on nothing. The BEHAVIOUR — which hostnames draw a mark and
+// which do not — is pinned in tests/bridge-platform-mark.test.js, which
+// runs this block against a fake DOM.
+test('hosted bridge injects the back-to-platform mark on share views', () => {
   const bridge = readBridge(versionedBridgePath);
 
   assert.match(bridge, /__un-platform-link/);
   // Canonical App-tab deep link: https://<platformHost>/app/<slug>.
   assert.match(bridge, /"\/app\/" \+ label/);
-  // Staging previews (<slug>--s<id>) must not get the pill.
+  // Staging previews (<slug>--s<id>) must not get the mark.
   assert.match(bridge, /label\.indexOf\("--"\) !== -1/);
   // Never inside the platform iframe or the Flutter WebView.
   assert.match(bridge, /_inIframe \|\| _hasNativeChannel/);
-  // Dismiss must NOT persist anywhere — the pill comes back on refresh.
+  // Nor on the platform's own top-frame document, which loads this same
+  // bridge from the apex and says so (frontend/src/head.html).
+  assert.match(bridge, /window\.__usernodePlatformShell/);
+  // Nothing about the mark is remembered between loads, dismissal least
+  // of all — there is no dismiss control to remember.
   assert.doesNotMatch(bridge, /__un_platform_link_dismissed/);
   assert.doesNotMatch(bridge, /sessionStorage[^\n]*platform_link/i);
-  // Platform host comes from the script's own src, not a hard-coded
-  // domain (keeps self-hosted forks correct).
+  // An app that still names a host in its tag gets that name checked
+  // against the one its subdomain implies, rather than ignored.
   assert.match(bridge, /document\.currentScript/);
+  // The mark rides the centrally hosted asset prefixes, so it resolves
+  // on the app's own origin and no app carries a platform hostname.
+  assert.match(bridge, /"\/usernode-bridge\/v1\/mark\.svg"/);
 });
 
 // External links can only leave the app's webview through the system

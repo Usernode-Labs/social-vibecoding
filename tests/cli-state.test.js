@@ -41,7 +41,7 @@ test('production defaults to Homeroom without an environment override', () => {
     encoding: 'utf8',
   }));
   assert.deepEqual(resolve(env), {
-    production: { name: 'production', origin: 'https://my.onhomeroom.com' },
+    production: { name: 'production', origin: 'https://app.onhomeroom.com' },
     local: { name: 'local', origin: 'http://localhost:3000' },
   });
   assert.deepEqual(resolve({ ...env, USERNODE_DOMAIN: 'self-hosted.example.com' }), {

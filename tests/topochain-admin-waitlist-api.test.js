@@ -534,7 +534,9 @@ test('export-csv downloads every signup, newest first, with a dated filename', a
     'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
     'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
     'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
-    'country', 'city', 'found_us', 'found_us_detail', 'made_url',
+    'country', 'city', 'found_us', 'found_us_detail', 'made_url', 'made_note',
+    'group_name', 'group_size', 'group_role', 'group_tools', 'group_need',
+    'had_loss', 'loss_product', 'loss_kind', 'loss_story', 'followed_claim',
   ].join(','));
 
   const byId = new Map(rows.map((r) => [r.signup_id, r]));
@@ -548,6 +550,36 @@ test('export-csv downloads every signup, newest first, with a dated filename', a
   assert.equal(byId.get('4').has_platform_access, '');
   assert.equal(byId.get('1').country, 'DE');
   assert.equal(byId.get('5').farcaster, 'someone');
+  assert.equal(byId.get('1').group_name, 'Chess club');
+  assert.equal(byId.get('1').had_loss, 'yes');
+  assert.equal(byId.get('5').followed_claim, 'true');
+  assert.equal(byId.get('3').followed_claim, '');
+});
+
+// The "what they want to build with who" half of the issue: the group
+// section's size/role/tools/need and the loss-story section, both entirely
+// absent from the export before this test was added.
+test('export-csv carries the group and loss survey sections', async () => {
+  signupRows[0].answers.group = {
+    name: 'Chess club', size: '10-50', role: 'organizer', tools: ['discord', 'telegram'], need: 'A shared roster',
+  };
+  signupRows[0].answers.loss = {
+    had: 'yes', product: 'Old Forum', kind: ['shutdown', 'acquired'], story: 'It just vanished one day.',
+  };
+  signupRows[0].answers.made_note = 'A little side project';
+
+  const rows = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv')).text);
+  const row = rows.find((r) => r.signup_id === '1');
+  assert.equal(row.made_note, 'A little side project');
+  assert.equal(row.group_name, 'Chess club');
+  assert.equal(row.group_size, '10-50');
+  assert.equal(row.group_role, 'organizer');
+  assert.equal(row.group_tools, 'discord; telegram');
+  assert.equal(row.group_need, 'A shared roster');
+  assert.equal(row.had_loss, 'yes');
+  assert.equal(row.loss_product, 'Old Forum');
+  assert.equal(row.loss_kind, 'shutdown; acquired');
+  assert.equal(row.loss_story, 'It just vanished one day.');
 });
 
 test('export-csv honours the status and only filters the screen has set', async () => {

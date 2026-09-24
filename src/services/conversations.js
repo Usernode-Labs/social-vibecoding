@@ -112,16 +112,16 @@ async function blockedEitherWay(db, a, b) {
   return rows.length > 0;
 }
 
-async function loadMembership(db, conversationId, userId, { forUpdate = false, allowInvited = false } = {}) {
+async function loadMembership(db, conversationId, userId, { forUpdate = false, allowInvited = false, allowDeletedPeer = false } = {}) {
   const { rows } = await db.query(
     `SELECT c.id, c.kind, c.title, c.status AS conversation_status,
-            c.created_by, c.created_at, c.updated_at,
+            c.created_by, c.created_at, c.updated_at, c.deleted_peer,
             cm.role, cm.status AS membership_status, cm.invited_by,
             cm.joined_at, cm.last_read_message_id
        FROM conversations c
        JOIN conversation_members cm ON cm.conversation_id = c.id
       WHERE c.id = $1 AND cm.user_id = $2
-        AND c.status = 'active'
+        AND (c.status = 'active' OR (${allowDeletedPeer ? 'TRUE' : 'FALSE'} AND c.status = 'archived' AND c.deleted_peer))
         AND cm.status ${allowInvited ? "IN ('member', 'invited')" : "= 'member'"}
       ${forUpdate ? 'FOR UPDATE OF c, cm' : ''}`,
     [conversationId, userId]
@@ -145,6 +145,13 @@ async function canDirectInteract(db, membership, userId) {
   if (membership.kind !== 'direct') return true;
   const otherId = await loadDirectPeer(db, membership.id, userId, { forShare: true });
   return !!otherId && !(await blockedEitherWay(db, userId, otherId));
+}
+
+// Deleted-peer archives are only marked for accepted, unblocked members
+// by account deletion. Writes keep canDirectInteract's live-peer gate.
+async function canReadConversation(db, membership, userId) {
+  if (membership.deleted_peer && membership.membership_status === 'member') return true;
+  return canDirectInteract(db, membership, userId);
 }
 
 // Canonical ordering for every direct-conversation write:
@@ -177,12 +184,13 @@ async function lockInteractionMembership(db, conversationId, userId, { allowInvi
 // by block mutations is held. The mutation that prompted the event has
 // already committed; this second short transaction suppresses the event if a
 // block won the race, or makes a concurrent block wait until the send is
-// complete. Group conversations deliberately ignore pairwise blocks.
+// complete. In shared rooms, only the people who have not blocked the actor
+// receive the actor's message, reaction, or typing envelope.
 async function withLockedAudience(pool, user, conversationId, callback) {
   return transaction(pool, async (db) => {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
     if (!membership) return null;
-    const memberIds = await activeMemberIds(db, conversationId);
+    const memberIds = await visibleMemberIds(db, conversationId, user.id);
     await callback(memberIds, membership);
     return memberIds;
   });
@@ -194,6 +202,18 @@ async function activeMemberIds(db, conversationId) {
       WHERE conversation_id = $1 AND status = 'member'
       ORDER BY user_id`,
     [conversationId]
+  );
+  return rows.map((row) => row.user_id);
+}
+
+async function visibleMemberIds(db, conversationId, senderId) {
+  const { rows } = await db.query(
+    `SELECT cm.user_id FROM conversation_members cm
+      WHERE cm.conversation_id = $1 AND cm.status = 'member'
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = cm.user_id AND b.blocked_user_id = $2)
+      ORDER BY cm.user_id`,
+    [conversationId, senderId]
   );
   return rows.map((row) => row.user_id);
 }
@@ -258,14 +278,17 @@ function attachmentGroups(rows, conversationId) {
 async function hydrateMessages(db, user, rows) {
   if (!rows.length) return [];
   const ids = rows.map((row) => row.id);
-  const [reactionResult, attachmentResult, objects, savedIds] = await Promise.all([
+  const replyAuthors = [...new Set(rows.map((row) => row.reply_sender_id).filter(Boolean))];
+  const [reactionResult, attachmentResult, objects, savedIds, blockResult] = await Promise.all([
     db.query(
       `SELECT r.message_id, r.user_id, r.emoji, u.username
          FROM conversation_message_reactions r
          LEFT JOIN users u ON u.id = r.user_id
         WHERE r.message_id = ANY($1::int[])
+          AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE b.blocker_id = $2 AND b.blocked_user_id = r.user_id)
         ORDER BY r.message_id, r.created_at, r.id`,
-      [ids]
+      [ids, user.id]
     ),
     db.query(
       `SELECT id, message_id, kind, filename, content_type, size_bytes, meta
@@ -281,25 +304,33 @@ async function hydrateMessages(db, user, rows) {
     // round of latency for the whole page — and returns an empty Set for an
     // anonymous viewer, so no branch is needed below.
     messageBookmarks.savedConversationMessageIdsFor(db, user && user.id, ids),
+    replyAuthors.length
+      ? db.query(
+        `SELECT blocked_user_id FROM user_blocks
+          WHERE blocker_id = $1 AND blocked_user_id = ANY($2::int[])`,
+        [user.id, replyAuthors]
+      )
+      : Promise.resolve({ rows: [] }),
   ]);
   const reactions = reactionGroups(reactionResult.rows, user.id);
   const attachments = attachmentGroups(attachmentResult.rows, rows[0].conversation_id);
+  const blockedIds = new Set(blockResult.rows.map((row) => row.blocked_user_id));
   return rows.map((row) => ({
     id: row.id,
     conversationId: row.conversation_id,
     sender: {
       id: row.sender_id || 0,
-      username: row.sender_username || 'deleted user',
+      username: row.sender_username || 'Deleted user',
       avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
     },
     content: row.content,
     createdAt: row.created_at,
     editedAt: row.edited_at,
-    reply: row.reply_id ? {
+    reply: row.reply_id && !blockedIds.has(row.reply_sender_id) ? {
       id: row.reply_id,
       sender: {
         id: row.reply_sender_id || 0,
-        username: row.reply_sender_username || 'deleted user',
+        username: row.reply_sender_username || 'Deleted user',
         avatarUrl: row.reply_sender_avatar_id ? `/avatars/${row.reply_sender_avatar_id}` : null,
       },
       content: row.reply_content || '',
@@ -325,18 +356,20 @@ const MESSAGE_SELECT = `
 
 async function getMessage(db, user, conversationId, messageId) {
   const { rows } = await db.query(
-    `${MESSAGE_SELECT} WHERE m.id = $1 AND m.conversation_id = $2`,
-    [messageId, conversationId]
+    `${MESSAGE_SELECT} WHERE m.id = $1 AND m.conversation_id = $2
+       AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                        WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)`,
+    [messageId, conversationId, user.id]
   );
   const hydrated = await hydrateMessages(db, user, rows);
   return hydrated[0] || null;
 }
 
 async function listMessages(pool, user, conversationId, { before = null, limit = 50 } = {}) {
-  const membership = await loadMembership(pool, conversationId, user.id);
-  if (!membership || !(await canDirectInteract(pool, membership, user.id))) return null;
+  const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
+  if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
-  const params = [conversationId];
+  const params = [conversationId, user.id];
   let beforeSql = '';
   if (before) {
     params.push(before);
@@ -346,6 +379,8 @@ async function listMessages(pool, user, conversationId, { before = null, limit =
   const { rows } = await pool.query(
     `${MESSAGE_SELECT}
       WHERE m.conversation_id = $1 ${beforeSql}
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
       ORDER BY m.id DESC LIMIT $${params.length}`,
     params
   );
@@ -360,7 +395,8 @@ async function listMessages(pool, user, conversationId, { before = null, limit =
 
 async function conversationRow(db, user, conversationId) {
   const { rows } = await db.query(
-    `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at,
+    `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer,
+            c.channel_key,
             me.role AS my_role, me.status AS membership_status, me.invited_by,
             me.last_read_message_id,
             inviter.username AS requester_username,
@@ -381,9 +417,12 @@ async function conversationRow(db, user, conversationId) {
        LEFT JOIN user_avatars peer_avatar ON peer_avatar.user_id = peer.user_id
        LEFT JOIN LATERAL (
          SELECT id FROM conversation_messages m
-          WHERE m.conversation_id = c.id ORDER BY id DESC LIMIT 1
+          WHERE m.conversation_id = c.id
+            AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                             WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
+          ORDER BY id DESC LIMIT 1
        ) latest ON TRUE
-      WHERE c.id = $1 AND c.status = 'active'
+      WHERE c.id = $1 AND (c.status = 'active' OR (c.status = 'archived' AND c.deleted_peer))
         AND me.status IN ('member', 'invited')`,
     [conversationId, user.id]
   );
@@ -392,15 +431,29 @@ async function conversationRow(db, user, conversationId) {
 
 async function serializeConversation(db, user, row, { includeMembers = true } = {}) {
   const accepted = row.membership_status === 'member';
-  const members = accepted && includeMembers ? await loadMembers(db, row.id) : [];
+  const channel = row.kind === 'channel';
+  // A channel's roster is every user on the platform, so it is COUNTED rather
+  // than loaded: the list and the thread header need the number, and nothing
+  // renders thousands of member rows.
+  const members = accepted && includeMembers && !channel ? await loadMembers(db, row.id) : [];
+  const channelMemberCount = accepted && channel
+    ? (await db.query(
+      `SELECT COUNT(*)::int AS count FROM conversation_members
+        WHERE conversation_id = $1 AND status = 'member'`,
+      [row.id]
+    )).rows[0]?.count || 0
+    : 0;
   const latest = accepted && row.latest_message_id
     ? await getMessage(db, user, row.id, row.latest_message_id)
     : null;
   let unread = 0;
-  if (row.membership_status === 'member') {
+  if (row.membership_status === 'member' && !row.deleted_peer) {
     const result = await db.query(
-      `SELECT COUNT(*)::int AS count FROM conversation_messages
-        WHERE conversation_id = $1 AND id > COALESCE($2, 0) AND sender_id IS DISTINCT FROM $3`,
+      `SELECT COUNT(*)::int AS count FROM conversation_messages m
+        WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
+          AND m.sender_id IS DISTINCT FROM $3
+          AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)`,
       [row.id, row.last_read_message_id, user.id]
     );
     unread = result.rows[0]?.count || 0;
@@ -419,22 +472,28 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     username: row.requester_username,
     avatarUrl: row.requester_avatar_id ? `/avatars/${row.requester_avatar_id}` : null,
   } : null;
-  const title = row.kind === 'direct' ? (peer?.username || 'Direct message') : row.title;
+  const title = row.kind === 'direct' ? (peer?.username || (row.deleted_peer ? 'Deleted user' : 'Direct message')) : row.title;
   return {
     id: row.id,
     kind: row.kind,
     title,
     status: row.status,
     archived: row.status === 'archived',
+    deletedPeer: !!row.deleted_peer,
     members,
-    memberCount: accepted ? members.filter((member) => member.status === 'member').length : 0,
+    memberCount: channel
+      ? channelMemberCount
+      : (accepted ? members.filter((member) => member.status === 'member').length : 0),
+    channelKey: channel ? row.channel_key : null,
     membershipStatus: row.membership_status,
     myRole: row.my_role,
     requester,
     peer,
     latestMessage: latest,
     latestSummary: accepted ? (latest?.content || '') : '',
-    lastActivityAt: latest?.createdAt || row.updated_at || row.created_at,
+    // A blocked sender must not move a shared room up the inbox just by
+    // posting. Invitations still use their own update timestamp.
+    lastActivityAt: accepted ? (latest?.createdAt || row.created_at) : (row.updated_at || row.created_at),
     unreadCount: unread,
     canSend: row.membership_status === 'member' && row.status === 'active',
     canInvite: row.kind === 'group' && row.membership_status === 'member' && row.status === 'active',
@@ -442,17 +501,54 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   };
 }
 
+/**
+ * Join the viewer to every channel they are not in yet (#2783).
+ *
+ * Channel membership is implicit — every user is in #general — but the
+ * realtime audience, the read cursor and the unread count all hang off a
+ * `conversation_members` row, so one is written the first time it matters:
+ * when the viewer's list is read, or when they open a channel before it has
+ * been. The cursor starts at the room's latest message, so a newcomer is not
+ * greeted with its whole history as unread. Idempotent: an existing row, in
+ * whatever state, is left alone.
+ */
+async function ensureChannelMemberships(db, user) {
+  if (!user || !user.id) return;
+  await db.query(
+    `INSERT INTO conversation_members
+       (conversation_id, user_id, role, status, responded_at, joined_at, last_read_message_id)
+     SELECT c.id, $1, 'member', 'member', NOW(), NOW(),
+            (SELECT MAX(m.id) FROM conversation_messages m WHERE m.conversation_id = c.id)
+       FROM conversations c
+      WHERE c.kind = 'channel' AND c.status = 'active'
+     ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+    [user.id]
+  );
+}
+
 async function getConversation(pool, user, conversationId) {
-  const row = await conversationRow(pool, user, conversationId);
-  if (!row || !(await canDirectInteract(pool, row, user.id))) return null;
+  let row = await conversationRow(pool, user, conversationId);
+  if (!row) {
+    // Opening #general by its address before the list has ever been read.
+    const channel = await pool.query(
+      `SELECT 1 FROM conversations WHERE id = $1 AND kind = 'channel' AND status = 'active'`,
+      [conversationId]
+    );
+    if (channel.rows.length) {
+      await ensureChannelMemberships(pool, user);
+      row = await conversationRow(pool, user, conversationId);
+    }
+  }
+  if (!row || !(await canReadConversation(pool, row, user.id))) return null;
   return serializeConversation(pool, user, row);
 }
 
 async function listConversations(pool, user) {
+  await ensureChannelMemberships(pool, user);
   const { rows } = await pool.query(
     `SELECT c.id FROM conversations c
       JOIN conversation_members me ON me.conversation_id = c.id
-      WHERE me.user_id = $1 AND c.status = 'active'
+      WHERE me.user_id = $1 AND (c.status = 'active' OR (c.status = 'archived' AND c.deleted_peer))
         AND me.status IN ('member', 'invited')
       ORDER BY c.updated_at DESC, c.id DESC
       LIMIT 200`,
@@ -470,12 +566,14 @@ async function insertNotification(db, { userId, conversationId, messageId = null
   const { rows } = await db.query(
     `INSERT INTO notifications
        (user_id, conversation_id, conversation_message_id, source_user_id, kind, detail)
-     VALUES ($1, $2, $3, $4, $5, $6)
+     SELECT $1, $2, $3, $4, $5, $6
+      WHERE NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = $1 AND b.blocked_user_id = $4)
      RETURNING id, user_id, conversation_id, conversation_message_id,
                source_user_id, kind, detail, created_at`,
     [userId, conversationId, messageId, sourceUserId || null, kind, detail]
   );
-  return rows[0];
+  return rows[0] || null;
 }
 
 async function createDirect(pool, user, targetUserId) {
@@ -769,7 +867,9 @@ async function transferOrArchive(db, conversationId, leavingUserId) {
 async function leave(pool, user, conversationId) {
   return transaction(pool, async (db) => {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
-    if (!membership) return null;
+    // A channel cannot be left (#2783): every user is in it, and the next
+    // read of their list would only join them again.
+    if (!membership || membership.kind === 'channel') return null;
     await db.query(
       `UPDATE conversation_members
           SET status = 'left', role = 'member', left_at = NOW(), responded_at = NOW()
@@ -948,6 +1048,9 @@ async function sendMessage(pool, user, conversationId, input) {
       let kind = 'conversation_message';
       if (member.user_id === replyAuthorId) kind = 'conversation_reply';
       else if (mentionsUsername(content, member.username)) kind = 'conversation_mention';
+      // A channel is everybody (#2783): an ordinary message there would ring
+      // every bell on the platform. Only a reply or an @mention does.
+      if (membership.kind === 'channel' && kind === 'conversation_message') continue;
       notifications.push(await insertNotification(db, {
         userId: member.user_id, conversationId, messageId,
         sourceUserId: user.id, kind,
@@ -988,8 +1091,11 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
     if (!membership) return null;
     const message = await db.query(
       `SELECT id, sender_id FROM conversation_messages
-        WHERE id = $1 AND conversation_id = $2 FOR UPDATE`,
-      [messageId, conversationId]
+        WHERE id = $1 AND conversation_id = $2
+          AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE b.blocker_id = $3 AND b.blocked_user_id = sender_id)
+        FOR UPDATE`,
+      [messageId, conversationId, user.id]
     );
     if (!message.rows.length) return null;
     const deleted = await db.query(
@@ -1143,6 +1249,18 @@ async function setBlock(pool, userId, targetId, blocked) {
       conversationIds: affected.rows.map((row) => row.conversation_id),
       memberIds: [userId, targetId],
     };
+    const shared = await db.query(
+      `SELECT mine.conversation_id
+         FROM conversation_members mine
+         JOIN conversation_members peer
+           ON peer.conversation_id = mine.conversation_id AND peer.user_id = $2
+         JOIN conversations c ON c.id = mine.conversation_id
+        WHERE mine.user_id = $1 AND mine.status = 'member'
+          AND peer.status = 'member' AND c.status = 'active'
+          AND c.kind IN ('group', 'channel')`,
+      [userId, targetId]
+    );
+    outcome.privateRefreshConversationIds = shared.rows.map((row) => row.conversation_id);
     const audience = await db.query(
       `SELECT cm.conversation_id,
               ARRAY_AGG(DISTINCT cm.user_id ORDER BY cm.user_id) AS user_ids
@@ -1223,6 +1341,16 @@ async function setBlock(pool, userId, targetId, blocked) {
           AND p.user_high_id = GREATEST($1::int, $2::int)`,
       [userId, targetId]
     );
+    // A shared group or channel stays available, but anything this person
+    // sent stops appearing in the blocker's bell and queued mobile push.
+    await db.query(
+      `DELETE FROM notifications
+        WHERE user_id = $1 AND source_user_id = $2
+          AND (kind IN ('conversation_invite', 'conversation_message',
+                        'conversation_mention', 'conversation_reply', 'conversation_reaction')
+               OR chat_message_id IS NOT NULL)`,
+      [userId, targetId]
+    );
     return outcome;
   });
 }
@@ -1262,6 +1390,7 @@ module.exports = {
   loadMembership,
   loadDirectPeer,
   canDirectInteract,
+  canReadConversation,
   lockInteractionMembership,
   withLockedAudience,
   activeMemberIds,
@@ -1277,6 +1406,7 @@ module.exports = {
   leave,
   removeMember,
   mentionsUsername,
+  ensureChannelMemberships,
   sendMessage,
   editMessage,
   toggleReaction,

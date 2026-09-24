@@ -1294,6 +1294,25 @@ async function deleteWorker(config, sessionId, { deleteVolume = false } = {}) {
   if (deleteVolume) await deleteIfPresent(core, 'deleteNamespacedPersistentVolumeClaim', withSuffix(name, 'state'), namespace);
 }
 
+// A deletion acceptance is not proof that pods/PVCs finished terminating.
+// Account erasure keeps its durable task pending while finalizers run.
+async function eraseWorker(config, sessionId) {
+  await deleteWorker(config, sessionId, { deleteVolume: true });
+  const { apps, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const name = dnsName(`sv-worker-s${sessionId}`);
+  const absent = async (api, method, resourceName) => {
+    try { await api[method]({ namespace, name: resourceName }); }
+    catch (err) { if (isNotFound(err)) return; throw err; }
+    throw new Error('worker_erasure_pending');
+  };
+  await absent(apps, 'readNamespacedDeployment', name);
+  await absent(core, 'readNamespacedSecret', withSuffix(name, 'env'));
+  await absent(core, 'readNamespacedPersistentVolumeClaim', withSuffix(name, 'state'));
+  const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${name}` });
+  if (pods.items?.length) throw new Error('worker_erasure_pending');
+}
+
 async function listWorkers(config) {
   const namespace = config.kubernetes.workerNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
@@ -1666,7 +1685,7 @@ async function runCheckJob(config, {
   const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
   const resources = {
     requests: {
-      cpu: checkResourceRequest('1', cpuLimit, 'CPU'),
+      cpu: checkResourceRequest('4', cpuLimit, 'CPU'),
       memory: checkResourceRequest(unitSuite ? '1Gi' : '3Gi', memoryLimit, 'memory'),
       'ephemeral-storage': '1Gi',
     },
@@ -1675,7 +1694,13 @@ async function runCheckJob(config, {
   const image = unitSuite ? cfg.workerImage : cfg.captureImage;
   if (!image?.includes('@sha256:')) throw new Error(`${unitSuite ? 'KUBERNETES_WORKER_IMAGE' : 'KUBERNETES_CAPTURE_IMAGE'} must be an immutable digest`);
   const namespace = cfg.workerNamespace;
-  const name = dnsName(`sv-${kind}-s${sessionId}-${previewRunId || Date.now().toString(36)}`);
+  const runName = `sv-${kind}-s${sessionId}-${previewRunId || Date.now().toString(36)}`;
+  // One evidence run launches two clean replay passes, and a repair may
+  // launch more. Finished Jobs remain for their TTL, so the run id is a
+  // correlation label, not a unique Job name. Keep the suffix even if the
+  // base must be truncated to fit Kubernetes' DNS name limit. Reserve room
+  // for the input Secret's "-input" suffix without truncating the nonce.
+  const name = evidence ? withSuffix(runName, crypto.randomBytes(8).toString('hex'), 57) : dnsName(runName);
   const inputSecretName = !unitSuite && stdinPayload == null ? null : withSuffix(name, 'input');
   if (stdinPayload != null && Buffer.byteLength(String(stdinPayload), 'utf8') > 900 * 1024) {
     throw new Error('Capture stdin payload exceeds the Kubernetes Secret transport limit');
@@ -1706,9 +1731,26 @@ async function runCheckJob(config, {
       secret: { secretName: inputSecretName, items: [{ key: 'tests.json', path: 'tests.json' }] },
     });
   }
-  const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: {
+  // Count all check kinds and sessions together, excluding resident workers.
+  const checkSelector = {
+    'app.kubernetes.io/managed-by': MANAGED_BY,
+    'app.kubernetes.io/part-of': PART_OF,
+    'social.usernode.io/workload': 'check',
+  };
+  const checkLabels = { ...labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }), ...checkSelector };
+  const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: { ...checkLabels } }, spec: {
     backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: 3600,
-    template: { metadata: { labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: { restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount, automountServiceAccountToken: false, securityContext: nodePodSecurityContext(), containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}) } },
+    template: { metadata: { labels: { ...checkLabels } }, spec: {
+      restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
+      automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
+      // Prefer spare hosts without stranding checks when only one host fits.
+      topologySpreadConstraints: [{
+        maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
+        nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
+        labelSelector: { matchLabels: checkSelector },
+      }],
+      containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}),
+    } },
   } };
   const { batch, core } = getClients();
   if (previewRunId) {
@@ -1833,6 +1875,7 @@ async function runCheckJob(config, {
         const jobReason = job.status.conditions?.find(c => c.type === 'Failed')?.reason;
         err.stderr = [jobReason, terminated?.reason].filter(Boolean).join(': ');
         err.killed = jobReason === 'DeadlineExceeded' || terminated?.reason === 'OOMKilled';
+        err.captureJobTerminated = true;
         throw err;
       }
       if (job.status?.succeeded) {
@@ -1872,7 +1915,10 @@ async function runCheckJob(config, {
     // throwing it past the verdict path and losing the only explanation.
     // Unit suites retain their throwing contract; their outcome parser has
     // a separate TAP/stderr path.
-    const captureTerminated = !!err.stderr || Number.isInteger(err.code);
+    // Kubernetes API errors also use numeric codes (for example 409 when a
+    // Job already exists). Only a failed Job observed above is a container
+    // termination whose partial stdout can be salvaged.
+    const captureTerminated = err.captureJobTerminated === true;
     if (retainPartial && (err.killed || err.captureLogFailed
         || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || captureTerminated)) {
       const termination = [err.stderr, Number.isInteger(err.code) ? `exit code ${err.code}` : '']
@@ -2182,7 +2228,7 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runEvidenceJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
-  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, listWorkers, cloneWorkerVolume,
+  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,

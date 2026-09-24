@@ -264,7 +264,10 @@ top-frame call, so embedded apps cannot enable the shell's gesture.
 
 The platform header publishes `true` only for a visible Back arrow with a
 destination, outside embedded App-tab content. Workshop and other Dev screens
-remain eligible. Home icons and hidden headers publish `false`. WebKit still
+remain eligible. A Workshop topic page (an issue, proposal, governance vote or
+shared session) draws its Back as the in-page "Workshop" chip instead of a
+header arrow (#2916), and publishes `true` for that chip's destination. Home
+icons and hidden headers publish `false`. WebKit still
 requires an existing history entry: a cold deep link with no previous page
 keeps its clickable header destination but cannot swipe back through history.
 The native flag also allows WebKit's standard forward gesture where forward

@@ -529,7 +529,7 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(created.body.spec.template.spec.automountServiceAccountToken, false);
   assert.deepEqual(created.body.spec.template.spec.containers[0].resources, {
-    requests: { cpu: '1', memory: '3Gi', 'ephemeral-storage': '1Gi' },
+    requests: { cpu: '4', memory: '3Gi', 'ephemeral-storage': '1Gi' },
     // 6Gi: the pool is sixteen pages now (services/visuals.js CAPTURE_MEMORY
     // and tests/checks-budget.test.js carry the sizing).
     limits: { cpu: '8', memory: '6Gi', 'ephemeral-storage': '4Gi' },
@@ -541,9 +541,9 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(result.stdout, 'result');
 });
 
-for (const kind of ['Capture', 'UnitSuite']) {
+for (const kind of ['Capture', 'UnitSuite', 'Evidence']) {
   for (const [cpus, memory, expectedMemory, expectedRequestMemory] of [
-    ['6', '6g', '6Gi', kind === 'Capture' ? '3Gi' : '1Gi'],
+    ['6', '6g', '6Gi', kind === 'UnitSuite' ? '1Gi' : '3Gi'],
     ['0.5', '512m', '512Mi', '512Mi'],
   ]) {
     test(`${kind} honors resource overrides ${cpus} CPU / ${memory} without exceeding limits`, async () => {
@@ -564,11 +564,59 @@ for (const kind of ['Capture', 'UnitSuite']) {
       const { requests, limits } = created.spec.template.spec.containers[0].resources;
       assert.equal(limits.cpu, cpus);
       assert.equal(limits.memory, expectedMemory);
-      assert.equal(requests.cpu, Number(cpus) < 1 ? cpus : '1');
+      assert.equal(requests.cpu, Number(cpus) < 4 ? cpus : '4');
       assert.equal(requests.memory, expectedRequestMemory);
     });
   }
 }
+
+test('check kinds and sessions share one spread group without including resident workers', async () => {
+  const jobs = [];
+  kubernetes._setClientsForTest({
+    batch: {
+      async createNamespacedJob({ body }) { jobs.push(body); },
+      async readNamespacedJob() { return { status: { succeeded: 1 } }; },
+    },
+    core: {
+      async createNamespacedSecret() {},
+      async deleteNamespacedSecret() {},
+      async listNamespacedPod() { return { items: [{ metadata: { name: 'check-pod' } }] }; },
+      async readNamespacedPodLog() { return 'passed'; },
+    },
+  });
+  for (const [index, kind] of ['Capture', 'UnitSuite', 'Evidence'].entries()) {
+    await kubernetes[`run${kind}Job`](config(), { sessionId: 42 + index, env: {}, previewRunId: `run-${index}` });
+  }
+  const expected = {
+    maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
+    nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
+    labelSelector: { matchLabels: {
+      'app.kubernetes.io/managed-by': 'social-vibecoding-runtime',
+      'app.kubernetes.io/part-of': 'social-vibecoding',
+      'social.usernode.io/workload': 'check',
+    } },
+  };
+  for (const job of jobs) {
+    const pod = job.spec.template;
+    assert.deepEqual(pod.spec.topologySpreadConstraints, [expected]);
+    for (const [key, value] of Object.entries(expected.labelSelector.matchLabels)) {
+      assert.equal(pod.metadata.labels[key], value);
+      assert.equal(job.metadata.labels[key], value);
+    }
+    assert.equal(pod.spec.containers[0].resources.requests.cpu, '4');
+    assert.equal(pod.spec.affinity, undefined, 'checks must not inherit preview database affinity');
+    assert.equal(pod.spec.nodeSelector, undefined);
+  }
+  // Existing coding workers share runtime/part-of and worker environment labels,
+  // but do not carry the dedicated check label required by the spread selector.
+  const workerLabels = {
+    'app.kubernetes.io/managed-by': 'social-vibecoding-runtime',
+    'app.kubernetes.io/part-of': 'social-vibecoding',
+    'social.usernode.io/environment': 'worker',
+  };
+  assert.equal(Object.entries(expected.labelSelector.matchLabels)
+    .every(([key, value]) => workerLabels[key] === value), false);
+});
 
 test('invalid capture resource limits fail before creating credentials or workloads', async () => {
   kubernetes._setClientsForTest({});

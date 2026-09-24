@@ -73,6 +73,16 @@ export function FeedbackDialog() {
             or against the Homeroom platform. The "This app" button
             is always visible but rendered disabled/grayed-out when no app
             with a repo is open (see ./feedback-controller).
+
+            #2707: BOTH options render `aria-checked="false"`, because when
+            both are selectable nothing is selected until the person taps
+            one. The old markup pre-checked Platform, and the controller
+            then pre-selected "This app" on open wherever it was available —
+            so the dialog always arrived with a destination already made up,
+            and a report about the app could be filed against the platform
+            (or the reverse) by nobody's decision. The controller still
+            selects the single available destination when there is only one:
+            an extra tap that cannot disambiguate anything is just a tax.
         */}
         <div id="feedback-target" className="flex gap-2 mb-3" role="radiogroup" aria-label="Feedback target">
           <div className="flex-1 flex flex-col items-center">
@@ -97,7 +107,7 @@ export function FeedbackDialog() {
             <button
               type="button"
               role="radio"
-              aria-checked="true"
+              aria-checked="false"
               data-feedback-target="platform"
               id="feedback-target-platform"
               className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium transition-colors"
@@ -111,6 +121,22 @@ export function FeedbackDialog() {
             </div>
           </div>
         </div>
+        {/*
+            #2707: what the row is asking while no destination is chosen —
+            and, #2888, the red "choose one" the controller turns it into when
+            Submit is pressed anyway (Submit stays live; it refuses and says
+            why rather than sitting disabled). Renders EMPTY and hidden for the same two reasons #feedback-text-error
+            does — the controller owns the text, and a prompt on the initial
+            render would both lie (the one-destination case never shows it)
+            and mismatch on hydration. The controller also points the
+            radiogroup's `aria-describedby` at it while it is up.
+
+            #1603 is the precedent this follows: a control that refuses and
+            says nothing reads as a broken control, so the reason is on
+            screen beside the thing to fix.
+        */}
+        <p id="feedback-target-hint" className="hidden -mt-1 mb-3 text-xs text-zinc-600 dark:text-zinc-400">
+        </p>
         {/*
             #556: editable title, auto-filled live from the description
             (the controller debounces POST /api/feedback/title as you type).
