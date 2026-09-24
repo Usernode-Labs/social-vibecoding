@@ -453,3 +453,110 @@ test('bug h: the discussion context carries the app artwork, for a header with n
     globalThis.fetch = saved.fetch;
   }
 });
+
+// ── Your apps, then the other channels behind "Show more" (#2967) ────────
+//
+// A member of many apps had a channel for each, all at one weight. Home's
+// "Your apps" is the platform's one definition of which apps are the
+// viewer's (a member app unless they took it out, app_favorites.hidden), so
+// the server says it per channel and the list folds the rest.
+
+const groups = loadTsx('frontend/src/features/messages/channel-groups.tsx');
+
+function channelInbox(discussions, filter = 'all') {
+  return inbox.buildInbox({
+    conversations: [
+      { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
+      { id: 9, kind: 'channel', lastActivityAt: at('2026-01-01T00:00:00Z') },
+    ],
+    discussions,
+    agents: [],
+    filter,
+  });
+}
+
+const MIXED = [
+  { slug: 'hidden-new', lastAt: at('2026-01-09T00:00:00Z'), yours: false },
+  { slug: 'mine-old', lastAt: at('2026-01-03T00:00:00Z'), yours: true },
+  { slug: 'hidden-old', lastAt: at('2026-01-04T00:00:00Z'), yours: false },
+  { slug: 'mine-new', lastAt: at('2026-01-05T00:00:00Z') },
+];
+
+test('#2967: the viewer\'s own app channels come first, the others after, each on the clock', () => {
+  const merged = channelInbox(MIXED);
+  assert.deepEqual(merged.map((e) => e.key),
+    ['person:1', 'channel:9', 'app:mine-new', 'app:mine-old', 'app:hidden-new', 'app:hidden-old'],
+    '#general still leads the channels; an app newer than yours does not jump over them');
+  assert.deepEqual(merged.map((e) => e.group || null), [null, null, 'yours', 'yours', 'more', 'more'],
+    'a row with no `yours` flag (an older server) is one of the viewer\'s');
+});
+
+test('#2967: collapsed, the other channels fold under one toggle after the viewer\'s own', () => {
+  const merged = channelInbox(MIXED);
+  const shut = inbox.collapseChannels(merged, { expanded: false });
+  assert.deepEqual(shut.entries.map((e) => e.key), ['person:1', 'channel:9', 'app:mine-new', 'app:mine-old']);
+  assert.equal(shut.toggleAfter, 'app:mine-old');
+  assert.equal(shut.hidden, 2);
+  const open = inbox.collapseChannels(merged, { expanded: true });
+  assert.equal(open.entries, merged, 'expanded draws every row');
+  assert.equal(open.toggleAfter, 'app:mine-old', 'with the toggle (now "Show less") still between the halves');
+  const filtered = inbox.collapseChannels(channelInbox(MIXED, 'channels'), { expanded: false });
+  assert.deepEqual(filtered.entries.map((e) => e.key), ['channel:9', 'app:mine-new', 'app:mine-old'],
+    'the Channels filter folds the same way');
+});
+
+test('#2967: the open channel stays in view, lifted after the viewer\'s own', () => {
+  const merged = channelInbox(MIXED);
+  const shut = inbox.collapseChannels(merged, { expanded: false, keep: 'app:hidden-old' });
+  assert.deepEqual(shut.entries.map((e) => e.key),
+    ['person:1', 'channel:9', 'app:mine-new', 'app:mine-old', 'app:hidden-old']);
+  assert.equal(shut.toggleAfter, 'app:hidden-old');
+  assert.equal(shut.hidden, 1, 'the count is what the toggle still holds');
+  const only = inbox.collapseChannels(channelInbox([MIXED[1], MIXED[0]]), { expanded: false, keep: 'app:hidden-new' });
+  assert.equal(only.toggleAfter, null, 'a toggle holding nothing is not drawn');
+  assert.equal(only.hidden, 0);
+});
+
+test('#2967: nothing folds with no channels of the viewer\'s own, no others, or a search running', () => {
+  const none = channelInbox([MIXED[0], MIXED[2]]);
+  const noneFolded = inbox.collapseChannels(none, { expanded: false });
+  assert.equal(noneFolded.entries, none, 'every channel "other": drawn as they are, not all behind a toggle');
+  assert.equal(noneFolded.toggleAfter, null);
+  const mineOnly = channelInbox([MIXED[1], MIXED[3]]);
+  assert.equal(inbox.collapseChannels(mineOnly, { expanded: false }).toggleAfter, null);
+  const merged = channelInbox(MIXED);
+  const searching = inbox.collapseChannels(merged, { expanded: false, searching: true });
+  assert.equal(searching.entries, merged, 'a match is never hidden behind the toggle');
+  assert.equal(searching.toggleAfter, null);
+});
+
+test('#2967: the toggle is a disclosure button whose label says what a tap does', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const shut = renderToHtml(createElement(groups.MoreChannelsToggle, { expanded: false, hidden: 3, onToggle() {} }));
+  assert.match(shut, /<button[^>]*type="button"[^>]*id="messages-more-channels"[^>]*class="messages-more-toggle"[^>]*aria-expanded="false"/);
+  assert.match(shut, /<span>Show more \(3\)<\/span>/);
+  const open = renderToHtml(createElement(groups.MoreChannelsToggle, { expanded: true, hidden: 3, onToggle() {} }));
+  assert.match(open, /aria-expanded="true"/);
+  assert.match(open, /<span>Show less<\/span>/);
+  assert.match(open, /rotate-180/);
+  const head = renderToHtml(createElement(groups.YourAppsHead));
+  assert.equal(head, '<h4 class="messages-section-head messages-group-head" data-inbox-group="yours">Your apps</h4>',
+    'an h4, so the declared check\'s `h3[data-inbox-section="channels"] + #general` still holds');
+});
+
+test('#2967: the screen folds through collapseChannels and remembers the choice after mount', () => {
+  assert.match(SCREEN, /const folded = collapseChannels\(matched, \{\s*expanded: moreExpanded,\s*keep: snap\.route\.appSlug \? `app:\$\{snap\.route\.appSlug\}` : null,\s*searching: !!q,\s*\}\);/);
+  assert.match(SCREEN, /if \(snap\.filter === 'all' && entry\.group === 'yours' && shown\[i - 1\]\?\.group !== 'yours'\)/);
+  const src = read('frontend/src/features/messages/channel-groups.tsx');
+  assert.match(src, /const \[expanded, setExpanded\] = useState\(false\);/, 'collapsed in the prerender');
+  assert.match(src, /useEffect\(\(\) => \{\s*try \{\s*if \(window\.localStorage\.getItem\(storageKey\(\)\) === '1'\) setExpanded\(true\);/,
+    'the remembered value is read in an effect, guarded');
+});
+
+test('#2967: the server says which channels are in Your apps, by Home\'s own rule', () => {
+  assert.match(ROUTE, /NOT COALESCE\(fav\.hidden, FALSE\) AS yours/);
+  assert.match(ROUTE, /LEFT JOIN app_favorites fav\s+ON fav\.app_id = a\.id AND fav\.user_id = \$1/);
+  assert.equal(overview.toDiscussion({ slug: 'a', name: 'A', yours: false }).yours, false);
+  assert.equal(overview.toDiscussion({ slug: 'a', name: 'A', yours: true }).yours, true);
+  assert.equal(overview.toDiscussion({ slug: 'a', name: 'A' }).yours, true, 'absent means a member app, one of theirs');
+});

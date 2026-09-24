@@ -17898,6 +17898,27 @@ html.un-kb #platform-parked {
   text-transform: uppercase;
   color: var(--text-muted);
 }
+/* #2967: "Your apps" sits under "Channels" as a lighter subheading, and the
+   other app channels fold under a quiet text toggle after them. */
+.messages-group-head { padding-top: 8px; letter-spacing: .02em; }
+.messages-more-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--brand-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.messages-more-toggle:hover { background: var(--bg-tertiary); }
+.messages-more-toggle:focus-visible { outline: 2px solid var(--brand-ink); outline-offset: -2px; }
 /* A channel's tile is the `#` it is named with. */
 .messages-channel-tile {
   background: var(--bg-tertiary);

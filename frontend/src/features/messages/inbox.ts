@@ -35,6 +35,15 @@
  * you visit, not a conversation waiting on you, so it does not jump over a
  * DM because somebody said something in it. Within the section the clock
  * orders the app channels, and one nobody has spoken in sits at the end.
+ *
+ * ── Your apps, then "Show more" (#2967) ────────────────────────────────
+ *
+ * A member of many apps had a channel for each, all at one weight. The app
+ * channels now split in two: the ones in the viewer's "Your apps" (Home's
+ * section, decided by the server — see src/routes/messages-overview.js
+ * `yours`) first, then the rest, which `collapseChannels` folds under a
+ * "Show more (N)" toggle. #general is not an app and stays where it was, at
+ * the head of the section.
  */
 
 // `mayor` is an agent session (#2779): a conversation with the Mayor that
@@ -53,7 +62,11 @@ export interface InboxEntry {
   section: InboxSection;
   /** ISO, or null when the source has no clock (see the header). */
   at: string | null;
+  /** An app channel's half of the section (#2967): in Your apps, or not. */
+  group?: ChannelGroup;
 }
+
+export type ChannelGroup = 'yours' | 'more';
 
 /**
  * An app's channel — its general discussion, `chat_messages` with a null
@@ -69,6 +82,11 @@ export interface AppDiscussion {
   lastMessage: string;
   lastAt: string | null;
   lastBy: string | null;
+  /**
+   * In the viewer's "Your apps" (#2967). Optional: an older server did not
+   * send it, and a member app is one of theirs unless they said otherwise.
+   */
+  yours?: boolean;
 }
 
 export interface AgentChat {
@@ -163,7 +181,13 @@ export function buildInbox(input: {
   }
   if (admits(input.filter, 'app')) {
     for (const item of input.discussions) {
-      apps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt });
+      apps.push({
+        key: `app:${item.slug}`,
+        kind: 'app',
+        section: 'channels',
+        at: item.lastAt,
+        group: item.yours === false ? 'more' : 'yours',
+      });
     }
   }
   if (admits(input.filter, 'agent')) {
@@ -189,5 +213,48 @@ export function buildInbox(input: {
   // Stable within a timestamp: `sort` is stable in every engine this ships
   // to, so two rows that happened in the same second keep the order their
   // own source gave them — which for conversations is the server's.
-  return [...chats.sort(byClock), ...rooms, ...apps.sort(byClock)];
+  apps.sort(byClock);
+  return [
+    ...chats.sort(byClock),
+    ...rooms,
+    ...apps.filter((e) => e.group === 'yours'),
+    ...apps.filter((e) => e.group === 'more'),
+  ];
+}
+
+/**
+ * Fold the app channels outside Your apps under a toggle (#2967).
+ *
+ * Returns the entries to DRAW, the key of the row the toggle follows (null:
+ * no toggle), and how many rows it holds. Nothing folds when:
+ *
+ *   - there are no other channels, or no channels of the viewer's own: a
+ *     list that is ALL "other" is drawn as it is, because hiding every
+ *     channel behind a toggle would leave a heading over nothing;
+ *   - a search is running: a match hidden behind a toggle is a match the
+ *     reader was told does not exist.
+ *
+ * The open channel is never hidden. Collapsed, a folded channel that is the
+ * one on screen is LIFTED to sit after the viewer's own, rather than the
+ * whole group auto-expanding: the toggle keeps meaning what it says, and the
+ * row the reader is in stays under their finger. (App channels carry no
+ * unread count — chat_messages has no read cursor — and #general, which does,
+ * never folds, so "open" is the only thing that can need lifting.)
+ */
+export function collapseChannels(
+  entries: InboxEntry[],
+  opts: { expanded: boolean; keep?: string | null; searching?: boolean },
+): { entries: InboxEntry[]; toggleAfter: string | null; hidden: number } {
+  const more = entries.filter((e) => e.group === 'more');
+  let lastYours: InboxEntry | null = null;
+  for (const e of entries) if (e.group === 'yours') lastYours = e;
+  if (!more.length || !lastYours || opts.searching) return { entries, toggleAfter: null, hidden: 0 };
+  if (opts.expanded) return { entries, toggleAfter: lastYours.key, hidden: more.length };
+  const lifted = more.find((e) => e.key === opts.keep) || null;
+  const hidden = more.length - (lifted ? 1 : 0);
+  return {
+    entries: entries.filter((e) => e.group !== 'more' || e === lifted),
+    toggleAfter: hidden ? (lifted || lastYours).key : null,
+    hidden,
+  };
 }

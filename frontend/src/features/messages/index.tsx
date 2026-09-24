@@ -14,6 +14,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { AgentAppDialog } from './agent-dialog';
+import { MoreChannelsToggle, YourAppsHead, useMoreChannelsExpanded } from './channel-groups';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -64,7 +65,7 @@ import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
 import {
-  INBOX_FILTERS, buildInbox,
+  INBOX_FILTERS, buildInbox, collapseChannels,
   type AgentChat, type AppDiscussion, type InboxFilter, type InboxSection,
 } from './inbox';
 import type { ConversationMessage, ConversationSummary, MessagesAgentThread } from './types';
@@ -669,6 +670,7 @@ function ConversationList() {
   // screen. The filter IS in the store, because the thread pane and the
   // deep-link router both read it.
   const [query, setQuery] = useState('');
+  const [moreExpanded, toggleMore] = useMoreChannelsExpanded();
   const chat = useGlobalChatState();
   const agentsOn = !!chat.bootstrap?.parityReady
     && chat.bootstrap.profiles.globalChat.enabled === true;
@@ -742,7 +744,15 @@ function ConversationList() {
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
   };
-  const shown = inbox.filter(matches);
+  const matched = inbox.filter(matches);
+  // #2967: the app channels outside Your apps fold under "Show more", except
+  // the one open on screen, and never while a search is narrowing the list.
+  const folded = collapseChannels(matched, {
+    expanded: moreExpanded,
+    keep: snap.route.appSlug ? `app:${snap.route.appSlug}` : null,
+    searching: !!q,
+  });
+  const shown = folded.entries;
 
   return (
     <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
@@ -794,7 +804,7 @@ function ConversationList() {
         {/* A QUERY THAT MATCHED NOTHING is not an empty inbox, and must not
             borrow the empty inbox's offer to start a conversation: the rows
             are there, this one word is what hid them. */}
-        {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !shown.length
+        {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !matched.length
           ? <div id="messages-search-empty" className="messages-state"><p>No messages match “{query.trim()}”.</p></div>
           : null}
         {/* ONE LIST, TWO SECTIONS (#2783). ./inbox.ts orders them — the
@@ -808,7 +818,18 @@ function ConversationList() {
             ? <h3 key={`head-${entry.section}`} className="messages-section-head" data-inbox-section={entry.section}>{SECTION_LABELS[entry.section]}</h3>
             : null;
           const row = inboxRow(entry);
-          return head ? [head, row] : row;
+          const parts: ReactNode[] = [];
+          if (head) parts.push(head);
+          // "Your apps" heads the viewer's own app channels (#2967) — only
+          // when there are some, so no heading ever sits over nothing.
+          if (snap.filter === 'all' && entry.group === 'yours' && shown[i - 1]?.group !== 'yours') {
+            parts.push(<YourAppsHead key="head-yours" />);
+          }
+          parts.push(row);
+          if (folded.toggleAfter === entry.key) {
+            parts.push(<MoreChannelsToggle key="more-channels" expanded={moreExpanded} hidden={folded.hidden} onToggle={toggleMore} />);
+          }
+          return parts.length === 1 ? row : parts;
         })}
       </div>
     </section>

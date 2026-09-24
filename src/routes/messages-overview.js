@@ -4,7 +4,7 @@
 //
 //   GET /api/messages/app-discussions
 //        → { discussions: [{ slug, name, channel, iconUrl, iconEmoji,
-//                            lastMessage, lastAt, lastBy }, …] }
+//                            lastMessage, lastAt, lastBy, yours }, …] }
 //
 // ── They are CHANNELS now (#2783) ──────────────────────────────────────
 //
@@ -15,6 +15,16 @@
 // which is why `latest` is a LEFT JOIN and why the cap is a directory's
 // rather than an inbox pane's. `channel` is the app's `#handle`, the name a
 // `#name` reference in a message resolves against (see channelHandles).
+//
+// ── Your apps first, the rest behind "Show more" (#2967) ─────────────
+//
+// `yours` says whether the app is in the viewer's "Your apps" — Home's
+// section, the one definition the platform has (frontend/src/features/home/
+// home.js `isYours`): a member app counts unless the viewer took it out of
+// that section, which is an `app_favorites` row with `hidden` set (#618).
+// Every row here is already a member app, so that hidden flag is the whole
+// test. The Messages list draws these channels first and folds the rest
+// under a "Show more" toggle; it never re-derives the rule itself.
 //
 // ── Why this exists (#2718) ────────────────────────────────────────────
 //
@@ -72,10 +82,13 @@ const LIMIT = 500;
 
 const DISCUSSIONS_SQL = `
   WITH mine AS (
-    SELECT a.id, a.slug, a.name, a.icon_image_id, a.icon_emoji
+    SELECT a.id, a.slug, a.name, a.icon_image_id, a.icon_emoji,
+           NOT COALESCE(fav.hidden, FALSE) AS yours
       FROM apps a
       JOIN app_collaborators me
         ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
+      LEFT JOIN app_favorites fav
+        ON fav.app_id = a.id AND fav.user_id = $1
      WHERE (NOT a.self_hosted OR $2::boolean)
   ),
   latest AS (
@@ -94,6 +107,7 @@ const DISCUSSIONS_SQL = `
          mine.name,
          mine.icon_image_id,
          mine.icon_emoji,
+         mine.yours,
          latest.content    AS last_message,
          latest.created_at AS last_at,
          u.username        AS last_by
@@ -123,6 +137,8 @@ function toDiscussion(row) {
     lastMessage: typeof row.last_message === 'string' ? row.last_message : '',
     lastAt: row.last_at ? new Date(row.last_at).toISOString() : null,
     lastBy: row.last_by || null,
+    // Absent on an older row shape: a member app is in Your apps by default.
+    yours: row.yours !== false,
   };
 }
 

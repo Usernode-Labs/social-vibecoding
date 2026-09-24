@@ -37,6 +37,8 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
         icon_image_id int, icon_emoji text, self_hosted boolean NOT NULL DEFAULT false
       );
       CREATE TABLE app_collaborators (app_id int, user_id int, status text);
+      CREATE TABLE app_favorites (app_id int, user_id int, hidden boolean NOT NULL DEFAULT false,
+        PRIMARY KEY (app_id, user_id));
       CREATE TABLE user_blocks (blocker_id int, blocked_user_id int,
         PRIMARY KEY (blocker_id, blocked_user_id));
       CREATE TABLE chat_messages (
@@ -47,7 +49,9 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
       );
       INSERT INTO users VALUES (1, 'reader'), (2, 'blocked'), (3, 'visible');
       INSERT INTO apps (id, slug, name) VALUES (7, 'demo', 'Demo');
-      INSERT INTO app_collaborators VALUES (7, 1, 'member');
+      INSERT INTO apps (id, slug, name) VALUES (8, 'tucked', 'Tucked Away');
+      INSERT INTO app_collaborators VALUES (7, 1, 'member'), (8, 1, 'member');
+      INSERT INTO app_favorites VALUES (8, 1, true);
       INSERT INTO user_blocks VALUES (1, 2);
       INSERT INTO chat_messages (id, app_id, user_id, content, metadata) VALUES
         (1, 7, 3, 'visible older', '{}'),
@@ -103,6 +107,9 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
     const { rows } = await pool.query(DISCUSSIONS_SQL, [1, false]);
     assert.equal(rows[0].last_message, 'visible newest');
     assert.equal(rows[0].last_by, 'visible');
+    // #2967: a member app the viewer took out of Home's Your apps is still a
+    // channel, but not one of theirs.
+    assert.deepEqual(rows.map((row) => [row.slug, row.yours]), [['demo', true], ['tucked', false]]);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (pool) await pool.end().catch(() => {});
