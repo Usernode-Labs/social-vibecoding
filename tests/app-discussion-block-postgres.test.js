@@ -37,6 +37,7 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
         icon_image_id int, icon_emoji text, self_hosted boolean NOT NULL DEFAULT false
       );
       CREATE TABLE app_collaborators (app_id int, user_id int, status text);
+      CREATE TABLE user_app_blocks (user_id int, app_id int, PRIMARY KEY (user_id, app_id));
       CREATE TABLE user_blocks (blocker_id int, blocked_user_id int,
         PRIMARY KEY (blocker_id, blocked_user_id));
       CREATE TABLE chat_messages (
@@ -103,6 +104,10 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
     const { rows } = await pool.query(DISCUSSIONS_SQL, [1, false]);
     assert.equal(rows[0].last_message, 'visible newest');
     assert.equal(rows[0].last_by, 'visible');
+    await pool.query('INSERT INTO user_app_blocks VALUES (1,7)');
+    assert.equal((await pool.query(DISCUSSIONS_SQL, [1,false])).rows.length,0, 'a personal app block hides the whole channel');
+    await pool.query('DELETE FROM user_app_blocks WHERE user_id=1 AND app_id=7');
+    assert.equal((await pool.query(DISCUSSIONS_SQL, [1,false])).rows[0].last_by,'visible', 'unblocking the app preserves the separate user block');
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (pool) await pool.end().catch(() => {});
