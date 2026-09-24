@@ -22,6 +22,7 @@ import * as api from './api';
 import type {
   AgentAction,
   AgentCard,
+  AgentChange,
   AgentChoice,
   AgentHint,
   AgentMessage,
@@ -76,6 +77,22 @@ export interface SpecSheetState {
 
 export type SpecTab = 'user' | 'tech';
 
+/**
+ * A change's staging preview in the side pane (#2779 follow-up), beside the
+ * spec: the platform's own preview (AppView.ensureStaging), docked over the
+ * pane's slot. Only on a wide screen; a narrow one opens the preview in a tab.
+ */
+export interface PreviewPaneState {
+  changeId: number;
+  url: string;
+  prNumber: number | null;
+  /** The app the preview is of, for signing in to it. */
+  app: { slug: string; self_hosted: boolean } | null;
+}
+
+/** Which of the side pane's two pages is showing, when it holds both. */
+export type PaneTab = 'spec' | 'preview';
+
 export interface AgentSessionState {
   open: boolean;
   host: AgentSessionHost;
@@ -99,6 +116,10 @@ export interface AgentSessionState {
   /** A message the server refused, handed back to the composer to send again. */
   returnedText: string | null;
   specSheet: SpecSheetState | null;
+  preview: PreviewPaneState | null;
+  paneTab: PaneTab;
+  /** A staging card's action on its way: proposing, or retrying the build. */
+  changeAction: { changeId: number; kind: 'propose' | 'retry' } | null;
 }
 
 const IDLE_TURN: LiveTurn = {
@@ -132,6 +153,9 @@ export const INITIAL_STATE: AgentSessionState = {
   choosing: false,
   returnedText: null,
   specSheet: null,
+  preview: null,
+  paneTab: 'spec',
+  changeAction: null,
 };
 
 let state: AgentSessionState = INITIAL_STATE;
@@ -303,6 +327,21 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
       break;
     case 'staging_ready':
     case 'staging_failed':
+      if ((event.type === 'staging_ready' || event.type === 'staging_failed') && fromChange) {
+        const changeId = Number(event.changeId);
+        // A preview in the pane waiting on this rebuild opens (or says why not).
+        try {
+          window.AppView?.onStagingRebuildResult?.(changeId, {
+            url: typeof event.url === 'string' ? event.url : null,
+            failed: event.type === 'staging_failed',
+            error: typeof event.error === 'string' ? event.error : null,
+          });
+        } catch { /* the preview's own loader says so */ }
+        if (state.changeAction && state.changeAction.kind === 'retry' && state.changeAction.changeId === changeId) {
+          publish({ changeAction: null });
+        }
+      }
+      // falls through
     case 'pr_created':
     case 'pr_updated':
     case 'spec_updated':
@@ -356,7 +395,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     phase: same ? state.phase : 'loading',
     error: '',
     drawerOpen: drawer || (same ? state.drawerOpen : false),
-    ...(same ? {} : { session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null }),
+    ...(same ? {} : { session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null }),
   });
   syncTitle();
   if (same) return;
@@ -441,7 +480,8 @@ export function deactivateAgentSession() {
   closeEvents();
   if (turnAbort) turnAbort.abort();
   turnAbort = null;
-  publish({ open: false, drawerOpen: false, specSheet: null, turn: IDLE_TURN });
+  if (state.preview) closePreview();
+  publish({ open: false, drawerOpen: false, specSheet: null, preview: null, turn: IDLE_TURN });
 }
 
 /** Where a conversation lives: beside the inbox on a desktop, its own screen on a phone (app.js swaps). */
@@ -655,6 +695,7 @@ export async function openSpec(changeId: number, version: number | null = null) 
   const tab: SpecTab = same ? same.tab : 'user';
   publish({
     drawerOpen: false,
+    paneTab: 'spec',
     specSheet: { changeId, version, versions: same ? same.versions : [], text: '', phase: 'loading', error: '', tab },
   });
   try {
@@ -678,7 +719,137 @@ export async function openSpec(changeId: number, version: number | null = null) 
 
 export function closeSpec() {
   specRequest += 1;
-  publish({ specSheet: null });
+  publish({ specSheet: null, paneTab: 'preview' });
+}
+
+// ── The preview in the side pane (#2779 follow-up) ─────────────────────
+
+export const PREVIEW_SLOT_ID = 'agent-session-preview-slot';
+
+/** The change a staging card is about, from the conversation on screen. */
+export function changeById(changeId: number | null | undefined): AgentChange | null {
+  if (changeId == null || !state.session) return null;
+  return [state.session.activeChange, ...(state.session.changes || [])]
+    .find((change) => change && change.id === changeId) || null;
+}
+
+/**
+ * Show a change's preview in the side pane. The pane mounts its slot, then
+ * asks the platform's preview to open docked over it (`dockPreview`).
+ */
+export function openPreview(preview: { changeId: number; url: string; prNumber: number | null }) {
+  const change = changeById(preview.changeId);
+  const app = change && change.appSlug ? { slug: change.appSlug, self_hosted: !!change.appSelfHosted } : null;
+  publish({ drawerOpen: false, paneTab: 'preview', preview: { ...preview, app } });
+}
+
+/**
+ * Called by the pane once its slot is on screen: this conversation becomes
+ * the preview's dock host, and the platform's preview opens over the slot,
+ * signed in to the change's app. Its own chrome (Full screen, the dev
+ * console, x) works as it does beside the dev chat.
+ */
+export function dockPreview(preview: PreviewPaneState) {
+  const view = typeof window !== 'undefined' ? window.AppView : null;
+  if (!view || typeof view.ensureStaging !== 'function') return;
+  view.setStagingDockHost?.({
+    slotId: PREVIEW_SLOT_ID,
+    live: () => state.open && !!state.preview,
+    // Full screen leaves the slot where it is: exiting puts the preview back.
+    collapse: () => {},
+    redock: () => publish({ paneTab: 'preview' }),
+    closed: () => {
+      if (state.preview) publish({ preview: null, paneTab: 'spec' });
+    },
+  });
+  void view.ensureStaging(preview.changeId, preview.url, null, {
+    dock: true,
+    readOnly: false,
+    ...(preview.app ? { app: preview.app } : {}),
+  });
+}
+
+/** Close the preview: the platform's overlay closes, and tells us (`closed`). */
+export function closePreview() {
+  const view = typeof window !== 'undefined' ? window.AppView : null;
+  if (view && typeof view.closeStagingOverlay === 'function') view.closeStagingOverlay();
+  if (state.preview) publish({ preview: null, paneTab: 'spec' });
+}
+
+export function setPaneTab(tab: PaneTab) {
+  if (state.paneTab !== tab) publish({ paneTab: tab });
+}
+
+function toast(message: string) {
+  try { window.PlatformUI?.toast?.(message); } catch { /* the card keeps its buttons */ }
+}
+
+/** Read afresh: the action can end while an await is outstanding. */
+function actionOn(changeId: number): boolean {
+  const action: AgentSessionState['changeAction'] = state.changeAction;
+  return !!action && action.changeId === changeId;
+}
+
+/**
+ * The staging card's Propose: confirm, then the owner's propose route. The
+ * card then reads "In vote" from the refreshed change.
+ */
+export async function proposeChange(changeId: number) {
+  if (state.changeAction) return;
+  const change = changeById(changeId);
+  const title = (change && change.title) || 'this change';
+  const pr = change && change.prNumber ? ` (PR #${change.prNumber})` : '';
+  const confirm = window.PlatformUI?.confirm;
+  const ok = typeof confirm === 'function'
+    ? await confirm({
+      title: 'Put this up for the group\'s vote?',
+      message: `“${title}”${pr} goes to the vote. Its preview and checks run again on the way.`,
+      confirmLabel: 'Propose',
+    })
+    : true;
+  if (!ok) return;
+  publish({ changeAction: { changeId, kind: 'propose' } });
+  try {
+    await api.promoteChange(changeId);
+    if (state.id != null) await refreshSession(state.id).catch(() => {});
+  } catch (error) {
+    toast(errorText(error, 'Could not put this change up for the vote.'));
+  } finally {
+    if (actionOn(changeId)) publish({ changeAction: null });
+  }
+}
+
+/**
+ * The failed card's Retry: rebuild the preview. The build's own
+ * staging_ready or staging_failed comes back through the conversation and
+ * writes the next card; this one reads "Retrying" until then.
+ */
+export const RETRY_GIVE_UP_MS = 180_000;
+
+export async function retryStaging(changeId: number) {
+  if (state.changeAction) return;
+  publish({ changeAction: { changeId, kind: 'retry' } });
+  try {
+    const result = await api.ensureChangeStaging(changeId);
+    if (result.status === 'rebuilding') {
+      // The dev chat preview's give-up: a build whose answer never lands (a
+      // restart, a lost event) must not leave the card saying "Retrying…".
+      const timer = setTimeout(() => {
+        const action: AgentSessionState['changeAction'] = state.changeAction;
+        if (action && action.changeId === changeId && action.kind === 'retry') {
+          publish({ changeAction: null });
+          toast('The rebuild is still running. Its result will appear in this conversation.');
+        }
+      }, RETRY_GIVE_UP_MS) as unknown as { unref?: () => void };
+      timer.unref?.();
+      return;
+    }
+    if (result.status === 'unavailable') toast('This preview can\'t be rebuilt right now. Ask the agent to look at the build.');
+    if (state.id != null) await refreshMessages(state.id).catch(() => {});
+  } catch (error) {
+    toast(errorText(error, 'Could not rebuild the preview.'));
+  }
+  if (actionOn(changeId)) publish({ changeAction: null });
 }
 
 /** Switch the open spec between its plain-language and technical halves. No fetch. */

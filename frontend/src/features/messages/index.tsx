@@ -51,7 +51,7 @@ import {
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
-import { useSpecBeside } from '../agent-session/spec-layout';
+import { useSidePaneBeside } from '../agent-session/spec-layout';
 import { agentActivity } from '../agent-session/activity';
 import { AgentActivityMark } from '../agent-session/activity-mark';
 import {
@@ -713,11 +713,12 @@ function ConversationList() {
   const mayor = useAgentSessionState();
   useEffect(() => { void loadAgentSessions(); }, []);
   const mayors: MayorSession[] = mounted ? mayor.sessions : [];
-  // A spec open BESIDE an agent session's chat (#2779 follow-up) takes this
-  // column's width while it is open: at 1280 the thread pane alone is too
-  // narrow for two readable columns. Closing the spec brings the list back.
-  // False until mounted, like everything above (../agent-session/spec-layout).
-  const specBeside = useSpecBeside('messages');
+  // The side pane open BESIDE an agent session's chat (#2779 follow-up), a
+  // spec or a preview, takes this column's width while it is open: at 1280
+  // the thread pane alone is too narrow for two readable columns. Closing it
+  // brings the list back. False until mounted, like everything above
+  // (../agent-session/spec-layout).
+  const specBeside = useSidePaneBeside('messages');
   const inbox = buildInbox({
     conversations: snap.conversations,
     discussions: snap.discussions,

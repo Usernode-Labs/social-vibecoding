@@ -112,6 +112,11 @@ function shapeChangeRow(row) {
     // For the changes drawer: the owner's own preview and checks verdict.
     stagingUrl: row.change_staging_url || null,
     checkState: row.change_check_state || null,
+    // The staging card (#2779 follow-up): how many checks failed on the last
+    // run, and whether the preview is the platform's own (its preview is
+    // signed into as the self-hosted app, with its review fixtures on).
+    checkFailing: Number(row.change_check_failing) || 0,
+    appSelfHosted: !!row.change_app_self_hosted,
   };
 }
 
@@ -182,7 +187,8 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
-            ca.slug AS change_app_slug, ca.name AS change_app_name
+            ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
@@ -212,7 +218,8 @@ async function getAgentSession(pool, { userId, id }) {
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
-            ca.slug AS change_app_slug, ca.name AS change_app_name
+            ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
@@ -228,7 +235,8 @@ async function getAgentSession(pool, { userId, id }) {
     `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
-            a.slug AS change_app_slug, a.name AS change_app_name
+            a.slug AS change_app_slug, a.name AS change_app_name, a.self_hosted AS change_app_self_hosted,
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM chat_sessions c JOIN apps a ON a.id = c.app_id
       WHERE c.agent_session_id = $1 AND c.user_id = $2
       ORDER BY c.id DESC

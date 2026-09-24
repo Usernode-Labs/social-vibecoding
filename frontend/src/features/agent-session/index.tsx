@@ -34,12 +34,14 @@ import {
 } from './model-choice';
 import {
   buildTranscript,
+  checksSummary,
   cardView,
   changeStatusLabel,
   durationLabel,
   latestReplies,
   runHeading,
   type CardView,
+  type PreviewItem,
   type RunItem,
   type TranscriptItem,
 } from './transcript';
@@ -55,20 +57,30 @@ import {
   sendAgentMessage,
   setDrawerOpen,
   setSpecTab,
+  setPaneTab,
+  dockPreview,
+  openPreview,
+  proposeChange,
+  retryStaging,
+  PREVIEW_SLOT_ID,
   stopAgentTurn,
   switchActiveChange,
   useAgentSessionState,
+  type PaneTab,
+  type PreviewPaneState,
   type SpecSheetState,
   type SpecTab,
 } from './store';
 import {
+  PREVIEW_MIN_WIDTH,
   SPEC_DEFAULT_WIDTH,
   SPEC_MIN_WIDTH,
   SPEC_WIDTH_STEP,
   clampSpecWidth,
   readSpecWidth,
   splitSpec,
-  useSpecBeside,
+  useSidePaneBeside,
+  useWideEnoughForSpec,
   writeSpecWidth,
   type SpecSplit,
 } from './spec-layout';
@@ -283,19 +295,7 @@ function Item({ item }: { item: TranscriptItem }) {
     case 'spec':
       return <SpecCard item={item} />;
     case 'preview':
-      return (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900" data-agent-session-preview>
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">{item.text}</p>
-          <a
-            className="mt-2 inline-flex rounded-full border border-violet-300 px-3 py-1 text-sm font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40"
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Open preview{item.prNumber ? ` · PR #${item.prNumber}` : ''}
-          </a>
-        </section>
-      );
+      return <PreviewCard item={item} />;
     default:
       return null;
   }
@@ -335,6 +335,131 @@ export function RunCard({ run }: { run: RunItem }) {
     <div data-agent-session-run={run.status} data-agent-session-run-mode={run.mode}>
       <Attached r={row} />
     </div>
+  );
+}
+
+const CARD_BUTTON = 'inline-flex rounded-full border border-violet-300 px-3 py-1 text-sm font-semibold text-violet-700 '
+  + 'hover:bg-violet-50 disabled:opacity-60 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40';
+const CARD_PRIMARY = 'inline-flex rounded-full bg-violet-600 px-3 py-1 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-60';
+const CHECK_TONE: Record<string, string> = {
+  passing: 'text-green-700 dark:text-green-400',
+  failing: 'text-red-700 dark:text-red-300',
+  running: 'text-zinc-500 dark:text-zinc-400',
+  error: 'text-amber-700 dark:text-amber-300',
+};
+
+function findChange(session: AgentSession | null, changeId: number | null): AgentChange | null {
+  if (!session || changeId == null) return null;
+  return [session.activeChange, ...(session.changes || [])].find((change) => change && change.id === changeId) || null;
+}
+
+/**
+ * A change's staging build, as a card (#2779 follow-up). The newest one of a
+ * change is live:
+ *   - deployed: Open preview (in the side pane on a wide screen, a new tab
+ *     otherwise), View change (its card), and Propose to group while it has
+ *     not been proposed; then "In vote" with the proposal.
+ *   - failed: why, and Retry (a rebuild; its result writes the next card).
+ * It says where the change's checks stand, because they gate merge. An older
+ * card is "Superseded by a newer preview" and offers nothing: its build is
+ * gone or stale.
+ */
+export function PreviewCard({ item }: { item: PreviewItem }) {
+  const snapshot = useAgentSessionState();
+  const wide = useWideEnoughForSpec();
+  const action = snapshot.changeAction && snapshot.changeAction.changeId === item.changeId ? snapshot.changeAction.kind : null;
+  return (
+    <PreviewCardView
+      item={item}
+      change={findChange(snapshot.session, item.changeId)}
+      wide={wide}
+      action={action}
+      busy={!!snapshot.changeAction}
+    />
+  );
+}
+
+/** The card itself, from plain props (a test renders it without a store). */
+export function PreviewCardView({ item, change, wide, action, busy }: {
+  item: PreviewItem;
+  change: AgentChange | null;
+  wide: boolean;
+  action: 'propose' | 'retry' | null;
+  busy: boolean;
+}) {
+  const prNumber = item.prNumber || change?.prNumber || null;
+  const heading = `${item.failed ? 'Staging build failed' : 'Staging deployed'}${prNumber ? ` · PR #${prNumber}` : ''}`;
+  if (item.superseded) {
+    return (
+      <section className="rounded-2xl border border-zinc-200 px-3 py-2 dark:border-zinc-800" data-agent-session-preview="superseded">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">{heading} · Superseded by a newer preview</p>
+      </section>
+    );
+  }
+  const checks = checksSummary(change?.checkState, change?.checkFailing);
+  const changeHref = change && change.appSlug && item.changeId != null
+    ? `#app/${encodeURIComponent(change.appSlug)}/dev/proposals/${item.changeId}`
+    : null;
+  const inVote = change && (change.status === 'promoted' || change.status === 'merging');
+  const merged = change && change.status === 'merged';
+  const proposable = change && (change.status === 'active' || change.status === 'paused');
+  return (
+    <section
+      className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900"
+      data-agent-session-preview={item.failed ? 'failed' : 'deployed'}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p className={`text-sm font-medium ${item.failed ? 'text-red-700 dark:text-red-300' : 'text-zinc-800 dark:text-zinc-100'}`}>{heading}</p>
+        {inVote || merged ? (
+          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300" data-agent-session-preview-status>
+            {merged ? 'Merged' : 'In vote'}
+          </span>
+        ) : null}
+        {checks ? (
+          <span className={`ml-auto inline-flex items-center gap-1 text-xs ${CHECK_TONE[checks.key]}`} data-agent-session-checks={checks.key}>
+            {checks.key === 'running'
+              ? <SpinnerArcIcon className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              : checks.key === 'passing' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+            {checks.text}
+          </span>
+        ) : null}
+      </div>
+      {item.failed && item.error ? <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{item.error}</p> : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {item.failed ? (
+          item.changeId != null ? (
+            <button type="button" className={CARD_BUTTON} disabled={busy} onClick={() => void retryStaging(item.changeId as number)} data-agent-session-preview-retry>
+              {action === 'retry' ? 'Retrying…' : 'Retry'}
+            </button>
+          ) : null
+        ) : item.url ? (
+          wide && item.changeId != null ? (
+            <button
+              type="button"
+              className={CARD_BUTTON}
+              onClick={() => openPreview({ changeId: item.changeId as number, url: item.url as string, prNumber })}
+              data-agent-session-preview-open
+            >
+              Open preview
+            </button>
+          ) : (
+            <a className={CARD_BUTTON} href={item.url} target="_blank" rel="noopener noreferrer" data-agent-session-preview-open>
+              Open preview
+            </a>
+          )
+        ) : null}
+        {changeHref ? (
+          <a className={CARD_BUTTON} href={changeHref} data-agent-session-preview-change>
+            {inVote ? 'View proposal' : 'View change'}
+          </a>
+        ) : null}
+        {proposable && item.changeId != null ? (
+          <button type="button" className={CARD_PRIMARY} disabled={busy} onClick={() => void proposeChange(item.changeId as number)} data-agent-session-preview-propose>
+            {action === 'propose' ? 'Proposing…' : 'Propose to group'}
+          </button>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -494,23 +619,73 @@ function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
   );
 }
 
+/** Spec | Preview, when the side pane holds both. */
+function PaneTabs({ tab }: { tab: PaneTab }) {
+  const button = (key: PaneTab, label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === key}
+      data-agent-session-pane-tab={key}
+      className={tab === key
+        ? 'border-b-2 border-violet-600 px-3 py-2 text-sm font-semibold text-zinc-900 dark:border-violet-400 dark:text-zinc-100'
+        : 'border-b-2 border-transparent px-3 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'}
+      onClick={() => setPaneTab(key)}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div role="tablist" aria-label="Side pane" className="flex shrink-0 gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
+      {button('spec', 'Spec')}
+      {button('preview', 'Preview')}
+    </div>
+  );
+}
+
 /**
- * From 1024px up: the spec beside the conversation, behind a divider that
- * drags (and moves with the arrow keys). The width is the dev chat viewer's
- * remembered one, clamped so the chat keeps 320px beside the 4px divider;
- * `max-w` holds the same ceiling when the window narrows after the drag.
+ * From 1024px up: the side pane beside the conversation, behind a divider
+ * that drags (and moves with the arrow keys). It holds the spec, a change's
+ * staging preview, or both as tabs.
+ *
+ * THE WIDTH is the dev chat viewer's remembered one, clamped so the chat keeps
+ * 320px beside the 4px divider; `max-w` holds the same ceiling when the window
+ * narrows after the drag. A preview renders a real app's screen, so while one
+ * is open the floor is the dev chat staging panel's 320px, not the spec's 280.
+ *
+ * THE PREVIEW is the platform's own (AppView.ensureStaging): its fixed
+ * overlay is pinned over this pane's slot, the way it is pinned beside the
+ * dev chat, so sign-in, Full screen and the dev console are the same ones. The
+ * slot stays mounted while the Spec tab shows (hidden, so the overlay shrinks
+ * to nothing and the preview keeps its state).
  */
-function SpecBesidePane({ sheet, containerRef }: {
-  sheet: SpecSheetState;
+function SidePane({ sheet, preview, tab, containerRef }: {
+  sheet: SpecSheetState | null;
+  preview: PreviewPaneState | null;
+  tab: PaneTab;
   containerRef: { current: HTMLDivElement | null };
 }) {
+  const floor = preview ? PREVIEW_MIN_WIDTH : SPEC_MIN_WIDTH;
   const [width, setWidth] = useState(SPEC_DEFAULT_WIDTH);
   const paneRef = useRef<HTMLElement | null>(null);
   const containerWidth = () => containerRef.current?.getBoundingClientRect().width ?? null;
-  useEffect(() => { setWidth(clampSpecWidth(readSpecWidth(), containerWidth())); }, []);
+  useEffect(() => { setWidth(clampSpecWidth(readSpecWidth(), containerWidth(), floor)); }, [floor]);
+  const showing: PaneTab = sheet && preview ? tab : (preview ? 'preview' : 'spec');
+
+  // The platform's preview opens over the slot once the slot is on screen,
+  // and again only for another preview.
+  const previewKey = preview ? `${preview.changeId}:${preview.url}` : null;
+  useEffect(() => {
+    if (preview) dockPreview(preview);
+  }, [previewKey]);
+  // The overlay follows the slot's size on its own; a move without a resize
+  // (the tab strip appearing, the list stepping aside) needs a nudge.
+  useEffect(() => {
+    if (preview) window.AppView?._syncStagingDockGeometry?.();
+  }, [width, showing, !!sheet, previewKey]);
 
   const commit = (next: number) => {
-    const clamped = clampSpecWidth(next, containerWidth());
+    const clamped = clampSpecWidth(next, containerWidth(), floor);
     setWidth(clamped);
     return clamped;
   };
@@ -524,7 +699,10 @@ function SpecBesidePane({ sheet, containerRef }: {
     try { handle.setPointerCapture(event.pointerId); } catch { /* moves still arrive on the handle */ }
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
-    // Dragging right narrows the spec: its left edge is the divider.
+    // An iframe swallows pointer moves: the preview's, while the drag runs.
+    const frame = document.getElementById('staging-iframe');
+    if (frame) frame.style.pointerEvents = 'none';
+    // Dragging right narrows the pane: its left edge is the divider.
     const onMove = (move: PointerEvent) => { latest = commit(startWidth - (move.clientX - startX)); };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
@@ -533,6 +711,7 @@ function SpecBesidePane({ sheet, containerRef }: {
       try { handle.releasePointerCapture(event.pointerId); } catch { /* already released */ }
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
+      if (frame) frame.style.pointerEvents = '';
       writeSpecWidth(latest);
     };
     handle.addEventListener('pointermove', onMove);
@@ -551,9 +730,9 @@ function SpecBesidePane({ sheet, containerRef }: {
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize the spec"
+        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the spec'}
         aria-valuenow={width}
-        aria-valuemin={SPEC_MIN_WIDTH}
+        aria-valuemin={floor}
         tabIndex={0}
         className="w-1 shrink-0 cursor-col-resize touch-none bg-zinc-200 transition-colors hover:bg-violet-500 focus-visible:bg-violet-500 focus-visible:outline-none dark:bg-zinc-800"
         data-agent-session-spec-resizer
@@ -562,13 +741,28 @@ function SpecBesidePane({ sheet, containerRef }: {
       />
       <aside
         ref={paneRef}
-        aria-label="Spec"
-        className="flex min-h-0 min-w-[280px] max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900"
+        aria-label={showing === 'preview' ? 'Preview' : 'Spec'}
+        className={`flex min-h-0 ${preview ? 'min-w-[320px]' : 'min-w-[280px]'} max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900`}
         style={{ width }}
-        data-agent-session-spec-sheet={sheet.changeId}
-        data-agent-session-spec-beside=""
+        data-agent-session-side-pane={showing}
       >
-        <SpecContent sheet={sheet} />
+        {sheet && preview ? <PaneTabs tab={showing} /> : null}
+        {sheet && showing === 'spec' ? (
+          <div
+            className="flex min-h-0 flex-1 flex-col"
+            data-agent-session-spec-sheet={sheet.changeId}
+            data-agent-session-spec-beside=""
+          >
+            <SpecContent sheet={sheet} />
+          </div>
+        ) : null}
+        {preview ? (
+          <div
+            id={PREVIEW_SLOT_ID}
+            className={showing === 'preview' ? 'min-h-0 flex-1' : 'hidden'}
+            data-agent-session-preview-slot={preview.changeId}
+          />
+        ) : null}
       </aside>
     </>
   );
@@ -929,9 +1123,10 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
   const snapshot = useAgentSessionState();
   const scroll = useRef<HTMLDivElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
-  // The spec beside the chat, or over it (./spec-layout.ts). False until
-  // mounted, so the first render is the one the prerender printed.
-  const beside = useSpecBeside(embedded ? 'messages' : 'screen');
+  // The side pane beside the chat (the spec, a preview, or both), or the
+  // spec over it (./spec-layout.ts). False until mounted, so the first
+  // render is the one the prerender printed.
+  const beside = useSidePaneBeside(embedded ? 'messages' : 'screen');
   const liveRun = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const items = useMemo(
     () => buildTranscript(snapshot.messages, snapshot.actions, Date.now(), { liveRun }),
@@ -977,11 +1172,9 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
         <Composer id={composerId(embedded ? 'messages' : 'screen')} />
         {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
       </div>
-      {snapshot.specSheet
-        ? (beside
-          ? <SpecBesidePane sheet={snapshot.specSheet} containerRef={root} />
-          : <SpecSheet sheet={snapshot.specSheet} />)
-        : null}
+      {beside ? (
+        <SidePane sheet={snapshot.specSheet} preview={snapshot.preview} tab={snapshot.paneTab} containerRef={root} />
+      ) : snapshot.specSheet ? <SpecSheet sheet={snapshot.specSheet} /> : null}
     </div>
   );
 }

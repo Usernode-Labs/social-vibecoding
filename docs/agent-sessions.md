@@ -659,6 +659,25 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - The default effort is the follow-the-default option itself (`''`), not a second "Default (High)" entry beside "High". A conversation that names the default effort shows as following it (`effortValue`).
   - The "applies from your next message" line beside them is gone: the next message simply runs on the new pick.
 
+*Follow-up: staging builds as cards, with the preview beside the chat.* A build used to say "Staging deployed!" with a link that opened a new tab.
+
+- **Every build is a card** (`PreviewCard`, from `transcript.ts`'s `PreviewItem`):
+  - **Deployed:** Open preview, View change (the change's card, `#app/<slug>/dev/proposals/<id>`), and Propose to group while it is active or paused. Once proposed it reads "In vote", with View proposal.
+  - **Failed** (the `stagingFailed` row the build writes, previously folded into the run's steps): the error, Retry, and Propose to group. Proposing rebuilds the preview itself, as in the dev chat.
+  - **Checks:** the card says where the change's checks stand ("Checks running", "Checks passing", "2 checks failing"), because they gate merge. The failing count comes from the change's `test_results`.
+  - **Superseded:** only a change's newest card is live. Older ones read "Superseded by a newer preview" and offer nothing.
+- **The preview in the side pane.** On a wide screen Open preview shows the preview beside the chat. With a spec open too, the pane has Spec and Preview tabs.
+  - It is the platform's own preview (`AppView.ensureStaging`), docked over the pane's slot the way it docks beside the dev chat, so sign-in, Full screen and the dev console are the same.
+  - `app-view.js` gained a dock host (`setStagingDockHost`): the slot, whether the host is still on screen, and what Full screen, re-docking and closing do. The dev chat's is the default, and it takes the dock back when it opens its own.
+  - It also gained an explicit app (`opts.app`), so the preview signs in to the change's app rather than whatever app is on screen, and `opts.readOnly`.
+  - The slot stays mounted, hidden, while the Spec tab shows, so the preview keeps its state.
+  - While a preview is open the divider's floor is the staging panel's 320px. The preview's iframe ignores the pointer during a drag.
+  - A narrow screen opens the preview in a new tab, as before.
+- **Propose and Retry.**
+  - Propose confirms ("Put this up for the group's vote?", naming the change and its PR), then calls the owner's `POST /api/sessions/:id/promote`.
+  - Retry calls the owner's `POST /api/sessions/:id/ensure-staging`. The build's `staging_ready` or `staging_failed` reaches the conversation, writes the next card, and ends "Retrying…". A build whose answer never lands (a restart, a lost event) gives up after the dev chat preview's three minutes, and says the result will still appear.
+  - A preview waiting on a rebuild hears the same events (`AppView.onStagingRebuildResult`), which this conversation may not otherwise receive: the app-room socket only reaches people on that app's screen.
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;
