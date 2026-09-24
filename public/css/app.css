@@ -1229,6 +1229,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   box-shadow: none;
   -webkit-tap-highlight-color: transparent;
 }
+/* #2387: FIREFOX'S RING. Tailwind's preflight ships
+   `:-moz-focusring { outline: auto }`, and tailwind.css loads AFTER this file
+   (the order head.html pins) at the same specificity as `outline: none`
+   above — so in Gecko the later rule won and the field drew its own focus
+   ring, a second rectangle inside the card's. Chromium and WebKit drop the
+   `-moz-` selector, which is why only Firefox showed it. One more class
+   outranks preflight without touching the stylesheet order. */
+.messages-composer-card .messages-composer-input { outline: none; }
 .messages-composer-input::placeholder { color: var(--text-faint); }
 .messages-composer-action {
   display: inline-flex;
