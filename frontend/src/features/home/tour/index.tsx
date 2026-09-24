@@ -178,10 +178,8 @@ import {
 /** How long to keep waiting for Home before giving up on this page load. */
 const HOME_WAIT_TRIES = 60;
 const HOME_WAIT_MS = 300;
-/** How long after the page regains focus the tour waits to start. */
-const FOCUS_GRACE_MS = 400;
-/** The most the tour waits for focus before starting anyway. */
-const FOCUS_WAIT_MAX_MS = 10_000;
+/** In the app, how long the tour waits for the first touch before starting anyway. */
+const FIRST_TOUCH_WAIT_MS = 6_000;
 
 const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
@@ -287,34 +285,46 @@ async function whenTermsSettled(): Promise<void> {
 }
 
 /**
- * In the app, wait until the page has focus. Right after sign-in the phone
- * can put its own dialog on top (Samsung Pass offering to save the
- * password), and a tour started under it opens on a step nobody can read.
- * Bounded, so a WebView that never reports focus still gets the tour.
+ * In the app, wait for the viewer's first touch on the page, or a few
+ * seconds. Right after sign-in the phone can put its own dialog on top
+ * (Samsung Pass offering to save the password), and a tour started under it
+ * opens on a step nobody can read. That dialog does not take focus from the
+ * page, so focus cannot tell; a touch on the page means the dialog is gone.
  */
-function whenAppFocused(): Promise<void> {
+function whenUserSettled(): Promise<void> {
   const native = (window as unknown as { usernode?: { isNative?: boolean } })
     .usernode?.isNative === true;
-  if (!native || document.hasFocus()) return Promise.resolve();
+  if (!native) return Promise.resolve();
   return new Promise((resolve) => {
     const done = () => {
-      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('pointerdown', done, true);
       window.clearTimeout(timer);
       resolve();
     };
-    // A beat after focus returns, so the dialog's exit animation is over.
-    const onFocus = () => window.setTimeout(done, FOCUS_GRACE_MS);
-    const timer = window.setTimeout(done, FOCUS_WAIT_MAX_MS);
-    window.addEventListener('focus', onFocus);
+    const timer = window.setTimeout(done, FIRST_TOUCH_WAIT_MS);
+    document.addEventListener('pointerdown', done, true);
   });
 }
 
-/** The app's top inset (status bar), in px; 0 in a browser tab. */
+/**
+ * The status bar's height, in px; 0 in a browser tab. Measured, because in
+ * the app the value is `env(safe-area-inset-top)` behind the shell's
+ * `--platform-safe-top` token, which no script can read as a number.
+ */
+let safeTopCache: number | null = null;
 function safeTopInset(): number {
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue('--un-safe-inset-top');
-  const px = Number.parseFloat(raw);
-  return Number.isFinite(px) ? px : 0;
+  if (safeTopCache != null) return safeTopCache;
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;top:0;left:0;width:0;visibility:hidden;' +
+    'pointer-events:none;height:var(--platform-safe-top, env(safe-area-inset-top, 0px))';
+  document.body.appendChild(probe);
+  const px = probe.getBoundingClientRect().height;
+  probe.remove();
+  safeTopCache = Number.isFinite(px) ? px : 0;
+  return safeTopCache;
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => { safeTopCache = null; });
 }
 
 /**
@@ -472,7 +482,7 @@ export function OnboardingTour() {
     void (async () => {
       await whenTermsSettled();
       if (cancelled || started.current) return;
-      await whenAppFocused();
+      await whenUserSettled();
       if (cancelled || started.current) return;
       const home = await whenHomeVisible();
       if (cancelled || started.current || !home) return;

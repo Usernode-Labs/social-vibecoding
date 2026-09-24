@@ -374,8 +374,9 @@ test('a tall target is scrolled to its start, not centred past it', () => {
 test('the tour waits for focus in the app and hands Home back at its top', () => {
   const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
   const body = start.slice(0, start.indexOf('}, [userId, start]);'));
-  assert.match(body, /await whenTermsSettled\(\);[\s\S]*await whenAppFocused\(\);[\s\S]*await whenHomeVisible\(\);/);
-  assert.match(OVERLAY_SRC, /FOCUS_WAIT_MAX_MS/, 'the focus wait is bounded');
+  assert.match(body, /await whenTermsSettled\(\);[\s\S]*await whenUserSettled\(\);[\s\S]*await whenHomeVisible\(\);/);
+  assert.match(OVERLAY_SRC, /FIRST_TOUCH_WAIT_MS/, 'the wait is bounded');
+  assert.match(OVERLAY_SRC, /--platform-safe-top/, 'the status bar is measured from the shell token');
   assert.match(OVERLAY_SRC, /clearStep\(userId\);[\s\S]{0,200}backToTopOfHome\(\);/);
 });
 
