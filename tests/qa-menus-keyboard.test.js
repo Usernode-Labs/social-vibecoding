@@ -271,6 +271,12 @@ test('Q13: Enter, Tab and the arrows belong to an open suggestion list before th
   assert.equal((src.match(/role="option" tabIndex=\{-1\} aria-selected=\{index === activeOption\}/g) || []).length, 2,
     'both the @ and the # lists');
   assert.match(read('public/css/app.css'), /\.messages-mention-menu button\[aria-selected="true"\] \{/);
+  // A pick moves the caret in the render's layout effect, not a frame later,
+  // so a key typed straight after Enter lands after the name it picked.
+  const picks = src.slice(src.indexOf('function insertChannel('), src.indexOf('async function addFiles('));
+  assert.equal((picks.match(/placeCaretAfterPick\(input, before\.length\);/g) || []).length, 2, 'the @ and the # pick');
+  assert.doesNotMatch(picks, /requestAnimationFrame/);
+  assert.match(src, /function placeCaretAfterPick\(input: HTMLTextAreaElement \| null, at: number\) \{\s*emojiCaret\.current = at;/);
 });
 
 // ── Q18: Skip to navigation ───────────────────────────────────────────────

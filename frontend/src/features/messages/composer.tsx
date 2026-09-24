@@ -265,11 +265,20 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     const next = before + value.slice(cursor);
     updateValue(next);
     // A pick closes the list for the text it produced. The lists read the
-    // caret during render, and the caret only moves past the inserted name
-    // on the next frame, so without this the list reopened on the OLD caret
-    // and a second Enter picked again.
+    // caret during render, before the caret moves past the inserted name, so
+    // without this the list reopened on the OLD caret and a second Enter
+    // picked again.
     setDismissedAt(next.slice(0, 8000));
-    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(before.length, before.length); });
+    placeCaretAfterPick(input, before.length);
+  }
+
+  // The caret moves in the layout effect the new value renders, as an emoji
+  // swap's does (`emojiCaret`), not a frame later: a key typed straight after
+  // Enter picked a name would land before the caret moved and end up on the
+  // wrong side of it (QA 2026-09-24 Q13, where the keyboard made that fast).
+  function placeCaretAfterPick(input: HTMLTextAreaElement | null, at: number) {
+    emojiCaret.current = at;
+    input?.focus();
   }
 
   function updateValue(next: string) {
@@ -287,7 +296,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     const next = before + value.slice(cursor);
     updateValue(next);
     setDismissedAt(next.slice(0, 8000));
-    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(before.length, before.length); });
+    placeCaretAfterPick(input, before.length);
   }
 
   async function addFiles(files: File[]) {
