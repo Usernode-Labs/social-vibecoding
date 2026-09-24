@@ -242,6 +242,9 @@ export function MessageRow({
     <MessageActionBar
       className={`messages-message-actions ${message.pending ? 'messages-message-actions-reserved' : ''}`}
       hidden={!!message.pending}
+      // What useDismiss measures "outside" against: without it every press —
+      // on a menu item or an emoji too — closed the popover before its click.
+      barRef={bar}
       recents={recents}
       reacted={reacted}
       onReact={(emoji) => { void toggle(emoji); }}

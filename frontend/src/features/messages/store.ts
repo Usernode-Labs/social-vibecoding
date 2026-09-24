@@ -320,9 +320,25 @@ export async function loadConversations(force = false): Promise<void> {
   }
 }
 
+/**
+ * The message link whose window has been read (#2387). The link's message
+ * anchors the FIRST read of the conversation only: every later refresh — the
+ * realtime echo of a message or a reaction — keeps the window the reader is
+ * on now (`reading` below), or the present once they have reached it.
+ * Anchoring each refresh on the link snapped a reader who had paged on back
+ * to it, and dropped their own new message outside the window.
+ */
+let focusLoaded: number | null = null;
+
+/** Server rows by id; local rows (negative ids) after them, in the order sent. */
+function transcriptOrder(a: ConversationMessage, b: ConversationMessage): number {
+  return a.id < 0 || b.id < 0 ? Number(a.id < 0) - Number(b.id < 0) : a.id - b.id;
+}
+
 export async function loadThread(conversationId: number, force = false): Promise<void> {
   if (!validId(conversationId)) return;
-  const focus = state.route.conversationId === conversationId ? state.route.focusMessageId : null;
+  const linked = state.route.conversationId === conversationId ? state.route.focusMessageId : null;
+  const focus = linked && linked !== focusLoaded ? linked : null;
   if (!force && !focus && state.active?.id === conversationId && state.messages.length) return;
   const request = ++threadRequest;
   const preserveVisibleThread = force && state.active?.id === conversationId;
@@ -354,6 +370,7 @@ export async function loadThread(conversationId: number, force = false): Promise
         : { ...(await api.listMessages(conversationId)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id));
+    if (focus) focusLoaded = focus;
     publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true });
     upsertConversation(active);
     // A link to a reply inside a thread opens that thread beside it.
@@ -425,7 +442,7 @@ export async function loadNewer(): Promise<void> {
     if (state.route.conversationId !== conversationId) return;
     const known = new Set(state.messages.map((message) => message.id));
     const newer = page.messages.filter((message) => !known.has(message.id));
-    const messages = [...state.messages, ...newer].sort((a, b) => a.id - b.id);
+    const messages = [...state.messages, ...newer].sort(transcriptOrder);
     publish({ messages, nextAfter: page.nextAfter, loadingOlder: false });
     const last = messages.at(-1);
     if (!page.nextAfter && last && unreadHold !== conversationId) void markRead(last.id);
@@ -452,7 +469,7 @@ export async function loadOlder(): Promise<void> {
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));
     publish({
-      messages: [...older, ...state.messages].sort((a, b) => a.id - b.id),
+      messages: [...older, ...state.messages].sort(transcriptOrder),
       nextBefore: page.nextBefore,
       loadingOlder: false,
     });
@@ -518,6 +535,8 @@ export function route(
     revealAppFocus(nextSlug, nextFocus);
     return;
   }
+  // A new address reads its link afresh, even one followed before.
+  focusLoaded = null;
   publish({
     route: { open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent, threadRootId: nextRoot, focusMessageId: nextFocus },
     thread: null,
@@ -972,6 +991,9 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
     publish({ thread: { ...state.thread, messages: [...state.thread.messages, optimistic], error: null } });
   } else {
     publish({ messages: [...state.messages, optimistic], threadError: null });
+    // Sending from a linked window part-way back (#2387) goes to the present,
+    // where the message lands — the way every messenger does it.
+    if (state.nextAfter) jumpToPresent();
   }
   await deliver(conversationId, pending);
 }
@@ -997,9 +1019,7 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
       const messages = state.messages
         .filter((item) => item.clientKey !== key && item.id !== message.id)
         .concat({ ...message, clientKey: key })
-        // Server rows by id; local rows (negative ids) stay after them in
-        // the order they were sent.
-        .sort((a, b) => (a.id < 0 || b.id < 0 ? Number(a.id < 0) - Number(b.id < 0) : a.id - b.id));
+        .sort(transcriptOrder);
       publish({ messages });
     }
     await loadConversations(true);
@@ -1234,6 +1254,8 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
         loading: false, error: null, nextBefore: page.nextBefore,
       },
     });
+    const newest = known.reduce((top, item) => Math.max(top, item.id), 0);
+    if (newest) void markThreadRead(conversationId, rootId, newest);
   } catch (error) {
     if (request !== replyThreadRequest) return;
     const thread = state.thread;
@@ -1312,6 +1334,23 @@ export async function toggleSaved(messageId: number): Promise<void> {
   }
 }
 
+/**
+ * A reply thread read up to its newest reply (#2387). The server clears that
+ * thread's alerts — a reply, a mention in it — and leaves the conversation's
+ * own read position alone: thread and main-stream ids interleave. The bell
+ * clears the same rows here, and only those.
+ */
+const threadReadUpTo = new Map<string, number>();
+
+async function markThreadRead(conversationId: number, rootId: number, replyId: number): Promise<void> {
+  // Once per new reply: a refresh for a reaction reads nothing new.
+  const key = `${conversationId}:${rootId}`;
+  if ((threadReadUpTo.get(key) || 0) >= replyId) return;
+  threadReadUpTo.set(key, replyId);
+  if (typeof window !== 'undefined') window.Notifications?.markConversationThreadRead?.(conversationId, rootId);
+  try { await api.markRead(conversationId, replyId); } catch { /* the next open reads it again */ }
+}
+
 export async function markRead(messageId: number): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
@@ -1352,6 +1391,12 @@ export function handleEvent(raw: ConversationEvent): void {
       // Rehydrate under this viewer's current membership/block permissions.
       if (state.route.open && state.route.conversationId === conversationId) {
         void loadThread(conversationId, true);
+        // A reply in the open thread pane (#2387), or its first message.
+        const thread = state.thread;
+        if (thread && thread.conversationId === conversationId
+            && (thread.rootId === messageId || thread.messages.some((item) => item.id === messageId))) {
+          void loadReplyThread(conversationId, thread.rootId, true);
+        }
       }
       break;
     }
@@ -1363,7 +1408,10 @@ export function handleEvent(raw: ConversationEvent): void {
       // …and not when the reader marked it UNREAD (#2387): that moved the
       // cursor back, and nothing in the bell was read by it.
       if (api.strictId(event.userId ?? event.user_id) === currentUser().id && event.unread !== true) {
-        notifyConversationRead(conversationId);
+        // A thread read clears that thread's alerts only (#2387).
+        const threadRoot = api.strictId(event.threadRootId ?? event.thread_root_id);
+        if (threadRoot) window.Notifications?.markConversationThreadRead?.(conversationId, threadRoot);
+        else notifyConversationRead(conversationId);
       }
       break;
     case 'conversation_membership_changed':

@@ -437,13 +437,15 @@ async function broadcastFromSender(pool, appId, data, senderId, excludeWs = null
 // best-effort: a missed summary is corrected by the next history load.
 async function broadcastThreadSummary(pool, appId, rootId, senderId) {
   try {
-    const { thread, byViewer } = await appChat.threadSummaryForRoom(pool, appId, rootId);
+    const { thread, byViewer, withheldFrom = [] } = await appChat.threadSummaryForRoom(pool, appId, rootId);
     const { rows } = await pool.query(
       `SELECT blocker_id FROM user_blocks WHERE blocked_user_id = $1`, [senderId]
     );
     const routing = {
       appId,
-      blockedUserIds: rows.map((row) => row.blocker_id),
+      // The sender's blockers, and the blockers of a replier past the
+      // per-viewer cap: the base frame would name the person they blocked.
+      blockedUserIds: [...rows.map((row) => row.blocker_id), ...withheldFrom],
       threadByViewer: byViewer,
     };
     const data = { type: 'thread_summary', root_id: Number(rootId), thread };
@@ -529,6 +531,16 @@ async function validateThread(pool, appId, thread, viewerId = null) {
   if (type === appChat.MESSAGE_THREAD) {
     const root = await appChat.findThreadRoot(pool, appId, ref, viewerId);
     if (!root) return null;
+    // A deleted message starts no NEW thread (#2387), as in Messages; one
+    // that already has replies stays open under its placeholder.
+    if (root.deleted_at) {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'message' AND thread_ref = $2 LIMIT 1`,
+        [appId, ref]
+      );
+      if (!rows.length) return null;
+    }
   } else if (type === 'session') {
     const { rows } = await pool.query(
       'SELECT 1 FROM chat_sessions WHERE id = $1 AND app_id = $2', [ref, appId]

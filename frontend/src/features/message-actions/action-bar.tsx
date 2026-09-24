@@ -57,6 +57,7 @@ export function MessageActionBar({
   moreButtonRef,
   moreClassName = 'messages-action-more',
   hidden = false,
+  barRef,
   children,
 }: {
   className: string;
@@ -76,12 +77,18 @@ export function MessageActionBar({
   moreClassName?: string;
   /** Laid out but invisible and inert — a send still in flight (#2907). */
   hidden?: boolean;
+  /**
+   * The bar's own element, for the caller's outside-press dismissal: a press
+   * on the open picker or menu, which are children of the bar, is inside.
+   */
+  barRef?: Ref<HTMLDivElement>;
   /** The picker and the menu, anchored to the bar. */
   children?: ReactNode;
 }) {
   const quick = onReact ? recents.slice(0, 3) : [];
   return (
     <div
+      ref={barRef}
       className={`${className} msgx-bar ${pickerOpen || moreOpen ? 'msgx-bar-open' : ''} ${hidden ? 'messages-message-actions-reserved' : ''}`}
       role="toolbar"
       aria-label="Message actions"

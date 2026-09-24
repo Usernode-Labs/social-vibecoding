@@ -583,6 +583,9 @@ const Notifications = {
     let cleared = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      // #2387: an alert about a message inside a reply thread waits for that
+      // thread to be read, as it does server-side.
+      if (n.conversationThreadRootId) continue;
       n.readAt = now;
       cleared += 1;
     }
@@ -593,6 +596,27 @@ const Notifications = {
     Notifications._renderBadge();
     Notifications._renderList();
   },
+
+  // #2387: one reply thread of a conversation was read — its alerts (a reply
+  // in it, a mention in it) clear, and nothing else of the conversation's.
+  markConversationThreadRead(conversationId, rootId) {
+    const id = Number(conversationId);
+    const root = Number(rootId);
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(root) || root <= 0) return;
+    const now = new Date().toISOString();
+    let cleared = 0;
+    for (const n of Notifications.items) {
+      if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      if (Number(n.conversationThreadRootId) !== root) continue;
+      n.readAt = now;
+      cleared += 1;
+    }
+    if (!cleared) return;
+    Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications._renderBadge();
+    Notifications._renderList();
+  },
+
 
   // #2847: the viewer opened a proposal card, or touched something on it, so
   // its "New proposal" nudge is answered — clear it the way a vote already

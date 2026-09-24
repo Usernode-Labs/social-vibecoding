@@ -190,11 +190,13 @@ async function threadSummaries(db, appId, rootIds, viewerId = null) {
  * What the room hears about one thread after it changes: the summary as
  * everybody sees it, plus a per-viewer variant for each viewer who blocked
  * one of its repliers (their count and faces must not include that person).
- * `thread` null means no visible reply is left.
+ * `thread` null means no visible reply is left. `withheldFrom` are the
+ * blockers past MAX_SUMMARY_VARIANTS: they get NO frame, never the base one,
+ * which names the person they blocked.
  */
 async function threadSummaryForRoom(db, appId, rootId) {
   const id = positiveInt(rootId);
-  if (!id) return { thread: null, byViewer: {} };
+  if (!id) return { thread: null, byViewer: {}, withheldFrom: [] };
   const base = await threadSummaries(db, appId, [id], null);
   const { rows } = await db.query(
     `SELECT DISTINCT blocked.blocker_id
@@ -202,15 +204,17 @@ async function threadSummaryForRoom(db, appId, rootId) {
        JOIN user_blocks blocked ON blocked.blocked_user_id = reply.user_id
       WHERE reply.app_id = $1 AND reply.thread_type = 'message'
         AND reply.thread_ref = $2 AND reply.deleted_at IS NULL
-      LIMIT ${MAX_SUMMARY_VARIANTS}`,
+      ORDER BY blocked.blocker_id`,
     [appId, id]
   );
   const byViewer = {};
+  const withheldFrom = [];
   for (const { blocker_id: viewerId } of rows) {
+    if (Object.keys(byViewer).length >= MAX_SUMMARY_VARIANTS) { withheldFrom.push(viewerId); continue; }
     const mine = await threadSummaries(db, appId, [id], viewerId);
     byViewer[viewerId] = mine.get(id) || null;
   }
-  return { thread: base.get(id) || null, byViewer };
+  return { thread: base.get(id) || null, byViewer, withheldFrom };
 }
 
 // ── Soft delete ───────────────────────────────────────────────────────

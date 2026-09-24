@@ -247,6 +247,10 @@ const GroupChat = {
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
       GroupChat._applyPendingReveal();
+      // #2387: coming back to a channel whose socket stayed up is opening it
+      // too — what arrived while it was off screen is read now. After this
+      // turn, once the remounted transcript is on the page.
+      setTimeout(() => { if (GroupChat.appSlug === appSlug) void GroupChat.markRead(); }, 0);
       return;
     }
     GroupChat.connect(appSlug);
@@ -1441,7 +1445,11 @@ const GroupChat = {
       const rowId = parseInt(row.dataset.msgId || '', 10);
       if (rowId) GroupChat._clearMessageDot(rowId);
       const quote = GroupChat._quoteFromRow(row);
-      if (quote) GroupChat.setQuote(quote);
+      // #2387: the transcript tapped names the composer — with a reply
+      // thread open beside the channel, both are on screen.
+      const scope = container.id === 'gc-thread-messages' ? 'thread'
+        : container.id === 'gc-messages' ? 'main' : undefined;
+      if (quote) GroupChat.setQuote(quote, scope);
     });
 
     // #130: chips are spans with role="link" tabindex="0" — give keyboard
@@ -1592,9 +1600,18 @@ const GroupChat = {
 
   // The address a message link opens — the channel in Messages, scrolled to
   // it (#messages/app/<slug>/m/<id>).
+  //
+  // Only for the general stream and its reply threads, which is what the
+  // address can find: a message in an issue's or a proposal's discussion is
+  // not in the channel, and its link would open the channel at the bottom.
   messageAddress(id) {
     const slug = GroupChat.appSlug;
-    return slug ? `#messages/app/${encodeURIComponent(slug)}/m/${Number(id)}` : null;
+    if (!slug) return null;
+    let msg = null;
+    GroupChat._eachCopy(id, (m) => { if (!msg) msg = m; });
+    const type = msg && (msg.thread_type || (msg.thread && msg.thread.type) || null);
+    if (!msg || (type && type !== 'message')) return null;
+    return `#messages/app/${encodeURIComponent(slug)}/m/${Number(id)}`;
   },
 
   // Open the reply thread under a general-chat message: beside the channel in
@@ -1683,6 +1700,14 @@ const GroupChat = {
       });
       window.UsernodeReact?.messages?.refresh?.();
     } catch (_) { /* the next open reads it again */ }
+  },
+
+  // The channel's pane closed (#2387). "Mark unread" holds only while the
+  // channel stays open: the socket outlives the pane, so without this the
+  // hold lasted until another app's chat was opened, and the channel was
+  // never read again before then.
+  releaseUnreadHold(appSlug) {
+    if (GroupChat._unreadHold && GroupChat._unreadHold === appSlug) GroupChat._unreadHold = null;
   },
 
   async markUnread(id) {

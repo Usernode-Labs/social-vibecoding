@@ -93,6 +93,14 @@ test('validateThread checks a reply thread\'s root in SQL, and leaves the topic 
   assert.equal(await validateThread(poolWith([root]), 7, { type: 'reply', ref: 70 }, 5), null);
   assert.equal(seen.length, 0, 'malformed refs are refused before any query');
 
+  // A deleted root starts no new thread; one with replies stays open.
+  const deletedRoot = { ...root, deleted_at: '2026-01-02' };
+  const poolSeq = (...answers) => ({ async query() { return { rows: answers.shift() || [] }; } });
+  assert.equal(await validateThread(poolSeq([deletedRoot], []), 7, { type: 'message', ref: 70 }, 5), null,
+    'a deleted message with no replies takes none');
+  assert.deepEqual(await validateThread(poolSeq([deletedRoot], [{ '?column?': 1 }]), 7, { type: 'message', ref: 70 }, 5),
+    { type: 'message', ref: 70 }, 'a thread already under it goes on');
+
   // #194's issue refs still need no lookup; session/governance still do.
   assert.deepEqual(await validateThread(poolWith([]), 7, { type: 'issue', ref: 42 }), { type: 'issue', ref: 42 });
   assert.deepEqual(await validateThread(poolWith([{}]), 7, { type: 'session', ref: 9 }), { type: 'session', ref: 9 });

@@ -46,6 +46,8 @@ declare global {
        * lookup as `unknown` and so makes the call itself an error.
        */
       markConversationRead(conversationId: number): void;
+      /** The same, for one reply thread's alerts (#2387). */
+      markConversationThreadRead(conversationId: number, rootId: number): void;
       open: boolean;
       [key: string]: unknown;
     };

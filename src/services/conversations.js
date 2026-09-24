@@ -1287,9 +1287,12 @@ async function sendMessage(pool, user, conversationId, input) {
     // the recipient's block; the sender's own is checked here).
     const threadParticipants = new Set();
     if (threadRoot) {
+      // Earlier repliers from their live replies only, as app chat does:
+      // deleting your reply is the one way to step out of a thread.
       const participants = await db.query(
         `SELECT sender_id FROM conversation_messages
-          WHERE sender_id IS NOT NULL AND (id = $1 OR (thread_root_id = $1 AND id < $2))`,
+          WHERE sender_id IS NOT NULL
+            AND (id = $1 OR (thread_root_id = $1 AND id < $2 AND deleted_at IS NULL))`,
         [threadRoot.id, messageId]
       );
       const senderBlocks = await db.query(

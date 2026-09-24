@@ -218,5 +218,7 @@ test('both ways a discussion comes on screen apply it', () => {
   assert.match(load, /GroupChat\.scrollToBottom\(\);\s*GroupChat\._didInitialScroll = true;\s*GroupChat\._applyPendingReveal\(\);/);
   // …and the remount of an app whose socket is still live.
   const mount = SRC.slice(SRC.indexOf('  mount(appSlug, app) {'));
-  assert.match(mount, /GroupChat\.restoreScroll\(\);\s*GroupChat\._applyPendingReveal\(\);\s*return;/);
+  // (#2387: and the same remount reads what arrived while it was off screen,
+  // a turn later, before it returns.)
+  assert.match(mount, /GroupChat\.restoreScroll\(\);\s*GroupChat\._applyPendingReveal\(\);[\s\S]{0,400}?GroupChat\.markRead\(\)[\s\S]{0,80}?return;/);
 });

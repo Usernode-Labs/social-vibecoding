@@ -1110,6 +1110,8 @@ function AppDiscussionThread({ slug }: { slug: string }) {
       const list = el.querySelector('#gc-messages');
       if (list) chat?.unmountTranscript?.(list);
       chat?.unmountGeneralChat?.(el);
+      // #2387: a "Mark unread" lasts while the channel is open, not after.
+      (window as any).GroupChat?.releaseUnreadHold?.(slug);
     };
   }, [slug, ready, name, readOnly]);
 
@@ -1560,7 +1562,9 @@ function ReplyThreadPanel() {
         </button>
       </header>
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
-        {root ? <MessageRow message={{ ...root, thread: null }} conversationId={conversationId} channels={channels} kind={kind} inThread /> : null}
+        {/* The root's Reply quotes it into THIS thread's composer (#2387): its
+            own threadRootId is null, being the main stream's message. */}
+        {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread /> : null}
         <div className="messages-reply-count" aria-hidden={!replies.length}>
           <span>{replies.length ? `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : thread?.loading ? 'Loading replies…' : 'No replies yet'}</span>
         </div>
