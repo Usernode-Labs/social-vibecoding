@@ -1144,10 +1144,21 @@ async function seedStagingGeneralChannel(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     await pool.query(
-      `INSERT INTO users (id, username, password)
-       VALUES (902783, 'staging-demo-general-ada', 'staging-demo-not-a-login'),
-              (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login')
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (902783, 'staging-demo-general-ada', 'staging-demo-not-a-login', TRUE),
+              (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login', TRUE)
        ON CONFLICT DO NOTHING`
+    );
+    // The ?demo=1 inbox uses these same identities. Its synthetic direct/group
+    // memberships are not database rows; a public fixture profile makes the
+    // ordinary reporting and blocking APIs usable without an authorization
+    // bypass. Repair older previews too, preserving any moderation decision.
+    await pool.query(
+      `UPDATE users SET profile_published = TRUE
+        WHERE (id, username) IN ((902783, 'staging-demo-general-ada'),
+                                 (902784, 'staging-demo-general-lin'))
+          AND password = 'staging-demo-not-a-login'
+          AND profile_published = FALSE AND profile_disabled_at IS NULL`
     );
     const room = await pool.query(
       `SELECT id FROM conversations WHERE channel_key = 'general' AND kind = 'channel'`
@@ -12828,4 +12839,5 @@ module.exports = {
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
+  seedStagingGeneralChannel,
 };

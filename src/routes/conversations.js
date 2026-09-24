@@ -58,6 +58,12 @@ function demoUser(id, username) {
   return { id, username, avatarUrl: null };
 }
 
+// Use the real, non-login fixture accounts seeded by seedStagingGeneralChannel.
+// An invented handle such as "ada" can be absent from the database (or belong
+// to an unrelated cloned account), so it cannot be a report/block target.
+const DEMO_ADA = demoUser(902783, 'staging-demo-general-ada');
+const DEMO_LIN = demoUser(902784, 'staging-demo-general-lin');
+
 // A 96x64 solid PNG for the staging demo's screenshot attachment (#2113).
 const DEMO_SCREENSHOT_NAME = 'Screenshot 2026-08-13 at 12.44.10\u202fPM.png';
 const DEMO_SCREENSHOT_PNG = Buffer.from(
@@ -67,8 +73,8 @@ const DEMO_SCREENSHOT_PNG = Buffer.from(
 
 function demoConversations(user) {
   const self = demoUser(user.id, user.username || 'you');
-  const ada = demoUser(910001, 'ada');
-  const lin = demoUser(910002, 'lin');
+  const ada = DEMO_ADA;
+  const lin = DEMO_LIN;
   return [
     {
       id: 910001, kind: 'direct', title: 'ada', status: 'active', archived: false,
@@ -119,7 +125,7 @@ function demoConversations(user) {
 
 function demoMessages(user, conversationId) {
   const self = demoUser(user.id, user.username || 'you');
-  const ada = demoUser(910001, 'ada');
+  const ada = DEMO_ADA;
   if (conversationId === 910001) return [
     {
       // #1808: the thread's oldest row, fixed in an earlier YEAR so the
@@ -142,7 +148,7 @@ function demoMessages(user, conversationId) {
       // staging clone therefore has the table and none of the rows.
       id: 9100101, conversationId, sender: ada, saved: true,
       content: 'Can you look at the latest proposal?', createdAt: '2026-08-13T13:20:00Z', editedAt: null,
-      reply: null, reactions: [{ emoji: '👍', count: 2, reacted: false, users: ['ada', self.username] }],
+      reply: null, reactions: [{ emoji: '👍', count: 2, reacted: false, users: [ada.username, self.username] }],
       attachments: [], objects: [{
         type: 'proposal', appId: 1, appSlug: 'usernode', available: true,
         sessionId: 3327, title: 'Platform Messages', subtitle: 'Homeroom', state: 'active',
@@ -197,7 +203,7 @@ function demoMessages(user, conversationId) {
     }], objects: [],
   }];
   if (conversationId === 910004) {
-    const lin = demoUser(910002, 'lin');
+    const lin = DEMO_LIN;
     // Three from ada in a row, then lin: the transcript draws ada's name and
     // face ONCE and her next two as continuation lines (#2783), which is the
     // grouping the declared checks look for.
@@ -205,7 +211,7 @@ function demoMessages(user, conversationId) {
       {
         id: 9100401, conversationId, sender: ada,
         content: 'Morning all! The Messages list is sectioned now.', createdAt: '2026-08-13T13:00:00Z', editedAt: null,
-        reply: null, reactions: [{ emoji: '🎉', count: 3, reacted: false, users: ['lin'] }], attachments: [], objects: [],
+        reply: null, reactions: [{ emoji: '🎉', count: 3, reacted: false, users: [lin.username] }], attachments: [], objects: [],
       },
       {
         id: 9100402, conversationId, sender: ada,
@@ -657,14 +663,14 @@ function conversationRoutes(config) {
       if (attachmentId === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
         return {
           id: attachmentId, kind: 'markdown', filename: 'launch-checklist.md',
-          content_type: 'text/markdown', message_id: 9100201, user_id: 910001,
+          content_type: 'text/markdown', message_id: 9100201, user_id: DEMO_ADA.id,
           data: Buffer.from('# Launch checklist\n\n- Verify consent states\n- Verify private cards\n'),
         };
       }
       if (attachmentId === 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') {
         return {
           id: attachmentId, kind: 'image', filename: DEMO_SCREENSHOT_NAME,
-          content_type: 'image/png', message_id: 9100201, user_id: 910001,
+          content_type: 'image/png', message_id: 9100201, user_id: DEMO_ADA.id,
           data: DEMO_SCREENSHOT_PNG,
         };
       }
