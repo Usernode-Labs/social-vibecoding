@@ -8,6 +8,7 @@ const notifications = require('./notifications');
 const events = require('./events');
 const appAccess = require('./app-access');
 const attachmentsSvc = require('./attachments');
+const appChat = require('./app-chat');
 const wsBus = require('./ws-bus');
 
 // #328: server-side cap on a single chat message body. Must match the
@@ -362,9 +363,17 @@ function deliverToRoom(appId, data, excludeWs = null, audience = {}) {
   const withoutQuote = quoteHidden.size && data.metadata?.quote
     ? JSON.stringify({ ...data, metadata: { ...data.metadata, quote: null } }) : null;
   const reactionVariants = audience.reactionsByViewer || {};
+  // #2387: a reply thread's summary as seen by a viewer who blocked one of
+  // its repliers (count and faces without that person). `null` is a real
+  // variant — nothing left for them to see — so test for the key.
+  const threadVariants = audience.threadByViewer || {};
   for (const client of room) {
     if (client.ws !== excludeWs && client.ws.readyState === 1 && !hidden.has(client.user.id)) {
       const reactions = reactionVariants[client.user.id];
+      if (Object.prototype.hasOwnProperty.call(threadVariants, client.user.id)) {
+        client.ws.send(JSON.stringify({ ...data, thread: threadVariants[client.user.id] }));
+        continue;
+      }
       client.ws.send(reactions
         ? JSON.stringify({ ...data, reactions })
         : (withoutQuote && quoteHidden.has(client.user.id) ? withoutQuote : payload));
@@ -420,6 +429,29 @@ async function broadcastFromSender(pool, appId, data, senderId, excludeWs = null
   }
   deliverToRoom(appId, data, excludeWs, routing);
   wsBus.publish('room', routing, data);
+}
+
+// #2387: tell the room a reply thread changed — a reply arrived, or one was
+// deleted — so every general-stream row showing that root can redraw its
+// "N replies" line without refetching. Sent after the change itself, and
+// best-effort: a missed summary is corrected by the next history load.
+async function broadcastThreadSummary(pool, appId, rootId, senderId) {
+  try {
+    const { thread, byViewer } = await appChat.threadSummaryForRoom(pool, appId, rootId);
+    const { rows } = await pool.query(
+      `SELECT blocker_id FROM user_blocks WHERE blocked_user_id = $1`, [senderId]
+    );
+    const routing = {
+      appId,
+      blockedUserIds: rows.map((row) => row.blocker_id),
+      threadByViewer: byViewer,
+    };
+    const data = { type: 'thread_summary', root_id: Number(rootId), thread };
+    deliverToRoom(appId, data, null, routing);
+    wsBus.publish('room', routing, data);
+  } catch (err) {
+    log.warn('ws', 'thread summary broadcast failed', { appId, rootId, err: err.message });
+  }
 }
 
 // Broadcast to all connected clients (global events like app status changes)
@@ -481,13 +513,23 @@ function pushPlatformVersion({ sha, reason = 'rollout' } = {}) {
 // accept any positive integer — the GitHub issue list is cached and
 // eventual, so a strict existence check would reject messages on
 // fresh issues for up to the cache TTL.
-async function validateThread(pool, appId, thread) {
+//
+// #2387: 'message' is a reply thread, ref = its root. The root must be a
+// general-stream message a person wrote in THIS app (so a reply can never
+// be a root: no nesting), and — when `viewerId` is given — not by somebody
+// the poster blocked, whose message they cannot see to answer.
+const THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', appChat.MESSAGE_THREAD]);
+
+async function validateThread(pool, appId, thread, viewerId = null) {
   if (!thread || typeof thread !== 'object') return null;
   const type = thread.type;
   const ref = Number(thread.ref);
-  if (!['issue', 'session', 'governance'].includes(type)) return null;
-  if (!Number.isInteger(ref) || ref <= 0) return null;
-  if (type === 'session') {
+  if (!THREAD_TYPES.includes(type)) return null;
+  if (!Number.isInteger(ref) || ref <= 0 || ref > 2147483647) return null;
+  if (type === appChat.MESSAGE_THREAD) {
+    const root = await appChat.findThreadRoot(pool, appId, ref, viewerId);
+    if (!root) return null;
+  } else if (type === 'session') {
     const { rows } = await pool.query(
       'SELECT 1 FROM chat_sessions WHERE id = $1 AND app_id = $2', [ref, appId]
     );
@@ -560,7 +602,7 @@ async function handleMessage(pool, client, msg) {
       // way, and general chat is the louder surface).
       let thread = null;
       if (msg.thread) {
-        thread = await validateThread(pool, client.appId, msg.thread);
+        thread = await validateThread(pool, client.appId, msg.thread, client.user.id);
         if (!thread) {
           log.warn('ws', 'chat message dropped: invalid thread ref', {
             appId: client.appId, userId: client.user.id,
@@ -604,9 +646,11 @@ async function handleMessage(pool, client, msg) {
             const { rows: refRows } = await pool.query(
               `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, u.username
                FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
-               WHERE m.id = $1 AND m.app_id = $2`,
+               WHERE m.id = $1 AND m.app_id = $2 AND m.deleted_at IS NULL`,
               [q.refMsgId, client.appId]
             );
+            // #2387: a deleted message cannot be quoted — its text is gone,
+            // so the send goes out as a plain message.
             if (refRows.length) {
               const r = refRows[0];
               let snippet;
@@ -738,12 +782,22 @@ async function handleMessage(pool, client, msg) {
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      // #2387: a reply thread grew — every row showing its root redraws its
+      // "N replies" line from this frame.
+      if (thread && thread.type === appChat.MESSAGE_THREAD) {
+        await broadcastThreadSummary(pool, client.appId, thread.ref, client.user.id);
+      }
 
       events.record(pool, {
         type: events.EVENT_TYPES.CHAT_MESSAGE_SENT,
         userId: client.user.id,
         appId: client.appId,
       });
+
+      // #2387: everyone who already got a more specific row for this message
+      // (quoted → 'reply', @named → 'mention'). A reply-thread participant in
+      // this set gets that row, not a second 'thread_reply' one.
+      const directlyNotified = new Set();
 
       // #15: reply notification — ping the author of the quoted message
       // or PR (no-op for self-quotes and authorless system rows).
@@ -754,6 +808,7 @@ async function handleMessage(pool, client, msg) {
           senderId: client.user.id,
           recipientId: replyRecipientId,
         });
+        for (const r of replyRows) directlyNotified.add(Number(r.user_id));
         if (replyRows.length) {
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
@@ -796,6 +851,7 @@ async function handleMessage(pool, client, msg) {
           senderId: client.user.id,
           content,
         });
+        for (const r of notifRows) directlyNotified.add(Number(r.user_id));
         if (notifRows.length) {
           // Hydrate with app/sender info so the client can render the
           // dropdown item immediately without another fetch. Mirror the
@@ -834,6 +890,24 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'mention notify failed', { err: err.message });
       }
 
+      // #2387: a reply in a reply thread pings the root's author and the
+      // earlier repliers ('thread_reply'), minus the sender and anybody the
+      // two blocks above already reached — a mention wins.
+      if (thread && thread.type === appChat.MESSAGE_THREAD) {
+        try {
+          const threadRows = await notifications.createThreadReplyNotifications(pool, {
+            appId: client.appId,
+            replyMessageId: rows[0].id,
+            rootId: thread.ref,
+            senderId: client.user.id,
+            excludeUserIds: [...directlyNotified],
+          });
+          await Promise.all(threadRows.map((row) => notifications.hydrateAndPush(pool, row)));
+        } catch (err) {
+          log.warn('ws', 'thread reply notify failed', { err: err.message });
+        }
+      }
+
       // Posting a message in this app's group chat is the "I've engaged
       // with this thread" action: clear every unread mention/reply/reaction
       // notification this user has for this app (the reply-clears-all
@@ -852,6 +926,18 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'message_sent auto-dismiss failed', {
           appId: client.appId, userId: client.user.id, err: err.message,
         });
+      }
+      // #2387: posting in the general stream is reading it — the poster's
+      // cursor moves forward to their own message (never back). A thread
+      // reply is not in the general stream and leaves the cursor alone.
+      if (!thread) {
+        try {
+          await appChat.advanceReadCursor(pool, client.appId, client.user.id, rows[0].id);
+        } catch (err) {
+          log.warn('ws', 'read cursor advance failed', {
+            appId: client.appId, userId: client.user.id, err: err.message,
+          });
+        }
       }
       // WebSocket callers intentionally ignore this value. The JSON chat
       // route uses it to return the exact row produced by this canonical
@@ -878,7 +964,7 @@ async function handleMessage(pool, client, msg) {
       // row): the row must exist in this app, belong to the editor, and be
       // an ordinary 'message'.
       const { rows } = await pool.query(
-        `SELECT user_id, msg_type, thread_type, thread_ref
+        `SELECT user_id, msg_type, thread_type, thread_ref, deleted_at
            FROM chat_messages WHERE id = $1 AND app_id = $2`,
         [messageId, client.appId]
       );
@@ -895,14 +981,18 @@ async function handleMessage(pool, client, msg) {
         });
         return;
       }
+      // #2387: a deleted message stays deleted — an edit is not a way back.
+      if (row.deleted_at) return { ok: false, code: 'message_deleted' };
 
       // Leave metadata (the reply quote) untouched so a reply still points
       // at what it replied to, and reactions (keyed on message id) survive.
       const { rows: upd } = await pool.query(
         `UPDATE chat_messages SET content = $1, edited_at = NOW()
-          WHERE id = $2 RETURNING edited_at`,
+          WHERE id = $2 AND deleted_at IS NULL RETURNING edited_at`,
         [content, messageId]
       );
+      // Deleted between the check and the write.
+      if (!upd.length) return { ok: false, code: 'message_deleted' };
       const editedAt = upd[0].edited_at;
 
       // NOTE: we intentionally do NOT re-fire createMentionNotifications for
@@ -938,13 +1028,15 @@ async function handleMessage(pool, client, msg) {
       const { rows: mrows } = await pool.query(
         `SELECT m.user_id FROM chat_messages m
           WHERE m.id = $1 AND m.app_id = $2
+            AND m.deleted_at IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM user_blocks blocked
                WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = m.user_id
             )`,
         [messageId, client.appId, client.user.id]
       );
-      if (!mrows.length) return;
+      // Missing, blocked, or (#2387) deleted: nothing to react to.
+      if (!mrows.length) return { ok: false, code: 'message_unavailable' };
       const authorId = mrows[0].user_id;
 
       const { rowCount: deleted } = await pool.query(
@@ -1011,6 +1103,46 @@ async function handleMessage(pool, client, msg) {
       break;
     }
 
+    // #2387: the author deletes one of their own messages. Inbound:
+    // { type: 'delete', id } — and the REST route
+    // DELETE /api/apps/:slug/messages/:id lands here too, so the socket and
+    // the route cannot disagree about what deleting does. Not in
+    // WRITE_MSG_TYPES on purpose: taking back your own words needs only the
+    // view access the socket already has, so someone who has since lost
+    // collaborator access can still remove what they wrote. Authorship is
+    // the gate (services/app-chat.js deleteOwnMessage).
+    case 'delete': {
+      const messageId = appChat.positiveInt(msg.id);
+      if (!messageId) return { ok: false, code: 'not_found' };
+      const result = await appChat.deleteOwnMessage(pool, {
+        appId: client.appId, userId: client.user.id, messageId,
+      });
+      if (!result.ok) {
+        log.warn('ws', 'delete rejected', {
+          appId: client.appId, userId: client.user.id, messageId, code: result.code,
+        });
+        return result;
+      }
+      if (result.alreadyDeleted) return result;
+      const { message } = result;
+      await broadcastFromSender(pool, client.appId, {
+        type: 'chat_delete',
+        id: message.id,
+        thread_type: message.thread_type,
+        thread_ref: message.thread_ref,
+      }, client.user.id);
+      // A reply went: its thread's count and faces change with it.
+      if (message.thread_type === appChat.MESSAGE_THREAD && message.thread_ref) {
+        await broadcastThreadSummary(pool, client.appId, message.thread_ref, client.user.id);
+      }
+      // Notification rows pointing at the message went in the same
+      // transaction; the people who held them re-sync their bells.
+      for (const userId of result.clearedUserIds) {
+        pushNotificationToUser(userId, { type: 'notifications_changed' });
+      }
+      return result;
+    }
+
     case 'typing': {
       // #194: pass the (shape-checked) thread along so typing indicators
       // don't bleed between general chat and threads. No DB lookup —
@@ -1018,7 +1150,7 @@ async function handleMessage(pool, client, msg) {
       // typing line in a thread nobody has open.
       const t = msg.thread;
       const typingThread = (t && typeof t === 'object'
-        && ['issue', 'session', 'governance'].includes(t.type)
+        && THREAD_TYPES.includes(t.type)
         && Number.isInteger(Number(t.ref)) && Number(t.ref) > 0)
         ? { type: t.type, ref: Number(t.ref) } : null;
       await broadcastFromSender(pool, client.appId, {

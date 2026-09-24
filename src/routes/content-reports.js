@@ -84,12 +84,15 @@ function contentReportRoutes(config) {
       await client.query('BEGIN');
       const { rows } = await client.query(
         `SELECT id, user_id, content, metadata, msg_type, thread_type,
-                thread_ref, created_at, edited_at, posted_via
+                thread_ref, created_at, edited_at, posted_via, deleted_at
            FROM chat_messages WHERE id = $1 AND app_id = $2 FOR SHARE`,
         [id, app.id]
       );
       const message = rows[0];
+      // #2387: a deleted message has no content left to report; what a
+      // report already snapshotted before the delete is kept.
       if (!message || message.msg_type !== 'message' || !message.user_id
+          || message.deleted_at
           || Number(message.user_id) === Number(req.user.id)) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'Message not found' });
