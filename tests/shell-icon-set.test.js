@@ -320,6 +320,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M17 8h1a4 4 0 1 1 0 8h-1',
     'M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8Z',
     'M7 2v2M11 2v2M15 2v2',
+    // THE FULL-WIDTH TOGGLE (#2387 follow-up): arrows out, and arrows in once
+    // the list is hidden. Drawn in an open conversation's header, which only
+    // renders once one is open.
+    'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
+    'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

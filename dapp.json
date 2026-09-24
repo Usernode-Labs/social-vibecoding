@@ -5098,10 +5098,20 @@
       "expectText": "Threads keep the room readable"
     },
     {
-      "name": "#2387: a deleted message leaves a placeholder, a message link lands on it, and the list beside it can be hidden",
+      "name": "#2387: a deleted message leaves a placeholder, a message link lands on it, and Full width, just before ⋯ in the header, can hide the list beside it",
       "path": "/?demo=1#messages/910002/m/9100202",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout:has(.messages-list-toggle[aria-pressed=\"false\"]) #messages-message-9100202 .messages-deleted",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout:has(.messages-thread-header > .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"] + .relative) #messages-message-9100202 .messages-deleted",
       "expectText": "Message deleted"
+    },
+    {
+      "name": "#2387 follow-up: an app's channel ends its header with the same Full width control",
+      "path": "/?demo=1#messages/app/staging-demo-app",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-discussion[data-discussion-app=\"staging-demo-app\"] > .messages-thread-header > .messages-list-toggle:last-child[aria-label=\"Full width\"][aria-pressed=\"false\"]"
+    },
+    {
+      "name": "#2387 follow-up: a dev session's pane carries Full width too, after Open full view",
+      "path": "/?demo=1#messages/session/usernode-2d5619/990002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-session .messages-session-bar > a.messages-session-full + .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"]"
     },
     {
       "name": "#2387: an app channel's messages carry the same hover bar, a threaded one its reply count, a deleted one its placeholder",

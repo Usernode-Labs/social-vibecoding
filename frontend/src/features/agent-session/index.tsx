@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -145,7 +146,13 @@ function changeRef(change: AgentChange) {
 /** What the conversation is about: the session's, or the unsent draft's. */
 type About = Pick<AgentSession, 'focusApp' | 'focusContext'> | null;
 
-function SessionBar({ session, about, embedded }: { session: AgentSession | null; about: About; embedded: boolean }) {
+function SessionBar({ session, about, embedded, action }: {
+  session: AgentSession | null;
+  about: About;
+  embedded: boolean;
+  /** The pane's own control at the bar's end — Messages' full-width toggle. */
+  action?: ReactNode;
+}) {
   const snapshot = useAgentSessionState();
   const active = session?.activeChange || null;
   const building = snapshot.turn.running && snapshot.turn.phase === 'cc';
@@ -184,6 +191,7 @@ function SessionBar({ session, about, embedded }: { session: AgentSession | null
       >
         Changes · {count}
       </button>
+      {action}
     </div>
   );
 }
@@ -1119,7 +1127,12 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
 
 // ── The panel and the screen ───────────────────────────────────────────
 
-export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) {
+/**
+ * `headerAction` is a surface's addition to the session bar, drawn at its
+ * end: the Messages pane passes its full-width toggle, which every
+ * discussion pane carries in that place.
+ */
+export function AgentSessionPanel({ embedded = false, headerAction = null }: { embedded?: boolean; headerAction?: ReactNode }) {
   const snapshot = useAgentSessionState();
   const scroll = useRef<HTMLDivElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
@@ -1156,7 +1169,7 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
   return (
     <div ref={root} className={`relative flex min-h-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
-        <SessionBar session={snapshot.session} about={about} embedded={embedded} />
+        <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
         <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
