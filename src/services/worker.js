@@ -903,12 +903,15 @@ function applyStreamEvent(event, onProgress, state) {
   }
 }
 
-// Keep slow OpenRouter calls visible in the owner's coding transcript. The
-// adapter emits only timing/counts, but still accept an explicit allowlist
-// here: runner output is untrusted and must never echo a prompt, key, URL, or
-// provider body into progress. Fast requests add no transcript noise.
+// Keep OpenRouter calls visible in the owner's coding transcript. The adapter
+// emits only timing/counts, but still accept an explicit allowlist here:
+// runner output is untrusted and must never echo a prompt, key, URL, or
+// provider body into progress.
 const CODING_PROVIDER_STAGES = new Set(['await_headers', 'await_first_byte', 'streaming']);
 const CODING_PROVIDER_OUTCOMES = new Set(['ok', 'http_error', 'cancelled', 'network_error', 'stream_error']);
+function codingProviderCount(value, maximum) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
+}
 function observeCodingProviderTiming(event, onProgress, state) {
   if (event?.kind === 'codex_output_idle') {
     const durationMs = event.durationMs;
@@ -935,7 +938,22 @@ function observeCodingProviderTiming(event, onProgress, state) {
   if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 1_000_000) return;
   const requests = state.codingProviderRequests || (state.codingProviderRequests = new Map());
   if (event.kind === 'provider_request_start') {
-    requests.set(ordinal, { lastReportedMs: null, lastReportedStage: null });
+    const request = { lastReportedMs: null, lastReportedStage: null, contextReported: false };
+    requests.set(ordinal, request);
+    const payloadBytes = codingProviderCount(event.payloadBytes, 64 * 1024 * 1024);
+    const inputBytes = codingProviderCount(event.inputBytes, 64 * 1024 * 1024);
+    const instructionBytes = codingProviderCount(event.instructionBytes, 64 * 1024 * 1024);
+    const inputItems = codingProviderCount(event.inputItems, 1_000_000);
+    const maxOutputTokens = codingProviderCount(event.maxOutputTokens, 10_000_000);
+    const linked = event.previousResponseLinked;
+    if (payloadBytes != null && inputBytes != null && instructionBytes != null && maxOutputTokens != null
+        && typeof linked === 'boolean') {
+      const itemCount = inputItems == null ? '' : ` in ${inputItems} items`;
+      onProgress(`OpenRouter request #${ordinal}: payload ${payloadBytes} bytes, context ${inputBytes} bytes${itemCount}, `
+        + `instructions ${instructionBytes} bytes, previous response ${linked ? 'linked' : 'absent'}, `
+        + `reply limit ${maxOutputTokens} tokens`);
+      request.contextReported = true;
+    }
     return;
   }
   const durationMs = event.durationMs;
@@ -974,10 +992,15 @@ function observeCodingProviderTiming(event, onProgress, state) {
   }
   if (event.kind === 'provider_request_end') {
     requests.delete(ordinal);
-    if (!prior || prior.lastReportedMs == null || !CODING_PROVIDER_OUTCOMES.has(event.outcome)) return;
+    if (!prior || (!prior.contextReported && prior.lastReportedMs == null)
+        || !CODING_PROVIDER_OUTCOMES.has(event.outcome)) return;
     const status = Number.isSafeInteger(event.httpStatus) && event.httpStatus >= 100 && event.httpStatus <= 599
       ? `, HTTP ${event.httpStatus}` : '';
-    onProgress(`OpenRouter request #${ordinal}: ${event.outcome} after ${Math.round(durationMs / 1000)}s${status}`);
+    const responseBytes = codingProviderCount(event.responseBytes, 10_000_000);
+    const chunkCount = codingProviderCount(event.chunkCount, 1000);
+    const transfer = prior.contextReported && responseBytes != null && chunkCount != null
+      ? `, ${responseBytes} response bytes in ${chunkCount} chunks` : '';
+    onProgress(`OpenRouter request #${ordinal}: ${event.outcome} after ${Math.round(durationMs / 1000)}s${status}${transfer}`);
   }
 }
 

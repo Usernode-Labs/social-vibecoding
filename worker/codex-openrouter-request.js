@@ -220,12 +220,27 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         return;
       }
       body.max_output_tokens = Math.min(maxOutputTokens, incomingCap ?? maxOutputTokens);
+      const serializedBody = JSON.stringify(body);
+      const payloadBytes = Buffer.byteLength(serializedBody);
+      const inputBytes = body.input == null ? 0 : Buffer.byteLength(JSON.stringify(body.input));
       if (onTiming) {
         const ordinal = ++requestOrdinal;
         const startedAt = performance.now();
+        // Request content never enters the timing stream. These counts let
+        // the owner see whether a long coding turn is carrying its prior
+        // context, linking an earlier response, or suddenly sending a much
+        // smaller request after compaction. They are taken from the actual
+        // wire request rather than inferred from the initial prompt.
+        const instructionBytes = body.instructions == null
+          ? 0 : Buffer.byteLength(JSON.stringify(body.instructions));
+        const inputItems = Array.isArray(body.input) ? body.input.length : null;
+        const previousResponseLinked = typeof body.previous_response_id === 'string'
+          && body.previous_response_id.length > 0;
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
           responseBytes: 0, chunks: 0, outcome: 'ok' };
-        emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal });
+        emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal,
+          payloadBytes, inputBytes, instructionBytes, inputItems, previousResponseLinked,
+          maxOutputTokens: body.max_output_tokens });
         timing.interval = setInterval(() => emitTiming({
           kind: 'provider_request_pending', requestOrdinal: ordinal,
           stage: timing.stage,
@@ -243,7 +258,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       headers['content-type'] = 'application/json';
       headers['accept-encoding'] = 'identity';
       const response = await fetchImpl(`${upstreamBase}/responses`, {
-        method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal,
+        method: 'POST', headers, body: serializedBody, redirect: 'error', signal: controller.signal,
       });
       if (timing) {
         timing.status = response.status;
@@ -255,7 +270,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       }
       const diagnostic = {
         model, maxOutputTokens: body.max_output_tokens,
-        inputBytes: Buffer.byteLength(JSON.stringify(body.input ?? [])),
+        inputBytes,
         inputItems: Array.isArray(body.input) ? body.input.length : null,
         httpStatus: response.status,
         requestId: safeRequestId(response.headers.get('x-request-id') || response.headers.get('x-openrouter-request-id')),

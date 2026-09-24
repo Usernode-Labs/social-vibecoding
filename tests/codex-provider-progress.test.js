@@ -67,6 +67,31 @@ test('coding request progress ignores short requests and never copies untrusted 
   assert.equal(state.codingProviderRequests.size, 0);
 });
 
+test('coding request progress records content-free context for every request', () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  const progress = [];
+  const send = event => worker.parseLine(
+    `__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`,
+    text => progress.push(text), state,
+  );
+
+  send({ kind: 'provider_request_start', requestOrdinal: 3,
+    payloadBytes: 175000, inputBytes: 151000, instructionBytes: 0, inputItems: 8,
+    previousResponseLinked: false, maxOutputTokens: 32000,
+    prompt: 'private-prompt', previous_response_id: 'private-response-id' });
+  send({ kind: 'provider_request_end', requestOrdinal: 3, durationMs: 800,
+    outcome: 'ok', httpStatus: 200, responseBytes: 2048, chunkCount: 3,
+    body: 'private-body' });
+
+  assert.deepEqual(progress, [
+    'OpenRouter request #3: payload 175000 bytes, context 151000 bytes in 8 items, instructions 0 bytes, previous response absent, reply limit 32000 tokens',
+    'OpenRouter request #3: ok after 1s, HTTP 200, 2048 response bytes in 3 chunks',
+  ]);
+  assert.doesNotMatch(JSON.stringify(progress), /private/);
+  assert.equal(state.codingProviderRequests.size, 0);
+});
+
 test('idle heartbeat names what Codex is waiting on, and flags only a quiet with nothing open', () => {
   const state = worker.newWatchState();
   state.agentBackend = 'codex_openrouter';
