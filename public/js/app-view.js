@@ -10255,8 +10255,15 @@ const AppView = {
   // proposal cards. All card controls are wired via the delegated
   // #dev-body handler in renderDevView, so repaints stay cheap.
 
+  // PLAIN TEXT, not HTML (#3010). Every reader is a React card model
+  // (card/fold.tsx and card/list-rows.tsx render it as a text child and a
+  // `title` attribute) or ConfirmModal's title, all of which escape it
+  // themselves. It returned escapeHtml's output from the innerHTML days,
+  // so a title with a quote or an ampersand read `&quot;` / `&amp;` on the
+  // card. The agent-session Mayor names changes in prose, quotes and all,
+  // which is how it surfaced.
   _sessionCardLabel(s) {
-    return escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+    return String(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
   },
 
   // #1038: busy is read live from window.SessionState, falling back to the
@@ -11762,16 +11769,17 @@ const AppView = {
   // The provenance words that replaced four badges on the meta line. Kept
   // short — this line truncates — and ordered so the most load-bearing fact
   // (where the code came from) reads first. Returns '' for an ordinary
-  // in-platform proposal, which is the common case.
+  // in-platform proposal, which is the common case. Plain text: the card
+  // model renders it as a React text part, which escapes it (#3010).
   _proposalProvenanceWords(pr) {
     const bits = [];
     if (pr.source === 'imported') {
       bits.push(pr.imported_pr_author
-        ? `imported from GitHub (${escapeHtml(pr.imported_pr_author)})`
+        ? `imported from GitHub (${pr.imported_pr_author})`
         : 'imported from GitHub');
     }
     const agent = AppView.externalAgentName(pr.external_agent);
-    if (agent) bits.push(`built with ${escapeHtml(agent)}`);
+    if (agent) bits.push(`built with ${agent}`);
     if (pr.source === 'maintenance') bits.push('platform maintenance');
     // The placeholder-title marker: a word, not a chip. The title-heal
     // sweeper removes it on the next refresh once AI naming is back.
