@@ -14,7 +14,7 @@ metadata:
     {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
     app.kubernetes.io/component: database-worker
 spec:
-  replicas: 1
+  replicas: {{ ternary 1 0 .Values.databaseControlPlane.provisioningEnabled }}
   revisionHistoryLimit: 3
   strategy:
     type: Recreate

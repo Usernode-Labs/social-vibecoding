@@ -224,3 +224,25 @@ test('retained cluster API failures do not replace durable identity or create re
   await assert.rejects(f.reconcile(),/API unavailable/);
   assert.deepEqual(await f.request(),before);assert.equal(f.store.creates,2);
 });
+
+test('operator-managed HTTP surface is read-only even for a full admin', async t => {
+  const store = memoryStore();const app = express();app.use(express.json());
+  app.use((req, _res, next) => { req.user = { id: 1, isAdmin: true, canAdminWrite: true };next(); });
+  app.use('/api/admin', adminMiddleware);
+  registerDatabaseRoutes(app, { requireAdminWrite, getPolicy: () => ({ ...policy, operatorManaged: true, pools: [] }), getStore: () => store });
+  const server = app.listen(0, '127.0.0.1');await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}/api/admin/database-clusters`;
+  const read = await (await fetch(url)).json();assert.equal(read.operatorManaged, true);assert.equal(read.placementEnabled, false);
+  const write = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target: 'previews' }) });
+  assert.equal(write.status, 409);assert.equal(store.creates, 0);
+});
+
+test('operator-managed background worker never provisions or changes request status', async () => {
+  const { run } = require('../src/workers/database-worker');const controller = new AbortController();
+  const health = {};let errors = 0;
+  setTimeout(() => controller.abort(), 20);
+  await run({ policy: { ...policy, operatorManaged: true }, store: { list: () => { throw Error('must not list'); } },
+    signal: controller.signal, intervalMs: 5, health, onError: () => { errors++; } });
+  assert.equal(errors, 0);assert.ok(health.lastPoll);
+});
