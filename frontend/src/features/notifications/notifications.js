@@ -667,13 +667,13 @@ const Notifications = {
           && conversationId <= 2147483647) {
         Notifications._dismissSheetForNav();
         const messages = window.UsernodeReact?.messages;
-        // #2387: a permalink or thread address goes through the hash, which
-        // carries the message/thread the bridge's open(id) cannot.
+        // #2387: a row about a message or a thread opens that ADDRESS. The
+        // bridge's openAddress re-runs the router when it is the address
+        // already in the bar; open(id) would move to the bare conversation
+        // and close the thread the row is about.
         const href = conversationNotificationHref(item);
-        if (href !== `#messages/${conversationId}` && window.location.hash !== href) {
-          window.location.hash = href;
-        } else if (messages?.open) messages.open(conversationId);
-        else window.location.hash = `#messages/${conversationId}`;
+        if (messages?.openAddress) messages.openAddress(href);
+        else window.location.hash = href;
       }
       return;
     }
@@ -793,7 +793,23 @@ const Notifications = {
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
-      const chatKinds = new Set(['mention', 'reply', 'reaction']);
+      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
+      // #2387: a message in a REPLY thread (thread_type 'message', its ref
+      // the thread's first message) opens that thread beside the channel,
+      // at the address the server worked out for the row.
+      if (chatKinds.has(item.kind) && item.threadType === 'message' && item.threadRef != null) {
+        const root = parseInt(item.threadRef, 10);
+        const href = typeof item.href === 'string' && item.href.startsWith('#messages/app/')
+          ? item.href
+          : (Number.isInteger(root) && root > 0
+            ? `#messages/app/${encodeURIComponent(item.appSlug)}/thread/${root}` : null);
+        if (href) {
+          const messages = window.UsernodeReact?.messages;
+          if (messages?.openAddress) messages.openAddress(href);
+          else window.location.hash = href;
+          return;
+        }
+      }
       if (chatKinds.has(item.kind) && item.threadType && item.threadRef != null) {
         const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
         const topicKind = kindMap[item.threadType];
@@ -2142,7 +2158,9 @@ function rowView(n) {
     by: n.sourceUsername || null,
     ...headline(
       n.kind === 'mention' ? 'Mentioned you'
-        : (n.kind === 'reply' ? 'Replied to you' : 'Posted'),
+        : n.kind === 'reply' ? 'Replied to you'
+          // #2387: somebody answered in a reply thread you started or joined.
+          : n.kind === 'thread_reply' ? 'Replied in thread' : 'Posted',
       (n.messageContent || '').slice(0, 140),
     ),
   };

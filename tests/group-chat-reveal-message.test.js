@@ -50,7 +50,7 @@ function setup({ pane = null } = {}) {
   const gc = sandbox.window.GroupChat;
   gc._react = () => ({ patchTranscriptMessage: (id, patch) => patches.push([id, patch.flash]) });
   return {
-    gc, container, patches, frames, timers,
+    gc, container, patches, frames, timers, sandbox,
     // A row `offset` px down the transcript, 40px tall.
     row(id, offset) {
       rows.set(id, { getBoundingClientRect: () => ({ top: 100 + offset - container.scrollTop, height: 40 }) });
@@ -128,13 +128,64 @@ test('the rows land a frame after the transcript is published: it waits for them
   assert.deepEqual(h.patches, [[5552, true]]);
 });
 
-test('a message older than the loaded page is not coming: the stream stays at the newest', () => {
+// #2387: a message LINK can name any message, so one older than the loaded
+// page is looked for: the stream pages back to it (an unbroken run to the
+// present, never a window with a gap), and a reply inside a reply thread
+// opens that thread beside the channel instead.
+test('a message older than the loaded page: the stream pages back to it', async () => {
   const h = setup();
+  const urls = [];
+  h.gc.hasMore = true;
+  h.gc.oldestMessageId = 5550;
+  h.gc.loadHistory = async () => {
+    // One older page: 1200..1240 arrive, and the row is drawn.
+    h.gc.messages = [{ id: 1200 }, { id: 1234 }, { id: 1240 }, ...h.gc.messages];
+    h.gc.oldestMessageId = 1200;
+    h.row(1234, 300);
+  };
+  h.sandbox.fetch = async (url) => {
+    urls.push(url);
+    return { ok: true, json: async () => ({ messages: [], focus: { message_id: 1234, thread_ref: null } }) };
+  };
+  h.gc.revealMessage('garden-ab12', 1234);
+  h.mounted('garden-ab12');
+  h.loaded([5550, 5552]);
+  assert.equal(h.gc._applyPendingReveal(), false, 'not on the page yet');
+  assert.equal(h.frames.length, 0, 'no frame-waiting for a row the page does not hold');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(urls, ['/api/apps/garden-ab12/messages?around=1234&limit=1']);
+  assert.equal(h.center(1234), 400, 'paged back and centred');
+  assert.deepEqual(h.patches, [[1234, true]]);
+  assert.equal(h.gc._pendingReveal, null);
+});
+
+test('a reply inside a reply thread opens that thread beside the channel', async () => {
+  const h = setup();
+  const opened = [];
+  h.sandbox.window.UsernodeReact = { messages: { openAddress: (href) => opened.push(href) } };
+  h.sandbox.fetch = async () => ({ ok: true, json: async () => ({ messages: [], focus: { message_id: 1234, thread_ref: 900 } }) });
+  h.gc.loadHistory = async () => { throw new Error('never pages for a thread reply'); };
+  h.gc.revealMessage('garden-ab12', 1234);
+  h.mounted('garden-ab12');
+  h.loaded([5550, 5552]);
+  h.gc._applyPendingReveal();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(opened, ['#messages/app/garden-ab12/thread/900']);
+  assert.equal(h.gc._pendingReveal, null);
+  assert.deepEqual(h.patches, []);
+});
+
+test('a message the server cannot show is not coming: the stream stays at the newest', async () => {
+  const h = setup();
+  h.sandbox.fetch = async () => ({ ok: false, json: async () => ({}) });
   h.gc.revealMessage('garden-ab12', 1234);
   h.mounted('garden-ab12');
   h.loaded([5550, 5552]);
   const before = h.container.scrollTop;
   assert.equal(h.gc._applyPendingReveal(), false);
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.frames.length, 0, 'no waiting for a row that is not coming');
   assert.equal(h.container.scrollTop, before);
   assert.deepEqual(h.patches, []);

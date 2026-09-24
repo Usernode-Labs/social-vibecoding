@@ -196,9 +196,14 @@ test('the bell names a thread reply and opens each conversation row at its addre
   assert.equal(view.icon, '🧵');
   assert.equal(view.conversation, true);
 
+  // Every row opens through the controller's openAddress, which re-runs the
+  // router when the address is the one already in the bar — a hash
+  // assignment there fires nothing, and the old open(id) fallback closed the
+  // thread the row was about. The hash is only the fallback for a shell
+  // still starting.
   const opened = [];
   globalThis.location = { hash: '' };
-  globalThis.UsernodeReact = { messages: { open: (id) => opened.push(id) } };
+  globalThis.UsernodeReact = { messages: { openAddress: (href) => opened.push(href) } };
   bell._markOneRead = () => {};
   bell._dismissSheetForNav = () => {};
   const open = (item) => {
@@ -206,7 +211,8 @@ test('the bell names a thread reply and opens each conversation row at its addre
     opened.length = 0;
     bell.items = [{ id: 9, conversationId: 7, conversationMessageId: 31, ...item }];
     bell._onItemClick(9);
-    return globalThis.location.hash || `open:${opened.join(',')}`;
+    assert.equal(globalThis.location.hash, '', 'never assigned while the controller is up');
+    return opened.join(',');
   };
   assert.equal(open({ kind: 'conversation_thread_reply', conversationThreadRootId: 30 }),
     '#messages/7/thread/30');
@@ -214,9 +220,9 @@ test('the bell names a thread reply and opens each conversation row at its addre
     '#messages/7/m/31', 'a mention opens the message, inside its thread if it has one');
   assert.equal(open({ kind: 'conversation_reply' }), '#messages/7/m/31');
   assert.equal(open({ kind: 'conversation_reaction' }), '#messages/7/m/31');
-  assert.equal(open({ kind: 'conversation_message' }), 'open:7', 'a plain message opens the room');
-  assert.equal(open({ kind: 'conversation_invite', conversationMessageId: null }), 'open:7');
-  assert.equal(open({ kind: 'conversation_thread_reply', conversationThreadRootId: null }), 'open:7',
+  assert.equal(open({ kind: 'conversation_message' }), '#messages/7', 'a plain message opens the room');
+  assert.equal(open({ kind: 'conversation_invite', conversationMessageId: null }), '#messages/7');
+  assert.equal(open({ kind: 'conversation_thread_reply', conversationThreadRootId: null }), '#messages/7',
     'a thread alert whose message is gone falls back to the room');
 });
 

@@ -495,7 +495,7 @@ const GroupChat = {
         GroupChat.appendMessage(msg);
         if (shouldStick) GroupChat.scrollToBottom();
         // #2387: a message landing on the open channel is read.
-        if (document.visibilityState === 'visible' && document.getElementById('gc-messages')) void GroupChat.markRead();
+        void GroupChat.markRead();
         break;
       }
       case 'reaction': {
@@ -1667,6 +1667,9 @@ const GroupChat = {
   async markRead() {
     const slug = GroupChat.appSlug;
     if (!slug || !window.App || !App.user) return;
+    // Read means SEEN: the socket also connects for an app whose chat is not
+    // on screen, and loading its history there must not clear the channel.
+    if (document.visibilityState === 'hidden' || !document.getElementById('gc-messages')) return;
     const newest = GroupChat.messages.reduce((top, m) => Math.max(top, Number(m.id) || 0), 0);
     if (!newest || newest <= (GroupChat._readUpTo || 0) || GroupChat._unreadHold === slug) return;
     GroupChat._readUpTo = newest;
@@ -3437,6 +3440,11 @@ const GroupChat = {
       const loaded = GroupChat.messages.some((m) => Number(m && m.id) === want.id);
       if (loaded && attempt < 30 && typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(() => GroupChat._applyPendingReveal(attempt + 1));
+      } else if (!loaded && !want.located) {
+        // #2387: a message link can name any message — one older than the
+        // page that loaded, or a reply inside a reply thread. Go and find it.
+        want.located = true;
+        void GroupChat._locateReveal(want);
       } else {
         GroupChat._pendingReveal = null;
       }
@@ -3454,6 +3462,51 @@ const GroupChat = {
     GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
     setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
     return true;
+  },
+
+  // Where a message link's message is (#2387), when the first page did not
+  // have it. The server's permalink window says whether it is a reply in a
+  // reply thread — then the thread opens beside the channel — and otherwise
+  // the stream pages back to it, a bounded number of pages, so the stream
+  // stays one unbroken run to the present rather than a window with a gap.
+  REVEAL_MAX_PAGES: 20,
+
+  async _locateReveal(want) {
+    const slug = want.slug;
+    const live = () => GroupChat._pendingReveal === want && GroupChat.appSlug === slug;
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/messages?around=${want.id}&limit=1${GroupChat._demoParam()}`
+      );
+      if (!live()) return;
+      if (!res.ok) { GroupChat._pendingReveal = null; return; }
+      const body = await res.json();
+      const root = Number(body && body.focus && body.focus.thread_ref);
+      if (Number.isSafeInteger(root) && root > 0 && root !== want.id) {
+        GroupChat._pendingReveal = null;
+        const address = `#messages/app/${encodeURIComponent(slug)}/thread/${root}`;
+        const messages = window.UsernodeReact?.messages;
+        if (messages?.openAddress) messages.openAddress(address);
+        else window.location.hash = address;
+        return;
+      }
+      for (let page = 0; page < GroupChat.REVEAL_MAX_PAGES; page += 1) {
+        if (!live()) return;
+        if (GroupChat.messages.some((m) => Number(m && m.id) === want.id)) break;
+        const oldest = Number(GroupChat.oldestMessageId);
+        if (!GroupChat.hasMore || (oldest && oldest < want.id)) break;
+        if (GroupChat._historyLoad) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
+        }
+        await GroupChat.loadHistory();
+      }
+      if (!live()) return;
+      want.at = Date.now();
+      GroupChat._applyPendingReveal();
+    } catch {
+      if (live()) GroupChat._pendingReveal = null;
+    }
   },
 
   restoreScroll() {

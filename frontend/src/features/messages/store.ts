@@ -515,6 +515,7 @@ export function route(
     if (nextId && (!state.active || state.active.id !== nextId || focusChanged)) void loadThread(nextId, focusChanged);
     else if (nextId && nextRoot && threadChanged) void loadReplyThread(nextId, nextRoot);
     if (nextSlug && state.discussionContext?.slug !== nextSlug) void loadDiscussion(nextSlug);
+    revealAppFocus(nextSlug, nextFocus);
     return;
   }
   publish({
@@ -537,6 +538,7 @@ export function route(
   if (nextId) void loadThread(nextId);
   else publish({ active: null, messages: [], nextBefore: null, loadingThread: false });
   if (nextSlug) void loadDiscussion(nextSlug);
+  revealAppFocus(nextSlug, nextFocus);
 }
 
 /**
@@ -742,6 +744,42 @@ export function open(conversationId?: number | null): void {
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(conversationId || null);
   else window.location.hash = target;
+}
+
+/** The app-channel message link last revealed (see revealAppFocus). */
+let revealedAppFocus: string | null = null;
+
+/**
+ * Open any Messages address (#2387): a thread, a message link. The bell's
+ * rows come through here rather than assigning the hash themselves, because
+ * assigning the address already in the bar fires no hashchange — and the
+ * fallback that used to run then, open(conversationId), moved to the bare
+ * conversation and shut the very thread the row was about. When the address
+ * is already current, the router runs on it again instead.
+ */
+export function openAddress(href: string): void {
+  if (typeof window === 'undefined' || !/^#messages(?:\/|$)/.test(href)) return;
+  if (sidePanelTakes(href)) return;
+  if (window.location.hash !== href) { window.location.hash = href; return; }
+  revealedAppFocus = null;
+  (window as { App?: { restoreFromHash?: () => void } }).App?.restoreFromHash?.();
+}
+
+/**
+ * An app channel's message link (#2387) lands on its message. The channel's
+ * transcript is the legacy GroupChat's, so the scroll and the flash are its
+ * revealMessage — which pages back for a message older than the first page,
+ * and opens the reply thread a reply lives in.
+ */
+function revealAppFocus(slug: string | null, messageId: number | null): void {
+  // Once per address: the router re-runs on the same address for reasons of
+  // its own, and a re-run must not drag a reader back who has scrolled on.
+  const key = slug && messageId ? `${slug}:${messageId}` : null;
+  if (key === revealedAppFocus) return;
+  revealedAppFocus = key;
+  if (!slug || !messageId) return;
+  (window as { GroupChat?: { revealMessage?: (slug: string, id: number) => void } })
+    .GroupChat?.revealMessage?.(slug, messageId);
 }
 
 /** The same, for the app-discussion half of the inbox (#2718 review). */
@@ -1427,6 +1465,7 @@ function paintSaved(messageId: number, saved: boolean): void {
 
 export const messagesController = {
   open,
+  openAddress,
   openDiscussion,
   openThread,
   closeThread,
