@@ -118,6 +118,7 @@ function defaults(deps = {}) {
     // while a turn runs and a dot once it has finished: tell every tab, on
     // every pod, when either happens.
     notifyUser: deps.notifyUser || ((userId, payload) => require('../ws').pushToUser(userId, payload)),
+    isChangeBusy: deps.isChangeBusy || ((changeId) => require('../active-workers').isSessionBusy(changeId)),
   };
 }
 
@@ -884,6 +885,16 @@ function turnState(agentSessionId) {
   };
 }
 
+// A build that restart recovery adopted runs on the conversation's active
+// change with no Mayor turn behind it: the turn that dispatched it died with
+// the old process. It is still the conversation's running work, so it reads
+// as a running dispatch, and stop goes to the change.
+function recoveredRunState(agentSessionId, changeId, deps = {}) {
+  if (stopRegistry.has(agentSessionId) || !changeId) return null;
+  if (!defaults(deps).isChangeBusy(changeId)) return null;
+  return { phase: 'cc', stopping: false, changeId };
+}
+
 // A turn whose process died (a restart mid-dispatch) leaves its lease and
 // its open screens behind: nothing will ever send their `done`. Once the
 // lease is stale, clear it and send that `done` in the dead turn's place, so
@@ -903,9 +914,10 @@ async function handBackOrphanedTurn({ pool, agentSessionId, userId, finished = f
   return true;
 }
 
-// A recovered run on `changeId` has posted its wrap-up: hand back the dead
-// dispatching turn of every conversation it is the active change of. A lease
-// not yet stale (the restart was moments ago) is tried again once it is.
+// A recovered run on `changeId` has ended, however it ended: hand back the
+// dead dispatching turn of every conversation it is the active change of. A
+// screen following the run settles now; a lease not yet stale (the restart
+// was moments ago) is released once it is.
 async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null }) {
   const d = defaults(deps);
   const conversations = await d.agentSessions.conversationsOfChange(pool, changeId);
@@ -913,6 +925,9 @@ async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null
     // eslint-disable-next-line no-await-in-loop
     const handed = await handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps });
     if (handed || stopRegistry.has(agentSessionId)) continue;
+    d.sessionBus.publish(busKey(agentSessionId), {
+      type: 'done', _seq: `recovered-${Date.now().toString(36)}`, agentSessionId,
+    });
     const wait = retryMs ?? (d.agentSessions.TURN_LEASE_STALE_MINUTES * 60_000 + LEASE_RENEW_MS);
     const timer = setTimeout(() => {
       handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps }).catch((err) => {
@@ -949,6 +964,7 @@ module.exports = {
   turnState,
   handBackOrphanedTurn,
   handBackAfterRecovery,
+  recoveredRunState,
   newTurnId,
   _stopRegistry: stopRegistry,
 };
