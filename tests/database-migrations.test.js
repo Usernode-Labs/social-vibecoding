@@ -89,3 +89,10 @@ test('HTTP mutations require full admin, JSON, and exact same origin', async t =
   const read = await fetch(url, { headers: { 'x-test-role': 'read' } }); assert.equal(read.status, 200); assert.equal((await read.json()).canWrite, false);
   const ok = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://staging.example', 'x-test-role': 'write' }, body: JSON.stringify(request) }); assert.equal(ok.status, 202);
 });
+
+test('Kubernetes runtime contains the executables used by the migration worker', () => {
+  const fs = require('node:fs');
+  const dockerfile = fs.readFileSync('Dockerfile.kubernetes', 'utf8');
+  assert.match(dockerfile, /RUN apk add --no-cache[^\n]*python3[^\n]*kubectl/);
+  assert.match(fs.readFileSync('src/workers/database-migrations.js', 'utf8'), /run\('python3'/);
+});

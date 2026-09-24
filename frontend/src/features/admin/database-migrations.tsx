@@ -59,12 +59,12 @@ export function DatabaseMigrations() {
           <td className={AdminUI.td}>{b.slug}<div className={AdminUI.muted}>{b.phase} · revision {b.current.revision}</div></td>
           <td className={AdminUI.td}>{label(b.current.targetId)}</td>
           <td className={AdminUI.td}><select aria-label={`Destination for ${b.slug}`} className={AdminUI.input}
-            disabled={!data.canWrite || busy || !!active || b.phase !== 'Ready'} value={targets[b.name] || ''}
+            disabled={!data.canWrite || busy || !!active || b.phase !== 'Ready'} value={targets[b.name] === b.current.targetId ? '' : targets[b.name] || ''}
             onChange={e => { setTargets(t => ({ ...t, [b.name]: e.target.value })); setPlan(null); }}>
             <option value="">Choose destination</option>
             {data.targets.filter(t => t.id !== b.current.targetId).map(t => <option key={t.id} value={t.id}>{t.displayName}</option>)}
           </select></td>
-          <td className={AdminUI.td}><button className={AdminUI.btn.primary} disabled={!data.canWrite || busy || !!active || !targets[b.name] || b.phase !== 'Ready'}
+          <td className={AdminUI.td}><button className={AdminUI.btn.primary} disabled={!data.canWrite || busy || !!active || !targets[b.name] || targets[b.name] === b.current.targetId || b.phase !== 'Ready'}
             onClick={() => void act(async () => { setPlan(await send('/plan', { binding: b.name, target: targets[b.name] })); setConfirmation(''); })}>Review move</button></td>
         </tr>)}</tbody>
       </table></div>
