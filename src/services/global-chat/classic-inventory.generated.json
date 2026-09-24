@@ -7,7 +7,7 @@
     "mappedRoutes": 541,
     "exemptRoutes": 154,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 389,
+    "clientApiReferences": 394,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -5907,6 +5907,7 @@
         "frontend/src/features/admin/topochain/api-tester.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/friends/api.ts",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/workshop/index.tsx",
@@ -5921,7 +5922,6 @@
       "path": "/api/friends/:userId",
       "expression": null,
       "status": "mapped",
-      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "profile.get.friends.item.82f566e1",
       "domain": "profile",
       "risk": "read",
@@ -5930,7 +5930,9 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#profile",
-      "clientReferences": []
+      "clientReferences": [
+        "frontend/src/features/friends/api.ts"
+      ]
     },
     {
       "source": "src/routes/friends.js",
@@ -5939,7 +5941,6 @@
       "path": "/api/friends/:userId/request",
       "expression": null,
       "status": "mapped",
-      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "profile.post.friends.item.request.562e5f6e",
       "domain": "profile",
       "risk": "external_write",
@@ -5948,7 +5949,9 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#profile",
-      "clientReferences": []
+      "clientReferences": [
+        "frontend/src/features/friends/api.ts"
+      ]
     },
     {
       "source": "src/routes/friends.js",
@@ -5957,7 +5960,6 @@
       "path": "/api/friends/:userId/request",
       "expression": null,
       "status": "mapped",
-      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "profile.delete.friends.item.request.9d03956e",
       "domain": "profile",
       "risk": "external_write",
@@ -5966,7 +5968,9 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#profile",
-      "clientReferences": []
+      "clientReferences": [
+        "frontend/src/features/friends/api.ts"
+      ]
     },
     {
       "source": "src/routes/friends.js",
@@ -5975,7 +5979,6 @@
       "path": "/api/friends/:userId/accept",
       "expression": null,
       "status": "mapped",
-      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "profile.post.friends.item.accept.b2c57896",
       "domain": "profile",
       "risk": "external_write",
@@ -5984,7 +5987,10 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#profile",
-      "clientReferences": []
+      "clientReferences": [
+        "frontend/src/features/friends/api.ts",
+        "frontend/src/features/notifications/notifications.js"
+      ]
     },
     {
       "source": "src/routes/friends.js",
@@ -5993,7 +5999,6 @@
       "path": "/api/friends/:userId/decline",
       "expression": null,
       "status": "mapped",
-      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "profile.post.friends.item.decline.1daa8e4c",
       "domain": "profile",
       "risk": "external_write",
@@ -6002,7 +6007,10 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#profile",
-      "clientReferences": []
+      "clientReferences": [
+        "frontend/src/features/friends/api.ts",
+        "frontend/src/features/notifications/notifications.js"
+      ]
     },
     {
       "source": "src/routes/friends.js",
@@ -6011,7 +6019,6 @@
       "path": "/api/friends/:userId",
       "expression": null,
       "status": "mapped",
-      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "profile.delete.friends.item.93dab95c",
       "domain": "profile",
       "risk": "external_write",
@@ -6020,7 +6027,9 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#profile",
-      "clientReferences": []
+      "clientReferences": [
+        "frontend/src/features/friends/api.ts"
+      ]
     },
     {
       "source": "src/routes/gallery.js",

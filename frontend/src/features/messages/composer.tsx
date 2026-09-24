@@ -6,6 +6,7 @@ import { channels, draftFor, notifyTyping, replyFor, send, setDraft, setReply, t
 import type { MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { orderFriendsFirst, useFriendIds } from '../friends/store';
 
 const MAX_ATTACHMENTS = 4;
 
@@ -48,6 +49,8 @@ export function MessageComposer() {
   const fileRef = useRef<HTMLInputElement>(null);
   const typingStop = useRef<number | null>(null);
   const reply = replyFor(conversationId);
+  // #2386: friends lead the @ list (features/friends/store.ts).
+  const friendIds = useFriendIds();
 
   useEffect(() => {
     setValue(draftFor(conversationId)); setAttachments([]); setObject(null); setError('');
@@ -92,9 +95,9 @@ export function MessageComposer() {
     const cursor = inputRef.current?.selectionStart ?? value.length;
     const prefix = value.slice(0, cursor).match(/(?:^|\s)@([^\s@]*)$/)?.[1];
     if (prefix === undefined) return null;
-    return (active?.members || []).filter((member) => member.status === 'member'
-      && member.username.toLowerCase().startsWith(prefix.toLowerCase())).slice(0, 6);
-  }, [active?.members, value]);
+    return orderFriendsFirst((active?.members || []).filter((member) => member.status === 'member'
+      && member.username.toLowerCase().startsWith(prefix.toLowerCase())), friendIds).slice(0, 6);
+  }, [active?.members, value, friendIds]);
 
   // #2783: `#` offers the viewer's channels — #general and their apps' —
   // and inserts `#handle`, which every chat renders as a link to it. Only a
