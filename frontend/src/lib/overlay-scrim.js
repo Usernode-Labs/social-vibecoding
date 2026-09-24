@@ -21,11 +21,30 @@ function flush() {
 // Compound clip paths with an inner hole paint as a solid dim in Android's
 // WebView on the tested Pixel. Paint only the outside instead: four bounded
 // strips and four small corner gradients, never a viewport-sized shadow/mask.
+//
+// THE STRIPS MEET ON DEVICE PIXELS (QA 2026-09-24 Q25). A dialog's box lands
+// on fractional pixels (Group members ended at 683.75), and two strips meeting
+// there each covered part of the same pixel row: the row's two partial
+// coverages composite to LESS than one full dim, so a 1px light line ran the
+// whole width of the window at the dialog's edge, at 1x and 2x alike. The
+// hole's four edges are now snapped OUTWARD to the device grid (floor above
+// and left, ceil below and right), so the strips tile exactly and the hole is
+// never smaller than the surface. The corner boxes run from each ellipse's
+// centre out to those snapped edges; past the ellipse they paint the dim, so
+// the sub-pixel between the surface's own edge and the snapped one is dimmed
+// in a corner as it is along a side (where the opaque surface covers it).
 export function scrimBackground(rect, radii, width, height, pixelRatio = 1) {
   const layers = [];
   const clamp = (n, end) => Math.max(0, Math.min(n, end));
-  const top = clamp(rect.top, height), bottom = clamp(rect.bottom, height);
-  const left = clamp(rect.left, width), right = clamp(rect.right, width);
+  const dpr = pixelRatio > 0 ? pixelRatio : 1;
+  // A hair of tolerance, so an edge already on the grid is not pushed a
+  // whole device pixel by float noise.
+  const down = (n) => Math.floor(n * dpr + 1e-3) / dpr;
+  const up = (n) => Math.ceil(n * dpr - 1e-3) / dpr;
+  const holeTop = down(rect.top), holeBottom = up(rect.bottom);
+  const holeLeft = down(rect.left), holeRight = up(rect.right);
+  const top = clamp(holeTop, height), bottom = clamp(holeBottom, height);
+  const left = clamp(holeLeft, width), right = clamp(holeRight, width);
   const color = 'var(--pane-scrim)';
   const place = (image, x, y, w, h) => {
     if (w > 0 && h > 0) layers.push(`${image} ${x}px ${y}px / ${w}px ${h}px no-repeat`);
@@ -36,16 +55,18 @@ export function scrimBackground(rect, radii, width, height, pixelRatio = 1) {
   place(fill, 0, top, left, bottom - top);
   place(fill, right, top, width - right, bottom - top);
   const [tl, tr, br, bl] = radii;
+  // [radii, box x, box y, box w, box h, the ellipse centre's corner of the box]
   const corners = [
-    [tl, rect.left, rect.top, 'right bottom'],
-    [tr, rect.right - tr[0], rect.top, 'left bottom'],
-    [br, rect.right - br[0], rect.bottom - br[1], 'left top'],
-    [bl, rect.left, rect.bottom - bl[1], 'right top'],
+    [tl, holeLeft, holeTop, rect.left + tl[0] - holeLeft, rect.top + tl[1] - holeTop, 'right bottom'],
+    [tr, rect.right - tr[0], holeTop, holeRight - (rect.right - tr[0]), rect.top + tr[1] - holeTop, 'left bottom'],
+    [br, rect.right - br[0], rect.bottom - br[1], holeRight - (rect.right - br[0]), holeBottom - (rect.bottom - br[1]), 'left top'],
+    [bl, holeLeft, rect.bottom - bl[1], rect.left + bl[0] - holeLeft, holeBottom - (rect.bottom - bl[1]), 'right top'],
   ];
-  for (const [[rx, ry], x, y, center] of corners) {
-    if (x >= width || y >= height || x + rx <= 0 || y + ry <= 0) continue;
-    const edge = 0.5 / pixelRatio;
-    place(`radial-gradient(ellipse ${rx}px ${ry}px at ${center}, transparent calc(100% - ${edge}px), ${color} 100%)`, x, y, rx, ry);
+  for (const [[rx, ry], x, y, w, h, center] of corners) {
+    if (!(rx > 0 && ry > 0)) continue;
+    if (x >= width || y >= height || x + w <= 0 || y + h <= 0) continue;
+    const edge = 0.5 / dpr;
+    place(`radial-gradient(ellipse ${rx}px ${ry}px at ${center}, transparent calc(100% - ${edge}px), ${color} 100%)`, x, y, w, h);
   }
   return layers.join(', ') || 'none';
 }

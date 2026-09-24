@@ -75,9 +75,11 @@
  *                                        call site serves both idioms
  *   unNative.toast(message, opts?)    — transient status toast / snackbar
  *                                        ({ duration?, action?, priority?,
+ *                                        error?, dismissible?,
  *                                        onClose?(reason) }; a priority
  *                                        toast holds the slot for undo
- *                                        flows)
+ *                                        flows; a long message stays
+ *                                        longer and taps away)
  *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
  *   unNative.attachKeyboardAvoidance(scrollEl, opts) — keyboard avoidance
  *                                        for a fixed-shell app's content
@@ -636,6 +638,40 @@
     };
   }
 
+  // How long a toast stays when the caller names no duration. A short
+  // status ("Copied") keeps the 2.2s it always had; a longer message gets
+  // reading time — about 60ms a character over a one-second glance — up to
+  // 8s, because an error that wraps to three lines was gone before it could
+  // be read. `error: true` holds at least 5s whatever its length. An action
+  // toast keeps its 4s: its clock is the undo window, not reading time. An
+  // explicit `duration` always wins. Pure; unit-tested in
+  // tests/native-kit.test.js.
+  var TOAST_MIN_MS = 2200;
+  var TOAST_MAX_MS = 8000;
+  var TOAST_ERROR_MIN_MS = 5000;
+  var TOAST_ACTION_MS = 4000;
+  function toastDuration(message, opts) {
+    var o = opts || {};
+    if (o.duration != null) return o.duration;
+    if (o.action && o.action.label != null) return TOAST_ACTION_MS;
+    var len = message == null ? 0 : String(message).length;
+    var ms = Math.min(TOAST_MAX_MS, Math.max(TOAST_MIN_MS, 1000 + 60 * len));
+    return o.error ? Math.max(TOAST_ERROR_MIN_MS, ms) : ms;
+  }
+
+  // Whether tapping the toast dismisses it. Only a toast that outstays the
+  // short default (or asks to, or is an error) takes taps: a 2.2s "Copied"
+  // stays pass-through, as the kit has always promised, while a long one
+  // that now lingers for up to 8s can be tapped away. Never an action
+  // toast: its only tappable part is its button. `dismissible: false`
+  // opts out.
+  function toastTapDismisses(opts, duration) {
+    var o = opts || {};
+    if (o.action && o.action.label != null) return false;
+    if (o.dismissible != null) return !!o.dismissible;
+    return !!o.error || duration > TOAST_MIN_MS;
+  }
+
   /* ────────────────────────────────────────────────────────────────────
    * Zoom-from-element math — pure functions for the 'zoom-in'/'zoom-out'
    * transition types. Unit-tested via the physics export.
@@ -782,6 +818,8 @@
     placePopover: placePopover,
     createArbiter: createArbiter,
     createToastSlot: createToastSlot,
+    toastDuration: toastDuration,
+    toastTapDismisses: toastTapDismisses,
     zoomPose: zoomPose,
     zoomRectUsable: zoomRectUsable,
     ICON_NAMES: Object.keys(ICONS),
@@ -4127,9 +4165,17 @@
       toastEl.className = 'un-toast';
       toastEl.setAttribute('role', 'status');
       toastEl.setAttribute('aria-live', 'polite');
+      // Tap to dismiss, for the records that allow it (toastTapDismisses);
+      // the CSS gives only those `pointer-events`, so every other toast
+      // still lets a tap through to the content under it.
+      toastEl.addEventListener('click', function () {
+        var shown = toastSlot.current();
+        if (shown && shown.tapDismiss && !shown.closed) resolveToast(shown, 'dismiss');
+      });
       document.body.appendChild(toastEl);
     }
     toastEl.classList.toggle('un-has-action', !!record.action);
+    toastEl.classList.toggle('un-dismissible', !!record.tapDismiss);
     while (toastEl.firstChild) toastEl.removeChild(toastEl.firstChild);
     var msg = document.createElement('div');
     msg.className = 'un-toast-msg';
@@ -4179,7 +4225,10 @@
   }
 
   // toast(message, { duration?, action?: { label, handler }, priority?,
-  // onClose?(reason) }) — returns { dismiss(), el }. A priority toast is
+  // error?, dismissible?, onClose?(reason) }) — returns { dismiss(), el }.
+  // With no `duration`, a longer message stays longer (toastDuration) and
+  // one that outstays the short default can be tapped away
+  // (toastTapDismisses); a tap closes it with reason 'dismiss'. A priority toast is
   // not displaced by ordinary toasts (those queue, one deep, latest
   // wins); onClose fires exactly once with 'timeout' | 'action' |
   // 'dismiss' | 'replaced'. `el` is the live toast element while this
@@ -4189,10 +4238,12 @@
   function toast(message, options) {
     var opts = options || {};
     var action = opts.action && opts.action.label != null ? opts.action : null;
+    var duration = toastDuration(message, opts);
     var record = {
       message: message,
       action: action,
-      duration: opts.duration != null ? opts.duration : (action ? 4000 : 2200),
+      duration: duration,
+      tapDismiss: toastTapDismisses(opts, duration),
       priority: !!opts.priority,
       onClose: typeof opts.onClose === 'function' ? opts.onClose : null,
       closed: false,

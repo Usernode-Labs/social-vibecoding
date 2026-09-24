@@ -858,3 +858,35 @@ for (const kind of ['sheet', 'panel', 'modal']) {
     assert.deepEqual(events, ['decorate', 'cleanup', 'restore']);
   });
 }
+
+// QA 2026-09-24 Q28: a toast rests ABOVE the bottom chrome. The kit reads
+// `--un-toast-inset-bottom`; app.css gives it the tab bar's height, and
+// PlatformUI.toast measures a composer (every composer block wears
+// `.platform-safe-bar`) and sets the var on the live toast.
+test('QA 2026-09-24 Q28: toast clears the tab bar and a composer pinned to the foot', () => {
+  const rect = (top, bottom, width = 390) => ({ top, bottom, width, height: bottom - top });
+  const els = [
+    { r: rect(787, 844) },            // #platform-tabs on a phone
+    { r: rect(716, 844) },            // the issue thread's composer block, reaching the edge
+    { r: rect(52, 844, 224) },        // a panel whose top is in the upper half: content, not a bar
+    { r: rect(0, 0, 0) },             // hidden
+    { r: rect(900, 960) },            // translated off-screen
+  ].map(({ r }) => ({ getBoundingClientRect: () => r }));
+  const { kit } = stubKit();
+  const style = {};
+  kit.toast = () => ({ dismiss() {}, el: { style: { setProperty: (k, v) => { style[k] = v; }, removeProperty: (k) => { delete style[k]; } } } });
+  const { PlatformUI, sandbox } = makeSandbox({ kit });
+  sandbox.innerHeight = 844;
+  let asked = null;
+  sandbox.document.querySelectorAll = (sel) => { asked = sel; return els; };
+  assert.equal(PlatformUI.toastClearance(), 128, 'the composer block is the taller of the two');
+  assert.equal(asked, '#platform-tabs, .platform-safe-bar');
+  PlatformUI.toast('Cannot verify the issue right now.');
+  assert.equal(style['--un-toast-inset-bottom'], '128px');
+  sandbox.document.querySelectorAll = () => [];
+  PlatformUI.toast('Copied');
+  assert.equal(style['--un-toast-inset-bottom'], undefined, 'nothing at the foot: the stylesheet default');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  assert.match(css, /\.un-toast \{\n  --un-toast-inset-bottom: var\(--platform-tabs-h, 0px\);\n\}/,
+    'with no measurement, the tab bar\'s height');
+});

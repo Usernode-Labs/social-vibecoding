@@ -177,3 +177,44 @@ test('offscreen surfaces dim the viewport without negative background sizes', ()
   }
   h.detach();
 });
+
+// QA 2026-09-24 Q25: Group members ended at y=683.75. The strips meeting on
+// that fractional row each covered part of it, and the two partial dims
+// composited to less than one: a 1px light line across the whole window.
+// The hole's edges now snap OUTWARD to device pixels, so the strips tile.
+test('QA 2026-09-24 Q25: strips meet on device pixels, the hole snapped outward', () => {
+  const h = harness();
+  const rect = { left: 496.4, top: 216.25, right: 943.6, bottom: 683.75 };
+  const radii = [[16, 16], [16, 16], [16, 16], [16, 16]];
+  const strips = (paint) => [...paint.matchAll(/linear-gradient\(var\(--pane-scrim\), var\(--pane-scrim\)\) (-?[\d.]+)px (-?[\d.]+)px \/ ([\d.]+)px ([\d.]+)px/g)]
+    .map((m) => m.slice(1, 5).map(Number));
+  for (const [dpr, top, bottom, left, right] of [
+    [1, 216, 684, 496, 944],
+    [2, 216, 684, 496, 944],
+    [3, 216, 684, 1489 / 3, 2831 / 3],
+  ]) {
+    const paint = h.scrimBackground(rect, radii, 1440, 900, dpr);
+    const [above, below, west, east] = strips(paint);
+    assert.deepEqual(above, [0, 0, 1440, top], `dpr ${dpr}: the strip above ends on the grid`);
+    assert.deepEqual(below, [0, bottom, 1440, 900 - bottom], `dpr ${dpr}: the strip below starts on the grid`);
+    assert.deepEqual(west.slice(1), [top, left, bottom - top], `dpr ${dpr}: the side strips span exactly between them`);
+    assert.deepEqual([east[0], east[1]], [right, top]);
+    for (const v of [top, bottom, left, right]) {
+      assert.ok(Math.abs(v * dpr - Math.round(v * dpr)) < 1e-6, `dpr ${dpr}: ${v} is a device pixel`);
+    }
+    assert.ok(top <= rect.top && bottom >= rect.bottom && left <= rect.left && right >= rect.right,
+      'the hole is never smaller than the surface');
+    // The corner boxes run out to the snapped edges, so nothing is left
+    // undimmed between a corner and its strips.
+    const corners = [...paint.matchAll(/radial-gradient\(.*?var\(--pane-scrim\) 100%\) (-?[\d.]+)px (-?[\d.]+)px \/ ([\d.]+)px ([\d.]+)px/g)]
+      .map((m) => m.slice(1, 5).map(Number));
+    assert.equal(corners.length, 4);
+    const [tl, , br] = corners;
+    assert.deepEqual([tl[0], tl[1]], [left, top]);
+    assert.ok(Math.abs(br[0] + br[2] - right) < 1e-9 && Math.abs(br[1] + br[3] - bottom) < 1e-9);
+  }
+  // Already on the grid: nothing moves.
+  const flat = h.scrimBackground({ left: 100, top: 200, right: 300, bottom: 600 }, [[0, 0], [0, 0], [0, 0], [0, 0]], 400, 800, 2);
+  assert.match(flat, /0px 600px \/ 400px 200px no-repeat/);
+  h.detach();
+});

@@ -70,18 +70,28 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
       id="profile-identity-card"
       className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-3"
     >
-      <div className="flex items-center gap-3">
-        <IdentityAvatar url={identity.avatarUrl} initial={identity.initial} />
-        <div className="flex-1 min-w-0">
-          <div className="text-[1.0625rem] font-bold truncate">{identity.name}</div>
-          {identity.sub ? (
-            // Wraps rather than truncating: beside the Edit button a phone
-            // has room for "Building since March 2026" but not the rest, and
-            // a fact cut off mid-word is not a fact.
-            <div className="text-sm text-zinc-500 dark:text-zinc-400">
-              {identity.sub}
-            </div>
-          ) : null}
+      {/*
+          QA 2026-09-24 Q30e: on a phone "Edit profile" took the right half of
+          the row, cutting the name to "[Staging de…" and wrapping the facts
+          line to four lines. Below `sm` the button drops under the text,
+          lined up with it (avatar 56px + gap 12px), and the name and facts
+          get the card's whole width. From `sm` up it is the one row it was.
+      */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex flex-1 min-w-0 items-center gap-3">
+          <IdentityAvatar url={identity.avatarUrl} initial={identity.initial} />
+          <div className="flex-1 min-w-0">
+            {/* Two lines at most, then an ellipsis: a long display name wraps
+                rather than losing its end at the first line. */}
+            <div className="text-[1.0625rem] font-bold break-words line-clamp-2">{identity.name}</div>
+            {identity.sub ? (
+              // Wraps rather than truncating: a fact cut off mid-word is not
+              // a fact.
+              <div className="text-sm text-zinc-500 dark:text-zinc-400">
+                {identity.sub}
+              </div>
+            ) : null}
+          </div>
         </div>
         <Button
           id="profile-edit-btn"
@@ -89,6 +99,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           variant="neutral"
           size="sm"
           ink="neutral"
+          className="self-start ml-[68px] sm:self-auto sm:ml-0"
           onClick={() => Profile.showEditSheet()}
         >
           Edit profile

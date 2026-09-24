@@ -54,7 +54,7 @@
  * fails proposal checks.
  */
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { BookmarkSolidIcon } from '@/components/ui/icons';
@@ -286,6 +286,22 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
   );
 }
 
+/**
+ * How many invites the section shows before folding the rest (QA 2026-09-24
+ * Q30f). The section used to be its own 192px scroller inside the sheet's
+ * scroller, which cut the second invite in half. It flows in the sheet's
+ * scroll now, so the cap moved here: past INVITES_FOLD_AFTER invites the
+ * first INVITES_SHOWN stay and a "Show N more" row opens the rest. Folding
+ * never hides a single invite behind a button, which would take the same
+ * room as showing it.
+ */
+export const INVITES_SHOWN = 2;
+export const INVITES_FOLD_AFTER = 3;
+
+export function visibleInvites<T>(invites: T[], expanded: boolean): { shown: T[]; hidden: number } {
+  if (expanded || invites.length <= INVITES_FOLD_AFTER) return { shown: invites, hidden: 0 };
+  return { shown: invites.slice(0, INVITES_SHOWN), hidden: invites.length - INVITES_SHOWN };
+}
 
 /**
  * The pinned Saved + Invites sections (Streamlined Concept).
@@ -308,6 +324,8 @@ export function NotificationsPinnedSections(): ReactNode {
   };
   const saved = state.saved || [];
   const invites = state.invites || [];
+  const [invitesOpen, setInvitesOpen] = useState(false);
+  const { shown: shownInvites, hidden: hiddenInvites } = visibleInvites(invites, invitesOpen);
 
   return (
     <>
@@ -330,17 +348,34 @@ export function NotificationsPinnedSections(): ReactNode {
       {/*
           Pinned collaborator-invites section: rendered above the notification
           rows, driven by the authoritative pendingInvites payload (see
-          ./notifications.js _renderInvites).
+          ./notifications.js _renderInvites). No scroller of its own any more
+          (QA 2026-09-24 Q30f): it scrolls with the sheet, and a long run of
+          invites folds behind "Show N more" instead (visibleInvites above).
       */}
-      <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
+      <div id="notifications-invites" className="shrink-0">
         {invites.length ? (
           <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
             Invites
           </div>
         ) : null}
-        {invites.map((inv) => (
+        {shownInvites.map((inv) => (
           <Invite key={`${inv.kind}:${inv.appId}`} view={inv} touch={state.touch} />
         ))}
+        {hiddenInvites ? (
+          <div className="px-4 py-2">
+            <button
+              type="button"
+              data-invites-more
+              className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                setInvitesOpen(true);
+              }}
+            >
+              {`Show ${hiddenInvites} more ${hiddenInvites === 1 ? 'invite' : 'invites'}`}
+            </button>
+          </div>
+        ) : null}
       </div>
     </>
   );

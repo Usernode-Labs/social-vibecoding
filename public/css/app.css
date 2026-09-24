@@ -2771,6 +2771,16 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   box-shadow: 0 0.5px 0 var(--un-hairline);
 }
 
+/* THE KIT'S TOAST CLEARS THE TAB BAR (QA 2026-09-24 Q28). native.css rests
+   the toast 16px above `--un-toast-inset-bottom`; on a phone that is the
+   tab bar's full outer height, which `--platform-tabs-h` already says (0px
+   on a desktop, where the "bar" is the rail). Read on the toast itself, a
+   child of body, so it inherits body's value. PlatformUI.toast overrides it
+   inline when a composer sits above the bar. */
+.un-toast {
+  --un-toast-inset-bottom: var(--platform-tabs-h, 0px);
+}
+
 /* ── Native iOS performance baseline (#787) ──────────────────────────
    The Flutter shell marks the top document with .in-native-webview before
    first paint (index.html) and the kit independently adds .un-ios.  Together
@@ -9390,7 +9400,62 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .settings-sheet {
   margin-top: 12px;
   padding: 10px 20px 32px;
-  min-height: 60vh;
+}
+/* THE SHEET RUNS OFF THE BOTTOM, like every other sheet on the ladder
+   (QA 2026-09-24 Q24). It had a fixed `min-height: 60vh` under `.dc-lift`'s
+   top-only radius, a shape drawn for sheets that run to the screen's foot:
+   a short section (Theme, Username, Password) became a mostly empty box
+   that stopped mid-screen on a square edge. On a phone the strip behind it
+   stopped too, because browser-scroller mode sizes #settings-screen to its
+   content (`flex: none; height: auto`), leaving bare wallpaper above the
+   tab bar.
+
+   Now the screen, its root, the row and the content column are a column of
+   flex boxes that fill the height they are given, and the open sheet takes
+   whatever is left: a short section's sheet reaches the bottom edge, a long
+   one is as tall as its content, as before. On a phone the sheet also runs
+   UNDER the tab bar (the negative margin spends the screen's own
+   `.platform-safe-scroll` padding) and carries that padding itself, so its
+   last row still clears the bar. All of it is scoped to "a section is
+   open": the phone's level-1 menu keeps the layout it had. */
+#settings-screen:not(.hidden):has(#settings-section-content:not(.hidden)) {
+  display: flex;
+  flex-direction: column;
+}
+html[data-browser-scroller="settings-screen"] #settings-screen:has(#settings-section-content:not(.hidden)) {
+  flex: 1 0 auto;
+}
+#settings-root:has(#settings-section-content:not(.hidden)) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+#settings-root:has(#settings-section-content:not(.hidden)) > div {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+@media (min-width: 768px) {
+  #settings-root:has(#settings-section-content:not(.hidden)) > div {
+    flex-direction: row;
+    align-items: stretch;
+  }
+}
+#settings-content-col:has(> #settings-section-content:not(.hidden)) {
+  display: flex;
+  flex-direction: column;
+}
+#settings-content-col > .settings-sheet {
+  flex: 1 0 auto;
+  margin-bottom: calc(-1 * max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)));
+  padding-bottom: calc(32px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)));
+}
+/* Keyboard up: the screen's safe-scroll padding is 0 (see
+   `html.un-kb .platform-safe-scroll`), so there is nothing to spend. */
+html.un-kb #settings-content-col > .settings-sheet {
+  margin-bottom: 0;
+  padding-bottom: 32px;
 }
 .settings-sheet > [data-settings-section] { max-width: 40rem; }
 .settings-sheet h3 {

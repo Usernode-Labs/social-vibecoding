@@ -197,6 +197,13 @@ function pick(items: RecentItem[], limit = RECENTS_LIMIT): RecentItem[] {
 /** Today and the five days before it each get a label; older is folded. */
 export const RECENT_DAYS = 6;
 
+/** QA 2026-09-24 Q31: the fewest rows the list shows while folded. A viewer
+ *  whose whole history is older than the labelled days used to see only
+ *  "RECENTS" over "Show N older", which reads as an empty list. So when the
+ *  labelled days hold fewer than this, the newest older rows top them up
+ *  under an "Earlier" label and only the rest fold. */
+export const RECENTS_MIN_SHOWN = 3;
+
 export interface RecentDay {
   /** 0 is today, 1 yesterday, and so on, in the viewer's calendar. */
   daysAgo: number;
@@ -207,7 +214,12 @@ export interface RecentDay {
 export interface RecentGroups {
   /** Only the days that have a row, newest first. */
   days: RecentDay[];
-  /** Before the labelled days, or with no clock: behind "Show N older". */
+  /** Before the labelled days but shown anyway, under "Earlier", so the
+   *  folded list is never shorter than RECENTS_MIN_SHOWN rows while it has
+   *  that many (QA 2026-09-24 Q31). Empty when the days already fill it. */
+  earlier: RecentItem[];
+  /** The rest of the rows before the labelled days, or with no clock:
+   *  behind "Show N older". */
   older: RecentItem[];
 }
 
@@ -247,5 +259,10 @@ export function groupRecents(items: RecentItem[], now: number = Date.now()): Rec
     day.items.push(item);
   }
   days.sort((a, b) => a.daysAgo - b.daysAgo);
-  return { days, older };
+  // Top up from the front of the older rows, which are the newest of them:
+  // reading days, then earlier, then older is still buildRecents' order.
+  const shown = days.reduce((sum, day) => sum + day.items.length, 0);
+  const topUp = Math.max(0, RECENTS_MIN_SHOWN - shown);
+  const earlier = older.splice(0, topUp);
+  return { days, earlier, older };
 }
