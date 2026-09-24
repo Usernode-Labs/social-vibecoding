@@ -67,10 +67,12 @@ const PR = {
 };
 
 const plain = (o) => JSON.parse(JSON.stringify(o));
-const render = (av, item, kind = 'proposal') => {
+// `advanced` defaults to true here: these assertions read the page's full
+// anatomy. The basic view (#2841) has its own tests at the end of the file.
+const render = (av, item, kind = 'proposal', advanced = true) => {
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const v = av._topicViewFor(kind, item);
-  return { v, html: renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item, conversation: true })) };
+  return { v, html: renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item, conversation: true, advanced })) };
 };
 
 test('the page is the hero, the steps sheet and the Discussion, in that order, and nothing the old shape had', () => {
@@ -121,7 +123,9 @@ test('the band is the card’s, Vote first, with Preview and the ⋯ at its righ
 
 test('the ⋯ menu carries Technical details as a row of its own, which opens the sheet', () => {
   const av = context();
-  const { v, html } = render(av, PR);
+  // The basic view (#2841): the advanced one also carries the description
+  // as a collapsed disclosure under its toggle, asserted at the end of file.
+  const { v, html } = render(av, PR, 'proposal', false);
   const menu = av._cardMenuItems(v.card.rail.menuKey);
   assert.equal(menu[0].label, 'Technical details');
   assert.equal(menu[0].icon, 'details');
@@ -408,4 +412,105 @@ test('the settled states keep #2604’s wording word for word', () => {
   assert.equal(at.cancelled[0], 'Visual change preview cancelled');
   assert.equal(at.not_required[0], 'No visual change preview required');
   assert.equal(at.overridden[0], 'Preview requirement overridden');
+});
+
+// ── #2841: basic by default, advanced on request ────────────────────────
+//
+// "Proposal details are too technical." The page opens BASIC: what changed,
+// the picture, the vote, and each step in one sentence — with a blocking
+// problem still said in plain words. The technical half (the pull request's
+// number, the check-by-check lists, the build pipeline, file lists, the
+// follow-on lines of a step that is not blocking, the PR description) is one
+// "Show advanced details" away, and the choice is remembered per browser.
+
+const failingItem = () => ({
+  ...PR, check_state: 'failing',
+  test_results: [{ name: 'Home loads', path: '/', status: 'fail', failureReason: 'Expected app, received login' }],
+  mergeRequirements: { gates: gates({ checks: { state: 'blocked', detail: { note: 'some checks are failing' } } }), evaluated: true, provisional: false },
+});
+
+test('#2841 basic view: the blocking problem in plain words, the technical dump behind one toggle', () => {
+  const av = context();
+  const { html } = render(av, failingItem(), 'proposal', false);
+  assert.match(html, /<section class="dev-topic-sheet dev-topic-steps" data-topic-sheet="steps" data-detail-level="basic">/);
+  // Blocking stays visible, in words, with its count and who acts.
+  assert.match(html, /data-note="checks" data-req-gate="checks" data-req-state="blocked">[\s\S]*?<span class="dev-ledger-lead dev-ledger-lead-bad">Failing\.<\/span> 1 of 1 check failed on this build\. maya must fix it before this proposal can land\./);
+  // The merge step keeps its note; the vote keeps its tally.
+  assert.match(html, /<span class="dev-step-note">level with main, merges cleanly<\/span>/);
+  assert.match(html, /<span class="dev-step-vote-tally">Yes 1 · No 0<\/span>/);
+  // The check-by-check list, its failure reason and the PR number are advanced.
+  assert.doesNotMatch(html, /dev-ledger-fails/);
+  assert.doesNotMatch(html, /Expected app, received login/);
+  assert.doesNotMatch(html, /PR#12/);
+  assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Proposal · In review<\/span>/);
+  assert.doesNotMatch(html, /technical prose/, 'the PR description is not on the basic page');
+  // One toggle, closed, inside the steps sheet so the page keeps hero → steps → Discussion.
+  assert.equal((html.match(/data-advanced-toggle=""/g) || []).length, 1);
+  assert.match(html, /<button type="button" data-advanced-toggle="" aria-expanded="false"[^>]*>[\s\S]*?Show advanced details<\/button><\/div><\/section><section class="dev-topic-sheet dev-conversation"/);
+});
+
+test('#2841 advanced view: the PR number, the failing checks list and the PR description come back', () => {
+  const av = context();
+  const { html } = render(av, failingItem(), 'proposal', true);
+  assert.match(html, /data-detail-level="advanced"/);
+  assert.match(html, /<a href="https:\/\/github\.com\/example\/app\/pull\/12" target="_blank" rel="noopener">PR#12<\/a>/);
+  assert.match(html, /<ul class="dev-ledger-fails"><li class="dev-ledger-check dev-ledger-check-why">/);
+  assert.match(html, /Expected app, received login/);
+  assert.match(html, /aria-expanded="true"[^>]*>[\s\S]*?Hide advanced details<\/button>/);
+  // The PR description as the same collapsed "Technical details" disclosure
+  // the About sheet uses, under the toggle and still inside the steps sheet.
+  assert.match(html, /Hide advanced details<\/button><\/div><details class="dev-topic-details"><summary class="dev-topic-details-summary">Technical details<\/summary>[\s\S]*?technical prose[\s\S]*?<\/details><\/section>/);
+});
+
+test('#2841 a blocked step keeps its explanation in basic; a step in flight keeps only its sentence', () => {
+  const { basicFoot } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const why = ['Infrastructure problem, not this change.'];
+  const list = { list: [{ text: 'a.js', mono: true }] };
+  assert.deepEqual(basicFoot({ key: 'checks', tone: 'bad', label: 'Checks', text: [], foot: [why, list] }), [why],
+    'why checks could not run stays; the file list does not');
+  assert.deepEqual(basicFoot({ key: 'checks', tone: 'mute', label: 'Checks', text: [], foot: [['Triggered by a new commit on this proposal.']] }), [],
+    'a run in flight: its provenance line is advanced');
+});
+
+test('#2841 the toggle only appears when there is something to reveal', () => {
+  const av = context();
+  // PR's steps are all quiet, but the PR number and its description exist.
+  assert.match(render(av, PR, 'proposal', false).html, /data-advanced-toggle=""/);
+  const { hasAdvancedDetails } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.equal(hasAdvancedDetails({ changeId: 1, steps: { headline: 'x', detail: null, done: null, total: null, rows: [
+    { key: 'votes', state: 'waiting', label: 'Vote', actor: null, row: { key: 'votes', tone: 'vote', label: 'Votes', text: [], foot: [] } },
+  ] } }), false);
+});
+
+test('#2841 the choice is the viewer’s: remembered in wrapped localStorage, forced by ?advanced=1 for checks', () => {
+  const src = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(src, /export const ADVANCED_DETAILS_KEY = 'homeroom\.changeDetail\.advanced';/);
+  const { readAdvancedDetails, ADVANCED_DETAILS_KEY } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const saved = globalThis.window;
+  try {
+    const store = new Map();
+    globalThis.window = { location: { search: '' }, localStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null) } };
+    assert.equal(readAdvancedDetails(), false, 'basic by default');
+    store.set(ADVANCED_DETAILS_KEY, '1');
+    assert.equal(readAdvancedDetails(), true, 'a remembered choice');
+    globalThis.window = { location: { search: '?demo=1&advanced=1' }, localStorage: { getItem() { throw new Error('blocked'); } } };
+    assert.equal(readAdvancedDetails(), true, '?advanced=1 wins without touching storage');
+    globalThis.window = { location: { search: '' }, localStorage: { getItem() { throw new Error('blocked'); } } };
+    assert.equal(readAdvancedDetails(), false, 'blocked storage falls back to basic instead of throwing');
+  } finally {
+    if (saved === undefined) delete globalThis.window; else globalThis.window = saved;
+  }
+});
+
+test('#2841 checks that could not run say why in the basic view (the #1771 declared check reads it there)', () => {
+  const av = context();
+  const item = {
+    ...PR, check_state: 'error', test_results: [],
+    check_error_detail: 'Infrastructure problem, not this change: the preview ran out of database connections.',
+    mergeRequirements: { gates: gates({ checks: { state: 'blocked', detail: { note: 'the staging preview could not start, so the tests could not run' } } }), evaluated: true, provisional: false },
+  };
+  const { html } = render(av, item, 'proposal', false);
+  assert.match(html, /data-detail-level="basic"/);
+  assert.match(html, /class="dev-step dev-step-blocked" data-note="checks"[\s\S]*?Infrastructure problem, not this change/);
+  assert.match(html, /data-advanced-toggle="" aria-expanded="false"/);
 });

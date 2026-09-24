@@ -176,10 +176,13 @@ function transcriptHtml(AppView, item) {
 }
 
 /** Render the opened topic's whole head from `AppView._renderTopicHead`'s two halves. */
-function topicHeadHtml(card, body) {
+// `advanced` defaults to true: the suites that read a change page's steps
+// were written against everything it can show, which since #2841 is the
+// ADVANCED view — the page itself opens basic until the viewer asks.
+function topicHeadHtml(card, body, { advanced = true } = {}) {
   const m = mod();
   m.topicHeadStore.set({ card, body });
-  return renderToHtml(createElement(m.TopicHead));
+  return renderToHtml(createElement(m.TopicHead, { advanced }));
 }
 
 /** Render one ListRow (a divider, the filter note, the archived block). */
