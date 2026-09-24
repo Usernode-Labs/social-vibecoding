@@ -3520,6 +3520,22 @@ const GroupChat = {
     if (GroupChat.appSlug !== want.slug || !GroupChat._didInitialScroll) return false;
     const container = document.getElementById('gc-messages');
     if (!container) return false;
+    // A reply in a reply thread (#2387 follow-up): the general stream holds
+    // it now, but as a line of a thread card rather than a row of its own —
+    // the link opens its thread beside the channel instead.
+    const loadedReply = GroupChat.messages.find((m) => Number(m && m.id) === want.id
+      && (m.thread_type === 'message' || (m.thread && m.thread.type === 'message')));
+    if (loadedReply) {
+      const root = Number(loadedReply.thread_ref ?? (loadedReply.thread && loadedReply.thread.ref));
+      GroupChat._pendingReveal = null;
+      if (Number.isSafeInteger(root) && root > 0) {
+        const address = `#messages/app/${encodeURIComponent(want.slug)}/thread/${root}`;
+        const messages = window.UsernodeReact?.messages;
+        if (messages?.openAddress) messages.openAddress(address);
+        else window.location.hash = address;
+      }
+      return false;
+    }
     const row = container.querySelector(`[data-msg-id="${want.id}"]`);
     if (!row) {
       // The transcript is published BATCHED (features/group-chat/mount.ts):
