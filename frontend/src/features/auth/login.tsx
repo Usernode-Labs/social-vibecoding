@@ -367,14 +367,24 @@ const PASSWORD_ACCOUNT_MSG =
 /** The pre-email copy the frozen markup shipped, and its replacement. */
 const ADMIN_LEAD_SHIPPED =
   "Accounts here have no email on file, so a password can't be reset automatically from the web.";
+/**
+ * The confirmed-email fallback copy (#2969): explains why the reset email
+ * never arrives, then how to recover. Two sentences, both inside the same
+ * warning card — see ADMIN_LEAD_NOTICE_BOX below.
+ */
 const ADMIN_LEAD_WITH_EMAIL =
-  'No confirmed email on your account? The link above can only go to a confirmed address, but an admin can still get you back in.';
+  'If you did not confirm your email account, you will not receive the reset email.';
+const ADMIN_LEAD_SUPPORT_INSTRUCTIONS =
+  'If this happens to you, ask Homeroom support team to issue you a temporary password (support@usernodelabs.org).';
 
 /**
  * The warning-card treatment for ADMIN_LEAD_WITH_EMAIL (#2958): a caution box
  * instead of ambient body text, so the confirmed-email gap reads as a helpful
  * notice rather than blending into the surrounding copy. Same `notice`
  * spelling as OFFLINE_NOTICE above — one caution box for the whole shell.
+ * #2969 moved the support-team follow-up sentence inside the same box, so
+ * the whole message reads as one warning rather than a card plus a stray
+ * paragraph below it.
  */
 const ADMIN_LEAD_NOTICE_BOX = `flex items-start gap-2 ${alertVariants({ variant: 'notice', density: 'compact' })}`;
 
@@ -1808,25 +1818,32 @@ export function LoginScreen() {
                     aria-hidden="true"
                   />
                 ) : null}
-                <p className={resetUi ? '' : 'text-sm text-zinc-500 dark:text-zinc-400'}>
-                  {resetUi ? ADMIN_LEAD_WITH_EMAIL : ADMIN_LEAD_SHIPPED}
-                </p>
+                {resetUi ? (
+                  <div className="space-y-1">
+                    <p>{ADMIN_LEAD_WITH_EMAIL}</p>
+                    <p>{ADMIN_LEAD_SUPPORT_INSTRUCTIONS}</p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{ADMIN_LEAD_SHIPPED}</p>
+                )}
               </div>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {/* JSX drops a line-ending space, so the separators before the
-                    inline elements must live inside the string expressions —
-                    without them the text renders as "atemporary" /
-                    "fromSettings" (issue #1158). */}
-                {'Ask a Homeroom platform admin to issue you a '}
-                <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                  temporary password
-                </span>
-                {". Once you're back in, set a password you choose from "}
-                <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
-                  Settings → Change password
-                </a>
-                .
-              </p>
+              {resetUi ? null : (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {/* JSX drops a line-ending space, so the separators before the
+                      inline elements must live inside the string expressions —
+                      without them the text renders as "atemporary" /
+                      "fromSettings" (issue #1158). */}
+                  {'Ask a Homeroom platform admin to issue you a '}
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                    temporary password
+                  </span>
+                  {". Once you're back in, set a password you choose from "}
+                  <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
+                    Settings → Change password
+                  </a>
+                  .
+                </p>
+              )}
             </div>
             <button
               id="btn-recovery-back"
