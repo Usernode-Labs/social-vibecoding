@@ -163,8 +163,9 @@ export interface MessagesRoute {
 export type MessagesAgentThread =
   | { kind: 'chat'; id: string }
   | { kind: 'session'; slug: string; id: number }
-  // #2779: an agent session, a conversation with the Mayor (a serial id).
-  | { kind: 'agent'; id: number };
+  // #2779: an agent session, a conversation with the Mayor (a serial id), or
+  // `new`: the one New change opens, unsent until its first message.
+  | { kind: 'agent'; id: number | 'new' };
 
 /** The app whose discussion is open, once its metadata has landed. */
 export interface DiscussionContext {

@@ -236,16 +236,22 @@ declare global {
         paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
       };
-      /** features/agent-session/store.ts (#2779). */
+      /**
+       * features/agent-session/store.ts (#2779). `new` is the conversation
+       * New change opens, unsent until its first message creates it.
+       */
       agentSession?: {
-        open(id: number, options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
-        route(id: number, options?: { drawer?: boolean }): Promise<void> | void;
+        open(id: number | 'new', options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
+        route(id: number | 'new', options?: { drawer?: boolean }): Promise<void> | void;
         start(
           hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-        ): Promise<unknown>;
+        ): void;
+        prepareDraft(
+          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
+        ): void;
         deactivate(): void;
         isOpen(): boolean;
-        currentId(): number | null;
+        currentId(): number | 'new' | null;
         refreshList(): Promise<void> | void;
       };
       globalChat?: {

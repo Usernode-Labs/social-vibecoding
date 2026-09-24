@@ -116,19 +116,27 @@ function defaults(deps = {}) {
 
 // ── Who runs the Mayor, and who pays ───────────────────────────────────
 //
-// The same rules as a classic session's Mayor, keyed on the user's default
-// coding backend because an agent session has no backend of its own yet: an
-// OpenRouter user's Mayor runs on their OpenRouter model and key (and an
-// included key is gated on, and billed to, the shared weekly pool); everyone
-// else's runs on Anthropic through the limit-first platform or BYOK path.
+// The same rules as a classic session's Mayor, keyed on the conversation's
+// model choice (the composer's picker) and, when it has none, on the user's
+// default coding backend: an OpenRouter choice runs the Mayor on that
+// OpenRouter model and key (and an included key is gated on, and billed to,
+// the shared weekly pool); a Claude one runs it on Anthropic, on the chosen
+// model, through the limit-first platform or BYOK path. Read when a turn
+// starts, so a pick made mid-turn applies from the next one.
 async function resolveAgentMayor({ pool, config, userId, agentSessionId, requestedModel, deps = {} }) {
   const d = defaults(deps);
-  const { rows } = await pool.query(
-    `SELECT backend, model_id FROM user_agent_preferences
-      WHERE user_id = $1 AND is_default = TRUE`,
-    [userId]
-  );
-  const pref = rows[0];
+  const choice = await d.agentSessions.getAgentChoice(pool, agentSessionId);
+  let pref;
+  if (choice) {
+    pref = { backend: choice.backend, model_id: choice.model };
+  } else {
+    const { rows } = await pool.query(
+      `SELECT backend, model_id FROM user_agent_preferences
+        WHERE user_id = $1 AND is_default = TRUE`,
+      [userId]
+    );
+    pref = rows[0];
+  }
   if (pref && pref.backend === 'codex_openrouter') {
     const resolved = await d.openrouterMayor.resolveForSession({
       pool,
@@ -170,11 +178,14 @@ async function resolveAgentMayor({ pool, config, userId, agentSessionId, request
       reason: billing.reason || null, verificationRequired: !!billing.verificationRequired,
     };
   }
+  // A model named on the request still wins (the turn route accepts one);
+  // otherwise the conversation's Claude choice, otherwise the default.
+  const claudeModel = requestedModel || (choice && choice.backend === 'claude_code' ? choice.model : null);
   return {
     ok: true,
     provider: 'anthropic',
     client: d.llm,
-    model: d.models.resolve(requestedModel),
+    model: d.models.resolve(claudeModel),
     apiKey: billing.apiKey || null,
     spendRecorded: true,
     byok: !!billing.apiKey,

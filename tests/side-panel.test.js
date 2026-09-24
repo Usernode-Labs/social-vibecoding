@@ -494,6 +494,35 @@ test('Expand from an agent session goes to Messages, the conversation beside the
   cleanup();
 });
 
+test('an unsent agent session opens beside the app with its hint, and becomes the session in place (#2779)', () => {
+  // `agent/new` is New change before its first message: a panel page like
+  // any conversation, with no row behind it yet.
+  for (const route of ['agent/new', 'messages/agent/new']) {
+    assert.equal(R.panelPage(route).key, 'agent/new', route);
+    assert.equal(R.isPanelRoute(route), true, route);
+    assert.equal(R.embeddedAllows(route), true, route);
+  }
+  assert.equal(R.samePage('agent/new', 'agent/7'), false);
+  assert.equal(R.panelPage('agent/newer'), null);
+
+  const { pushed } = topWindow();
+  const hint = { agentHint: { slug: 'notes-ab12', entry: 'improve' } };
+  assert.equal(api.take('messages/agent/new', hint), true);
+  // The first page is the frame's own address: the hint waits for its boot.
+  assert.deepEqual(api.embeddedApi.takeBootHint(), hint);
+  assert.equal(api.embeddedApi.takeBootHint(), null, 'once');
+  fakeFrame();
+  api.embeddedApi.ready('agent/new', '');
+  // The first message created session 7, and the panel's document replaced
+  // its address: the same page settling, not a step Back would undo.
+  api.embeddedApi.navigated('agent/7', 'Dark mode', false);
+  assert.equal(api.sidePanelStore.get().route, 'agent/7');
+  assert.equal(api.sidePanelStore.get().canBack, true, 'Back still climbs to the inbox, and only there');
+  api.expand();
+  assert.deepEqual(pushed, ['/?demo=1#messages/agent/7'], 'Expand finds the session, not a fresh draft');
+  cleanup();
+});
+
 test('a panel link in the top document is refused before the browser follows it', () => {
   topWindow();
   const click = (href, extra = {}) => {

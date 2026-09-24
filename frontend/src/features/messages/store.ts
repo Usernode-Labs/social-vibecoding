@@ -454,6 +454,7 @@ export function validAgentThread(agent?: MessagesAgentThread | null): MessagesAg
     return slug && validId(agent.id) ? { kind: 'session', slug, id: agent.id } : null;
   }
   if (agent.kind === 'agent') {
+    if (agent.id === 'new') return { kind: 'agent', id: 'new' };
     return validId(agent.id) ? { kind: 'agent', id: agent.id } : null;
   }
   return null;

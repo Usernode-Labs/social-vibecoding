@@ -1537,6 +1537,121 @@ async function resolveExplicitAgentPreference(client, userId, config, {
   };
 }
 
+// The switch behind POST /api/sessions/:id/reset-agent-context (its phases
+// 2-5), for any caller that has already resolved `pref`: the route, and an
+// agent session's dispatch, which applies the conversation's model choice to
+// its active change right before the next build (services/mayor/
+// agent-dispatch.js). Under a row lock: refuses a closed or busy change,
+// switches the backend, model and effort, drops both resume ids, records the
+// reset in the change's transcript, then evicts the warm worker.
+async function switchSessionAgent(pool, { sessionId, userId, pref }) {
+  const resolved = pref.backend;
+  const isCodex = resolved === 'codex_openrouter';
+  // ── Phase 2: one checked-out client + explicit transaction ──
+  // (plan 8.2). The row lock is held until COMMIT so a concurrently
+  // starting turn serializes correctly instead of racing the in-memory
+  // busy check.
+  const client = await pool.connect();
+  let updatedRow = null;
+  let contextMessage = null;
+  try {
+    await client.query('BEGIN');
+
+    const { rows } = await client.query(
+      `SELECT id, user_id, status, active_turn,
+              agent_backend, agent_model, agent_reasoning_effort,
+              agent_config_version
+         FROM chat_sessions
+        WHERE id = $1 AND user_id = $2
+        FOR UPDATE`,
+      [sessionId, userId],
+    );
+    const sess = rows[0];
+    if (!sess) {
+      await client.query('ROLLBACK').catch(() => {});
+      return { ok: false, status: 404, error: 'Session not found' };
+    }
+    if (sess.status === 'archived' || sess.status === 'merged') {
+      await client.query('ROLLBACK').catch(() => {});
+      return { ok: false, status: 409, error: 'Session is closed' };
+    }
+    // ── Phase 3: authoritative post-lock busy recheck ──
+    // (plan 8.3). The pre-lock check above is only a fast path; the
+    // post-lock check (activeWorkers / inFlight / persisted active_turn)
+    // is the source of truth now that we hold the row lock.
+    if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId) || sess.active_turn) {
+      await client.query('ROLLBACK').catch(() => {});
+      return { ok: false, status: 409, error: 'Session is busy; stop the current turn first.' };
+    }
+
+    // ── Phase 4: conditional update ── (plan 8.4)
+    // `WHERE ... AND active_turn IS NULL` guarantees exactly one row is
+    // touched; RETURNING * lets us return the ACTUAL row we inserted.
+    const upd = await client.query(
+      `UPDATE chat_sessions SET
+         agent_backend = $2,
+         agent_provider = $3,
+         agent_model = $4,
+         agent_reasoning_effort = $5,
+         agent_thread_id = NULL,
+         cc_session_id = NULL,
+         agent_config_version = agent_config_version + 1,
+         agent_context_reset_at = NOW()
+       WHERE id = $1 AND active_turn IS NULL
+       RETURNING *`,
+      [sessionId, pref.backend, pref.provider,
+       pref.model, pref.reasoningEffort],
+    );
+    if (upd.rows.length !== 1) {
+      await client.query('ROLLBACK').catch(() => {});
+      return { ok: false, status: 409, error: 'Session is busy; stop the current turn first.' };
+    }
+    updatedRow = upd.rows[0];
+
+    const agentLabel = isCodex
+      ? `OpenRouter (${safeAgentModelLabel(pref.model)})`
+      : 'Claude Code';
+    const changedBackend = registry.resolveBackend(sess.agent_backend) !== pref.backend;
+    const messageText = isCodex
+      ? (changedBackend
+        ? `Session AI switched to ${agentLabel}. Fresh model context will start on the next turn; the branch and conversation were kept.`
+        : `${agentLabel} context was reset. Fresh model context will start on the next turn; the branch and conversation were kept.`)
+      : (changedBackend
+        ? `Coding agent switched to ${agentLabel}. A fresh agent context will start on the next turn; the branch and conversation were kept.`
+        : `${agentLabel} context was reset. A fresh agent context will start on the next turn; the branch and conversation were kept.`);
+    const msg = await client.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3) RETURNING *`,
+      [sessionId, messageText, JSON.stringify({
+        type: 'agent_context_reset',
+        previousBackend: sess.agent_backend,
+        agentBackend: pref.backend,
+        agentModel: pref.model,
+        reasoningEffort: pref.reasoningEffort,
+      })],
+    );
+    contextMessage = msg.rows[0] || null;
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // ── Phase 5: commit before worker eviction ── (plan 8.6)
+  // After Commit 1 the warm container no longer holds provider secrets,
+  // so eviction is best-effort (a failure still leaves a consistent DB).
+  if (typeof worker.evictWorker === 'function') {
+    await worker.evictWorker(sessionId).catch((evErr) => {
+      log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
+    });
+  }
+
+  return { ok: true, session: updatedRow, message: contextMessage };
+}
+
 function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   const router = Router();
   const pool = getPool(config);
@@ -2532,13 +2647,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // usable; legacy/API clients that omit it keep the saved-default
       // behavior. Resolve before global LRU reclamation or GitHub branch
       // creation so an invalid selection has no external side effects.
+      //
+      // #2779: a change an agent session starts is created on that
+      // conversation's model choice (its composer's picker), held to the same
+      // exact-or-refuse rule as a browser's explicit pick. A conversation
+      // with no choice follows the saved default like any other caller.
       let pref;
       try {
         const explicitAgent = req.body
           && Object.prototype.hasOwnProperty.call(req.body, 'backend');
-        pref = explicitAgent
-          ? await resolveExplicitAgentPreference(pool, req.user.id, config, req.body)
-          : await resolveDefaultAgentPreference(pool, req.user.id, config);
+        const conversationChoice = !explicitAgent && agentSessionId
+          ? await agentSessions.getAgentChoice(pool, agentSessionId)
+          : null;
+        if (explicitAgent) {
+          pref = await resolveExplicitAgentPreference(pool, req.user.id, config, req.body);
+        } else if (conversationChoice) {
+          pref = await resolveExplicitAgentPreference(pool, req.user.id, config, conversationChoice);
+        } else {
+          pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
+        }
       } catch (err) {
         if (err instanceof AgentSelectionError) {
           return res.status(err.statusCode).json(agentSelectionErrorBody(err));
@@ -3852,107 +3979,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const resolved = pref.backend;
       const isCodex = resolved === 'codex_openrouter';
 
-      // ── Phase 2: one checked-out client + explicit transaction ──
-      // (plan 8.2). The row lock is held until COMMIT so a concurrently
-      // starting turn serializes correctly instead of racing the in-memory
-      // busy check.
-      const client = await pool.connect();
-      let updatedRow = null;
-      let contextMessage = null;
-      try {
-        await client.query('BEGIN');
-
-        const { rows } = await client.query(
-          `SELECT id, user_id, status, active_turn,
-                  agent_backend, agent_model, agent_reasoning_effort,
-                  agent_config_version
-             FROM chat_sessions
-            WHERE id = $1 AND user_id = $2
-            FOR UPDATE`,
-          [sessionId, req.user.id],
-        );
-        const sess = rows[0];
-        if (!sess) {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(404).json({ error: 'Session not found' });
-        }
-        if (sess.status === 'archived' || sess.status === 'merged') {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(409).json({ error: 'Session is closed' });
-        }
-        // ── Phase 3: authoritative post-lock busy recheck ──
-        // (plan 8.3). The pre-lock check above is only a fast path; the
-        // post-lock check (activeWorkers / inFlight / persisted active_turn)
-        // is the source of truth now that we hold the row lock.
-        if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId) || sess.active_turn) {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
-        }
-
-        // ── Phase 4: conditional update ── (plan 8.4)
-        // `WHERE ... AND active_turn IS NULL` guarantees exactly one row is
-        // touched; RETURNING * lets us return the ACTUAL row we inserted.
-        const upd = await client.query(
-          `UPDATE chat_sessions SET
-             agent_backend = $2,
-             agent_provider = $3,
-             agent_model = $4,
-             agent_reasoning_effort = $5,
-             agent_thread_id = NULL,
-             cc_session_id = NULL,
-             agent_config_version = agent_config_version + 1,
-             agent_context_reset_at = NOW()
-           WHERE id = $1 AND active_turn IS NULL
-           RETURNING *`,
-          [sessionId, pref.backend, pref.provider,
-           pref.model, pref.reasoningEffort],
-        );
-        if (upd.rows.length !== 1) {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
-        }
-        updatedRow = upd.rows[0];
-
-        const agentLabel = isCodex
-          ? `OpenRouter (${safeAgentModelLabel(pref.model)})`
-          : 'Claude Code';
-        const changedBackend = registry.resolveBackend(sess.agent_backend) !== pref.backend;
-        const messageText = isCodex
-          ? (changedBackend
-            ? `Session AI switched to ${agentLabel}. Fresh model context will start on the next turn; the branch and conversation were kept.`
-            : `${agentLabel} context was reset. Fresh model context will start on the next turn; the branch and conversation were kept.`)
-          : (changedBackend
-            ? `Coding agent switched to ${agentLabel}. A fresh agent context will start on the next turn; the branch and conversation were kept.`
-            : `${agentLabel} context was reset. A fresh agent context will start on the next turn; the branch and conversation were kept.`);
-        const msg = await client.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3) RETURNING *`,
-          [sessionId, messageText, JSON.stringify({
-            type: 'agent_context_reset',
-            previousBackend: sess.agent_backend,
-            agentBackend: pref.backend,
-            agentModel: pref.model,
-            reasoningEffort: pref.reasoningEffort,
-          })],
-        );
-        contextMessage = msg.rows[0] || null;
-
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
+      // ── Phases 2-5: the switch itself ──
+      // Shared with an agent session's dispatch, which applies the
+      // conversation's model choice to its active change the same way
+      // (switchSessionAgent, below the resolvers).
+      const switched = await switchSessionAgent(pool, {
+        sessionId, userId: req.user.id, pref,
+      });
+      if (!switched.ok) {
+        return res.status(switched.status).json({ error: switched.error });
       }
-
-      // ── Phase 5: commit before worker eviction ── (plan 8.6)
-      // After Commit 1 the warm container no longer holds provider secrets,
-      // so eviction is best-effort (a failure still leaves a consistent DB).
-      if (typeof worker.evictWorker === 'function') {
-        await worker.evictWorker(sessionId).catch((evErr) => {
-          log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
-        });
-      }
+      const updatedRow = switched.session;
+      const contextMessage = switched.message;
 
       // #1348: an EXPLICIT pick is also the answer to "which one did you
       // use last", so it is remembered. This is the rule the venue sheet
@@ -12936,6 +12974,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   sharedPoolCodexSpend,
   snapshotMayorResponse,
   staticWrapUpText,
+  switchSessionAgent,
 });
 
-module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

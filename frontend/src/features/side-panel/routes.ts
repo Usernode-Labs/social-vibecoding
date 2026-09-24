@@ -28,10 +28,13 @@
  *   agent/<id>[/changes]           an agent session (#2779): one conversation
  *                                  with the Mayor, on any app — `changes`
  *                                  is the same page with its drawer up
- *   messages/agent/<id>            the same session, by the address Messages
- *                                  links it with; a numeric id only (a UUID
- *                                  there is a Global Chat thread, which the
- *                                  panel does not take)
+ *   agent/new                      a session not sent yet (New change): no
+ *                                  row until its first message, when the
+ *                                  address becomes the session's own
+ *   messages/agent/<id|new>        the same, by the address Messages links
+ *                                  it with; a numeric id or `new` only (a
+ *                                  UUID there is a Global Chat thread, which
+ *                                  the panel does not take)
  *   messages                       the inbox itself — never opened INTO the
  *                                  panel from outside it (it is a tab root,
  *                                  and a tab leaves the app), but it is where
@@ -66,6 +69,8 @@ export interface PanelPage {
 }
 
 const NUMERIC = /^[1-9]\d{0,15}$/;
+// An agent session's serial id, or `new` for the one not sent yet.
+const isAgentSessionId = (segment: string | undefined) => segment === 'new' || NUMERIC.test(segment || '');
 
 function decode(seg: string): string {
   try { return decodeURIComponent(seg); } catch { return seg; }
@@ -168,7 +173,7 @@ export function panelPage(route: string): PanelPage | null {
       // A `#name` channel reference (#2783) — see isPointer below.
       return { kind: 'thread', slug: null, key: `messages/channel/${parts[2]}` };
     }
-    if (parts[1] === 'agent' && NUMERIC.test(parts[2] || '')) {
+    if (parts[1] === 'agent' && isAgentSessionId(parts[2])) {
       // An agent session (#2779). The panel is phone-width, so its document
       // swaps this for `agent/<id>` in place (App.restoreFromHash) — the same
       // page, which is why the key is the session's own.
@@ -180,7 +185,7 @@ export function panelPage(route: string): PanelPage | null {
   if (head === 'chat') {
     return { kind: 'chat', slug: null, key: parts[1] ? `chat/${parts[1]}` : 'chat' };
   }
-  if (head === 'agent' && NUMERIC.test(parts[1] || '')) {
+  if (head === 'agent' && isAgentSessionId(parts[1])) {
     return { kind: 'agent', slug: null, key: `agent/${parts[1]}` };
   }
   return null;

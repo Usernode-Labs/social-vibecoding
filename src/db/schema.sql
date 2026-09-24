@@ -9007,8 +9007,15 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   -- go to it only; starting or switching to another change parks it.
   active_change_id   INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
   -- The Mayor's model, split from the coding agent's (which each change
-  -- carries itself, copied from here when the change starts).
+  -- carries itself, copied from here when the change starts). Unused: the
+  -- conversation's one choice below drives both.
   mayor_model        VARCHAR(100),
+  -- The conversation's coding-agent choice, from the composer's picker:
+  -- 'claude_code' with an Anthropic model id, or 'codex_openrouter' with an
+  -- OpenRouter model id (and agent_reasoning_effort, added below). NULL
+  -- follows the user's default. The Mayor answers with it, a change the
+  -- conversation starts is created with it, and the active change takes it
+  -- at its next build.
   agent_backend      VARCHAR(32),
   agent_model        VARCHAR(100),
   -- Rolling compaction of older turns, and the last message id it covers.
@@ -9025,6 +9032,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   CONSTRAINT agent_sessions_archived_check
     CHECK ((status = 'archived') = (archived_at IS NOT NULL))
 );
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS agent_reasoning_effort VARCHAR(16);
 CREATE INDEX IF NOT EXISTS agent_sessions_user_activity
   ON agent_sessions (user_id, last_activity_at DESC);
 COMMENT ON TABLE agent_sessions IS 'staging:private';

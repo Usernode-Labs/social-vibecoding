@@ -1120,14 +1120,18 @@ function AppDiscussionThread({ slug }: { slug: string }) {
 /**
  * An agent session (#2779), as a thread of this inbox: the same panel its
  * own screen draws (features/agent-session), told it is drawn here. Leaving
- * the pane deactivates it only if the pane still owns it, as above.
+ * the pane deactivates it only if the pane still owns it, as above — and
+ * only if it is still THIS conversation: an unsent one (`new`) becomes its
+ * session on the first message, and the thread for that address takes over
+ * a store that is already showing it.
  */
-function MayorSessionThread({ id }: { id: number }) {
+function MayorSessionThread({ id }: { id: number | 'new' }) {
   useEffect(() => {
     void openAgentSession({ id, host: 'messages' });
     return () => {
       const current = getAgentSessionState();
-      if (current.open && current.host === 'messages') deactivateAgentSession();
+      const same = id === 'new' ? current.id === null : current.id === id;
+      if (current.open && current.host === 'messages' && same) deactivateAgentSession();
     };
   }, [id]);
   return (

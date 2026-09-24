@@ -21,6 +21,8 @@ const { drainGuard } = require('../services/lifecycle');
 const agentSessions = require('../services/agent-sessions');
 const actions = require('../services/agent-session-actions');
 const agentTurn = require('../services/mayor/agent-turn');
+const models = require('../services/models');
+const agentPreferences = require('../services/agent-preferences');
 
 const MAX_MESSAGE_CHARS = 20000;
 
@@ -90,7 +92,84 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     return next();
   };
 
-  // POST /api/agent-sessions { hint?: { slug, issueNumber?, proposalId?, entry? } }
+  // The composer's model choice, validated the way the dev chat's picker is.
+  // `{ backend: 'claude_code', model }` names one of the Anthropic models
+  // (none means the default); `{ backend: 'codex_openrouter', model,
+  // reasoningEffort? }` goes through the dev chat's own explicit resolver
+  // (routes/sessions.js), which checks the deployment, the account and the
+  // model against the viewer's OpenRouter catalog. Throws an error carrying a
+  // status on a choice that cannot be honoured.
+  const resolveChoice = async (user, raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new agentSessions.AgentSessionError(400, 'agent must be an object');
+    }
+    const unknown = Object.keys(raw).filter((key) => !['backend', 'model', 'reasoningEffort'].includes(key));
+    if (unknown.length) throw new agentSessions.AgentSessionError(400, `Unsupported agent field: ${unknown[0]}`);
+    if (raw.backend === 'claude_code') {
+      const model = raw.model == null || raw.model === '' ? null : String(raw.model);
+      if (model !== null && !models.isAllowed(model)) {
+        throw new agentSessions.AgentSessionError(400, 'That model is not available.');
+      }
+      return { backend: 'claude_code', model: model || models.DEFAULT_MODEL, reasoningEffort: null };
+    }
+    if (raw.backend !== 'codex_openrouter') {
+      throw new agentSessions.AgentSessionError(400, 'agent.backend must be claude_code or codex_openrouter');
+    }
+    const { resolveExplicitAgentPreference, AgentSelectionError } = require('./sessions');
+    try {
+      const pref = await resolveExplicitAgentPreference(pool, user.id, config, {
+        backend: raw.backend, model: raw.model, reasoningEffort: raw.reasoningEffort,
+      });
+      return { backend: pref.backend, model: pref.model, reasoningEffort: pref.reasoningEffort || null };
+    } catch (err) {
+      if (err instanceof AgentSelectionError) {
+        throw new agentSessions.AgentSessionError(err.statusCode || 400, err.message);
+      }
+      throw err;
+    }
+  };
+
+  // A pick is also the answer to "which one did you use last", as it is in the
+  // dev chat (#1348): the next conversation and the next classic change start
+  // from it. Best effort and after the fact: a default that failed to save
+  // must not turn a successful pick into an error. The Anthropic model is not
+  // part of the stored default (a Claude default carries none), so only the
+  // backend, and an OpenRouter model and effort, are remembered.
+  const rememberChoice = (userId, agent) => {
+    agentPreferences.setDefaultBackend(pool, userId, {
+      backend: agent.backend,
+      model: agent.backend === 'codex_openrouter' ? agent.model : null,
+      reasoningEffort: agent.backend === 'codex_openrouter' ? agent.reasoningEffort : null,
+    }).catch((err) => {
+      log.warn('agent-sessions', 'Model choice not remembered as the default', { userId, err: err.message });
+    });
+  };
+
+  // GET /api/agent-sessions/draft?slug=&issueNumber=&proposalId=&entry=
+  // What an UNSENT conversation is about: the hint resolved exactly as
+  // creating one would resolve it, and nothing written. New change opens this
+  // state; the row only exists once the first message is sent.
+  router.get('/api/agent-sessions/draft', requireUser, async (req, res) => {
+    if (!req.user.agentSessionsEnabled) {
+      return res.status(403).json({ error: 'Agent sessions are not turned on for your account.' });
+    }
+    const q = req.query || {};
+    const hint = {};
+    if (q.slug) hint.slug = String(q.slug);
+    if (q.issueNumber) hint.issueNumber = Number(q.issueNumber);
+    if (q.proposalId) hint.proposalId = Number(q.proposalId);
+    if (q.entry) hint.entry = String(q.entry);
+    try {
+      const draft = await agentSessions.previewDraft(pool, { user: req.user, hint: Object.keys(hint).length ? hint : null });
+      return res.json({ draft });
+    } catch (err) {
+      return sendError(res, err, 'Preview agent session');
+    }
+  });
+
+  // POST /api/agent-sessions { hint?: { slug, issueNumber?, proposalId?, entry? }, agent? }
+  // Called on the FIRST message of a New change, carrying the model the
+  // viewer picked while it was unsent (`agent`, see resolveChoice).
   router.post('/api/agent-sessions', requireUser, agentSessionCreateLimiter, async (req, res) => {
     if (!req.user.agentSessionsEnabled) {
       return res.status(403).json({ error: 'Agent sessions are not turned on for your account.' });
@@ -99,10 +178,12 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     if (typeof body !== 'object' || Array.isArray(body)) {
       return res.status(400).json({ error: 'Body must be an object.' });
     }
-    const unknown = Object.keys(body).filter((key) => key !== 'hint');
+    const unknown = Object.keys(body).filter((key) => key !== 'hint' && key !== 'agent');
     if (unknown.length) return res.status(400).json({ error: `Unsupported field: ${unknown[0]}` });
     try {
-      const session = await agentSessions.createAgentSession(pool, { user: req.user, hint: body.hint });
+      const agent = body.agent == null ? null : await resolveChoice(req.user, body.agent);
+      const session = await agentSessions.createAgentSession(pool, { user: req.user, hint: body.hint, agent });
+      if (agent) rememberChoice(req.user.id, agent);
       return res.status(201).json({ session });
     } catch (err) {
       return sendError(res, err, 'Create agent session');
@@ -149,6 +230,26 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       return res.json(result);
     } catch (err) {
       return sendError(res, err, 'Read agent session messages');
+    }
+  });
+
+  // PATCH /api/agent-sessions/:id/agent { backend, model?, reasoningEffort? }
+  // The composer's picker. Allowed at any time, mid-turn included: the Mayor
+  // reads the choice when its next turn starts and a dispatch when its next
+  // build starts, so what is running finishes on the model it started with.
+  router.patch('/api/agent-sessions/:id/agent', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    try {
+      const existing = id ? await agentSessions.getAgentSession(pool, { userId: req.user.id, id }) : null;
+      if (!existing) return res.status(404).json({ error: 'Agent session not found' });
+      if (existing.status !== 'open') return res.status(409).json({ error: 'This agent session is archived.' });
+      const agent = await resolveChoice(req.user, req.body || null);
+      const session = await agentSessions.setAgentChoice(pool, { userId: req.user.id, id, agent });
+      if (!session) return res.status(409).json({ error: 'This agent session is archived.' });
+      rememberChoice(req.user.id, agent);
+      return res.json({ session });
+    } catch (err) {
+      return sendError(res, err, 'Choose agent session model');
     }
   });
 

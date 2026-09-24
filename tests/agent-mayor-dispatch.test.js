@@ -426,13 +426,17 @@ test('a long conversation is compacted after the turn, and replays only what fol
 
 // ── The dispatch ───────────────────────────────────────────────────────
 
-function dispatchDeps({ change = CHANGE_ROW, busy = false, tool = null, cleared = true } = {}) {
+function dispatchDeps({
+  change = CHANGE_ROW, busy = false, tool = null, cleared = true, choice = null, switched = { ok: true },
+} = {}) {
   const log = [];
   const registry = new Map();
   const deps = {
     log,
     registry,
+    agentSessions: { getAgentChoice: async () => choice },
     turnDeps: {
+      switchSessionAgent: async (_pool, args) => { log.push(['switch', args]); return switched; },
       runScoutTool: async (args) => { log.push(['scout', args]); return tool ? tool(args) : { toolResultText: 'spec', turnId: 't-1' }; },
       runClaudeCodeTool: async (args) => { log.push(['build', args]); return tool ? tool(args) : { toolResultText: 'built', turnId: 't-1', stagingUrl: 'https://s' }; },
       scheduleRetainedInteractiveTurn: async (args) => { log.push(['retain', args]); return true; },
@@ -542,6 +546,45 @@ test('a parked change is reopened through the resume route first', async () => {
   assert.deepEqual(log.find((e) => e[0] === 'revoke')[1], { grantId: 'g1', reason: 'action_done' });
   const order = log.map((e) => e[0]).filter((k) => ['call', 'revoke', 'begin'].includes(k));
   assert.deepEqual(order, ['call', 'revoke', 'begin'], 'reopened and the grant gone before the change is claimed');
+});
+
+test('the conversation\'s model applies from the next build: a Claude pick picks the model, a backend or OpenRouter change switches the change first', async () => {
+  const onClaude = await dispatchWith({ choice: { backend: 'claude_code', model: 'claude-fable-5-1', reasoningEffort: null } });
+  const [, claudeArgs] = onClaude.log.find((e) => e[0] === 'build');
+  assert.equal(claudeArgs.selectedModel, 'claude-fable-5-1');
+  assert.ok(!onClaude.log.some((e) => e[0] === 'switch'), 'a Claude model is chosen per run, not by a reset');
+
+  let reads = 0;
+  const toCodex = await dispatchWith({
+    change: () => ((reads += 1) === 1 ? CHANGE_ROW : { ...CHANGE_ROW, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5' }),
+    choice: { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' },
+  });
+  const [, switchArgs] = toCodex.log.find((e) => e[0] === 'switch');
+  assert.deepEqual(switchArgs, {
+    sessionId: 50, userId: 7,
+    pref: { backend: 'codex_openrouter', provider: 'openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' },
+  });
+  const order = toCodex.log.map((e) => e[0]).filter((k) => ['switch', 'begin', 'build'].includes(k));
+  assert.deepEqual(order, ['switch', 'begin', 'build'], 'switched before the change is claimed (the switch refuses a busy one)');
+  const [, codexArgs] = toCodex.log.find((e) => e[0] === 'build');
+  assert.equal(codexArgs.session.agent_backend, 'codex_openrouter', 'the build runs on the switched row');
+
+  const refused = await dispatchWith({
+    choice: { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: null },
+    switched: { ok: false, status: 409, error: 'Session is busy' },
+  });
+  assert.equal(refused.outcome.toolResultText, 'built', 'a switch that cannot happen does not stop the build');
+
+  assert.equal(dispatch.needsAgentSwitch(CHANGE_ROW, null), false, 'no choice follows what the change has');
+  assert.equal(dispatch.needsAgentSwitch({ ...CHANGE_ROW, agent_backend: null }, { backend: 'claude_code', model: 'x' }), false);
+  const codexChange = { ...CHANGE_ROW, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5', agent_reasoning_effort: 'low' };
+  assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'low' }), false);
+  assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' }), true);
+  assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'moonshot/kimi', reasoningEffort: 'low' }), true);
+  assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'claude_code', model: null }), true);
+  assert.deepEqual(dispatch.agentPrefFor({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: 'high' }),
+    { backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null },
+    'a Claude change stores no model: each run picks it');
 });
 
 test('a dispatch is refused when there is nothing to build on', async () => {

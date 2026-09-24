@@ -9,6 +9,12 @@
 //   - what a turn is doing right now (streamed text, the tool it is running,
 //     the coding agent's latest progress line), which only lives until the
 //     turn's rows are persisted.
+//
+// A conversation New change opens is UNSENT (`draft`, addressed `new`): no
+// row exists until its first message, so opening and leaving it leaves
+// nothing behind in Messages. The first send creates the session with what
+// the draft carried (the hint, the model picked while it was unsent), swaps
+// the address for the session's own in place, and posts the message.
 
 import { useSyncExternalStore } from 'react';
 
@@ -16,14 +22,28 @@ import * as api from './api';
 import type {
   AgentAction,
   AgentCard,
+  AgentChoice,
   AgentHint,
   AgentMessage,
   AgentSession,
   AgentTurnEvent,
+  ModelCatalog,
 } from './api';
+import { sameChoice } from './model-choice';
 import { toolActivity } from './transcript';
 
 export type AgentSessionHost = 'screen' | 'messages';
+
+/** A conversation's id, or `new` for the one not sent yet. */
+export type AgentSessionTarget = number | 'new';
+
+/** An unsent conversation: what it is about, and the model picked for it. */
+export interface AgentDraft {
+  hint: AgentHint | null;
+  focusApp: AgentSession['focusApp'];
+  focusContext: Record<string, unknown>;
+  agent: AgentChoice | null;
+}
 
 export interface LiveTurn {
   running: boolean;
@@ -42,6 +62,8 @@ export interface AgentSessionState {
   host: AgentSessionHost;
   id: number | null;
   session: AgentSession | null;
+  /** Set while the conversation on screen is unsent (`id` is null). */
+  draft: AgentDraft | null;
   messages: AgentMessage[];
   actions: AgentAction[];
   phase: 'idle' | 'loading' | 'ready' | 'error';
@@ -51,6 +73,12 @@ export interface AgentSessionState {
   deciding: string | null;
   sessions: AgentSession[];
   sessionsLoaded: boolean;
+  /** The picker's options, read once per page. */
+  catalog: ModelCatalog | null;
+  /** A pick on its way to the server. */
+  choosing: boolean;
+  /** A message the server refused, handed back to the composer to send again. */
+  returnedText: string | null;
 }
 
 const IDLE_TURN: LiveTurn = {
@@ -70,6 +98,7 @@ export const INITIAL_STATE: AgentSessionState = {
   host: 'screen',
   id: null,
   session: null,
+  draft: null,
   messages: [],
   actions: [],
   phase: 'idle',
@@ -79,6 +108,9 @@ export const INITIAL_STATE: AgentSessionState = {
   deciding: null,
   sessions: [],
   sessionsLoaded: false,
+  catalog: null,
+  choosing: false,
+  returnedText: null,
 };
 
 let state: AgentSessionState = INITIAL_STATE;
@@ -88,6 +120,10 @@ let turnAbort: AbortController | null = null;
 let events: EventSource | null = null;
 let eventFilter: string | null = null;
 const seen = new Set<string>();
+// The hint the next `new` open starts from: undefined when nothing has been
+// prepared (a reload of `#agent/new`, or the same draft routed again).
+let pendingHint: AgentHint | null | undefined;
+let catalogRequest: Promise<void> | null = null;
 
 function publish(patch: Partial<AgentSessionState> | ((current: AgentSessionState) => Partial<AgentSessionState>)) {
   const next = typeof patch === 'function' ? patch(state) : patch;
@@ -276,10 +312,11 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
 // ── Opening and closing ────────────────────────────────────────────────
 
 export async function openAgentSession({ id, host = 'screen', drawer = false }: {
-  id: number;
+  id: AgentSessionTarget;
   host?: AgentSessionHost;
   drawer?: boolean;
 }) {
+  if (id === 'new') return openDraft(host);
   const version = ++navigation;
   const same = state.id === id && state.open;
   publish({
@@ -289,7 +326,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     phase: same ? state.phase : 'loading',
     error: '',
     drawerOpen: drawer || (same ? state.drawerOpen : false),
-    ...(same ? {} : { session: null, messages: [], actions: [], turn: IDLE_TURN }),
+    ...(same ? {} : { session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN }),
   });
   syncTitle();
   if (same) return;
@@ -310,6 +347,63 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   }
 }
 
+/**
+ * Where to start the next unsent conversation from. Called by New change
+ * (startAgentSession) in this document, and by the side panel's own document
+ * with the hint the top window handed it.
+ */
+export function prepareAgentDraft(hint: AgentHint | null | undefined) {
+  pendingHint = hint || null;
+}
+
+/**
+ * Show an unsent conversation. A freshly prepared hint starts a new draft;
+ * routing the one already on screen again (a resize, a same-address
+ * restore) keeps it, typed model pick included.
+ */
+function openDraft(host: AgentSessionHost) {
+  const version = ++navigation;
+  const fresh = pendingHint !== undefined;
+  if (!fresh && state.open && state.id === null && state.draft) {
+    publish({ host });
+    syncTitle();
+    return;
+  }
+  const hint = fresh ? (pendingHint || null) : null;
+  pendingHint = undefined;
+  seen.clear();
+  closeEvents();
+  const draft: AgentDraft = {
+    hint,
+    focusApp: null,
+    focusContext: hint && hint.entry ? { entry: hint.entry } : {},
+    agent: null,
+  };
+  publish({
+    open: true,
+    host,
+    id: null,
+    session: null,
+    draft,
+    messages: [],
+    actions: [],
+    phase: 'ready',
+    error: '',
+    drawerOpen: false,
+    turn: IDLE_TURN,
+  });
+  syncTitle();
+  if (!hint || !(hint.slug || hint.issueNumber || hint.proposalId)) return;
+  // What it is about, resolved as creating it would resolve it, written
+  // nowhere. A failure only leaves the bar saying "Any app".
+  void api.previewDraft(hint).then((preview) => {
+    if (version !== navigation || state.draft?.hint !== hint) return;
+    publish((current) => ({
+      draft: current.draft ? { ...current.draft, focusApp: preview.focusApp, focusContext: preview.focusContext } : null,
+    }));
+  }).catch(() => {});
+}
+
 /** The screen or pane stopped showing this conversation. A running turn goes on server-side. */
 export function deactivateAgentSession() {
   navigation += 1;
@@ -320,8 +414,29 @@ export function deactivateAgentSession() {
 }
 
 /** Where a conversation lives: beside the inbox on a desktop, its own screen on a phone (app.js swaps). */
-export function agentSessionAddress(id: number) {
+export function agentSessionAddress(id: AgentSessionTarget) {
   return `#messages/agent/${id}`;
+}
+
+/**
+ * The unsent conversation became session `id`: give the page the session's
+ * own address in place, so a reload, Back or Expand finds it, and let the
+ * router hear it (its same-id checks make that a no-op for this store).
+ */
+function adoptAddress(id: number) {
+  if (typeof window === 'undefined') return;
+  const hash = window.location.hash;
+  const next = /^#agent\/new(?:\/|$)/.test(hash)
+    ? `#agent/${id}`
+    : /^#messages\/agent\/new(?:\/|$)/.test(hash) ? agentSessionAddress(id) : null;
+  if (!next) return;
+  try {
+    window.history.replaceState(window.history.state, '', next);
+  } catch {
+    return;
+  }
+  const restore = window.App?.restoreFromHash;
+  if (typeof restore === 'function') restore.call(window.App);
 }
 
 /**
@@ -331,19 +446,19 @@ export function agentSessionAddress(id: number) {
  * the moment — no app on screen, a narrow window, or this IS the panel's own
  * document, where the address below is followed in place.
  */
-function sidePanelTakes(hash: string): boolean {
+function sidePanelTakes(hash: string, agentHint?: AgentHint | null): boolean {
   const panel = (window as unknown as {
-    UsernodeReact?: { sidePanel?: { take?: (route: string) => boolean } };
+    UsernodeReact?: { sidePanel?: { take?: (route: string, hint?: { agentHint?: AgentHint | null } | null) => boolean } };
   }).UsernodeReact?.sidePanel;
   try {
-    return !!panel?.take?.(hash.replace(/^#/, ''));
+    return !!panel?.take?.(hash.replace(/^#/, ''), agentHint !== undefined ? { agentHint } : null);
   } catch {
     return false;
   }
 }
 
-function go(hash: string) {
-  if (sidePanelTakes(hash)) return;
+function go(hash: string, agentHint?: AgentHint | null) {
+  if (sidePanelTakes(hash, agentHint)) return;
   if (window.location.hash === hash) {
     const restore = window.App?.restoreFromHash;
     if (typeof restore === 'function') restore.call(window.App);
@@ -354,21 +469,22 @@ function go(hash: string) {
 
 /**
  * Start a conversation from an entry point, carrying what it knows (the app,
- * a request, a proposal) as the hint, and open it — in the side panel when an
- * app is running beside it. The viewer's first message is typed there: a
- * message sent from here would go through THIS document's store, which is
- * not the one showing the conversation once the panel has it.
+ * a request, a proposal) as the hint, and open it UNSENT — in the side panel
+ * when an app is running beside it, where the hint rides into the panel's own
+ * document. Nothing is created here: the first message creates the session,
+ * in whichever document is showing it.
  */
-export async function startAgentSession(hint: AgentHint | null = null) {
-  try {
-    const session = await api.createSession(hint);
-    publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
-    go(agentSessionAddress(session.id));
-    return session;
-  } catch (error) {
-    window.PlatformUI?.toast?.(errorText(error, 'Could not start an agent session.'));
-    return null;
+export function startAgentSession(hint: AgentHint | null = null) {
+  prepareAgentDraft(hint);
+  if (sidePanelTakes(agentSessionAddress('new'), hint)) {
+    // The panel's document starts the draft; this one has nothing to open.
+    pendingHint = undefined;
+    return;
   }
+  // Already showing an unsent conversation: the address may not change, and
+  // then no router pass would pick the new hint up. Start it here.
+  if (state.open && state.id === null && state.draft) openDraft(state.host);
+  go(agentSessionAddress('new'));
 }
 
 export function closeAgentSession() {
@@ -378,21 +494,53 @@ export function closeAgentSession() {
 
 // ── Talking ────────────────────────────────────────────────────────────
 
+/**
+ * Create the session an unsent conversation stands for, with what it carried.
+ * Its id, or null when the create was refused (said on screen, and the draft
+ * stays as it was).
+ */
+async function createFromDraft(draft: AgentDraft): Promise<number | null> {
+  try {
+    const session = await api.createSession(draft.hint, draft.agent);
+    publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
+    // Still on screen: this is the conversation now. Left meanwhile: it
+    // still gets its message, it just is not what the screen shows.
+    if (state.open && state.draft === draft) {
+      publish({ id: session.id, session, draft: null, phase: 'ready' });
+      syncTitle();
+      adoptAddress(session.id);
+    }
+    return session.id;
+  } catch (error) {
+    if (state.draft === draft) publish({ error: errorText(error, 'Could not start an agent session.') });
+    return null;
+  }
+}
+
 export async function sendAgentMessage(text: string) {
-  const id = state.id;
+  const draft = state.id ? null : state.draft;
   const message = text.trim();
-  if (!id || !message || state.turn.running) return;
+  if ((!state.id && !draft) || !message || state.turn.running) return;
   publish({ error: '' });
   patchTurn({ running: true, phase: 'mayor', pendingUserText: message, startedAt: Date.now(), streamText: '', cards: [] });
+  const id = draft ? await createFromDraft(draft) : state.id;
+  if (!id) {
+    if (draft && state.draft === draft) publish({ turn: IDLE_TURN, returnedText: message });
+    return;
+  }
   const abort = new AbortController();
-  turnAbort = abort;
+  // A conversation the viewer left while it was being created still gets its
+  // message, but its stream is not this screen's to stop.
+  if (state.id === id) turnAbort = abort;
   try {
     await api.sendTurn(id, message, { signal: abort.signal, onEvent: (event) => handleEvent(id, event) });
   } catch (error) {
     if (abort.signal.aborted) return;
     const busy = (error as { body?: { busy?: boolean } }).body?.busy;
     publish({ error: busy ? 'The Mayor is already answering in this conversation.' : errorText(error, 'The Mayor could not take that message.') });
-    publish({ turn: IDLE_TURN });
+    // Refused before it was recorded: the text goes back to the composer
+    // rather than vanishing with the pending bubble.
+    publish({ turn: IDLE_TURN, ...(state.id === id ? { returnedText: message } : {}) });
     if (busy) followEvents(id);
   } finally {
     if (turnAbort === abort) turnAbort = null;
@@ -403,6 +551,11 @@ export async function sendAgentMessage(text: string) {
     }
     void refreshAll(id).catch(() => {});
   }
+}
+
+/** The composer took a refused message back. */
+export function clearReturnedText() {
+  if (state.returnedText !== null) publish({ returnedText: null });
 }
 
 export async function stopAgentTurn() {
@@ -456,6 +609,44 @@ export function setDrawerOpen(open: boolean) {
   publish({ drawerOpen: open });
 }
 
+// ── The model ──────────────────────────────────────────────────────────
+
+/** Read the picker's options once per page; a failed read is retried on the next open. */
+export function loadModelCatalog(): Promise<void> {
+  if (state.catalog) return Promise.resolve();
+  if (!catalogRequest) {
+    catalogRequest = api.loadModelCatalog()
+      .then((catalog) => { publish({ catalog }); })
+      .catch(() => {})
+      .finally(() => { catalogRequest = null; });
+  }
+  return catalogRequest;
+}
+
+/**
+ * The picker. On an unsent conversation the pick is held and sent with the
+ * first message; on a session it is saved now and applies from the Mayor's
+ * next turn and the active change's next build, so it may be made mid-turn.
+ */
+export async function chooseAgent(choice: AgentChoice) {
+  if (!state.id && state.draft) {
+    if (!sameChoice(state.draft.agent, choice)) publish({ draft: { ...state.draft, agent: choice } });
+    return;
+  }
+  const id = state.id;
+  if (!id || state.choosing) return;
+  if (sameChoice(state.session?.agent || null, choice)) return;
+  publish({ choosing: true, error: '' });
+  try {
+    const session = await api.setAgentChoice(id, choice);
+    if (state.id === id) publish({ session });
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not change the model.') });
+  } finally {
+    publish({ choosing: false });
+  }
+}
+
 // ── The list, for Messages ─────────────────────────────────────────────
 
 export async function loadAgentSessions() {
@@ -468,12 +659,14 @@ export async function loadAgentSessions() {
 }
 
 export const agentSessionController = {
-  open: (id: number, options: { host?: AgentSessionHost } = {}) => openAgentSession({ id, host: options.host }),
-  route: (id: number, options: { drawer?: boolean } = {}) => openAgentSession({ id, host: 'screen', drawer: !!options.drawer }),
+  open: (id: AgentSessionTarget, options: { host?: AgentSessionHost } = {}) => openAgentSession({ id, host: options.host }),
+  route: (id: AgentSessionTarget, options: { drawer?: boolean } = {}) => openAgentSession({ id, host: 'screen', drawer: !!options.drawer }),
   start: (hint: AgentHint | null = null) => startAgentSession(hint),
+  prepareDraft: prepareAgentDraft,
   deactivate: deactivateAgentSession,
   isOpen: () => state.open,
-  currentId: () => state.id,
+  /** The conversation on screen: its id, `new` while it is unsent, or null. */
+  currentId: (): AgentSessionTarget | null => (state.id ?? (state.draft ? 'new' : null)),
   refreshList: loadAgentSessions,
 };
 
