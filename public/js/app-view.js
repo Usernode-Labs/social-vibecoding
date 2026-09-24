@@ -3275,6 +3275,31 @@ const AppView = {
     // width on the same name made the two read as a breadcrumb with a
     // repeated segment. The bar names the SECTION, the chip names the scope.
     App.setHeaderTitle?.('Workshop');
+
+    // THE APP'S RECORD MAY NOT BE HERE — the #2879 case, on the board. A
+    // failed or superseded GET /api/apps/<slug> leaves AppView.appData empty
+    // (or describing another app), and _loadDevData then returns null — "not
+    // ready yet" — so _loadDevFeed left the frame's skeleton up for good: a
+    // Workshop that said Loading forever. Worse, a record for ANOTHER app
+    // would have loaded that app's cards under this one's name. So ask once
+    // more with the skeleton up; a record that arrives re-renders the board
+    // against it (the frame's props read it), and one that still will not
+    // come is said in #dev-body — the host this module already fills by
+    // innerHTML — with a way to try again.
+    if (!AppView._hasCurrentAppRecord()) {
+      const record = await AppView._recoverCurrentAppRecord();
+      if (record === 'moved') return;
+      // The viewer left the board while that was in flight.
+      const body = document.getElementById('dev-body');
+      if (!body || App.currentTab !== 'dev') return;
+      if (record === 'ok') {
+        await AppView.renderDevView(subTab, ref);
+        return;
+      }
+      AppView._renderAppUnavailable(body, 'dev-app-unavailable',
+        () => { AppView.renderDevView(subTab, ref); });
+      return;
+    }
     // NO BACK ARROW HERE ANY MORE (#2718 review). This used to publish a ← to
     // the Workshop screen whenever the app had been opened from it — the one
     // thing standing between a reader and the rest of the platform, on a
@@ -19042,17 +19067,51 @@ const AppView = {
     return !slug || AppView.appData.slug === slug;
   },
 
-  // #2879: the session screen with no app record to draw against — said,
-  // with a retry, instead of an empty page. Plain markup in the host this
-  // function already owns by innerHTML; no React island is mounted yet.
-  _renderSessionAppUnavailable(content, restoreSessionId) {
-    content.innerHTML = `
-      <div id="dc-app-unavailable" class="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">
+  // #2879: ask for the open app's record once more when AppView.appData is
+  // missing or names another app. navigateToApp goes on to the Dev screens
+  // whether or not AppView.open got GET /api/apps/<slug>, so a failed or
+  // superseded read reaches them with nothing to draw against. An open for
+  // this app still in flight is joined first rather than raced. Resolves
+  // 'ok' (the record is here), 'missing' (it still will not come — a failed
+  // read or a network error alike) or 'moved' (the viewer went to another
+  // app meanwhile, and that navigation owns the screen).
+  async _recoverCurrentAppRecord() {
+    if (AppView._hasCurrentAppRecord()) return 'ok';
+    const slug = typeof App !== 'undefined' ? App.currentApp : null;
+    if (!slug) return 'missing';
+    const moved = () => App.currentApp !== slug;
+    const load = App._appLoad;
+    if (load && load.slug === slug) {
+      try { await load.promise; } catch (_) { /* judged by the record below */ }
+      if (moved()) return 'moved';
+      if (AppView._hasCurrentAppRecord()) return 'ok';
+    }
+    try {
+      await AppView.open(slug, { needsToken: false });
+    } catch (_) { /* a network error is a record that did not come */ }
+    if (moved()) return 'moved';
+    return AppView._hasCurrentAppRecord() ? 'ok' : 'missing';
+  },
+
+  // #2879: a Dev screen with no app record to draw against — said, with a
+  // retry, instead of an empty page (the session screen) or a skeleton that
+  // never resolves (the Workshop). Plain markup, written ONLY into a host the
+  // caller already owns by innerHTML: the session screen's #app-content /
+  // #dev-section, or the board frame's legacy-owned #dev-body. `idBase`
+  // names the card and its button (`${idBase}-retry`).
+  _renderAppUnavailable(host, idBase, onRetry) {
+    host.innerHTML = `
+      <div id="${idBase}" class="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 py-10 text-center">
         <p class="text-sm text-zinc-600 dark:text-zinc-300">This app could not be loaded. Check your connection and try again.</p>
-        <button type="button" id="dc-app-unavailable-retry" class="inline-flex h-9 items-center rounded-full bg-violet-600 px-4 text-sm font-semibold text-white hover:bg-violet-500 un-touch-target">Try again</button>
+        <button type="button" id="${idBase}-retry" class="inline-flex h-9 items-center rounded-full bg-violet-600 px-4 text-sm font-semibold text-white hover:bg-violet-500 un-touch-target">Try again</button>
       </div>`;
-    const retry = content.querySelector('#dc-app-unavailable-retry');
-    if (retry) retry.addEventListener('click', () => { AppView.renderDevChatTab(restoreSessionId); });
+    const retry = host.querySelector(`#${idBase}-retry`);
+    if (retry) {
+      retry.addEventListener('click', () => {
+        retry.disabled = true;
+        onRetry();
+      });
+    }
   },
 
   // Forum revision: the dedicated session view. There is no session
@@ -19091,12 +19150,12 @@ const AppView = {
     // So ask for the record once more, and if it still will not come, say
     // so with a way to try again rather than painting nothing.
     if (!embedded && !AppView._hasCurrentAppRecord()) {
-      const slug = typeof App !== 'undefined' ? App.currentApp : null;
-      if (slug) await AppView.open(slug, { needsToken: false });
+      const record = await AppView._recoverCurrentAppRecord();
       // The viewer went somewhere else while that was in flight.
-      if (typeof App !== 'undefined' && App.currentApp !== slug) return undefined;
-      if (!AppView._hasCurrentAppRecord()) {
-        AppView._renderSessionAppUnavailable(content, restoreSessionId);
+      if (record === 'moved') return undefined;
+      if (record === 'missing') {
+        AppView._renderAppUnavailable(content, 'dc-app-unavailable',
+          () => { AppView.renderDevChatTab(restoreSessionId); });
         return undefined;
       }
     }
