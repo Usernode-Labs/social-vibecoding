@@ -5,7 +5,8 @@
 //
 //  - Android asks for exact alarms and battery only when the phone
 //    produces blocks. A delegated account, or a device with no wallet, has
-//    no slots to wake for and is not asked at all.
+//    no slots to wake for and is not asked at all. (It also waits until the
+//    account has asked to produce blocks, #2960.)
 //  - It asks one step at a time, and says what the next system screen will
 //    show before it shows it.
 //  - "Delegate instead" opens the native staking screen, which owns the
@@ -54,7 +55,7 @@ function findButton(node, label) {
   return null;
 }
 
-function load({ permissions, wallet, staking }) {
+function load({ permissions, wallet, staking, bpRequested = true }) {
   const sheets = [];
   const dismissed = [];
   const calls = [];
@@ -109,7 +110,17 @@ function load({ permissions, wallet, staking }) {
     setTimeout(fn) { return setTimeout(fn, 0); },
     clearTimeout,
     setInterval() {},
-    fetch() { return Promise.reject(new Error('unexpected fetch')); },
+    // The block-producer queue (#2960): the Android sheet waits until the
+    // account has asked to produce blocks.
+    async fetch(url) {
+      if (url !== '/challenges-api/bp/state') throw new Error('unexpected fetch');
+      return {
+        ok: true,
+        async json() {
+          return { success: true, data: { bp_requested: bpRequested, bp_released: false } };
+        },
+      };
+    },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -142,6 +153,12 @@ test('a delegated account is never asked about alarms or battery', async () => {
 
 test('a device with no wallet is never asked about alarms or battery', async () => {
   const h = load({ permissions: nothingGranted, wallet: { address: null } });
+  await h.NativeChrome.maybeShowFirstRunPermissions();
+  assert.equal(h.sheets.length, 0);
+});
+
+test('a producing phone that has not asked to produce blocks is not asked yet', async () => {
+  const h = load({ permissions: nothingGranted, wallet: producing, bpRequested: false });
   await h.NativeChrome.maybeShowFirstRunPermissions();
   assert.equal(h.sheets.length, 0);
 });
