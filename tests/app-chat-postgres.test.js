@@ -148,7 +148,7 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
   let rootId;
   let bobReply;
   let carolReply;
-  await t.test('a reply thread hangs off a general-stream root and stays out of the general stream', async () => {
+  await t.test('a reply thread hangs off a general-stream root, and its replies are drawn in the general stream', async () => {
     rootId = (await post(alice, chan, 'Root: which colour for the header?')).message.id;
     frames.length = 0;
     const first = await post(bob, chan, 'Blue, I think.', { thread: { type: 'message', ref: rootId } });
@@ -159,6 +159,10 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     const chat = roomFrames('chat');
     assert.equal(chat.length, 1);
     assert.deepEqual(chat[0].data.thread, { type: 'message', ref: rootId }, 'the live frame names its thread');
+    // #2387 follow-up: and the start of its first message, which the reply's
+    // line in the general stream names.
+    assert.deepEqual(chat[0].data.threadRoot,
+      { id: rootId, username: 'ta_alice', content: 'Root: which colour for the header?', deleted: false });
     const summary = roomFrames('thread_summary');
     assert.equal(summary.length, 1, 'the room hears the thread grew');
     assert.equal(summary[0].data.root_id, rootId);
@@ -185,16 +189,26 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
       { content: 'x', thread_type: 'message', thread_ref: bobReply });
     assert.equal(nested.status, 400);
 
-    // The general stream: the root with its summary, never a reply.
+    // The general stream: the root with its summary — and (#2387 follow-up)
+    // its replies too, where they landed, each naming its thread's root.
     const general = await call('GET', '/api/apps/ta-chan/messages', alice);
     assert.equal(general.status, 200);
     const ids = general.body.messages.map((m) => m.id);
     assert.ok(ids.includes(rootId));
-    assert.ok(!ids.includes(bobReply) && !ids.includes(carolReply), 'replies never reach the general stream');
+    assert.ok(ids.indexOf(rootId) < ids.indexOf(bobReply) && ids.indexOf(bobReply) < ids.indexOf(carolReply),
+      'the replies are in the general stream, in the order they landed');
+    const bobRow = general.body.messages.find((m) => m.id === bobReply);
+    assert.equal(bobRow.thread_type, 'message');
+    assert.equal(bobRow.thread_ref, rootId);
+    assert.deepEqual(bobRow.thread_root,
+      { id: rootId, username: 'ta_alice', content: 'Root: which colour for the header?', deleted: false });
     const root = general.body.messages.find((m) => m.id === rootId);
     assert.equal(root.thread.reply_count, 2);
     assert.deepEqual(root.thread.participants.map((p) => p.username), ['ta_carol', 'ta_bob'],
       'most recent replier first');
+    assert.equal(root.thread.last_reply.id, carolReply, 'the card shows the newest reply');
+    assert.equal(root.thread.last_reply.username, 'ta_carol');
+    assert.equal(root.thread.last_reply.content, 'Green. @ta_alice what do you think?');
     assert.equal(root.deleted, false);
     for (const m of general.body.messages.filter((row) => row.id !== rootId)) {
       assert.equal(m.thread, null, `row ${m.id} has no thread`);
@@ -389,8 +403,10 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     const get = async (qs) => (await call('GET', `/api/apps/ta-pager/messages?${qs}`, alice)).body;
     const idsOf = (page) => page.messages.map((m) => m.id);
 
+    // #2387 follow-up: the reply is part of the general stream now, the
+    // newest row of it; the issue's message still is not.
     const latest = await get('limit=3');
-    assert.deepEqual(idsOf(latest), ids.slice(6));
+    assert.deepEqual(idsOf(latest), [...ids.slice(7), reply]);
     assert.equal(latest.has_more_before, true);
     assert.equal(latest.has_more_after, false);
 
@@ -408,7 +424,7 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal(catchUp.has_more_before, true);
     assert.equal(catchUp.has_more_after, true);
     const caughtUp = await get(`limit=5&after=${ids[6]}`);
-    assert.deepEqual(idsOf(caughtUp), ids.slice(7));
+    assert.deepEqual(idsOf(caughtUp), [...ids.slice(7), reply]);
     assert.equal(caughtUp.has_more_after, false);
 
     const window = await get(`limit=5&around=${ids[4]}`);
@@ -436,7 +452,16 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     // A blocked author's message is not visible to around.
     await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [carol.id, alice.id]);
     assert.equal((await call('GET', `/api/apps/ta-pager/messages?around=${ids[1]}`, carol)).status, 404);
+    // #2387 follow-up: nor is a reply under that author's root — a line
+    // naming a message the viewer cannot see, in a thread they cannot open.
+    const carolView = await call('GET', '/api/apps/ta-pager/messages?limit=50', carol);
+    assert.ok(!idsOf(carolView.body).includes(reply), 'no line for a reply under a blocked author\'s root');
     await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1', [carol.id]);
+    // A deleted reply leaves no line in the general stream (its thread keeps
+    // the placeholder).
+    await pool.query('UPDATE chat_messages SET deleted_at = NOW() WHERE id = $1', [reply]);
+    assert.ok(!idsOf(await get('limit=50')).includes(reply), 'a deleted reply leaves no line');
+    await pool.query('UPDATE chat_messages SET deleted_at = NULL WHERE id = $1', [reply]);
 
     for (const qs of [`before=${ids[1]}&after=${ids[0]}`, 'before=abc', 'around=0', 'after=1e3']) {
       assert.equal((await call('GET', `/api/apps/ta-pager/messages?${qs}`, alice)).status, 400, qs);

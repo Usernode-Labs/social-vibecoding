@@ -1562,7 +1562,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 230,
+      "line": 240,
       "method": "GET",
       "path": "/api/agent-sessions/:id/messages",
       "expression": null,
@@ -1571,7 +1571,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 249,
+      "line": 259,
       "method": "PATCH",
       "path": "/api/agent-sessions/:id/agent",
       "expression": null,
@@ -1580,7 +1580,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 265,
+      "line": 275,
       "method": "PATCH",
       "path": "/api/agent-sessions/:id/title",
       "expression": null,
@@ -1589,7 +1589,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 277,
+      "line": 287,
       "method": "POST",
       "path": "/api/agent-sessions/:id/archive",
       "expression": null,
@@ -1598,7 +1598,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 287,
+      "line": 297,
       "method": "POST",
       "path": "/api/agent-sessions/:id/unarchive",
       "expression": null,
@@ -1607,7 +1607,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 304,
+      "line": 314,
       "method": "POST",
       "path": "/api/agent-sessions/:id/turns",
       "expression": null,
@@ -1616,7 +1616,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 364,
+      "line": 374,
       "method": "GET",
       "path": "/api/agent-sessions/:id/events",
       "expression": null,
@@ -1625,7 +1625,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 401,
+      "line": 411,
       "method": "POST",
       "path": "/api/agent-sessions/:id/stop",
       "expression": null,
@@ -1634,7 +1634,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 420,
+      "line": 430,
       "method": "POST",
       "path": "/api/agent-sessions/:id/active-change",
       "expression": null,
@@ -1643,7 +1643,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 435,
+      "line": 445,
       "method": "GET",
       "path": "/api/agent-sessions/:id/actions",
       "expression": null,
@@ -1652,7 +1652,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 449,
+      "line": 459,
       "method": "POST",
       "path": "/api/agent-sessions/:id/actions/:actionId/confirm",
       "expression": null,
@@ -1661,7 +1661,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 466,
+      "line": 476,
       "method": "POST",
       "path": "/api/agent-sessions/:id/actions/:actionId/dismiss",
       "expression": null,
@@ -3831,7 +3831,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 311,
+      "line": 333,
       "method": "GET",
       "path": "/api/models",
       "expression": null,
@@ -3860,7 +3860,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 328,
+      "line": 350,
       "method": "GET",
       "path": "/api/model-notes",
       "expression": null,
@@ -3887,7 +3887,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 358,
+      "line": 380,
       "method": "GET",
       "path": "/api/apps/:slug/messages",
       "expression": null,
@@ -3913,7 +3913,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 660,
+      "line": 719,
       "method": "POST",
       "path": "/api/apps/:slug/messages",
       "expression": null,
@@ -3939,7 +3939,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 753,
+      "line": 812,
       "method": "DELETE",
       "path": "/api/apps/:slug/messages/:id",
       "expression": null,
@@ -3958,7 +3958,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 832,
+      "line": 891,
       "method": "POST",
       "path": "/api/apps/:slug/messages/read",
       "expression": null,
@@ -3977,7 +3977,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 834,
+      "line": 893,
       "method": "POST",
       "path": "/api/apps/:slug/messages/unread",
       "expression": null,
@@ -3996,7 +3996,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 882,
+      "line": 941,
       "method": "PUT",
       "path": "/api/apps/:slug/messages/:id/bookmark",
       "expression": null,
@@ -4016,7 +4016,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 898,
+      "line": 957,
       "method": "DELETE",
       "path": "/api/apps/:slug/messages/:id/bookmark",
       "expression": null,
@@ -4036,7 +4036,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 923,
+      "line": 982,
       "method": "POST",
       "path": "/api/apps/:slug/chat-attachments",
       "expression": null,
@@ -4060,7 +4060,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 986,
+      "line": 1045,
       "method": "GET",
       "path": "/api/apps/:slug/chat-attachments/:attId",
       "expression": null,
@@ -4079,7 +4079,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 1034,
+      "line": 1093,
       "method": "GET",
       "path": "/api/apps/:slug/chat-attachments/:attId/view",
       "expression": null,
@@ -4097,7 +4097,7 @@
     },
     {
       "source": "src/routes/chat.js",
-      "line": 1080,
+      "line": 1139,
       "method": "GET",
       "path": "/api/apps/:slug/mention-suggestions",
       "expression": null,
@@ -4641,7 +4641,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 394,
+      "line": 409,
       "method": "GET",
       "path": "/api/conversations",
       "expression": null,
@@ -4668,7 +4668,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 404,
+      "line": 419,
       "method": "POST",
       "path": "/api/conversations",
       "expression": null,
@@ -4695,7 +4695,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 422,
+      "line": 437,
       "method": "GET",
       "path": "/api/conversations/:id",
       "expression": null,
@@ -4714,7 +4714,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 438,
+      "line": 453,
       "method": "PATCH",
       "path": "/api/conversations/:id",
       "expression": null,
@@ -4733,7 +4733,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 453,
+      "line": 468,
       "method": "POST",
       "path": "/api/conversations/:id/respond",
       "expression": null,
@@ -4752,7 +4752,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 467,
+      "line": 482,
       "method": "POST",
       "path": "/api/conversations/:id/members",
       "expression": null,
@@ -4771,7 +4771,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 482,
+      "line": 497,
       "method": "DELETE",
       "path": "/api/conversations/:id/members/:userId",
       "expression": null,
@@ -4790,7 +4790,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 497,
+      "line": 512,
       "method": "POST",
       "path": "/api/conversations/:id/leave",
       "expression": null,
@@ -4809,7 +4809,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 511,
+      "line": 526,
       "method": "GET",
       "path": "/api/conversations/:id/messages",
       "expression": null,
@@ -4828,7 +4828,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 538,
+      "line": 553,
       "method": "GET",
       "path": "/api/conversations/:id/threads/:rootId",
       "expression": null,
@@ -4847,7 +4847,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 563,
+      "line": 578,
       "method": "POST",
       "path": "/api/conversations/:id/messages",
       "expression": null,
@@ -4866,7 +4866,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 602,
+      "line": 617,
       "method": "PATCH",
       "path": "/api/conversations/:id/messages/:messageId",
       "expression": null,
@@ -4885,7 +4885,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 626,
+      "line": 641,
       "method": "DELETE",
       "path": "/api/conversations/:id/messages/:messageId",
       "expression": null,
@@ -4904,7 +4904,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 655,
+      "line": 670,
       "method": "POST",
       "path": "/api/conversations/:id/messages/:messageId/reactions",
       "expression": null,
@@ -4923,7 +4923,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 703,
+      "line": 718,
       "method": "PUT",
       "path": "/api/conversations/:id/messages/:messageId/bookmark",
       "expression": null,
@@ -4943,7 +4943,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 724,
+      "line": 739,
       "method": "DELETE",
       "path": "/api/conversations/:id/messages/:messageId/bookmark",
       "expression": null,
@@ -4963,7 +4963,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 744,
+      "line": 759,
       "method": "POST",
       "path": "/api/conversations/:id/read",
       "expression": null,
@@ -4982,7 +4982,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 789,
+      "line": 804,
       "method": "POST",
       "path": "/api/conversations/:id/unread",
       "expression": null,
@@ -5001,7 +5001,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 811,
+      "line": 826,
       "method": "POST",
       "path": "/api/conversations/:id/typing",
       "expression": null,
@@ -5020,7 +5020,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 829,
+      "line": 844,
       "method": "POST",
       "path": "/api/conversations/:id/messages/:messageId/report",
       "expression": null,
@@ -5039,7 +5039,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 845,
+      "line": 860,
       "method": "POST",
       "path": "/api/conversations/:id/attachments",
       "expression": null,
@@ -5058,7 +5058,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 967,
+      "line": 982,
       "method": "GET",
       "path": "/api/conversations/:id/attachments/:attachmentId",
       "expression": null,
@@ -5077,7 +5077,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 992,
+      "line": 1007,
       "method": "GET",
       "path": "/api/conversations/:id/attachments/:attachmentId/view",
       "expression": null,
@@ -5095,7 +5095,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 1007,
+      "line": 1022,
       "method": "GET",
       "path": "/api/me/blocks",
       "expression": null,
@@ -5121,7 +5121,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 1016,
+      "line": 1031,
       "method": "PUT",
       "path": "/api/me/blocks/:userId",
       "expression": null,
@@ -5140,7 +5140,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 1040,
+      "line": 1055,
       "method": "DELETE",
       "path": "/api/me/blocks/:userId",
       "expression": null,
@@ -5159,7 +5159,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 1085,
+      "line": 1100,
       "method": "GET",
       "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId",
       "expression": null,
@@ -5177,7 +5177,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 1105,
+      "line": 1120,
       "method": "GET",
       "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId/view",
       "expression": null,
@@ -5195,7 +5195,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 1124,
+      "line": 1139,
       "method": "GET",
       "path": "/api/admin/conversation-reports",
       "expression": null,
@@ -5217,7 +5217,7 @@
     },
     {
       "source": "src/routes/conversations.js",
-      "line": 1151,
+      "line": 1166,
       "method": "POST",
       "path": "/api/admin/conversation-reports/:id/:action",
       "expression": null,

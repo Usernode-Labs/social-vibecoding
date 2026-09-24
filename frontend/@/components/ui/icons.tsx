@@ -470,6 +470,21 @@ export const SidebarIcon = stroked(
 );
 
 /**
+ * TWO ARROWS POINTING OUT TO OPPOSITE CORNERS — "give this pane the whole
+ * width": the full-width toggle at the right of every Messages discussion's
+ * header. Its pair, ArrowsPointingInIcon, is the same two diagonals pointing
+ * back in.
+ *
+ * Unlike SidebarIcon this one DOES swap with its state. SidebarIcon is a
+ * picture of the layout, the same in both states; these are verbs, and the
+ * glyph shows the one a press performs, as every full-screen control does.
+ * `aria-pressed` still carries the state for a screen reader.
+ */
+export const ArrowsPointingOutIcon = stroked('ArrowsPointingOutIcon', 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7');
+
+export const ArrowsPointingInIcon = stroked('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7');
+
+/**
  * A NEWSPAPER — the Activity row and screen.
  *
  * The Figma board names this slot `lucide/newspaper`, and the glyph is right:

@@ -160,6 +160,7 @@ const OWNED = [
   { sel: '#switcher-nav' },
   { sel: '#gc-mention-menu' },               // features/group-chat/autocomplete.tsx
   { sel: '#gc-ref-menu' },                   // ditto
+  { sel: '#gc-emoji-menu' },                 // ditto
   { sel: '#gc-spec-side-panel' },            // features/group-chat/spec-panel.tsx
   // The card metadata picker (features/dev-board/attr-popover.tsx). Its host
   // is created and removed by app-view.js on every open, so it is only on

@@ -1,19 +1,22 @@
 /**
- * The group chat composer's two autocomplete menus, as view models.
+ * The group chat composer's autocomplete menus, as view models.
  *
- * `@name` (MentionAutocomplete) and `#123` / `PR#123` (RefAutocomplete) are
- * separate modules in `public/js/group-chat.js` with the same shape: detect the
+ * `@name` (MentionAutocomplete), `#123` / `PR#123` (RefAutocomplete) and
+ * `:tada` (EmojiAutocomplete) are separate modules in
+ * `public/js/group-chat.js` with the same shape: detect the
  * token under the caret, filter a candidate list, and draw a floating listbox
  * anchored to the composer. Both used to build that listbox with `innerHTML`
- * and then re-toggle a class per row on every arrow key.
+ * and then re-toggle a class per row on every arrow key. (The emoji menu came
+ * later and was React from its first row.)
  *
- * ── One store, two slots ──────────────────────────────────────────────
+ * ── One store, a slot per menu ────────────────────────────────────────
  *
- * They are two menus, not one, because they are two modules with independent
- * open/close state and independent dismiss bindings. They share a store
- * because they share a composer: a token under the caret is `@`-shaped or
- * `#`-shaped, never both, so the two slots are never populated at once and
- * keeping them together makes that visible rather than incidental.
+ * They are separate menus, not one, because they are separate modules with
+ * independent open/close state and independent dismiss bindings. They share a
+ * store because they share a composer: a token under the caret is `@`-shaped,
+ * `#`-shaped or `:`-shaped, never two at once, so no two slots are populated
+ * together and keeping them side by side makes that visible rather than
+ * incidental.
  *
  * ── What stays in group-chat.js ───────────────────────────────────────
  *
@@ -40,21 +43,35 @@ export interface RefOption {
   title: string;
 }
 
+/** One `:shortcode` row: `👍 :thumbsup:`. */
+export interface EmojiOption {
+  emoji: string;
+  /** Without colons: `thumbsup`. */
+  shortcode: string;
+}
+
 export interface AutocompleteSlot<T> {
   items: T[];
   /** Highlighted row; -1 when closed. Arrow keys move it, they do not repaint. */
   active: number;
 }
 
+/** The emoji menu also heads its rows with what was typed: "Emoji matching :th". */
+export interface EmojiSlot extends AutocompleteSlot<EmojiOption> {
+  query: string;
+}
+
 export interface AutocompleteState {
   mention: AutocompleteSlot<MentionOption>;
   ref: AutocompleteSlot<RefOption>;
+  emoji: EmojiSlot;
 }
 
-/** Both closed. A menu's host ships empty and hidden, so this draws nothing. */
+/** All closed. A menu's host ships empty and hidden, so this draws nothing. */
 export const EMPTY_AUTOCOMPLETE: AutocompleteState = {
   mention: { items: [], active: -1 },
   ref: { items: [], active: -1 },
+  emoji: { items: [], active: -1, query: '' },
 };
 
 export const autocompleteStore = createStore<AutocompleteState>(EMPTY_AUTOCOMPLETE);

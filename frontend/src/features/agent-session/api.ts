@@ -34,6 +34,8 @@ export interface AgentSession {
   activeChange: AgentChange | null;
   changes?: AgentChange[];
   busy: boolean;
+  /** A turn finished after the owner last read the conversation (the lists' green dot). */
+  doneUnseen?: boolean;
   lastActivityAt: string | null;
   createdAt: string | null;
 }

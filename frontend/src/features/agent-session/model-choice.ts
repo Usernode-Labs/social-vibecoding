@@ -36,6 +36,11 @@ export interface PickerOption {
   value: string;
   label: string;
   title?: string;
+  /**
+   * What a conversation with no choice of its own runs on. The open list says
+   * "(default)" after it; the closed control shows just the label.
+   */
+  isDefault?: boolean;
 }
 
 export function choiceValue(choice: AgentChoice | null | undefined): string {
@@ -120,7 +125,8 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
       else push({ value, label: selected.model || 'Claude', title: ANTHROPIC_TITLE });
     }
   }
-  return options;
+  const fallback = catalog ? choiceValue(effectiveChoice(null, catalog)) : null;
+  return options.map((option) => (option.value === fallback ? { ...option, isDefault: true } : option));
 }
 
 /** Does this choice take a reasoning effort? Only an OpenRouter model that offers one. */
@@ -154,13 +160,26 @@ export function choiceFromValue(value: string, catalog: ModelCatalog | null, pre
   return null;
 }
 
-/** The reasoning control's options; '' is the deployment's default. */
+/**
+ * The reasoning control's options, in the server's order. '' follows the
+ * deployment's default, so the default effort IS that option, marked
+ * "(default)" in the open list, rather than a second "Default (High)" entry
+ * beside a plain "High". With no default known, '' is a plain "Default".
+ */
 export function effortOptions(catalog: ModelCatalog | null): PickerOption[] {
-  const fallback = catalog?.defaultReasoningEffort ? EFFORT_LABELS[catalog.defaultReasoningEffort] : null;
-  return [
-    { value: '', label: fallback ? `Default (${fallback})` : 'Default' },
-    ...REASONING_EFFORTS.map((effort) => ({ value: effort, label: EFFORT_LABELS[effort] })),
-  ];
+  const fallback = catalog?.defaultReasoningEffort && EFFORT_LABELS[catalog.defaultReasoningEffort]
+    ? catalog.defaultReasoningEffort
+    : null;
+  const efforts = REASONING_EFFORTS.map((effort): PickerOption => (effort === fallback
+    ? { value: '', label: EFFORT_LABELS[effort], isDefault: true }
+    : { value: effort, label: EFFORT_LABELS[effort] }));
+  return fallback ? efforts : [{ value: '', label: 'Default', isDefault: true }, ...efforts];
+}
+
+/** The option a choice's effort is: its own, or '' when it follows the default or names it. */
+export function effortValue(choice: AgentChoice | null, catalog: ModelCatalog | null): string {
+  const effort = (choice && choice.reasoningEffort) || '';
+  return effort && effort === catalog?.defaultReasoningEffort ? '' : effort;
 }
 
 /** Two choices that run the same way. */
