@@ -88,14 +88,15 @@ export type SessionRowView = {
  *     turn is in flight. The amber is the platform's own "something is
  *     building" colour, borrowed from the header's deploy dot.
  *   - READY, solid emerald once it stops: the success green that says the
- *     change is back with you. It reads "Ready for your input" ONLY when the
- *     session is actually waiting on the user — a question with answer chips
- *     still up, or a finished spec whose Questions section is open (#1959,
+ *     change is back with you. It reads "Needs you" ONLY when the session
+ *     is actually waiting on the user — a question with answer chips still
+ *     up, or a finished spec whose Questions section is open (#1959,
  *     `awaitingInput`). A finished spec with nothing to ask and a finished
- *     build are plain "Ready": the feedback that asked for the longer label
- *     asked for it to be true, and a pill that says "for your input" on
- *     every idle row says it on none. Same state, same tone — the words
- *     carry the qualification, not a fourth colour.
+ *     build are plain "Ready": the feedback that asked for the qualified
+ *     label asked for it to be true, and a pill that says it on every idle
+ *     row says it on none. Same state, same tone — the words carry the
+ *     qualification, not a fourth colour. (#1959 shipped it as "Ready for
+ *     your input"; QA 2026-09-24 Q29 shortened it, see stateOf.)
  *   - HANDED OFF, outlined, for a work order (#1417). Its agent runs on the
  *     user's own machine, where the platform cannot see whether a turn is in
  *     flight, so the row states what it knows instead of borrowing a liveness
@@ -165,7 +166,12 @@ function stateOf(session: SessionRowView): {
     };
   }
   return {
-    label: session.awaitingInput ? 'Ready for your input' : 'Ready',
+    // QA 2026-09-24 Q29: "Needs you", not "Ready for your input". The
+    // longer label took 144px of a 344px Messages row and left the change's
+    // TITLE — the part a reader has to read — at "[Mock] Yo…". Same fact,
+    // same predicate, and the word the caption and the Workshop's own
+    // "Needs you" already use for it.
+    label: session.awaitingInput ? 'Needs you' : 'Ready',
     pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
     spinner: false,
   };

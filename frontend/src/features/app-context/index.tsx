@@ -13,6 +13,7 @@ import { useEffect } from 'react';
 
 import { placeUnderAnchor } from '../../lib/anchor-popover';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { menuItems, roveMenuFocus } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
 import { AppsSwitcherSheet } from './app-context-sheet';
@@ -30,6 +31,9 @@ const ABOUT_SHOT_TRIES = 100;
 
 /** The welcome tour's overlay (../home/tour/index.tsx), which drives this menu. */
 const TOUR_ID = 'home-tour';
+
+/** What the arrow keys move between in the menu: its buttons and links. */
+const SHEET_ROWS = 'a[href], button:not([disabled])';
 
 /**
  * Pin the web presentation under the mark: right edges aligned, 6px below it,
@@ -131,16 +135,41 @@ export function AppContextIsland() {
 
   // Escape closes the sheet — web presentation only; adopted into a kit
   // sheet the kit's modal stack owns the key. Same rule as the Improve panel.
+  //
+  // KEYBOARD (QA 2026-09-24 Q18), web presentation only as well. Opening it
+  // from the mark moves focus to the menu's first row, the arrows (and Home,
+  // End) move between its rows, and Escape hands focus back to the mark —
+  // before, focus stayed on the mark and the rows were a Tab-hunt away.
+  // Focus is only moved in when the MARK opened it (or nothing had focus):
+  // the welcome tour opens this menu too, and its card keeps focus.
   useEffect(() => {
     if (!open) return undefined;
+    const sheet = () => document.getElementById('apps-switcher-sheet');
+    // The tour's root is always in the document and carries `hidden` while
+    // it is not running.
+    const tour = document.getElementById(TOUR_ID);
+    const touring = !!tour && !tour.classList.contains('hidden');
+    if (!adopted && !window.PlatformUI?.isTouch?.() && !touring) {
+      const was = document.activeElement;
+      if (!was || was === document.body || was.id === MARK_ID) {
+        const first = menuItems(sheet(), SHEET_ROWS).find((el) => el.id !== 'apps-switcher-close');
+        first?.focus({ preventScroll: true });
+      }
+    }
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
       if (AppContext._sheet) return;
-      AppContext.close();
+      const el = sheet();
+      const inside = !!el && el.contains(event.target as Node);
+      if (event.key === 'Escape') {
+        AppContext.close();
+        if (inside) document.getElementById(MARK_ID)?.focus({ preventScroll: true });
+        return;
+      }
+      if (inside) roveMenuFocus(event, el, SHEET_ROWS);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
+  }, [open, adopted]);
 
   return <AppsSwitcherSheet />;
 }

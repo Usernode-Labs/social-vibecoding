@@ -302,8 +302,26 @@ export function ProfileEditSheet({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const [name, setName] = useState(String(user.displayName || ''));
-  const [bio, setBio] = useState(String(user.bio || ''));
+  // What Back left behind the last time, if anything (QA 2026-09-24 Q16):
+  // see Profile._draft. Taken once, by the opening render.
+  const [draft] = useState(() => (Profile as unknown as {
+    takeDraft?: () => { displayName: string; bio: string } | null;
+  }).takeDraft?.() ?? null);
+  const [name, setName] = useState(draft ? draft.displayName : String(user.displayName || ''));
+  const [bio, setBio] = useState(draft ? draft.bio : String(user.bio || ''));
+
+  // The fields as they stand, for Profile._dismissSheet to keep when the card
+  // closes by Back rather than by a decision.
+  const fields = useRef({ displayName: name, bio });
+  fields.current = { displayName: name, bio };
+  useIsomorphicLayoutEffect(() => {
+    const host = Profile as unknown as { _draftSource: null | (() => { displayName: string; bio: string }) };
+    const read = () => ({ ...fields.current });
+    host._draftSource = read;
+    return () => {
+      if (host._draftSource === read) host._draftSource = null;
+    };
+  }, []);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -323,9 +341,17 @@ export function ProfileEditSheet({
       adoptedOn: flagEl,
       home: 'placeholder',
       gate: 'kit',
+      // The backdrop or Escape: a dismissal, not a decision, so what was
+      // typed is kept for the next open, as Back keeps it.
+      //
+      // The teardown below dismisses the kit as well, and its callback lands
+      // here after the exit fade. That close has already happened (and a
+      // reopen inside the fade must not be closed by it), so it is ignored:
+      // the teardown clears `adoption` before it dismisses.
       onDismiss: () => {
+        if (!adoption) return;
         adoption = null;
-        Profile._dismissSheet();
+        Profile._dismissSheet({ keepDraft: true });
       },
     });
     return () => {

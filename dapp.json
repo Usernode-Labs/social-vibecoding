@@ -1335,6 +1335,12 @@
       "expectText": "All apps"
     },
     {
+      "name": "Browse rows carry a compact Add pill that still names Your apps as its destination (QA 2026-09-24 Q10)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .browse-add-btn[data-added=\"false\"][aria-label=\"Add to Your apps\"][title=\"Add to Your apps\"]",
+      "expectText": "All apps"
+    },
+    {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
       "path": "/?shot=home-search",
       "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
@@ -2999,6 +3005,11 @@
       "expectSelector": "#messages-screen:not(.hidden) #messages-filters > .messages-filter-track + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
     },
     {
+      "name": "QA 2026-09-24 Q18: a Skip to navigation link is the first thing Tab reaches, ahead of the header, and the rail it skips to is there",
+      "path": "/?demo=1",
+      "expectSelector": "body > a[href=\"#platform-tabs\"]:first-of-type:not([hidden]) + header#platform-header ~ nav#platform-tabs a#platform-tab-home"
+    },
+    {
       "name": "The global chat composer wears the safe-bar contract, so on a phone it sits above the tab bar (bug e)",
       "path": "/?demo=1",
       "expectSelector": "#global-chat-screen .global-chat-shell > .global-chat-transcript:not(.platform-safe-scroll) + form.global-chat-composer.platform-safe-bar > textarea#global-chat-composer[placeholder]"
@@ -3271,7 +3282,7 @@
     {
       "name": "A deep link into Advanced opens the group it lives in (#1554)",
       "path": "/?demo=cli-empty#settings/cli",
-      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-selected=\"true\"]"
+      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-current=\"page\"]"
     },
     {
       "name": "The Anthropic API key section renders at its deep link",
@@ -4610,6 +4621,19 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "The sign-in Back disc moves with its screen, so the phone install strip cannot cover it (QA Q8)",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) > a[data-auth-back].absolute[aria-label=\"Back\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The register form states the username rule under the username field (QA Q11)",
+      "path": "/?shot=anon#register",
+      "expectSelector": "#auth-register-screen:not(.hidden) #reg-username[autocapitalize=\"none\"][aria-describedby=\"reg-username-hint\"] + #reg-username-hint",
+      "expectText": "Letters, numbers and underscores, 3 to 32 characters.",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "#1808: an issue's GitHub comments carry a day and a time, and the year once it is not this one",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "#dev-issue-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-head time.dev-feed-msg-time[title]",
@@ -5148,6 +5172,18 @@
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll button#messages-more-channels.messages-more-channels[aria-expanded=\"false\"]",
       "expectText": "more"
+    },
+    {
+      "name": "QA 2026-09-24 Q29: a change waiting on you says \"Needs you\" in its Messages row, short enough to leave the title room",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"] > span.inline-flex.rounded-full",
+      "expectText": "Needs you"
+    },
+    {
+      "name": "QA 2026-09-24 Q14: a group invitation's header reads \"Invitation pending\", not a member count the invitee is not shown",
+      "path": "/?demo=1#messages/910003",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-thread-header .messages-thread-sub",
+      "expectText": "Invitation pending"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779)",

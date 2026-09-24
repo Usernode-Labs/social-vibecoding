@@ -18,6 +18,7 @@
 
 import { useSyncExternalStore } from 'react';
 
+import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
 import type {
   AgentAction,
@@ -406,19 +407,30 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   drawer?: boolean;
 }) {
   if (id === 'new') return openDraft(host);
+  // THE SAME SESSION AGAIN changes where it is drawn and nothing else — and in
+  // particular does not claim the load (QA 2026-09-24 Q23). A cold deep link
+  // opens it twice (the screen's own effect, then app.js's router), and the
+  // second call used to take a new `navigation` version and return. The first
+  // call's answer then belonged to nobody: a session that does not exist left
+  // the full screen blank, with no "Agent session not found" and no spinner,
+  // while the Messages pane, opened once, said so. It also used to clear the
+  // error it would never set again.
+  if (state.id === id && state.open) {
+    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
+    syncTitle();
+    return;
+  }
   const version = ++navigation;
-  const same = state.id === id && state.open;
   publish({
     open: true,
     host,
     id,
-    phase: same ? state.phase : 'loading',
+    phase: 'loading',
     error: '',
-    drawerOpen: drawer || (same ? state.drawerOpen : false),
-    ...(same ? {} : { session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [] }),
+    drawerOpen: drawer,
+    session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
   });
   syncTitle();
-  if (same) return;
   seen.clear();
   closeEvents();
   try {
@@ -1019,9 +1031,23 @@ export function setSpecTab(tab: SpecTab) {
 
 // ── The model ──────────────────────────────────────────────────────────
 
-/** Read the picker's options once per page; a failed read is retried on the next open. */
+/**
+ * Read the picker's options once per page; a failed read is retried on the next open.
+ *
+ * Member-only, so it waits for a viewer the endpoint answers (QA 2026-09-24
+ * Q35, ../../lib/platform-viewer.ts) instead of spending a 401 or 403 on a
+ * signed-out or waitlisted document; `sv:authed` asks again.
+ */
+let catalogDeferred = false;
 export function loadModelCatalog(): Promise<void> {
   if (state.catalog) return Promise.resolve();
+  if (!hasPlatformViewer()) {
+    if (!catalogDeferred) {
+      catalogDeferred = true;
+      whenPlatformViewer(() => { catalogDeferred = false; void loadModelCatalog(); });
+    }
+    return Promise.resolve();
+  }
   if (!catalogRequest) {
     catalogRequest = api.loadModelCatalog()
       .then((catalog) => { publish({ catalog }); })
@@ -1069,7 +1095,22 @@ export function agentSessionListChanged() {
   }, 250);
 }
 
+/**
+ * The list is per-user, and this is called at mount by Messages, the nav's
+ * recents and the app sheet, all of which are mounted on every document. So
+ * it waits for a viewer `/api/agent-sessions` answers (QA 2026-09-24 Q35,
+ * ../../lib/platform-viewer.ts) rather than logging a 401 on the signed-out
+ * landing or a 403 in the waiting room, and loads on `sv:authed` instead.
+ */
+let sessionsDeferred = false;
 export async function loadAgentSessions() {
+  if (!hasPlatformViewer()) {
+    if (!sessionsDeferred) {
+      sessionsDeferred = true;
+      whenPlatformViewer(() => { sessionsDeferred = false; void loadAgentSessions(); });
+    }
+    return;
+  }
   try {
     const sessions = await api.listSessions();
     publish({ sessions, sessionsLoaded: true });

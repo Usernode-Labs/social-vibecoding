@@ -1237,8 +1237,12 @@ function agentSelectionErrorBody(err) {
 
 function automaticOpenRouterSetupError(err) {
   if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+    // QA 2026-09-24: no environment variable in the toast. The caller has
+    // already logged err.message, which names USERNODE_OPENROUTER_MANAGEMENT_API_KEY
+    // for whoever reads the server log; the person who pressed "Start work"
+    // is told what it means for them.
     const message = err.code === 'not_configured'
-      ? 'OpenRouter could not be set up automatically because managed key provisioning is not configured. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY.'
+      ? managedOpenRouter.NOT_CONFIGURED_USER_MESSAGE
       : `OpenRouter could not be set up automatically. ${err.message}`;
     return new AgentSelectionError(err.statusCode, message, err.code);
   }

@@ -24,6 +24,7 @@ const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
+const usernames = require('../services/usernames');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
@@ -215,7 +216,18 @@ function authRoutes(config) {
       // both-verify tie the email owner wins (listed first). Email
       // matching is case-insensitive on both sides — every write path
       // stores the lower-cased form, and lower(email) also reaches any
-      // legacy mixed-case row. Usernames stay exact-match.
+      // legacy mixed-case row.
+      //
+      // Usernames match case-INSENSITIVELY too (QA 2026-09-24 Q11). They
+      // were exact-match, while registration, renames and every handle
+      // resolver treat `Ada` and `ada` as one name (#2296's trigger refuses
+      // the second), and phones capitalise the first letter of the field. So
+      // "Username already taken" for QAFLOW2 and "Invalid credentials" for
+      // the same letters at sign-in. The candidate list is what makes this
+      // safe: a legacy case-variant pair (`Drea`/`drea`, from before #2296)
+      // yields two rows and the password decides between them, the exact
+      // spelling tried first so it wins a both-verify tie. idx_users_
+      // username_lower (schema.sql) serves the lookup.
       const identifier = String(username).trim();
       const candidates = [];
       if (identifier.includes('@')) {
@@ -228,7 +240,8 @@ function authRoutes(config) {
       let usernameMatched = false;
       {
         const { rows } = await pool.query(
-          'SELECT id, username, password, is_admin, admin_readonly, is_synthetic FROM users WHERE username = $1',
+          `SELECT id, username, password, is_admin, admin_readonly, is_synthetic FROM users WHERE LOWER(username) = LOWER($1)
+            ORDER BY (username = $1) DESC, id ASC`,
           [identifier]
         );
         for (const row of rows) {
@@ -246,14 +259,16 @@ function authRoutes(config) {
       // when no live account wears the handle, a RETIRED one signs its owner
       // in. Retired handles are globally unique and never re-issued, so this
       // is at most one extra candidate (the compare budget above holds) and
-      // the password still decides. Exact match, like the live lookup:
-      // usernames stay case-sensitive at sign-in.
+      // the password still decides. Case-insensitive, like the live lookup
+      // (QA 2026-09-24 Q11) and like checkAvailability, which is what keeps
+      // retired handles unique regardless of case.
       if (!usernameMatched) {
         const { rows: retired } = await pool.query(
           `SELECT u.id, u.username, u.password, u.is_admin, u.admin_readonly, u.is_synthetic
              FROM username_history h
              JOIN users u ON u.id = h.user_id
-            WHERE h.username = $1
+            WHERE LOWER(h.username) = LOWER($1)
+            ORDER BY (h.username = $1) DESC
             LIMIT 1`,
           [identifier]
         );
@@ -279,7 +294,8 @@ function authRoutes(config) {
         // are synthetic.
         if (candidate.row.is_synthetic) continue;
         // At most 2 compares (one email match + one username match), so
-        // the cost posture behind the login limiters is unchanged.
+        // the cost posture behind the login limiters is unchanged. A legacy
+        // case-variant pair adds one more; no new pair can be made.
         if (await bcrypt.compare(password, candidate.row.password)) {
           user = candidate.row;
           matchedBy = candidate.matchedBy;
@@ -367,7 +383,23 @@ function authRoutes(config) {
         userId: verified.userId,
         next: 'set-password',
       });
-      return res.json({ ok: true, next: 'set-password' });
+      // QA 2026-09-24 Q12: say what the next step IS. `created` means this
+      // code just made the account (no account used the address), so the
+      // screen can say so instead of implying one already existed; the
+      // username pair lets it ask for the handle, prefilled, rather than the
+      // waiting room introducing one the person never chose; `waitlisted`
+      // lets it say plainly, before the waiting room, that new accounts
+      // queue. All additive: `ok` and `next` are unchanged, and a client
+      // that ignores the rest behaves exactly as before. Nothing here leaks
+      // to somebody who does not hold the mailbox: the code was just proved.
+      return res.json({
+        ok: true,
+        next: 'set-password',
+        created: !!verified.created,
+        needsUsername: !!verified.needsUsernameChoice,
+        suggestedUsername: verified.suggestedUsername || null,
+        waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
+      });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
         return res.status(422).json({ error: error.message, code: error.code });
@@ -386,6 +418,9 @@ function authRoutes(config) {
       const completed = await emailSignup.completePassword(pool, {
         signupToken: req.cookies?.[SIGNUP_COOKIE],
         password,
+        // Optional (QA 2026-09-24 Q12): the handle the set-password step
+        // asks a new account for. Absent, the first-run gate asks later.
+        username: typeof req.body?.username === 'string' ? req.body.username : null,
         createSession,
       });
       clearSignupCookie(res);
@@ -399,6 +434,11 @@ function authRoutes(config) {
       });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
+        // A username refusal leaves the signup session unspent, so the
+        // person corrects the field and submits again on the same cookie.
+        if (error.code === 'invalid_username' || error.code === 'username_taken') {
+          return res.status(422).json({ error: error.message, code: error.code, field: 'username' });
+        }
         clearSignupCookie(res);
         return res.status(422).json({ error: error.message, code: error.code });
       }
@@ -417,6 +457,25 @@ function authRoutes(config) {
 
     if (!code?.trim() || !username?.trim() || !password) {
       return res.status(400).json({ error: 'Activation code, username, and password required' });
+    }
+
+    // QA 2026-09-24 Q11: the SAME rules the rest of the account surface
+    // already enforces. Registration took any non-empty string for either,
+    // so a one-character password and `qa flow-3!` both went through, while
+    // Change password asks for eight characters and a rename refuses anything
+    // but letters, numbers and underscores. The handle rule is not cosmetic:
+    // a hyphen breaks @mentions, and #1377's stranded branch names were
+    // reached by registering exactly such a name (services/usernames.js).
+    // Checked before the code preflight and the cost-12 hash, so a form that
+    // is simply filled in wrong costs nothing and says which field to fix.
+    // New accounts only: no existing handle or password is re-checked.
+    const handle = usernames.validateUsername(username);
+    if (!handle.ok) {
+      return res.status(400).json({ error: handle.error, field: 'username' });
+    }
+    const policy = validatePassword(password);
+    if (!policy.ok) {
+      return res.status(400).json({ error: policy.error, field: 'password' });
     }
 
     try {
@@ -517,7 +576,7 @@ function authRoutes(config) {
       res.json({ user: { id: userId, username: username.trim(), ...roleFields(false, false) } });
     } catch (err) {
       if (err.code === '23505') {
-        return res.status(409).json({ error: 'Username already taken' });
+        return res.status(409).json({ error: 'Username already taken', field: 'username' });
       }
       log.error('auth', 'Registration error', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -584,7 +643,7 @@ function authRoutes(config) {
       requestedAt: null,
     };
     try {
-      allowance = await appAllowance.read(pool, req.user);
+      allowance = await appAllowance.read(pool, req.user, { maxApps: config.maxApps });
     } catch (err) {
       log.warn('auth', 'App allowance lookup failed', { message: err.message });
     }
@@ -669,6 +728,10 @@ function authRoutes(config) {
         canCreateApps: allowance.canCreateApps,
         appCreationQuota: allowance.quota,
         appQuotaRequestedAt: allowance.requestedAt,
+        // QA 2026-09-24 Q33b: the server-wide MAX_APPS cap as this viewer
+        // meets it ({ used, limit, remaining, full }), or null when it does
+        // not apply to them. Seeds the allowance panel's first paint.
+        appServerCapacity: allowance.server || null,
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,

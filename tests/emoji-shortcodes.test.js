@@ -204,7 +204,9 @@ test('the Messages composer: its own listbox, and its keys run before Enter-to-s
   // A press keeps the textarea focused, like the mention rows.
   assert.match(composer, /data-emoji-option=\{item\.shortcode\} onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{\(\) => insertEmoji\(item\.emoji\)\}/);
   // The menu's keys come first: with it open, Enter inserts and never sends.
-  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(event\.key === 'Enter' && !event\.shiftKey/);
+  // The @ and # list's keys (QA 2026-09-24 Q13) come next, and never meet
+  // these: the emoji menu opens only while neither of those lists shows.
+  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && !event\.shiftKey/);
   const handler = composer.slice(composer.indexOf('function onEmojiKeyDown('), composer.indexOf('function onComposerChange('));
   for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape']) {
     assert.ok(handler.includes(`'${key}'`), `${key} is the menu's while it is open`);

@@ -64,7 +64,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { ChevronRightIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, SpinnerArcIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -249,6 +249,13 @@ export function CreateAppDialog() {
   const [collabVis, setCollabVis] = useState<Vis>('public');
   const [viewVis, setViewVis] = useState<Vis>('public');
   const [error, setError] = useState('');
+  // QA 2026-09-24 Q5: a double-click on Create sent two POSTs and made two
+  // apps, each taking a slot. `submitting` drives the button's disabled and
+  // busy look; the ref is the handler's own guard, because a second click can
+  // be dispatched before React has re-rendered the button as disabled (and
+  // Enter in the name field never goes through the button at all).
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const { blocked: quotaBlocksCreation } = useAppAllowance();
   // The app this dialog is now reporting on. Null until a POST succeeds,
   // which is what keeps the FIRST render byte-identical to the
@@ -492,6 +499,11 @@ export function CreateAppDialog() {
     body.collabVisibility = collabVis;
     body.viewVisibility = viewVis;
 
+    // One request at a time (QA 2026-09-24 Q5). Claimed synchronously, before
+    // the first await, so a second click in the same frame finds it taken.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       const res = await fetch('/api/apps', {
         method: 'POST',
@@ -528,6 +540,9 @@ export function CreateAppDialog() {
       (window.Home?.load as (() => void) | undefined)?.();
     } catch {
       setError('Network error');
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -852,6 +867,11 @@ export function CreateAppDialog() {
             >
               Next
             </Button>
+            {/*
+                QA 2026-09-24 Q5: disabled with a spinner while the POST is
+                in flight. `submitting` starts false, so the first render is
+                still the prerendered button: no aria-busy, no spinner.
+            */}
             <Button
               type="submit"
               id="create-submit"
@@ -859,9 +879,13 @@ export function CreateAppDialog() {
               size="pill"
               layout="flex"
               disabledStyle="block"
-              disabled={quotaBlocksCreation}
+              disabled={quotaBlocksCreation || submitting}
+              aria-busy={submitting || undefined}
             >
-              {mode === 'import' ? 'Import' : 'Create'}
+              {submitting ? <SpinnerArcIcon className="inline-block h-4 w-4 mr-2 -mt-0.5 align-middle animate-spin" aria-hidden="true" /> : null}
+              {submitting
+                ? (mode === 'import' ? 'Importing…' : 'Creating…')
+                : (mode === 'import' ? 'Import' : 'Create')}
             </Button>
           </div>
         </form>

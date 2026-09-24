@@ -104,7 +104,10 @@ test('app.css unfolds the steps in place and shapes the footer', () => {
   // Only the steps PAST the furthest one are folded: the earlier ones stay.
   assert.match(CSS, /#create-card\[data-step="start"\]\s+\[data-create-step="details"\],\n#create-card\[data-step="start"\]\s+\[data-create-step="access"\],\n#create-card\[data-step="details"\] \[data-create-step="access"\] \{\n  display: none;\n\}/);
   assert.doesNotMatch(CSS, /#create-card \[data-create-step\] \{ display: none; \}/, 'no step is hidden by default');
-  assert.match(CSS, /#create-card\[data-step="start"\]  #create-submit,\n#create-card\[data-step="access"\] #create-next \{\n  display: none;\n\}/);
+  // QA 2026-09-24 Q6: Create is folded on the details step as well as the
+  // start step. Showing it beside Next put two equal accent buttons on step
+  // 2, and pressing it skipped "Who can use it".
+  assert.match(CSS, /#create-card\[data-step="start"\]   #create-submit,\n#create-card\[data-step="details"\] #create-submit,\n#create-card\[data-step="access"\]  #create-next \{\n  display: none;\n\}/);
   assert.doesNotMatch(CSS, /#create-cancel \{ display: none; \}/, 'Cancel is always there');
   // The collapsed start step: the other row, the captions and the chevron
   // fold away; "Change" shows in their place.
@@ -177,4 +180,33 @@ test('the prerendered document starts on the start step with every id in place',
     assert.match(card, new RegExp(`id="${id}"`), id);
   }
   assert.match(card, /Create a new app/);
+});
+
+// QA 2026-09-24 Q5: a double-click on Create sent two POSTs and made two apps,
+// each taking a slot. The handler claims a ref BEFORE its first await, so a
+// second click (or an Enter) in the same frame returns without a request; the
+// button is disabled and busy while the request is in flight; and both are
+// released in a `finally`, so a failed request can be retried.
+test('Create sends one request at a time and shows it is busy', () => {
+  const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  return (\n    <DialogRoot'));
+  const guard = submit.indexOf('if (submittingRef.current) return;');
+  assert.ok(guard > 0, 'the handler has its own in-flight guard');
+  assert.ok(guard < submit.indexOf("await fetch('/api/apps'"), 'claimed before the request');
+  assert.match(submit, /if \(submittingRef\.current\) return;\s*submittingRef\.current = true;\s*setSubmitting\(true\);\s*try \{/);
+  assert.match(submit, /\} finally \{\s*submittingRef\.current = false;\s*setSubmitting\(false\);\s*\}/);
+  assert.equal((submit.match(/fetch\('\/api\/apps'/g) || []).length, 1);
+  const button = SRC.slice(SRC.indexOf('id="create-submit"'), SRC.indexOf('</Button>', SRC.indexOf('id="create-submit"')));
+  assert.match(button, /disabled=\{quotaBlocksCreation \|\| submitting\}/);
+  assert.match(button, /aria-busy=\{submitting \|\| undefined\}/, 'no aria-busy in the prerender');
+  assert.match(button, /\{submitting \? <SpinnerArcIcon /);
+  assert.match(button, /\(mode === 'import' \? 'Importing…' : 'Creating…'\)/);
+  assert.match(SRC, /const \[submitting, setSubmitting\] = useState\(false\);/, 'starts idle, as prerendered');
+});
+
+test('the prerendered Create button is idle', () => {
+  const html = shellMarkup();
+  const submit = html.match(/<button[^>]*id="create-submit"[^>]*>[\s\S]*?<\/button>/)[0];
+  assert.doesNotMatch(submit, /aria-busy/);
+  assert.doesNotMatch(submit, /<svg/);
+  assert.match(submit, />Create<\/button>$/);
 });

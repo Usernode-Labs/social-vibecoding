@@ -321,6 +321,10 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-left: calc('));
   assert.doesNotMatch(roots, /#app-view/, 'an app covers the rail');
   assert.match(roots, /#messages-screen/, 'every platform root does move over');
+  // QA 2026-09-24 Q23: the agent session's own screen drew from the window's
+  // edge, under the rail, with its chips and the start of its composer
+  // unreachable there.
+  assert.match(roots, /#agent-session-screen/, 'the agent session screen moves over too');
   // IT MOVES OVER ANYWAY WHILE ITS RAIL IS UP (#2718 review), through a rule
   // of its own keyed off the bar rather than off the screen id — because
   // `#app-view` is two screens behind one id, and only one of them covers the

@@ -160,7 +160,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
-          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
+          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors un-touch-target ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
@@ -192,8 +192,10 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
             {tile.blurb}
           </span>
         ) : null}
+        {/* zinc-600, the blurb's ink (QA 2026-09-24 Q20): zinc-500 is under
+            4.5:1 on two of the five pastel tints (4.39 and 4.36). */}
         {tile.contributors ? (
-          <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-500 dark:text-zinc-400">
+          <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-600 dark:text-zinc-400">
             {tile.contributors === 1 ? '1 contributor' : `${tile.contributors} contributors`}
           </span>
         ) : null}
