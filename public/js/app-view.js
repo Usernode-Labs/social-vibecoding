@@ -6054,7 +6054,7 @@ const AppView = {
       // #694: an attachments-only send is allowed; a send while an upload
       // is still in flight waits (input keeps its text).
       if (GroupChat.attachmentsUploading(null)) {
-        GroupChat._setAttachError('Still uploading, one moment…', null);
+        GroupChat._setAttachError(GroupChat.UPLOAD_WAIT_NOTICE, null);
         return;
       }
       if (!content && !GroupChat.hasPendingAttachments(null)) return;
