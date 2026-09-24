@@ -677,6 +677,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - Propose confirms ("Put this up for the group's vote?", naming the change and its PR), then calls the owner's `POST /api/sessions/:id/promote`.
   - Retry calls the owner's `POST /api/sessions/:id/ensure-staging`. The build's `staging_ready` or `staging_failed` reaches the conversation, writes the next card, and ends "Retrying…". A build whose answer never lands (a restart, a lost event) gives up after the dev chat preview's three minutes, and says the result will still appear.
   - A preview waiting on a rebuild hears the same events (`AppView.onStagingRebuildResult`), which this conversation may not otherwise receive: the app-room socket only reaches people on that app's screen.
+- **Staging** gives the seeded conversation's change two build rows, written as a real build writes them: a failed build, then a deployed one at a fixture address (`.invalid`). So the conversation shows a superseded card and a live one. A declared check pins them. Open preview there reports honestly that the fixture's preview is not running.
 
 **Process.** Each proposal:
 

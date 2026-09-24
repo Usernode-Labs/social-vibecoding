@@ -2967,9 +2967,39 @@ async function seedStagingAgentSession(pool, config) {
       [STAGING_AGENT_SESSION_ID, JSON.stringify({ confirmations: [card] })]
     );
   }
+  await seedStagingAgentBuilds(pool);
   log.info('db', 'Staging agent-session fixture seeded', {
     owner: owner.username, agentSessionId: STAGING_AGENT_SESSION_ID, changeId: STAGING_AGENT_CHANGE_ID,
   });
+}
+
+// The change's staging builds, as cards (#2779 follow-up): one that failed,
+// then one that deployed, written as a real build writes them, so the
+// conversation shows a superseded card and a live one. The address is a
+// fixture's (.invalid never resolves): Open preview asks the platform for
+// this change's preview, which says it is not running. Added once, and to a
+// preview seeded before this.
+const STAGING_AGENT_PREVIEW_URL = 'https://staging-fixture-preview.invalid';
+
+async function seedStagingAgentBuilds(pool) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM chat_session_messages
+      WHERE session_id = $1 AND (metadata ? 'stagingUrl' OR metadata ? 'stagingFailed')
+      LIMIT 1`,
+    [STAGING_AGENT_CHANGE_ID]
+  );
+  if (rows.length) return;
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+     VALUES ($1, $2, 'system', 'Staging build failed', $3::jsonb, NOW() - INTERVAL '170 seconds'),
+            ($1, $2, 'system', 'Staging deployed!', $4::jsonb, NOW() - INTERVAL '165 seconds')`,
+    [
+      STAGING_AGENT_CHANGE_ID,
+      STAGING_AGENT_SESSION_ID,
+      JSON.stringify({ stagingFailed: true, changesReady: true, error: 'npm ci exited with code 1 (staging fixture)', prNumber: null }),
+      JSON.stringify({ stagingUrl: STAGING_AGENT_PREVIEW_URL, prNumber: null }),
+    ]
+  );
 }
 
 // #1350: a session with NO BRANCH at all.
