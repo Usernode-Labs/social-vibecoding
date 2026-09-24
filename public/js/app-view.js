@@ -3223,7 +3223,11 @@ const AppView = {
       // that snapshot after the current app's metadata loaded, so the whole
       // topic could keep naming another app indefinitely. The topic card
       // names the inner destination; the chip names the app, with no subtitle.
-      if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
+      // A record for ANOTHER app is not this one's name either: the topic
+      // view asks for the right record, and re-renders through here with it.
+      if (AppView._hasCurrentAppRecord() && AppView.appData?.name) {
+        App.setHeaderTitle?.(AppView.appData.name);
+      }
       await AppView._renderTopicSubView(content, ref);
       return;
     }
@@ -3523,6 +3527,35 @@ const AppView = {
     // scrolls with the page and carries the NavLink-guarded click; the header
     // draws no arrow on this route. See features/dev-board/topic-frame.tsx.
     AppView._reactDevBoard()?.mountTopicSubView(content);
+
+    // THE APP'S RECORD MAY NOT BE HERE — the #2879 case, on a topic page. A
+    // failed or superseded GET /api/apps/<slug> leaves AppView.appData empty
+    // (or describing another app). Empty, _loadDevData returned null and the
+    // miss branch below bounced to the board (or dropped the remembered
+    // Workshop view), so a transient failure lost the page the link asked
+    // for. Another app's, it loaded THAT app's lists and searched them — and
+    // issue numbers repeat across every app's repo, so its issue #n was
+    // painted under this app's name. So ask once more with the skeleton up;
+    // a record that arrives re-renders the topic against it, and one that
+    // still will not come is said in #dev-topic-thread — the host this module
+    // already fills (GroupChat.mountThread / the change page) — with a way to
+    // try again.
+    if (!AppView._hasCurrentAppRecord()) {
+      const record = await AppView._recoverCurrentAppRecord();
+      if (record === 'moved') return;
+      // The viewer left this topic while that was in flight.
+      const slot = document.getElementById('dev-topic-thread');
+      const cur = AppView._devTopic;
+      if (!slot || App.currentTab !== 'dev' || !cur
+          || cur.kind !== ref.kind || cur.id !== ref.id) return;
+      if (record === 'ok') {
+        await AppView.renderDevView('topic', ref);
+        return;
+      }
+      AppView._renderAppUnavailable(slot, 'dev-topic-app-unavailable',
+        () => { AppView.renderDevView('topic', ref); });
+      return;
+    }
 
     const ok = await AppView._loadDevData();
     // The view may have been replaced (or retargeted) while the fetch
