@@ -173,6 +173,9 @@ function accessFlags(app, user, isCollaborator, adminAppIds = null, contributorC
     is_collaborator: !!isCollaborator,
     can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
     can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id) || isAppAdmin,
+    // All reporting entry points use the same server-derived eligibility.
+    can_report: !!user?.id && !app.demo && !app.moderation_suspended_at
+      && Number(app.created_by) !== Number(user.id),
     // Deletion is deliberately narrower than general app management. App
     // admins can manage settings, but only a full platform admin or the
     // creator while they remain the app's ONE contributor may destroy it.
@@ -279,6 +282,7 @@ function demoIconApps(curation = false) {
     icon_url: null,
     can_collaborate: false,
     can_manage: false,
+    can_report: false,
     // Marks the tile inert for client gestures: these slugs don't
     // exist in the DB, so drag-to-favorite (issue #746) would 404 —
     // home.js excludes [data-demo] cards from the kit drag.

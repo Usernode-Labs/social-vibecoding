@@ -65,6 +65,7 @@ const ImproveStatus = {
         deploying: appData.status === 'deploying',
         readOnly: !!window.AppView?.readOnly,
         canShare: appData.status === 'running' && !!appData.url,
+        canReport: appData.can_report === true,
       });
     } else if (!open) {
       // Closing an app does not mean there is nothing to improve — it means

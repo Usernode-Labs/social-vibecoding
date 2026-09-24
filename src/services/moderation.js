@@ -48,7 +48,8 @@ async function resolveTarget(db, user, type, key, lock = false) {
       `SELECT id, slug, name, created_by, main_sha, collab_visibility, view_visibility, moderation_suspended_at
          FROM apps WHERE slug = $1 ${lock ? 'FOR SHARE' : ''}`, [String(key)]);
     const app = rows[0];
-    if (!app || Number(app.created_by) === Number(user.id) || !(await appAccess.checkAppAccess(db, app, user, 'view'))) fail(404, 'Target unavailable');
+    if (!app || !(await appAccess.checkAppAccess(db, app, user, 'view'))) fail(404, 'Target unavailable');
+    if (Number(app.created_by) === Number(user.id)) fail(400, 'You cannot report your own app.');
     return { id: app.id, userId: app.created_by, label: app.name,
       evidence: { name: app.name, slug: app.slug, deployedVersion: app.main_sha }, files: [] };
   }
@@ -143,7 +144,7 @@ async function submitReport(pool, user, input) {
     target = await resolveTarget(db, user, input.targetType, input.target, true);
     if (['new', 'in_review'].includes(c.status)) {
       const existing = await db.query(`SELECT id FROM moderation_reports WHERE case_id = $1 AND (cycle = $2 OR (cycle = 0 AND evidence->>'legacyStatus' = 'pending')) AND reporter_user_id = $3`, [c.id, c.cycle, user.id]);
-      if (existing.rows.length) return { id: existing.rows[0].id, received: true, duplicate: true, blockUserId: target.userId !== user.id ? target.userId : null };
+      if (existing.rows.length) return { id: existing.rows[0].id, received: true, duplicate: true, blockUserId: input.targetType !== 'app' && target.userId !== user.id ? target.userId : null };
     }
     const rate = await db.query(
       `SELECT COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') AS hourly, COUNT(*) AS daily
@@ -165,7 +166,7 @@ async function submitReport(pool, user, input) {
     }
     await db.query('UPDATE moderation_cases SET revision = revision + 1, updated_at = NOW() WHERE id = $1', [c.id]);
     await notify(db, user.id, 'moderation_report', `Report #${rows[0].id} received. We’ll review it.`);
-    return { id: rows[0].id, received: true, duplicate: false, blockUserId: target.userId !== user.id ? target.userId : null };
+    return { id: rows[0].id, received: true, duplicate: false, blockUserId: input.targetType !== 'app' && target.userId !== user.id ? target.userId : null };
   });
 }
 

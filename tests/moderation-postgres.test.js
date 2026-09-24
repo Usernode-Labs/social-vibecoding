@@ -42,6 +42,7 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     const reports = await Promise.all([moderation.submitReport(pool,alice,input),moderation.submitReport(pool,alice,input)]);
     assert.equal(reports[0].id,reports[1].id,'concurrent retries produce one receipt');
     assert.equal(reports.filter(r=>r.duplicate).length,1);
+    assert.ok(reports.every(r=>r.blockUserId===bob.id),'message receipts identify the author for optional blocking');
     let c = (await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'conversation_message'")).rows[0];
     const act = async (action, extra={}) => {
       c = (await pool.query('SELECT * FROM moderation_cases WHERE id = $1',[c.id])).rows[0];
@@ -118,7 +119,11 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     assert.equal((await pool.query('SELECT evidence FROM moderation_reports WHERE case_id = $1',[c.id])).rows[0].evidence,null);
     assert.equal((await get(`/api/admin/moderation/${c.id}/files/${fileId}`)).status,404);
 
-    await moderation.submitReport(pool,alice,{targetType:'app',target:'reported-app',reason:'scam'});
+    const appReceipt = await moderation.submitReport(pool,alice,{targetType:'app',target:'reported-app',reason:'scam'});
+    assert.equal(appReceipt.blockUserId,null,'reporting an app does not offer to block its creator');
+    const duplicateAppReceipt = await moderation.submitReport(pool,alice,{targetType:'app',target:'reported-app',reason:'scam'});
+    assert.equal(duplicateAppReceipt.id,appReceipt.id);
+    assert.equal(duplicateAppReceipt.blockUserId,null,'duplicate app reports use the same receipt contract');
     c=(await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'app'")).rows[0];
     await act('suspend_app');
     assert.equal(await appAccess.getAppForUser(pool,'reported-app',bob),null,'owner has no suspension bypass');
@@ -126,7 +131,8 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     assert.equal((await get('/api/apps/reported-app/messages','alice')).status,403);
     await act('restore_app'); assert.ok(await appAccess.getAppForUser(pool,'reported-app',alice));
 
-    await moderation.submitReport(pool,alice,{targetType:'user',target:'author',reason:'harassment'});
+    const userReceipt = await moderation.submitReport(pool,alice,{targetType:'user',target:'author',reason:'harassment'});
+    assert.equal(userReceipt.blockUserId,bob.id,'user reports still offer the separately chosen block action');
     c=(await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'user' AND target_id = $1",[bob.id])).rows[0];
     await act('hide_profile'); await act('restrict_user');
     assert.ok(await moderation.isRestricted(pool,bob.id));
@@ -186,7 +192,11 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     assert.deepEqual(migratedMessages.rows.map(r => r.evidence.content), ['Original legacy post','Deleted legacy post']);
     for (const r of migratedMessages.rows) assert.equal(r.evidence.content,r.content_snapshot);
     assert.equal((await get('/api/apps/reported-app/report','alice',{method:'POST',body:JSON.stringify({reason:'spam'})})).status,202);
-    assert.equal((await get('/api/apps/reported-app/report','bob',{method:'POST',body:JSON.stringify({reason:'spam'})})).status,404,'own app reports are still rejected');
+    for (const route of ['/api/apps/reported-app/report','/api/reports']) {
+      const ownReport = await get(route,'bob',{method:'POST',body:JSON.stringify({targetType:'app',target:'reported-app',reason:'spam'})});
+      assert.equal(ownReport.status,400,'own app reports are still rejected');
+      assert.equal((await ownReport.json()).error,'You cannot report your own app.');
+    }
     assert.equal((await get(`/api/apps/reported-app/messages/${chat.id}/report`,'alice',{method:'POST',body:JSON.stringify({reason:'spam'})})).status,202);
     assert.equal((await get(`/api/apps/wrong-app/messages/${chat.id}/report`,'alice',{method:'POST',body:JSON.stringify({reason:'spam'})})).status,404);
     assert.equal((await get('/api/users/author/report','alice',{method:'POST',body:JSON.stringify({reason:'spam'})})).status,202);

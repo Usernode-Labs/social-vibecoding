@@ -268,6 +268,7 @@ const Improve = {
         readOnly: false,
         showTerminal: false,
         canShare: false,
+        canReport: false,
         // Back to App.currentTab's own initial value, so the next target does
         // not inherit the last one's half.
         tab: 'app',
@@ -297,6 +298,7 @@ const Improve = {
       appUpdateReady: slugChanged ? false : !!prev.appUpdateReady,
       readOnly: !!target.readOnly,
       canShare: !!target.canShare,
+      canReport: target.canReport === true,
       // The terminal is only meaningful while an iframe is on screen, and
       // DevConsole owns that fact — a target change alone never turns it on.
       showTerminal: slugChanged ? false : prev.showTerminal,
@@ -572,7 +574,7 @@ const Improve = {
   update(patch) {
     if (!patch || !improveStore.get().slug) return;
     const allowed = {};
-    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'appUpdateReady', 'readOnly', 'canShare', 'selfHosted']) {
+    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'appUpdateReady', 'readOnly', 'canShare', 'canReport', 'selfHosted']) {
       if (key in patch) allowed[key] = patch[key];
     }
     improveStore.set(allowed);

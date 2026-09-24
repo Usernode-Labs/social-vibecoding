@@ -39,7 +39,7 @@ export function ReportDialog() {
     finally { setBusy(false); }
   }
   async function block() {
-    if (!target?.userId || busy) return;
+    if (!target?.userId || target.targetType === 'app' || busy) return;
     setBusy(true); setError('');
     try {
       const response = await fetch(`/api/me/blocks/${target.userId}`, { method: 'PUT' });
@@ -54,8 +54,10 @@ export function ReportDialog() {
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{target?.label}</p>
       {receipt ? <div className="mt-4 space-y-4">
         <p role="status">{`Report #${receipt} received. We’ll review it and notify you when review finishes.`}</p>
-        {target?.userId ? <Button type="button" disabled={busy || blocked} onClick={() => void block()}>{blocked ? 'User blocked' : 'Block user'}</Button> : null}
-        <Button type="button" disabled={busy} onClick={dialog.close}>Done</Button>
+        <div className="flex flex-wrap gap-3">
+          {target?.targetType !== 'app' && target?.userId ? <Button type="button" disabled={busy || blocked} onClick={() => void block()}>{blocked ? 'User blocked' : 'Block user'}</Button> : null}
+          <Button type="button" disabled={busy} onClick={dialog.close}>Done</Button>
+        </div>
       </div> : <form className="mt-4 space-y-4" onSubmit={submit}>
         {target?.targetType === 'conversation_message' ? <p className="text-sm">Moderators will receive this message and its attachments. Your other private messages are not included.</p> : null}
         <label className="block text-sm font-medium">Reason

@@ -36,6 +36,14 @@ function makeHome(user) {
   return makeHomeEnv(user).Home;
 }
 
+test('app listing report action follows server eligibility and stays hidden until loaded', () => {
+  const Home = makeHome({id:3});
+  for (const can_report of [undefined,false,true]) {
+    const items = Home.menuItemsFor({id:928,slug:'watchnest-0bd214',name:'WatchNest',created_by:3,can_report});
+    assert.equal(items.some(item=>item.key==='report'),can_report===true);
+  }
+});
+
 // Fake 2D context for _widgetIconDataUrl — the vm sandbox has no real
 // DOM. It draws a rounded-rect tile (face + hairline) before the glyph,
 // so the stub has to answer the path/stroke calls too, not just
@@ -135,6 +143,7 @@ const baseApp = (over) => ({
   name: 'Demo App',
   status: 'running',
   created_by: OTHER,
+  can_report: over?.created_by !== ME && !over?.demo,
   created_at: '2026-06-01T00:00:00Z',
   last_deploy_at: null,
   repo_url: 'https://github.com/o/r',

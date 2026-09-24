@@ -88,7 +88,7 @@ export function ImproveQuickActions(): ReactNode {
           onClick={() => Improve.startSession()}
         />
       )}
-      {state.slug ? <QuickAction id="improve-row-report" label="Report app" onClick={async () => {
+      {state.slug && state.canReport ? <QuickAction id="improve-row-report" label="Report app" onClick={async () => {
         await Improve.close();
         openReport({ targetType: 'app', target: state.slug!, label: state.name || state.slug! });
       }} /> : null}

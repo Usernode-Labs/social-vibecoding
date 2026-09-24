@@ -18,7 +18,10 @@ impersonation, other) and optional details up to 1,000 characters. Other
 requires details. Private-message reports explain that the message and its
 attachments become available to moderators. Submit confirms receipt and
 offers blocking separately where supported. Retries return the existing
-open report; reporting alone never imposes a penalty.
+open report; reporting alone never imposes a penalty. App owners do not see
+Report app; an already-open form clearly explains that an owner cannot report
+their own app. App-report confirmations offer Done, without offering to block
+the app's creator. Blocking remains a separate option for user/message reports.
 
 ## Moderation
 

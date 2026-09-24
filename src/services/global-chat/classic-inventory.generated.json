@@ -1988,7 +1988,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 699,
+      "line": 703,
       "method": "GET",
       "path": "/api/apps",
       "expression": null,
@@ -2016,7 +2016,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 982,
+      "line": 986,
       "method": "GET",
       "path": "/api/github/repo-info",
       "expression": null,
@@ -2034,7 +2034,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1002,
+      "line": 1006,
       "method": "GET",
       "path": "/api/github/verify-access",
       "expression": null,
@@ -2053,7 +2053,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1026,
+      "line": 1030,
       "method": "GET",
       "path": "/api/me/app-allowance",
       "expression": null,
@@ -2078,7 +2078,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1037,
+      "line": 1041,
       "method": "POST",
       "path": "/api/me/app-allowance/request",
       "expression": null,
@@ -2097,7 +2097,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1049,
+      "line": 1053,
       "method": "POST",
       "path": "/api/apps",
       "expression": null,
@@ -2125,7 +2125,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1185,
+      "line": 1189,
       "method": "POST",
       "path": "/api/apps/:slug/fork",
       "expression": null,
@@ -2148,7 +2148,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1275,
+      "line": 1279,
       "method": "GET",
       "path": "/api/apps/:slug",
       "expression": null,
@@ -2172,7 +2172,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1410,
+      "line": 1414,
       "method": "GET",
       "path": "/api/apps/:slug/version",
       "expression": null,
@@ -2194,7 +2194,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1675,
+      "line": 1679,
       "method": "GET",
       "path": "/api/apps/:slug/secrets",
       "expression": null,
@@ -2218,7 +2218,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1779,
+      "line": 1783,
       "method": "PUT",
       "path": "/api/apps/:slug/secrets/:key",
       "expression": null,
@@ -2237,7 +2237,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1832,
+      "line": 1836,
       "method": "DELETE",
       "path": "/api/apps/:slug/secrets/:key",
       "expression": null,
@@ -2256,7 +2256,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1876,
+      "line": 1880,
       "method": "POST",
       "path": "/api/apps/:slug/secret-declaration-pr",
       "expression": null,
@@ -2279,7 +2279,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2132,
+      "line": 2136,
       "method": "POST",
       "path": "/api/apps/:slug/redeploy",
       "expression": null,
@@ -2303,7 +2303,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2170,
+      "line": 2174,
       "method": "POST",
       "path": "/api/apps/:slug/check-updates",
       "expression": null,
@@ -2326,7 +2326,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2198,
+      "line": 2202,
       "method": "POST",
       "path": "/api/apps/:slug/rename",
       "expression": null,
@@ -2349,7 +2349,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2262,
+      "line": 2266,
       "method": "POST",
       "path": "/api/apps/:slug/lock",
       "expression": null,
@@ -2372,7 +2372,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2307,
+      "line": 2311,
       "method": "POST",
       "path": "/api/apps/:slug/main-check/resume",
       "expression": null,
@@ -2391,7 +2391,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2333,
+      "line": 2337,
       "method": "POST",
       "path": "/api/apps/:slug/visibility-pr",
       "expression": null,
@@ -2414,7 +2414,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2434,
+      "line": 2438,
       "method": "GET",
       "path": "/api/apps/:slug/admins",
       "expression": null,
@@ -2436,7 +2436,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2504,
+      "line": 2508,
       "method": "GET",
       "path": "/api/apps/:slug/contributors",
       "expression": null,
@@ -2458,7 +2458,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2554,
+      "line": 2558,
       "method": "POST",
       "path": "/api/apps/:slug/admins-pr",
       "expression": null,
@@ -2481,7 +2481,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2650,
+      "line": 2654,
       "method": "POST",
       "path": "/api/apps/:slug/governance-pr",
       "expression": null,
@@ -2504,7 +2504,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2784,
+      "line": 2788,
       "method": "GET",
       "path": "/__access/authorize",
       "expression": null,
@@ -2513,7 +2513,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2827,
+      "line": 2831,
       "method": "DELETE",
       "path": "/api/apps/:slug",
       "expression": null,
@@ -2537,7 +2537,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3022,
+      "line": 3026,
       "method": "POST",
       "path": "/api/apps/:slug/retry",
       "expression": null,
@@ -2563,7 +2563,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3097,
+      "line": 3101,
       "method": "POST",
       "path": "/api/apps/:slug/favorite",
       "expression": null,
@@ -2586,7 +2586,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3171,
+      "line": 3175,
       "method": "PUT",
       "path": "/api/favorites/order",
       "expression": null,
@@ -2604,7 +2604,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3218,
+      "line": 3222,
       "method": "POST",
       "path": "/api/apps/:slug/activity",
       "expression": null,

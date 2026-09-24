@@ -1273,7 +1273,7 @@ const Home = {
     if (!self || !self.slug) {
       if (Home._appsLoaded) return;
       const cached = Home._cachedImproveTarget();
-      if (cached) window.Improve.setTarget(cached);
+      if (cached) window.Improve.setTarget({ ...cached, canReport: false });
       return;
     }
     const target = {
@@ -1291,6 +1291,7 @@ const Home = {
       // this viewer on this row — the same bit that decides whether starting
       // a session is offered anywhere else.
       readOnly: !self.can_collaborate,
+      canReport: self.can_report === true,
       // Nothing to share: the platform row has no per-slug app URL, which is
       // also why opening it lands on Dev rather than the App tab.
       canShare: false,
@@ -3366,7 +3367,7 @@ const Home = {
     if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
       items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
-    if (App.user && app.slug && !app.demo && Number(app.created_by) !== Number(App.user.id)) items.push({
+    if (App.user && app.slug && app.can_report === true) items.push({
       key: 'report', label: 'Report app',
       run: () => window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: app.slug, label: app.name || app.slug }),
     });
