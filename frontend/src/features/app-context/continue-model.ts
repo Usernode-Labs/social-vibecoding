@@ -1,17 +1,18 @@
-// The "Continue" rows under the platform mark (#2779 follow-up): the work in
-// progress you have on the app the menu is about, so going back to it is one
-// tap from anywhere, beside New change. Pure, so tests/app-context-sheet
-// tests can read the rules without a browser.
+// The "Continue" rows under the platform mark (#2779 follow-up): your agent
+// sessions on the app the menu is about, so going back to one is a tap from
+// anywhere. Pure, so tests can read the rules without a browser.
 //
-// The rules every list of your work follows now:
-//   - an agent session is listed as itself, and the changes it started are
-//     not listed again beside it: they are worked on in that conversation;
+// The rules:
+//   - agent sessions only: a conversation stands for the changes it started,
+//     and the Workshop is one row above for everything else;
 //   - "paused" is not a state of the work (the platform pauses an idle
-//     session and resumes it when it is used), so a paused session is listed
-//     like any other;
-//   - a conversation nothing was said in yet (no title: the first message
-//     titles it, and no change) is not work in progress;
-//   - conversations first, then the rest, each newest first.
+//     session and resumes it when it is used), so it is listed like any other;
+//   - a conversation nothing was said in yet (no title, since the first
+//     message titles it, and no change) is not work in progress;
+//   - newest first, each with the mark the other lists draw (./activity):
+//     a spinner while it works, a green dot once it finished unseen.
+
+import { agentActivity, type AgentActivity } from '../agent-session/activity';
 
 export interface ContinueAgentSession {
   id: number;
@@ -21,26 +22,16 @@ export interface ContinueAgentSession {
   createdAt?: string | null;
   focusApp: { slug: string | null } | null;
   activeChange: { appSlug: string | null; status: string | null; title: string | null } | null;
-}
-
-/** A row of the Improve store (features/improve/improve-controller.js toRow / taskToRow). */
-export interface ContinueImproveRow {
-  key: string;
-  kind: string;
-  title: string;
-  href: string;
-  status: string | null;
   busy?: boolean;
-  sortAt?: number;
-  agentSessionId?: number | null;
+  doneUnseen?: boolean;
 }
 
 export interface ContinueRow {
   key: string;
-  kind: 'agent' | 'change';
   href: string;
   title: string;
   detail: string;
+  activity: AgentActivity;
 }
 
 export const CONTINUE_MAX = 3;
@@ -66,30 +57,18 @@ function agentDetail(session: ContinueAgentSession): string {
 export function continueRows(
   slug: string | null,
   agentSessions: ContinueAgentSession[],
-  improveRows: ContinueImproveRow[],
   max = CONTINUE_MAX,
 ): ContinueRow[] {
   if (!slug) return [];
-  const conversations = agentSessions
+  return agentSessions
     .filter((session) => session.status === 'open' && (session.title || session.activeChange) && appOf(session) === slug)
     .sort((a, b) => (time(b.lastActivityAt) || time(b.createdAt)) - (time(a.lastActivityAt) || time(a.createdAt)))
+    .slice(0, Math.max(0, max))
     .map((session): ContinueRow => ({
       key: `agent:${session.id}`,
-      kind: 'agent',
       href: `#messages/agent/${session.id}`,
       title: session.title || (session.activeChange && session.activeChange.title) || 'Agent session',
       detail: agentDetail(session),
+      activity: agentActivity(session),
     }));
-  const changes = improveRows
-    .filter((row) => !row.agentSessionId)
-    .slice()
-    .sort((a, b) => Number(!!b.busy) - Number(!!a.busy) || (b.sortAt || 0) - (a.sortAt || 0))
-    .map((row): ContinueRow => ({
-      key: `change:${row.key}`,
-      kind: 'change',
-      href: row.href,
-      title: row.title,
-      detail: row.status || (row.kind === 'task' ? 'Handed off' : 'In progress'),
-    }));
-  return [...conversations, ...changes].slice(0, Math.max(0, max));
 }

@@ -52,6 +52,8 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
 import { useSpecBeside } from '../agent-session/spec-layout';
+import { agentActivity } from '../agent-session/activity';
+import { AgentActivityMark } from '../agent-session/activity-mark';
 import {
   agentSessionsEnabled,
   deactivateAgentSession,
@@ -1259,6 +1261,9 @@ function MayorSessionRow({ session, active }: { session: MayorSession; active: b
           <span className="messages-row-preview">
             {session.busy ? 'Working…' : `${session.focusApp?.name ? `${session.focusApp.name} · ` : ''}${status}`}
           </span>
+          {/* #2779: where a conversation's unread count goes, the lists' mark:
+              a spinner while it works, a green dot once it finished unseen. */}
+          <AgentActivityMark activity={agentActivity(session)} />
         </div>
       </div>
     </a>

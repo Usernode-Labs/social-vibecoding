@@ -195,10 +195,19 @@ function syncTitle() {
 
 // ── Reading ────────────────────────────────────────────────────────────
 
+/**
+ * The lists (Recents, the mark's menu, Messages) read the same session as
+ * the screen: reading it marked it seen, and a turn that just ended is no
+ * longer working, so their mark follows the conversation on screen at once.
+ */
+function withListed(current: AgentSessionState, session: AgentSession): AgentSession[] {
+  return current.sessions.map((s) => (s.id === session.id ? session : s));
+}
+
 async function refreshSession(id: number) {
   const { session } = await api.getSession(id);
   if (state.id !== id) return;
-  publish({ session });
+  publish((current) => ({ session, sessions: withListed(current, session) }));
   syncTitle();
 }
 
@@ -356,7 +365,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   try {
     const [{ session, turn }] = await Promise.all([api.getSession(id), refreshMessages(id), refreshActions(id)]);
     if (version !== navigation) return;
-    publish({ session, phase: 'ready' });
+    publish((current) => ({ session, phase: 'ready', sessions: withListed(current, session) }));
     syncTitle();
     if (session.busy) {
       patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: Date.now() });
@@ -720,6 +729,18 @@ export async function chooseAgent(choice: AgentChoice) {
 
 // ── The list, for Messages ─────────────────────────────────────────────
 
+// One of the user's conversations started or finished a turn, or was read in
+// another tab (the server's `agent_session_changed`, routed by app.js). The
+// lists redraw their marks from a fresh read; a burst of events is one read.
+let listTimer: ReturnType<typeof setTimeout> | null = null;
+export function agentSessionListChanged() {
+  if (listTimer) return;
+  listTimer = setTimeout(() => {
+    listTimer = null;
+    void loadAgentSessions();
+  }, 250);
+}
+
 export async function loadAgentSessions() {
   try {
     const sessions = await api.listSessions();
@@ -739,6 +760,7 @@ export const agentSessionController = {
   /** The conversation on screen: its id, `new` while it is unsent, or null. */
   currentId: (): AgentSessionTarget | null => (state.id ?? (state.draft ? 'new' : null)),
   refreshList: loadAgentSessions,
+  listChanged: agentSessionListChanged,
 };
 
 if (typeof window !== 'undefined') {

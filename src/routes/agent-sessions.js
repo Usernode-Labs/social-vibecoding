@@ -208,6 +208,16 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
 
   router.get('/api/agent-sessions/:id', requireUser, async (req, res) => {
     try {
+      // Reading the conversation is seeing what it finished, so the green
+      // dot beside it in the lists clears; before the read, so the session
+      // this answers with says so too. The owner's other tabs are told.
+      const cleared = await agentSessions.markSeen(pool, { userId: req.user.id, id: req.params.id }).catch((err) => {
+        log.warn('agent-sessions', 'Could not mark the conversation seen', { err: err.message });
+        return false;
+      });
+      if (cleared) {
+        require('../services/ws').pushToUser(req.user.id, { type: 'agent_session_changed', agentSessionId: Number(req.params.id), busy: false });
+      }
       const session = await agentSessions.getAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found' });
       // Reading the conversation is seeing what its changes finished with:
