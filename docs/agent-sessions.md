@@ -588,6 +588,8 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - Claude Code: build gets the bridge next to the pinned browser (`--mcp-config` twice, `--strict-mcp-config`); scout gets the bridge alone. Codex: a `[mcp_servers.homeroom]` block, the token excluded from the shell environment policy, a leak guard and output redaction. Log redaction also covers `svmcp_` and `svmcd_` tokens.
 - The build and scout prompts carry a short note naming the six tools, when the turn runs on Homeroom (not on the user's own machine).
 
+*Follow-up: the side panel.* While an app is running on a desktop-width window, an agent session opens in the side panel beside it, the way the Workshop, conversations and classic changes do: starting one from New change or the Workshop's Start here, and opening one from a link. The panel's route table knows `agent/<id>[/changes]` and `messages/agent/<numeric id>` as one page. Back climbs to Messages, the header shows the session's title, and Expand lands on the conversation beside the inbox (`messages/agent/<id>`). The agent store asks the panel first and navigates as before when it declines. `start()` no longer takes a first message, which no caller used: a message sent from the top document's store would not reach the conversation once the panel has it.
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;

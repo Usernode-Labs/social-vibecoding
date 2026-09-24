@@ -25,6 +25,13 @@
  *                                  pointer, rewritten to the channel's own
  *                                  address (isPointer)
  *   chat[/<uuid>]                  an agent chat
+ *   agent/<id>[/changes]           an agent session (#2779): one conversation
+ *                                  with the Mayor, on any app — `changes`
+ *                                  is the same page with its drawer up
+ *   messages/agent/<id>            the same session, by the address Messages
+ *                                  links it with; a numeric id only (a UUID
+ *                                  there is a Global Chat thread, which the
+ *                                  panel does not take)
  *   messages                       the inbox itself — never opened INTO the
  *                                  panel from outside it (it is a tab root,
  *                                  and a tab leaves the app), but it is where
@@ -46,6 +53,7 @@ export type PanelKind =
   | 'discussion'
   | 'thread'
   | 'chat'
+  | 'agent'
   | 'messages';
 
 /** The parsed shape of a route the panel knows about. */
@@ -160,11 +168,20 @@ export function panelPage(route: string): PanelPage | null {
       // A `#name` channel reference (#2783) — see isPointer below.
       return { kind: 'thread', slug: null, key: `messages/channel/${parts[2]}` };
     }
+    if (parts[1] === 'agent' && NUMERIC.test(parts[2] || '')) {
+      // An agent session (#2779). The panel is phone-width, so its document
+      // swaps this for `agent/<id>` in place (App.restoreFromHash) — the same
+      // page, which is why the key is the session's own.
+      return { kind: 'agent', slug: null, key: `agent/${parts[2]}` };
+    }
     // A malformed id: the router degrades it to the list.
     return { kind: 'messages', slug: null, key: 'messages' };
   }
   if (head === 'chat') {
     return { kind: 'chat', slug: null, key: parts[1] ? `chat/${parts[1]}` : 'chat' };
+  }
+  if (head === 'agent' && NUMERIC.test(parts[1] || '')) {
+    return { kind: 'agent', slug: null, key: `agent/${parts[1]}` };
   }
   return null;
 }
@@ -223,6 +240,7 @@ export function parentRoute(route: string): string | null {
     case 'discussion':
     case 'thread':
     case 'chat':
+    case 'agent':
       return 'messages';
     case 'proposal':
     case 'issue':
@@ -252,6 +270,7 @@ const KIND_TITLE: Record<PanelKind, string> = {
   discussion: 'Discussion',
   thread: 'Messages',
   chat: 'Chat',
+  agent: 'Agent session',
   messages: 'Messages',
 };
 
@@ -277,6 +296,17 @@ export function titleFor(route: string | null | undefined, reported?: string | n
   if (!page) return text;
   if (FIXED_TITLE.has(page.kind)) return KIND_TITLE[page.kind];
   return text || KIND_TITLE[page.kind];
+}
+
+/**
+ * Where Expand takes `route`: the page itself, full width — except an agent
+ * session, whose desktop home is the Messages pane beside the inbox
+ * (`messages/agent/<id>`), not the phone screen the panel draws it as.
+ */
+export function expandRoute(route: string): string {
+  const page = panelPage(route);
+  if (page && page.kind === 'agent') return `messages/${page.key}`;
+  return route;
 }
 
 /**

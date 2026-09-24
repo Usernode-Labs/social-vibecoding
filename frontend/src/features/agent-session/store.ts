@@ -324,7 +324,26 @@ export function agentSessionAddress(id: number) {
   return `#messages/agent/${id}`;
 }
 
+/**
+ * THE SIDE PANEL (desktop): while an app runs on its App tab, a conversation
+ * opens in the panel beside it instead of replacing it, as a change or a
+ * thread does (frontend/src/features/side-panel/). False whenever that is not
+ * the moment — no app on screen, a narrow window, or this IS the panel's own
+ * document, where the address below is followed in place.
+ */
+function sidePanelTakes(hash: string): boolean {
+  const panel = (window as unknown as {
+    UsernodeReact?: { sidePanel?: { take?: (route: string) => boolean } };
+  }).UsernodeReact?.sidePanel;
+  try {
+    return !!panel?.take?.(hash.replace(/^#/, ''));
+  } catch {
+    return false;
+  }
+}
+
 function go(hash: string) {
+  if (sidePanelTakes(hash)) return;
   if (window.location.hash === hash) {
     const restore = window.App?.restoreFromHash;
     if (typeof restore === 'function') restore.call(window.App);
@@ -335,18 +354,16 @@ function go(hash: string) {
 
 /**
  * Start a conversation from an entry point, carrying what it knows (the app,
- * a request, a proposal) as the hint, and open it. An optional first message
- * is sent straight away.
+ * a request, a proposal) as the hint, and open it — in the side panel when an
+ * app is running beside it. The viewer's first message is typed there: a
+ * message sent from here would go through THIS document's store, which is
+ * not the one showing the conversation once the panel has it.
  */
-export async function startAgentSession(hint: AgentHint | null = null, { message = null }: { message?: string | null } = {}) {
+export async function startAgentSession(hint: AgentHint | null = null) {
   try {
     const session = await api.createSession(hint);
     publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
     go(agentSessionAddress(session.id));
-    if (message && message.trim()) {
-      // The route opens the conversation first; the message follows it.
-      setTimeout(() => { void sendAgentMessage(message); }, 0);
-    }
     return session;
   } catch (error) {
     window.PlatformUI?.toast?.(errorText(error, 'Could not start an agent session.'));
@@ -453,7 +470,7 @@ export async function loadAgentSessions() {
 export const agentSessionController = {
   open: (id: number, options: { host?: AgentSessionHost } = {}) => openAgentSession({ id, host: options.host }),
   route: (id: number, options: { drawer?: boolean } = {}) => openAgentSession({ id, host: 'screen', drawer: !!options.drawer }),
-  start: (hint: AgentHint | null = null, options: { message?: string | null } = {}) => startAgentSession(hint, options),
+  start: (hint: AgentHint | null = null) => startAgentSession(hint),
   deactivate: deactivateAgentSession,
   isOpen: () => state.open,
   currentId: () => state.id,

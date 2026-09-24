@@ -242,7 +242,6 @@ declare global {
         route(id: number, options?: { drawer?: boolean }): Promise<void> | void;
         start(
           hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-          options?: { message?: string | null },
         ): Promise<unknown>;
         deactivate(): void;
         isOpen(): boolean;
