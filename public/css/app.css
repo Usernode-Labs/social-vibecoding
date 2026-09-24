@@ -5957,6 +5957,29 @@ body:has(#platform-header.hidden) #app-frame-host {
    doesn't have. */
 .dc-credits-dev .dc-credits-options { margin-top: 6px; }
 
+/* QA 2026-09-24 Q27: the credits banners fold to one line on a phone. The
+   lead stays; what follows it (`.dc-credits-banner-more`) and the button row
+   wait behind "Details" (dev-chat/banners.tsx), which is the whole strip's
+   height handed back to the conversation, and the banner's "Check API key"
+   no longer sits over the identical button on the transcript's card. The
+   toggle is phone-only: from 640px up the banner is the one-row strip it
+   always was. */
+.dc-credits-banner-toggle { display: none; }
+@media (max-width: 639.98px) {
+  #dc-credits-banner:not([data-credits-open]) :is(.dc-credits-banner-more, .dc-credits-banner-actions),
+  #dc-credits-low-banner:not([data-credits-open]) :is(.dc-credits-banner-more, .dc-credits-banner-actions) {
+    display: none;
+  }
+  .dc-credits-banner-toggle {
+    display: inline-flex; align-items: center; flex: none;
+    min-height: 28px; padding: 0 2px;
+    border: 0; background: none;
+    font: inherit; font-size: 12px; font-weight: 600;
+    text-decoration: underline; text-underline-offset: 2px;
+    cursor: pointer;
+  }
+}
+
 /* Banner variant: three small buttons inside the red exhausted banner.
    The row wraps onto its own line under the message on a phone (the
    banner itself is flex-wrap, and the message keeps a min-width), rather
@@ -14393,7 +14416,17 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-topic-hero > div.dev-topic-hero-actions.dev-card-topic {
   margin-top: 12px; padding: 0; border-radius: 0; box-shadow: none; background: none; --dev-edge-w: 0px;
 }
-.dev-topic-hero .gc-card-actions { margin-top: 0; }
+/* QA 2026-09-24 Q26: THE HERO'S BAND IS AS TALL AS ITS VOTE BUTTON. The band
+   reserves and clips one 28px row (the card rule above), which is right for
+   the 28px pills, but the hero also carries the Vote button, and that is
+   30px (`.dev-vote-btn`). So the row was 30px inside a 28px window: the Vote
+   pill lost its bottom 2px and the round menu button its last pixel, and on
+   a phone both read as cut flat along the bottom. 30px here fits the tallest
+   thing the hero's band holds; a wrapped second row still starts at 36px
+   (30 plus the 6px row gap) and stays clipped, and useFoldedActions' "off the
+   row" test reads the band's own height, so the fold is unchanged. Only the
+   hero: on a card the Vote button sits in the status row, not in this band. */
+.dev-topic-hero .gc-card-actions { margin-top: 0; min-height: 30px; max-height: 30px; }
 .dev-topic-hero .gc-card-actions > .dev-vote-btn { margin-right: 4px; }
 /* The summary at the item's reading size, the whole of it. */
 .dev-topic-hero-summary { margin: 14px 0 0; font-size: 17px; line-height: 1.45; color: var(--text-secondary); }
@@ -15895,6 +15928,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
        top went to -890 on a 900px scroll. `top: 0` is the scroller's own top;
        there is no chrome inside it to clear. */
     top: 0;
+    /* QA 2026-09-24 Q7: ABOVE THE CARDS, BELOW THE HEAD. Pinned with no
+       z-index, the strip sat at the floor of the stacking order, and the
+       pane (`position: relative` from 768px, see the ear) and its cards come
+       later in the tree, so everything that scrolled up past it painted over
+       the tabs and took their clicks: the three tabs and the "+" went under
+       the list. 30 puts it over the list and under the pane head's 31, which
+       is what the ear needs: the ear lives in the head and hangs into this
+       band, and it has to stay on top of the nav's box to be clickable. The
+       open "+" menu still lifts the strip to 32 (above). */
+    z-index: 30;
     max-width: none;
     /* LEFT-ALIGNED, not centred. The pill is `.dev-ws-tabtrack` inside this
        nav and it is content-width, so whatever positions the pill is what
@@ -15938,6 +15981,63 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      strip no longer floats 8px up out of the air it was given, which is the
      "too little above, too much below" this pair always claimed to prevent. */
   #dev-body:has(> #dev-workshop) { padding-top: 10px; }
+  /* QA 2026-09-24 Q7: THE BAND BEHIND THE PINNED STRIP. With the strip on top
+     of the list, the pill itself is opaque, but the air around it was not:
+     the gap to the ear, the column gap down to the pane head and, on By
+     stage, the board columns either side of the reading column all showed
+     the cards scrolling underneath, between the controls. So once the strip
+     is pinned (`data-ws-pinned`, set by workshop.tsx's usePinnedStrip) a
+     band runs behind it, from the scroller's top down to where the head pins
+     (`--dev-ws-head-top`) and across the PANE's width (`--dev-ws-band-*`,
+     measured by useEarInset), and the strip, the ear and the head read as
+     one pinned header.
+
+     SOLID, NOT FROSTED. The frost cannot blur anything here: this whole
+     column sits inside the dev frame's `.dc-lift`, which has a
+     backdrop-filter of its own, and Chromium does not blur content through
+     a backdrop-filter nested inside another one. What was left was 50%
+     white, which is exactly the "cards showing through" this fixes (and
+     why the search row looked washed rather than frosted over the list).
+     So while pinned the band, and the head under it, take the sheet's
+     opaque colour, which is what the fallback below the frost rules already
+     uses where there is no backdrop-filter at all.
+
+     ONLY WHILE PINNED. At rest the pill sits on the page and the ear hangs
+     off the pane beside it; a band there would swallow the ear's shape.
+
+     Behind the nav's own content (`z-index: -1` inside the strip's stacking
+     context), so the pill and the "+" draw over it. Where there is an ear
+     the band STOPS at it (`--dev-ws-ear-left`, the ear's left edge measured
+     from the pane's) and the ear, pinned, takes the same solid fill and
+     drops its outline: the two tile the row. The band must not run under the
+     ear, because the open "+" menu lifts the strip above the head (32, above)
+     and a band there would then cover the ear's two tabs. The pinned ear's
+     rounded corner and the head's are squared: a curve there left a notch
+     the cards showed through. */
+  .dev-ws-tabs::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    top: 0;
+    height: var(--dev-ws-head-top, calc(100% + 10px));
+    left: var(--dev-ws-band-left, 0px);
+    right: var(--dev-ws-band-right, 0px);
+    background-color: var(--dc-sheet);
+    pointer-events: none;
+    visibility: hidden;
+  }
+  .dev-ws:has(.dev-ws-ear) > .dev-ws-tabs::before { right: auto; width: var(--dev-ws-ear-left, 100%); }
+  .dev-ws[data-ws-pinned] > .dev-ws-tabs::before { visibility: visible; }
+  .dev-ws[data-ws-pinned] .dev-ws-ear {
+    background-color: var(--dc-sheet);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    box-shadow: none;
+    border-top-left-radius: 0;
+  }
+  .dev-ws[data-ws-pinned] .dev-ws-pane-head {
+    background-color: var(--dc-sheet);
+    border-top-left-radius: 0;
+  }
   .dev-ws-tabtrack {
     display: inline-flex; align-items: center; gap: 2px;
     padding: 2px;

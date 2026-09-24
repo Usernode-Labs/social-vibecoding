@@ -5267,6 +5267,72 @@ test('the tab strip, the ear and the head pin as one band (#2339 follow-up)', ()
     'the head is never un-stuck here');
 });
 
+test('the pinned strip stays above the list, on a solid band (QA 2026-09-24 Q7)', () => {
+  // THE BUG. Scrolled on All items, the strip went UNDER the cards: it was
+  // sticky with no z-index, so the pane (positioned from 768px, for the ear)
+  // and its cards, later in the tree, painted over it and took its clicks.
+  // And the air around the pill had nothing behind it, so the cards scrolled
+  // past between the controls.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen block exists');
+  const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  const rail = /\n  \.dev-ws-tabs \{([\s\S]*?)\n  \}/.exec(decls);
+  assert.ok(rail, 'the strip is restyled for width');
+  assert.match(rail[1], /z-index: 30;/, 'the strip has a stacking level of its own');
+  const headZ = Number(/#dev-workshop \.dev-ws-pane-head \{[^}]*z-index: (\d+)/.exec(decls)[1]);
+  assert.ok(headZ > 30, 'and stays under the head, whose ear hangs into its band');
+  // The band: behind the strip's content, only while pinned, down to where
+  // the head rests and across the pane (measured), stopping at the ear.
+  const band = /\.dev-ws-tabs::before \{([^}]*)\}/.exec(decls);
+  assert.ok(band, 'the strip carries a band');
+  assert.match(band[1], /z-index: -1;/);
+  assert.match(band[1], /height: var\(--dev-ws-head-top, calc\(100% \+ 10px\)\);/);
+  assert.match(band[1], /left: var\(--dev-ws-band-left, 0px\);/);
+  assert.match(band[1], /right: var\(--dev-ws-band-right, 0px\);/);
+  assert.match(band[1], /background-color: var\(--dc-sheet\);/, 'solid: a nested frost cannot blur here');
+  assert.match(band[1], /visibility: hidden;/, 'and not at rest, where it would swallow the ear');
+  assert.match(decls, /\.dev-ws\[data-ws-pinned\] > \.dev-ws-tabs::before \{ visibility: visible; \}/);
+  assert.match(decls, /\.dev-ws:has\(\.dev-ws-ear\) > \.dev-ws-tabs::before \{ right: auto; width: var\(--dev-ws-ear-left, 100%\); \}/,
+    'the band stops at the ear, so the open "+" menu (which lifts the strip) cannot cover it');
+  assert.match(decls, /\.dev-ws\[data-ws-pinned\] \.dev-ws-ear \{[^}]*background-color: var\(--dc-sheet\);/);
+  assert.match(decls, /\.dev-ws\[data-ws-pinned\] \.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet\);/);
+  // The measurement and the flag.
+  assert.match(WORKSHOP, /const BAND_PROPS = \['--dev-ws-band-left', '--dev-ws-band-right'\];/);
+  assert.match(WORKSHOP, /setProperty\('--dev-ws-band-left', `\$\{Math\.round\(p\.left - n\.left\)\}px`\)/);
+  assert.match(WORKSHOP, /setProperty\('--dev-ws-band-right', `\$\{Math\.round\(n\.right - p\.right\)\}px`\)/);
+  const hook = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
+  const body = hook.slice(0, hook.indexOf('\n}\n'));
+  assert.match(body, /document\.addEventListener\('scroll', schedule, \{ capture: true, passive: true \}\)/,
+    'hears the dev frame\'s scroller and the document alike');
+  assert.match(body, /host\.toggleAttribute\('data-ws-pinned', pinned\)/, 'written on the host, not as state');
+  assert.match(body, /host\.removeAttribute\('data-ws-pinned'\)/, 'and taken off again on teardown');
+  assert.match(WORKSHOP, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);/);
+  assert.match(WORKSHOP, /const stripSticks = useMediaFlag\(WIDE_QUERY\);/, 'only where the strip is sticky at all');
+});
+
+test('the Needs-you card is marked voted only once the server has the vote (QA 2026-09-24 Q3)', () => {
+  // THE BUG. `answer` set the confirmation before castVote ran, and castVote
+  // asks a No for its line first: cancelling that prompt sent nothing and
+  // still left "Voted no · press ↓ for the next" on the card.
+  const fn = WORKSHOP.slice(WORKSHOP.indexOf('  const answer = (which'));
+  const body = fn.slice(0, fn.indexOf('\n  };\n'));
+  const then = body.indexOf('.then((ok) => {');
+  assert.ok(then > 0, 'the answer waits on castVote\'s outcome');
+  const marks = body.indexOf('setAnswered(');
+  assert.ok(marks > then, 'and the card is marked only inside it');
+  assert.match(body.slice(then), /if \(ok === true\) \{\s*setAnswered\(/, 'only on a vote that landed');
+  assert.match(body, /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
+  assert.match(body, /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
+  assert.match(body, /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
+  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : 'Vote'/);
+  // castVote's side of the contract.
+  const view = read('public/js/app-view.js');
+  const cast = view.slice(view.indexOf('  async castVote(sessionId, vote'));
+  const castBody = cast.slice(0, cast.indexOf('\n  },\n'));
+  assert.match(castBody, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
+  assert.match(castBody, /return true;/);
+});
+
 test('the ear re-measures on every render, or a grouping switch leaves it stale', () => {
   // A REAL BUG, reported from the preview. `useEarInset` had
   // `[bar, hostRef, earUp]` as its dependencies, none of which change when the

@@ -639,3 +639,21 @@ test('imported underway PR archive is owner-only and works from compact and full
     assert.ok(!viewer._cardMenuItems(v.card.rail.menuKey).some((a) => a.icon === 'archive'));
   }
 });
+
+// QA 2026-09-24: "Up to date with main." followed, on the next line, by "The
+// author must update this branch in their fork, then push the changes." The
+// fork line went under every fork proposal's Main row, whatever the row said.
+test('the fork instruction appears only when the fork actually needs updating', () => {
+  const av = context();
+  const fork = { ...failing, status: 'promoted', source: 'imported', check_state: 'passing',
+    proposal_state: 'ready', imported_pr_head_repo: 'someone/fork', repo_url: 'https://github.com/org/app' };
+  const footOf = (v) => {
+    const main = v.body.details.ledger.find((r) => ['sync', 'behind', 'conflict', 'mergeability', 'main'].includes(r.key));
+    return (main.foot || []).filter(Array.isArray).map((f) => f.map((x) => (typeof x === 'string' ? x : x.b)).join('')).join(' ');
+  };
+  const current = av._topicViewFor('proposal', { ...fork, freshness_behind_by: 0, freshness_checked_at: failing.created_at });
+  assert.ok(current.body.details.ledger.some((r) => r.text.includes('Up to date with main.')));
+  assert.doesNotMatch(footOf(current), /must update this branch/, 'an up-to-date fork is not told to update');
+  const behind = av._topicViewFor('proposal', { ...fork, freshness_behind_by: 3, freshness_checked_at: failing.created_at });
+  assert.match(footOf(behind), /must update this branch in their fork/, 'a fork that is behind still is');
+});
