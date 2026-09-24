@@ -163,7 +163,8 @@ import { appContextStore } from '../../app-context/app-context-store.js';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import {
-  cardWidth, findTarget, padRect, placeCardForPanel, panelBox, shadeBoxes, type Box,
+  CARD_GAP, cardWidth, findTarget, fitHole, padRect, placeCardForPanel, panelBox, shadeBoxes,
+  SPOTLIGHT_PAD, type Box,
 } from './spotlight';
 import { useTourRequest } from './tour-request';
 import {
@@ -314,6 +315,59 @@ function safeTopInset(): number {
     .getPropertyValue('--un-safe-inset-top');
   const px = Number.parseFloat(raw);
   return Number.isFinite(px) ? px : 0;
+}
+
+/**
+ * How much of the bottom of the screen the tab bar covers, for a target that
+ * is NOT one of its tabs (QA 2026-09-24 Q30d); 0 with no bar on screen (the
+ * desktop sidebar) or when the step points at a tab, which is in the bar.
+ */
+function tabBarInset(target: HTMLElement | null): number {
+  const bar = document.getElementById('platform-tabs');
+  if (!bar || (target && bar.contains(target))) return 0;
+  const rect = bar.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return 0;
+  return Math.max(0, window.innerHeight - rect.top);
+}
+
+/** Where the header ends, so a scroll can land a target just below it. */
+function headerBottom(): number {
+  const header = document.getElementById('platform-header');
+  if (!header) return 0;
+  const rect = header.getBoundingClientRect();
+  return rect.height > 0 ? Math.max(0, rect.bottom) : 0;
+}
+
+/** The element that scrolls `el`: its nearest scrolling ancestor, else the page. */
+function scrollerOf(el: HTMLElement): Element {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight) return node;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+
+/**
+ * Bring a step's target into view (QA 2026-09-24 Q30d). Centred when it fits
+ * between the header and the tab bar, as before. A target TALLER than that
+ * band (Challenges, on a phone) is lined up by its START instead, just below
+ * the header: centring it pushed its heading off the top, leaving the card
+ * nothing to sit under but the section's middle.
+ */
+function bringIntoView(target: HTMLElement, reduced: boolean): void {
+  const rect = target.getBoundingClientRect();
+  const top = headerBottom();
+  const band = window.innerHeight - tabBarInset(target) - top;
+  const behavior: ScrollBehavior = reduced ? 'auto' : 'smooth';
+  try {
+    if (rect.height + SPOTLIGHT_PAD * 2 > band) {
+      scrollerOf(target).scrollBy({ top: rect.top - (top + SPOTLIGHT_PAD + CARD_GAP), behavior });
+    } else {
+      target.scrollIntoView({ block: 'center', behavior });
+    }
+  } catch {
+    target.scrollIntoView();
+  }
 }
 
 /** Scroll Home back to its top, where the tour found it. */
@@ -570,8 +624,12 @@ export function OnboardingTour() {
     const shades = [topRef.current, rightRef.current, bottomRef.current, leftRef.current];
     if (!card || !spot || shades.some((el) => !el)) return;
     const target = findTarget(stepAt(indexRef.current).targets);
-    const hole = target ? padRect(target.getBoundingClientRect()) : null;
     const viewport = { width: window.innerWidth, height: window.innerHeight };
+    // QA 2026-09-24 Q30d: the hole is fitted to where its ring can be seen,
+    // inside the screen's edges and above the tab bar unless the target is
+    // a tab, and the card keeps above the bar by the same inset.
+    const bottomInset = tabBarInset(target);
+    const hole = target ? fitHole(padRect(target.getBoundingClientRect()), viewport, bottomInset) : null;
     const boxes = shadeBoxes(viewport, hole);
 
     // The card's width goes first because its height, measured next, depends
@@ -584,7 +642,7 @@ export function OnboardingTour() {
     // reaches the arithmetic.
     const panel = stepAt(indexRef.current).needsPanel && panelOpenNow() ? panelBox() : null;
     const placed = placeCardForPanel(
-      viewport, { width, height: card.offsetHeight }, hole, panel, safeTopInset(),
+      viewport, { width, height: card.offsetHeight }, hole, panel, safeTopInset(), bottomInset,
     );
 
     const painted = JSON.stringify([hole, boxes, placed]);
@@ -641,11 +699,7 @@ export function OnboardingTour() {
     if (!target) return;
     if (document.getElementById('apps-switcher-sheet')?.contains(target)) return;
     const reduced = !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    try {
-      target.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
-    } catch {
-      target.scrollIntoView();
-    }
+    bringIntoView(target, reduced);
   }, [live, index, confirming]);
 
   // ── Focus ────────────────────────────────────────────────────────────

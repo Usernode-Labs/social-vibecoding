@@ -250,7 +250,9 @@ test('the search input pins on focus/input and releases on empty blur', () => {
   const start = HOME_SRC.indexOf('_wireSearch() {');
   const wire = HOME_SRC.slice(start, HOME_SRC.indexOf('_wireDiscoveryCards(listEl, onChange)', start));
   assert.ok(wire.length > 200, 'located _wireSearch');
-  assert.match(wire, /addEventListener\('focus', \(\) => Home\._searchReveal\.pin\(\)\)/);
+  // QA 2026-09-24 Q30c: focus also REVEALS the bar, which is transparent
+  // while parked under the translucent header.
+  assert.match(wire, /addEventListener\('focus', \(\) => \{\s*Home\._searchReveal\.pin\(\);\s*Home\._searchReveal\.reveal\(\);\s*\}\)/);
   assert.match(wire, /Home\._searchReveal\.pin\(\)/);
   assert.match(wire, /if \(!input\.value\) Home\._searchReveal\.unpin\(\)/);
 });
@@ -261,4 +263,18 @@ test('home PTR is still element-mode on #home-screen (the second stage)', () => 
   const app = read('public/js/app.js');
   assert.match(app, /pullToRefresh\(home,/);
   assert.match(app, /const home = document\.getElementById\('home-screen'\)/);
+});
+
+// QA 2026-09-24 Q30c: parked, the bar sat under the phone's translucent header
+// and "Search your apps…" read through the Homeroom logo on every load. It is
+// transparent while parked, never while focused, and a focus brings it out.
+test('the parked bar is transparent, and a focus reveals it', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /#home-search-bar\[data-revealed="false"\]:not\(:focus-within\) \{\s*opacity: 0;\s*\}/);
+  for (const [from, to] of [[52, 0], [30, 0], [0, 0], [800, 800]]) {
+    const { Home, screen, bar } = makeHome({ barHeight: 52, scrollTop: from });
+    Home._searchReveal.reveal();
+    assert.equal(screen.scrollTop, to, `from ${from}`);
+    if (to === 0) assert.equal(bar.dataset.revealed, 'true');
+  }
 });

@@ -584,7 +584,7 @@ function authRoutes(config) {
       requestedAt: null,
     };
     try {
-      allowance = await appAllowance.read(pool, req.user);
+      allowance = await appAllowance.read(pool, req.user, { maxApps: config.maxApps });
     } catch (err) {
       log.warn('auth', 'App allowance lookup failed', { message: err.message });
     }
@@ -669,6 +669,10 @@ function authRoutes(config) {
         canCreateApps: allowance.canCreateApps,
         appCreationQuota: allowance.quota,
         appQuotaRequestedAt: allowance.requestedAt,
+        // QA 2026-09-24 Q33b: the server-wide MAX_APPS cap as this viewer
+        // meets it ({ used, limit, remaining, full }), or null when it does
+        // not apply to them. Seeds the allowance panel's first paint.
+        appServerCapacity: allowance.server || null,
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,

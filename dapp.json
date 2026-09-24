@@ -1335,6 +1335,12 @@
       "expectText": "All apps"
     },
     {
+      "name": "Browse rows carry a compact Add pill that still names Your apps as its destination (QA 2026-09-24 Q10)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .browse-add-btn[data-added=\"false\"][aria-label=\"Add to Your apps\"][title=\"Add to Your apps\"]",
+      "expectText": "All apps"
+    },
+    {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
       "path": "/?shot=home-search",
       "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
@@ -1386,6 +1392,12 @@
       "path": "/?shot=create-quota#create",
       "expectSelector": ".un-modal #create-app-quota[data-quota-state=\"available\"]",
       "expectText": "1 of 2 app slots used"
+    },
+    {
+      "name": "Create-app dialog names a full server in the allowance panel up front (QA 2026-09-24 Q33b)",
+      "path": "/?shot=create-server-full#create",
+      "expectSelector": ".un-modal #create-app-quota[data-quota-state=\"server-full\"] #create-app-quota-server[data-server-full=\"true\"]",
+      "expectText": "This server is at its app limit (50)"
     },
     {
       "name": "Create-app dialog wears the pane styling: a rounded white name card on the details step (#1910, #1911)",
