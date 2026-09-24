@@ -3840,7 +3840,7 @@ const AppView = {
     // after the route moved on) can run before the new topic's surface
     // mounts, and mounting into the change page's head deletes React's own
     // node out from under it. The surface's mount repaints the head itself.
-    if (changePage !== !!head.closest('.dev-change-overview')) return;
+    if (head.closest && changePage !== !!head.closest('.dev-change-overview')) return;
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
     // #gc-thread-head is TWO nodes: the thread panel's empty slot (the host
