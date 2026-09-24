@@ -20,6 +20,7 @@ export {
   onClickCapture,
   onNavigate,
   embeddedApi,
+  sideRouteFrom,
   DESKTOP_QUERY,
   _resetForTests,
 } from '../../frontend/src/features/side-panel/controller';

@@ -293,7 +293,11 @@ function topWindow({ width = 1280, app = 'notes-ab12', tab = 'app', chromeless =
   const classes = new Set([native ? 'in-native-webview' : null, embedded ? 'in-side-panel' : null].filter(Boolean));
   const win = {
     location: new URL(`https://homeroom.test/app/${app || 'none'}?demo=1`),
-    history: { pushState: (s, t, url) => pushed.push(url) },
+    history: {
+      state: null,
+      pushState: (s, t, url) => pushed.push(url),
+      replaceState: (s, t, url) => { win.location = new URL(url, win.location.href); },
+    },
     matchMedia: (q) => ({ matches: q === '(min-width: 1024px)' ? width >= 1024 : false }),
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
     App: {
@@ -520,6 +524,49 @@ test('an unsent agent session opens beside the app with its hint, and becomes th
   assert.equal(api.sidePanelStore.get().canBack, true, 'Back still climbs to the inbox, and only there');
   api.expand();
   assert.deepEqual(pushed, ['/?demo=1#messages/agent/7'], 'Expand finds the session, not a fresh draft');
+  cleanup();
+});
+
+test('the page the panel shows is in the top window\'s address, so a reload brings the panel back', () => {
+  const { win, flush } = topWindow();
+  const address = () => `${win.location.pathname}${win.location.search}`;
+  assert.equal(api.take('messages/agent/7'), true);
+  assert.equal(address(), '/app/notes-ab12?demo=1&side=messages/agent/7', 'in place, every other parameter kept');
+  const gone = fakeFrame();
+  api.embeddedApi.ready('agent/7', 'Dark mode');
+  api.embeddedApi.navigated('app/notes-ab12/dev/proposals/12', 'Notes', true);
+  assert.equal(address(), '/app/notes-ab12?demo=1&side=app/notes-ab12/dev/proposals/12', 'and it follows the panel');
+  api.close();
+  assert.equal(address(), '/app/notes-ab12?demo=1', 'closed: out of the address');
+  assert.equal(gone.length, 0);
+  api._resetForTests();
+
+  // A reload: the app comes back on screen with ?side= and the panel opens there.
+  win.location = new URL('https://homeroom.test/app/notes-ab12?side=agent/7&demo=1');
+  api.appPresence(true);
+  flush();
+  const s = api.sidePanelStore.get();
+  assert.equal(s.open, true);
+  assert.equal(s.route, 'agent/7');
+  assert.equal(s.frameSrc, '/?demo=1&panel=1#agent/7', 'the panel\'s own document does not inherit the note');
+  // Leaving the app takes it out, so a later visit starts without a panel.
+  api.appPresence(false);
+  assert.equal(address(), '/app/notes-ab12?demo=1');
+
+  // Only a page the panel shows is honoured; anything else is dropped.
+  assert.equal(api.sideRouteFrom('?side=settings'), null);
+  assert.equal(api.sideRouteFrom('?side=agent%2Fnew'), 'agent/new');
+  assert.equal(api.sideRouteFrom('?demo=1'), null);
+  cleanup();
+});
+
+test('a panel that cannot open where the address asks gives up and cleans the address', () => {
+  const { win, flush } = topWindow({ width: 800 });
+  win.location = new URL('https://homeroom.test/app/notes-ab12?demo=1&side=agent/7');
+  api.appPresence(true);
+  for (let i = 0; i < 25; i += 1) flush();
+  assert.equal(api.sidePanelStore.get().frameSrc, null, 'a narrow window has no room for it');
+  assert.equal(`${win.location.search}`, '?demo=1');
   cleanup();
 });
 
