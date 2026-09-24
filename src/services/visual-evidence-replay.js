@@ -362,7 +362,7 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
     try {
       execution = await kubernetes.runEvidenceJob(config, {
         sessionId, stdinPayload: payload,
-        timeoutMs: config.visualEvidence?.maxRunMs || 720_000,
+        timeoutMs: config.visualEvidence?.maxRunMs || 1_440_000,
         maxBuffer: MAX_OUTPUT_BYTES,
         salvagePartial: true,
         onStdoutLine, signal, previewRunId,
@@ -377,7 +377,7 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
         image: require('./visuals').CAPTURE_IMAGE,
         stdinPayload: payload,
         cmd: ['node', '/app/evidence-replay.js'],
-        memory: '6g', cpus: '8', timeoutMs: config.visualEvidence?.maxRunMs || 720_000,
+        memory: '6g', cpus: '8', timeoutMs: config.visualEvidence?.maxRunMs || 1_440_000,
         maxBuffer: MAX_OUTPUT_BYTES, onStdoutLine,
       });
     } catch (err) {

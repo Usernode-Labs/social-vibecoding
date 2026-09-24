@@ -35,7 +35,7 @@ async function cleanupRunResources(config, run) {
 async function recoverInterrupted(config, pool, {
   maxAgeMs = null, limit = 20, cleanup = cleanupRunResources, stateService = state,
 } = {}) {
-  const ageMs = Math.max(60_000, Number(maxAgeMs) || config.visualEvidence?.maxRunMs || 720_000);
+  const ageMs = Math.max(60_000, Number(maxAgeMs) || config.visualEvidence?.maxRunMs || 1_440_000);
   const legacyAgeMs = Math.max(ageMs, LEGACY_RUN_GRACE_MS);
   const { rows } = await pool.query(
     `SELECT r.*, a.slug AS app_slug, s.visual_evidence_run_id AS current_run_id
@@ -278,7 +278,7 @@ async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpd
 async function sweep(config, pool) {
   const recovered = await recoverInterrupted(config, pool);
   const checkouts = await sweepOrphanCheckouts(pool, {
-    maxAgeMs: config.visualEvidence?.maxRunMs || 720_000,
+    maxAgeMs: config.visualEvidence?.maxRunMs || 1_440_000,
   });
   const pruned = await prune(pool, config);
   return {
