@@ -207,7 +207,7 @@ no unmeasured numeric defaults are being enabled by this document.
 5. Backup/restore of data plus intent/checkpoints, explicit identity recovery and
    a reconstruction test, then the separately scheduled production migration.
 
-The installed staging release still creates unselected apps centrally, exposes
-single-app moves, and retains their sources. It has no bulk-run API or automatic
-placement yet. The one-off cleanup recorded in infra removes existing retired
+The next candidate enables opt-in new-app placement through durable SQL reservations.
+Existing apps keep their assignments; single-app moves still retain their sources.
+The bulk-run API and automatic source cleanup remain outstanding. The one-off cleanup recorded in infra removes existing retired
 copies; automatic post-verification deletion is part of the next executor change.

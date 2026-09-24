@@ -1641,7 +1641,17 @@ async function setAppDatabaseWritable(dbName, writable, { execute = execInDb } =
   return { dbName, role, writable: !!writable };
 }
 
+// Called only inside an allocation-owned routing context, before publication.
+async function copyAllocatedDatabase(sourceDb, targetDb) {
+  const exclude = await privateDataExclusions(sourceDb);
+  await dumpRestore(sourceDb, targetDb, exclude);
+  await reassignUserObjectsTo(targetDb, adminUser(targetDb), ownerRoleName(targetDb));
+  await truncatePrivateTables(targetDb);
+  await scrubPrivateColumns(targetDb);
+}
+
 module.exports = {
+  copyAllocatedDatabase,
   appDbName,
   stagingDbName,
   evidenceDbName,
@@ -1706,6 +1716,9 @@ for (const [name, count] of Object.entries(placementOperations)) {
     const databases = args.slice(0, count).map((arg) => typeof arg === 'object' ? arg?.templateDb : arg);
     const placement = require('./database-placement');
     return routing.run(databases, async () => {
+      if (['adoptExistingDatabase', 'ensureRoleExists'].includes(name) && routing.currentRecords().some(r => r.name?.startsWith('allocation-'))) {
+        throw new Error('Allocated database identity requires operator recovery');
+      }
       if (['createDatabase', 'dropDatabase', 'truncatePrivateTables', 'scrubPrivateColumns'].includes(name)) {
         await placement.assertRetirementAllowed(databases);
       }

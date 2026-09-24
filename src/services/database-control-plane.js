@@ -37,6 +37,7 @@ function validatePolicy(policy) {
     destinations.add(destination);
   }
   require('./database-pools').validatePools(policy);
+  require('./database-allocation').validate(policy);
   return policy;
 }
 

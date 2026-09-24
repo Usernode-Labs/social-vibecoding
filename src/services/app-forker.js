@@ -304,7 +304,8 @@ async function forkApp(config, appRow, sourceApp) {
     reportPhase(appId, slug, 'database');
     const forkDbName = dbManager.appDbName(slug);
     const sourceDbName = dbManager.appDbName(sourceApp.slug);
-    const { password: dbPassword } = await dbManager.cloneDatabase(sourceDbName, forkDbName);
+    const allocated = await require('./database-allocation').provision(config, appRow, { sourceDatabase: sourceDbName });
+    const { password: dbPassword } = allocated || await dbManager.cloneDatabase(sourceDbName, forkDbName);
     await pool.query('UPDATE apps SET db_password = $1 WHERE id = $2', [dbPassword, appId]);
     const dbUrl = await dbManager.connectionUrl(forkDbName, dbPassword);
 

@@ -9,8 +9,8 @@ async function main() {
     kubeconfig: { type: 'string' }, 'expected-cluster-uid': { type: 'string' }, target: { type: 'string' },
     namespace: { type: 'string', default: 'social-platform' }, 'policy-configmap': { type: 'string', default: 'social-database-policy' },
   } });
-  if (positionals.length !== 1 || !['plan', 'reconcile'].includes(positionals[0]) || !values.kubeconfig || !values['expected-cluster-uid'] || !values.target) {
-    throw new Error('Usage: node tools/database-pools.js plan|reconcile --kubeconfig PATH --expected-cluster-uid UID --target ID');
+  if (positionals.length !== 1 || !['plan', 'reconcile', 'project-runtime'].includes(positionals[0]) || !values.kubeconfig || !values['expected-cluster-uid'] || (positionals[0] !== 'project-runtime' && !values.target)) {
+    throw new Error('Usage: node tools/database-pools.js plan|reconcile|project-runtime --kubeconfig PATH --expected-cluster-uid UID --target ID');
   }
   const k8s = require('@kubernetes/client-node'), config = new k8s.KubeConfig();
   config.loadFromFile(values.kubeconfig);
@@ -19,8 +19,9 @@ async function main() {
   if (ns.metadata.uid !== values['expected-cluster-uid']) throw new Error('Kubernetes cluster identity mismatch');
   const cm = await core.readNamespacedConfigMap({ name: values['policy-configmap'], namespace: values.namespace });
   const policy = validatePolicy(JSON.parse(cm.data['policy.json']));
-  if (!policy.operatorManaged || policy.namespace !== values.namespace || !policy.targets.some(t => t.id === values.target)) throw new Error('Target is not in the operator-managed registry');
+  if (!policy.operatorManaged || policy.namespace !== values.namespace || (positionals[0] !== 'project-runtime' && !policy.targets.some(t => t.id === values.target))) throw new Error('Target is not in the operator-managed registry');
   const store = createStore(config.makeApiClient(k8s.CustomObjectsApi));
+  if (positionals[0] === 'project-runtime') { await projectRuntime(core, store, policy); console.log('Runtime credentials projected for registered pool identities.'); return; }
   let request = await store.get(REQUESTS, policy.namespace, values.target);
   if (positionals[0] === 'plan') {
     const target = policy.targets.find(t => t.id === values.target);
@@ -43,9 +44,32 @@ async function main() {
   }
   throw new Error('Provisioning remains pending; rerun reconcile to continue the same request');
 }
+async function projectRuntime(core, store, policy) {
+  const data = {}, targets = [];
+  for (const t of policy.runtimeTargets || []) {
+    const cluster = await store.getCluster(t.namespace,t.clusterName);
+    if (cluster?.metadata?.uid !== t.uid || cluster.metadata.deletionTimestamp) throw Error('Cluster identity changed');
+    const ca = await core.readNamespacedSecret({namespace:t.namespace,name:`${t.clusterName}-ca`});
+    const admin = await core.readNamespacedSecret({namespace:t.namespace,name:`${t.clusterName}-superuser`});
+    for (const s of [ca,admin]) if (!s.metadata.ownerReferences?.some(r=>r.kind==='Cluster' && r.uid===t.uid)) throw Error('Secret identity changed');
+    const decode=k=>Buffer.from(admin.data[k] || '', 'base64').toString();
+    if (!ca.data['ca.crt'] || !decode('username') || !decode('password')) throw Error('Credentials missing');
+    const url=new URL(`postgresql://${t.clusterName}-rw.${t.namespace}.svc.cluster.local:5432/postgres`);
+    url.username=decode('username');url.password=decode('password');
+    url.searchParams.set('sslmode','verify-full');url.searchParams.set('sslrootcert',`/etc/sv-database-targets/${t.id}.crt`);
+    targets.push({id:t.id,clusterUid:t.uid,adminUrl:url.toString()});data[`${t.id}.crt`]=ca.data['ca.crt'];
+  }
+  if (!targets.length) throw Error('No runtime targets');
+  data['targets.json']=Buffer.from(JSON.stringify({targets})).toString('base64');
+  const args={namespace:policy.namespace,name:'social-database-runtime-targets'};
+  let existing;
+  try {existing=await core.readNamespacedSecret(args);} catch(e) {if (Number(e.code || e.response?.statusCode)!==404) throw e;}
+  if (existing) await core.replaceNamespacedSecret({...args,body:{...existing,data}});
+  else await core.createNamespacedSecret({namespace:policy.namespace,body:{apiVersion:'v1',kind:'Secret',metadata:{name:args.name,namespace:args.namespace},type:'Opaque',data}});
+}
 if (require.main === module) main().catch(e => {
   // API errors can contain credentials or full resources. Only our own messages are public.
   console.error('Operator request failed; check arguments, cluster identity and resource status.');
   process.exitCode = 1;
 });
-module.exports = { main };
+module.exports = { main, projectRuntime };

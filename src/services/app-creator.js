@@ -84,7 +84,8 @@ async function createApp(config, appRow) {
     // SELF-HOSTING.md "Per-app postgres roles".
     reportPhase(appId, slug, 'database');
     const dbName = dbManager.appDbName(slug);
-    const { password: dbPassword } = await dbManager.createDatabase(dbName);
+    const allocated = await require('./database-allocation').provision(config, appRow);
+    const { password: dbPassword } = allocated || await dbManager.createDatabase(dbName);
     await pool.query(
       'UPDATE apps SET db_password = $1 WHERE id = $2',
       [dbPassword, appId]

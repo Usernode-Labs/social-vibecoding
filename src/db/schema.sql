@@ -8758,3 +8758,25 @@ CREATE TABLE IF NOT EXISTS preview_operations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE preview_operations IS 'staging:private';
+
+-- Durable initial placement intent. No cascading delete: retiring an app must
+-- explicitly verify its SQL database before releasing reserved capacity.
+CREATE TABLE IF NOT EXISTS app_database_allocations (
+  app_id INTEGER PRIMARY KEY REFERENCES apps(id),
+  slug TEXT NOT NULL UNIQUE,
+  database_name TEXT NOT NULL UNIQUE,
+  allocation_uid UUID NOT NULL UNIQUE,
+  source_database TEXT,
+  phase TEXT NOT NULL CHECK (phase IN ('Waiting','Reserved','Provisioning','Ready')),
+  target_id TEXT,
+  cluster_uid TEXT,
+  cluster_namespace TEXT,
+  cluster_name TEXT,
+  demand JSONB NOT NULL,
+  decision JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((phase = 'Waiting' AND target_id IS NULL) OR
+    (phase <> 'Waiting' AND target_id IS NOT NULL AND cluster_uid IS NOT NULL
+      AND cluster_namespace IS NOT NULL AND cluster_name IS NOT NULL))
+);
+COMMENT ON TABLE app_database_allocations IS 'staging:private';

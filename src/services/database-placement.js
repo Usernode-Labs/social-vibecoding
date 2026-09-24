@@ -80,7 +80,8 @@ async function resolvePlacements(databaseNames, { all = false, env = process.env
   if (!policy) return [];
   const targets = policy.bindingTargets.filter((target) => all
     || databaseNames.some((name) => ownsDatabase(target, name)));
-  if (!targets.length) return []; // Non-selected apps do not make API requests.
+  const allocated = await require('./database-allocation').records(policy, databaseNames, all);
+  if (!targets.length && !allocated.length) return []; // Unmanaged apps retain their existing route.
   try {
     const central = new URL(env.DB_ADMIN_URL || env.DATABASE_URL);
     if (!['postgres:', 'postgresql:'].includes(central.protocol)) throw fail();
@@ -115,6 +116,12 @@ async function resolvePlacements(databaseNames, { all = false, env = process.env
       const cluster = await api.cluster(current.clusterRef.namespace, current.clusterRef.name);
       if (cluster?.metadata?.uid !== current.clusterRef.uid || cluster.metadata.deletionTimestamp) throw fail();
       records.push({ name: target.bindingName, ...current });
+    }
+    for (const entry of allocated) {
+      if (records.some(r => r.appId === entry.appId)) throw fail();
+      const cluster = await api.cluster(entry.clusterRef.namespace, entry.clusterRef.name);
+      if (cluster?.metadata?.uid !== entry.clusterRef.uid || cluster.metadata.deletionTimestamp) throw fail();
+      records.push(entry);
     }
     return records;
   } catch { throw fail(); } // Never emit URLs, API bodies or credentials.
