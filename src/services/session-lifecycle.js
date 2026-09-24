@@ -157,6 +157,48 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
   return { freed: false };
 }
 
+// The per-user cap, handled for the user rather than put to them. When their
+// own work needs one of their slots and every slot is taken, pause their
+// least-recently-active session that is not mid-turn. Pausing keeps the
+// branch, the pull request, the preview and the agent's context, and opening
+// or messaging the session resumes it, so it is bookkeeping the user never
+// sees: "paused" is not a state anybody is asked to manage (#2779 follow-up).
+// The resume route has always done this; starting new work does it too now.
+//
+// Params:
+//   userId           - whose slot to free (only their own sessions).
+//   excludeSessionId - a session never to pause (the one being resumed or
+//                      replaced).
+//   includeHeadless  - the resume route's count includes headless rows, so
+//                      its victims may be headless too; every other count
+//                      excludes them.
+//
+// Returns { freed: boolean, sessionId?: number }.
+async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHeadless = false }) {
+  const { rows } = await pool.query(
+    `SELECT id FROM chat_sessions
+      WHERE user_id = $1 AND status = 'active' AND id <> $2
+        AND source IS DISTINCT FROM 'imported'
+        AND ($3::boolean OR is_headless = FALSE)
+      ORDER BY last_activity_at ASC`,
+    [userId, excludeSessionId == null ? 0 : excludeSessionId, !!includeHeadless]
+  );
+  for (const row of rows) {
+    const id = Number(row && row.id);
+    if (!Number.isInteger(id) || id <= 0 || isSessionBusy(id)) continue;
+    const { paused } = await pauseSession({ pool, sessionId: id, userId, reason: 'lru' });
+    if (paused) {
+      log.info('session-lifecycle', 'Freed a user slot', { userId, sessionId: id });
+      return { freed: true, sessionId: id };
+    }
+  }
+  return { freed: false };
+}
+
+// The one thing a user is told when their slots cannot be freed: every other
+// session of theirs is in the middle of a turn.
+const USER_SLOTS_BUSY = 'Your other sessions are all busy finishing turns. Try again in a moment.';
+
 // Tear down a session's staging preview (container + cloned DB + Caddy
 // route) WITHOUT changing the session's status. This is the staging GC
 // path — pausing no longer does it, so a separate, longer-horizon
@@ -575,6 +617,8 @@ module.exports = {
   ensureSessionBranch,
   pauseSession,
   freeGlobalSlot,
+  freeUserSlot,
+  USER_SLOTS_BUSY,
   teardownStagingForSession,
   archiveSession,
   finalizeArchivedSession,

@@ -60,6 +60,7 @@ import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
 import { useGlobalChatState } from '../global-chat/store';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
@@ -226,12 +227,21 @@ export function RecentsList() {
   // the experimental chat is off shows no agent rows here either.
   const agentsOn = !!chat.bootstrap?.parityReady
     && chat.bootstrap.profiles.globalChat.enabled === true;
+  // Agent sessions (#2779 follow-up), read once the viewer is named; the
+  // store keeps the list current as conversations start and move. The flag
+  // or not, as Messages lists them: turning agent sessions off never hides a
+  // conversation that already exists.
+  const { sessions: agentSessions } = useAgentSessionState();
+  useEffect(() => {
+    if (viewer) void loadAgentSessions();
+  }, [viewer]);
   const items = mounted && viewer
     ? buildRecents({
       apps,
       conversations: snap.conversations,
       discussions: snap.discussions,
       agents: agentsOn ? (chat.threads as AgentChat[]) : [],
+      agentSessions,
       viewerId: Number(window.App?.user?.id) || null,
     })
     : [];

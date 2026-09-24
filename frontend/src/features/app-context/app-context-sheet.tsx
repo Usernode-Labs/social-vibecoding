@@ -122,7 +122,9 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   InfoCircleIcon,
+  PencilSquareIcon,
   PlusWideIcon,
+  SparklesIcon,
   TerminalIcon,
   XIcon,
 } from '@/components/ui/icons';
@@ -134,6 +136,9 @@ import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
+import { continueRows } from './continue-model';
+import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
+import { setFilter as setMessagesFilter } from '../messages/store';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
@@ -232,8 +237,9 @@ export function AppsSwitcherSheet(): ReactNode {
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
   const {
-    slug, name, showTerminal, target, restricted,
+    slug, name, showTerminal, target, restricted, sessions: improveRows,
   } = useStoreState(improveStore);
+  const { sessions: agentSessions } = useAgentSessionState();
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to workshop" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
@@ -276,6 +282,27 @@ export function AppsSwitcherSheet(): ReactNode {
   const appLabel = name || slug || 'this app';
 
   const close = useCallback(() => AppContext.close(), []);
+
+  /*
+      CONTINUE (#2779 follow-up): up to three of your in-progress items on
+      this app, under Go to workshop, so going back to what you were doing
+      is one tap from anywhere — then "See all your work", Messages' Agents
+      list. The rules are ./continue-model.ts's: a conversation stands for
+      the changes it started, and a paused session is listed like any other.
+
+      AFTER MOUNT and after the lists load, never in the prerender: the rows
+      are the viewer's own data, and the hydrating render has to print what
+      the prerender printed. The Improve store's rows are already loaded by
+      the time a target exists; the conversations are read on open, for any
+      signed-in viewer, the flag or not — Messages' rule: turning agent
+      sessions off never hides a conversation that already exists.
+  */
+  useEffect(() => {
+    if (open && window.App?.user) void loadAgentSessions();
+  }, [open]);
+  const continuing = mounted && view !== 'about'
+    ? continueRows(slug || null, agentSessions || [], improveRows || [])
+    : [];
 
 
   // Every way into an app funnels through improveStore.slug, so recording
@@ -572,6 +599,38 @@ export function AppsSwitcherSheet(): ReactNode {
               </span>
             ) : null}
           />
+          {/*
+              CONTINUE (#2779 follow-up), directly under Go to workshop: the
+              list still opens on that row (#2761, the owner's call, and a
+              declared check), and your own work on this app is the next
+              thing in it. See the comment on `continuing` above.
+          */}
+          {continuing.length ? (
+            <div id="app-menu-continue" data-app-menu-continue={continuing.length}>
+              <div className={SECTION}>Continue</div>
+              {continuing.map((row, index) => (
+                <MenuRow
+                  key={row.key}
+                  id={`app-menu-continue-${index}`}
+                  dataContextRow={row.kind === 'agent' ? 'continue-agent' : 'continue-change'}
+                  href={row.href}
+                  icon={row.kind === 'agent' ? <SparklesIcon /> : <PencilSquareIcon />}
+                  label={row.title}
+                  trailing={<span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{row.detail}</span>}
+                />
+              ))}
+              <MenuRow
+                id="app-menu-continue-all"
+                href="#messages"
+                icon={<ChatIcon />}
+                label="See all your work"
+                onClick={() => {
+                  setMessagesFilter('agents');
+                  AppContext.dismissForNav();
+                }}
+              />
+            </div>
+          ) : null}
           {/*
               #2763: the TWO-PANE route. `#app/<slug>/dev/chat` was the old
               full-screen discussion; `#messages/app/<slug>` opens the same

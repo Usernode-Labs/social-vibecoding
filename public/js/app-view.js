@@ -10227,7 +10227,9 @@ const AppView = {
     // carries the same two check scalars as the proposal feed. Render that
     // higher-signal state in the Underway card instead of leaving the row
     // visually idle while the background pipeline runs.
-    if (s && s.status === 'active' && s.check_state
+    // A paused session is an active one whose worker was released (#2779
+    // follow-up: pausing is bookkeeping, resumed on open), so it reads the same.
+    if (s && (s.status === 'active' || s.status === 'paused') && s.check_state
         && typeof window !== 'undefined' && window.MergeStatus) {
       const life = MergeStatus.lifecycle(s);
       if (life.key === 'checks_running' && s.check_phase) {
@@ -10244,9 +10246,7 @@ const AppView = {
         glyph: life.glyph || undefined,
       };
     }
-    return s && s.status === 'paused'
-      ? { t: 'chip', key: 'state', cls: 'dev-badge bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', label: 'paused' }
-      : null;
+    return null;
   },
 
   _importedSessionBadgeSpec(s) {
@@ -18209,7 +18209,12 @@ const AppView = {
       in_review: 'In review',
       working: 'Being worked on',
       auto_solving: 'Auto-solving…',
-      paused: 'Paused',
+      // The key stays 'paused' (it orders the states and dates the
+      // self-clear), but the word is not shown (#2779 follow-up): the
+      // platform pauses any session a few idle minutes after it was used,
+      // so what this state means to a reader is "started, not being
+      // worked on now".
+      paused: 'Started',
       answer_needed: 'Needs an answer',
       draft_ready: 'Draft ready to review',
       claimed: 'Claimed',
@@ -18272,7 +18277,7 @@ const AppView = {
     } else if (s.key === 'auto_solving') {
       main = 'An auto-solve run is working on this right now.';
     } else if (s.key === 'paused') {
-      main = `${subj} started work on this and paused it${when}, so nobody is working on it at the moment.`
+      main = `${subj} started work on this${age ? ` and last worked on it ${age}` : ''}, so nobody is working on it at the moment.`
         + (clears ? ` This clears itself on ${clears} unless the session picks up again.` : '');
     } else if (s.key === 'answer_needed') {
       main = 'An auto-solve run got part way and asked a question. It needs an answer from someone before it can go further.';

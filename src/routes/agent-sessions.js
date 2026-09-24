@@ -23,6 +23,7 @@ const actions = require('../services/agent-session-actions');
 const agentTurn = require('../services/mayor/agent-turn');
 const models = require('../services/models');
 const agentPreferences = require('../services/agent-preferences');
+const notifications = require('../services/notifications');
 
 const MAX_MESSAGE_CHARS = 20000;
 
@@ -209,6 +210,14 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     try {
       const session = await agentSessions.getAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found' });
+      // Reading the conversation is seeing what its changes finished with:
+      // the bell's "The coding agent finished" rows for it are answered,
+      // however the user got here. Fire-and-forget, like the dev chat's.
+      notifications.markReadForAgentSession(pool, req.user.id, session.id)
+        .then((cleared) => {
+          if (cleared > 0) require('../services/ws').pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+        })
+        .catch((err) => log.warn('agent-sessions', 'session_done dismiss failed', { err: err.message }));
       // Where a running turn is, when it runs in this process, so a client
       // that opens the conversation mid-turn shows the right controls.
       return res.json({ session, turn: agentTurn.turnState(session.id) });

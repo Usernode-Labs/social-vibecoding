@@ -133,6 +133,8 @@
     // Notifications._onItemClick.
     _routeFor(info) {
       if (info?.kind === 'test_alert') return '#settings/alerts';
+      // #2779: a change an agent session started opens the conversation.
+      if (info && info.agentSessionId) return `#messages/agent/${info.agentSessionId}`;
       if (!info || !info.appSlug) return null;
       if (info.kind === 'auto_solve_done') {
         return info.headlessIssueNumber
@@ -149,6 +151,10 @@
     // back to a hash assignment, exactly like the bell-menu click path.
     _navigate(info) {
       try { window.focus(); } catch {}
+      if (info && info.agentSessionId) {
+        window.location.hash = DevAlerts._routeFor(info);
+        return;
+      }
       if (info && info.appSlug && typeof App !== 'undefined' && App.openAppTab) {
         if (info.kind === 'auto_solve_done') {
           App.openAppTab(info.appSlug, 'dev', {

@@ -104,4 +104,11 @@ function clearSession(sessionId) {
   }
 }
 
-module.exports = { publish, subscribe, clearSession };
+// How many listeners are following a session's bus right now (an open
+// conversation screen follows its agent session's). Zero for an unknown key.
+function subscriberCount(sessionId) {
+  const b = buffers.get(sessionId);
+  return b ? b.subs.size : 0;
+}
+
+module.exports = { publish, subscribe, clearSession, subscriberCount };
