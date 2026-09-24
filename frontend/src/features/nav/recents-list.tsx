@@ -147,7 +147,7 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
   onToggleOlder: () => void;
   now?: number;
 }) {
-  const { days, older } = groupRecents(items, now);
+  const { days, earlier, older } = groupRecents(items, now);
   const row = (item: RecentItem) => (
     <RecentRow key={item.key} item={item} live={!!item.app && live.includes(item.app.slug)} />
   );
@@ -159,9 +159,19 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
           {day.items.map(row)}
         </Fragment>
       ))}
+      {/* QA 2026-09-24 Q31: the newest older rows, shown while folded so
+          the list is never just a heading over a button. Opened, the rest
+          follow straight on: they are earlier too, and a second label
+          ("Older") under "Earlier" would say nothing new. */}
+      {earlier.length ? (
+        <>
+          <div className="platform-recents-day">Earlier</div>
+          {earlier.map(row)}
+        </>
+      ) : null}
       {showOlder && older.length ? (
         <>
-          <div className="platform-recents-day">Older</div>
+          {earlier.length ? null : <div className="platform-recents-day">Older</div>}
           {older.map(row)}
         </>
       ) : null}

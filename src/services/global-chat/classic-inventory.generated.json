@@ -6440,7 +6440,7 @@
     },
     {
       "source": "src/routes/home-panels.js",
-      "line": 679,
+      "line": 694,
       "method": "GET",
       "path": "/api/home-panels",
       "expression": null,
