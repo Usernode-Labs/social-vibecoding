@@ -45,12 +45,12 @@ async function resolveTarget(db, user, type, key, lock = false) {
   if (!user?.id) fail(401, 'Sign in to report');
   if (type === 'app') {
     const { rows } = await db.query(
-      `SELECT id, slug, name, created_by, main_sha, collab_visibility, view_visibility, moderation_suspended_at
+      `SELECT id, slug, name, created_by, self_hosted, main_sha, collab_visibility, view_visibility, moderation_suspended_at
          FROM apps WHERE slug = $1 ${lock ? 'FOR SHARE' : ''}`, [String(key)]);
     const app = rows[0];
     if (!app || !(await appAccess.checkAppAccess(db, app, user, 'view'))) fail(404, 'Target unavailable');
     if (Number(app.created_by) === Number(user.id)) fail(400, 'You cannot report your own app.');
-    return { id: app.id, userId: app.created_by, label: app.name,
+    return { id: app.id, userId: app.created_by, label: app.name, blockAppSlug: app.self_hosted ? null : app.slug,
       evidence: { name: app.name, slug: app.slug, deployedVersion: app.main_sha }, files: [] };
   }
   if (type === 'user') {
@@ -119,6 +119,11 @@ async function resolveTarget(db, user, type, key, lock = false) {
       threadType: row.thread_type || null, threadRef: row.thread_ref || null, objects },
     files: row.moderation_hidden_at ? [] : files.rows };
 }
+function blockActions(type, target, userId) {
+  if (type === 'app') return { blockUserId: null, blockAppSlug: target.blockAppSlug || null };
+  return { blockAppSlug: null, blockUserId: target.userId !== userId ? target.userId : null,
+    blockUsername: type === 'user' ? target.evidence.username : target.evidence.author };
+}
 async function notify(db, userId, kind, detail) {
   if (!userId) return;
   const { rows } = await db.query('INSERT INTO notifications (user_id, kind, detail) VALUES ($1, $2, $3) RETURNING id', [userId, kind, detail.slice(0, 1200)]);
@@ -144,7 +149,7 @@ async function submitReport(pool, user, input) {
     target = await resolveTarget(db, user, input.targetType, input.target, true);
     if (['new', 'in_review'].includes(c.status)) {
       const existing = await db.query(`SELECT id FROM moderation_reports WHERE case_id = $1 AND (cycle = $2 OR (cycle = 0 AND evidence->>'legacyStatus' = 'pending')) AND reporter_user_id = $3`, [c.id, c.cycle, user.id]);
-      if (existing.rows.length) return { id: existing.rows[0].id, received: true, duplicate: true, blockUserId: input.targetType !== 'app' && target.userId !== user.id ? target.userId : null };
+      if (existing.rows.length) return { id: existing.rows[0].id, received: true, duplicate: true, ...blockActions(input.targetType, target, user.id) };
     }
     const rate = await db.query(
       `SELECT COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') AS hourly, COUNT(*) AS daily
@@ -166,7 +171,7 @@ async function submitReport(pool, user, input) {
     }
     await db.query('UPDATE moderation_cases SET revision = revision + 1, updated_at = NOW() WHERE id = $1', [c.id]);
     await notify(db, user.id, 'moderation_report', `Report #${rows[0].id} received. We’ll review it.`);
-    return { id: rows[0].id, received: true, duplicate: false, blockUserId: input.targetType !== 'app' && target.userId !== user.id ? target.userId : null };
+    return { id: rows[0].id, received: true, duplicate: false, ...blockActions(input.targetType, target, user.id) };
   });
 }
 

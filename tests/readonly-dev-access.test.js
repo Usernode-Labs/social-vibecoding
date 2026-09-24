@@ -46,6 +46,7 @@ const FULLY_PRIVATE = { id: 20, collab_visibility: 'private', view_visibility: '
 function guardStubPool() {
   return {
     async query(sql, params = []) {
+      if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
       if (/FROM app_collaborators/.test(sql)) return { rows: [] };
       if (/FROM chat_sessions cs JOIN apps a/.test(sql) || /FROM issues i JOIN apps a/.test(sql)) {
         const id = params[0];
@@ -108,6 +109,7 @@ function wsStubPool() {
   return {
     queries,
     async query(sql, params = []) {
+      if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
       queries.push(sql);
       if (/SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE id/.test(sql)) {
         return { rows: [{ id: 10, collab_visibility: 'private', view_visibility: 'public' }] };

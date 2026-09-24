@@ -111,6 +111,7 @@ async function listForUser(pool, userId, { isAdmin = false, limit = MAX_SAVED } 
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN users u ON u.id = m.user_id
       WHERE b.user_id = $1 AND ${VIEW_ACCESS_SQL}
+        AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = $1 AND app_block.app_id = a.id)
         AND NOT EXISTS (
           SELECT 1 FROM user_blocks blocked
            WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = m.user_id

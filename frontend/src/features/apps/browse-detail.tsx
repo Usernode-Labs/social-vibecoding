@@ -62,6 +62,7 @@ type ActionView = {
 export type DetailView =
   | { state: 'loading' }
   | { state: 'missing' }
+  | { state: 'blocked' }
   | {
     state: 'ready';
     app: Record<string, any>;
@@ -313,6 +314,10 @@ export function BrowseDetail({ detail }: { detail: DetailView | null }): ReactNo
   if (detail.state === 'loading') {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading&hellip;</p>;
   }
+  if (detail.state === 'blocked') return <div className={NOTE_CLASS}>
+    <p>You blocked this app. Unblock it to open it again.</p>
+    <a href="#settings/blocked-apps" className="text-violet-600 dark:text-violet-400 underline">Open blocked apps in Settings</a>
+  </div>;
   if (detail.state === 'missing') return <Missing />;
   return <Ready key={detail.slug} view={detail} />;
 }

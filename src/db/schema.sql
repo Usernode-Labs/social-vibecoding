@@ -5048,6 +5048,16 @@ COMMENT ON TABLE mobile_push_registrations IS 'staging:private';
 COMMENT ON TABLE mobile_push_registration_events IS 'staging:private';
 COMMENT ON TABLE mobile_push_deliveries IS 'staging:private';
 
+-- Personal app blocks affect one viewer, never the app's contributors.
+CREATE TABLE IF NOT EXISTS user_app_blocks (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, app_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_app_blocks_app ON user_app_blocks (app_id, user_id);
+COMMENT ON TABLE user_app_blocks IS 'staging:private';
+
 -- Capture the push outbox in the same transaction as the canonical
 -- notification. The kind/category registry is intentionally closed: adding a
 -- new inbox kind does not automatically make it a lock-screen event.
@@ -5057,6 +5067,7 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NEW.read_at IS NOT NULL
+     OR EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = NEW.user_id AND b.app_id = NEW.app_id)
      OR NOT COALESCE((
        SELECT COALESCE(preference.enabled, policy.default_enabled)
          FROM mobile_push_kind_categories policy
@@ -8915,4 +8926,3 @@ CREATE TABLE IF NOT EXISTS preview_operations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE preview_operations IS 'staging:private';
-

@@ -817,6 +817,7 @@ function appRoutes(config) {
           GROUP BY app_id
         ) iss ON iss.app_id = a.id
         WHERE a.moderation_suspended_at IS NULL AND (NOT a.self_hosted OR $1::boolean)
+          AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $2 AND b.app_id = a.id)
           AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
       `, [showSelfHosted, userId, isAdmin]);

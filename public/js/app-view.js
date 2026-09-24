@@ -740,6 +740,12 @@ const AppView = {
     // before that tail resumes, so the ownership check belongs here too.
     if (!isCurrentOpen()) return false;
     if (!res.ok) {
+      const failure = await res.json().catch(() => ({}));
+      if (failure.code === 'app_blocked') {
+        void window.PlatformUI?.confirm({ title: 'App blocked', message: 'You blocked this app. Unblock it in Settings → Blocked apps to open it again.', confirmLabel: 'Open Settings', cancelLabel: 'Close' }).then(open => {
+          if (open) location.hash = '#settings/blocked-apps';
+        });
+      }
       // The server won't confirm this app, but a launch surface may already
       // be mounted and pointing at it (beginLaunch runs off the cached list
       // record). Drop both, so the switchTab that follows lands on

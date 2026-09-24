@@ -250,6 +250,7 @@
       // gate lines in _renderLanguageSection.
       { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
       { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
+      { key: 'blocked-apps', label: 'Blocked apps', group: 'Preferences' },
       // The replay control for Home's welcome tour (#2255). Last in
       // Preferences: it configures nothing, it re-runs something, and the
       // tour's own Skip promises this row exists.

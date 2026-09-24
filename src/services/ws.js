@@ -739,6 +739,7 @@ async function handleMessage(pool, client, msg) {
              LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
              WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                AND NOT EXISTS (
                  SELECT 1 FROM user_blocks blocked
                   WHERE blocked.blocker_id = n.user_id
@@ -787,6 +788,7 @@ async function handleMessage(pool, client, msg) {
              LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
              WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                AND NOT EXISTS (
                  SELECT 1 FROM user_blocks blocked
                   WHERE blocked.blocker_id = n.user_id
@@ -962,6 +964,7 @@ async function handleMessage(pool, client, msg) {
                LEFT JOIN chat_sessions cs ON cs.id = n.session_id
                LEFT JOIN users su ON su.id = n.source_user_id
                WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                  AND NOT EXISTS (
                    SELECT 1 FROM user_blocks blocked
                     WHERE blocked.blocker_id = n.user_id
@@ -1114,14 +1117,15 @@ function deliverGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
   appAccess.getWsVisibility(_pool, { appId, appSlug })
     .then((info) => {
       if (!info || info.suspended) return; // no ordinary activity from a suspended app
-      if (!info.viewPrivate) {
+      if (!info.viewPrivate && !info.blockedUserIds?.size) {
         deliverGlobal(payload);
         return;
       }
       const json = JSON.stringify(payload);
       for (const client of globalClients) {
         if (client.ws.readyState !== 1) continue;
-        if (client.user.isAdmin || info.memberIds.has(client.user.id)) {
+        if (!info.blockedUserIds?.has(client.user.id)
+            && (!info.viewPrivate || client.user.isAdmin || info.memberIds.has(client.user.id))) {
           client.ws.send(json);
         }
       }
@@ -1331,6 +1335,14 @@ function broadcastToAdmins(payload) {
 // `pushNotificationToUser` is kept as an alias so the notification call sites
 // above (and any external caller) read naturally and don't have to churn.
 function deliverToUser(userId, payload) {
+  if (payload.type === 'app_blocks_changed') {
+    appAccess.invalidateVisibility(payload.appId, payload.slug);
+    if (payload.blocked) {
+      for (const client of rooms.get(payload.appId) || []) {
+        if (client.user.id === userId) client.ws.close(4004, 'App blocked');
+      }
+    }
+  }
   const json = JSON.stringify(payload);
   let sent = 0;
   for (const client of globalClients) {

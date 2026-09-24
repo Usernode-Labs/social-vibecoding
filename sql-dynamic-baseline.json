@@ -145,6 +145,13 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
+      "fingerprint": "2af50ec967a3eb8b0faa",
+      "count": 1,
+      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
       "fingerprint": "3ebf0a6fda28d39ecee9",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
@@ -155,13 +162,6 @@
       "fingerprint": "409bfab8e5d57942b5e6",
       "count": 1,
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE slug = $1`"
-    },
-    {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
-      "fingerprint": "f49f7e4446b7fca83c77",
-      "count": 1,
-      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },
     {
       "source": "src/routes/chat.js",
@@ -1020,13 +1020,6 @@
     {
       "source": "src/services/moderation.js",
       "kind": "structural-template",
-      "fingerprint": "9958ef865e41f0372a3a",
-      "count": 1,
-      "preview": "`SELECT id, slug, name, created_by, main_sha, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1 ${lock ? 'FOR SHARE' : ''}`"
-    },
-    {
-      "source": "src/services/moderation.js",
-      "kind": "structural-template",
       "fingerprint": "a9dee7364368978b9c59",
       "count": 1,
       "preview": "`UPDATE ${table} SET content = $2, moderation_hidden_at = NOW()${c.target_type === 'app_message' ? \", metadata = '{}'::jsonb\" : ''} WHERE id = $1`"
@@ -1037,6 +1030,13 @@
       "fingerprint": "ca8d147570795698a506",
       "count": 1,
       "preview": "`SELECT * FROM ${table} WHERE id = $1 ${lock ? 'FOR SHARE' : ''}`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "d3c71689eb36f6537d03",
+      "count": 1,
+      "preview": "`SELECT id, slug, name, created_by, self_hosted, main_sha, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1 ${lock ? 'FOR S"
     },
     {
       "source": "src/services/moderation.js",

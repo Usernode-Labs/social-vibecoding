@@ -68,6 +68,7 @@ const Browse = {
   // Guards the cold-deep-link fetch below so a miss can't loop.
   _detailFetching: null,
   _detailMissing: false,
+  _detailBlocked: false,
   // Where the CURRENT detail page was entered from, so the header's back
   // button lands where the user actually came from:
   //   'list' — a browse row tap, or a deep link / screenshot state. Back
@@ -138,6 +139,7 @@ const Browse = {
     Browse._chromeSuspended = !!(opts && opts.chrome === false);
     Browse._slug = slug || null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     if (Browse._slug) Browse._takeOrigin();
     else Browse._pendingOrigin = null;
@@ -154,6 +156,7 @@ const Browse = {
     Browse._open = false;
     Browse._slug = null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     // Leaving the screen retires the entry note with it — the next detail
     // page declares its own origin.
     Browse._detailOrigin = 'list';
@@ -181,6 +184,7 @@ const Browse = {
     const goingDeeper = !!next && !Browse._slug;
     Browse._slug = next;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     if (next) Browse._takeOrigin();
     else Browse._pendingOrigin = null;
@@ -194,6 +198,7 @@ const Browse = {
     if (!slug) return;
     Browse._slug = slug;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     Browse._takeOrigin();
     Browse._syncLevel();
@@ -203,6 +208,7 @@ const Browse = {
   showList() {
     Browse._slug = null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     Browse._pendingOrigin = null;
     Browse._syncLevel();
@@ -870,7 +876,7 @@ const Browse = {
 
     if (!app) {
       if (Browse._detailMissing) {
-        Browse._store.set({ detail: { state: 'missing' } });
+        Browse._store.set({ detail: { state: Browse._detailBlocked ? 'blocked' : 'missing' } });
         return;
       }
       Browse._store.set({ detail: { state: 'loading' } });
@@ -997,7 +1003,12 @@ const Browse = {
     Browse._detailFetching = slug;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const failure = await res.json().catch(() => ({}));
+        Browse._detailBlocked = failure.code === 'app_blocked';
+        throw new Error(`HTTP ${res.status}`);
+      }
+      Browse._detailBlocked = false;
       // The route answers `{ app: … }` (src/routes/apps.js), NOT a bare app
       // row — reading it as one made every cold deep link resolve to the
       // "isn't available" state. It only ever surfaced when the concurrent

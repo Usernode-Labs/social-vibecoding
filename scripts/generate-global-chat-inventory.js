@@ -170,6 +170,7 @@ const CLIENT_REFERENCE_EXEMPTIONS = [
 ];
 
 const DOMAIN_RULES = [
+  [/^\/api\/me\/app-blocks(?:\/|$)/, 'settings'],
   [/^\/api\/v4\/admin(?:\/|$)/, 'admin'],
   [/^\/api\/v4\/mobile(?:\/|$)/, 'native'],
   [/^\/challenges-api(?:\/|$)/, 'leaderboards'],
@@ -442,6 +443,7 @@ function classicPathFor(domain, routePath) {
   const value = String(routePath || '');
   const inApp = value.includes(':slug');
   const appRoot = '#app/:slug';
+  if (/^\/api\/me\/app-blocks(?:\/|$)/.test(value)) return '#settings/blocked-apps';
   if (domain === 'settings') return '#settings';
   if (domain === 'admin') return '#admin';
   if (domain === 'notifications') return '#notifications';

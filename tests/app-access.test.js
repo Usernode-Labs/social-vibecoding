@@ -12,6 +12,7 @@ const appAccess = require('../src/services/app-access');
 function stubPool({ apps = {}, members = new Set() } = {}) {
   return {
     async query(sql, params = []) {
+      if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
       if (/FROM app_collaborators/.test(sql)) {
         const [appId, userId] = params;
         return { rows: members.has(`${appId}:${userId}`) ? [{ '?column?': 1 }] : [] };

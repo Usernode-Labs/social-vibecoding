@@ -127,6 +127,7 @@ function makeMockPool(initial = {}) {
 
   async function query(sql, params = []) {
     const s = String(sql);
+    if (/FROM user_app_blocks/.test(s)) return { rows: [] };
     // ------------ SELECT session + app context ------------
     if (/SELECT[\s\S]*FROM chat_sessions cs[\s\S]*JOIN apps a/i.test(s)) {
       const id = params[0];
@@ -806,6 +807,7 @@ function makeBountyPool(bounties) {
     : b === null || b === undefined ? true : a !== b);
   async function query(sql, params = []) {
     const s = String(sql);
+    if (/FROM user_app_blocks/.test(s)) return { rows: [] };
     // Combined weekly-allowance count (countWeeklyAllowanceUsed): pr_kudos
     // (none in this pool) + non-voided issue_bounties for the user/week. The
     // `status <> 'voided'` filter is what refunds a voided self-bounty.

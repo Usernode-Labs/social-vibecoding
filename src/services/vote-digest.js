@@ -78,6 +78,7 @@ const PENDING_SQL = `
     FROM open_proposals p
     JOIN stakeholders s ON s.app_id = p.app_id
    WHERE s.user_id IS DISTINCT FROM p.author_id
+     AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = s.user_id AND b.app_id = p.app_id)
      AND NOT EXISTS (
        SELECT 1 FROM pr_votes v
         WHERE v.session_id = p.id AND v.user_id = s.user_id

@@ -77,6 +77,7 @@ const DISCUSSIONS_SQL = `
       JOIN app_collaborators me
         ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
      WHERE (NOT a.self_hosted OR $2::boolean)
+       AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $1 AND b.app_id = a.id)
   ),
   latest AS (
     SELECT DISTINCT ON (m.app_id)

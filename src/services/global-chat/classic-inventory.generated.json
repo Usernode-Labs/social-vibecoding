@@ -3,13 +3,13 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 680,
-    "mappedRoutes": 542,
+    "totalRoutes": 683,
+    "mappedRoutes": 545,
     "exemptRoutes": 138,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 370,
+    "clientApiReferences": 372,
     "unmatchedClientApiReferences": 0,
-    "settingsSections": 21,
+    "settingsSections": 22,
     "navigationSurfaces": 10
   },
   "navigation": [
@@ -100,6 +100,15 @@
       "gate": null,
       "capabilityId": "settings.open.alerts",
       "classicPath": "#settings/alerts",
+      "mobileSupported": true
+    },
+    {
+      "key": "blocked-apps",
+      "label": "Blocked apps",
+      "group": "Preferences",
+      "gate": null,
+      "capabilityId": "settings.open.blocked_apps",
+      "classicPath": "#settings/blocked-apps",
       "mobileSupported": true
     },
     {
@@ -367,7 +376,7 @@
     },
     {
       "source": "server.js",
-      "line": 684,
+      "line": 685,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -376,7 +385,7 @@
     },
     {
       "source": "server.js",
-      "line": 866,
+      "line": 867,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -385,7 +394,7 @@
     },
     {
       "source": "server.js",
-      "line": 870,
+      "line": 871,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -394,7 +403,7 @@
     },
     {
       "source": "server.js",
-      "line": 874,
+      "line": 875,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -403,7 +412,7 @@
     },
     {
       "source": "server.js",
-      "line": 878,
+      "line": 879,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -412,7 +421,7 @@
     },
     {
       "source": "server.js",
-      "line": 882,
+      "line": 883,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -421,7 +430,7 @@
     },
     {
       "source": "server.js",
-      "line": 886,
+      "line": 887,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -1414,6 +1423,71 @@
       ]
     },
     {
+      "source": "src/routes/app-blocks.js",
+      "line": 22,
+      "method": "GET",
+      "path": "/api/me/app-blocks",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "settings.get.me.app.blocks.4297b6cb",
+      "domain": "settings",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "setting",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#settings/blocked-apps",
+      "clientReferences": [
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/settings/sections/blocked-apps.tsx",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/app-blocks.js",
+      "line": 32,
+      "method": "PUT",
+      "path": "/api/me/app-blocks/:slug",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "settings.put.me.app.blocks.item.e4da76a9",
+      "domain": "settings",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "setting",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#settings/blocked-apps",
+      "clientReferences": [
+        "frontend/src/features/dialogs/report.tsx",
+        "frontend/src/features/settings/sections/blocked-apps.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/app-blocks.js",
+      "line": 33,
+      "method": "DELETE",
+      "path": "/api/me/app-blocks/:slug",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "settings.delete.me.app.blocks.item.63feee12",
+      "domain": "settings",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "setting",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#settings/blocked-apps",
+      "clientReferences": [
+        "frontend/src/features/dialogs/report.tsx",
+        "frontend/src/features/settings/sections/blocked-apps.tsx"
+      ]
+    },
+    {
       "source": "src/routes/app-directory.js",
       "line": 45,
       "method": "GET",
@@ -2016,7 +2090,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 986,
+      "line": 987,
       "method": "GET",
       "path": "/api/github/repo-info",
       "expression": null,
@@ -2034,7 +2108,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1006,
+      "line": 1007,
       "method": "GET",
       "path": "/api/github/verify-access",
       "expression": null,
@@ -2053,7 +2127,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1030,
+      "line": 1031,
       "method": "GET",
       "path": "/api/me/app-allowance",
       "expression": null,
@@ -2078,7 +2152,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1041,
+      "line": 1042,
       "method": "POST",
       "path": "/api/me/app-allowance/request",
       "expression": null,
@@ -2097,7 +2171,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1053,
+      "line": 1054,
       "method": "POST",
       "path": "/api/apps",
       "expression": null,
@@ -2125,7 +2199,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1189,
+      "line": 1190,
       "method": "POST",
       "path": "/api/apps/:slug/fork",
       "expression": null,
@@ -2148,7 +2222,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1279,
+      "line": 1280,
       "method": "GET",
       "path": "/api/apps/:slug",
       "expression": null,
@@ -2172,7 +2246,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1414,
+      "line": 1415,
       "method": "GET",
       "path": "/api/apps/:slug/version",
       "expression": null,
@@ -2194,7 +2268,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1679,
+      "line": 1680,
       "method": "GET",
       "path": "/api/apps/:slug/secrets",
       "expression": null,
@@ -2218,7 +2292,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1783,
+      "line": 1784,
       "method": "PUT",
       "path": "/api/apps/:slug/secrets/:key",
       "expression": null,
@@ -2237,7 +2311,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1836,
+      "line": 1837,
       "method": "DELETE",
       "path": "/api/apps/:slug/secrets/:key",
       "expression": null,
@@ -2256,7 +2330,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 1880,
+      "line": 1881,
       "method": "POST",
       "path": "/api/apps/:slug/secret-declaration-pr",
       "expression": null,
@@ -2279,7 +2353,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2136,
+      "line": 2137,
       "method": "POST",
       "path": "/api/apps/:slug/redeploy",
       "expression": null,
@@ -2303,7 +2377,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2174,
+      "line": 2175,
       "method": "POST",
       "path": "/api/apps/:slug/check-updates",
       "expression": null,
@@ -2326,7 +2400,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2202,
+      "line": 2203,
       "method": "POST",
       "path": "/api/apps/:slug/rename",
       "expression": null,
@@ -2349,7 +2423,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2266,
+      "line": 2267,
       "method": "POST",
       "path": "/api/apps/:slug/lock",
       "expression": null,
@@ -2372,7 +2446,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2311,
+      "line": 2312,
       "method": "POST",
       "path": "/api/apps/:slug/main-check/resume",
       "expression": null,
@@ -2391,7 +2465,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2337,
+      "line": 2338,
       "method": "POST",
       "path": "/api/apps/:slug/visibility-pr",
       "expression": null,
@@ -2414,7 +2488,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2438,
+      "line": 2439,
       "method": "GET",
       "path": "/api/apps/:slug/admins",
       "expression": null,
@@ -2436,7 +2510,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2508,
+      "line": 2509,
       "method": "GET",
       "path": "/api/apps/:slug/contributors",
       "expression": null,
@@ -2458,7 +2532,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2558,
+      "line": 2559,
       "method": "POST",
       "path": "/api/apps/:slug/admins-pr",
       "expression": null,
@@ -2481,7 +2555,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2654,
+      "line": 2655,
       "method": "POST",
       "path": "/api/apps/:slug/governance-pr",
       "expression": null,
@@ -2504,7 +2578,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2788,
+      "line": 2789,
       "method": "GET",
       "path": "/__access/authorize",
       "expression": null,
@@ -2513,7 +2587,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 2831,
+      "line": 2832,
       "method": "DELETE",
       "path": "/api/apps/:slug",
       "expression": null,
@@ -2537,7 +2611,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3026,
+      "line": 3027,
       "method": "POST",
       "path": "/api/apps/:slug/retry",
       "expression": null,
@@ -2563,7 +2637,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3101,
+      "line": 3102,
       "method": "POST",
       "path": "/api/apps/:slug/favorite",
       "expression": null,
@@ -2586,7 +2660,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3175,
+      "line": 3176,
       "method": "PUT",
       "path": "/api/favorites/order",
       "expression": null,
@@ -2604,7 +2678,7 @@
     },
     {
       "source": "src/routes/apps.js",
-      "line": 3222,
+      "line": 3223,
       "method": "POST",
       "path": "/api/apps/:slug/activity",
       "expression": null,
@@ -6799,7 +6873,7 @@
     },
     {
       "source": "src/routes/messages-overview.js",
-      "line": 165,
+      "line": 166,
       "method": "GET",
       "path": "/api/messages/app-discussions",
       "expression": null,

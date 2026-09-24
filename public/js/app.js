@@ -2498,6 +2498,12 @@ const App = {
               }
             }
             break;
+          case 'app_blocks_changed':
+            window.dispatchEvent(new CustomEvent('app-blocks-changed', { detail: data }));
+            if (data.blocked && window.AppView?.appData?.slug === data.slug) App.navigateHome();
+            window.Home?.load?.();
+            window.Browse?._load?.();
+            break;
           case 'user_blocks_changed':
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
             break;

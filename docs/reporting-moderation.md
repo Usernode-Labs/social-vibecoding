@@ -20,8 +20,28 @@ attachments become available to moderators. Submit confirms receipt and
 offers blocking separately where supported. Retries return the existing
 open report; reporting alone never imposes a penalty. App owners do not see
 Report app; an already-open form clearly explains that an owner cannot report
-their own app. App-report confirmations offer Done, without offering to block
-the app's creator. Blocking remains a separate option for user/message reports.
+their own app. App-report confirmations offer **Block app** and **Done**.
+User/message receipts offer **Block @username** and **Done**, identifying the
+actual reported person or author from server data. Neither action is automatic.
+
+## Personal app blocking
+
+Blocking an app hides it from the viewer's home/discovery lists, denies opening
+it through Homeroom (including direct links and API/session access), closes
+existing app chat sockets, and suppresses its bell and phone notifications.
+Existing and queued app notifications are removed; suppressed activity is not
+replayed after unblocking. Account-level moderation updates remain available.
+Public standalone app websites remain public outside the signed-in Homeroom
+experience. Homeroom itself cannot be blocked, preserving access to Settings.
+
+The creator, other contributors, their other apps, and other viewers are
+unaffected. Memberships, favorites, messages and reports are retained. This is
+a private account preference, with no moderation penalty or creator notification.
+Settings → Blocked apps lists blocked apps and offers Unblock. It remains
+possible to remove a personal block if the app later becomes private or
+suspended; removing that block does not bypass those separate access controls.
+Block records are scoped to the authenticated user, removed with the account or
+app, and excluded from staging data and generic debugging tools.
 
 ## Moderation
 

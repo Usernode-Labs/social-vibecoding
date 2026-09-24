@@ -35,6 +35,7 @@ function extract(re, label) {
 
 // The real push DDL, verbatim from schema.sql.
 const PUSH_DDL = [
+  extract(/CREATE TABLE IF NOT EXISTS user_app_blocks \([\s\S]*?\n\);/, 'personal app blocks'),
   extract(/CREATE TABLE IF NOT EXISTS mobile_push_deployment_state \([\s\S]*?\n\);/,
     'the deployment state table'),
   extract(/CREATE TABLE IF NOT EXISTS mobile_push_registrations \([\s\S]*?\n\);/,
@@ -57,9 +58,11 @@ const TRIGGER_FN = extract(
 // types the real tables declare for them, nothing more.
 const STUB_DDL = `
   CREATE TABLE users (id SERIAL PRIMARY KEY);
+  CREATE TABLE apps (id SERIAL PRIMARY KEY);
   CREATE TABLE notifications (
     id         SERIAL PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id),
+    app_id     INTEGER REFERENCES apps(id),
     kind       VARCHAR(32) NOT NULL,
     read_at    TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -137,12 +140,12 @@ async function addRegistration(client, {
   return Number(rows[0].id);
 }
 
-async function notify(client, { userId, kind, readAt = null, createdAt = null }) {
+async function notify(client, { userId, kind, readAt = null, createdAt = null, appId = null }) {
   const { rows } = await client.query(
-    `INSERT INTO notifications (user_id, kind, read_at, created_at)
-     VALUES ($1, $2, $3, COALESCE($4, NOW()))
+    `INSERT INTO notifications (user_id, kind, read_at, created_at, app_id)
+     VALUES ($1, $2, $3, COALESCE($4, NOW()), $5)
      RETURNING id, created_at`,
-    [userId, kind, readAt, createdAt]
+    [userId, kind, readAt, createdAt, appId]
   );
   return rows[0];
 }
@@ -361,4 +364,19 @@ pgTest('test alerts use the durable ten-second delay and respect developer-sessi
   assert.equal((await queueTestAlert(pool, bob)).reason, 'no_eligible_device');
   assert.equal((await client.query('SELECT id FROM notifications')).rowCount, 1,
     'unqueueable tests do not leave misleading inbox entries');
+});
+
+pgTest('blocked apps never enqueue phone alerts, while other apps and contributors remain unaffected', async client => {
+  await enableSending(client);
+  const alice = await addUser(client), bob = await addUser(client);
+  await addRegistration(client, { userId: alice, installationId: DEVICE_A });
+  await addRegistration(client, { userId: bob, installationId: DEVICE_B });
+  const appId = (await client.query('INSERT INTO apps DEFAULT VALUES RETURNING id')).rows[0].id;
+  await client.query('INSERT INTO user_app_blocks (user_id,app_id) VALUES ($1,$2)', [alice,appId]);
+  const blocked = await notify(client, { userId: alice, kind: 'mention', appId });
+  assert.equal((await deliveriesFor(client,blocked.id)).length,0);
+  const personal = await notify(client, { userId: alice, kind: 'session_done' });
+  assert.equal((await deliveriesFor(client,personal.id)).length,1);
+  const peer = await notify(client, { userId: bob, kind: 'mention', appId });
+  assert.equal((await deliveriesFor(client,peer.id)).length,1);
 });

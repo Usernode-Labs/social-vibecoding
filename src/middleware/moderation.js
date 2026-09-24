@@ -20,7 +20,10 @@ function moderationGuard(config, { pool = getPool(config) } = {}) {
       }
       const appPath = req.path.match(/^\/api\/(?:public\/)?apps\/([^/]+)(?:\/|$)/i);
       if (appPath) {
-        const result = await pool.query('SELECT moderation_suspended_at FROM apps WHERE slug = $1', [decodeURIComponent(appPath[1])]);
+        const result = await pool.query('SELECT id, moderation_suspended_at FROM apps WHERE slug = $1', [decodeURIComponent(appPath[1])]);
+        if (await require('../services/app-blocks').isBlocked(pool, req.user?.id, result.rows[0]?.id)) {
+          return res.status(403).json({ error: 'You blocked this app. Unblock it in Settings → Blocked apps.', code: 'app_blocked' });
+        }
         if (result.rows[0]?.moderation_suspended_at) return res.status(403).json({ error: 'App suspended by moderation', code: 'app_suspended' });
       }
       next();

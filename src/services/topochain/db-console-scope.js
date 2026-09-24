@@ -142,6 +142,7 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'conversation_message_attachments',
   'conversation_message_objects',
   'chat_session_spec_conversation_shares',
+  'user_app_blocks',
   'user_blocks',
   'conversation_message_reports',
   'app_reports',

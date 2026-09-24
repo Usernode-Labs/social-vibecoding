@@ -42,7 +42,7 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     const reports = await Promise.all([moderation.submitReport(pool,alice,input),moderation.submitReport(pool,alice,input)]);
     assert.equal(reports[0].id,reports[1].id,'concurrent retries produce one receipt');
     assert.equal(reports.filter(r=>r.duplicate).length,1);
-    assert.ok(reports.every(r=>r.blockUserId===bob.id),'message receipts identify the author for optional blocking');
+    assert.ok(reports.every(r=>r.blockUserId===bob.id && r.blockUsername===bob.username),'message receipts identify the author for optional blocking');
     let c = (await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'conversation_message'")).rows[0];
     const act = async (action, extra={}) => {
       c = (await pool.query('SELECT * FROM moderation_cases WHERE id = $1',[c.id])).rows[0];
@@ -133,6 +133,7 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
 
     const userReceipt = await moderation.submitReport(pool,alice,{targetType:'user',target:'author',reason:'harassment'});
     assert.equal(userReceipt.blockUserId,bob.id,'user reports still offer the separately chosen block action');
+    assert.equal(userReceipt.blockUsername,bob.username);
     c=(await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'user' AND target_id = $1",[bob.id])).rows[0];
     await act('hide_profile'); await act('restrict_user');
     assert.ok(await moderation.isRestricted(pool,bob.id));

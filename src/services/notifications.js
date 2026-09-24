@@ -86,11 +86,12 @@ const CONVERSATION_ACCESS_SQL = `(
 // App discussion notifications carry chat_message_id; block applies to
 // mentions, replies, and reactions even when the underlying post is visible.
 const CHAT_SENDER_ACCESS_SQL = `(
-  n.chat_message_id IS NULL OR NOT EXISTS (
+  NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
+  AND (n.chat_message_id IS NULL OR NOT EXISTS (
     SELECT 1 FROM user_blocks blocked
      WHERE blocked.blocker_id = n.user_id
        AND blocked.blocked_user_id = n.source_user_id
-  )
+  ))
 )`;
 
 function parseMentions(text) {

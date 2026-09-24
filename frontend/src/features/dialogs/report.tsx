@@ -21,8 +21,9 @@ export function ReportDialog() {
   const [receipt, setReceipt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const [blockAction, setBlockAction] = useState<{ appSlug?: string; userId?: number; username?: string } | null>(null);
   const dialog = useDialog<ReportTarget>('report', {
-    onOpen(value) { if (detailRef.current) detailRef.current.value = ''; setTarget(value || null); setReason(''); setDetail(''); setError(''); setReceipt(null); setBlocked(false); },
+    onOpen(value) { if (detailRef.current) detailRef.current.value = ''; setTarget(value || null); setReason(''); setDetail(''); setError(''); setReceipt(null); setBlocked(false); setBlockAction(null); },
     canClose: () => !busy,
   });
   async function submit(event: FormEvent) {
@@ -34,17 +35,28 @@ export function ReportDialog() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not send your report. Try again.');
       setReceipt(data.id);
-      setTarget(current => current ? {...current, userId: data.blockUserId || current.userId} : current);
+      setBlockAction(target.targetType === 'app'
+        ? (data.blockAppSlug ? { appSlug: data.blockAppSlug } : null)
+        : (data.blockUserId && data.blockUsername ? { userId: data.blockUserId, username: data.blockUsername } : null));
     } catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
   }
   async function block() {
-    if (!target?.userId || target.targetType === 'app' || busy) return;
+    if (!blockAction || busy) return;
     setBusy(true); setError('');
     try {
-      const response = await fetch(`/api/me/blocks/${target.userId}`, { method: 'PUT' });
-      if (!response.ok) throw new Error('Could not block this user. Try again.');
+      const path = blockAction.appSlug ? `/api/me/app-blocks/${encodeURIComponent(blockAction.appSlug)}` : `/api/me/blocks/${blockAction.userId}`;
+      const response = await fetch(path, { method: 'PUT' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not block. Try again.');
       setBlocked(true);
+      if (blockAction.appSlug) {
+        window.dispatchEvent(new CustomEvent('app-blocks-changed', { detail: data }));
+        const app = (window as any).App;
+        if ((window as any).AppView?.appData?.slug === blockAction.appSlug) app?.navigateHome?.();
+        (window as any).Home?.load?.();
+        (window as any).Notifications?.refresh?.();
+      }
     } catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
   }
@@ -54,8 +66,9 @@ export function ReportDialog() {
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{target?.label}</p>
       {receipt ? <div className="mt-4 space-y-4">
         <p role="status">{`Report #${receipt} received. We’ll review it and notify you when review finishes.`}</p>
+        {blockAction?.appSlug ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Blocking hides this app and stops its notifications for you. It does not block any contributors. You can unblock it in Settings → Blocked apps.</p> : null}
         <div className="flex flex-wrap gap-3">
-          {target?.targetType !== 'app' && target?.userId ? <Button type="button" disabled={busy || blocked} onClick={() => void block()}>{blocked ? 'User blocked' : 'Block user'}</Button> : null}
+          {blockAction ? <Button type="button" disabled={busy || blocked} onClick={() => void block()}>{blocked ? (blockAction.appSlug ? 'App blocked' : `@${blockAction.username} blocked`) : (blockAction.appSlug ? 'Block app' : `Block @${blockAction.username}`)}</Button> : null}
           <Button type="button" disabled={busy} onClick={dialog.close}>Done</Button>
         </div>
       </div> : <form className="mt-4 space-y-4" onSubmit={submit}>

@@ -14,6 +14,7 @@ const users = {
 
 const pool = {
   async query(sql, params = []) {
+      if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
     const text = String(sql);
     state.calls.push({ text, params });
     if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text)) return { rows: [] };

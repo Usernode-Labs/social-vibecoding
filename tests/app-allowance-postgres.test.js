@@ -60,6 +60,7 @@ test('app allowances: migration, create/fork, requests and admin review', async 
         created_by INTEGER REFERENCES users(id), status VARCHAR(32),
         collab_visibility VARCHAR(16) DEFAULT 'public', view_visibility VARCHAR(16) DEFAULT 'public',
         self_hosted BOOLEAN DEFAULT FALSE, forked_from JSONB);
+      CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
       CREATE TABLE app_collaborators (app_id INTEGER, user_id INTEGER, status TEXT,
         accepted_at TIMESTAMPTZ, PRIMARY KEY(app_id, user_id));
       INSERT INTO users (id, username, app_quota, is_admin, admin_readonly) VALUES

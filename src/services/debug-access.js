@@ -89,6 +89,7 @@ const DENIED_TABLES = new Set([
   'conversation_message_attachments', // private attachment bytes + metadata
   'conversation_message_objects', // private shared-object activity
   'chat_session_spec_conversation_shares', // private spec access grants
+  'user_app_blocks',
   'user_blocks',          // private user safety relationships
   'conversation_message_reports', // private abuse evidence and reporter identity
   'app_reports',             // private mini-app report details and reporter identity

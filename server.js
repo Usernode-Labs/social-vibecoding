@@ -530,6 +530,7 @@ app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
 app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
+app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
 app.use(cliBrowserRoutes(config));
 // Social identity proofs are a platform account surface, independent of
 // the hosted MCP connector. They remain reviewable (with fixtures only) in

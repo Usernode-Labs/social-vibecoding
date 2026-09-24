@@ -243,6 +243,7 @@ class MobilePushWorker {
               d.created_at AS delivery_created_at,
               n.id AS notification_id, n.user_id AS notification_user_id,
               n.kind, n.read_at, n.detail, n.conversation_id, n.chat_message_id,
+              EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = n.user_id AND b.app_id = n.app_id) AS app_blocked,
               a.name AS app_name,
               c.title AS conversation_title,
               c.status AS conversation_status,
@@ -308,6 +309,7 @@ class MobilePushWorker {
 
   invalidReason(row) {
     if (row.read_at) return 'notification_read';
+    if (row.app_blocked) return 'app_blocked';
     const isConversationKind = CONVERSATION_NOTIFICATION_KINDS.has(row.kind);
     // Schema references are nullable for legacy kinds, so enforce the domain
     // pairing at send time: a conversation kind needs a conversation ref and

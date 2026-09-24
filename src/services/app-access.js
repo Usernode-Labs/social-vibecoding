@@ -124,6 +124,7 @@ async function checkAppAccess(pool, app, user, level = 'view') {
       + 'ACCESS_COLUMNS) rather than trimming the projection.'
     );
   }
+  if (await require('./app-blocks').isBlocked(pool, user?.id, app.id)) return false;
   if (user?.isAdmin) return true;
   if (vis === 'public') return true;
   return isCollaborator(pool, app.id, user?.id);
@@ -258,7 +259,9 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
     );
     memberIds = new Set(members.map((r) => r.user_id));
   }
-  const entry = { at: now, viewPrivate, memberIds, suspended: !!rows[0].moderation_suspended_at };
+  const { rows: blocks } = await pool.query('SELECT user_id FROM user_app_blocks WHERE app_id = $1', [id]);
+  const blockedUserIds = new Set(blocks.map(row => Number(row.user_id)));
+  const entry = { at: now, viewPrivate, memberIds, blockedUserIds, suspended: !!rows[0].moderation_suspended_at };
   visCacheById.set(id, entry);
   return entry;
 }
@@ -338,7 +341,7 @@ async function getHostVisibility(pool, slug) {
 async function isViewMember(pool, appId, userId) {
   if (!Number.isInteger(userId)) return false;
   const info = await getWsVisibility(pool, { appId });
-  if (!info || info.suspended) return false; // app deleted or suspended
+  if (!info || info.suspended || info.blockedUserIds?.has(userId)) return false; // app deleted or suspended
   if (!info.viewPrivate) return true; // flipped public since lookup
   if (info.memberIds.has(userId)) return true;
   const { rows } = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);

@@ -38,6 +38,7 @@ import { AboutSection } from './about';
 import { AdminPreviewSection } from './admin-preview';
 import { AgentFilesSection } from './agent-files';
 import { AlertsSection } from './alerts';
+import { BlockedAppsSection } from './blocked-apps';
 import { ApiKeySection } from './api-key';
 import { AppAiSection } from './app-ai';
 import { AppPermissionsSection } from './app-permissions';
@@ -86,6 +87,7 @@ export function SettingsSections() {
       <WalletSection />
       <LanguageSection />
       <AlertsSection />
+      <BlockedAppsSection />
       {/* The way back to Home's welcome tour. It sits in Preferences, last,
           because it is the one entry here that does not configure anything:
           pressing it replays a walkthrough. See ./tour.tsx. */}

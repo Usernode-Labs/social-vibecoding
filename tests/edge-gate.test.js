@@ -32,6 +32,7 @@ const ADMIN_ID = 50;
 // ── pool stub ──────────────────────────────────────────────────────────
 const fakePool = {
   async query(sql, params = []) {
+      if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
     if (/SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
       if (params[0] === 'pubapp') return { rows: [{ id: 1, view_visibility: 'public' }] };
       if (params[0] === 'privapp') return { rows: [{ id: PRIV_APP_ID, view_visibility: 'private' }] };
