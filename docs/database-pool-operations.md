@@ -181,3 +181,10 @@ Current limits: explicit staging cohort (Stockroom and allocation test apps 17/1
 active batch. Retire active previews first. Existing historical moves keep their
 original recorded retention policy. Completed Jobs remain checkpoint records;
 Pod retention is separate. Backup/reconstruction testing remains deferred.
+
+Cancellation does not automatically remove an unfinished destination copy. It
+fences that copy for operator inspection; a later successful move to that pool
+can archive and clean it through the same identity checks. Keep one executor
+replica with `Recreate`; concurrent operator execution is unsupported. A platform
+release or pool identity change invalidates a reviewed plan and requires a fresh
+review before any new child is started.
