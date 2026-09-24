@@ -8,10 +8,10 @@ remains useful as the execution engine; a dedicated cluster tier is deferred.
 ## Target shape
 
 - Keep the SV platform database in its Argo-managed central CNPG cluster.
-- Create a small fleet of shared app pools through the admin control surface,
-  using approved CNPG resource/storage/replica profiles. The existing create
-  flow only accepts preconfigured target IDs; arbitrary new pool creation still
-  needs implementation and scoped infra permissions.
+- Infrastructure operators create, resize, restore and retire shared app pools
+  through declarative infra/GitOps workflows. SV does not create CNPG clusters,
+  resize their resources or change their replica counts. New pool-creation UI
+  and platform-driven infrastructure provisioning are out of scope.
 - Each app has one durable assignment to a pool. Pool identity survives primary
   failover and is independent of physical worker names. No automatic rebalancing
   of existing apps when utilization changes.
@@ -20,13 +20,55 @@ remains useful as the execution engine; a dedicated cluster tier is deferred.
 - Dedicated per-app clusters and the product flow to promote/demote into that
   tier are deferred. Shared-to-shared maintenance moves remain useful internally.
 
+## Responsibility boundary and capacity warnings
+
+**Infra/operator:** own pool definitions, resource/storage budgets, replicas,
+backup/restore, credentials distribution, networking and lifecycle. Provision
+and verify a pool before publishing its stable ID, cluster identity, endpoint,
+secret references, capacity budget and admission state to SV. Mark a pool as not
+accepting new apps before maintenance or retirement; existing assignments remain
+valid until separately migrated. Using Crossplane internally is an infra choice,
+not an API capability the SV web process needs.
+
+**SV:** consume the approved registry, observe readiness/capacity, select a pool
+and atomically reserve an assignment during app creation, then provision the app's
+SQL database/role there. Keep that binding for normal app database lifecycle and
+routing. Imports, forks and creation retries follow the same contract. Existing
+apps are not automatically moved or reassigned when capacity observations change.
+The platform has no pool-lifecycle mutation permissions in the final design.
+
+Expose read-only pool capacity and actionable warnings in the admin surface:
+
+- Near the configurable safe-capacity threshold: warn operators while continuing
+  to place apps on pools that still meet admission requirements. Show the limiting
+  resource, observation age, reserved demand and affected pool.
+- No eligible capacity: keep the new app in an explicit waiting/blocked state;
+  do not start database provisioning, overload a pool or silently use central.
+  Report whether the cause is saturation, unavailable pools or stale telemetry.
+- Capacity restored or a new pool registered: retry allocation through the same
+  idempotent app-creation path. A partially provisioned app keeps its assignment;
+  it must not be allocated elsewhere simply because another pool became available.
+
+Warnings request operator action; they do not create infrastructure. Suggested
+capacity actions distinguish enlarging a pool or adding another writable pool
+from adding standby replicas. A standby is another copy of the same pool, not an
+additional independent writer for new-app placement. New capacity increases
+headroom for new apps; redistributing existing demand requires a separately planned
+migration and is not triggered by an alert.
+
+The current staging prototype still has pool-create controls and a provisioning
+worker with Crossplane request permissions. Retiring that SV creation path and its
+unused permissions is part of the next implementation. Retain existing clusters,
+composites and data while changing their management interface; do not delete them
+as a side effect of removing UI controls or worker permissions.
+
 ## Reproducibility and reuse
 
 Pool setup must be declarative and reusable. Keep approved pool profiles and
 fleet definitions in infra, with environment-specific values for names, storage,
-resources, replica counts and secret references. An admin-created pool must be
-representable in that same declarative format; recreating an environment must not
-require manually clicking through pool creation again. Reconciliation must reuse
+resources, replica counts and secret references. Operators apply those declarations
+and publish an approved pool registry to SV; reproducing an environment must not
+require manually clicking through pool creation. Infra reconciliation must reuse
 matching managed resources and reject conflicting identities rather than adopt
 arbitrary databases by name.
 
@@ -142,8 +184,9 @@ no unmeasured numeric defaults are being enabled by this document.
 
 ## Implementation order and acceptance
 
-1. Declarative fleet/profile import/export, existing-resource registration and
-   pool creation/capacity inventory controls.
+1. Operator-owned declarative fleet/profile setup and an approved pool registry.
+   Replace SV pool-create controls with read-only inventory/capacity warnings and
+   remove its unused infrastructure-provisioning privileges safely.
 2. Durable capacity reservations and placement decisions, then opt-in new-app
    provisioning on shared pools. Generalize the current static binding allowlist
    and central-origin assumptions before enabling it.
@@ -151,8 +194,9 @@ no unmeasured numeric defaults are being enabled by this document.
 4. Staging tests covering unequal pool sizes, insufficient/stale capacity,
    concurrent creates, retries, partial provisioning, worker restarts during a
    batch and during cleanup, repeated fleet configuration with no duplicate pools
-   or databases, existing-app registration without SQL creation, and preserving
-   the platform DB.
+   or databases, existing-app registration without SQL creation, warning/admission
+   thresholds, operator-added capacity, absence of SV pool-lifecycle privileges,
+   and preserving the platform DB.
 5. Backup/restore of data plus intent/checkpoints, explicit identity recovery and
    a reconstruction test, then the separately scheduled production migration.
 

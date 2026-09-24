@@ -1,7 +1,9 @@
 # Database control plane
 
-The next scope is [shared pools, bulk migration and capacity-based new-app placement](database-pool-placement.md). Dedicated per-app clusters are deferred. That plan
-distinguishes the next implementation from the currently deployed staging controls.
+The next scope is [operator-managed shared pools, bulk migration and capacity-based new-app placement](database-pool-placement.md). Operators own pool lifecycle;
+SV selects existing pools for new apps and reports capacity warnings. Dedicated
+per-app clusters are deferred. The sections below describe the currently deployed
+staging prototype, including creation controls to retire in the next implementation.
 
 The database worker is a separate Deployment using the platform image. The
 existing admin console exposes **Platform → Database clusters**. The web
