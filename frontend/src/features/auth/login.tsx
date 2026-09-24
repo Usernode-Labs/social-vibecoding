@@ -52,7 +52,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { alertVariants } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { KeyIcon } from '@/components/ui/icons';
+import { KeyIcon, WarningTriangleIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Wordmark } from '@/components/ui/wordmark';
@@ -369,6 +369,14 @@ const ADMIN_LEAD_SHIPPED =
   "Accounts here have no email on file, so a password can't be reset automatically from the web.";
 const ADMIN_LEAD_WITH_EMAIL =
   'No confirmed email on your account? The link above can only go to a confirmed address, but an admin can still get you back in.';
+
+/**
+ * The warning-card treatment for ADMIN_LEAD_WITH_EMAIL (#2958): a caution box
+ * instead of ambient body text, so the confirmed-email gap reads as a helpful
+ * notice rather than blending into the surrounding copy. Same `notice`
+ * spelling as OFFLINE_NOTICE above — one caution box for the whole shell.
+ */
+const ADMIN_LEAD_NOTICE_BOX = `flex items-start gap-2 ${alertVariants({ variant: 'notice', density: 'compact' })}`;
 
 export function LoginScreen() {
   const rootRef = useRef<HTMLElement>(null);
@@ -1793,9 +1801,17 @@ export function LoginScreen() {
                   alternative below the email flow (issue #1158).
               */}
               <hr className="border-zinc-200 dark:border-zinc-800" />
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {resetUi ? ADMIN_LEAD_WITH_EMAIL : ADMIN_LEAD_SHIPPED}
-              </p>
+              <div className={resetUi ? ADMIN_LEAD_NOTICE_BOX : ''}>
+                {resetUi ? (
+                  <WarningTriangleIcon
+                    className="h-4 w-4 mt-0.5 shrink-0 text-amber-800 dark:text-amber-300"
+                    aria-hidden="true"
+                  />
+                ) : null}
+                <p className={resetUi ? '' : 'text-sm text-zinc-500 dark:text-zinc-400'}>
+                  {resetUi ? ADMIN_LEAD_WITH_EMAIL : ADMIN_LEAD_SHIPPED}
+                </p>
+              </div>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 {/* JSX drops a line-ending space, so the separators before the
                     inline elements must live inside the string expressions —
