@@ -104,8 +104,47 @@ test('the Leaderboard screen hosts a tab strip, an event bar and all four panes'
   // narrower reading column, centered on its own (#2921) rather than
   // left-pinned inside the wider frame.
   assert.match(screen, /max-w-5xl/, 'the shell is the wider column');
-  assert.match(screen, /id="leaderboard-root" class="hidden max-w-3xl mx-auto"/,
-    'the Kudos pane keeps its reading width, centered (and now ships hidden — see below)');
+  assert.match(screen, /id="leaderboard-root" class="hidden max-w-\[40rem\] mx-auto"/,
+    'the Kudos pane keeps a narrower reading width, centered (and ships hidden — see below)');
+});
+
+test('Kudos sits in Me\'s column, and the strip clears the bar as Me does (#2832 follow-up)', () => {
+  const classOf = (re) => {
+    const m = html.match(re);
+    assert.ok(m, `${re} renders`);
+    return m[1].split(/\s+/);
+  };
+  const rem = (cls) => {
+    // Tailwind's named widths in rem, and one arbitrary `[Nrem]` value.
+    const named = { 'max-w-2xl': 42, 'max-w-3xl': 48, 'max-w-5xl': 64 };
+    if (cls in named) return named[cls];
+    const m = cls.match(/^max-w-\[(\d+(?:\.\d+)?)rem\]$/);
+    return m ? Number(m[1]) : null;
+  };
+  const pad = { 'px-4': 1 };
+
+  // Me: the reference column (#2832) — Workshop's max-w-2xl box, its own px-4.
+  const me = classOf(/id="profile-root" class="([^"]*)"/);
+  const meWidth = rem(me.find((c) => c.startsWith('max-w-')));
+  assert.equal(meWidth, 42, 'Me is still the max-w-2xl column');
+  assert.ok(me.includes('px-4') && me.includes('pt-5'), 'with its own px-4 gutter and pt-5 top gap');
+  const meContent = meWidth - 2 * pad['px-4'];
+
+  // The Leaderboard frame supplies the gutter OUTSIDE the Kudos root, so the
+  // Kudos root's width must equal Me's CONTENT width for the rows to span
+  // exactly the x-range Me's cards do — the 96px jump was max-w-3xl here.
+  const start = html.indexOf('<main id="leaderboard-screen"');
+  const screen = html.slice(start, html.indexOf('</main>', start));
+  const frame = classOf(/<main id="leaderboard-screen"[^>]*><div class="([^"]*)"/);
+  assert.ok(frame.includes('px-4'), 'the frame carries the 16px gutter');
+  assert.ok(frame.includes('pt-5') && !frame.includes('p-4'),
+    'and pt-5, clearing the bar\'s 8px notch plus 12px as Me and Workshop do — not p-4');
+  const kudos = (screen.match(/id="leaderboard-root" class="([^"]*)"/) || [])[1].split(/\s+/);
+  assert.ok(kudos.includes('mx-auto'), 'the Kudos column is centered, as Me\'s is');
+  assert.ok(!kudos.includes('max-w-3xl'), 'not the 96px-wider column it used to be');
+  assert.ok(!kudos.some((c) => /^p[xytblr]?-\d/.test(c)), 'and adds no gutter of its own (the frame\'s is the gutter)');
+  assert.equal(rem(kudos.find((c) => c.startsWith('max-w-'))), meContent,
+    'the Kudos rows are exactly as wide as Me\'s cards');
 });
 
 test('the retired screens are gone from the shell', () => {
