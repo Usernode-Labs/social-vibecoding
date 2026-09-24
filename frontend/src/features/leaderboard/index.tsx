@@ -144,7 +144,8 @@ export function LeaderboardScreen() {
           max-w-5xl for the Topochain table's sake; the Kudos pane keeps its
           narrower max-w-3xl reading column below — centered with its own
           `mx-auto` (#2921) rather than left-pinned inside this wider frame,
-          the way Profile's own `max-w-3xl mx-auto` column is.
+          the way Profile's own `mx-auto` column is (max-w-2xl since #2832,
+          Workshop's width).
       */}
       <div className="max-w-5xl mx-auto p-4 w-full">
         <div className={detailOpen ? 'hidden' : undefined}>
