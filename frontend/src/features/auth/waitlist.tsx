@@ -1174,7 +1174,7 @@ export function WaitlistScreen() {
             {/* #1877: JSX drops the line break between a label's text and the
                 span after it, so without its own margin "Optional" rendered
                 glued to the word ("CountryOptional"). */}
-            <label className={SURVEY_LABEL}>
+            <label className={SURVEY_LABEL} htmlFor="waitlist-country">
               Country
               <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
                 Optional

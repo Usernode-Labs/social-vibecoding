@@ -1182,7 +1182,8 @@ test('every path that owned #app-content goes through the frame seam', () => {
   for (const call of [
     'AppView._appFrame()',            // the adopt-or-fall-back resolver
     'frame.mount({ slug, cover: AppView._coverDescriptor(rec), faded: true })', // #931 launch
-    'frame.mount({ slug: appData.slug, faded: false })',                        // plain render
+    // QA 2026-09-24 Q20: the plain render names the frame after the app.
+    "frame.mount({ slug: appData.slug, faded: false, title: appData.name || '' })", // plain render
     'frame.setSrc(iframeSrc, { granted: AppView._grantedNow() })', // imperative navigation
     'frame.setOnLoad(',               // one slot, not a stacking listener
     'AppView._parkAppFrame()',        // Dev tab

@@ -2779,7 +2779,7 @@ const AppView = {
     // #685: this render DOES replace the frame, so the announcement goes.
     AppView._issueStateSource = null;
 
-    frame.mount({ slug: appData.slug, faded: false });
+    frame.mount({ slug: appData.slug, faded: false, title: appData.name || '' });
     // #970: full-bleed frame; the insets go to the app instead.
     AppView._setSurface('app');
 

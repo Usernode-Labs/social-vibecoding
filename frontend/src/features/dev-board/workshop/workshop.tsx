@@ -804,7 +804,7 @@ export function WeekWalk({ weeks, firstWeek, note, shown, onMore }: {
       {more ? (
         <button
           type="button"
-          className="dev-ws-reveal dev-ws-week-more"
+          className="dev-ws-reveal dev-ws-week-more un-touch-target"
           data-ws-week-more=""
           onClick={onMore}
         >
@@ -3297,11 +3297,14 @@ export function DevWorkshop(): ReactNode {
                 pane down — were centred muted text with a caret. Three
                 spellings of one gesture. It is `.dev-ws-reveal` now, and the
                 caret turns over when there is nothing left to reveal, which
-                is what that class already does for the since list. */}
+                is what that class already does for the since list.
+                Its hit area is `touch-target-32`, not the kit's 44px one the
+                other two carry (QA 2026-09-24 Q19): it sits 4px under the
+                last row, and a 44px box would take that row's bottom edge. */}
             {v.mine.rows.length > v.mine.shown ? (
               <button
                 type="button"
-                className="dev-ws-reveal dev-ws-mine-more"
+                className="dev-ws-reveal dev-ws-mine-more touch-target-32"
                 aria-expanded={allMine}
                 data-ws-mine-more=""
                 onClick={() => setAllMine(!allMine)}
@@ -3361,7 +3364,7 @@ export function DevWorkshop(): ReactNode {
             <span className="dev-ws-since-n">{v.since.total}</span>
             <button
               type="button"
-              className="dev-ws-since-clear"
+              className="dev-ws-since-clear un-touch-target"
               data-ws-since-clear=""
               disabled={!v.since.rows.length && !seenShown}
               onClick={clearSince}
@@ -3427,7 +3430,7 @@ export function DevWorkshop(): ReactNode {
               nobody learns to reach for. */}
           <button
             type="button"
-            className="dev-ws-reveal dev-ws-since-more"
+            className="dev-ws-reveal dev-ws-since-more un-touch-target"
             data-ws-since-more=""
             disabled={!sinceMore}
             onClick={showOlder}

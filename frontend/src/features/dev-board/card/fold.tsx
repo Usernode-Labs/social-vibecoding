@@ -207,7 +207,7 @@ export function FoldMark({ open, onClick }: { open: boolean; onClick?: () => voi
   const glyph = <FoldMarkIcon aria-hidden="true" />;
   if (!open) return <span className="dev-fold-mark" aria-hidden="true">{glyph}</span>;
   return (
-    <button type="button" className="dev-fold-mark" data-open="1" aria-expanded="true" aria-label="Fold the card" onClick={onClick}>
+    <button type="button" className="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label="Fold the card" onClick={onClick}>
       {glyph}
     </button>
   );

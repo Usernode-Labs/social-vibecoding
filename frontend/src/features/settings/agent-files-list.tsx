@@ -78,7 +78,7 @@ function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
           <button
             type="button"
             data-role="view"
-            className="text-violet-700 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 font-medium"
+            className="text-violet-700 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 font-medium touch-target-32"
             onClick={() => { void toggle(); }}
           >
             {open ? 'Hide' : 'View'}
@@ -86,7 +86,7 @@ function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
           <button
             type="button"
             data-role="delete"
-            className="text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-medium"
+            className="text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-medium touch-target-32"
             onClick={() => { void controller()?._onAgentFileDelete?.(file.kind, file.name); }}
           >
             Delete

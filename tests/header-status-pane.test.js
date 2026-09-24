@@ -167,7 +167,9 @@ test('there is ONE badge in the header, and the Improve corner is a dot', () => 
   const bellBadge = header.match(/<span id="notifications-badge"[^>]*>/);
   assert.ok(bellBadge, '#notifications-badge is on the bell');
   assert.match(bellBadge[0], /-top-1 -right-1/, 'the bell badge is top-right');
-  assert.match(bellBadge[0], /bg-red-500/, 'the bell badge stays red');
+  // red-600, not red-500 (QA 2026-09-24 Q20): white 10.4px bold on red-500 is
+  // 3.76:1, one step darker is 4.83 and reads as the same red.
+  assert.match(bellBadge[0], /bg-red-600/, 'the bell badge stays red, at a shade white text passes on');
   assert.match(bellBadge[0], /data-session-done="0"/,
     'and carries the completed-session attribute the declared check selects on');
   assert.ok(!header.includes('id="notifications-badge-ai"'),
