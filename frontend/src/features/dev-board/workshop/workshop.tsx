@@ -2398,6 +2398,95 @@ function useEarInset(
 }
 
 /**
+ * The widest the scope chip may be once it moves beside the tab pill. Its
+ * name truncates past this. app.css spells the same number on
+ * `.dev-ws[data-ws-scope-inline] > .dev-ws-scope > button`.
+ */
+const SCOPE_INLINE_MAX_PX = 220;
+
+/**
+ * The space between the chip's right edge and the pill's left edge
+ * (`right: calc(100% + 12px)` in app.css), which is also the least space
+ * left between the chip and the edge of the content area.
+ */
+const SCOPE_INLINE_GAP_PX = 12;
+
+/**
+ * The rule `useScopeInline` applies, kept apart so it can be tested without a
+ * browser. `gutter` is the space from `#dev-body`'s left edge to the reading
+ * column's left edge. `chipWidth` is the chip as drawn. The chip fits when the
+ * gutter holds the chip (capped, because its name truncates there) plus the gap
+ * to the pill and the same gap again before the content's edge.
+ */
+export function scopeFitsInline(gutter: number, chipWidth: number): boolean {
+  if (!(gutter > 0) || !(chipWidth > 0)) return false;
+  return gutter >= Math.min(chipWidth, SCOPE_INLINE_MAX_PX) + SCOPE_INLINE_GAP_PX * 2;
+}
+
+/**
+ * #2837: DOES THE SCOPE CHIP FIT BESIDE THE TAB PILL?
+ *
+ * The chip had a row of its own above the pill. That works while the reading
+ * column fills the window. On a large desktop window it looked wrong: the
+ * 760px column sits in the middle of a wide page, and on By stage and Needs
+ * you everything under it spans the width. The chip was then a small pill
+ * alone on a row, far from both edges, with nothing next to it.
+ *
+ * It can't join the pill's row INSIDE the column. The row is already full:
+ * a 444px pill and the 240px ear (EAR_MIN_PX) fill most of 760px, so a chip
+ * in front of the pill would push it into the ear on By category. So the chip
+ * goes OUTSIDE the column. It sits in the empty space to the left, on the same
+ * row as the pill, with its right edge 12px from the pill's left edge. The pill,
+ * the ear and their measurements don't move at all.
+ *
+ * That only works when the space to the left is wide enough. How wide it is
+ * depends on the window, whether the sidebar is folded, and whether a side
+ * panel is open, and CSS alone can't see all of that. So this measures it: the
+ * distance from `#dev-body`'s left edge to the column's left edge, compared
+ * with the chip's width (capped at SCOPE_INLINE_MAX_PX) plus a gap on each
+ * side. When there isn't room, the chip keeps its own row as before. That
+ * covers every phone, and any desktop window where the column fills the page.
+ *
+ * The result is state, so the attribute is rendered by React. A layout effect
+ * sets it before the browser paints, so a wide window never shows the chip in
+ * its old row first. There is no dependency array, for the same reason as
+ * `useEarInset`: the column can move without changing size.
+ */
+function useScopeInline(hostRef: React.RefObject<HTMLDivElement | null>, enabled: boolean): boolean {
+  const [inline, setInline] = useState(false);
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!enabled || !host) {
+      setInline(false);
+      return undefined;
+    }
+    const scope = host.querySelector<HTMLElement>('[data-ws-scope]');
+    const chip = scope ? scope.querySelector<HTMLElement>(':scope > button') : null;
+    const body = host.closest<HTMLElement>('#dev-body') || host.parentElement;
+    if (!scope || !chip || !body) return undefined;
+    const measure = () => {
+      const s = scope.getBoundingClientRect();
+      const b = body.getBoundingClientRect();
+      const c = chip.getBoundingClientRect();
+      // A hidden chip (a phone, where `display: none` zeroes both boxes)
+      // measures as 0 and does not fit. That turns the attribute off on the
+      // way down from a wide window, rather than leaving the last answer.
+      if (!b.width) return;
+      setInline(scopeFitsInline(s.left - b.left, c.width));
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const ro = new ResizeObserver(measure);
+    // The body tracks the window, the sidebar folding and a side panel; the
+    // chip tracks its own name, which changes once the apps list arrives.
+    ro.observe(body);
+    ro.observe(chip);
+    return () => ro.disconnect();
+  });
+  return inline;
+}
+
+/**
  * THE SLIDING SELECTION MARKER.
  *
  * The selected tab used to draw its own fill, so the selection jumped between
@@ -2590,6 +2679,9 @@ export function DevWorkshop(): ReactNode {
   // ...and how wide it is: from just clear of the pill to the pane's right
   // edge, which only a measurement knows. See `useEarInset`.
   useEarInset(bar, hostRef, earUp);
+  // #2837: whether the scope chip sits in the space left of the tab pill
+  // rather than on a row of its own. See `useScopeInline`.
+  const scopeInline = useScopeInline(hostRef, !!v.slug);
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.
@@ -2833,7 +2925,12 @@ export function DevWorkshop(): ReactNode {
   );
 
   return (
-    <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
+    <div
+      ref={hostRef}
+      className="dev-ws"
+      data-ws-tab={tab}
+      {...(scopeInline ? { 'data-ws-scope-inline': '' } : {})}
+    >
       {/* WHICH WORKSHOP YOU ARE IN, and the way to another (#2718 review).
           It names this app and its panel offers the others — and All apps,
           which is the way back up.
@@ -2841,7 +2938,11 @@ export function DevWorkshop(): ReactNode {
           ABOVE THE RAIL in the markup, so the panel drops down over the tabs
           rather than under them. On a phone the chip itself is hidden
           (app.css) and the header's tile and name open the same panel
-          (#2768), so there it is the panel alone, right under the header. */}
+          (#2768), so there it is the panel alone, right under the header.
+          On a large desktop window (#2837) the chip moves into the space
+          left of the reading column, on the tab pill's row. That is CSS
+          keyed on `data-ws-scope-inline` above; see `useScopeInline`. The
+          markup stays the same at every width. */}
       {slug ? (
         <AppWorkshopScope
           slug={slug}
