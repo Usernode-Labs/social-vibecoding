@@ -50,7 +50,7 @@ const MAX_TOOL_ROUNDS = 6;
 // history well under it in practice.
 const HISTORY_ROWS = 400;
 const TITLE_MAX = 80;
-const LEASE_RENEW_MS = 60_000;
+const LEASE_RENEW_MS = 30_000;
 const EMPTY_REPLY_TEXT = 'I could not put an answer together that time. Could you say that again?';
 
 const IMMEDIATE_WRITE_TOOLS = new Set(['recheck_change']);
@@ -877,6 +877,45 @@ function turnState(agentSessionId) {
   };
 }
 
+// A turn whose process died (a restart mid-dispatch) leaves its lease and
+// its open screens behind: nothing will ever send their `done`. Once the
+// lease is stale, clear it and send that `done` in the dead turn's place, so
+// the screen settles on what the transcript holds. Never while this process
+// runs a turn there. `finished` stamps the green dot: a recovery that posted
+// the wrap-up finished the dead turn's work. True when it handed one back.
+async function handBackOrphanedTurn({ pool, agentSessionId, userId, finished = false, deps = {} }) {
+  if (stopRegistry.has(agentSessionId)) return false;
+  const d = defaults(deps);
+  const released = await d.agentSessions.releaseStaleTurnLease(pool, { agentSessionId, userId, finished });
+  if (!released) return false;
+  log.info('agent-mayor', 'Handed back an orphaned turn lease', { agentSessionId, finished });
+  try { d.notifyUser(userId, { type: 'agent_session_changed', agentSessionId, busy: false }); } catch { /* the lists catch up on their next read */ }
+  d.sessionBus.publish(busKey(agentSessionId), {
+    type: 'done', _seq: `orphan-${Date.now().toString(36)}`, agentSessionId,
+  });
+  return true;
+}
+
+// A recovered run on `changeId` has posted its wrap-up: hand back the dead
+// dispatching turn of every conversation it is the active change of. A lease
+// not yet stale (the restart was moments ago) is tried again once it is.
+async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null }) {
+  const d = defaults(deps);
+  const conversations = await d.agentSessions.conversationsOfChange(pool, changeId);
+  for (const { agentSessionId, userId } of conversations) {
+    // eslint-disable-next-line no-await-in-loop
+    const handed = await handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps });
+    if (handed || stopRegistry.has(agentSessionId)) continue;
+    const wait = retryMs ?? (d.agentSessions.TURN_LEASE_STALE_MINUTES * 60_000 + LEASE_RENEW_MS);
+    const timer = setTimeout(() => {
+      handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps }).catch((err) => {
+        log.warn('agent-mayor', 'Could not hand back an orphaned turn lease', { agentSessionId, err: err.message });
+      });
+    }, wait);
+    if (typeof timer.unref === 'function') timer.unref();
+  }
+}
+
 function newTurnId() {
   return crypto.randomUUID();
 }
@@ -901,6 +940,8 @@ module.exports = {
   runAgentTurn,
   stopAgentTurn,
   turnState,
+  handBackOrphanedTurn,
+  handBackAfterRecovery,
   newTurnId,
   _stopRegistry: stopRegistry,
 };

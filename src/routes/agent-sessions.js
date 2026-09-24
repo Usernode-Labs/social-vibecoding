@@ -417,7 +417,11 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       if (!rows.length) return res.status(404).json({ error: 'Agent session not found' });
       // During a dispatch the answer names the change: its own stop route
       // (POST /api/sessions/:changeId/stop) confirms the kill and escalates.
-      return res.json({ ok: true, ...agentTurn.stopAgentTurn(id, { by: req.user.username }) });
+      const answer = agentTurn.stopAgentTurn(id, { by: req.user.username });
+      if (answer.reason === 'no_active_turn' && rows[0].active_turn) {
+        answer.released = await agentTurn.handBackOrphanedTurn({ pool, agentSessionId: id, userId: req.user.id });
+      }
+      return res.json({ ok: true, ...answer });
     } catch (err) {
       return sendError(res, err, 'Stop agent turn');
     }
