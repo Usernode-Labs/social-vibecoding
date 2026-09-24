@@ -13,12 +13,24 @@ export interface AgentChange {
   checkState?: string | null;
 }
 
+/**
+ * The conversation's model (the composer's picker): Claude Code on an
+ * Anthropic model, or Codex on an OpenRouter model with a reasoning effort
+ * where the model offers one. Null on a session follows the user's default.
+ */
+export interface AgentChoice {
+  backend: 'claude_code' | 'codex_openrouter';
+  model: string | null;
+  reasoningEffort: string | null;
+}
+
 export interface AgentSession {
   id: number;
   title: string | null;
   status: 'open' | 'archived';
   focusApp: { id: number; slug: string | null; name: string | null } | null;
   focusContext: Record<string, unknown>;
+  agent?: AgentChoice | null;
   activeChange: AgentChange | null;
   changes?: AgentChange[];
   busy: boolean;
@@ -83,6 +95,39 @@ export interface AgentHint {
   entry?: string;
 }
 
+/** What an unsent conversation is about: its hint, resolved and not saved. */
+export interface AgentDraftPreview {
+  focusApp: AgentSession['focusApp'];
+  focusContext: Record<string, unknown>;
+}
+
+export interface AnthropicModel {
+  id: string;
+  label: string;
+}
+
+export interface OpenRouterModel {
+  id: string;
+  name?: string;
+  supportsReasoning?: boolean;
+  isRecommended?: boolean;
+  isDefaultFavorite?: boolean;
+  isFavorite?: boolean;
+}
+
+/** Everything the picker offers, read once per page. */
+export interface ModelCatalog {
+  anthropic: AnthropicModel[];
+  anthropicDefault: string | null;
+  /** The user's saved default, which a conversation with no choice follows. */
+  defaultBackend: AgentChoice['backend'];
+  savedOpenRouter: { model: string | null; reasoningEffort: string | null } | null;
+  defaultReasoningEffort: string | null;
+  codexAvailable: boolean;
+  openrouter: OpenRouterModel[];
+  recommendedOpenRouterId: string | null;
+}
+
 async function json<T>(response: Response, fallback: string): Promise<T> {
   const body = await response.json().catch(() => ({})) as T & { error?: string };
   if (!response.ok) {
@@ -103,12 +148,96 @@ function request(path: string, init: RequestInit = {}) {
   });
 }
 
-export async function createSession(hint: AgentHint | null): Promise<AgentSession> {
+/** Called on the first message of an unsent conversation, with what was picked while it was unsent. */
+export async function createSession(hint: AgentHint | null, agent: AgentChoice | null = null): Promise<AgentSession> {
+  const payload: { hint?: AgentHint; agent?: AgentChoice } = {};
+  if (hint) payload.hint = hint;
+  if (agent) payload.agent = agent;
   const body = await json<{ session: AgentSession }>(
-    await request('/api/agent-sessions', { method: 'POST', body: JSON.stringify(hint ? { hint } : {}) }),
+    await request('/api/agent-sessions', { method: 'POST', body: JSON.stringify(payload) }),
     'Could not start an agent session.',
   );
   return body.session;
+}
+
+export async function previewDraft(hint: AgentHint | null): Promise<AgentDraftPreview> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(hint || {})) {
+    if (value != null && value !== '') query.set(key, String(value));
+  }
+  const suffix = query.toString() ? `?${query}` : '';
+  const body = await json<{ draft: AgentDraftPreview }>(
+    await request(`/api/agent-sessions/draft${suffix}`),
+    'Could not load this agent session.',
+  );
+  return body.draft;
+}
+
+export async function setAgentChoice(id: number, agent: AgentChoice): Promise<AgentSession> {
+  const body = await json<{ session: AgentSession }>(
+    await request(`/api/agent-sessions/${id}/agent`, { method: 'PATCH', body: JSON.stringify(agent) }),
+    'Could not change the model.',
+  );
+  return body.session;
+}
+
+/**
+ * The picker's options: the Anthropic models (GET /api/models), the saved
+ * default (GET /api/me/coding-agent) and, where OpenRouter is offered, the
+ * viewer's OpenRouter catalog. A part that does not load is left out rather
+ * than failing the picker; the server validates every pick anyway.
+ */
+export async function loadModelCatalog(): Promise<ModelCatalog> {
+  const catalog: ModelCatalog = {
+    anthropic: [],
+    anthropicDefault: null,
+    defaultBackend: 'claude_code',
+    savedOpenRouter: null,
+    defaultReasoningEffort: null,
+    codexAvailable: false,
+    openrouter: [],
+    recommendedOpenRouterId: null,
+  };
+  const [models, prefs] = await Promise.all([
+    request('/api/models').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    request('/api/me/coding-agent').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+  ]) as [
+    { models?: Array<{ id?: unknown; label?: unknown }>; default?: unknown } | null,
+    {
+      defaultBackend?: unknown;
+      backends?: Record<string, { model?: unknown; reasoningEffort?: unknown } | undefined>;
+      codexAvailable?: unknown;
+      defaultReasoningEffort?: unknown;
+    } | null,
+  ];
+  if (models && Array.isArray(models.models)) {
+    catalog.anthropic = models.models
+      .filter((m) => m && typeof m.id === 'string')
+      .map((m) => ({ id: String(m.id), label: typeof m.label === 'string' && m.label ? m.label : String(m.id) }));
+    catalog.anthropicDefault = typeof models.default === 'string' ? models.default : null;
+  }
+  if (prefs) {
+    catalog.defaultBackend = prefs.defaultBackend === 'codex_openrouter' ? 'codex_openrouter' : 'claude_code';
+    const saved = prefs.backends?.codex_openrouter;
+    if (saved) {
+      catalog.savedOpenRouter = {
+        model: typeof saved.model === 'string' && saved.model ? saved.model : null,
+        reasoningEffort: typeof saved.reasoningEffort === 'string' && saved.reasoningEffort ? saved.reasoningEffort : null,
+      };
+    }
+    catalog.codexAvailable = prefs.codexAvailable === true;
+    catalog.defaultReasoningEffort = typeof prefs.defaultReasoningEffort === 'string' ? prefs.defaultReasoningEffort : null;
+  }
+  if (catalog.codexAvailable) {
+    const list = await request('/api/me/coding-agent/models?backend=codex_openrouter')
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null) as
+      { models?: OpenRouterModel[]; recommendedModelId?: unknown } | null;
+    if (list && Array.isArray(list.models)) {
+      catalog.openrouter = list.models.filter((m) => m && typeof m.id === 'string');
+      catalog.recommendedOpenRouterId = typeof list.recommendedModelId === 'string' ? list.recommendedModelId : null;
+    }
+  }
+  return catalog;
 }
 
 export async function listSessions(): Promise<AgentSession[]> {

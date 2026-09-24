@@ -104,7 +104,11 @@ test('an app the user cannot see is dropped from the hint, never refused', async
   });
   assert.deepEqual(
     await agentSessions.resolveHint(visible, { id: 7 }, { slug: 'recipe-box', issueNumber: 12, entry: 'issue' }),
-    { focusAppId: 3, focusContext: { entry: 'issue', issueNumber: 12 } }
+    {
+      focusAppId: 3,
+      focusApp: { id: 3, slug: 'recipe-box', name: null },
+      focusContext: { entry: 'issue', issueNumber: 12 },
+    }
   );
   const hidden = recordingPool({
     'FROM apps WHERE slug': () => ({
@@ -114,8 +118,49 @@ test('an app the user cannot see is dropped from the hint, never refused', async
   });
   assert.deepEqual(
     await agentSessions.resolveHint(hidden, { id: 7 }, { slug: 'secret', proposalId: 9, entry: 'proposal' }),
-    { focusAppId: null, focusContext: { entry: 'proposal' } },
+    { focusAppId: null, focusApp: null, focusContext: { entry: 'proposal' } },
     'the app and anything about it are dropped; only where the user came from is kept'
+  );
+});
+
+test('an unsent conversation is previewed with the same rule, and nothing is written', async () => {
+  const pool = recordingPool({
+    'FROM apps WHERE slug': () => ({
+      rows: [{ id: 3, slug: 'recipe-box', name: 'Recipe box', collab_visibility: 'public', view_visibility: 'public' }],
+    }),
+  });
+  assert.deepEqual(
+    await agentSessions.previewDraft(pool, { user: { id: 7 }, hint: { slug: 'recipe-box', proposalId: 4, entry: 'proposal' } }),
+    { focusApp: { id: 3, slug: 'recipe-box', name: 'Recipe box' }, focusContext: { entry: 'proposal', proposalId: 4 } },
+  );
+  assert.deepEqual(await agentSessions.previewDraft(pool, { user: { id: 7 } }), { focusApp: null, focusContext: {} });
+  assert.ok(pool.calls.every((c) => /^\s*SELECT/i.test(c.sql)), 'reads only');
+  assert.throws(() => agentSessions.parseHint({ slug: 'Bad Slug' }), /app slug/);
+  await assert.rejects(agentSessions.previewDraft(pool, { user: { id: 7 }, hint: { slug: 'Bad Slug' } }), /app slug/);
+});
+
+test('the conversation\'s model choice is stored, read back and shaped', async () => {
+  const pool = recordingPool({
+    'UPDATE agent_sessions': () => ({ rows: [{ id: 5 }], rowCount: 1 }),
+    'SELECT agent_backend, agent_model, agent_reasoning_effort': () => ({
+      rows: [{ agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5', agent_reasoning_effort: 'high' }],
+    }),
+  });
+  await agentSessions.setAgentChoice(pool, {
+    userId: 7, id: 5, agent: { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' },
+  });
+  const update = pool.calls.find((c) => /UPDATE agent_sessions/.test(c.sql));
+  assert.match(update.sql, /WHERE id = \$1 AND user_id = \$2 AND status = 'open'/, 'owner-scoped, open only');
+  assert.deepEqual(update.params, [5, 7, 'codex_openrouter', 'z-ai/glm-5', 'high']);
+  assert.deepEqual(await agentSessions.getAgentChoice(pool, 5),
+    { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' });
+  assert.equal(await agentSessions.getAgentChoice(recordingPool(), 5), null, 'no row, no choice');
+  assert.equal(await agentSessions.getAgentChoice(pool, 'x'), null);
+
+  assert.equal(agentSessions.shapeSession({ id: 5, status: 'open' }).agent, null, 'no choice follows the default');
+  assert.deepEqual(
+    agentSessions.shapeSession({ id: 5, status: 'open', agent_backend: 'claude_code', agent_model: 'claude-fable-5-1' }).agent,
+    { backend: 'claude_code', model: 'claude-fable-5-1', reasoningEffort: null },
   );
 });
 
@@ -258,6 +303,12 @@ test('the create route links a Mayor\'s change to its session, and only then', (
   const link = create.indexOf('agentSessions.linkChange');
   assert.ok(link > insert, 'and the new one is linked once it exists');
   assert.match(create, /session_title, proposed_pr_title\)/, 'a name can ride on the create');
+  // A change the conversation starts is created on the conversation's model,
+  // held to a browser pick's exact-or-refuse rule, and resolved before any
+  // slot is reclaimed so a choice that cannot run has no side effects.
+  assert.match(create, /!explicitAgent && agentSessionId\s*\? await agentSessions\.getAgentChoice\(pool, agentSessionId\)/);
+  assert.match(create, /resolveExplicitAgentPreference\(pool, req\.user\.id, config, conversationChoice\)/);
+  assert.ok(create.indexOf('conversationChoice') < create.indexOf('sessionLifecycle.freeGlobalSlot'));
 });
 
 test('the merge and archive paths tell the parent session', () => {
@@ -336,12 +387,88 @@ test('creating a session needs the flag; everything else only needs to be yours'
     assert.equal(created.body.session.id, 5);
     assert.deepEqual(created.body.session.focusApp, { id: 3, slug: 'recipe-box', name: 'Recipe box' });
     const insert = pool.calls.find((c) => /INSERT INTO agent_sessions/.test(c.sql));
-    assert.deepEqual(insert.params, [7, 3, JSON.stringify({ entry: 'improve' })]);
+    assert.deepEqual(insert.params, [7, 3, JSON.stringify({ entry: 'improve' }), null, null, null],
+      'no model picked: the conversation follows the default');
 
     assert.equal((await call('POST', '/api/agent-sessions', { message: 'hi' })).status, 400,
       'a first message is not accepted yet');
     assert.equal((await call('POST', '/api/agent-sessions', { hint: { slug: 'NOPE' } })).status, 400);
     assert.equal((await call('GET', '/api/agent-sessions?status=deleted')).status, 400);
+  });
+});
+
+test('an unsent conversation is previewed, then created on its first message with the model picked meanwhile', async () => {
+  const handlers = {
+    'INSERT INTO agent_sessions': () => ({ rows: [{ id: 5 }] }),
+    'FROM agent_sessions s': () => ({ rows: [SESSION_ROW] }),
+    'FROM apps WHERE slug': () => ({
+      rows: [{ id: 3, slug: 'recipe-box', name: 'Recipe box', collab_visibility: 'public', view_visibility: 'public' }],
+    }),
+  };
+  await withRoutes({ id: 7, agentSessionsEnabled: false }, handlers, async (call) => {
+    assert.equal((await call('GET', '/api/agent-sessions/draft?slug=recipe-box')).status, 403);
+  });
+  await withRoutes({ id: 7, agentSessionsEnabled: true }, handlers, async (call, pool) => {
+    const draft = await call('GET', '/api/agent-sessions/draft?slug=recipe-box&issueNumber=12&entry=issue');
+    assert.equal(draft.status, 200);
+    assert.deepEqual(draft.body.draft, {
+      focusApp: { id: 3, slug: 'recipe-box', name: 'Recipe box' },
+      focusContext: { entry: 'issue', issueNumber: 12 },
+    });
+    assert.equal((await call('GET', '/api/agent-sessions/draft?slug=NOPE')).status, 400);
+    assert.ok(!pool.calls.some((c) => /INSERT|UPDATE/.test(c.sql)), 'opening New change writes nothing');
+
+    const created = await call('POST', '/api/agent-sessions', {
+      hint: { slug: 'recipe-box', entry: 'improve' },
+      agent: { backend: 'claude_code', model: 'claude-fable-5-1' },
+    });
+    assert.equal(created.status, 201);
+    const insert = pool.calls.find((c) => /INSERT INTO agent_sessions/.test(c.sql));
+    assert.deepEqual(insert.params.slice(3), ['claude_code', 'claude-fable-5-1', null]);
+    await new Promise((resolve) => setImmediate(resolve));
+    const remembered = pool.calls.find((c) => /INSERT INTO user_agent_preferences/.test(c.sql));
+    assert.deepEqual(remembered && remembered.params, [7, 'claude_code', null, null],
+      'a pick is also the next default, as in the dev chat; a Claude default carries no model');
+
+    for (const agent of [
+      { backend: 'claude_code', model: 'gpt-4' },
+      { backend: 'mystery' },
+      { backend: 'claude_code', extra: 1 },
+      'claude_code',
+    ]) {
+      const refused = await call('POST', '/api/agent-sessions', { agent });
+      assert.equal(refused.status, 400, JSON.stringify(agent));
+    }
+    const noOpenRouter = await call('POST', '/api/agent-sessions', { agent: { backend: 'codex_openrouter', model: 'z-ai/glm-5' } });
+    assert.equal(noOpenRouter.status, 403, 'an OpenRouter pick goes through the dev chat\'s own resolver');
+  });
+});
+
+test('the model can be changed at any time, mid-turn included, on an open session of the user\'s', async () => {
+  const handlers = {
+    'UPDATE agent_sessions': () => ({ rows: [{ id: 5 }], rowCount: 1 }),
+    'FROM agent_sessions s': () => ({
+      rows: [{ ...SESSION_ROW, active_turn: 'busy-turn', agent_backend: 'claude_code', agent_model: 'claude-sonnet-5' }],
+    }),
+  };
+  await withRoutes({ id: 7, agentSessionsEnabled: false }, handlers, async (call, pool) => {
+    const changed = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-sonnet-5' });
+    assert.equal(changed.status, 200, 'a running turn does not lock the picker, and the flag only gates starting');
+    assert.deepEqual(changed.body.session.agent, { backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+    const update = pool.calls.find((c) => /UPDATE agent_sessions/.test(c.sql));
+    assert.deepEqual(update.params, [5, 7, 'claude_code', 'claude-sonnet-5', null]);
+    const defaulted = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code' });
+    assert.equal(defaulted.status, 200);
+    assert.equal(pool.calls.filter((c) => /UPDATE agent_sessions/.test(c.sql))[1].params[3], 'claude-opus-5-5',
+      'no model names the platform default');
+    assert.equal((await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'nope' })).status, 400);
+  });
+  await withRoutes({ id: 7 }, { 'FROM agent_sessions s': () => ({ rows: [{ ...SESSION_ROW, status: 'archived', archived_at: new Date() }] }) },
+    async (call) => {
+      assert.equal((await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code' })).status, 409);
+    });
+  await withRoutes({ id: 8 }, {}, async (call) => {
+    assert.equal((await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code' })).status, 404);
   });
 });
 

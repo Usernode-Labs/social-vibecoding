@@ -73,6 +73,12 @@ export const DESKTOP_QUERY = '(min-width: 1024px)';
 export interface PanelHint {
   /** Show the "what a proposal is" hint on the unsent change (New change). */
   proposalHint?: boolean;
+  /**
+   * What an unsent agent session (`agent/new`, #2779) is about: the app, the
+   * request or the proposal New change was pressed on. The session is
+   * created with it on the first message, in the panel's own document.
+   */
+  agentHint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null;
 }
 
 interface AppLike {

@@ -413,6 +413,43 @@ test('the Mayor runs where the user\'s coding agent runs, and is paid for the sa
   assert.deepEqual([refused.ok, refused.status], [false, 503], 'never a silent switch to Anthropic');
 });
 
+test('the conversation\'s own model choice outranks the user\'s default, read when the turn starts', async () => {
+  // The default says OpenRouter; the conversation picked Claude on Fable.
+  const pool = recordingPool({
+    'FROM user_agent_preferences': () => ({ rows: [{ backend: 'codex_openrouter', model_id: 'z-ai/glm-5' }] }),
+  });
+  const resolved = [];
+  const onClaude = await agentTurn.resolveAgentMayor({
+    pool, config: CONFIG, userId: 7, agentSessionId: 5,
+    deps: {
+      agentSessions: { getAgentChoice: async (_pool, id) => (id === 5 ? { backend: 'claude_code', model: 'claude-fable-5-1', reasoningEffort: null } : null) },
+      llm: { isEnabled: () => true },
+      limits: { resolveBillingPath: async () => ({ apiKey: null }) },
+      models: { resolve: (m) => { resolved.push(m); return m || 'claude-opus-5-5'; } },
+      openrouterMayor: { resolveForSession: async () => { throw new Error('the default is not asked'); } },
+    },
+  });
+  assert.deepEqual([onClaude.provider, onClaude.model], ['anthropic', 'claude-fable-5-1']);
+  assert.ok(!pool.calls.some((c) => /user_agent_preferences/.test(c.sql)), 'a conversation with a choice never reads the default');
+
+  // And the other way: the conversation picked an OpenRouter model.
+  const asked = [];
+  const onOpenRouter = await agentTurn.resolveAgentMayor({
+    pool: recordingPool(), config: CONFIG, userId: 7, agentSessionId: 5,
+    deps: {
+      agentSessions: { getAgentChoice: async () => ({ backend: 'codex_openrouter', model: 'moonshot/kimi-k3', reasoningEffort: 'high' }) },
+      openrouterMayor: {
+        resolveForSession: async (args) => {
+          asked.push(args);
+          return { client: { streamChat() {} }, modelLabel: 'openrouter/moonshot/kimi-k3', usesIncludedKey: false };
+        },
+      },
+    },
+  });
+  assert.equal(onOpenRouter.provider, 'openrouter');
+  assert.equal(asked[0].session.agent_model, 'moonshot/kimi-k3');
+});
+
 // ── Confirmation cards ─────────────────────────────────────────────────
 
 test('a card stores only the sealed input, and only for an open session of the user\'s', async () => {

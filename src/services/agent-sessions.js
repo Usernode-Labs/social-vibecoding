@@ -72,15 +72,30 @@ function parseHint(raw) {
 
 async function resolveHint(pool, user, hint) {
   if (!hint || !hint.slug) {
-    return { focusAppId: null, focusContext: hint && hint.entry ? { entry: hint.entry } : {} };
+    return { focusAppId: null, focusApp: null, focusContext: hint && hint.entry ? { entry: hint.entry } : {} };
   }
-  const app = await appAccess.getAppForUser(pool, hint.slug, user, 'view', appAccess.ACCESS_COLUMNS);
-  if (!app) return { focusAppId: null, focusContext: hint.entry ? { entry: hint.entry } : {} };
+  const app = await appAccess.getAppForUser(pool, hint.slug, user, 'view', `${appAccess.ACCESS_COLUMNS}, name`);
+  if (!app) return { focusAppId: null, focusApp: null, focusContext: hint.entry ? { entry: hint.entry } : {} };
   const context = {};
   if (hint.entry) context.entry = hint.entry;
   if (hint.issueNumber) context.issueNumber = hint.issueNumber;
   if (hint.proposalId) context.proposalId = hint.proposalId;
-  return { focusAppId: app.id, focusContext: context };
+  return {
+    focusAppId: app.id,
+    focusApp: { id: app.id, slug: app.slug || null, name: app.name || null },
+    focusContext: context,
+  };
+}
+
+// An UNSENT conversation (New change before the first message) is not a row:
+// nothing is created until the viewer sends something, so opening and leaving
+// New change leaves nothing behind in Messages. The screen still has to say
+// what it is about, so the hint is resolved exactly as creating would resolve
+// it, with the same access rule, and nothing is written.
+async function previewDraft(pool, { user, hint = null }) {
+  const parsed = parseHint(hint);
+  const { focusApp, focusContext } = await resolveHint(pool, user, parsed);
+  return { focusApp, focusContext };
 }
 
 // ── Shaping ────────────────────────────────────────────────────────────
@@ -110,6 +125,14 @@ function shapeSession(row) {
       ? { id: row.focus_app_id, slug: row.focus_app_slug || null, name: row.focus_app_name || null }
       : null,
     focusContext: row.focus_context || {},
+    // The composer's model choice; null follows the user's default.
+    agent: row.agent_backend
+      ? {
+        backend: row.agent_backend,
+        model: row.agent_model || null,
+        reasoningEffort: row.agent_reasoning_effort || null,
+      }
+      : null,
     activeChange: shapeChangeRow(row),
     busy: !!row.active_turn,
     lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).toISOString() : null,
@@ -120,14 +143,19 @@ function shapeSession(row) {
 
 // ── Sessions ───────────────────────────────────────────────────────────
 
-async function createAgentSession(pool, { user, hint = null }) {
+// `agent` is an already-validated choice ({ backend, model, reasoningEffort },
+// see routes/agent-sessions.js) or null to follow the user's default.
+async function createAgentSession(pool, { user, hint = null, agent = null }) {
   const parsed = parseHint(hint);
   const { focusAppId, focusContext } = await resolveHint(pool, user, parsed);
   const { rows } = await pool.query(
-    `INSERT INTO agent_sessions (user_id, focus_app_id, focus_context)
-     VALUES ($1, $2, $3::jsonb)
+    `INSERT INTO agent_sessions
+       (user_id, focus_app_id, focus_context, agent_backend, agent_model, agent_reasoning_effort)
+     VALUES ($1, $2, $3::jsonb, $4, $5, $6)
      RETURNING id`,
-    [user.id, focusAppId, JSON.stringify(focusContext)]
+    [user.id, focusAppId, JSON.stringify(focusContext),
+      agent ? agent.backend : null, agent ? agent.model || null : null,
+      agent ? agent.reasoningEffort || null : null]
   );
   log.info('agent-sessions', 'Agent session created', {
     userId: user.id, agentSessionId: rows[0].id, focusAppId,
@@ -145,6 +173,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
     // detail cannot disagree about what a session looks like.
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
+            s.agent_backend, s.agent_model, s.agent_reasoning_effort,
             s.last_activity_at, s.created_at, s.archived_at,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
@@ -174,6 +203,7 @@ async function getAgentSession(pool, { userId, id }) {
   const { rows } = await pool.query(
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
+            s.agent_backend, s.agent_model, s.agent_reasoning_effort,
             s.last_activity_at, s.created_at, s.archived_at,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
@@ -204,6 +234,42 @@ async function getAgentSession(pool, { userId, id }) {
   );
   session.changes = changes.map(shapeChangeRow);
   return session;
+}
+
+// The composer's model choice (#2779). The Mayor reads it at the start of its
+// next turn and a dispatch at the start of its next build, so a turn or build
+// already running finishes on the model it started with.
+async function setAgentChoice(pool, { userId, id, agent }) {
+  const sessionId = positiveInt(Number(id));
+  if (!sessionId) return null;
+  const { rows } = await pool.query(
+    `UPDATE agent_sessions
+        SET agent_backend = $3, agent_model = $4, agent_reasoning_effort = $5
+      WHERE id = $1 AND user_id = $2 AND status = 'open'
+      RETURNING id`,
+    [sessionId, userId, agent.backend, agent.model || null, agent.reasoningEffort || null]
+  );
+  if (!rows.length) return null;
+  return getAgentSession(pool, { userId, id: sessionId });
+}
+
+// The choice alone, for the Mayor, a dispatch and a change being started.
+// Null when the conversation follows the user's default.
+async function getAgentChoice(pool, agentSessionId) {
+  const sessionId = positiveInt(Number(agentSessionId));
+  if (!sessionId) return null;
+  const { rows } = await pool.query(
+    `SELECT agent_backend, agent_model, agent_reasoning_effort
+       FROM agent_sessions WHERE id = $1`,
+    [sessionId]
+  );
+  const row = rows[0];
+  if (!row || !row.agent_backend) return null;
+  return {
+    backend: row.agent_backend,
+    model: row.agent_model || null,
+    reasoningEffort: row.agent_reasoning_effort || null,
+  };
 }
 
 async function renameAgentSession(pool, { userId, id, title }) {
@@ -537,7 +603,10 @@ module.exports = {
   parseHint,
   resolveHint,
   shapeSession,
+  previewDraft,
   createAgentSession,
+  setAgentChoice,
+  getAgentChoice,
   listAgentSessions,
   getAgentSession,
   renameAgentSession,

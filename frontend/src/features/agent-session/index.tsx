@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import {
   ArrowUpIcon,
   CheckIcon,
+  ChevronDownIcon,
   SparklesIcon,
   SpinnerArcIcon,
   XIcon,
@@ -11,6 +12,14 @@ import {
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import type { AgentChange, AgentSession } from './api';
+import {
+  choiceFromValue,
+  choiceValue,
+  effectiveChoice,
+  effortOptions,
+  offersReasoning,
+  pickerOptions,
+} from './model-choice';
 import {
   buildTranscript,
   cardView,
@@ -20,8 +29,11 @@ import {
   type TranscriptItem,
 } from './transcript';
 import {
+  chooseAgent,
+  clearReturnedText,
   composerId,
   decideCard,
+  loadModelCatalog,
   openAgentSession,
   sendAgentMessage,
   setDrawerOpen,
@@ -34,7 +46,9 @@ import {
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
 // like Global Chat: its own screen (#agent/<id>, a phone's only surface) and
 // the Messages pane beside the inbox on a desktop (#messages/agent/<id>).
-// One panel, so the two cannot drift.
+// One panel, so the two cannot drift. New change opens it UNSENT at `new`
+// (the store's `draft`): the same panel, with nothing created until the
+// first message.
 //
 // React owns every node below the screen root; no legacy module writes into
 // it. The first render is the hidden, empty root the prerendered shell
@@ -83,7 +97,10 @@ function changeRef(change: AgentChange) {
 
 // ── Header ─────────────────────────────────────────────────────────────
 
-function SessionBar({ session, embedded }: { session: AgentSession | null; embedded: boolean }) {
+/** What the conversation is about: the session's, or the unsent draft's. */
+type About = Pick<AgentSession, 'focusApp' | 'focusContext'> | null;
+
+function SessionBar({ session, about, embedded }: { session: AgentSession | null; about: About; embedded: boolean }) {
   const snapshot = useAgentSessionState();
   const active = session?.activeChange || null;
   const building = snapshot.turn.running && snapshot.turn.phase === 'cc';
@@ -94,7 +111,7 @@ function SessionBar({ session, embedded }: { session: AgentSession | null; embed
         <div className="mr-auto min-w-0 basis-full sm:basis-auto">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
           <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-            Agent session{session?.focusApp?.name ? ` · started from ${session.focusApp.name}` : ''}
+            Agent session{about?.focusApp?.name ? ` · started from ${about.focusApp.name}` : ''}
           </p>
         </div>
       ) : null}
@@ -103,8 +120,8 @@ function SessionBar({ session, embedded }: { session: AgentSession | null; embed
         className="inline-flex min-w-0 max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
         title="The app this conversation is about when a request does not name one. The Mayor moves it when you ask."
       >
-        {session?.focusApp ? <AppMark name={session.focusApp.name} /> : null}
-        <span className="truncate">{session?.focusApp?.name || 'Any app'}</span>
+        {about?.focusApp ? <AppMark name={about.focusApp.name} /> : null}
+        <span className="truncate">{about?.focusApp?.name || 'Any app'}</span>
       </span>
       <span
         data-agent-session-change-pill
@@ -299,8 +316,8 @@ function LiveTurn() {
   );
 }
 
-function EmptyState({ session }: { session: AgentSession | null }) {
-  const app = session?.focusApp?.name || null;
+function EmptyState({ about }: { about: About }) {
+  const app = about?.focusApp?.name || null;
   return (
     <section className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center" data-agent-session-empty>
       <span className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
@@ -317,9 +334,9 @@ function EmptyState({ session }: { session: AgentSession | null }) {
 
 // The first things to say, from where the conversation was opened: a
 // request or a proposal the user was looking at comes first.
-function starters(session: AgentSession | null) {
-  const app = session?.focusApp?.name || null;
-  const context = (session?.focusContext || {}) as { issueNumber?: number; proposalId?: number };
+function starters(about: About) {
+  const app = about?.focusApp?.name || null;
+  const context = (about?.focusContext || {}) as { issueNumber?: number; proposalId?: number };
   const first = context.issueNumber
     ? [`Work on request #${context.issueNumber}`]
     : context.proposalId
@@ -352,11 +369,83 @@ function Replies({ replies }: { replies: string[] }) {
   );
 }
 
+/**
+ * The conversation's model (./model-choice.ts): Claude Code on an Anthropic
+ * model, or Codex on an OpenRouter model with its reasoning effort where the
+ * model offers one. The dev chat picker's look (`dc-model-select`). Usable at
+ * any time: what is running finishes on the model it started with, and the
+ * line beside the control says so while a turn runs.
+ */
+function ModelPicker() {
+  const snapshot = useAgentSessionState();
+  useEffect(() => { void loadModelCatalog(); }, []);
+  const catalog = snapshot.catalog;
+  const explicit = snapshot.session ? (snapshot.session.agent || null) : (snapshot.draft?.agent || null);
+  const current = effectiveChoice(explicit, catalog);
+  const options = pickerOptions(catalog, current);
+  if (!options.length || !current) return null;
+  const archived = snapshot.session?.status === 'archived';
+  const disabled = archived || snapshot.choosing || snapshot.phase === 'loading';
+  const reasoning = offersReasoning(current, catalog);
+  const running = snapshot.turn.running && !!snapshot.session;
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1" data-agent-session-model>
+      <span className="dc-venue-detail-inline">
+        <select
+          className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
+          aria-label="Model"
+          value={choiceValue(current)}
+          disabled={disabled}
+          onChange={(event) => {
+            const next = choiceFromValue(event.currentTarget.value, catalog, current);
+            if (next) void chooseAgent(next);
+          }}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value} title={option.title || undefined}>{option.label}</option>
+          ))}
+        </select>
+        <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
+      </span>
+      {reasoning ? (
+        <span className="dc-venue-detail-inline">
+          <select
+            className="dc-model-select rounded text-[13px] text-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-300"
+            aria-label="Reasoning effort"
+            value={current.reasoningEffort || ''}
+            disabled={disabled}
+            onChange={(event) => void chooseAgent({ ...current, reasoningEffort: event.currentTarget.value || null })}
+          >
+            {effortOptions(catalog).map((option) => (
+              <option key={option.value} value={option.value}>{`Thinking: ${option.label}`}</option>
+            ))}
+          </select>
+          <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
+        </span>
+      ) : null}
+      {running ? (
+        <span className="whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-400" data-agent-session-model-note>
+          applies from your next message
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function Composer({ id }: { id: string }) {
   const snapshot = useAgentSessionState();
   const [value, setValue] = useState('');
   const running = snapshot.turn.running;
   const archived = snapshot.session?.status === 'archived';
+  const returned = snapshot.returnedText;
+
+  // A message the server refused comes back here, unless something new has
+  // been typed since.
+  useEffect(() => {
+    if (returned == null) return;
+    setValue((current) => current || returned);
+    clearReturnedText();
+  }, [returned]);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -372,7 +461,7 @@ function Composer({ id }: { id: string }) {
     // the bordered field above it never sits under either.
     <div className="platform-safe-bar shrink-0 px-3 pt-1">
     <form
-      className="agent-session-composer flex items-end gap-2 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+      className="agent-session-composer flex flex-col gap-1 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
       onSubmit={submit}
     >
       <textarea
@@ -383,7 +472,7 @@ function Composer({ id }: { id: string }) {
         disabled={archived || snapshot.phase === 'loading'}
         placeholder={archived ? 'This session is archived.' : 'Describe a change to any app in plain English. No coding needed.'}
         aria-label="Message the Mayor"
-        className="max-h-36 min-h-[2.5rem] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
+        className="max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
         onChange={(event) => {
           setValue(event.target.value);
           event.currentTarget.style.height = 'auto';
@@ -396,6 +485,8 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
+      <div className="flex items-center gap-2">
+      <div className="min-w-0 flex-1"><ModelPicker /></div>
       <Button
         type={running ? 'button' : 'submit'}
         data-agent-session-send={running ? 'stop' : 'send'}
@@ -411,6 +502,7 @@ function Composer({ id }: { id: string }) {
       >
         {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
       </Button>
+      </div>
     </form>
     </div>
   );
@@ -503,6 +595,7 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
   const items = useMemo(() => buildTranscript(snapshot.messages, snapshot.actions), [snapshot.messages, snapshot.actions]);
   const replies = latestReplies(items);
   const empty = snapshot.phase === 'ready' && !items.length && !snapshot.turn.running && !snapshot.turn.pendingUserText;
+  const about: About = snapshot.session || snapshot.draft;
 
   useEffect(() => {
     if (!scroll.current) return;
@@ -511,19 +604,19 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
 
   return (
     <div className={`relative flex min-h-0 flex-1 flex-col ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
-      <SessionBar session={snapshot.session} embedded={embedded} />
+      <SessionBar session={snapshot.session} about={about} embedded={embedded} />
       <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
         {snapshot.phase === 'loading' ? (
           <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
         ) : null}
-        {empty ? <EmptyState session={snapshot.session} /> : null}
+        {empty ? <EmptyState about={about} /> : null}
         {items.map((item) => <Item key={item.key} item={item} />)}
         <LiveTurn />
         {snapshot.error ? (
           <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
         ) : null}
       </div>
-      <Replies replies={empty ? starters(snapshot.session) : replies} />
+      <Replies replies={empty ? starters(about) : replies} />
       <Composer id={composerId(embedded ? 'messages' : 'screen')} />
       {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
     </div>
@@ -540,6 +633,10 @@ export function AgentSessionScreen() {
   useEffect(() => {
     if (snapshot.open || !window.location.hash.startsWith('#agent/')) return;
     const [segment, section] = window.location.hash.slice('#agent/'.length).split('/');
+    if (segment === 'new') {
+      void openAgentSession({ id: 'new', host: 'screen' });
+      return;
+    }
     const id = Number(segment);
     if (Number.isSafeInteger(id) && id > 0) void openAgentSession({ id, host: 'screen', drawer: section === 'changes' });
   }, [snapshot.open]);

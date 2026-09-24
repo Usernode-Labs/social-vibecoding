@@ -4059,8 +4059,13 @@ const App = {
         // #2779: an agent session, one conversation with the Mayor that works
         // on any app. Its own screen at #agent/<id> (a phone's surface; a
         // desktop can also draw it beside the inbox at #messages/agent/<id>).
-        // A serial id, so the same signed-int32 bound as a conversation's.
+        // A serial id, so the same signed-int32 bound as a conversation's;
+        // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
+        if (parts[1] === 'new') {
+          App.navigateToAgentSession('new');
+          return;
+        }
         const agentSessionId = App._numericSegment(parts[1]);
         if (agentSessionId == null || agentSessionId > 2147483647) {
           App.navigateToMessages(null);
@@ -5815,7 +5820,9 @@ const App = {
       let id = null;
       try { id = decodeURIComponent(parts[2]); } catch (_) { return null; }
       // #2779: an agent session's id is a serial; a Global Chat thread's is
-      // a UUID, never all digits. So a number names an agent session.
+      // a UUID, never all digits. So a number names an agent session, and so
+      // does `new`: the one New change opens, unsent until its first message.
+      if (id === 'new') return { kind: 'agent', id: 'new' };
       const agentSessionId = App._numericSegment(id);
       if (agentSessionId != null && agentSessionId <= 2147483647) {
         return { kind: 'agent', id: agentSessionId };
