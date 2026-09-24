@@ -72,6 +72,10 @@ const GITHUB_API = 'https://api.github.com';
 const BRANCH_PREFIX = 'usernode';
 const DEFAULT_BASE_BRANCH = 'main';
 const MAX_BRIEF_CHARS = 6000;
+// How many requests one work order may implement. A proposal that closes more
+// than a handful is too big to review as one change, and every request's text
+// shares the one MAX_BRIEF_CHARS brief.
+const MAX_TASK_ISSUES = 5;
 // A proposal's own heading, clipped where it is printed into a work order.
 const MAX_TITLE_CHARS = 200;
 // Suffix for the fork name we suggest when the user already owns a
@@ -301,11 +305,37 @@ function branchNameFor(slug, issueNumber, nonce, label) {
 // exact brief text, so asking twice for the same thing returns the job that
 // already exists instead of minting a third.
 //
-// Must stay byte-identical to the backfill in src/db/schema.sql.
-function requestKeyFor(issueNumber, brief) {
-  if (Number.isInteger(issueNumber) && issueNumber > 0) return `issue:${issueNumber}`;
+// Must stay byte-identical to the backfill in src/db/schema.sql for the two
+// shapes it backfills. A job for SEVERAL requests is keyed on the whole set,
+// sorted, so asking again for the same requests in another order returns the
+// same job, and it never collides with a one-request `issue:N` job.
+function requestKeyFor(issueNumber, brief, issueNumbers) {
+  const issues = normalizeIssueNumbers(issueNumbers, issueNumber);
+  if (issues.length > 1) return `issues:${[...issues].sort((a, b) => a - b).join(',')}`;
+  if (issues.length === 1) return `issue:${issues[0]}`;
   const digest = crypto.createHash('sha256').update(String(brief || ''), 'utf8').digest('hex');
   return `brief:${digest.slice(0, 32)}`;
+}
+
+// The requests a job implements, primary first: `single` (the old one-request
+// parameter, and the row's issue_number) and then `list`, deduplicated, junk
+// dropped, capped at MAX_TASK_ISSUES. The primary is what names the branch and
+// what the Improve panel's row is keyed on; every one of them is linked.
+function normalizeIssueNumbers(list, single) {
+  const out = [];
+  for (const value of [single, ...(Array.isArray(list) ? list : [])]) {
+    if (typeof value !== 'number' && typeof value !== 'string') continue;
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0 && n <= 2147483647 && !out.includes(n)) out.push(n);
+  }
+  return out.slice(0, MAX_TASK_ISSUES);
+}
+
+// "request #12", "requests #12 and #14", "requests #12, #14 and #19".
+function requestPhrase(issues) {
+  const refs = issues.map((n) => `#${n}`);
+  if (refs.length <= 1) return `request ${refs[0] || ''}`.trim();
+  return `requests ${refs.slice(0, -1).join(', ')} and ${refs[refs.length - 1]}`;
 }
 
 // An UPDATE job is identified by the PROPOSAL it revises (#1054), not by the
@@ -354,11 +384,16 @@ function displayHandle(raw) {
 // continue, by calling prepare_work again with `proposalId`. Titles are left
 // out on purpose — they are other people's writing, they are already in the
 // structured result, and the line has a 320-character budget to keep.
-function buildDuplicateNotice({ issueNumber, openProposals }) {
+function buildDuplicateNotice({ issueNumber, issueNumbers, openProposals }) {
   const list = Array.isArray(openProposals) ? openProposals : [];
-  if (!list.length || !(Number.isInteger(issueNumber) && issueNumber > 0)) return null;
+  const issues = normalizeIssueNumbers(issueNumbers, issueNumber);
+  if (!list.length || !issues.length) return null;
 
   const lead = list.find((p) => p.mine) || list[0];
+  // On a job for several requests, the one THIS proposal is for — the lookup
+  // reports which of them each proposal matched.
+  const matched = normalizeIssueNumbers(lead.requests).filter((n) => issues.includes(n));
+  const request = matched[0] || issues[0];
   const who = displayHandle(lead.author) ? ` by ${displayHandle(lead.author)}` : '';
   // The pull request number leads when there is one (#2136): it is the number
   // the person can find on GitHub, and the proposal id stays beside it because
@@ -367,8 +402,8 @@ function buildDuplicateNotice({ issueNumber, openProposals }) {
     ? `PR #${Number(lead.prNumber)} (proposal ${lead.proposalId})`
     : `proposal ${lead.proposalId}`;
   const head = lead.mine
-    ? `Heads-up: request #${issueNumber} already has a proposal of yours up for a vote — ${named}.`
-    : `Heads-up: request #${issueNumber} already has a proposal up for a vote — ${named}, opened${who}.`;
+    ? `Heads-up: request #${request} already has a proposal of yours up for a vote — ${named}.`
+    : `Heads-up: request #${request} already has a proposal up for a vote — ${named}, opened${who}.`;
   const tail = lead.mine
     ? ' Say so if this change belongs on that one and I\'ll prepare an update to it, instead of a second proposal.'
     : ' Worth a read first — you can only update your own, so the other option is a deliberate rival approach.';
@@ -409,7 +444,7 @@ function buildDuplicateNotice({ issueNumber, openProposals }) {
 // really is the likely setting.
 function buildGuidance({
   agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus, issueNumber,
-  openProposals,
+  issueNumbers, openProposals,
 }) {
   const forkRef = `${forkOwner}/${forkRepo}`;
   const justCreated = forkStatus !== 'ready';
@@ -421,7 +456,7 @@ function buildGuidance({
   // FIRST, when there is one: this request is already being voted on (#1216).
   // Before the fork step, deliberately — every step below it is work, and the
   // decision this raises is whether that work should happen at all.
-  const duplicate = buildDuplicateNotice({ issueNumber, openProposals });
+  const duplicate = buildDuplicateNotice({ issueNumber, issueNumbers, openProposals });
   if (duplicate) steps.push(duplicate);
 
   if (forkStatus === 'name_conflict') {
@@ -516,7 +551,7 @@ const CMD = '    ';
 
 function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
-  forkPageUrl, forkStatus, branch, baseSha, issueNumber, brief, webPath,
+  forkPageUrl, forkStatus, branch, baseSha, issueNumber, issueNumbers, brief, webPath,
   taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough,
 }) {
   // Where the connector is added, for the agent that finds it has none. The
@@ -1293,8 +1328,15 @@ function buildWorkOrder({
     );
   }
 
-  if (Number.isInteger(issueNumber) && issueNumber > 0) {
-    lines.splice(2, 0, `This implements request #${issueNumber}.`, '');
+  const requests = normalizeIssueNumbers(issueNumbers, issueNumber);
+  if (requests.length === 1) {
+    lines.splice(2, 0, `This implements request #${requests[0]}.`, '');
+  } else if (requests.length > 1) {
+    // Each is quoted under WHAT TO BUILD, and the pull request Homeroom opens
+    // carries a `Closes #N` line for every one, so none of them is left open
+    // after the merge for somebody to close by hand.
+    lines.splice(2, 0, `This implements ${requestPhrase(requests)}: build all of them. The proposal `
+      + 'closes each one when it merges.', '');
   }
   if (webPath) {
     lines.push('', `The app on Homeroom: ${webPath}`);
@@ -1486,8 +1528,13 @@ function describeTargetProposal(session, user, app, origin) {
 // ── prepare_work ───────────────────────────────────────────────────────
 //
 // deps: { pool, config, gh, githubLink, limits, prompts }
-// params: { user, app, issueNumber, brief, clientId, clientName, origin,
-//           restart, agent, targetProposal }
+// params: { user, app, issueNumber, issueNumbers, brief, clientId, clientName,
+//           origin, restart, agent, targetProposal }
+//
+// `issueNumbers` names SEVERAL requests one piece of work implements, with
+// `issueNumber` still accepted for one (the browser's flow picker sends it).
+// The first is the row's issue_number; every one is recorded in its
+// linked_issues, which is what the submission links and closes.
 //
 // `targetProposal` is the session row of a proposal ALREADY up for a vote
 // (#1054). With it, the work order revises that proposal — based at its head
@@ -1509,9 +1556,11 @@ function describeTargetProposal(session, user, app, origin) {
 async function prepareWork(deps, params) {
   const { pool, config, gh, githubLink, limits, prompts } = deps;
   const {
-    user, app, issueNumber, brief, clientId, clientName, origin, restart, originSessionId,
+    user, app, brief, clientId, clientName, origin, restart, originSessionId,
     agent, targetProposal,
   } = params;
+  const issues = normalizeIssueNumbers(params.issueNumbers, params.issueNumber);
+  const issueNumber = issues[0] || null;
 
   const parsed = gh.parseGithubUrl(app.repo_url);
   if (!parsed) {
@@ -1555,7 +1604,7 @@ async function prepareWork(deps, params) {
 
   const requestKey = update
     ? proposalRequestKeyFor(update.proposalId)
-    : requestKeyFor(issueNumber, trimmedBrief);
+    : requestKeyFor(issueNumber, trimmedBrief, issues);
 
   // ── Is the group already voting on this request? (#1216) ─────────────
   //
@@ -1565,7 +1614,7 @@ async function prepareWork(deps, params) {
   // Skipped in UPDATE mode, where the proposal in question is the target.
   const openProposals = update
     ? []
-    : await findOpenProposalsForRequest(pool, app.id, issueNumber, user.id);
+    : await findOpenProposalsForRequest(pool, app.id, issues, user.id);
 
   // ── Look before minting ──────────────────────────────────────────────
   //
@@ -1695,13 +1744,13 @@ async function prepareWork(deps, params) {
       `INSERT INTO external_agent_tasks
          (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
           base_sha, brief, client_id, request_key, target_session_id,
-          origin_session_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          origin_session_id, linked_issues)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT DO NOTHING
        RETURNING *`,
       [
         user.id, app.id,
-        Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null,
+        issueNumber,
         link.login, forkRepo, branch, baseSha, trimmedBrief, clientId || null,
         requestKey,
         // Which proposal this job revises, when it revises one. Recorded so a
@@ -1712,6 +1761,9 @@ async function prepareWork(deps, params) {
         // has no session — see the column comment in schema.sql for how those
         // rows are adopted rather than stranded.
         sessionRef(originSessionId),
+        // Every request it implements, the first included, so the submission
+        // links and closes all of them rather than only issue_number's.
+        issues,
       ]
     );
     return rows[0] || null;
@@ -1770,7 +1822,8 @@ async function prepareWork(deps, params) {
       branch_name: branch,
       base_sha: baseSha,
       brief: trimmedBrief,
-      issue_number: Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null,
+      issue_number: issueNumber,
+      linked_issues: issues,
       target_session_id: update ? update.proposalId : null,
       client_id: clientId || row.client_id || null,
     },
@@ -1889,20 +1942,28 @@ async function closeTaskForSession(pool, userId, sessionId, fields = {}) {
 // ADVISORY, like every other read on this path: a lookup that fails costs the
 // warning and nothing else. Refusing to prepare work because a duplicate CHECK
 // broke would be a worse failure than the duplicate it is guarding against.
-async function findOpenProposalsForRequest(pool, appId, issueNumber, viewerId) {
-  if (!(Number.isInteger(issueNumber) && issueNumber > 0)) return [];
+//
+// `issueNumbers` is one request or the list a job implements; a proposal for
+// ANY of them counts, and `requests` says which of them it is for, in the
+// order the job lists them, so the notice can name the right one.
+async function findOpenProposalsForRequest(pool, appId, issueNumbers, viewerId) {
+  const issues = normalizeIssueNumbers([].concat(issueNumbers == null ? [] : issueNumbers));
+  if (!issues.length) return [];
   try {
     const { rows } = await pool.query(
       `SELECT cs.id, cs.status, cs.pr_number, cs.pr_title, cs.session_title,
-              cs.user_id, u.username
+              cs.user_id, u.username,
+              ARRAY(SELECT asked.n FROM unnest($2::int[]) WITH ORDINALITY AS asked(n, ord)
+                     WHERE asked.n = ANY(cs.linked_issues) OR asked.n = cs.created_from_issue_number
+                     ORDER BY asked.ord) AS requests
          FROM chat_sessions cs
          LEFT JOIN users u ON u.id = cs.user_id
         WHERE cs.app_id = $1
           AND cs.status IN ('promoted', 'merging')
-          AND ($2 = ANY(cs.linked_issues) OR cs.created_from_issue_number = $2)
+          AND (cs.linked_issues && $2::int[] OR cs.created_from_issue_number = ANY($2::int[]))
         ORDER BY cs.id DESC
         LIMIT $3`,
-      [appId, issueNumber, MAX_OPEN_PROPOSALS]
+      [appId, issues, MAX_OPEN_PROPOSALS]
     );
     return (rows || []).map((r) => ({
       proposalId: Number(r.id),
@@ -1915,10 +1976,13 @@ async function findOpenProposalsForRequest(pool, appId, issueNumber, viewerId) {
       // the notice offers a continuation or a second opinion.
       mine: Number(r.user_id) === Number(viewerId),
       author: r.username ? String(r.username).slice(0, 64) : null,
+      requests: Array.isArray(r.requests) && r.requests.length
+        ? normalizeIssueNumbers(r.requests)
+        : issues.slice(0, 1),
     }));
   } catch (err) {
     log.warn('external-agent-tasks', 'open-proposal lookup failed', {
-      appId, issueNumber, err: err.message,
+      appId, issues, err: err.message,
     });
     return [];
   }
@@ -1959,6 +2023,7 @@ function renderPreparedTask({
     forkPageUrl,
     forkStatus: status,
     issueNumber: task.issue_number,
+    issueNumbers: linkedIssuesFor(task),
     openProposals: duplicates,
   });
   const workOrder = buildWorkOrder({
@@ -1974,6 +2039,7 @@ function renderPreparedTask({
     branch: task.branch_name,
     baseSha: task.base_sha,
     issueNumber: task.issue_number,
+    issueNumbers: linkedIssuesFor(task),
     brief: task.brief,
     webPath,
     taskId: Number(task.id),
@@ -2001,6 +2067,9 @@ function renderPreparedTask({
     // duplicate — submit_work with a proposalId advances that proposal and
     // clears its votes — look like the documented next step.
     openProposals: duplicates,
+    // Every request this work order implements — what its pull request will
+    // carry a `Closes #N` line for, and what the proposal will be linked to.
+    requestNumbers: linkedIssuesFor(task),
     forkOwner,
     forkRepo,
     forkUrl: `https://github.com/${forkOwner}/${forkRepo}`,
@@ -3530,7 +3599,25 @@ async function submitWorkLocked(deps, params) {
     visualEvidenceRejected: !!(imported.body && imported.body.visualEvidenceRejected),
     visualEvidenceRequired: !!(imported.body && imported.body.visualEvidenceRequired),
     visualEvidenceNextStep: (imported.body && imported.body.visualEvidenceNextStep) || 'none',
+    // What the proposal was linked to, and — only when that is nothing — the
+    // request numbers its brief mentions. A number in free text is never
+    // linked by itself (it may name a request the work only touches, or one it
+    // deliberately leaves alone); the connector turns these into a pointer at
+    // update_proposal_issues instead.
+    linkedIssues: linkedIssuesFor(task),
+    mentionedIssues: linkedIssuesFor(task).length ? [] : mentionedIssueNumbers(task && task.brief),
   };
+}
+
+// `#123` references in a brief, in order, deduplicated. The brief is the
+// caller's own text on a job that names no request; this only ever feeds a
+// suggestion, so a number that turns out to be a pull request or a closed
+// request costs nothing — the connector checks them against the open list.
+function mentionedIssueNumbers(brief) {
+  const text = stripEnvelope(brief);
+  const found = [];
+  for (const m of text.matchAll(/(?:^|[^\w&#/])#(\d{1,9})\b/g)) found.push(m[1]);
+  return normalizeIssueNumbers(found);
 }
 
 // PR-facing text. The <untrusted-content> envelope is stripped HERE: it is a
@@ -3666,9 +3753,12 @@ async function withoutClosedRequests(rows, fetchOpenIssues) {
   });
 }
 
+// Every request the job implements: its issue_number and, since one job can
+// implement several, its linked_issues. A row from before that column held
+// the empty array, which leaves exactly the one issue_number it always had.
 function linkedIssuesFor(task) {
-  const n = task && Number(task.issue_number);
-  return Number.isInteger(n) && n > 0 ? [n] : [];
+  if (!task) return [];
+  return normalizeIssueNumbers(task.linked_issues, task.issue_number);
 }
 
 // Two things close a request when the work lands, and a connector submission
@@ -3716,6 +3806,10 @@ module.exports = {
   // The request-linking pair (#1217), unit-tested directly.
   linkedIssuesFor,
   prBodyFor,
+  // One job, several requests.
+  MAX_TASK_ISSUES,
+  normalizeIssueNumbers,
+  mentionedIssueNumbers,
   requestKeyFor,
   proposalRequestKeyFor,
   describeTargetProposal,

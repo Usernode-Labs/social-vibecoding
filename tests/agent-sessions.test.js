@@ -240,7 +240,8 @@ test('a new change parks the previous one, then becomes the active change', asyn
   const note = pool.calls.find((c) => /INSERT INTO chat_session_messages/.test(c.sql));
   assert.match(note.sql, /VALUES \(NULL, \$1, 'system'/, 'a conversation row, not a change row');
   assert.equal(note.params[1], 'Started a change on Recipe box: Dark mode');
-  assert.deepEqual(JSON.parse(note.params[2]), { changeId: 50, agentSessionEvent: 'change_started' });
+  assert.deepEqual(JSON.parse(note.params[2]), { changeId: 50, title: 'Dark mode', agentSessionEvent: 'change_started' },
+    'with the name it started with, which its proposal\'s title and description are written from');
 });
 
 test('a closed session or somebody else\'s cannot start a change', async () => {
@@ -311,7 +312,9 @@ test('the create route links a Mayor\'s change to its session, and only then', (
   const insert = create.indexOf('INSERT INTO chat_sessions');
   const link = create.indexOf('agentSessions.linkChange');
   assert.ok(link > insert, 'and the new one is linked once it exists');
-  assert.match(create, /session_title, proposed_pr_title\)/, 'a name can ride on the create');
+  assert.match(create, /agent_reasoning_effort,\s*session_title\)/, 'a name can ride on the create');
+  assert.doesNotMatch(create.slice(create.indexOf('INSERT INTO chat_sessions'), create.indexOf('RETURNING *')), /proposed_pr_title/,
+    'as the change\'s name, not a title a person pinned: the proposal\'s title is written from the change');
   // A change the conversation starts is created on the conversation's model,
   // held to a browser pick's exact-or-refuse rule, and resolved before any
   // slot is reclaimed so a choice that cannot run has no side effects.
@@ -627,6 +630,49 @@ test('a build recovery adopted on the active change reads as the conversation\'s
   } finally {
     agentTurnMod.recoveredRunState = saved.recoveredRunState;
     Object.assign(agentSessionsMod, { getAgentSession: saved.getAgentSession, markSeen: saved.markSeen });
+  }
+});
+
+test('a recovered build\'s clock counts from its dispatch, and the lists mark it working', async () => {
+  const agentTurnMod = require('../src/services/mayor/agent-turn');
+  const agentSessionsMod = require('../src/services/agent-sessions');
+  const saved = {
+    recoveredRunState: agentTurnMod.recoveredRunState,
+    getAgentSession: agentSessionsMod.getAgentSession,
+    listAgentSessions: agentSessionsMod.listAgentSessions,
+    markSeen: agentSessionsMod.markSeen,
+  };
+  agentTurnMod.recoveredRunState = (id, changeId) => (changeId === 50 ? { phase: 'cc', stopping: false, changeId } : null);
+  agentSessionsMod.getAgentSession = async () => ({ id: 5, busy: false, activeChange: { id: 50 } });
+  agentSessionsMod.listAgentSessions = async () => ({
+    sessions: [
+      { id: 5, busy: false, doneUnseen: true, activeChange: { id: 50 } },
+      { id: 6, busy: false, doneUnseen: true, activeChange: { id: 60 } },
+      { id: 7, busy: false, doneUnseen: false, activeChange: null },
+    ],
+    nextBefore: null,
+  });
+  agentSessionsMod.markSeen = async () => false;
+  try {
+    const handlers = {
+      'FROM chat_sessions WHERE id': (_sql, params) => ({ rows: params[0] === 50 ? [{ started_at: '2026-09-24T18:49:54.151Z' }] : [] }),
+    };
+    await withRoutes({ id: 7 }, handlers, async (call) => {
+      const detail = await call('GET', '/api/agent-sessions/5');
+      assert.deepEqual(detail.body.turn,
+        { phase: 'cc', stopping: false, changeId: 50, startedAt: Date.parse('2026-09-24T18:49:54.151Z') });
+
+      const list = await call('GET', '/api/agent-sessions');
+      assert.deepEqual(list.body.sessions.map((s) => [s.id, s.busy, s.doneUnseen]),
+        [[5, true, false], [6, false, true], [7, false, false]],
+        'Recents and Continue spin for the recovered build; the others are untouched');
+      assert.equal(list.body.nextBefore, null);
+    });
+  } finally {
+    Object.assign(agentTurnMod, { recoveredRunState: saved.recoveredRunState });
+    Object.assign(agentSessionsMod, {
+      getAgentSession: saved.getAgentSession, listAgentSessions: saved.listAgentSessions, markSeen: saved.markSeen,
+    });
   }
 });
 

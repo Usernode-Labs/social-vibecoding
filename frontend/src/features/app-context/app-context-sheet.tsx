@@ -136,7 +136,8 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { continueRows } from './continue-model';
-import { AgentActivityMark } from '../agent-session/activity-mark';
+import { AgentActivityMark, AgentWorkingIcon } from '../agent-session/activity-mark';
+import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
 
@@ -681,10 +682,14 @@ export function AppsSwitcherSheet(): ReactNode {
                   id={`app-menu-continue-${index}`}
                   dataContextRow="continue-agent"
                   href={row.href}
-                  icon={<SparklesIcon />}
+                  // Working, the spinner takes the icon's place (#3028); the
+                  // icon slot is aria-hidden, so "Working" rides in the lead
+                  // as words. Finished, the dot leads the name (#3013).
+                  icon={row.activity === 'working' ? <AgentWorkingIcon /> : <SparklesIcon />}
                   label={row.title}
-                  // The session's state leads its name, as in Recents (#3013).
-                  lead={<AgentActivityMark activity={row.activity} />}
+                  lead={row.activity === 'working'
+                    ? <span className="sr-only">{ACTIVITY_LABEL.working}</span>
+                    : <AgentActivityMark activity={row.activity} />}
                   trailing={(
                     <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{row.detail}</span>
                   )}

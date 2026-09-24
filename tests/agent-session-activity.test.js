@@ -54,25 +54,43 @@ test('Recents, the mark\'s Continue rows and Messages all draw it', () => {
     ['agent-session:1', 'working'], ['agent-session:2', 'done'], ['agent-session:3', null],
   ]);
   const row = read('frontend/src/features/nav/recents-list.tsx');
-  assert.match(row, /\{item\.activity \? <AgentActivityMark activity=\{item\.activity\} className="platform-recent-activity" \/> : null\}/);
+  assert.match(row, /\{working\s*\? <AgentWorkingIcon className="platform-recent-glyph" \/>\s*: app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/,
+    '#3028: working, the spinner takes the icon\'s place');
+  assert.match(row, /\{item\.activity && !working \? <AgentActivityMark activity=\{item\.activity\} className="platform-recent-activity" \/> : null\}/,
+    'finished, the dot leads the name');
   assert.match(row, /aria-label=\{`\$\{KIND_NAMES\[item\.kind\]\}: \$\{item\.label\}\$\{loaded\}\$\{doing\}\$\{unread\}`\}/,
     'and the row\'s name says it');
 
   const messages = read('frontend/src/features/messages/index.tsx');
   const mayorRow = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
   assert.match(mayorRow, /<AgentActivityMark activity=\{agentActivity\(session\)\} \/>/, 'where a conversation\'s unread count goes');
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /<AgentActivityMark activity=\{row\.activity\} \/>/);
+  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /: <AgentActivityMark activity=\{row\.activity\} \/>/);
+});
+
+test('#3028: while a session works, its spinner replaces the row\'s icon rather than sitting beside it', () => {
+  const { createElement, renderToHtml } = require('./lib/render-tsx');
+  const { AgentWorkingIcon } = loadTsx('frontend/src/features/agent-session/activity-mark.tsx');
+  const icon = renderToHtml(createElement(AgentWorkingIcon, { className: 'platform-recent-glyph' }));
+  assert.match(icon, /^<svg class="animate-spin text-violet-600 dark:text-violet-400 platform-recent-glyph"[^>]*aria-hidden="true" data-agent-activity="working"/,
+    'the same spinner, at the slot\'s size, decoration only');
+
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /icon=\{row\.activity === 'working' \? <AgentWorkingIcon \/> : <SparklesIcon \/>\}/);
+  assert.match(sheet, /lead=\{row\.activity === 'working'\s*\? <span className="sr-only">\{ACTIVITY_LABEL\.working\}<\/span>/,
+    'the icon slot is aria-hidden, so the row still says "Working" in words');
+  assert.match(sheet, /<span className="shrink-0 \[&>svg\]:h-5 \[&>svg\]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">/,
+    'the slot sizes the spinner like the icon it replaces');
 });
 
 test('#3013: in Recents and the mark\'s Continue rows the mark leads the session\'s name', () => {
   const row = read('frontend/src/features/nav/recents-list.tsx');
   const body = row.slice(row.indexOf('function RecentRow('), row.indexOf('export function RecentsByDay('));
   const mark = body.indexOf('<AgentActivityMark');
-  assert.ok(mark > body.indexOf('platform-recent-glyph') && mark < body.indexOf('platform-recent-label'),
+  assert.ok(mark > body.indexOf('<Glyph className="platform-recent-glyph"') && mark < body.indexOf('platform-recent-label'),
     'after the row\'s icon, before its name');
 
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /lead=\{<AgentActivityMark activity=\{row\.activity\} \/>\}/);
+  assert.match(sheet, /lead=\{row\.activity === 'working'[\s\S]{0,120}: <AgentActivityMark activity=\{row\.activity\} \/>\}/);
   const rowBody = sheet.slice(sheet.indexOf('function RowBody('), sheet.indexOf('function MenuRow('));
   assert.ok(rowBody.indexOf('{lead}') > rowBody.indexOf('{icon}') && rowBody.indexOf('{lead}') < rowBody.indexOf('{label}'),
     'RowBody draws the lead between the icon and the label');

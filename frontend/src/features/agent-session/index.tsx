@@ -72,6 +72,7 @@ import {
 import {
   addAttachments,
   chooseAgent,
+  clearComposerFill,
   clearReturnedText,
   closeSpec,
   composerId,
@@ -82,13 +83,13 @@ import {
   loadModelCatalog,
   openAgentSession,
   openSpec,
+  fillComposer,
   sendAgentMessage,
   setDrawerOpen,
   setSpecTab,
   setPaneTab,
   dockPreview,
   openPreview,
-  proposeChange,
   recheckChange,
   removeAttachment,
   renameCurrentSession,
@@ -120,6 +121,7 @@ import {
 } from './spec-layout';
 import { openFocusedApp } from './open-app';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
 import { CreditsCard, HandoffDialog, VenuePicker } from './handoff';
 
@@ -634,9 +636,14 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
           </a>
         ) : null}
         {proposable && item.changeId != null ? (
-          <button type="button" className={CARD_PRIMARY} disabled={busy} onClick={() => void proposeChange(item.changeId as number)} data-agent-session-preview-propose>
-            {action === 'propose' ? 'Proposing…' : 'Propose to group'}
-          </button>
+          <ProposeButton
+            changeId={item.changeId}
+            title={change?.title}
+            prNumber={prNumber}
+            className={CARD_PRIMARY}
+            busy={busy}
+            proposing={action === 'propose'}
+          />
         ) : null}
         {checks && (checks.key === 'failing' || checks.key === 'error') && item.changeId != null && !merged ? (
           <button
@@ -1061,6 +1068,11 @@ function starters(about: About) {
   ].slice(0, 3);
 }
 
+/**
+ * The suggested replies over the box. A tap puts one IN the box, to be
+ * edited or sent (#3033), as the dev chat's pills do; it no longer sends on
+ * its own.
+ */
 function Replies({ replies }: { replies: string[] }) {
   const snapshot = useAgentSessionState();
   if (!replies.length || snapshot.turn.running) return null;
@@ -1071,7 +1083,8 @@ function Replies({ replies }: { replies: string[] }) {
           key={reply}
           type="button"
           className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-sm text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
-          onClick={() => void sendAgentMessage(reply)}
+          data-agent-session-reply
+          onClick={() => fillComposer(reply)}
         >
           {reply}
         </button>
@@ -1250,6 +1263,24 @@ function Composer({ id }: { id: string }) {
     if (!value.trim()) update(returned);
     clearReturnedText();
   }, [returned]);
+
+  // A tapped suggested reply (#3033) replaces what is in the box, as the dev
+  // chat's pills do, with the caret at its end. Focus only with a fine
+  // pointer: on a phone it would raise the keyboard over the reply just
+  // chosen (the dev chat's _isCoarsePointer rule).
+  const fill = snapshot.composerFill;
+  useEffect(() => {
+    if (!fill) return;
+    update(fill.text);
+    clearComposerFill();
+    const field = input.current;
+    let coarse = false;
+    try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch { /* no media queries: treat as fine */ }
+    if (field && !coarse) {
+      field.focus();
+      try { field.setSelectionRange(fill.text.length, fill.text.length); } catch { /* not a text field yet */ }
+    }
+  }, [fill]);
 
   const placeholder = archived
     ? 'This session is archived.'

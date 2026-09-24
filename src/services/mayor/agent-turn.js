@@ -376,13 +376,17 @@ async function runAgentTurn({
   };
   const stop = {
     abort: new AbortController(), stopped: false, stoppedBy: null, send, phase: 'mayor', change: null,
+    startedAt: Date.now(), buildStartedAt: null,
   };
   const prior = stopRegistry.get(agentSessionId);
   if (prior && prior !== stop) { try { prior.abort.abort(); } catch { /* already gone */ } }
   stopRegistry.set(agentSessionId, stop);
+  // The build's clock starts at the dispatch, so a screen that opens or
+  // reconnects mid-build counts from there, not from when it arrived.
   const setPhase = (phase, extra = {}) => {
     stop.phase = phase;
-    send('phase', { phase, ...extra });
+    if (phase === 'cc') stop.buildStartedAt = Date.now();
+    send('phase', { phase, ...(phase === 'cc' ? { startedAt: stop.buildStartedAt } : {}), ...extra });
   };
 
   // The turn keeps its lease fresh while it runs: a dispatch can outlast the
@@ -918,6 +922,9 @@ function turnState(agentSessionId) {
     phase: handle.phase,
     stopping: !!handle.stopped,
     changeId: handle.change ? handle.change.changeId : null,
+    // What the screen's clock counts from: the build once one was
+    // dispatched (the wrap-up keeps counting it), else the turn.
+    startedAt: handle.buildStartedAt || handle.startedAt || null,
   };
 }
 
@@ -961,6 +968,7 @@ async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null
     // eslint-disable-next-line no-await-in-loop
     const handed = await handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps });
     if (handed || stopRegistry.has(agentSessionId)) continue;
+    try { d.notifyUser(userId, { type: 'agent_session_changed', agentSessionId, busy: false }); } catch { /* the lists catch up on their next read */ }
     d.sessionBus.publish(busKey(agentSessionId), {
       type: 'done', _seq: `recovered-${Date.now().toString(36)}`, agentSessionId,
     });

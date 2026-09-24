@@ -138,6 +138,12 @@ export interface AgentSessionState {
   choosing: boolean;
   /** A message the server refused, handed back to the composer to send again. */
   returnedText: string | null;
+  /**
+   * A suggested reply the user tapped (#3033): it goes INTO the box, to be
+   * edited or sent, the way the dev chat's pills do, rather than straight
+   * out. `seq` makes the same pill tapped twice a second fill.
+   */
+  composerFill: { text: string; seq: number } | null;
   specSheet: SpecSheetState | null;
   preview: PreviewPaneState | null;
   paneTab: PaneTab;
@@ -188,6 +194,7 @@ export const INITIAL_STATE: AgentSessionState = {
   catalog: null,
   choosing: false,
   returnedText: null,
+  composerFill: null,
   specSheet: null,
   preview: null,
   paneTab: 'spec',
@@ -392,7 +399,9 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
         phase,
         streamText: phase === 'mayor2' ? '' : state.turn.streamText,
         activity: phase === 'cc' ? 'The coding agent is working' : '',
-        startedAt: phase === 'cc' ? Date.now() : (state.turn.startedAt || Date.now()),
+        startedAt: phase === 'cc'
+          ? (typeof event.startedAt === 'number' ? event.startedAt : Date.now())
+          : (state.turn.startedAt || Date.now()),
         progress: phase === 'cc' ? '' : state.turn.progress,
       });
       break;
@@ -508,7 +517,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     void loadDrafts(id);
     refreshCredits();
     if (session.busy) {
-      patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: Date.now() });
+      patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: (turn && turn.startedAt) || Date.now() });
       followEvents(id);
     }
   } catch (error) {
@@ -891,6 +900,21 @@ export function dismissCredits() {
 /** The composer took a refused message back. */
 export function clearReturnedText() {
   if (state.returnedText !== null) publish({ returnedText: null });
+}
+
+let fillSeq = 0;
+
+/** Put a suggested reply in the box (#3033); the composer takes it and clears it. */
+export function fillComposer(text: string) {
+  const body = String(text || '');
+  if (!body.trim()) return;
+  fillSeq += 1;
+  publish({ composerFill: { text: body, seq: fillSeq } });
+}
+
+/** The composer took the tapped reply. */
+export function clearComposerFill() {
+  if (state.composerFill !== null) publish({ composerFill: null });
 }
 
 /**
@@ -1296,23 +1320,13 @@ function actionOn(changeId: number, kind?: NonNullable<AgentSessionState['change
 }
 
 /**
- * The staging card's Propose: confirm, then the owner's propose route. The
- * card then reads "In vote" from the refreshed change.
+ * The staging card's Propose, once confirmed: the owner's propose route. The
+ * confirmation is the card's own panel under the button (#3032,
+ * ./propose-confirm.tsx), no longer a dialog asked for here. The card then
+ * reads "In vote" from the refreshed change.
  */
 export async function proposeChange(changeId: number) {
   if (state.changeAction) return;
-  const change = changeById(changeId);
-  const title = (change && change.title) || 'this change';
-  const pr = change && change.prNumber ? ` (PR #${change.prNumber})` : '';
-  const confirm = window.PlatformUI?.confirm;
-  const ok = typeof confirm === 'function'
-    ? await confirm({
-      title: 'Put this up for the group\'s vote?',
-      message: `“${title}”${pr} goes to the vote. Its preview and checks run again on the way.`,
-      confirmLabel: 'Propose',
-    })
-    : true;
-  if (!ok) return;
   publish({ changeAction: { changeId, kind: 'propose' } });
   try {
     await api.promoteChange(changeId);

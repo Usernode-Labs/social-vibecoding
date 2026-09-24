@@ -62,7 +62,7 @@ import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-a
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
-import { AgentActivityMark } from '../agent-session/activity-mark';
+import { AgentActivityMark, AgentWorkingIcon } from '../agent-session/activity-mark';
 import { useGlobalChatState } from '../global-chat/store';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
@@ -119,6 +119,7 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
   const unread = item.unread ? ', unread' : '';
   const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
+  const working = item.activity === 'working';
   return (
     <a
       className="platform-recent"
@@ -129,12 +130,15 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       {...(live ? { 'data-live': 'true' } : null)}
       onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
     >
-      {app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       {/* #2779: an agent session working (a spinner) or finished unseen (a
-          green dot), leading its name (#3013) so it reads as the session's
-          state rather than one more mark at the row's end. The row's
-          accessible name says it too (`doing`). */}
-      {item.activity ? <AgentActivityMark activity={item.activity} className="platform-recent-activity" /> : null}
+          green dot). The spinner takes the icon's place (#3028) rather than
+          sitting beside it; the dot leads the name (#3013) so it reads as
+          the session's state rather than one more mark at the row's end.
+          The row's accessible name says either (`doing`). */}
+      {working
+        ? <AgentWorkingIcon className="platform-recent-glyph" />
+        : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
+      {item.activity && !working ? <AgentActivityMark activity={item.activity} className="platform-recent-activity" /> : null}
       <span className="platform-recent-label">{item.label}</span>
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}

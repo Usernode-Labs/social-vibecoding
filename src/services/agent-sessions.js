@@ -463,7 +463,11 @@ async function linkChange(pool, { agentSessionId, userId, change }) {
     agentSessionId,
     content: title ? `Started a change on ${where}: ${title}` : `Started a change on ${where}`,
     event: 'change_started',
-    metadata: { changeId: change.id },
+    // The name the change started with. The change's own session_title
+    // follows its PR title from then on (#249); this is what pr-metadata
+    // reads as the change's request when it writes the proposal's title and
+    // description (gatherSessionContext).
+    metadata: { changeId: change.id, ...(title ? { title } : {}) },
   });
   return true;
 }
