@@ -1619,7 +1619,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 242,
+      "line": 246,
       "method": "GET",
       "path": "/api/agent-sessions/:id/messages",
       "expression": null,
@@ -1628,7 +1628,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 261,
+      "line": 265,
       "method": "PATCH",
       "path": "/api/agent-sessions/:id/agent",
       "expression": null,
@@ -1637,7 +1637,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 277,
+      "line": 281,
       "method": "PATCH",
       "path": "/api/agent-sessions/:id/title",
       "expression": null,
@@ -1646,7 +1646,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 289,
+      "line": 293,
       "method": "POST",
       "path": "/api/agent-sessions/:id/archive",
       "expression": null,
@@ -1655,7 +1655,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 299,
+      "line": 303,
       "method": "POST",
       "path": "/api/agent-sessions/:id/unarchive",
       "expression": null,
@@ -1664,7 +1664,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 320,
+      "line": 324,
       "method": "POST",
       "path": "/api/agent-sessions/:id/attachments",
       "expression": null,
@@ -1673,7 +1673,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 374,
+      "line": 378,
       "method": "GET",
       "path": "/api/agent-sessions/:id/attachments/:attId",
       "expression": null,
@@ -1682,7 +1682,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 404,
+      "line": 408,
       "method": "POST",
       "path": "/api/agent-sessions/:id/turns",
       "expression": null,
@@ -1691,7 +1691,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 493,
+      "line": 497,
       "method": "GET",
       "path": "/api/agent-sessions/:id/events",
       "expression": null,
@@ -1700,7 +1700,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 530,
+      "line": 534,
       "method": "POST",
       "path": "/api/agent-sessions/:id/stop",
       "expression": null,
@@ -1709,7 +1709,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 553,
+      "line": 562,
       "method": "POST",
       "path": "/api/agent-sessions/:id/active-change",
       "expression": null,
@@ -1718,7 +1718,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 568,
+      "line": 577,
       "method": "GET",
       "path": "/api/agent-sessions/:id/actions",
       "expression": null,
@@ -1727,7 +1727,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 582,
+      "line": 591,
       "method": "POST",
       "path": "/api/agent-sessions/:id/actions/:actionId/confirm",
       "expression": null,
@@ -1736,7 +1736,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 599,
+      "line": 608,
       "method": "POST",
       "path": "/api/agent-sessions/:id/actions/:actionId/dismiss",
       "expression": null,
