@@ -607,6 +607,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - The card's caption names the agent from the rows' `agentBackend`: an OpenRouter change runs the Codex CLI and says "Codex · <model>". It never ran Claude Code; only that text said so.
   - While a build runs, the card carries the live progress line and clock, and replaces the separate activity line.
 - **A drafted spec is a card.** It is the dev chat's spec card. It opens a read-only spec viewer over the conversation, at the version the card names, with the change's other saved versions to switch to. The viewer reads the change's own `GET /api/sessions/:id/spec` and `/specs/:version`. The changes drawer's active change gets a Spec button that opens the latest version. Sharing and mentions stay on the change page's own viewer.
+- **Staging shows both.** The seeded conversation 990801 now carries, on its change 990802, a scout run on Codex, the spec it drafted (two saved versions) and a build run. These are the same rows a real run writes, so the screen folds them the same way. A preview seeded before this gets the rows added on its next boot.
 
 **Process.** Each proposal:
 
