@@ -624,6 +624,21 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - **The bell.** A scout or build that finishes while nobody is watching creates the dev chat's own `session_done` notification on the change: one unread per change. Watching means the turn's stream is still open, or the conversation screen follows its events (`session-bus.subscriberCount`). The notification carries `agentSessionId`, so it opens the conversation and reads "The coding agent finished". Reading the conversation (`GET /api/agent-sessions/:id`) marks its changes' rows read, however the user got there, as opening a dev session does for its own.
 - **Recents** lists open agent sessions by their last activity, next to your conversations. Like Messages, Recents and Continue read them for any signed-in viewer, whether or not agent sessions are turned on: the flag gates starting one, and turning it off never hides a conversation that already exists. Empty ones are left out of both.
 
+*Follow-up: the spec beside the chat, in two tabs.* The spec viewer covered the whole conversation, even on a desktop, and showed a spec as one document. Both now follow the dev chat's own viewer (`agent-session/spec-layout.ts`).
+
+- **Beside the chat from 1024px up.** The spec is a right-hand pane next to the conversation, with a divider between them.
+  - The divider drags, and moves with the arrow keys.
+  - The width is the dev chat viewer's remembered one: the same `localStorage` key, a 480px default and a 280px floor. The chat always keeps at least 320px, and CSS holds the same bounds when the window narrows.
+  - The width is read after mount, and the layout is decided after mount, so the first render matches the prerender.
+- **Messages makes the room.** While a spec is open beside an agent session, the conversation list steps aside. At 1280px the thread pane alone is about 680px, too narrow for two readable columns. Closing the spec brings the list back.
+- **Narrower windows keep the sheet.** Below 1024px the spec is still a sheet over the conversation. That includes the side panel beside a running app, which is a document of its own at the panel's width.
+- **Two tabs when the spec has two halves.** A spec under "## User-facing changes" and "## Technical implementation" (the scout's required structure) shows as the dev chat viewer's User-facing and Technical tabs, with the same classes.
+  - The title and summary sit above the tabs.
+  - The plain-language half shows first.
+  - The tab is kept across a version switch and reset for another change.
+  - The split is the page's own `splitSpecSections`, so a spec without both headings shows whole, as before.
+- **Staging** writes the seeded conversation's spec in the two halves, so the tabs can be seen there. A preview seeded before this picks up the new text.
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;

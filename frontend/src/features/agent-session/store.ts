@@ -66,7 +66,15 @@ export interface SpecSheetState {
   text: string;
   phase: 'loading' | 'ready' | 'error';
   error: string;
+  /**
+   * Which half of a two-half spec is showing (the platform's convention, see
+   * public/js/spec-sections.js): the plain-language half first, as the dev
+   * chat's viewer does. Kept across a version switch, reset for another change.
+   */
+  tab: SpecTab;
 }
+
+export type SpecTab = 'user' | 'tech';
 
 export interface AgentSessionState {
   open: boolean;
@@ -634,9 +642,11 @@ let specRequest = 0;
  */
 export async function openSpec(changeId: number, version: number | null = null) {
   const ticket = ++specRequest;
+  const same = state.specSheet?.changeId === changeId ? state.specSheet : null;
+  const tab: SpecTab = same ? same.tab : 'user';
   publish({
     drawerOpen: false,
-    specSheet: { changeId, version, versions: state.specSheet?.changeId === changeId ? state.specSheet.versions : [], text: '', phase: 'loading', error: '' },
+    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', phase: 'loading', error: '', tab },
   });
   try {
     const { spec, versions } = await api.getSpec(changeId);
@@ -644,7 +654,9 @@ export async function openSpec(changeId: number, version: number | null = null) 
     const newest = numbers.length ? Math.max(...numbers) : null;
     const text = version != null && version !== newest ? await api.getSpecVersion(changeId, version) : spec;
     if (ticket !== specRequest) return;
-    publish({ specSheet: { changeId, version: version ?? newest, versions: numbers, text, phase: 'ready', error: '' } });
+    publish((current) => ({
+      specSheet: { changeId, version: version ?? newest, versions: numbers, text, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
+    }));
   } catch (error) {
     if (ticket !== specRequest) return;
     publish((current) => ({
@@ -658,6 +670,14 @@ export async function openSpec(changeId: number, version: number | null = null) 
 export function closeSpec() {
   specRequest += 1;
   publish({ specSheet: null });
+}
+
+/** Switch the open spec between its plain-language and technical halves. No fetch. */
+export function setSpecTab(tab: SpecTab) {
+  const next: SpecTab = tab === 'tech' ? 'tech' : 'user';
+  publish((current) => (current.specSheet && current.specSheet.tab !== next
+    ? { specSheet: { ...current.specSheet, tab: next } }
+    : {}));
 }
 
 // ── The model ──────────────────────────────────────────────────────────
