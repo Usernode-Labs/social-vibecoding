@@ -193,13 +193,14 @@ async function dispatchClaude(config, options, deps) {
     evidenceRunId: runId,
     evidenceOrigins: origins,
     evidenceAuthTokens: authTokens,
+    evidenceNavigationHints: options.navigationHints,
     telemetryComponent: 'visual_evidence_agent',
     telemetryCorrelationId: runId,
     telemetryAttemptNumber: 1,
     onProgress,
     onEvidenceDiagnostic: options.onEvidenceDiagnostic,
   }), {
-    timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 240_000,
+    timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 480_000,
     onTimeout: async () => {
       reportDiagnostic(options, { kind: 'agent_deadline' });
       reportDiagnostic(options, { kind: 'worker_stop_requested' });
@@ -289,6 +290,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
         evidenceRunId: runId,
         evidenceOrigins: origins,
         evidenceAuthTokens: authTokens,
+        evidenceNavigationHints: options.navigationHints,
         turnUuid: attempt.turnUuid,
         logicalTurnId,
         attemptNumber,
@@ -297,7 +299,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
         onProgress,
         onEvidenceDiagnostic: options.onEvidenceDiagnostic,
       }), {
-        timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 240_000,
+        timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 480_000,
         onTimeout: async () => {
           reportDiagnostic(options, { kind: 'agent_deadline' });
           reportDiagnostic(options, { kind: 'worker_stop_requested' });

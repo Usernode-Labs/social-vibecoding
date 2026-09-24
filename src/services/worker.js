@@ -453,7 +453,15 @@ function evidenceNavigationTarget(state, input) {
   const routes = state.evidenceRouteOrdinals || (state.evidenceRouteOrdinals = new Map());
   const key = `${destination.pathname}${destination.search}${destination.hash}`;
   if (!routes.has(key) && routes.size < 1000) routes.set(key, routes.size + 1);
-  return { side, ...(routes.has(key) ? { routeOrdinal: routes.get(key) } : {}) };
+  const hints = state.evidenceNavigationHints || {};
+  const checkRank = Array.isArray(hints.declaredPaths) ? hints.declaredPaths.indexOf(key) + 1 : 0;
+  const intentStart = Array.isArray(hints.intentPaths) && hints.intentPaths.includes(key);
+  return {
+    side,
+    ...(routes.has(key) ? { routeOrdinal: routes.get(key) } : {}),
+    routeHint: checkRank > 0 ? 'declared_check' : intentStart ? 'intent_start' : 'other',
+    ...(checkRank > 0 ? { checkRank } : {}),
+  };
 }
 
 function emitEvidenceDiagnostic(state, event) {
@@ -490,7 +498,9 @@ function observeEvidenceTool(state, { phase, id, name, input = null, failed = fa
     sequence: prior?.sequence || null,
     ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}),
       ...(prior.side ? { side: prior.side } : {}),
-      ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}) }
+      ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}),
+      ...(prior.routeHint ? { routeHint: prior.routeHint } : {}),
+      ...(prior.checkRank ? { checkRank: prior.checkRank } : {}) }
       : evidenceDiagnosticTool(name)),
     outcome: failed ? 'error' : 'ok',
   });
@@ -843,6 +853,24 @@ function applyStreamEvent(event, onProgress, state) {
 
 function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
+  if (line.startsWith('__USERNODE_EVIDENCE_PROVIDER__ ')) {
+    try {
+      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_PROVIDER__ '.length));
+      if (event && typeof event === 'object' && !Array.isArray(event)) {
+        emitEvidenceDiagnostic(state, event);
+      }
+    } catch { /* A malformed diagnostic must not change the agent turn. */ }
+    return;
+  }
+  if (line.startsWith('__USERNODE_EVIDENCE_BROWSER__ ')) {
+    try {
+      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_BROWSER__ '.length));
+      if (event && typeof event === 'object' && !Array.isArray(event)) {
+        emitEvidenceDiagnostic(state, event);
+      }
+    } catch { /* A malformed diagnostic must not change the agent turn. */ }
+    return;
+  }
   if (line.startsWith('__USERNODE_PHASE__')) {
     state.phase = line.replace('__USERNODE_PHASE__', '').trim();
     const phase = state.phase.split(/[\s(]/, 1)[0];
@@ -2494,6 +2522,7 @@ async function execInWorker(sessionId, {
   evidenceRunId = null,
   evidenceOrigins = null,
   evidenceAuthTokens = null,
+  evidenceNavigationHints = null,
   turnUuid = null,
   logicalTurnId = null,
   attemptNumber = null,
@@ -2727,6 +2756,7 @@ async function execInWorker(sessionId, {
       EVIDENCE_RUN_ID: evidenceRunId,
       EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
       EVIDENCE_HEAD_ORIGIN: new URL(evidenceOrigins.head).origin,
+      EVIDENCE_NAVIGATION_HINTS: JSON.stringify(evidenceNavigationHints || {}),
     } : {}),
     ...(isClaude ? {
       MODEL: models.resolve(model),
@@ -2940,7 +2970,10 @@ async function execInWorker(sessionId, {
     // agent_backend in __USERNODE_RESULT__ (too late for the events), so
     // we seed it from the dispatch param up front.
     state.agentBackend = agentBackend;
-    if (mode === 'evidence') state.evidenceOrigins = evidenceOrigins;
+    if (mode === 'evidence') {
+      state.evidenceOrigins = evidenceOrigins;
+      state.evidenceNavigationHints = evidenceNavigationHints;
+    }
     if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
       state.evidenceDiagnosticObserver = onEvidenceDiagnostic;
       emitEvidenceDiagnostic(state, {

@@ -618,6 +618,55 @@ test('a planner timeout keeps a bounded, content-free record of its last active 
   assert.doesNotMatch(JSON.stringify(trace.agentActivity), /private|token|secret|url/i);
 });
 
+test('a timeout retains browser-boundary timing and document outcome without raw page data', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onEvidenceDiagnostic({ kind: 'browser_call_start', persona: 'member',
+        callOrdinal: 2, tool: 'browser_navigate', side: 'base', routeOrdinal: 1,
+        routeHint: 'declared_check', checkRank: 3, url: 'https://private.invalid/token' });
+      options.onEvidenceDiagnostic({ kind: 'document_request', side: 'base', documentOrdinal: 1 });
+      options.onEvidenceDiagnostic({ kind: 'document_response', side: 'base', documentOrdinal: 1,
+        outcome: 'http_error', httpStatus: 404, durationMs: 482, bodyBytes: 1274,
+        text: 'private page content' });
+      options.onEvidenceDiagnostic({ kind: 'browser_call_pending', persona: 'member',
+        callOrdinal: 2, tool: 'browser_navigate', side: 'base', routeOrdinal: 1,
+        durationMs: 30_000 });
+      throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  const activity = fixture.transitions.at(-1).patch.traceSummary.agentActivity;
+  assert.equal(activity.browserCallCounts.browser_navigate, 1);
+  assert.equal(activity.pendingBrowserCalls[0].durationMs, 30_000);
+  assert.equal(activity.pendingBrowserCalls[0].checkRank, 3);
+  assert.deepEqual(activity.pendingDocumentRequests, []);
+  assert.equal(activity.events[2].httpStatus, 404);
+  assert.equal(activity.events[2].durationMs, 482);
+  assert.doesNotMatch(JSON.stringify(activity), /private|page content|\.invalid|\/token/i);
+});
+
+test('a timeout identifies an unfinished GLM request and its last observed stage', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onEvidenceDiagnostic({ kind: 'provider_request_start', requestOrdinal: 1,
+        prompt: 'private user prompt' });
+      options.onEvidenceDiagnostic({ kind: 'provider_response_headers', requestOrdinal: 1,
+        httpStatus: 200, durationMs: 4200, providerUrl: 'https://private.invalid' });
+      options.onEvidenceDiagnostic({ kind: 'provider_request_pending', requestOrdinal: 1,
+        stage: 'await_first_byte', durationMs: 45_000, output: 'private model output' });
+      throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  const activity = fixture.transitions.at(-1).patch.traceSummary.agentActivity;
+  assert.equal(activity.pendingProviderRequests.length, 1);
+  assert.equal(activity.pendingProviderRequests[0].requestOrdinal, 1);
+  assert.equal(activity.pendingProviderRequests[0].stage, 'await_first_byte');
+  assert.equal(activity.pendingProviderRequests[0].durationMs, 45_000);
+  assert.equal(activity.pendingProviderRequests[0].httpStatus, 200);
+  assert.doesNotMatch(JSON.stringify(activity), /private|prompt|output|\.invalid/i);
+});
+
 test('a completed planner turn without tool calls retains tool availability and resume mode', async () => {
   const fixture = setup({
     dispatch: async (options) => {

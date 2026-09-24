@@ -82,6 +82,42 @@ test('the wire cap is enforced on every GLM request, independently of history si
   assert.doesNotMatch(JSON.stringify(diagnostics), /test-openrouter-key|coding instructions|Short request|long history/);
 });
 
+test('evidence timing separates provider wait, first byte, and stream completion without content', async t => {
+  const privateText = 'private model output';
+  const base = await upstream(t, async (req, res) => {
+    await json(req);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ delta: privateText })}\n\n`);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    res.end('data: [DONE]\n\n');
+  });
+  const events = [];
+  const instance = await adapter(t, base, {
+    onTiming: event => events.push(event), timingIntervalMs: 5,
+  });
+  const response = await request(instance, {
+    model: MODEL, stream: true, input: [{ role: 'user', content: 'private input' }],
+  });
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /private model output/);
+  assert.equal(events[0].kind, 'provider_request_start');
+  assert.ok(events.some(event => event.kind === 'provider_request_pending'
+    && event.stage === 'await_headers'));
+  assert.ok(events.some(event => event.kind === 'provider_request_pending'
+    && event.stage === 'streaming' && event.responseBytes > 0 && event.chunkCount > 0));
+  assert.deepEqual(events.filter(event => [
+    'provider_response_headers', 'provider_response_first_byte', 'provider_request_end',
+  ].includes(event.kind)).map(event => event.kind), [
+    'provider_response_headers', 'provider_response_first_byte', 'provider_request_end',
+  ]);
+  assert.equal(events.at(-1).outcome, 'ok');
+  assert.ok(events.at(-1).durationMs >= events.find(event => event.kind === 'provider_response_first_byte').durationMs);
+  assert.ok(events.at(-1).responseBytes > 0);
+  assert.equal(events.at(-1).httpStatus, 200);
+  assert.doesNotMatch(JSON.stringify(events), /private|input|output|model|api\/v1/i);
+});
+
 test('a real HTTP refusal is retried with the smaller limit on the wire and safe ledger evidence', async t => {
   // The attempt-loop's database behavior is covered in agent-ledger-codex;
   // this test connects its decision to the HTTP boundary without a paid call.

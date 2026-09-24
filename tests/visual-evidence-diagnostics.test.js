@@ -154,6 +154,9 @@ test('navigation diagnostics identify paired sides and repeated routes without s
   const state = worker.newWatchState();
   state.agentBackend = 'codex_openrouter';
   state.evidenceOrigins = { base: 'http://base.internal:3000', head: 'http://head.internal:3000' };
+  state.evidenceNavigationHints = {
+    intentPaths: ['/'], declaredPaths: ['/?token=private#app/private-route'],
+  };
   state.evidenceDiagnosticObserver = (event) => events.push(event);
   const navigate = (id, url) => {
     worker.parseLine(JSON.stringify({ type: 'item.started', item: {
@@ -174,5 +177,22 @@ test('navigation diagnostics identify paired sides and repeated routes without s
     { side: 'outside', routeOrdinal: undefined },
   ]);
   assert.equal(events.filter((event) => event.kind === 'tool_end')[1].routeOrdinal, 1);
+  assert.equal(calls[0].routeHint, 'declared_check');
+  assert.equal(calls[0].checkRank, 1);
   assert.doesNotMatch(JSON.stringify(events), /private|outside\.invalid|token|secret/i);
+});
+
+test('worker forwards evidence provider timing without exposing it as agent text', () => {
+  const events = [];
+  const progress = [];
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.evidenceDiagnosticObserver = event => events.push(event);
+  worker.parseLine('__USERNODE_EVIDENCE_PROVIDER__ '+ JSON.stringify({
+    kind: 'provider_request_pending', requestOrdinal: 2,
+    stage: 'await_headers', durationMs: 15_000,
+  }), line => progress.push(line), state);
+  assert.deepEqual(events, [{ kind: 'provider_request_pending', requestOrdinal: 2,
+    stage: 'await_headers', durationMs: 15_000 }]);
+  assert.deepEqual(progress, []);
 });

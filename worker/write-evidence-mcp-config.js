@@ -13,6 +13,7 @@ if (!output || !stateDir || !proxy || new Set(origins).size !== 2) {
   throw new Error('Evidence MCP config inputs are incomplete.');
 }
 const browserArgs = (persona) => [
+  '/usr/local/bin/evidence-browser-observer.js', persona === 'read_only_admin' ? 'admin' : 'member',
   '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox',
   '--storage-state', path.join(stateDir, `${persona}.json`),
   '--allowed-origins', origins.join(';'),
@@ -20,11 +21,16 @@ const browserArgs = (persona) => [
   '--proxy-server', proxy,
   '--timeout-action', '10000', '--timeout-navigation', '30000',
 ];
+const browserEnv = {
+  EVIDENCE_ALLOWED_ORIGINS: JSON.stringify(origins),
+  EVIDENCE_BROWSER_DIAGNOSTIC_FILE: process.env.EVIDENCE_BROWSER_DIAGNOSTIC_FILE || '',
+  EVIDENCE_NAVIGATION_HINTS: process.env.EVIDENCE_NAVIGATION_HINTS || '{}',
+};
 const config = {
   mcpServers: {
     evidence: { command: 'node', args: ['/usr/local/bin/evidence-mcp.js'] },
-    browser_member: { command: 'mcp-server-playwright', args: browserArgs('member') },
-    browser_admin: { command: 'mcp-server-playwright', args: browserArgs('read_only_admin') },
+    browser_member: { command: 'node', args: browserArgs('member'), env: browserEnv },
+    browser_admin: { command: 'node', args: browserArgs('read_only_admin'), env: browserEnv },
   },
 };
 fs.writeFileSync(output, `${JSON.stringify(config)}\n`, { mode: 0o600 });
