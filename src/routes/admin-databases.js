@@ -11,11 +11,13 @@ function registerDatabaseRoutes(router, { requireAdminWrite, getPolicy = loadPol
     try {
       const policy = getPolicy();
       if (!policy) return res.json({ enabled: false, targets: [], requests: [] });
-      const requests = await getStore().list(policy.namespace);
+      const store = getStore();
+      const requests = await store.list(policy.namespace);
+      const pools = policy.operatorManaged ? await require('../services/database-pools').inventory(policy, store) : [];
       const placement = require('../services/database-placement');
       const selected = placement.loadSelection();
       const bindings = selected ? await placement.resolvePlacements([], { all: true }) : null;
-      return res.json({ ...(bindings ? { bindings } : {}), enabled: true, targets: policy.targets.map(({ id, profile, displayName }) => ({ id, profile, ...(displayName ? { displayName } : {}) })),
+      return res.json({ ...(bindings ? { bindings } : {}), enabled: true, operatorManaged: policy.operatorManaged === true, placementEnabled: false, pools, targets: policy.targets.map(({ id, profile, displayName }) => ({ id, profile, ...(displayName ? { displayName } : {}) })),
         requests: requests.map(publicRequest) });
     } catch { return res.status(503).json({ error: 'Database control plane is unavailable' }); }
   });
@@ -23,6 +25,7 @@ function registerDatabaseRoutes(router, { requireAdminWrite, getPolicy = loadPol
     try {
       const policy = getPolicy();
       if (!policy) return res.status(503).json({ error: 'Database control plane is disabled' });
+      if (policy.operatorManaged) return res.status(409).json({ error: 'Database pools are managed by infrastructure operators' });
       if (!req.body || Object.keys(req.body).some((key) => key !== 'target')
         || typeof req.body.target !== 'string' || !policy.targets.some((t) => t.id === req.body.target)) {
         return res.status(400).json({ error: 'Choose a configured database target' });

@@ -4,7 +4,9 @@ import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 type Request = { id: string; target: string; phase: string; reason: string };
-type Inventory = { enabled: boolean; targets: { id: string; profile: string; displayName?: string }[]; requests: Request[] };
+type Pool = { id: string; displayName: string; phase: string; acceptingNewApps: boolean; instances?: number;
+  capacity: { state: string; message: string; observedAt?: string; ratios?: { cpu: number; memory: number; storage: number } } };
+type Inventory = { enabled: boolean; operatorManaged?: boolean; placementEnabled?: boolean; pools?: Pool[]; targets: { id: string; profile: string; displayName?: string }[]; requests: Request[] };
 const phases: Record<string, string> = {
   Pending: 'Queued', Provisioning: 'Creating', Ready: 'Ready',
   Blocked: 'Needs attention', RecoveryRequired: 'Recovery required',
@@ -53,6 +55,25 @@ function DatabaseSection() {
       if (alive.current) setError('Could not request the database cluster. You can retry safely.');
     } finally { if (alive.current) setBusy(''); }
   }
+
+  if (data?.operatorManaged) return <><DatabaseMigrations /><section className={`${AdminUI.card} p-4 space-y-4`} aria-label="Database pools">
+    <div className={AdminUI.cardHeader}><h2 className={AdminUI.cardTitle}>Database pools</h2>
+      <button type="button" className={AdminUI.btn.outline} onClick={() => setRefresh(v => v + 1)}>Refresh</button></div>
+    <p className={AdminUI.muted}>Infrastructure operators create and size these shared pools. SV reports their health and capacity.</p>
+    {!data.placementEnabled && <p className={AdminUI.muted}>Automatic placement for new apps is not enabled yet. Existing app assignments are preserved.</p>}
+    {error && <p role="alert" className={AdminUI.muted}>{error}</p>}
+    <div className={AdminUI.tableWrap}><table className={AdminUI.table}>
+      <thead className={AdminUI.thead}><tr>{['Pool', 'Status', 'CPU budget used', 'Memory budget used', 'Storage used', 'Capacity'].map(h => <th key={h} className={AdminUI.th}>{h}</th>)}</tr></thead>
+      <tbody>{(data.pools || []).map(pool => <tr key={pool.id} className={AdminUI.trHover}>
+        <td className={AdminUI.td}>{pool.displayName}<div className={AdminUI.muted}>{pool.instances ?? '—'} instance(s)</div></td>
+        <td className={AdminUI.td}>{pool.phase}</td>
+        {(['cpu', 'memory', 'storage'] as const).map(key => <td key={key} className={AdminUI.td}>{pool.capacity.ratios ? `${Math.round(pool.capacity.ratios[key] * 100)}%` : '—'}</td>)}
+        <td className={AdminUI.td}>{({ available: 'Available', warning: 'Near capacity', full: 'Capacity reached', unknown: 'Unknown' } as Record<string, string>)[pool.capacity.state] || 'Unknown'}</td>
+      </tr>)}</tbody></table></div>
+    <p className={AdminUI.muted}>CPU and memory use a five-minute average against the reserved budget per instance. Storage shows the fullest instance. These observations do not include new-app reservations or guarantee failover capacity.</p>
+    {(data.pools || []).filter(p => p.capacity.state !== 'available' || p.phase !== 'Ready').map(pool => <p role="alert" key={pool.id} className={AdminUI.muted}>{pool.displayName}: {pool.capacity.message}{!pool.acceptingNewApps ? ' Closed to new app assignments.' : ''}</p>)}
+    {!data.pools?.length && <p className={AdminUI.muted}>No shared pools registered. An infrastructure operator needs to provision and register a pool.</p>}
+  </section></>;
 
   return <><DatabaseMigrations /><div className={AdminUI.card}>
     <div className={AdminUI.cardHeader}>

@@ -9,7 +9,7 @@ async function run({ store, policy, getPolicy = () => policy, signal, intervalMs
     try {
       policy = getPolicy();
       if (!policy) throw new Error('Database control plane is disabled');
-      const requests = await store.list(policy.namespace);
+      const requests = policy.operatorManaged ? [] : await store.list(policy.namespace);
       for (const request of requests) {
         if (signal.aborted) break;
         try { await reconcileRequest(store, policy, request); }

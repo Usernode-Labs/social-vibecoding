@@ -73,3 +73,12 @@ test('migration admin stays in a separate deployment with only session DB creden
   const disabled = execFileSync('helm', [...args, '--set','databaseControlPlane.migrationsEnabled=false'], {encoding:'utf8'});
   assert.doesNotMatch(disabled, /src\/workers\/database-migrations.js|serviceAccountName: social-database-migrations/);
 });
+
+test('operator-managed rollout stops the provisioning worker without pruning its identity', () => {
+  const output = execFileSync('helm', ['template', 'test', 'deploy/helm/social-vibecoding-platform', '--set',
+    'enabled=true,databaseControlPlane.enabled=true,databaseControlPlane.provisioningEnabled=false,platform.enabled=false,migration.enabled=false,postgresql.enabled=false',
+    '--set-string', `release.sourceRevision=${'a'.repeat(40)},platform.image.digest=sha256:${'b'.repeat(64)}`,
+    '--show-only', 'templates/database-worker.yaml'], { encoding: 'utf8' });
+  assert.match(output, /replicas: 0/);assert.match(output, /kind: ServiceAccount/);
+  assert.doesNotMatch(output, /kind: Cluster\b/);
+});

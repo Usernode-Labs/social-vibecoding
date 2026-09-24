@@ -15,6 +15,7 @@ databaseControlPlane:
   bindingsEnabled: false
   runtimeSecret: ""
   migrationsEnabled: false
+  provisioningEnabled: true
   serviceAccountName: social-database-worker
   policyConfigMap: social-database-policy
   resources:

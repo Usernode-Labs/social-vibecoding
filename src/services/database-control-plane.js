@@ -36,6 +36,7 @@ function validatePolicy(policy) {
     ids.add(target.id);
     destinations.add(destination);
   }
+  require('./database-pools').validatePools(policy);
   return policy;
 }
 
