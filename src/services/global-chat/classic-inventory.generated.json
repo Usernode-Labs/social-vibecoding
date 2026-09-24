@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 701,
-    "mappedRoutes": 547,
+    "totalRoutes": 704,
+    "mappedRoutes": 550,
     "exemptRoutes": 154,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 397,
+    "clientApiReferences": 399,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -277,7 +277,7 @@
   "routes": [
     {
       "source": "server.js",
-      "line": 268,
+      "line": 269,
       "method": "GET",
       "path": "/health",
       "expression": null,
@@ -286,7 +286,7 @@
     },
     {
       "source": "server.js",
-      "line": 304,
+      "line": 305,
       "method": "GET",
       "path": "/api/version",
       "expression": null,
@@ -314,7 +314,7 @@
     },
     {
       "source": "server.js",
-      "line": 334,
+      "line": 335,
       "method": "GET",
       "path": "/claude.md",
       "expression": null,
@@ -323,7 +323,7 @@
     },
     {
       "source": "server.js",
-      "line": 374,
+      "line": 375,
       "method": "GET",
       "path": "/api/node-status",
       "expression": null,
@@ -349,7 +349,7 @@
     },
     {
       "source": "server.js",
-      "line": 379,
+      "line": 380,
       "method": "GET",
       "path": "/api/node-status/full",
       "expression": null,
@@ -368,7 +368,7 @@
     },
     {
       "source": "server.js",
-      "line": 401,
+      "line": 402,
       "method": "GET",
       "path": "/node-status",
       "expression": null,
@@ -377,7 +377,7 @@
     },
     {
       "source": "server.js",
-      "line": 699,
+      "line": 701,
       "method": "GET",
       "path": "/api/iframe-token",
       "expression": null,
@@ -386,7 +386,7 @@
     },
     {
       "source": "server.js",
-      "line": 881,
+      "line": 883,
       "method": "GET",
       "path": "/admin",
       "expression": null,
@@ -395,7 +395,7 @@
     },
     {
       "source": "server.js",
-      "line": 885,
+      "line": 887,
       "method": "GET",
       "path": "/admin-features",
       "expression": null,
@@ -404,7 +404,7 @@
     },
     {
       "source": "server.js",
-      "line": 889,
+      "line": 891,
       "method": "GET",
       "path": "/dashboard",
       "expression": null,
@@ -413,7 +413,7 @@
     },
     {
       "source": "server.js",
-      "line": 893,
+      "line": 895,
       "method": "GET",
       "path": "/debug",
       "expression": null,
@@ -422,7 +422,7 @@
     },
     {
       "source": "server.js",
-      "line": 897,
+      "line": 899,
       "method": "GET",
       "path": "/gallery",
       "expression": null,
@@ -431,7 +431,7 @@
     },
     {
       "source": "server.js",
-      "line": 901,
+      "line": 903,
       "method": "GET",
       "path": "*",
       "expression": null,
@@ -1522,6 +1522,63 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-mail.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/agent-session-drafts.js",
+      "line": 80,
+      "method": "GET",
+      "path": "/api/agent-sessions/:id/drafts",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.agent.sessions.item.drafts.02fc0729",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/agent-session/api.ts"
+      ]
+    },
+    {
+      "source": "src/routes/agent-session-drafts.js",
+      "line": 93,
+      "method": "POST",
+      "path": "/api/agent-sessions/:id/drafts",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.agent.sessions.item.drafts.2c1e6b90",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/agent-session/api.ts"
+      ]
+    },
+    {
+      "source": "src/routes/agent-session-drafts.js",
+      "line": 153,
+      "method": "DELETE",
+      "path": "/api/agent-sessions/:id/drafts/:draftId",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.delete.agent.sessions.item.drafts.item.7d16f8df",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/agent-session/api.ts"
       ]
     },
     {
@@ -3875,6 +3932,7 @@
       "classicPath": "#messages",
       "clientReferences": [
         "frontend/src/features/admin/topochain/api-tester.tsx",
+        "frontend/src/features/agent-session/api.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dev-chat/dev-chat.js",

@@ -9316,3 +9316,31 @@ CREATE TABLE IF NOT EXISTS agent_session_actions (
 CREATE INDEX IF NOT EXISTS agent_session_actions_session
   ON agent_session_actions (agent_session_id, created_at DESC);
 COMMENT ON TABLE agent_session_actions IS 'staging:private';
+
+-- An agent session's saved drafts (#2779 follow-up, the dev chat's #798/#940
+-- carried over): while the Mayor works, what the owner types next can be
+-- parked here instead of held in their head, and sent — always by a tap,
+-- never on its own — once the turn is over. Per ACCOUNT, like the dev chat's
+-- list, so a second device shows the same drafts. The same shape and caps
+-- as chat_session_drafts (routes/chat-drafts.js): client-generated ids, 20
+-- per conversation, 10,000 characters each.
+--
+-- Retention follows the conversation (ON DELETE CASCADE).
+CREATE TABLE IF NOT EXISTS agent_session_drafts (
+  agent_session_id INTEGER     NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  -- Always the conversation's owner, stored so a per-user query is one
+  -- predicate on this table.
+  user_id          INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  draft_id         VARCHAR(32) NOT NULL,
+  content          TEXT        NOT NULL CHECK (length(content) BETWEEN 1 AND 10000),
+  saved_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (agent_session_id, draft_id)
+);
+CREATE INDEX IF NOT EXISTS agent_session_drafts_session
+  ON agent_session_drafts (agent_session_id, saved_at, draft_id);
+CREATE INDEX IF NOT EXISTS agent_session_drafts_user
+  ON agent_session_drafts (user_id);
+-- Private like its conversation: unsent words, and a foreign key to the
+-- private agent_sessions.
+COMMENT ON TABLE agent_session_drafts IS 'staging:private';

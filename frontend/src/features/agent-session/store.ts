@@ -30,6 +30,7 @@ import type {
   AgentSession,
   AgentTurnEvent,
   ModelCatalog,
+  SavedDraft,
 } from './api';
 import { sameChoice } from './model-choice';
 import { toolActivity } from './transcript';
@@ -121,6 +122,12 @@ export interface AgentSessionState {
   paneTab: PaneTab;
   /** A staging card's action on its way: proposing, or retrying the build. */
   changeAction: { changeId: number; kind: 'propose' | 'retry' } | null;
+  /**
+   * The conversation's saved drafts (#2779 follow-up, the dev chat's #798
+   * list): what the owner parked while the Mayor worked, oldest first, as
+   * the server holds them for every device.
+   */
+  drafts: SavedDraft[];
 }
 
 const IDLE_TURN: LiveTurn = {
@@ -157,6 +164,7 @@ export const INITIAL_STATE: AgentSessionState = {
   preview: null,
   paneTab: 'spec',
   changeAction: null,
+  drafts: [],
 };
 
 let state: AgentSessionState = INITIAL_STATE;
@@ -174,7 +182,19 @@ let catalogRequest: Promise<void> | null = null;
 function publish(patch: Partial<AgentSessionState> | ((current: AgentSessionState) => Partial<AgentSessionState>)) {
   const next = typeof patch === 'function' ? patch(state) : patch;
   state = { ...state, ...next };
+  syncTabTitle();
   for (const listener of listeners) listener();
+}
+
+// The browser tab says "⏳ Thinking…" while the conversation on screen is
+// working, as the dev chat's does (#108). The dev chat's module stays the
+// title's one writer: this only tells it when an agent turn is running.
+let tabThinking = false;
+function syncTabTitle() {
+  const thinking = state.open && state.turn.running;
+  if (thinking === tabThinking || typeof window === 'undefined') return;
+  tabThinking = thinking;
+  try { window.DevChat?.setAgentSessionThinking?.(thinking); } catch { /* the title keeps its last marker */ }
 }
 
 function patchTurn(patch: Partial<LiveTurn>) {
@@ -408,7 +428,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     phase: 'loading',
     error: '',
     drawerOpen: drawer,
-    session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null,
+    session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
   });
   syncTitle();
   seen.clear();
@@ -418,6 +438,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     if (version !== navigation) return;
     publish((current) => ({ session, phase: 'ready', sessions: withListed(current, session) }));
     syncTitle();
+    void loadDrafts(id);
     if (session.busy) {
       patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: Date.now() });
       followEvents(id);
@@ -473,6 +494,7 @@ function openDraft(host: AgentSessionHost) {
     drawerOpen: false,
     specSheet: null,
     turn: IDLE_TURN,
+    drafts: [],
   });
   syncTitle();
   if (!hint || !(hint.slug || hint.issueNumber || hint.proposalId)) return;
@@ -641,10 +663,29 @@ export function clearReturnedText() {
   if (state.returnedText !== null) publish({ returnedText: null });
 }
 
+/**
+ * The message a Stop hands back: the one still waiting to be answered, or the
+ * newest the user sent. The composer takes it only when it is empty, so a
+ * half-typed follow-up is never overwritten (the dev chat's rule).
+ */
+export function stoppedText(current: Pick<AgentSessionState, 'turn' | 'messages'>): string | null {
+  if (current.turn.pendingUserText) return current.turn.pendingUserText;
+  for (let i = current.messages.length - 1; i >= 0; i -= 1) {
+    const row = current.messages[i];
+    if (row.role === 'user' && typeof row.content === 'string' && row.content.trim()) return row.content;
+  }
+  return null;
+}
+
 export async function stopAgentTurn() {
   const id = state.id;
   if (!id || !state.turn.running) return;
+  // Back in the box to edit and send again, as the dev chat's Stop does. The
+  // sent bubble stays: that turn really ran. Stopping first, so the box
+  // filling up never turns the button under this click into Save.
+  const text = stoppedText(state);
   patchTurn({ stopping: true });
+  if (text) publish({ returnedText: text });
   try {
     const answer = await api.stopTurn(id);
     if (!answer.stopped && answer.reason === 'wrap_up_not_stoppable') patchTurn({ stopping: false });
@@ -690,6 +731,122 @@ export async function switchActiveChange(changeId: number) {
 
 export function setDrawerOpen(open: boolean) {
   publish({ drawerOpen: open });
+}
+
+// ── Saved drafts ───────────────────────────────────────────────────────
+//
+// The dev chat's #798 list, per account (#940), for the conversation with the
+// Mayor. While a turn runs the composer's button saves instead of sending:
+// the text is parked here and sent later, always by a tap, never on its own.
+// The server's list is the truth and every write answers with it; the screen
+// updates first and settles on the answer.
+
+export const MAX_SAVED_DRAFTS = 20;
+
+function newDraftId() {
+  return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+
+async function loadDrafts(id: number) {
+  try {
+    const drafts = await api.listDrafts(id);
+    if (state.id === id) publish({ drafts });
+  } catch { /* the list stays as it was; the next write or event re-reads it */ }
+}
+
+/** Another device saved, sent or deleted one of this conversation's drafts. */
+export function agentSessionDraftsChanged(event: { agentSessionId?: unknown } | null | undefined) {
+  const id = Number(event?.agentSessionId);
+  if (state.open && state.id && state.id === id) void loadDrafts(id);
+}
+
+async function parkDraft(id: number, text: string): Promise<boolean> {
+  const draft: SavedDraft = { id: newDraftId(), text, savedAt: new Date().toISOString() };
+  publish((current) => ({ drafts: [...current.drafts, draft] }));
+  try {
+    const drafts = await api.saveDraft(id, draft);
+    if (state.id === id) publish({ drafts });
+    return true;
+  } catch (error) {
+    if (state.id === id) {
+      publish((current) => ({ drafts: current.drafts.filter((d) => d.id !== draft.id) }));
+      toast(errorText(error, 'Could not save that draft.'));
+    }
+    return false;
+  }
+}
+
+/**
+ * The composer's Save while the Mayor works. Refused when no turn is running,
+ * when the list is full, or with nothing typed: false, and the text stays in
+ * the box. True once the list shows the draft, and the composer empties; a
+ * save the server then refuses hands the text back to it.
+ */
+export function saveComposerDraft(text: string): boolean {
+  const id = state.id;
+  const body = text.trim();
+  if (!id || !body || !state.turn.running) return false;
+  if (state.drafts.length >= MAX_SAVED_DRAFTS) {
+    toast(`That's ${MAX_SAVED_DRAFTS} saved drafts. Send or delete one first`);
+    return false;
+  }
+  void parkDraft(id, body).then((saved) => {
+    if (!saved && state.id === id) publish({ returnedText: body });
+  });
+  toast("Draft saved. Send it whenever you're ready");
+  return true;
+}
+
+async function dropDraft(id: number, draftId: string) {
+  publish((current) => ({ drafts: current.drafts.filter((d) => d.id !== draftId) }));
+  try {
+    const drafts = await api.deleteDraft(id, draftId);
+    if (state.id === id) publish({ drafts });
+  } catch (error) {
+    if (state.id === id) {
+      toast(errorText(error, 'Could not delete that draft.'));
+      void loadDrafts(id);
+    }
+  }
+}
+
+/**
+ * Send a saved draft now. Refused while the Mayor is working. What the box
+ * held is kept as a draft of its own first, so emptying it for the send
+ * never throws away something the user wrote (the dev chat's #1962 rule).
+ */
+export async function sendSavedDraft(draftId: string, typed = '') {
+  const id = state.id;
+  if (!id || state.turn.running) return;
+  const draft = state.drafts.find((d) => d.id === draftId);
+  if (!draft) return;
+  const parked = typed.trim();
+  void dropDraft(id, draftId);
+  if (parked && parked !== draft.text && state.drafts.length < MAX_SAVED_DRAFTS) {
+    void parkDraft(id, parked);
+    toast('Kept what you had typed as another draft');
+  }
+  await sendAgentMessage(draft.text);
+}
+
+/**
+ * Put a saved draft back in the box to reword it. Its text, for the composer
+ * to take; what the box held is kept as a draft of its own first.
+ */
+export function editSavedDraft(draftId: string, typed = ''): string | null {
+  const id = state.id;
+  const draft = state.drafts.find((d) => d.id === draftId);
+  if (!id || !draft) return null;
+  const parked = typed.trim();
+  void dropDraft(id, draftId);
+  if (parked && parked !== draft.text && state.drafts.length < MAX_SAVED_DRAFTS) void parkDraft(id, parked);
+  return draft.text;
+}
+
+export function deleteSavedDraft(draftId: string) {
+  const id = state.id;
+  if (!id || !state.drafts.some((d) => d.id === draftId)) return;
+  void dropDraft(id, draftId);
 }
 
 // ── The spec viewer ────────────────────────────────────────────────────
@@ -973,6 +1130,7 @@ export const agentSessionController = {
   currentId: (): AgentSessionTarget | null => (state.id ?? (state.draft ? 'new' : null)),
   refreshList: loadAgentSessions,
   listChanged: agentSessionListChanged,
+  draftsChanged: agentSessionDraftsChanged,
 };
 
 if (typeof window !== 'undefined') {

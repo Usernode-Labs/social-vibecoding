@@ -32,9 +32,27 @@ export interface CardView {
 
 export type TranscriptItem =
   | { kind: 'user'; key: string; text: string }
-  | { kind: 'mayor'; key: string; text: string; cards: CardView[]; quickReplies: string[]; wrapUp: boolean }
+  | {
+    kind: 'mayor';
+    key: string;
+    text: string;
+    cards: CardView[];
+    quickReplies: string[];
+    wrapUp: boolean;
+    /** The turn was stopped or failed after this much was said. */
+    ended: 'stopped' | 'failed' | null;
+    /** What this reply cost, "reply $0.012", or '' when nothing was recorded. */
+    cost: string;
+  }
   | { kind: 'divider'; key: string; text: string; event: string }
-  | { kind: 'note'; key: string; text: string; tone: 'ok' | 'error' | 'muted' }
+  | {
+    kind: 'note';
+    key: string;
+    text: string;
+    tone: 'ok' | 'error' | 'muted';
+    /** A turn that did not finish: the reply suggestions offer to try again. */
+    turnFailed?: boolean;
+  }
   | RunItem
   | {
     kind: 'spec';
@@ -258,6 +276,8 @@ export function buildTranscript(
         cards,
         quickReplies: stringList(meta.quickReplies),
         wrapUp: meta.wrapUp === true,
+        ended: meta.stopped === true ? 'stopped' : meta.failed === true ? 'failed' : null,
+        cost: replyCostLabel(row),
       });
       continue;
     }
@@ -276,7 +296,7 @@ export function buildTranscript(
       continue;
     }
     if (event === 'turn_failed') {
-      items.push({ kind: 'note', key, text: row.content, tone: 'error' });
+      items.push({ kind: 'note', key, text: row.content, tone: 'error', turnFailed: true });
       continue;
     }
     if (event) {
@@ -378,7 +398,10 @@ export function buildTranscript(
       continue;
     }
     if (row.content && row.content.trim()) {
-      items.push({ kind: 'note', key, text: row.content, tone: meta.turnError ? 'error' : 'muted' });
+      items.push({
+        kind: 'note', key, text: row.content, tone: meta.turnError ? 'error' : 'muted',
+        ...(meta.turnError ? { turnFailed: true } : {}),
+      });
     }
   }
   // Only a change's newest staging card is live: an older build's preview is
@@ -435,10 +458,34 @@ export function durationLabel(ms: number | null): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
-/** Reply suggestions belong to the last thing said, and only while it is last. */
+/**
+ * What a turn that did not finish offers, the dev chat's own pair for a failed
+ * or stopped turn (services/recovery-pills.js `turn_failed`).
+ */
+export const TURN_FAILED_REPLIES = ['Try that again', 'What went wrong?'];
+
+/**
+ * Reply suggestions belong to the last thing said, and only while it is last.
+ * A turn that failed or was stopped, and said nothing to suggest, offers to
+ * try again, as the dev chat's does.
+ */
 export function latestReplies(items: TranscriptItem[]): string[] {
   const last = items[items.length - 1];
-  return last && last.kind === 'mayor' ? last.quickReplies : [];
+  if (!last) return [];
+  if (last.kind === 'mayor') return last.quickReplies.length ? last.quickReplies : (last.ended ? TURN_FAILED_REPLIES : []);
+  if (last.kind === 'note' && last.turnFailed) return TURN_FAILED_REPLIES;
+  return [];
+}
+
+/**
+ * What one Mayor reply cost, as the dev chat labels it (#2118): "reply
+ * $0.012", with "~" before a list-price estimate. Empty with no cost recorded.
+ */
+export function replyCostLabel(row: Pick<AgentMessage, 'costCents' | 'metadata'>): string {
+  const cents = Number(row.costCents);
+  if (row.costCents == null || !Number.isFinite(cents) || cents <= 0) return '';
+  const approx = row.metadata && row.metadata.costEstimated === true ? '~' : '';
+  return `reply ${approx}$${(cents / 100).toFixed(3)}`;
 }
 
 const TOOL_ACTIVITY: Record<string, string> = {

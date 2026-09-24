@@ -1243,14 +1243,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // change, one selector over the staging conversation 990801's two build
   // rows. 27 slots left under 830.
   //
-  // 803 → 810: +7 (QA 2026-09-24): the sweep's user-visible fixes.
-  // Discover's compact "Add" pill (Q10), the conversation ⋯ as a menu button
-  // and the Skip to navigation link (Q18), sign-in's Back disc and the
-  // username rule under the register field (Q8, Q11), "Needs you" in a
-  // Messages row (Q29) and a group invitation's "Invitation pending" header
-  // (Q14). Six more were drafted and left to unit tests to keep the 20 free
-  // slots the proposal suites require. 20 slots left under 830, the floor
-  // those suites allow.
+  // 803 → 804: +1 (#2779): an agent session's saved draft above the message
+  // box, in a conversation whose Mayor reply shows what it cost: one
+  // selector over the staging conversation 990801's seeded draft. 26 slots
+  // left under 830.
+  //
+  // 804 → 810: +6 (QA 2026-09-24): the sweep's user-visible fixes.
+  // Discover's compact "Add" pill (Q10), the Skip to navigation link (Q18),
+  // sign-in's Back disc and the username rule under the register field (Q8,
+  // Q11), "Needs you" in a Messages row (Q29) and a group invitation's
+  // "Invitation pending" header (Q14). Seven more were drafted and left to
+  // unit tests (the conversation ⋯ as a menu button among them, pinned in
+  // tests/qa-menus-keyboard.test.js) to keep the 20 free slots the proposal
+  // suites require. 20 slots left under 830, the floor those suites allow.
   assert.equal(DAPP.tests.length, 810);
 });
 

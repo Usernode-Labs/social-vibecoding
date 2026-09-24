@@ -72,6 +72,7 @@ const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
 const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
+const { agentSessionDraftsRoutes } = require('./src/routes/agent-session-drafts');
 const { devFlowRoutes } = require('./src/routes/dev-flow');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
@@ -664,6 +665,7 @@ app.use(stakingRoutes(config));
 // across devices. Owner-scoped per session, like the /api/sessions/* family
 // in routes/sessions.js.
 app.use(chatDraftsRoutes(config));
+app.use(agentSessionDraftsRoutes(config));
 // #1049: the alternate development flows (Claude Code / Codex web UI) as
 // ordinary browser routes rather than MCP-only tools. App-scoped with the
 // same 'collab' bar as the other dev surfaces, so behind authMiddleware.

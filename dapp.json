@@ -3005,11 +3005,6 @@
       "expectSelector": "#messages-screen:not(.hidden) #messages-filters > .messages-filter-track + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
     },
     {
-      "name": "QA 2026-09-24 Q18: the conversation's ⋯ is a menu button, so its rows are announced and reached as a menu",
-      "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-header button[aria-label=\"Conversation actions\"][aria-haspopup=\"menu\"][aria-expanded=\"false\"]"
-    },
-    {
       "name": "QA 2026-09-24 Q18: a Skip to navigation link is the first thing Tab reaches, ahead of the header, and the rail it skips to is there",
       "path": "/?demo=1",
       "expectSelector": "body > a[href=\"#platform-tabs\"]:first-of-type:not([hidden]) + header#platform-header ~ nav#platform-tabs a#platform-tab-home"
@@ -5113,6 +5108,12 @@
       "path": "/#messages/agent/990801",
       "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"] [data-agent-session-preview-open] + [data-agent-session-preview-change]",
       "expectText": "Superseded by a newer preview"
+    },
+    {
+      "name": "#2779: an agent session's saved drafts sit above the message box, and a Mayor reply says what it cost",
+      "path": "/#messages/agent/990801",
+      "expectSelector": "[data-agent-session-thread=\"990801\"]:has([data-agent-session-reply-cost]) [data-agent-session-drafts=\"1\"] [data-agent-session-draft=\"dstagingfixture1\"]",
+      "expectText": "Also keep the choice when I switch devices."
     },
     {
       "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, \u22ef), and a threaded one its reply count",

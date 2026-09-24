@@ -294,6 +294,8 @@ declare global {
       renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
       dismissReturnHint(): void;
       _importOwnToolsPr(): void;
+      /** An agent session's turn is running on screen: the tab's "⏳ Thinking…". */
+      setAgentSessionThinking?(on: boolean): void;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */
