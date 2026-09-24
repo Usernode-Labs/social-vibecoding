@@ -1236,15 +1236,18 @@ function stagingMockCompletedCloseIssues() {
   ];
 }
 
-// Global ordering for the unified Completed stream: newest created_at
+// Global ordering for the unified Completed stream: newest completion
 // first; on a timestamp tie PR rows rank before close-issue rows (rank
 // pr=1 > close_issue=0 — the same constant ranks the SQL keyset
 // predicates encode), then id DESC. Deterministic even across the two
 // id sequences (chat_sessions vs issues), which can collide numerically.
 const COMPLETED_TYPE_RANK = { pr: 1, close_issue: 0 };
+function completedAt(row) {
+  return row.completed_at || row.merged_at || row.payload?.appliedAt || row.closed_at || row.created_at;
+}
 function completedRowCompare(a, b) {
-  const ta = Date.parse(a.created_at) || 0;
-  const tb = Date.parse(b.created_at) || 0;
+  const ta = new Date(completedAt(a)).getTime() || 0;
+  const tb = new Date(completedAt(b)).getTime() || 0;
   if (tb !== ta) return tb - ta;
   const ra = COMPLETED_TYPE_RANK[a.row_type || 'pr'] ?? 1;
   const rb = COMPLETED_TYPE_RANK[b.row_type || 'pr'] ?? 1;
@@ -2021,6 +2024,7 @@ function mergedRowSelect() {
            -- merged before the column existed — consumers must keep the
            -- created_at fallback forever.
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
+           COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
            -- Transcript sharing: true when this proposal's owner published
            -- the dev chat that produced it, so the proposal page can offer
@@ -4175,25 +4179,25 @@ function voteRoutes(config) {
 
       // #429: keyset pagination so the Completed list can reach every
       // merged PR, not just the most-recent page. `limit` defaults to 20
-      // (the historical cap) and is clamped to 50. `before` + `before_id`
-      // form the cursor — the (created_at, id) of the last row the client
+      // (the historical cap) and is clamped to 50. `before_completed_at` + `before_id`
+      // form the cursor — the (completed_at, id) of the last row the client
       // already has — and we page strictly older than it. Keyset (not
       // OFFSET) because new merges insert at the top and would otherwise
-      // drift the offset. created_at isn't unique, so id is the tiebreaker.
+      // drift the offset. completed_at isn't unique, so id is the tiebreaker.
       //
       // The stream now interleaves TWO row types (merged PR sessions and
       // applied close-issue proposals — see below), whose ids come from
       // independent sequences, so the cursor carries a third part:
       // `before_type` ('pr' | 'close_issue', defaulting to 'pr' so older
-      // clients keep paging PRs exactly as before). Global order is
-      // (created_at DESC, type-rank DESC, id DESC) with rank pr=1 >
+      // clients can still omit the row type). Global order is
+      // (completed_at DESC, type-rank DESC, id DESC) with rank pr=1 >
       // close_issue=0 — see completedRowCompare.
       let limit = parseInt(req.query.limit, 10);
       if (!Number.isFinite(limit) || limit < 1) limit = 20;
       if (limit > 50) limit = 50;
-      const beforeRaw = req.query.before;
+      const beforeRaw = req.query.before_completed_at ?? req.query.before;
       const beforeIdRaw = parseInt(req.query.before_id, 10);
-      const before = new Date(beforeRaw);
+      let before = new Date(beforeRaw);
       // A cursor only applies when BOTH parts parse cleanly; otherwise we
       // ignore it and return the newest page (defensive against malformed
       // query strings).
@@ -4201,6 +4205,23 @@ function voteRoutes(config) {
         && Number.isFinite(beforeIdRaw);
       const isFirstPage = !hasCursor;
       const beforeType = req.query.before_type === 'close_issue' ? 'close_issue' : 'pr';
+
+      // Older open tabs send the row's creation date in `before`. Resolve
+      // that row within this app so a recent merge of old work cannot skip
+      // pages. New clients send completion time explicitly and need no lookup.
+      if (hasCursor && req.query.before_completed_at == null) {
+        const cursorParams = [appRows[0].id, beforeIdRaw];
+        const { rows: cursorRows } = beforeType === 'pr'
+          ? await pool.query(
+            `SELECT COALESCE(merged_at, created_at) AS completed_at
+               FROM chat_sessions WHERE app_id = $1 AND id = $2 AND status = 'merged'`, cursorParams)
+          : await pool.query(
+            `SELECT COALESCE((payload->>'appliedAt')::timestamptz, created_at) AS completed_at
+               FROM issues WHERE app_id = $1 AND id = $2
+                 AND kind = 'close_issue' AND status = 'closed' AND payload ? 'appliedAt'`, cursorParams);
+        const resolved = new Date(cursorRows[0]?.completed_at);
+        if (!Number.isNaN(resolved.getTime())) before = resolved;
+      }
 
       // Same kudos subqueries as /promoted so the merged card can show
       // its count + per-viewer "you gave kudos" state without a second
@@ -4223,8 +4244,8 @@ function voteRoutes(config) {
       // they page <= ; at a close cursor they use their own tuple.
       const prCursorSql = !hasCursor ? ''
         : beforeType === 'pr'
-          ? 'AND (cs.created_at, cs.id) < ($3, $4)'
-          : 'AND cs.created_at < $3';
+          ? 'AND (COALESCE(cs.merged_at, cs.created_at), cs.id) < ($3, $4)'
+          : 'AND COALESCE(cs.merged_at, cs.created_at) < $3';
       const prParams = !hasCursor
         ? [appRows[0].id, userId, limit + 1]
         : beforeType === 'pr'
@@ -4234,7 +4255,7 @@ function voteRoutes(config) {
         `${mergedRowSelect()}
          WHERE cs.app_id = $1 AND cs.status = 'merged'
            ${prCursorSql}
-         ORDER BY cs.created_at DESC, cs.id DESC
+         ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC
          LIMIT $${prParams.length}`,
         // Fetch limit+1 so an extra row signals there's another page.
         prParams
@@ -4256,8 +4277,8 @@ function voteRoutes(config) {
       // behave identically.
       const closeCursorSql = !hasCursor ? ''
         : beforeType === 'close_issue'
-          ? 'AND (i.created_at, i.id) < ($2, $3)'
-          : 'AND i.created_at <= $2';
+          ? "AND (COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at), i.id) < ($2, $3)"
+          : "AND COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at) <= $2";
       const closeParams = !hasCursor
         ? [appRows[0].id, limit + 1]
         : beforeType === 'close_issue'
@@ -4266,6 +4287,7 @@ function voteRoutes(config) {
       const { rows: closeRows } = await pool.query(
         `SELECT i.id, i.kind, i.title, i.description, i.payload, i.status,
                 i.github_issue_number, i.created_by, i.created_at,
+                COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at) AS completed_at,
                 u.username AS created_by_username,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up') AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count,
@@ -4279,7 +4301,7 @@ function voteRoutes(config) {
           WHERE i.app_id = $1 AND i.kind = 'close_issue' AND i.status = 'closed'
             AND i.payload ? 'appliedAt'
             ${closeCursorSql}
-          ORDER BY i.created_at DESC, i.id DESC
+          ORDER BY COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at) DESC, i.id DESC
           LIMIT $${closeParams.length}`,
         closeParams
       );
@@ -4458,6 +4480,7 @@ function voteRoutes(config) {
         }
       }
 
+      for (const row of rows) row.completed_at = completedAt(row);
       let deployment = await annotateDeploymentState(pool, appRows[0], rows);
       // A proposal preview runs the platform app from the proposal head, so
       // its boot-time main_sha intentionally has no merged-session match.
