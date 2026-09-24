@@ -212,7 +212,10 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   assert.match(picker, /Build:<\/span>Homeroom/);
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /<VenuePicker disabled=\{snapshot\.phase === 'loading'\} \/>/);
+  assert.match(panel, /<VenuePicker disabled=\{snapshot\.phase === 'loading'\} className=\{embedded \? '' : 'ml-auto'\} \/>/);
+  // The pills and Changes stay siblings: #2779's declared drawer check reads
+  // the bar as focus ~ change pill ~ Changes.
+  assert.match(panel, /data-agent-session-change-pill[\s\S]*?<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<VenuePicker[\s\S]*?\/>\s*<button\s+type="button"\s+data-agent-session-changes-button/);
   assert.match(panel, /\{ label: 'Rename…'/);
   assert.match(panel, /label: 'Archive',[\s\S]*?destructive: true/);
   assert.match(panel, /\{ label: 'Unarchive'/);

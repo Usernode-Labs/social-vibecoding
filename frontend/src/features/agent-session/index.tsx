@@ -199,21 +199,21 @@ function SessionBar({ session, about, embedded, action }: {
       >
         {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
       </span>
-      <span className={`${embedded ? '' : 'ml-auto '}inline-flex shrink-0 items-center gap-2`}>
-        <VenuePicker disabled={snapshot.phase === 'loading'} />
-        <button
-          type="button"
-          data-agent-session-changes-button
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-          onClick={() => setDrawerOpen(true)}
-          disabled={!session}
-          aria-haspopup="dialog"
-        >
-          Changes · {count}
-        </button>
-        {action}
-        <SessionMenu session={session} />
-      </span>
+      {/* Siblings of the pills, not a group of their own: a declared check
+          reads the bar as focus ~ change pill ~ Changes. */}
+      <VenuePicker disabled={snapshot.phase === 'loading'} className={embedded ? '' : 'ml-auto'} />
+      <button
+        type="button"
+        data-agent-session-changes-button
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        onClick={() => setDrawerOpen(true)}
+        disabled={!session}
+        aria-haspopup="dialog"
+      >
+        Changes · {count}
+      </button>
+      {action}
+      <SessionMenu session={session} />
     </div>
   );
 }
