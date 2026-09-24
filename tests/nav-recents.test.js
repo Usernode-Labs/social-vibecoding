@@ -105,7 +105,8 @@ test('#2878: an app row draws the app\'s own icon, the glyph only when it has no
   assert.match(list, /import \{ AppIconContent, appIconKind \} from '\.\.\/apps\/app-card-view';/,
     'the launcher\'s own icon renderer');
   assert.match(list, /const app = item\.app && \(item\.app\.iconUrl \|\| item\.app\.iconEmoji\) \? item\.app : null;/);
-  assert.match(list, /\{app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/);
+  // #3028: a working agent session's spinner takes the icon's place first.
+  assert.match(list, /: app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/);
   assert.match(list, /className="app-icon-tile platform-recent-tile"/);
 
   const { AppIconContent } = loadTsx('frontend/src/features/apps/app-card-view.tsx');

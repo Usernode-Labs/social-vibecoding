@@ -138,6 +138,12 @@ export interface AgentSessionState {
   choosing: boolean;
   /** A message the server refused, handed back to the composer to send again. */
   returnedText: string | null;
+  /**
+   * A suggested reply the user tapped (#3033): it goes INTO the box, to be
+   * edited or sent, the way the dev chat's pills do, rather than straight
+   * out. `seq` makes the same pill tapped twice a second fill.
+   */
+  composerFill: { text: string; seq: number } | null;
   specSheet: SpecSheetState | null;
   preview: PreviewPaneState | null;
   paneTab: PaneTab;
@@ -188,6 +194,7 @@ export const INITIAL_STATE: AgentSessionState = {
   catalog: null,
   choosing: false,
   returnedText: null,
+  composerFill: null,
   specSheet: null,
   preview: null,
   paneTab: 'spec',
@@ -895,6 +902,21 @@ export function clearReturnedText() {
   if (state.returnedText !== null) publish({ returnedText: null });
 }
 
+let fillSeq = 0;
+
+/** Put a suggested reply in the box (#3033); the composer takes it and clears it. */
+export function fillComposer(text: string) {
+  const body = String(text || '');
+  if (!body.trim()) return;
+  fillSeq += 1;
+  publish({ composerFill: { text: body, seq: fillSeq } });
+}
+
+/** The composer took the tapped reply. */
+export function clearComposerFill() {
+  if (state.composerFill !== null) publish({ composerFill: null });
+}
+
 /**
  * The message a Stop hands back: the one still waiting to be answered, or the
  * newest the user sent. The composer takes it only when it is empty, so a
@@ -1298,23 +1320,13 @@ function actionOn(changeId: number, kind?: NonNullable<AgentSessionState['change
 }
 
 /**
- * The staging card's Propose: confirm, then the owner's propose route. The
- * card then reads "In vote" from the refreshed change.
+ * The staging card's Propose, once confirmed: the owner's propose route. The
+ * confirmation is the card's own panel under the button (#3032,
+ * ./propose-confirm.tsx), no longer a dialog asked for here. The card then
+ * reads "In vote" from the refreshed change.
  */
 export async function proposeChange(changeId: number) {
   if (state.changeAction) return;
-  const change = changeById(changeId);
-  const title = (change && change.title) || 'this change';
-  const pr = change && change.prNumber ? ` (PR #${change.prNumber})` : '';
-  const confirm = window.PlatformUI?.confirm;
-  const ok = typeof confirm === 'function'
-    ? await confirm({
-      title: 'Put this up for the group\'s vote?',
-      message: `“${title}”${pr} goes to the vote. Its preview and checks run again on the way.`,
-      confirmLabel: 'Propose',
-    })
-    : true;
-  if (!ok) return;
   publish({ changeAction: { changeId, kind: 'propose' } });
   try {
     await api.promoteChange(changeId);
