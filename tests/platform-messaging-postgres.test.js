@@ -134,6 +134,19 @@ const DDL = `
     read_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  -- #2386: createDirect reads it (friends skip the invitation) and setBlock
+  -- clears it. The full DDL is schema.sql's; tests/friends-postgres.test.js
+  -- runs that.
+  CREATE TABLE friendships (
+    user_low_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_high_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    responded_at TIMESTAMPTZ,
+    PRIMARY KEY (user_low_id, user_high_id),
+    CHECK (user_low_id < user_high_id)
+  );
   CREATE TABLE chat_session_spec_conversation_shares (
     session_id INTEGER NOT NULL,
     version INTEGER NOT NULL,

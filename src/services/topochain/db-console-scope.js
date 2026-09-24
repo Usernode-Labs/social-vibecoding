@@ -141,6 +141,11 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'conversation_message_objects',
   'chat_session_spec_conversation_shares',
   'user_blocks',
+  // Mutual friends (#2386): private relationships, like user_blocks beside
+  // them, and no credential among their columns.
+  'friendships',
+  'friend_request_sends',
+  'friend_request_declines',
   'conversation_message_reports',
   'app_reports',
   'chat_message_reports',

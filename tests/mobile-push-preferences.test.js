@@ -35,6 +35,9 @@ const CURRENT_KINDS = [
   // #1688's two, both proposal lifecycle: the re-confirm ask after a
   // proposal you backed gets a new version, and the weekly card.
   'revision_recheck', 'weekly_digest',
+  // #2386's two: a friend request and its acceptance — one person reaching
+  // you directly, so they join direct_interactions.
+  'friend_request', 'friend_accept',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {
@@ -85,6 +88,15 @@ test('disabling blocks its kinds and re-enabling is prospective policy only', ()
     'category state is evaluated only as a new inbox row is inserted');
   assert.doesNotMatch(trigger, /UPDATE notifications|SELECT[\s\S]*FROM notifications/,
     'the enqueue path never scans old inbox rows for backfill');
+});
+
+test('#2386: friend requests and acceptances ride the direct-interactions switch', () => {
+  for (const kind of ['friend_request', 'friend_accept']) {
+    assert.equal(KIND_TO_CATEGORY.get(kind), 'direct_interactions', kind);
+    assert.equal(isKindEnabled(kind), true, `${kind} is on by default`);
+    assert.equal(isKindEnabled(kind, { direct_interactions: false }), false, `${kind} follows the switch`);
+    assert.equal(isKindEnabled(kind, { messages: false }), true, `${kind} is not a Messages kind`);
+  }
 });
 
 test('preference validation rejects malformed values and unknown categories', () => {

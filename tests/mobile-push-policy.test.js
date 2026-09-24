@@ -398,3 +398,24 @@ test('app health alerts say what happened and what to do (#2253, #2273)', () => 
     body: 'Open the app to see what needs attention',
   });
 });
+
+test('#2386: a friend request and its acceptance name the person and what to do', () => {
+  const request = buildMessage({ ...INPUT, kind: 'friend_request', context: { sourceUsername: 'lin' } });
+  assert.deepEqual(request.notification, {
+    title: '@lin sent you a friend request',
+    body: 'Accept or decline in Notifications',
+  });
+  const accepted = buildMessage({ ...INPUT, kind: 'friend_accept', context: { sourceUsername: 'ada' } });
+  assert.equal(accepted.notification.title, '@ada accepted your friend request');
+  assert.match(accepted.notification.body, /friends now/);
+  // No app and no conversation ride along, so nothing is appended.
+  assert.doesNotMatch(request.notification.title, / · /);
+  // Without the person there is nothing true to say: the generic copy.
+  assert.deepEqual(
+    buildMessage({ ...INPUT, kind: 'friend_request', context: {} }).notification,
+    { title: 'Homeroom', body: 'You have new activity' },
+  );
+  // The opaque data payload is unchanged by the kind.
+  assert.equal(request.data.notification_id, '42');
+  assert.equal(Object.keys(request.data).includes('source_username'), false);
+});

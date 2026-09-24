@@ -159,6 +159,30 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     assert.equal((await pool.query('SELECT role FROM conversation_members WHERE conversation_id=$1 AND user_id=$2',[group,peer.id])).rows[0].role,'owner');
   });
 
+  await t.test('friendships, requests, the quiet period and friend notifications go with the account (#2386)', async () => {
+    const friendsSvc = require('../src/services/friends');
+    const target = await user(), friend = await user(), asked = await user(), asker = await user();
+    await pool.query('UPDATE users SET has_platform_access = TRUE WHERE id = ANY($1::int[])',
+      [[target.id, friend.id, asked.id, asker.id]]);
+    await friendsSvc.sendRequest(pool, target, friend.id);
+    await friendsSvc.accept(pool, friend, target.id);
+    await friendsSvc.sendRequest(pool, target, asked.id);
+    await friendsSvc.sendRequest(pool, asker, target.id);
+    await friendsSvc.decline(pool, target, asker.id);
+    assert.equal(await count('notifications', 'source_user_id', target.id), 2, 'a friend_accept and a friend_request');
+    await erase(target);
+    for (const column of ['user_low_id', 'user_high_id', 'requester_id']) {
+      assert.equal(await count('friendships', column, target.id), 0, column);
+    }
+    assert.equal(await count('friend_request_sends', 'requester_id', target.id), 0);
+    assert.equal(await count('friend_request_declines', 'recipient_id', target.id), 0);
+    assert.equal(await count('notifications', 'source_user_id', target.id), 0,
+      'nobody is left holding a request from, or an acceptance by, a deleted account');
+    for (const other of [friend, asked, asker]) {
+      assert.deepEqual(await friendsSvc.listFor(pool, other.id), { friends: [], incoming: [], outgoing: [] });
+    }
+  });
+
   await t.test('last explicit app administrator must assign a successor', async () => {
     const target=await user();
     await pool.query('INSERT INTO app_admins(app_id,user_id) VALUES ($1,$2)',[app.id,target.id]);
