@@ -123,6 +123,7 @@ async function resolvePlacements(databaseNames, { all = false, env = process.env
       if (cluster?.metadata?.uid !== entry.clusterRef.uid || cluster.metadata.deletionTimestamp) throw fail();
       records.push(entry);
     }
+    if (databaseNames.some(name => records.filter(r => ownsDatabase(r, name)).length > 1)) throw fail();
     return records;
   } catch { throw fail(); } // Never emit URLs, API bodies or credentials.
 }
