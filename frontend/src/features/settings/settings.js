@@ -6328,9 +6328,10 @@
         // first-run trigger now that the account has asked to produce; it
         // re-reads the queue, and on iOS or an already-answered device it
         // presents nothing.
+        // `force`: the user just asked, so skip the once-a-day wait.
         if (window.NativeChrome &&
             typeof NativeChrome.maybeShowFirstRunPermissions === 'function') {
-          NativeChrome.maybeShowFirstRunPermissions();
+          NativeChrome.maybeShowFirstRunPermissions({ force: true });
         }
       } catch (e) {
         if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });

@@ -587,6 +587,7 @@
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
     _firstRunPromise: null,
     _firstRunSheetPresented: false,
+    _firstRunSheetOpen: false,
     // Settlement signal for the terms first-run gate (#1328): set only
     // when a sheet was actually presented this launch, resolved when that
     // sheet is dismissed. firstRunSheetSettled() below is the public read.
@@ -601,6 +602,27 @@
 
     _markFirstRunDone() {
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
+    },
+
+    // Android asks again while something is still missing, but at most once
+    // a day: the marker above used to end the asking for good, so a user
+    // who skipped once, or turned a permission off later, was never asked
+    // again. iOS keeps the marker's rule, because a determined iOS
+    // permission can only be changed in the OS settings app.
+    _ASKED_AT_KEY: 'sv:device_permissions_asked_at',
+    _REASK_AFTER_MS: 24 * 60 * 60 * 1000,
+
+    _markAsked() {
+      try {
+        localStorage.setItem(NativeChrome._ASKED_AT_KEY, String(Date.now()));
+      } catch (_) {}
+    },
+
+    _askedRecently() {
+      let at = NaN;
+      try { at = Number(localStorage.getItem(NativeChrome._ASKED_AT_KEY)); } catch (_) {}
+      return Number.isFinite(at) && at > 0 &&
+        Date.now() - at < NativeChrome._REASK_AFTER_MS;
     },
 
     // iOS: whether the app has ever presented the OS notification prompt.
@@ -815,8 +837,11 @@
     // nothing to do with block production (off on iOS since v4).
     decideFirstRunSheet(state) {
       const s = state || {};
-      if (!s.needsAlarm && !s.needsBattery) return 'done';
-      if (s.isAndroid === true && s.blockProduction !== true) return 'defer';
+      if (!s.needsAlarm && !s.needsBattery && !s.needsNotifications) return 'done';
+      // The Android notification prompt has nothing to do with block
+      // production, so it never waits for the producer queue.
+      if (s.isAndroid === true && s.blockProduction !== true &&
+          !s.needsNotifications) return 'defer';
       return 'present';
     },
 
@@ -846,9 +871,18 @@
     // Triggered by anonymous entry and successful native establishment. One
     // shared run keeps repeated session signals from stacking sheets, with a
     // document latch once a sheet was actually presented.
-    maybeShowFirstRunPermissions() {
+    //
+    // `{ force: true }` is an explicit request from the user (Settings'
+    // "Ask to produce blocks"): it skips the once-a-day wait and may present
+    // again in a document that already showed the sheet, but never stacks
+    // a second sheet over an open one.
+    maybeShowFirstRunPermissions(options) {
+      const force = !!(options && options.force);
+      if (force && !NativeChrome._firstRunSheetOpen) {
+        NativeChrome._firstRunPromise = null;
+      }
       if (NativeChrome._firstRunPromise) return NativeChrome._firstRunPromise;
-      const tracked = NativeChrome._maybeShowFirstRunPermissions()
+      const tracked = NativeChrome._maybeShowFirstRunPermissions({ force })
         .finally(() => {
           if (NativeChrome._firstRunPromise === tracked &&
               !NativeChrome._firstRunSheetPresented) {
@@ -859,8 +893,10 @@
       return tracked;
     },
 
-    async _maybeShowFirstRunPermissions() {
-      if (NativeChrome._firstRunSheetPresented) return;
+    async _maybeShowFirstRunPermissions(options) {
+      const force = !!(options && options.force);
+      if (NativeChrome._firstRunSheetOpen) return;
+      if (NativeChrome._firstRunSheetPresented && !force) return;
       let marked = false;
       try {
         marked = localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1';
@@ -872,12 +908,16 @@
         // versions (and a dismissed sheet) wrote this marker without the
         // prompt ever being presented — while iOS still reports the
         // permission as un-prompted, the marker must not be final.
-        // Android keeps its instant-return fast path.
+        // Android is re-read instead: see _askedRecently.
         const kit = window.unNative;
-        if (!kit || kit.platform !== 'ios') return;
-        pushStatus = await NativeChrome._iosPushPermissionStatus();
-        if (pushStatus !== 'undetermined') return;
+        if (kit && kit.platform === 'ios') {
+          pushStatus = await NativeChrome._iosPushPermissionStatus();
+          if (pushStatus !== 'undetermined') return;
+        }
       }
+      // Android already asked today: leave it until tomorrow, without a
+      // single bridge read. iOS never writes this key.
+      if (!force && NativeChrome._askedRecently()) return;
       if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return;
       if (!(await NativeChrome.has('getSettingsState'))) return;
 
@@ -909,23 +949,34 @@
       } else {
         pushStatus = null;
       }
-      // Android asks only people whose phone produces blocks. A delegated
-      // account or a device with no wallet has no slots to wake for, so it
-      // is not asked at all — and nothing is recorded, so switching back
-      // to producing later still gets the sheet.
-      if (isAndroid) {
+      // Android notifications: asked of everyone, like the iOS prompt,
+      // whenever the build can ask for them on their own. An older build
+      // that does not report the permission is not asked.
+      const notificationsAskable = isAndroid &&
+        perms.notificationsGranted === false &&
+        typeof window.usernode.requestNotificationPermission === 'function' &&
+        (await NativeChrome.supports('requestNotificationPermission')) !== false;
+
+      // Exact alarms and battery are only for people whose phone produces
+      // blocks: a delegated account or a device with no wallet has no slots
+      // to wake for. And they wait until the account has asked to produce
+      // blocks (#2960), so nobody is asked for them without a reason.
+      let needsBattery = isAndroid && perms.batteryOptDisabled !== true;
+      let blockProduction = false;
+      let productionDeferred = false;
+      if (isAndroid && (needsAlarm || needsBattery)) {
         const producer = await NativeChrome._producerStatus();
-        if (!NativeChrome.producerNeedsDevicePermissions(producer)) return;
+        if (!NativeChrome.producerNeedsDevicePermissions(producer)) {
+          needsAlarm = false;
+          needsBattery = false;
+        } else {
+          blockProduction = await NativeChrome._blockProductionEnabled();
+          productionDeferred = !blockProduction;
+        }
       }
-      // Battery optimization is Android-only; iOS never shows that row.
-      const needsBattery = isAndroid && perms.batteryOptDisabled !== true;
-      // The block-production read only happens when it can change the
-      // answer: Android, with something still to ask.
-      const blockProduction = isAndroid && (needsAlarm || needsBattery)
-        ? await NativeChrome._blockProductionEnabled()
-        : false;
       const decision = NativeChrome.decideFirstRunSheet({
         isAndroid, needsAlarm, needsBattery, blockProduction,
+        needsNotifications: notificationsAskable,
       });
       if (decision === 'done') {
         NativeChrome._markFirstRunDone();
@@ -939,6 +990,9 @@
         perms,
         isAndroid,
         pushStatus,
+        blockProduction,
+        productionDeferred,
+        notificationsAskable,
         // A dismissal that arrives before the sheet could physically be
         // read, from a user who touched nothing on it, is not an answer —
         // it is the opening gesture's ghost click landing on the backdrop.
@@ -948,9 +1002,11 @@
         // prompt forever, so it does not ride on that guard alone: leave
         // it unwritten and let a later launch offer the sheet again.
         onDismiss: (info) => {
+          NativeChrome._firstRunSheetOpen = false;
           if (info.interacted ||
               info.elapsedMs >= NativeChrome._FIRST_RUN_MIN_SEEN_MS) {
             NativeChrome._markFirstRunDone();
+            if (isAndroid) NativeChrome._markAsked();
           }
           // Settlement fires on EVERY dismissal, ghost clicks included —
           // it reports "the sheet is gone", not "the marker was written".
@@ -966,6 +1022,7 @@
       if (handle) {
         NativeChrome._firstRunSheetPresented = true;
         NativeChrome._firstRunSettledPromise = settledPromise;
+        NativeChrome._firstRunSheetOpen = true;
       }
     },
 
@@ -976,7 +1033,8 @@
     // the sheet survives its opening tap is exercising the real sheet
     // rather than a stand-in.
     //
-    // opts: { perms, isAndroid, pushStatus, onDismiss }. onDismiss is
+    // opts: { perms, isAndroid, pushStatus, blockProduction,
+    // productionDeferred, notificationsAskable, onDismiss }. onDismiss is
     // called with { interacted, elapsedMs } — `interacted` is true once
     // the user has pressed anything ON the sheet, which is what lets the
     // caller tell a real answer from a stray dismissal. Returns the kit's
@@ -986,6 +1044,11 @@
       const perms = opts.perms || {};
       const isAndroid = !!opts.isAndroid;
       let pushStatus = opts.pushStatus == null ? null : opts.pushStatus;
+      // Android: which of the three asks this sheet carries. The producer
+      // rows default to on so a caller that predates them keeps its sheet.
+      const producerAsks = opts.blockProduction !== false;
+      const productionDeferred = opts.productionDeferred === true;
+      const notificationsAskable = opts.notificationsAskable === true;
       if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return null;
 
       const el = (tag, cls, text) => {
@@ -1001,13 +1064,16 @@
       // turned iOS block production off — so the block-production pitch is
       // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
-        isAndroid
+        isAndroid && producerAsks
           ? 'Your phone helps run Homeroom: your node can produce blocks ' +
             'while the app is in the background. For that, Android needs ' +
             'to wake it at exact slot times and leave it free of battery ' +
             'optimization. These settings only schedule wake-ups. They ' +
             'give Homeroom no access to your data.'
-          : 'Allow notifications so Homeroom can alert you about node ' +
+          : isAndroid
+            ? 'Allow notifications so Homeroom can tell you about activity ' +
+              'on your apps and your node.'
+            : 'Allow notifications so Homeroom can alert you about node ' +
             'and account activity.'));
 
       const statusRow = (label, ok) => {
@@ -1116,14 +1182,69 @@
       // system surface, and the copy under its button says what that
       // surface will show BEFORE it shows it, so its battery warning reads
       // as expected rather than alarming.
+      // What is still missing on Android, given what this sheet asks for.
+      const androidMissing = (p) => ({
+        notifications: notificationsAskable && p.notificationsGranted === false,
+        alarm: producerAsks && !p.exactAlarmGranted,
+        battery: producerAsks && p.batteryOptDisabled !== true,
+      });
+      // After one "Allow notifications" that did not grant, Android shows no
+      // dialog again for a while, so the button becomes the settings page.
+      let notificationsAsked = false;
+
       const renderAndroid = (p) => {
-        const alarmOk = !!p.exactAlarmGranted;
-        const batteryOk = p.batteryOptDisabled === true;
-        body.appendChild(statusRow('Exact alarms', alarmOk));
-        body.appendChild(statusRow('Battery optimization', batteryOk));
+        const missing = androidMissing(p);
+        if (notificationsAskable) {
+          body.appendChild(statusRow('Notifications', !missing.notifications));
+        }
+        if (producerAsks) {
+          body.appendChild(statusRow('Exact alarms', !missing.alarm));
+          body.appendChild(statusRow('Battery optimization', !missing.battery));
+        }
 
         const btns = el('div', 'mt-4 space-y-2');
-        if (!alarmOk) {
+        if (missing.notifications && !notificationsAsked) {
+          const b = primaryButton('Allow notifications');
+          b.addEventListener('click', async () => {
+            interacted = true;
+            b.disabled = true;
+            let next = null;
+            try {
+              next = await window.usernode.requestNotificationPermission();
+            } catch (e) {
+              console.warn('[native-chrome] requestNotificationPermission failed:', e);
+            } finally { b.disabled = false; }
+            notificationsAsked = true;
+            const nextPerms = next && next.permissions ? next.permissions : p;
+            if (next && next.granted === true) {
+              nextPerms.notificationsGranted = true;
+              // Register for pushes now rather than on the next resume.
+              if (window.SocialPush && typeof SocialPush.getState === 'function') {
+                SocialPush.getState();
+              }
+            }
+            const left = androidMissing(nextPerms);
+            if (!left.notifications && !left.alarm && !left.battery) {
+              if (sheet && sheet.dismiss) sheet.dismiss();
+              return;
+            }
+            body.textContent = '';
+            renderAndroid(nextPerms);
+          });
+          btns.appendChild(b);
+          btns.appendChild(hint('Android will ask whether Homeroom may send ' +
+            'you notifications. Tap Allow. You can turn them off any time ' +
+            'in Settings.'));
+        } else if (missing.notifications) {
+          const b = primaryButton('Open notification settings');
+          b.addEventListener('click', () => {
+            interacted = true;
+            window.usernode.openNotificationSettings().catch(() => {});
+          });
+          btns.appendChild(b);
+          btns.appendChild(hint('Notifications are off for Homeroom. Turn ' +
+            'them on in Android settings, then come back here.'));
+        } else if (missing.alarm) {
           const b = primaryButton('Allow exact alarms');
           b.addEventListener('click', async () => {
             interacted = true;
@@ -1145,7 +1266,7 @@
           btns.appendChild(hint('Android opens the "Alarms & reminders" ' +
             'page. Turn on Allow for Homeroom, then come back here. Your ' +
             'node only wakes a few minutes before each of its slots.'));
-        } else if (!batteryOk) {
+        } else if (missing.battery) {
           const b = primaryButton('Allow background use');
           b.addEventListener('click', () => {
             interacted = true;
@@ -1159,7 +1280,7 @@
             'Settings.'));
         }
 
-        if ((!alarmOk || !batteryOk) &&
+        if ((missing.alarm || missing.battery) &&
             typeof window.usernode.manageStaking === 'function') {
           const delegate = el('button', 'w-full rounded-lg border ' +
             'border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm ' +
@@ -1186,9 +1307,15 @@
           btns.appendChild(delegate);
         }
 
+        if (productionDeferred) {
+          btns.appendChild(hint('Block production settings (exact alarms ' +
+            'and battery) come later, when you ask to produce blocks in ' +
+            'Settings, Homeroom app.'));
+        }
+
+        const allDone = !missing.notifications && !missing.alarm && !missing.battery;
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
-          'text-zinc-500 dark:text-zinc-400',
-        alarmOk && batteryOk ? 'Done' : 'Skip for now');
+          'text-zinc-500 dark:text-zinc-400', allDone ? 'Done' : 'Skip for now');
         done.addEventListener('click', () => {
           interacted = true;
           if (sheet && sheet.dismiss) sheet.dismiss();
@@ -1214,11 +1341,16 @@
           if (status != null) pushStatus = status;
         }
         if (closed) return;
-        const alarmOk = !isAndroid && pushStatus != null
-          ? pushStatus === 'granted'
-          : !!next.exactAlarmGranted;
-        const batteryOk = !isAndroid || next.batteryOptDisabled === true;
-        if (alarmOk && batteryOk) {
+        let nothingLeft;
+        if (isAndroid) {
+          const left = androidMissing(next);
+          nothingLeft = !left.notifications && !left.alarm && !left.battery;
+        } else {
+          nothingLeft = pushStatus != null
+            ? pushStatus === 'granted'
+            : !!next.exactAlarmGranted;
+        }
+        if (nothingLeft) {
           NativeChrome._markFirstRunDone();
           if (sheet && sheet.dismiss) sheet.dismiss();
           return;
