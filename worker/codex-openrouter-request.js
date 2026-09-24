@@ -295,6 +295,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
   });
   return {
     baseUrl: `http://127.0.0.1:${server.address().port}`,
+    activeRequestCount() { return active.size; },
     async close() {
       for (const controller of active) controller.abort();
       server.closeAllConnections();
@@ -312,9 +313,11 @@ async function runCodex(args, env = process.env) {
     model: env.AGENT_MODEL,
     maxOutputTokens: selected?.max_output_tokens,
     onRequest: diagnostic => process.stdout.write(`${JSON.stringify({ type: 'usernode.openrouter.request', diagnostic })}\n`),
-    onTiming: env.MODE === 'evidence'
-      ? diagnostic => process.stdout.write(`__USERNODE_EVIDENCE_PROVIDER__ ${JSON.stringify(diagnostic)}\n`)
-      : null,
+    // Evidence retains its structured run diagnostics. Ordinary coding turns
+    // need the same content-free request timing so a quiet model call can be
+    // distinguished from a runner that never sent a request.
+    onTiming: diagnostic => process.stdout.write(
+      `${env.MODE === 'evidence' ? '__USERNODE_EVIDENCE_PROVIDER__' : '__USERNODE_CODING_PROVIDER__'} ${JSON.stringify(diagnostic)}\n`),
   });
   // The override is process-local. Neither the key nor the ephemeral listener
   // is written to the persistent Codex configuration.
@@ -322,11 +325,29 @@ async function runCodex(args, env = process.env) {
     '-c', `model_providers.usernode_openrouter.base_url=${JSON.stringify(adapter.baseUrl)}`,
     ...args,
   ], { env, stdio: ['inherit', 'pipe', 'pipe'] });
+  let lastCodexOutputAt = performance.now();
+  let lastIdleReportAt = null;
   // Serialize complete lines from both child streams and our diagnostics so
   // a diagnostic cannot land halfway through a large Codex JSONL event.
   for (const stream of [child.stdout, child.stderr]) {
-    createInterface({ input: stream, crlfDelay: Infinity }).on('line', line => process.stdout.write(`${line}\n`));
+    createInterface({ input: stream, crlfDelay: Infinity }).on('line', line => {
+      lastCodexOutputAt = performance.now();
+      lastIdleReportAt = null;
+      process.stdout.write(`${line}\n`);
+    });
   }
+  // A quiet Codex process with zero provider requests is a different failure
+  // boundary from an in-flight provider request. Record that fact at most once
+  // a minute, without inspecting the model's input or output.
+  const idleHeartbeat = env.MODE === 'evidence' ? null : setInterval(() => {
+    const idleMs = Math.max(0, Math.round(performance.now() - lastCodexOutputAt));
+    if (idleMs < 60_000 || (lastIdleReportAt != null && idleMs - lastIdleReportAt < 60_000)) return;
+    lastIdleReportAt = idleMs;
+    process.stdout.write(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify({
+      kind: 'codex_output_idle', durationMs: idleMs, activeRequests: adapter.activeRequestCount(),
+    })}\n`);
+  }, 15_000);
+  idleHeartbeat?.unref();
   let killTimer;
   const stop = signal => {
     child.kill(signal);
@@ -345,6 +366,7 @@ async function runCodex(args, env = process.env) {
     process.removeListener('SIGTERM', onTerm);
     process.removeListener('SIGINT', onInt);
     clearTimeout(killTimer);
+    if (idleHeartbeat) clearInterval(idleHeartbeat);
     await adapter.close();
   }
 }
