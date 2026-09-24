@@ -96,7 +96,7 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
     onAgentDiagnostic(activity, kind) {
       if (stopped || !activity || typeof activity !== 'object') return;
       agentActivity = activity;
-      if (['tool_start', 'tool_end', 'browser_call_start', 'browser_call_pending',
+      if (['auth_bootstrap', 'tool_start', 'tool_end', 'browser_call_start', 'browser_call_pending',
         'browser_call_end', 'browser_server_exit', 'document_request', 'document_response',
         'provider_request_start', 'provider_request_pending', 'provider_response_headers',
         'provider_response_first_byte', 'provider_request_end',
@@ -551,6 +551,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
   'tool_start', 'tool_end', 'agent_deadline',
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
+  'auth_bootstrap',
   'document_request', 'document_response',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
@@ -621,6 +622,14 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   for (const key of ['jsonValid', 'acceptedIntentPresent', 'originsPresent', 'revisionsPresent']) {
     if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
+  if (kind === 'auth_bootstrap') {
+    for (const key of ['attempted', 'cookieAlreadyPresent', 'sessionCookieInstalled', 'sessionCookiePresent']) {
+      if (typeof raw[key] === 'boolean') event[key] = raw[key];
+    }
+    if (Number.isInteger(raw.responseStatus) && raw.responseStatus >= 100 && raw.responseStatus <= 599) {
+      event.responseStatus = raw.responseStatus;
+    }
   }
   for (const key of ['resultSubtype', 'providerStopReason']) {
     if (/^[a-z0-9_:-]{1,80}$/i.test(String(raw[key] || ''))) event[key] = raw[key];

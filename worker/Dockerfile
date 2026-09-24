@@ -148,8 +148,10 @@ COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
 COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js
 COPY evidence-browser-observer.js /usr/local/bin/evidence-browser-observer.js
 COPY evidence-browser-bootstrap.js /usr/local/bin/evidence-browser-bootstrap.js
+COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
 COPY write-evidence-mcp-config.js /usr/local/bin/write-evidence-mcp-config.js
 COPY verify-evidence-browser-mcp.js /usr/local/bin/verify-evidence-browser-mcp.js
+COPY verify-evidence-browser-auth.js /usr/local/bin/verify-evidence-browser-auth.js
 COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
 COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # usernode-push is the worker's only path to writing anything back to
@@ -235,6 +237,7 @@ RUN cd /usr/local/lib/node_modules/@playwright/mcp \
 # This catches a missing/renamed command, rejected CLI flags, or failed
 # Chromium startup through the actual MCP tool before deploy.
 RUN node /usr/local/bin/verify-evidence-browser-mcp.js
+RUN node /usr/local/bin/verify-evidence-browser-auth.js
 
 # The worker is "warm-by-default": MODE=warm clones the repo + restores
 # CC config + sleeps forever, and the host drives per-turn work via

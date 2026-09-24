@@ -618,6 +618,34 @@ test('a planner timeout keeps a bounded, content-free record of its last active 
   assert.doesNotMatch(JSON.stringify(trace.agentActivity), /private|token|secret|url/i);
 });
 
+test('planner authentication records both personas and sides without retaining credentials', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      for (const persona of ['member', 'admin']) {
+        for (const side of ['base', 'head']) {
+          options.onEvidenceDiagnostic({
+            kind: 'auth_bootstrap', persona, side, attempted: true,
+            responseStatus: 200, sessionCookieInstalled: true,
+            sessionCookiePresent: true, token: 'private-token',
+            cookie: 'private-session', url: 'http://private.invalid/',
+          });
+        }
+      }
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'missing_evidence_replay' });
+  const events = fixture.transitions.at(-1).patch.traceSummary.agentActivity.events
+    .filter((event) => event.kind === 'auth_bootstrap');
+  assert.equal(events.length, 4);
+  assert.deepEqual(events.map(({ persona, side }) => [persona, side]), [
+    ['member', 'base'], ['member', 'head'], ['admin', 'base'], ['admin', 'head'],
+  ]);
+  assert.ok(events.every((event) => event.responseStatus === 200
+    && event.sessionCookieInstalled && event.sessionCookiePresent));
+  assert.doesNotMatch(JSON.stringify(events), /private|credential|token|\.invalid/i);
+});
+
 test('a timeout retains browser-boundary timing and document outcome without raw page data', async () => {
   const fixture = setup({
     dispatch: async (options) => {
