@@ -1,5 +1,6 @@
-// The group chat composer's two autocomplete menus — `@name` and
-// `#123` / `PR#123` — after #1191 made their contents React's.
+// The group chat composer's autocomplete menus — `@name` and
+// `#123` / `PR#123` — after #1191 made their contents React's, and the
+// `:shortcode` emoji menu that was React from its first row.
 //
 // ── Why this file is new ──────────────────────────────────────────────
 //
@@ -36,6 +37,7 @@ const { renderComponent } = require('./lib/render-tsx');
 const MENUS = 'frontend/src/features/group-chat/autocomplete.tsx';
 const mention = (slot) => renderComponent(MENUS, 'MentionMenuView', slot);
 const refs = (slot) => renderComponent(MENUS, 'RefMenuView', slot);
+const emoji = (slot) => renderComponent(MENUS, 'EmojiMenuView', slot);
 
 const gcJs = read('public/js/group-chat.js');
 
@@ -45,6 +47,7 @@ test('a closed menu draws nothing', () => {
   // still the module's — the menu is position:fixed and placed by measurement.
   assert.equal(mention({ items: [], active: -1 }), '');
   assert.equal(refs({ items: [], active: -1 }), '');
+  assert.equal(emoji({ items: [], active: -1, query: '' }), '');
 });
 
 test('a username can never escape into markup', () => {
@@ -126,9 +129,41 @@ test('the dropdown teaches the two renderings it inserts', () => {
   assert.match(issue, /class="gc-ref gc-ref-issue">#9</);
 });
 
+test('the emoji menu: a heading, then a listbox of glyph + `:code:` rows', () => {
+  const items = [
+    { emoji: '👍', shortcode: 'thumbsup' },
+    { emoji: '👎', shortcode: 'thumbsdown' },
+  ];
+  const html = emoji({ items, active: 1, query: 'thu' });
+  assert.match(html, /^<div class="gc-emoji-menu-heading">Emoji matching <span class="gc-emoji-menu-query">:thu<\/span><\/div>/);
+  assert.match(html, /<div role="listbox" aria-label="Emoji">/);
+  assert.equal((html.match(/role="option"/g) || []).length, 2);
+  // The highlight is the shared class the arrow keys move, on the row at `active`.
+  assert.equal((html.match(/gc-mention-option-active/g) || []).length, 1);
+  assert.match(html, /class="gc-mention-option gc-emoji-option gc-mention-option-active" role="option" aria-selected="true" data-emoji="👎" data-shortcode="thumbsdown" data-index="1"/);
+  assert.match(html, /<span class="gc-emoji-option-glyph" aria-hidden="true">👍<\/span><span class="gc-emoji-option-code">:thumbsup:<\/span>/);
+  // The delegated handler reads `data-emoji` off `.gc-emoji-option`.
+  assert.match(gcJs, /menu\.addEventListener\('mousedown'[\s\S]{0,320}?closest\('\.gc-emoji-option'\)/);
+  assert.match(gcJs, /EmojiAutocomplete\.accept\(opt\.dataset\.emoji\)/);
+});
+
+test('the emoji menu rides the same seams as the other two', () => {
+  // Attached to both composers, like the mention and reference menus.
+  const appView = read('public/js/app-view.js');
+  assert.match(appView, /EmojiAutocomplete\.attach\(gcInput\)/);
+  assert.match(gcJs, /RefAutocomplete\.attach\(input, slug\);\s*\}\s*\/\/[^\n]*\n\s*if \(typeof EmojiAutocomplete !== 'undefined'\) \{\s*EmojiAutocomplete\.attach\(input\);/);
+  // Capture-phase keydown, like theirs, so Enter/Tab insert instead of sending.
+  assert.match(gcJs, /input\.addEventListener\('keydown', \(e\) => \{\s*if \(EmojiAutocomplete\._input === input\) EmojiAutocomplete\._onKeydown\(e\);\s*\}, true\);/);
+  // Only a typed colon converts `:tada:`; the synthetic `input` accept()
+  // dispatches never does.
+  assert.match(gcJs, /e\.inputType === 'insertText' && e\.data === ':' && EmojiAutocomplete\._convert\(\)/);
+  // Its host is in the ownership audit with the other two.
+  assert.match(read('scripts/audit-react-ownership.mjs'), /\{ sel: '#gc-emoji-menu' \}/);
+});
+
 test('the module publishes and positions; it no longer paints', () => {
   const code = gcJs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-  for (const name of ['MentionAutocomplete', 'RefAutocomplete']) {
+  for (const name of ['MentionAutocomplete', 'RefAutocomplete', 'EmojiAutocomplete']) {
     const start = code.indexOf(`const ${name} = {`);
     assert.ok(start > 0, `located ${name}`);
     const body = code.slice(start, code.indexOf('\n};', start));

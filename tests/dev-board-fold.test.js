@@ -1225,11 +1225,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // link to an app-channel reply opening its thread; and #2967's "Show N
   // more". Ten were folded into six with :has(). 32 slots left under 830.
   //
-  // 798 → 799: +1 (#2779): an agent session's staging builds are cards: an
+  // 798 → 800: +2 (#2387 follow-up): a thread's replies drawn in the main
+  // transcript where they landed, one card for a run, with the thread card
+  // showing the newest reply — in #general and in an app channel. 30 slots
+  // left under 830.
+  //
+  // 800 → 801: +1 (#2779): an agent session's staging builds are cards: an
   // older build superseded and the newest offering Open preview and View
   // change, one selector over the staging conversation 990801's two build
-  // rows. 31 slots left under 830.
-  assert.equal(DAPP.tests.length, 799);
+  // rows. 29 slots left under 830.
+  assert.equal(DAPP.tests.length, 801);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -113,6 +113,12 @@ async function findThreadRoot(db, appId, rootId, viewerId = null) {
   return rows[0] || null;
 }
 
+/** A line's worth of a message: whitespace collapsed, cut at 140 characters. */
+function snippet(text, max = 140) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
 function shapeSummary(row) {
   const participants = Array.isArray(row.participants) ? row.participants : [];
   return {
@@ -122,6 +128,15 @@ function shapeSummary(row) {
       .filter((p) => p && p.id != null)
       .slice(0, MAX_PARTICIPANTS)
       .map((p) => ({ id: Number(p.id), username: p.username || null })),
+    // #2387 follow-up: the newest reply itself, which the card under the
+    // thread's first message shows.
+    last_reply: row.last_reply_id ? {
+      id: Number(row.last_reply_id),
+      user_id: row.last_reply_user_id == null ? null : Number(row.last_reply_user_id),
+      username: row.last_reply_username || null,
+      content: snippet(row.last_reply_content),
+      created_at: iso(row.last_reply_at),
+    } : null,
   };
 }
 
@@ -140,7 +155,7 @@ async function threadSummaries(db, appId, rootIds, viewerId = null) {
   if (!ids.length || !appId) return out;
   const { rows } = await db.query(
     `WITH replies AS (
-       SELECT reply.thread_ref AS root_id, reply.id, reply.user_id, reply.created_at
+       SELECT reply.thread_ref AS root_id, reply.id, reply.user_id, reply.created_at, reply.content
          FROM chat_messages reply
         WHERE reply.app_id = $1
           AND reply.thread_type = 'message'
@@ -166,18 +181,29 @@ async function threadSummaries(db, appId, rootIds, viewerId = null) {
        SELECT root_id, user_id,
               ROW_NUMBER() OVER (PARTITION BY root_id ORDER BY last_id DESC) AS recency
          FROM repliers
+     ),
+     people AS (
+       SELECT ranked.root_id,
+              json_agg(json_build_object('id', u.id, 'username', u.username)
+                       ORDER BY ranked.recency) AS participants
+         FROM ranked
+         JOIN users u ON u.id = ranked.user_id
+        WHERE ranked.recency <= 3
+        GROUP BY ranked.root_id
+     ),
+     newest AS (
+       SELECT DISTINCT ON (root_id) root_id, id, user_id, content
+         FROM replies
+        ORDER BY root_id, id DESC
      )
      SELECT totals.root_id, totals.reply_count, totals.last_reply_at,
-            COALESCE(
-              json_agg(json_build_object('id', u.id, 'username', u.username)
-                       ORDER BY ranked.recency)
-                FILTER (WHERE u.id IS NOT NULL),
-              '[]'::json
-            ) AS participants
+            COALESCE(people.participants, '[]'::json) AS participants,
+            newest.id AS last_reply_id, newest.user_id AS last_reply_user_id,
+            newest.content AS last_reply_content, lu.username AS last_reply_username
        FROM totals
-       LEFT JOIN ranked ON ranked.root_id = totals.root_id AND ranked.recency <= 3
-       LEFT JOIN users u ON u.id = ranked.user_id
-      GROUP BY totals.root_id, totals.reply_count, totals.last_reply_at`,
+       LEFT JOIN people ON people.root_id = totals.root_id
+       LEFT JOIN newest ON newest.root_id = totals.root_id
+       LEFT JOIN users lu ON lu.id = newest.user_id`,
     [appId, ids, viewerId == null ? null : Number(viewerId)]
   );
   for (const row of rows) {
@@ -408,6 +434,7 @@ module.exports = {
   strippedMetadata,
   shapeRow,
   findThreadRoot,
+  snippet,
   threadSummaries,
   threadSummaryForRoom,
   deleteOwnMessage,

@@ -11,7 +11,7 @@ import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
-import { agoStamp } from '../../lib/timestamp';
+import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
@@ -19,7 +19,7 @@ import { AgentAppDialog } from './agent-dialog';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { UserAvatar } from './format';
+import { fullTime, UserAvatar } from './format';
 import { MessageRow } from './message-row';
 import { ShareItemDialog } from './share-dialog';
 import {
@@ -37,6 +37,7 @@ import {
   messagesController,
   open as openConversation,
   openAgentThread,
+  openThread,
   respond,
   setUserBlocked,
   selectConversation,
@@ -49,6 +50,7 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
 import { useSidePaneBeside } from '../agent-session/spec-layout';
@@ -1454,6 +1456,25 @@ function ConversationThread() {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
     }
+    // #2387 follow-up: a thread's reply, drawn where it landed — one card for
+    // the run of replies to that thread with nothing else said between them
+    // on the same day. A deleted reply is gone from the run; the next message
+    // after the card carries its own name.
+    if (message.threadRootId) {
+      const run = [message];
+      while (index + 1 < snap.messages.length) {
+        const next = snap.messages[index + 1];
+        if (next.threadRootId !== message.threadRootId || dayKey(next) !== day) break;
+        run.push(next);
+        index += 1;
+      }
+      const live = run.filter((item) => !item.deleted);
+      if (live.length) {
+        rows.push(<ThreadActivityRow key={`thread-activity-${live[0].clientKey || live[0].id}`} replies={live} />);
+      }
+      previous = null;
+      continue;
+    }
     // A failed or unsent row is its own line: it carries a status of its own.
     const grouped = !!previous && !previous.failed && !message.failed
       && groupsWithPrevious(
@@ -1522,6 +1543,34 @@ function ConversationThread() {
       <div className="messages-typing" aria-live="polite">{typing.length === 1 ? `${typing[0]} is typing…` : typing.length > 1 ? `${typing.slice(0, 2).join(', ')} are typing…` : ''}</div>
       <MessageComposer />
     </section>
+  );
+}
+
+/**
+ * A run of one thread's replies in the main transcript (#2387 follow-up):
+ * the shared card, told who replied and what, and to open that thread.
+ */
+function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
+  const first = replies[0];
+  const last = replies[replies.length - 1];
+  const rootId = first.threadRootId as number;
+  const root = first.threadRoot;
+  const start = timeOfDay(first.createdAt);
+  const end = timeOfDay(last.createdAt);
+  return (
+    <ThreadActivityCard
+      rootText={root?.content || ''}
+      rootDeleted={!!root?.deleted}
+      time={start === end ? start : `${start} – ${end}`}
+      timeTitle={fullTime(last.createdAt)}
+      replies={replies.map((reply) => ({
+        key: reply.clientKey || reply.id,
+        face: <span className="msgx-thread-face"><UserAvatar user={reply.sender} size="sm" shape="square" /></span>,
+        name: reply.sender.username,
+        text: reply.content,
+      }))}
+      onOpen={() => openThread(rootId)}
+    />
   );
 }
 

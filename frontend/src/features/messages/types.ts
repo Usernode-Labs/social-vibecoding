@@ -77,6 +77,11 @@ export interface ConversationMessage {
   deleted?: boolean;
   /** A reply inside a thread: the id of the message the thread hangs off. */
   threadRootId?: number | null;
+  /**
+   * On a reply read as part of the main stream (#2387 follow-up): the start
+   * of the message its thread hangs off, which the reply's line there names.
+   */
+  threadRoot?: ThreadRootRef | null;
   /** On a message a thread hangs off: how many replies, when the last, and who. */
   thread?: MessageThreadSummary | null;
   reactions: MessageReaction[];
@@ -99,6 +104,17 @@ export interface MessageThreadSummary {
   lastReplyAt: string;
   /** Up to three of the most recent distinct repliers. */
   participants: ConversationUser[];
+  /** The newest reply, which the card under the message shows (#2387 follow-up). */
+  lastReply?: { id: number; sender: ConversationUser; content: string; createdAt: string } | null;
+}
+
+/** The message a thread hangs off, as a reply's line in the main stream names it. */
+export interface ThreadRootRef {
+  id: number;
+  senderUsername: string;
+  /** Its start, one line's worth; empty when it was deleted. */
+  content: string;
+  deleted: boolean;
 }
 
 export interface ConversationSummary {

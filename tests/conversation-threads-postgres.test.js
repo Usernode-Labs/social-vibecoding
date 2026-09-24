@@ -129,7 +129,7 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
   const direct = await conversations.createDirect(pool, alice, bob.id);
   assert.ok(await conversations.respond(pool, bob, direct.conversationId, 'accept'));
 
-  await t.test('a thread reply joins its root, not the main stream', async () => {
+  await t.test('a thread reply joins its root, and the main stream draws it where it landed', async () => {
     const root = await send(alice, crew, { content: 'Who takes the release notes?' });
     const first = await send(bob, crew, { content: 'I can.', thread_root_id: root.messageId });
     assert.equal(first.message.threadRootId, root.messageId);
@@ -153,14 +153,24 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
       [[alice.id, 'conversation_mention'], [bob.id, 'conversation_thread_reply']]
     );
 
+    // #2387 follow-up: the main stream carries the replies too, in the order
+    // they landed, each naming the message its thread hangs off — the
+    // transcript draws them as a card where they happened.
     const page = await conversations.listMessages(pool, alice, crew);
-    assert.deepEqual(page.messages.map((m) => m.id), [root.messageId], 'replies stay out of the transcript');
+    assert.deepEqual(page.messages.map((m) => m.id), [root.messageId, first.messageId, second.messageId]);
+    assert.deepEqual(page.messages[1].threadRoot, {
+      id: root.messageId, senderUsername: alice.username, content: 'Who takes the release notes?', deleted: false,
+    });
+    assert.equal(page.messages[0].threadRoot, null, 'a main-stream message names no thread root');
     const summary = page.messages[0].thread;
     assert.equal(summary.replyCount, 2);
     assert.equal(new Date(summary.lastReplyAt).getTime(), new Date(second.message.createdAt).getTime());
     assert.deepEqual(summary.participants.map((p) => p.id), [carol.id, bob.id],
       'most recent replier first');
     assert.deepEqual(Object.keys(summary.participants[0]).sort(), ['avatarUrl', 'id', 'username']);
+    assert.equal(summary.lastReply.id, second.messageId, 'the card shows the newest reply');
+    assert.equal(summary.lastReply.sender.id, carol.id);
+    assert.equal(summary.lastReply.content, `Thanks @${alice.username}, I will review.`);
     assert.equal(page.messages[0].deleted, false);
     assert.equal(page.messages[0].threadRootId, null);
 
@@ -284,8 +294,10 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     assert.equal(edge.nextBefore, null);
     assert.equal(edge.nextAfter, m[1]);
 
+    // #2387 follow-up: the reply on m3 is part of the main stream, where it
+    // landed — after m7.
     const caughtUp = await conversations.listMessages(pool, bob, paging, { after: m[4] });
-    assert.deepEqual(caughtUp.messages.map((x) => x.id), [m[5], m[6]]);
+    assert.deepEqual(caughtUp.messages.map((x) => x.id), [m[5], m[6], reply]);
     assert.equal(caughtUp.nextAfter, null);
     const partial = await conversations.listMessages(pool, bob, paging, { after: m[0], limit: 2 });
     assert.deepEqual(partial.messages.map((x) => x.id), [m[1], m[2]]);
@@ -304,6 +316,24 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     assert.equal(await conversations.listMessages(pool, bob, paging, { around: m[3] }), null,
       'nor when its sender is blocked');
     assert.ok(await conversations.setBlock(pool, bob.id, alice.id, false));
+    // #2387 follow-up: a reply's line in the main stream goes with its root:
+    // a viewer who blocked the root's author has no line for a thread they
+    // cannot open (checked against carol, a new member here, so bob's own
+    // membership and the conversation's direct pair are untouched).
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, status) VALUES ($1, $2, 'member')
+       ON CONFLICT DO NOTHING`, [paging, carol.id]
+    );
+    const carolView = async () => (await conversations.listMessages(pool, carol, paging, { limit: 50 })).messages.map((x) => x.id);
+    assert.ok((await carolView()).includes(reply));
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [carol.id, alice.id]);
+    assert.ok(!(await carolView()).includes(reply), 'no line for a reply under a blocked author\'s root');
+    await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_user_id = $2', [carol.id, alice.id]);
+    // A deleted reply leaves no line; its thread keeps the placeholder.
+    await pool.query('UPDATE conversation_messages SET deleted_at = NOW() WHERE id = $1', [reply]);
+    assert.ok(!(await carolView()).includes(reply), 'a deleted reply leaves no line');
+    await pool.query('UPDATE conversation_messages SET deleted_at = NULL WHERE id = $1', [reply]);
+    await pool.query('DELETE FROM conversation_members WHERE conversation_id = $1 AND user_id = $2', [paging, carol.id]);
   });
 
   await t.test('mark unread moves the cursor back only; mark read stays forward-only', async () => {
@@ -543,8 +573,10 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     assert.equal(around.status, 200);
     assert.deepEqual(around.body.focus, { messageId: reply.body.message.id, threadRootId: root.body.message.id });
     assert.deepEqual(Object.keys(around.body).sort(), ['focus', 'messages', 'nextAfter', 'nextBefore']);
+    // After the root: its reply, drawn in the main stream where it landed.
     const after = await call(carol, 'GET', `/api/conversations/${crew}/messages?after=${root.body.message.id}`);
-    assert.deepEqual(after.body, { messages: [], nextAfter: null });
+    assert.deepEqual(after.body.messages.map((x) => x.id), [reply.body.message.id]);
+    assert.equal(after.body.nextAfter, null);
     assert.equal((await call(carol, 'GET', `/api/conversations/${crew}/messages?after=x`)).status, 404);
     assert.equal((await call(carol, 'GET',
       `/api/conversations/${crew}/messages?after=1&before=9`)).status, 404, 'one cursor at a time');
