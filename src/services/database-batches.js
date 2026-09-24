@@ -35,7 +35,7 @@ function createBatches({execute,executeBulk,store,getPolicy=loadPolicy,pool=getP
   let apps=[], inventoryError=null;
   try{apps=await executeBulk('inventory');}catch{inventoryError='Live app inventory unavailable; recorded batch recovery remains available';}
   return{enabled:true,apps,inventoryError,targets:p.pools.filter(r=>r.acceptingNewApps).map(r=>({id:r.id,displayName:p.targets.find(t=>t.id===r.id)?.displayName||r.id})),
-   batches:(await pool.query('SELECT id,phase,attempt,requested_by,created_at,plan,progress FROM app_database_batches ORDER BY created_at DESC LIMIT 20')).rows};
+   batches:(await pool.query(`SELECT id,phase,attempt,requested_by,created_at,plan,progress FROM app_database_batches ORDER BY (phase IN ('Pending','Running','NeedsAttention')) DESC,created_at DESC LIMIT 20`)).rows};
  }
  async function plan(body,userId){
   const p=getPolicy();if(!p.bulk?.enabled)throw error('Bulk migrations disabled',503);
