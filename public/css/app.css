@@ -95,6 +95,15 @@
   --dc-strip-fill: rgba(244, 242, 228, 0.38);
   --dc-sheet-fill: rgba(255, 255, 255, 0.50);
   --dc-frost: blur(24px) saturate(1.6);
+  /* FLOATING surfaces are denser (#2887). A pane is glass over the
+     wallpaper, which the platform draws and keeps soft; a dialog or a menu
+     floats over WHATEVER is under it — an app's dark UI, a code block, a
+     photo — and at the pane's alpha that showed through as shapes behind
+     the form's own text. Mostly opaque, still frosted: the blur stays, so
+     the surface keeps its material, and the words stay legible over dark
+     content in both themes. Used by the kit's modal (Send Feedback and
+     every other dialog) and the platform mark's menu. */
+  --dc-float-fill: rgba(255, 255, 255, 0.95);
 
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
@@ -791,8 +800,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   gap: 12px;
   padding: 8px 16px;
 }
-.messages-message-pending { opacity: .7; }
+/* A message in flight is drawn at once, faded, and changes nothing else
+   (#2907): no spinner, no "sending…" line, so confirming it moves no row.
+   The fade lifts when the server has it. */
+.messages-message { transition: opacity .15s ease-out; }
+.messages-message-pending { opacity: .55; }
 .messages-message-failed { background: rgba(239, 68, 68, .06); }
+.messages-message-meta.messages-message-failed-note { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 0; }
+.messages-message-failed-note button {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.messages-message-failed-note button.messages-discard { color: var(--text-muted); font-weight: 400; }
 .messages-message-head {
   display: flex;
   align-items: baseline;
@@ -815,6 +836,26 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   overflow-wrap: anywhere;
 }
 .messages-markdown a { color: var(--accent); text-decoration: underline; }
+
+/* A CONTINUATION LINE (#2783): the same person again, close behind their
+   last message. No avatar and no name — the time of day sits in the 36px
+   column the avatar would, muted, and only on hover (always on touch), which
+   is Discord's arrangement. */
+.messages-message-grouped { padding-top: 1px; padding-bottom: 1px; }
+.messages-message-gutter {
+  flex: 0 0 36px;
+  width: 36px;
+  padding-top: 4px;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  visibility: hidden;
+}
+.messages-message-grouped:hover .messages-message-gutter { visibility: visible; }
+@media (hover: none) {
+  .messages-message-gutter { visibility: visible; }
+}
 
 /* ── The bubble transcript (a direct conversation) ───────────────────────
    Two participants, one of them you, so side and surface say who is
@@ -892,6 +933,41 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-message-actions button svg { display: block; width: 16px; height: 16px; }
 .messages-bubble-wrap > .messages-message-actions { top: 0; right: auto; left: calc(100% + 6px); }
 .messages-message-self .messages-bubble-wrap > .messages-message-actions { left: auto; right: calc(100% + 6px); }
+
+/* The tray of a message still in flight keeps its place but draws nothing
+   (#2907) — on touch it is a line of the row, and growing it only once the
+   send confirmed moved every row under it. */
+.messages-message-actions.messages-message-actions-reserved { visibility: hidden; }
+
+/* #2905: report message, report the person and block, behind one ⋯ disc.
+   A small card under the tray on a pointer; on touch, where the tray is the
+   row's last line, it opens upward from that line. */
+.messages-more-menu {
+  position: absolute;
+  z-index: 25;
+  top: 38px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--messages-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+.messages-more-menu button {
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: left;
+}
+.messages-more-menu button:hover { background: var(--messages-surface-2); }
+.messages-more-menu button.messages-more-danger { color: #dc2626; }
+.dark .messages-more-menu button.messages-more-danger { color: #f87171; }
+@media (hover: none) {
+  .messages-more-menu { top: auto; bottom: 42px; }
+}
 
 /* A saved message's bookmark, solid and in the accent — the state lives in
    the glyph's SHAPE, the same way the app-chat bookmark's does, so the two
@@ -1080,6 +1156,10 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-attachment-view { color: var(--accent); font-size: 13px; font-weight: 600; }
 .messages-object-card:hover { background: var(--messages-surface-2); }
 .messages-object-unavailable { opacity: .6; }
+/* #2884: under the first card of a folded run, in the column the message
+   writes in (16px inset + 36px avatar + 12px gap). The pill is shared with
+   the app channel's `.gc-card-run-more`. */
+.messages-card-run { padding: 0 16px 6px 64px; }
 
 .messages-typing {
   flex: 0 0 auto;
@@ -1138,6 +1218,16 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      `max-height` above is what stops it. Past that ceiling the extra lines
      have to be reachable, so the box scrolls rather than clipping them. */
   overflow-y: auto;
+  /* #2882: ONE OUTLINE, THE CARD'S. The ring above goes around the whole
+     composer; the field inside it must draw no edge of its own in any
+     engine. `outline: none` covers the focus ring, but WebKit on iOS also
+     paints a native textarea box (a hairline and an inset shade) until the
+     appearance is reset, and a tap flashes its highlight over the field —
+     both read as a second, inner outline around just the text area. */
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
 }
 .messages-composer-input::placeholder { color: var(--text-faint); }
 .messages-composer-action {
@@ -1242,6 +1332,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-mention-menu button { display: block; width: 100%; padding: 9px 12px; border-radius: 10px; color: var(--text-primary); font-size: 15px; text-align: left; }
 .messages-mention-menu button:hover { background: var(--messages-surface-2); }
+.messages-mention-menu .messages-channel-option-name { color: var(--text-muted); font-size: 13px; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay {
   position: absolute;
@@ -1289,6 +1380,23 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .messages-thread-pane.messages-no-selection { margin: 0; }
 }
 
+/* #2883: THE TRANSCRIPT READS ONE STEP DOWN ON A DESKTOP. 17px is the phone's
+   reading size, and the phone keeps it; beside a 22rem list whose previews
+   and cards are already at 15px, a 17px body and a 17px bold name were the
+   largest text on the screen. So from 768px up a message reads at the size
+   the list's preview line and the shared-item cards use — 15px, with the
+   header's name at 15 and its time at 13, the next step on the same scale —
+   and the composer and the inline editor come down with it, so what you type
+   is the size it will be drawn at. Nothing new on the scale: 17 → 15 → 13. */
+@media (min-width: 768px) {
+  .messages-message-head { min-height: 20px; font-size: 15px; }
+  .messages-message-head time,
+  .messages-message-head time ~ span { font-size: 13px; }
+  .messages-markdown.gc-msg-content { font-size: 15px; line-height: 1.4; }
+  .messages-composer-input { font-size: 15px; }
+  .messages-edit textarea { font-size: 15px; }
+}
+
 /* ── An app's discussion, as a thread of this inbox (#2718 review) ──────
    The section is the BOX and features/group-chat draws the sheet inside it,
    so this adds no fill, no frost and no radius — see the note in the
@@ -1331,6 +1439,32 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 
 .messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
+
+/* ── An agent thread, as a thread of this inbox (#2813) ─────────────────
+   A global agent chat is the chat's own panel drawn on the conversation
+   pane's sheet, so the panel adds no plane of its own. A dev session is
+   DevChat's whole session view in a host, which draws its own sheet — the
+   same arrangement as a discussion above, so the host only has to fill the
+   pane. The bar above it carries the one link the pane adds: the session's
+   own full-window address, for the spec and preview at full width. */
+.messages-thread-agent { overflow: hidden; }
+.global-chat-embedded { flex: 1 1 auto; }
+.messages-session-host { display: flex; flex-direction: column; min-height: 0; }
+.messages-session-host > * { flex: 1 1 auto; min-height: 0; }
+.messages-session-host[hidden] { display: none; }
+.messages-session-bar {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  padding: 0 4px 6px;
+}
+.messages-session-full {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.messages-session-full:hover { color: var(--text-primary); }
+.messages-inbox-session-active > a { background: var(--messages-selected); }
 
 /* Phone-width only. Each of these exists because a narrow column cannot lay
    the row out sideways; the thread pane on a desktop is up to ~59rem and can. */
@@ -1866,7 +2000,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   flex: 0 0 auto;
   width: min(calc(100% - 24px), 52rem);
   margin: 0 auto;
-  padding: 10px 12px calc(10px + var(--platform-safe-bottom, 0px));
+  /* THE BOTTOM IS THE SAFE BAR'S. The form wears `.platform-safe-bar` (top of
+     this file): its 8px base gap plus the larger of the tab bar's band and
+     the home-indicator strip, since #global-chat-screen keeps the platform
+     tab bar up on a phone. This rule cleared the strip alone — `calc(10px +
+     var(--platform-safe-bottom))` — so the field sat under the tab bar. The
+     8px declared here is the value the class computes with no bar and no
+     inset, so the two cannot disagree on a desktop. */
+  padding: 10px 12px 8px;
   border-radius: 22px 22px 0 0;
   background: var(--dc-sheet-fill);
   box-shadow: 0 -5px 18px rgba(0, 0, 0, .06);
@@ -1966,6 +2107,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
      differ because the grounds do. */
   --dc-strip-fill: rgba(11, 13, 27, 0.55);
   --dc-sheet-fill: rgba(28, 28, 30, 0.72);
+  --dc-float-fill: rgba(28, 28, 30, 0.95);
   --bg-code: #141416;
   --bg-code-header: #1c1c1e;
   --bg-card: rgba(90, 169, 255, 0.10);
@@ -2143,6 +2285,22 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   display: flex !important;
 }
 
+/* ONE PANE OF GLASS, NOT TWO (#2825). The kit's sheet, panel and modal are
+   already frosted in the shell (`--dc-frost`, the "Shell-only frosted kit
+   surfaces" block). The panels that ride inside them — the Homeroom menu and
+   the notifications sheet wear `.dc-lift-panel` — kept their OWN
+   `backdrop-filter` when adopted: `background: transparent` above cleared the
+   fill but not the filter, so the panel re-frosted the already-frosted sheet
+   behind it and read as a second, whiter box inset by the sheet's padding —
+   the "extra white box around pop up dialogs". The kit shell is the only
+   surface; the content sits straight on it. */
+.platform-sheet-adopted,
+.platform-panel-adopted,
+.un-modal .platform-modal-card {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 /* ── The nav surfaces grow further, and keep their scroller ────────────
    The 70vh above is right for a kit sheet that is a DIALOG — a form, a
    confirm, a short list. The four navigation surfaces are not: the Improve
@@ -2228,6 +2386,18 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .un-sheet:has(#apps-switcher-sheet),
 .un-sheet:has([data-staking-sheet]) {
   touch-action: pan-x;
+}
+/* …EXCEPT ON ITS ABOUT PANE, WHICH IS A PAGE. The app's facts, its builders
+   and its MORE rows run past the sheet's 80% cap on a phone, and `pan-x`
+   above leaves #switcher-nav's overflow unreachable by touch — the pane would
+   end where the sheet does, with Share and Fork below the fold and no gesture
+   to reach them. So while About is showing the sheet takes the notifications
+   sheet's trade instead (the `pan-y` block above): a vertical drag in the
+   pane scrolls it, and the grabber still dismisses. Same specificity as the
+   rule above, so this one wins by coming after it; the menu pane keeps the
+   drag-to-dismiss it has always had. */
+.un-sheet:has(#app-about-pane) {
+  touch-action: pan-y;
 }
 
 /* THE HOME-INDICATOR INSET IS THE KIT'S JOB INSIDE AN ADOPTED SURFACE.
@@ -2962,6 +3132,21 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* …AND OVER AN APP'S OWN WORKSHOP (#2806). The exclusion above is about the
+   APP: its page colour is under the bar, and the bar takes that tone instead.
+   An app's Workshop tab (board, sessions, a discussion) is not the app, it is
+   the platform's own page about it — `data-app-surface="platform"`, set by
+   AppView._setSurface for everything the shell renders into #app-content —
+   and with the frame parked there is no app tone either (toneForState answers
+   null). So it is the same chrome as the standalone Workshop screen and wears
+   the same glass; left clear, the bar went bare on exactly those pages and
+   nowhere else. A separate rule, not a widened selector: the one above is
+   pinned to exclude #app-view, because a running app must stay clear. */
+body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
    beneath a night one: the bar has no surface inside an app, so the
@@ -2978,9 +3163,10 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 
    SCOPED TO THE BAR AND THE SHEET, deliberately, rather than to <html>.
    The theme is still the shell's: `.dark` on <html> is the theme module's
-   alone, every `dark:` utility keeps reading it, and a sheet or dialog
-   opened from the bar over a dark app is still drawn in the viewer's own
-   mode — the tone is the STRIP's, not the page's. Custom properties
+   alone and every `dark:` utility keeps reading it. The sheets, dialogs and
+   menus opened over a dark app follow its tone too since #2803, but by
+   carrying `.dark` themselves (lib/surface-tone.ts, and the
+   `.platform-app-tone-dark` rule below), not through these tokens. Custom properties
    inherit, so setting them on the two elements reaches every control and
    edge inside them and nothing outside. The chip's subtitle is the one
    control drawn with a `dark:` utility rather than a brand token, so it is
@@ -3011,10 +3197,9 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
    carried anyway, so the ramp is complete and a later divergence cannot
    quietly reopen the split.
 
-   STILL SCOPED TO THE BAR AND THE SHEET, and still never to <html>. A sheet
-   or dialog opened from the bar is drawn in the viewer's own mode exactly as
-   before, because the tone is the STRIP's and not the page's. This widens
-   what the strip repaints; it does not widen what the strip is. */
+   STILL SCOPED TO THE BAR AND THE SHEET, and still never to <html>. This
+   widens what the strip repaints; it does not widen what the strip is. The
+   floating surfaces are the next block's job. */
 [data-app-tone="dark"]:not(.dark) #platform-header,
 [data-app-tone="dark"]:not(.dark) #app-frame-host {
   color: #eaeaea; /* zinc-100, the body's dark ink */
@@ -3076,6 +3261,30 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 }
 .dark[data-app-tone="light"] #platform-header #app-switcher-subtitle {
   color: #68686c; /* zinc-500 */
+}
+/* AND WHAT OPENS OVER A DARK APP IS DARK TOO (#2803). This used to be the
+   one thing the tone left alone: every sheet, dialog and menu kept the
+   viewer's own mode, so Send feedback and the Homeroom menu opened as cream
+   cards over a night-black app under a bar that had already gone dark. They
+   follow the app now. lib/surface-tone.ts puts `.dark` on each kit shell
+   (modal, sheet, panel, action sheet, popover, alert) and on the two in-tree
+   sheets while `data-app-tone="dark"` holds under the light shell, marked
+   with this class so it only removes its own. `.dark` is all the palette
+   needs — the token blocks here and in native.css are plain `.dark { … }`
+   and `dark:` utilities compile to `.dark .dark\:…` — so a toned surface is
+   drawn exactly as it is under the dark shell.
+
+   The one thing `.dark` on the surface cannot carry is the INK: the body's is
+   `text-zinc-900 dark:text-zinc-100`, keyed on <html>, and these shells
+   inherit it from <body>. So it is set here, the same literal the bar's tone
+   uses. `:where()` keeps this at zero specificity: a kit rule that inks its
+   own surface from a token still wins, and reads the dark token anyway.
+
+   A light app under the dark shell is out of scope, as the request says:
+   that direction would need `.dark` taken AWAY below a dark <html>. */
+:where(.platform-app-tone-dark) {
+  color: #eaeaea; /* zinc-100, the body's dark ink */
+  color-scheme: dark;
 }
 /* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
    set inline in the head (frontend/src/head.html) so the first paint is
@@ -3147,7 +3356,29 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 /* ── App cards ─────────────────────────────────────────── */
 
 .app-card { transition: background-color 150ms; }
-.app-card:hover { background-color: var(--bg-card); }
+/* A pointer that can actually hover only (#2892). On a touch screen WebKit
+   emulates :hover from the last tap and keeps it until the next tap lands
+   somewhere else — so a tile held for its menu kept this fill as a stuck
+   "selected" look, most visibly after "Add to Homeroom widget", the one menu
+   action that leaves you on the home screen with the tile still in view. */
+@media (hover: hover) {
+  .app-card:hover { background-color: var(--bg-card); }
+}
+
+/* The widget strip as a DROP TARGET (#2894): a "Your apps" tile dragged over
+   it. home.js (_markWidgetDrop) sets `data-drop` for the span of the hover —
+   an attribute because the strip's className is React's. `ok` is the same
+   tint as the grid's own target cells (.home-grid-cell--on); `refused` (already pinned, or the widget is
+   full) is a muted outline that says "not here" without shouting. */
+#widget-strip[data-drop="ok"] {
+  border-style: solid;
+  border-color: rgba(31, 134, 255, 0.75);
+  background-color: rgba(31, 134, 255, 0.14);
+}
+#widget-strip[data-drop="refused"] {
+  border-color: rgb(161 161 170);
+  opacity: 0.7;
+}
 
 /* THE TILE LABEL — iOS-homescreen sized (#951).
    11px on a 13px line, TWO lines, ellipsised on overflow. The old label
@@ -4040,19 +4271,32 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    count capsule and the category well that lived here are retired with the
    design they drew. */
 
-/* ── Create-app widget ──────────────────────────────────────
-   The whole block is one button, drawn entirely in utilities in
-   frontend/src/features/home/panels/create.tsx: the dashed placeholder card
-   the Challenges area's locked slot uses, in the blue accent while creation is
-   available and in that card's neutrals at the limit. The SVG dashed outlines
-   that lived here (a data-URL rect per colour, per hover, per theme) and the
-   two-line clamp on the label are retired with the tile they drew.
-   `.home-create-tile`, `.home-create-label` and `.home-create-widget--disabled`
-   stay in the markup as hooks the declared checks and tests select on. */
-.home-create-widget {
-  min-width: 0;
+/* ── The Create tile: the launcher grid's last cell ─────────────
+   "Create an app" is the grid's trailing tile (the prototype's scrHome), drawn
+   entirely in utilities in frontend/src/features/home/create-tile.tsx: an app
+   card's cell with a dashed, unfilled face and a muted label. It replaced the
+   full-width Create section that sat below Challenges, and the
+   `.home-create-widget` wrapper went with that section.
+
+   Here are only the three things a utility cannot say, and each mirrors a rule
+   the app cards already carry (the `#app-list > .app-card` rules): the tile
+   sits ABOVE the drag overlay, at the top of its row, and it is transparent to
+   hit-testing for the span of a lift. That last one is load-bearing for the
+   same reason it is on the cards — the overlay cell under the tile has to stay
+   a drop target, and a drop there is an ordinary drop into an empty cell (the
+   tile is not in the layout; the next paint moves it along). It also fades
+   while a drag is live: it is the one thing on the canvas that does not move
+   with the preview, and at full strength it read as a tile being displaced. */
+#app-list > .home-create-tile {
+  position: relative;
+  z-index: 1;
+  align-self: start;
 }
-/* Keyboard focus draws the ring the challenge cards above it draw
+#app-list.un-reordering > .home-create-tile {
+  pointer-events: none;
+  opacity: 0.4;
+}
+/* Keyboard focus draws the ring the challenge cards draw
    (`.home-challenge-card[role="button"]:focus-visible`). */
 .home-create-btn:focus-visible {
   outline: 2px solid var(--accent);
@@ -4456,6 +4700,51 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   top: 0; left: 0; width: 100%; height: 100%;
   border: 0;
   background: var(--bg-primary);
+}
+
+/* THE GREEN "STILL OPEN" DOT (#2902), on an app kept loaded — its tile on
+   Home, its row in the rail's Recents (features/app-frame/live-apps.tsx).
+   Green because it says the app is RUNNING, the one colour every status
+   surface here already reads that way; ringed in the page ground so it
+   stays a dot on any icon behind it. */
+.app-live-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 2px var(--bg-primary);
+}
+/* On a launcher tile: the icon's top-right corner, where the fork tag's
+   bottom-left one leaves room. */
+.app-card-live-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+}
+/* In a Recents row: before the unread dot, beside the label. */
+.platform-recent-live {
+  width: 8px;
+  height: 8px;
+  box-shadow: none;
+}
+
+/* ── APPS KEPT ALIVE BEHIND THE ONE ON SCREEN (#2902) ──────────────────
+   The last few apps you opened stay loaded, each in its own frame beside
+   #app-iframe (features/app-frame/app-frame.tsx), so resuming one shows it
+   exactly as you left it. A kept frame keeps #app-iframe's box — the same
+   absolute inset — so the app inside never sees a resize while it waits, and
+   is hidden by `visibility`, not `display`: nothing paints and nothing can be
+   hit, but its layout (and so its scroll position) is untouched. `inert` and
+   `aria-hidden` on the element take it out of the keyboard and screen-reader
+   order; this only takes it off the screen. */
+.app-launch-host > iframe[data-kept] {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  border: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* ── THE APP SHEET, and why the corner lives HERE (#1571) ──────────────
@@ -5135,7 +5424,6 @@ body:has(#platform-header.hidden) #app-frame-host {
   transition: background 300ms;
 }
 
-.dc-pr-card-highlight { background: rgba(31, 134, 255, 0.2); }
 .dc-pr-card-header { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
 .dc-pr-link { font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
@@ -7664,6 +7952,26 @@ span.gc-vote-btn-icon { cursor: default; }
   .gc-ref:hover { filter: brightness(1.15); text-decoration: underline; }
 }
 
+/* #2783: a `#name` channel reference. A real link (`#messages/channel/<name>`),
+   not a role="link" span, because it navigates somewhere a plain anchor can
+   go — and the accent's tint rather than either ref colour, so a channel
+   never reads as an issue or a PR. Deliberately NOT `.gc-ref`: the app
+   chat's click handler sends every `.gc-ref` to the activity drawer. */
+.gc-channel-ref {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--accent);
+  background: var(--accent-tint, rgba(31, 134, 255, 0.12));
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .gc-channel-ref:hover { text-decoration: underline; }
+}
+
 .gc-msg-system {
   padding: 4px 12px;
   font-size: 11px;
@@ -7706,6 +8014,30 @@ span.gc-vote-btn-icon { cursor: default; }
   text-decoration: none;
 }
 a.gc-event-box { cursor: pointer; }
+
+/* #2884: the folded rest of a run of cards — "… 4 more" under the first
+   card, in the column its box writes in (16px row inset + the 44px avatar +
+   the 12px gap), and a tap draws the rest in place. The pill is the
+   Messages sheet's "Load earlier messages" control, at the event box's
+   13px. The Messages conversation's version is `.messages-card-run`. */
+.gc-card-run { padding: 0 16px 6px 72px; }
+.gc-card-run-more,
+.messages-card-run-more {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 150ms, color 150ms;
+}
+.gc-card-run-more:hover,
+.messages-card-run-more:hover { color: var(--text-primary); background: var(--messages-surface-2, var(--bg-tertiary)); }
+.gc-card-run-more:focus-visible,
+.messages-card-run-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 a.gc-event-box:hover { text-decoration: none; }
 a.gc-event-box:hover > .gc-event-text { color: var(--text-primary); }
 /* #1688: after a named merge's sentence, the number and the tally, quieter. */
@@ -7779,10 +8111,16 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background-color: var(--dc-raised);
   background-image: linear-gradient(var(--accent-tint), var(--accent-tint));
 }
-/* Your own row runs right to left, so the hover react disc — absolute at the
-   row's top-right for every other row — would land on your name there. It
-   crosses to the side your row leaves empty. */
-#gc-messages .gc-msg-self .gc-react-add { right: auto; left: 6px; }
+/* (#2783) A grouped continuation line's clock, in the avatar's column: shown
+   on hover, as Discord does, and always on touch where there is no hover. */
+.gc-msg[data-grouped] .gc-msg-gutter-time { visibility: hidden; }
+.gc-msg[data-grouped]:hover .gc-msg-gutter-time { visibility: visible; }
+@media (hover: none) {
+  .gc-msg[data-grouped] .gc-msg-gutter-time { visibility: visible; }
+}
+/* (#2783) Your own row no longer runs right to left — every row is the same
+   named row now — so the hover react disc stays at the top-right for yours
+   too, and the override that moved it is gone. */
 
 .gc-quote-pr { cursor: pointer; }
 @media (hover: hover) {
@@ -8015,6 +8353,31 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   transition: opacity 120ms, color 120ms;
 }
 .gc-msg-save svg { width: 12px; height: 12px; display: block; }
+/* #2905: the ⋯ that holds report and block — the bookmark's disc, so a row
+   carries two small marks at most and never a column of words. */
+.gc-msg-more {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 120ms;
+}
+.gc-msg-more[aria-expanded="true"] { opacity: 1; }
+@media (hover: hover) {
+  .gc-msg:hover .gc-msg-more { opacity: 0.85; }
+  .gc-msg-more:hover { opacity: 1; }
+}
 .gc-msg-save.gc-msg-saved { opacity: 1; color: var(--accent); }
 @media (hover: hover) {
   .gc-msg:hover .gc-msg-save,
@@ -8839,6 +9202,12 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .gc-composer-card .gc-composer-input {
   min-height: 40px;
   max-height: 140px;
+  /* #2882: the card is the one edge; the field draws none — see
+     `.messages-composer-input`, the same field in the conversation composer. */
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
 }
 .gc-composer-card .gc-composer-input::placeholder { color: var(--text-faint); }
 .gc-composer-glyph {
@@ -8989,9 +9358,16 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   transition: transform 200ms ease-out, box-shadow 200ms ease-out,
     opacity 0s linear 200ms, visibility 0s linear 200ms;
 }
+/* A VIEWPORT OF OVERSCAN above and below (#2822). With the on-screen keyboard
+   up, iOS pans the visual viewport inside the layout one, and the band on
+   screen is not reliably inside this fixed box: the dim stopped short of it —
+   the bottom once (#2765), the top after that. lib/overlay-scrim.js measures
+   this layer and cuts the hole relative to it, so however far it reaches, the
+   cutout still lands on the dialog; the extra reach only guarantees there is
+   dim wherever the screen has been panned to. Nothing hit-tests it. */
 .overlay-scrim {
   position: fixed;
-  inset: 0;
+  inset: -100vh 0;
   pointer-events: none;
   visibility: hidden;
   background: var(--pane-scrim);
@@ -9014,7 +9390,7 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: transparent;
 }
 .un-modal {
-  background-color: var(--dc-sheet-fill);
+  background-color: var(--dc-float-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
   box-shadow: var(--dc-lift-shadow);
@@ -9050,10 +9426,21 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* The platform mark's menu floats over the app, like a dialog (#2887): the
+   desktop dropdown is the panel itself, and below `sm` the kit's sheet it is
+   adopted into is the surface. Ids / `:has()` outrank `.dc-lift-panel` and
+   `.un-sheet` above; the blur they set is kept. */
+#apps-switcher-sheet,
+.un-sheet:has(#apps-switcher-sheet),
+.un-sheet:has(#apps-switcher-sheet)::after {
+  background-color: var(--dc-float-fill);
+}
 /* NO BLUR, NO GLASS: the kit's opaque surface comes back, in the shell's
    own sheet colour. The scrim is a shadow, not a filter, so it survives. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after {
+  .un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
+  #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
+  .un-sheet:has(#apps-switcher-sheet)::after {
     background-color: var(--dc-sheet);
   }
 }
@@ -10154,6 +10541,27 @@ html.web-browser-chrome {
   html.web-browser-chrome #platform-header.un-safe-top-extend,
   html.web-browser-chrome #landing-header.un-safe-top-extend {
     padding-top: 0.5rem !important;
+  }
+}
+
+/* A FLAT TOP EDGE FOR THE INSTALLED LANDING. From iOS 26 an installed web app
+   whose status bar is black-translucent (frontend/src/head.html, #1929) gets
+   a Liquid Glass blur over the strip, and it runs about 38pt below the clock
+   — straight through this bar's content row, which blurred the wordmark. The
+   blur is reported to appear only when iOS cannot sample ONE colour at the
+   page's top edge, and the landing root paints the grain, the washes and the
+   star right up to it. So in installed mode the bar paints the ground solid
+   through the inset and its 8px pad, then fades out by its bottom edge: the
+   top edge is one colour and the wallpaper below loses no texture and gains
+   no seam. Browser tabs (the wash in browser-scroller mode above) and the
+   native WebView are not standalone display modes, so nothing here reaches
+   them. */
+@media (display-mode: standalone) {
+  #landing-header {
+    background-image: linear-gradient(
+      var(--home-ground) calc(var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) + 0.5rem),
+      transparent
+    );
   }
 }
 
@@ -12201,8 +12609,13 @@ body.is-offline [data-offline-disabled] {
    under it; past ~760px a card's meta line and its bubbles were sentences
    too wide to read in one saccade, and the board strip beside them was
    empty. The strip's own padding closes to 4px at the sides so the sheets
-   sit almost edge to edge on a phone, as the Messages list does. */
-#dev-workshop { max-width: 760px; margin: 0 auto; }
+   sit almost edge to edge on a phone, as the Messages list does.
+   `width: 100%` for the LOADING state (#2880): `#dev-workshop:has(> .dev-ws)`
+   below explains why a flex item centred by auto margins needs it, but that
+   rule only matches once the Workshop has rendered. Until then the host holds
+   the skeleton, and as a flex item it shrank to the skeleton's content — a
+   72px sliver of grey tiles between the blank page and the Workshop. */
+#dev-workshop { max-width: 760px; margin: 0 auto; width: 100%; }
 /* The bottom padding is THE SAME GAP the rail sticks to, and that is what
    makes the two resting cases agree. When the lander fills the scroller the
    rail sits at its bottom edge, so the air below it is whatever `#dev-body`
@@ -12896,17 +13309,37 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   max-width: 900px;
   margin: 0 auto;
 }
-.dev-change-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 14px;
-  flex-shrink: 0;
+/* #2916: the topic page's one back control, "‹ Workshop"
+   (features/dev-board/topic/topic-back.tsx). It is the first child of
+   `.dev-topic`, so it sits at the top-left of the pane on the card's own
+   left edge and scrolls away with the page; the header draws no arrow on
+   these routes. Dressed as the header's back disc was (periwinkle ink on the
+   periwinkle tint, a hairline one step darker), stretched into a pill so it
+   can carry the destination's name. Hover steps the fill to the hairline's
+   shade; focus gets the shell's usual accent ring. `align-self` keeps the
+   column's stretch from widening it to the card. */
+.dev-topic-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  align-self: flex-start;
+  height: 30px;
+  padding: 0 12px 0 6px;
+  margin: 2px 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-line);
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background-color 120ms ease;
 }
-.dev-change-tabs [aria-pressed="true"] {
-  background: var(--dc-sheet-fill);
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
-}
+.dev-topic-back:hover { background: var(--brand-line); }
+.dev-topic-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-topic-back-icon { width: 18px; height: 18px; flex-shrink: 0; }
 .dev-change-overview {
   flex: 1;
   min-height: 0;
@@ -14299,11 +14732,17 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-tab {
   /* CONTENT-WEIGHTED, not equal thirds: "Current status" is twice "All
      items", and three equal cells ellipsized it at 390px while the other two
-     sat in air. The spare width is still shared out, so the pill stays full. */
+     sat in air. The spare width is still shared out, so the pill stays full.
+     THE "+" TAKES A 40px CELL AT THE PILL'S END, and the tabs pay for it out
+     of their own padding (8px to 4px a side) and glyph gap (5px to 4px), not
+     out of their labels: at 390px, measured in the headless harness's
+     DejaVu Sans — wider than SF Pro or Roboto — the three labels need 316px
+     at rest and the pill leaves them 324, so "Current status" is still whole
+     beside the "+" and the spare 8px is shared back out. */
   flex: 1 1 auto; min-width: 0;
   display: inline-flex; flex-direction: row;
-  align-items: center; justify-content: center; gap: 5px;
-  height: 40px; padding: 0 8px;
+  align-items: center; justify-content: center; gap: 4px;
+  height: 40px; padding: 0 4px;
   border: 0; border-radius: 999px;
   background: transparent;
   color: var(--text-muted);
@@ -14313,14 +14752,72 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 /* THE TRACK IS INERT ON A PHONE. `.dev-ws-tabs` is itself the pill there,
    full width, so the wrapper the desktop layout needs must not introduce a
-   box. `display: contents` removes it from the layout entirely and the
-   buttons stay direct flex items of the nav. */
+   box. `display: contents` removes it from the layout entirely and its two
+   children — the tab list and the "+" — are the nav's flex items. */
 .dev-ws-tabtrack { display: contents; }
+/* THE TAB LIST takes the pill's width less the "+" cell. A real box at both
+   widths (the `tablist` role lives here, and a role on a `display: contents`
+   node is one some screen readers drop), and not positioned: the tabs'
+   `offsetLeft` must keep resolving against the nav, where the marker is.
+   2px between segments, the desktop track's own step. */
+.dev-ws-tablist { flex: 1 1 auto; min-width: 0; display: flex; gap: 2px; }
+/* ── The "+", closing the strip ──────────────────────────────────────
+   The prototype's `.tplus`: the last item of the tab row, a bare glyph in the
+   selected tab's ink with no ground of its own, so it reads as part of the
+   bar rather than as a floating action (it was a violet filled square at the
+   end of All items' search row). The tab's own height and radius, so it sits
+   in the pill as one more cell; the MARKER's tint and ring when its menu is
+   open, which is how the strip already says "this one is active".
+   The wrapper is the dropdown's containing block (actions-row.tsx hangs
+   `#dev-plus-menu` off its right edge). */
+.dev-ws-plus { position: relative; flex: none; display: flex; }
+.dev-ws-plus-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; padding: 0;
+  border: 0; border-radius: 999px;
+  background: transparent;
+  color: var(--brand-ink);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Hover only where there IS hover: on touch a tapped button keeps `:hover`
+   until the next tap elsewhere, which would leave the "+" tinted after the
+   action sheet closes. */
+@media (hover: hover) {
+  .dev-ws-plus-btn:hover { background: var(--brand-tint); }
+}
+.dev-ws-plus-btn[aria-expanded="true"] {
+  background: var(--brand-tint);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+}
+.dev-ws-plus-glyph { width: 20px; height: 20px; stroke-width: 2.2; flex: none; }
 /* Size lives here, not on the component: icons.tsx has no size variant by
    design, so every call site passes its own class. `flex: none` so a label
    that is trying to fit squeezes itself, not the glyph. */
 .dev-ws-tab-glyph { width: 16px; height: 16px; flex: none; }
 .dev-ws-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* #2915: THE DOT ON ALL ITEMS, while its search or filters are on. They
+   narrow that tab alone, so from the other two this is the only sign a search
+   is still waiting there. The accent, not the tab's ink: it is a state of the
+   tab rather than part of its label, and it has to read on the selected tab's
+   tint as well as on the bare track.
+   ON A PHONE IT IS A BADGE ON THE GLYPH, AND TAKES NO WIDTH. The pill leaves
+   the three labels 8px to spare at 390px (see `.dev-ws-tab`), and a dot after
+   the label costs 10: every label lost its last letters to an ellipsis. So it
+   is moved to the head of the tab (`order`), its own width and the gap after
+   it are handed back (`margin-right`), which lays the glyph over it, and it is
+   drawn at the glyph's top-right corner. A transform, so none of that moves
+   anything else. Above 700px it goes back after the label, where the segment
+   hugs its content and has the room. */
+.dev-ws-tab-dot {
+  flex: none;
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  order: -1;
+  margin-right: -10px;
+  transform: translate(12px, -8px);
+}
 /* THE HEADER'S PERIWINKLE, not black. `--brand-ink` on `--brand-tint` with a
    hairline of `--brand-line` is how the bar above draws its own controls —
    the back glyph, the bell, the app chip — and these are the same kind of
@@ -14341,6 +14838,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    coming later in paint order for positioned elements, would cover the
    labels. */
 .dev-ws-tab { position: relative; z-index: 1; }
+/* WHILE THE "+" MENU IS OPEN the strip outranks the pane head below it. The
+   dropdown hangs out of the strip over the tab body, and the strip is a
+   stacking context (sticky above 700px, frosted below it), so the menu's own
+   `z-30` counts only inside it — and the pane head, which pins at `z-index:
+   31` wide and 20 narrow, painted over the menu's rows on All items. Only
+   while it is open: at rest the ear, which hangs into the strip's band from
+   the head, has to stay on top of the strip or its two tabs cannot be
+   clicked (see "the ear outranks the nav"). A click there while the menu is
+   up lands on the strip and dismisses the menu, like any outside click. */
+.dev-ws-tabs:has(#dev-plus-menu:not(.hidden)) { z-index: 32; }
 /* THE MARKER. Every number it uses is measured off the live tab (see
    workshop.tsx), so this rule carries no geometry — which is what lets it
    serve the phone's 58px equal-width pill and the desktop strip's 32px
@@ -14897,10 +15404,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      surface the cards already use — the same reason tabs.tsx's track is white
      rather than the recessed grey a control gets on a card. */
 
-  /* EVERYTHING PINS UP HERE, as one band: the tab strip, the ear hanging off
-     the head's top edge, and the head itself with the search, the filters and
-     the "+". The controls belong WITH the list you are narrowing, so they
-     stay reachable however far down it you are.
+  /* EVERYTHING PINS UP HERE, as one band: the tab strip with the "+" at its
+     end, the ear hanging off the head's top edge, and the head itself with
+     the search and the filters. The controls belong WITH the list you are
+     narrowing, so they stay reachable however far down it you are.
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
@@ -15013,6 +15520,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     border-radius: 9999px; font-size: 14px;
   }
   .dev-ws-tab-glyph { width: 16px; height: 16px; }
+  /* #2915: the dot follows the label here, a little further off it than the
+     tab's own gap, and centred on it. */
+  .dev-ws-tab-dot { order: 0; margin: 0 0 0 6px; transform: none; }
+  /* The tab list hugs its three segments inside the track, and the "+" is
+     the track's last segment: a 32px round cell, the tabs' own height, so
+     the pill ends on it — Current status · Needs you · All items · + — and
+     the ear's measured inset, read off the track's right edge, clears it. */
+  .dev-ws-tablist { flex: 0 0 auto; }
+  .dev-ws-plus-btn { width: 32px; height: 32px; }
+  .dev-ws-plus-glyph { width: 18px; height: 18px; }
 
   /* ── THE FEED ON A WIDE WINDOW: THE STAGE ──
      Above 700px the lander is a ROW: the feed as a 720px card at the centre,
@@ -15408,13 +15925,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
    It does NOT pin. The pane head is sticky and this is not in it: scroll the
    board and the ear leaves with the tab pill it sits beside, which is the
-   row it now belongs to. The head keeps the search, the filters and the "+",
-   which are the controls you reach for mid-scroll. */
+   row it now belongs to. The head keeps the search and the filters, which
+   are the controls you reach for mid-scroll; the "+" closes the tab strip,
+   which pins on its own. */
 @media (min-width: 768px) {
-  /* Scoped by `:has()` so a pane without an ear is untouched. The "+" menu
-     and the vote sheet are absolutely positioned against their own local
-     wrappers (actions-row.tsx's `relative ml-auto`, and `.dev-ws-row`), so
-     this containing block takes nothing away from them. */
+  /* Scoped by `:has()` so a pane without an ear is untouched. The vote
+     sheet is absolutely positioned against its own local wrapper
+     (`.dev-ws-row`), and the "+" menu is not in the pane at all any more (it
+     hangs off `.dev-ws-plus`, in the tab strip), so this containing block
+     takes nothing away from either. */
   .dev-ws-pane:has(.dev-ws-ear) { position: relative; }
   /* NO LINE BETWEEN THE EAR AND THE PANE. The pane's ring is one inset
      shadow, so its top side used to run the full width — straight under the
@@ -15531,10 +16050,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    the page reads as a stack of panes rather than a pane, two loose control
    rows and a list.
 
-   `overflow: visible` is load-bearing: the "+" menu is absolutely positioned
-   inside this subtree and the sticky head below depends on no ancestor
-   clipping. A `overflow: hidden` here to clip the radius would do both kinds
-   of damage at once. */
+   `overflow: visible` is load-bearing: the vote sheet is absolutely
+   positioned inside this subtree and the sticky head below depends on no
+   ancestor clipping. A `overflow: hidden` here to clip the radius would do
+   both kinds of damage at once. (The "+" menu used to be the other thing
+   escaping; it hangs off the tab strip now.) */
 .dev-ws-pane {
   display: flex; flex-direction: column;
   border-radius: 22px;
@@ -15557,9 +16077,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    The head's frost still does its job: the body is its SIBLING, so the rows
    scrolling inside the body pass through the head's backdrop and smear.
 
-   `overflow: visible` on the pane is load-bearing: the "+" menu is absolutely
-   positioned in this subtree, and sticky does not work under a clipping
-   ancestor. */
+   `overflow: visible` on the pane is load-bearing: the vote sheet is
+   absolutely positioned in this subtree, and sticky does not work under a
+   clipping ancestor. */
 .dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -16301,10 +16821,63 @@ html.un-ios {
   color: var(--brand-ink);
 }
 
+/* THE LIT TAB'S MARKER (#2824) — the Workshop's sliding pill, on the phone's
+   bar. The colour above was the only thing that said which tab you were on,
+   and at 11px under a glyph that is easy to miss; the Workshop's strip one
+   screen down already answers the same question with a blue fill that slides
+   between tabs, so this is that answer with the same tokens and the same
+   curve (`.dev-ws-tab-marker`).
+
+   Its geometry is measured off the lit tab (useTabMarker in
+   frontend/src/features/nav/tab-bar.tsx), so this rule carries none: the
+   transform is the only thing that moves. `.platform-tabs` is `position:
+   fixed`, which makes it the containing block the offsets are measured in.
+
+   Each tab is raised one step so the marker, rendered before them, paints
+   behind the glyph and label rather than over them. */
+.platform-tab {
+  position: relative;
+  z-index: 1;
+}
+.platform-tabs-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: 16px;
+  background: var(--brand-tint);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+  pointer-events: none;
+  /* Hidden until measured, and while nothing is lit. */
+  opacity: 0;
+}
+.platform-tabs-marker[data-marker-at] { opacity: 1; }
+/* ONLY A SELECTION CHANGE SLIDES, as on the Workshop's strip: the first
+   placement and a re-measure of the same tab carry `data-marker-at` without
+   `data-marker-slide`, and land where they are.
+
+   IT SLIDES THROUGH A VIEW TRANSITION TOO. A tab change is a screen swap,
+   and the swap runs as a view transition in which #platform-tabs is its own
+   group whose OLD image is dropped and whose NEW image is shown at once
+   (see the `platform-tabs` group near the top of this file). The new image
+   is a live rendering of the element, not a still, so a CSS transition
+   started by the swap plays inside it; this is the one part of the bar that
+   moves on a tab change, and the label colour still pops, as it should. */
+@media (prefers-reduced-motion: no-preference) {
+  .platform-tabs-marker[data-marker-slide] {
+    transition:
+      transform .26s cubic-bezier(.32, .72, 0, 1),
+      width .26s cubic-bezier(.32, .72, 0, 1),
+      height .26s cubic-bezier(.32, .72, 0, 1);
+  }
+}
+
 /* The badge's anchor. `position: relative` on the glyph's wrapper rather
    than on the whole tab, so the count sits on the ICON's corner and not on
    the tab's — the tab is 56px tall and a badge pinned to its top-right
-   would float in the air above the glyph, away from the thing it is about. */
+   would float in the air above the glyph, away from the thing it is about.
+   That is the PHONE's bar; the desktop rail dissolves this wrapper and draws
+   the count at the row's end instead (#2912, in the desktop block below). */
 .platform-tab-mark {
   position: relative;
   display: inline-flex;
@@ -16328,13 +16901,18 @@ html.un-ios {
   line-height: 1.35;
 }
 
-/* The same red disc as #notifications-badge in the header, at the same size:
-   two counts on one screen that disagreed about what a count looks like
-   would read as two different kinds of thing. The fill is Tailwind's
-   `red-500`, which is what that badge's utility classes compile to; it is
-   spelled out because this bar's appearance lives here rather than in the
-   component, and `--danger` elsewhere in this file already falls back to the
-   same value. */
+/* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
+   red disc as #notifications-badge, on the argument that two counts on one
+   screen should look alike. But an unread message is ALSO counted in the
+   bell, so the same news arrived twice in the loudest colour on the screen,
+   and the second red drew the eye away from the one that is the alarm. The
+   bell keeps the red; this only says "there is something here".
+
+   Same size and place on the phone's bar, on the glyph's corner, with white
+   ink. The fill is `--text-faint`, the neutral ramp's lightest step, which
+   is #8e8e93 in BOTH themes: a mid grey that reads as a mark on the light
+   bar and on the dark one without competing with either. The desktop rail
+   moves the count off the glyph altogether (the desktop block below). */
 .platform-tab-badge {
   position: absolute;
   top: -3px;
@@ -16344,7 +16922,7 @@ html.un-ios {
   padding: 0 4px;
   box-sizing: border-box;
   border-radius: 999px;
-  background: var(--danger, #ef4444);
+  background: var(--text-faint, #8e8e93);
   color: #fff;
   font-size: 0.65rem;
   font-weight: 700;
@@ -16367,6 +16945,14 @@ html.un-ios {
   /* The file is 261px square drawn at 26: tell the decoder so, rather than
      letting it pick. */
   object-fit: cover;
+}
+
+
+/* RECENTS ARE THE DESKTOP RAIL'S (#2802). The phone's bar is five tabs
+   across the foot of the screen with no room for a list, so the element is
+   in the markup at every width and drawn only from 768px up, below. */
+.platform-recents {
+  display: none;
 }
 
 
@@ -16535,7 +17121,9 @@ html.un-kb #platform-parked {
    All three questions are CSS's now, and none of them is part of hydration:
 
      does the rail exist   → `#platform-tabs.hidden`, which the island
-                             publishes through useHiddenClass
+                             publishes through useHiddenClass — and not
+                             `.platform-tabs-route-hidden`, which says the
+                             ROUTE has none and only the peek is showing it
      is there room for it  → the media query
      has the group anything→ `:has(> #back-btn.hidden)` plus the two above
 
@@ -16551,23 +17139,35 @@ html.un-kb #platform-parked {
 }
 @media (min-width: 768px) {
   /* …unless the toggle is in it, which needs both a rail and the width. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) #platform-header
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header
     .platform-header-left:has(> #back-btn.hidden) {
     display: flex;
   }
 }
 
 @media (min-width: 768px) {
-  /* THE PRESSED STATE IS THE DEFAULT ONE, so the button wears the bar's own
-     periwinkle disc while the rail is up and goes quiet when it is down —
-     the rail being there is what the control is asserting. Colour only: the
-     disc does not move, because it is the fixed thing the layout pivots
-     around when the whole content column slides.
+  /* NO DISC AT REST, EITHER WAY (#2798). The button used to wear the bar's
+     periwinkle disc for as long as the rail was up, which read as a control
+     permanently highlighted. The disc is a HOVER state now (the component's
+     `hover:` classes); what still tells the two states apart is the ink —
+     periwinkle while the rail is up, muted while it is folded. Colour only:
+     the button does not move, because it is the fixed thing the layout
+     pivots around when the whole content column slides.
 
      `body:has(...)` is what replaces the `return null` this component used
      to do for itself: a route with no rail has no fold to offer, and a dead
-     control is worse than none. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) .platform-sidebar-toggle {
+     control is worse than none.
+
+     A PEEK IS NOT A RAIL THE ROUTE HAS. Over a running app the peek takes
+     `hidden` off the bar, and this rule used to answer that alone: pointing
+     at the window's left edge inside an app put the toggle into the app's
+     own strip, pushed ✕, the tile and the name 34px right, and pressing it
+     folded the docked rail behind the app. `.platform-tabs-route-hidden` is
+     the route's answer published beside the peek's (features/nav/
+     tab-bar.tsx), so the toggle stays out of the app layer and the peek
+     still works. A rail the viewer FOLDED is still the route's, so its
+     toggle stays — it is how the fold comes undone. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) .platform-sidebar-toggle {
     display: inline-flex;
     transition: background-color 140ms ease, color 140ms ease,
                 border-color 140ms ease;
@@ -16757,8 +17357,9 @@ html.un-kb #platform-parked {
      that reason: Slack, Discord, Linear, Notion, VS Code. The other four are
      a list of sections; this is who is looking at them.
 
-     `margin-top: auto` and nothing else: no reordering in the markup, no
-     second element, no id moved. The DOM order is still the reading order a
+     An auto top margin and nothing else: no reordering in the markup, no
+     second element, no id moved. The margin is on the rule drawn above Me
+     now (below), which pins the pair to the foot. The DOM order is still the reading order a
      screen reader announces and the order the phone's bar lays out, and this
      rule lives inside the desktop media query because on a phone the five
      are a row across the foot and an auto margin there would drop Me out of
@@ -16766,8 +17367,22 @@ html.un-kb #platform-parked {
 
      THE PARKED STRIP SITS ABOVE IT, which is the prototype's order: the
      sections, then the app you left, then you. */
+  /* A THIN RULE ABOVE ME (#2800, #2878): the sections and the history above
+     it, you below it. It is the rail's own `::after` rather than an element
+     in the markup, drawn before Me with `order` — so the DOM, the reading
+     order and the shell's id inventory are untouched, and the phone's bar
+     (where none of this media query applies) never sees it. Me used to carry
+     the `margin-top: auto`; the rule carries it now, and Me follows it. */
+  .platform-tabs::after {
+    content: "";
+    order: 1;
+    flex: none;
+    height: 1px;
+    margin: auto 4px 6px;
+    background: var(--app-sheet-line);
+  }
   #platform-tab-me {
-    margin-top: auto;
+    order: 2;
   }
   .platform-parked {
     bottom: calc(var(--platform-rail-foot-h) + var(--platform-safe-bottom, 0px));
@@ -16778,6 +17393,10 @@ html.un-kb #platform-parked {
      beside it at 15px it is the name of a place, which is what a rail's
      rows are. */
   .platform-tab {
+    /* NEVER SHRINK (#2878): Recents now holds more than fits, and a column
+       of shrinkable rows would take the overflow out of the tabs' height
+       as well as the list's. The list is the one that scrolls. */
+    flex: none;
     flex-direction: row;
     justify-content: flex-start;
     gap: 12px;
@@ -16789,6 +17408,11 @@ html.un-kb #platform-parked {
   .platform-tab[aria-current="page"] {
     background: var(--brand-tint);
   }
+  /* The rail keeps its own row fill; the phone's sliding marker is not
+     drawn here (#2824). */
+  .platform-tabs-marker {
+    display: none;
+  }
   /* `min-width: 0` so the label can SHRINK in the row and the ellipsis the
      base rule asks for actually appears (#2760). The fifth tab carries the
      reader's username now, up to 32 characters, and a flex item's automatic
@@ -16799,6 +17423,220 @@ html.un-kb #platform-parked {
     min-width: 0;
   }
 
+  /* THE UNREAD COUNT SITS AT THE ROW'S END (#2912), as a quiet pill rather
+     than a disc on the glyph's corner. Beside a 15px label there is room to
+     say the number without covering the icon, and the far end of the row is
+     the column Recents draws its unread dots in just below, so the rail
+     keeps its marks in one place.
+
+     THE MARKUP DOES NOT MOVE. The badge stays inside the glyph's wrapper
+     (the phone still pins it to the icon's corner) and inside
+     #platform-tab-messages (a declared check selects it there). The wrapper
+     dissolves instead (`display: contents`), so the glyph, the label and the
+     badge are all items of this row. `order: 1` takes the badge past the
+     label, and `margin-left: auto` pushes it to the end. It is back in the
+     flow (`position: static`), so the label can never run under it. The
+     peeked rail over an open app is this same element, so it gets the same
+     row. */
+  .platform-tab-mark {
+    display: contents;
+  }
+  .platform-tab-badge {
+    position: static;
+    order: 1;
+    flex: none;
+    margin-left: auto;
+    margin-right: 2px;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    /* The rail's own muted ink over a faint wash of it: quieter than the
+       phone's disc, because beside the label it no longer sits on a glyph
+       it has to stand out from. */
+    background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,
+     so nothing said a row was a target until it was pressed. The hover is the
+     same periwinkle as the lit tab at about half the strength, so the tab you
+     are on stays the strongest thing in the rail and the one under the
+     pointer reads as "this one, if you press". Only where there IS a pointer:
+     a touch screen's sticky hover would leave a tapped tab half lit. */
+  .platform-tab,
+  .platform-recent {
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  @media (hover: hover) {
+    .platform-tab:not([aria-current="page"]):hover,
+    .platform-recent:hover {
+      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
+      color: var(--brand-ink);
+    }
+  }
+
+  /* ── RECENTS (#2802) ────────────────────────────────────────────────
+     frontend/src/features/nav/recents-list.tsx carries the argument: what you
+     were just doing, apps and conversations on one clock, between the
+     sections and Me. It takes the room the rail has left over and scrolls
+     inside it rather than pushing Me off the foot of a short window.
+
+     ALL THE WAY DOWN (#2878). The list used to stop at eight rows and leave
+     the rest of a tall rail empty; it now holds far more than fits
+     (RECENTS_LIMIT), so it runs to the rule above Me and scrolls there. */
+  .platform-recents:not(.hidden) {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--app-sheet-line);
+  }
+  .platform-recents-head {
+    margin: 0 0 4px;
+    padding: 0 12px;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    line-height: 1.35;
+    text-transform: uppercase;
+  }
+  .platform-recent {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 10px;
+    /* THE RAIL'S OWN INK (#2890): the muted grey `.platform-tab` draws its
+       sections in, not the page's near-black, so the history reads as more
+       of the same rail rather than louder than it. The hover above lifts it
+       to periwinkle exactly as it lifts a tab. */
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .platform-recent-glyph {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    color: var(--text-muted);
+  }
+  /* AN APP'S OWN ICON (#2878), at the glyph's footprint so every label
+     starts on the same line: the launcher's tile (`.app-icon-tile` draws the
+     face and ring) shrunk to a row. The emoji inside carries the launcher's
+     `text-3xl`, which is sized for a 56px tile. */
+  .platform-recent-tile {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    border-radius: 5px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .platform-recent-tile > img {
+    border-radius: 0;
+  }
+  .platform-recent-tile > span {
+    font-size: 11px;
+  }
+  .platform-recent-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.35;
+  }
+  /* UNREAD IS A DOT, not a count: the count lives on the Messages tab and
+     on the row in Messages, and a 224px rail has room for one mark. */
+  .platform-recent-dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 999px;
+    /* The unread count's own fill in Messages (`.messages-unread`). */
+    background: var(--accent);
+  }
+
+  /* ── RECENTS BY DAY (#2919) ──────────────────────────────────────────
+     frontend/src/features/nav/recents.ts (groupRecents) carries the argument.
+     A small label before each day that has a row, quieter than the RECENTS
+     heading above it: sentence case, no caps or tracking, and the muted ink
+     taken down a step so the rows stay the thing you read. Less air above
+     the first one, which already sits under the heading. */
+  .platform-recents-day {
+    flex: none;
+    padding: 8px 12px 2px;
+    color: var(--text-muted);
+    opacity: .75;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .01em;
+    line-height: 1.5;
+  }
+  .platform-recents-head + .platform-recents-day {
+    padding-top: 2px;
+  }
+  /* "Show N older" / "Show less": a quiet row at the list's foot, in the
+     rows' own muted ink and hover, a little smaller than a row so it reads
+     as a control on the list rather than one more place to go. */
+  .platform-recents-more {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    margin-top: 4px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .platform-recents-more-icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
+  }
+  /* The ring is drawn inside the button: the list scrolls, and would clip
+     one drawn outside it. */
+  .platform-recents-more:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  @media (hover: hover) {
+    .platform-recents-more:hover {
+      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
+      color: var(--brand-ink);
+    }
+  }
+
+  /* THE RESUME STRIP GIVES WAY TO RECENTS ON THE DESKTOP (#2802). The apps
+     in the list above are the same offer, several at once, so a second copy
+     at the rail's foot would say it twice. The phone has no rail and keeps
+     the strip. By id so no later `.platform-parked` rule can bring it back. */
+  #platform-parked {
+    display: none;
+  }
+
   /* THE PARKED STRIP IS THE RAIL'S FOOTER. It is the app you left, and the
      rail is the list of places you can go — so it belongs at the bottom of
      that list rather than across a window whose content has nothing to do
@@ -16806,6 +17644,13 @@ html.un-kb #platform-parked {
   .platform-parked {
     right: auto;
     width: var(--platform-rail-full);
+    /* NO FILL OF ITS OWN (#2801). On the phone the strip floats over the
+       page and needs the sheet's frost; in the rail it would be a second,
+       different surface under the Resume row. The rail behind it is the
+       surface, as it is for every other row. */
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     padding-bottom: var(--platform-safe-bottom, 0px);
     height: auto;
     min-height: 52px;
@@ -16951,40 +17796,91 @@ html.un-kb #platform-parked {
   box-shadow: inset 0 0 0 1px var(--brand-line);
 }
 
-/* WHAT STARTS SOMETHING, under the strip and answering to it. Two buttons
-   share the row under All and one takes it alone elsewhere, so both are
-   `flex: 1` — the split is even by construction rather than by a width
-   either of them carries. */
-.messages-compose {
-  display: flex;
+/* WHAT STARTS SOMETHING, at the strip's trailing end (#2778): one "+"
+   that opens a small popover of three choices rather than a row of buttons
+   under the strip. It sits on the track's own height and ground, so it reads
+   as part of the strip rather than as a second control beside it. */
+.messages-filters { align-items: center; gap: 8px; }
+/* Four segments and the "+" on one line inside the 22rem list pane: the
+   segments give up some of their side padding to make room for the disc. */
+.messages-filters .messages-filter { padding: 0 11px; }
+.messages-new-btn {
   flex: 0 0 auto;
-  gap: 8px;
-  padding: 0 16px 10px;
-}
-.messages-compose-btn {
-  flex: 1 1 0;
-  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 12px;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--brand-line);
-  border-radius: 999px;
+  border-radius: 9999px;
   background: var(--brand-tint);
   color: var(--brand-ink);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.messages-compose-btn > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.messages-new-btn svg { width: 18px; height: 18px; stroke-width: 2; }
+.messages-new-btn[aria-expanded="true"] { background: var(--brand-ink); color: var(--bg-primary); }
+/* The popover: the vote picker's frame (.dev-vote-pop) — body-mounted,
+   fixed, placed from the button's rect by lib/anchor-popover.ts. */
+.messages-new-pop {
+  position: fixed;
+  z-index: 2000;
+  width: 240px;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.messages-new-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.messages-new-option:hover, .messages-new-option:focus-visible { background: var(--bg-tertiary); outline: none; }
+.messages-new-option svg { flex: 0 0 auto; width: 20px; height: 20px; color: var(--brand-ink); }
+.messages-new-option-label { display: block; font-size: 14px; font-weight: 600; }
+.messages-new-option-hint { display: block; font-size: 12px; color: var(--text-muted); }
+
+/* THE SECTION HEADS (#2783): "Chats" over the people and agents, "Channels"
+   over #general and the apps — Discord's two headings, small and muted so
+   they divide the list without competing with its rows. */
+.messages-section-head {
+  margin: 0;
+  padding: 12px 16px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* A channel's tile is the `#` it is named with. */
+.messages-channel-tile {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 22px;
+  font-weight: 700;
+}
+.messages-thread-channel-tile { width: 36px; height: 36px; font-size: 18px; }
+/* An app channel's handle, muted after its name. */
+.messages-channel-handle {
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 /* THE KIND MARK. People get none — they are the overwhelming majority of an
@@ -17086,7 +17982,15 @@ html.un-kb #platform-parked {
      rail's own, because it IS the rail; what changes is that it floats. */
   .platform-tabs.platform-tabs-peek {
     z-index: 40;
-    background-color: var(--dc-sheet);
+    /* THE SAME FROSTED SURFACE AS THE DOCKED RAIL (#2795). This was the solid
+       `--dc-sheet`, so the rail came back over the page as a white panel
+       rather than as the rail. `.platform-tabs` already carries the frost;
+       restating the fill is what stops the solid one winning, and the
+       `@supports not` fallback above still gives a browser with no
+       backdrop-filter the solid sheet. */
+    background-color: var(--dc-sheet-fill);
+    backdrop-filter: var(--dc-frost);
+    -webkit-backdrop-filter: var(--dc-frost);
     border-right: 1px solid var(--app-sheet-line);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
     /* A FADE, NOT A SLIDE. A rail that slides in from the edge races the
@@ -17094,6 +17998,17 @@ html.un-kb #platform-parked {
        already where it is going to be. It was tried both ways in the design
        study and this is the one that stopped feeling like a mistake. */
     animation: platform-rail-peek-in 140ms ease-out;
+    /* On the peek itself, so the way back in from a half-finished fade is
+       the same curve as the way out. */
+    transition: opacity 200ms ease-in;
+  }
+  /* …AND IT FADES OUT THE SAME WAY (#2795). It used to snap: the grace
+     period ran out and the rail went straight to `display: none`. The peek
+     now stays up for 200ms with this class on (frontend/src/features/nav/
+     rail-peek.ts, PEEK_FADE_MS), and pointing back at it during the fade
+     takes the class off, so the rail comes back from wherever it had got to. */
+  .platform-tabs.platform-tabs-peek.platform-tabs-peek-out {
+    opacity: 0;
   }
   /* The peeked rail's footer: the parked strip rides ON the rail rather than
      under it (a peeking rail is 40, above the strip's 31 beside a docked one)
@@ -17113,4 +18028,204 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .platform-tabs.platform-tabs-peek,
   body:has(#platform-tabs.platform-tabs-peek) .platform-parked { animation: none; }
+  .platform-tabs.platform-tabs-peek { transition: none; }
+}
+
+/* ── #platform-side-panel — THE PANEL BESIDE A RUNNING APP ───────────────
+   On a desktop-width window, while an app runs on its App tab, the pages
+   about it (its Workshop, its discussion, a proposal, an issue, a change, a
+   conversation) open in a panel beside it rather than replacing it —
+   frontend/src/features/side-panel/, whose controller carries the why.
+
+   THE APP IS NEVER RE-PARENTED, HIDDEN OR RE-SOURCED: its frame lives in
+   #app-view, and the only thing that changes about #app-view is its SIZE — a
+   right margin the width of the panel, keyed off `<html data-side-panel>`,
+   which the panel's mount writes while the panel is on screen. <html> is not
+   React-owned (main.tsx hydrates <body>), and a margin on a flex item is a
+   resize, which an iframe survives with its document intact.
+
+   THE BREAKPOINT IS 1024px, not the rail's 768. The panel is
+   clamp(360px, 36vw, 560px) wide and the app keeps about 480px beside it; at
+   768px the app would be left 408, and 1024 (`lg`, used above already) is the
+   first breakpoint where both fit — 655px of app at the narrowest. Below it
+   the panel is not drawn and the app takes the width back, so a window that
+   shrinks while the panel is open simply hides it, navigating nothing; every
+   link below the breakpoint navigates as it always has (the controller's
+   DESKTOP_QUERY is the same figure). */
+:root {
+  --side-panel-w: clamp(360px, 36vw, 560px);
+}
+
+.side-panel {
+  /* From the top of the app's sheet to the floor, down the right edge. The
+     same arithmetic the rail uses for "under the header", less the half rem
+     the header's rounded lower edge overlaps the screen below it — which is
+     where #app-view, and so the app's sheet, begins. */
+  position: fixed;
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
+    + var(--platform-safe-top, 0px) - .5rem);
+  right: 0;
+  bottom: 0;
+  width: var(--side-panel-w);
+  /* Over the app view and the header's transparent lower edge, under every
+     sheet, menu and rail (30 and up). */
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  /* THE APP'S SHEET, CONTINUED. The running app arrives as a raised sheet with
+     a rounded top and a hairline (see "THE APP SHEET" above); the panel is the
+     rest of that sheet, split from it by one hairline, and it takes the
+     sheet's outer corner — the app's own top-right corner goes square while
+     the panel is up (below). */
+  background: var(--home-ground);
+  border-top: 1px solid var(--app-sheet-line);
+  border-left: 1px solid var(--app-sheet-line);
+  border-top-right-radius: 1.75rem;
+  overflow: hidden;
+}
+
+/* THE DIVIDER (#2886) — the panel's left edge, as a handle. It sits over the
+   panel's own hairline (the border-left above), inside the panel because the
+   panel clips its corner, and shows itself only under the pointer, on focus
+   and while held: a brand-coloured bar where the hairline is. The width it
+   sets is `--side-panel-w` on <html> (features/side-panel/resize.ts), so the
+   app beside it follows through the margin rule below. */
+.side-panel-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.side-panel-divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--brand-ink);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.side-panel-divider:hover::after,
+.side-panel-divider:focus-visible::after,
+html.side-panel-resizing .side-panel-divider::after {
+  opacity: .45;
+}
+/* WHILE HELD: the two frames would take the pointer the moment it crossed
+   them and the drag would stall, so they stand aside; and nothing under the
+   pointer selects or shows another cursor. */
+html.side-panel-resizing iframe {
+  pointer-events: none;
+}
+html.side-panel-resizing,
+html.side-panel-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-panel-divider::after { transition: none; }
+}
+
+.side-panel-head {
+  /* Back · title · Expand · Close, in the header's own disc controls. */
+  height: 3rem;
+  padding: 0 0.875rem 0 0.75rem;
+  border-bottom: 1px solid var(--app-sheet-line);
+}
+/* Back's display, which its className cannot carry beside the `hidden` it
+   ships with (see side-panel.tsx). Keyed on NOT hidden, so the utility still
+   hides it whenever there is nowhere for it to go. */
+.side-panel-head > #side-panel-back:not(.hidden) {
+  display: inline-flex;
+}
+
+.side-panel-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The panel's own document. Transparent until it has routed its first page —
+   a shell booting in a frame paints its boot screen first — with the spinner
+   behind it; then it fades in once and stays. */
+.side-panel-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.side-panel-frame-ready {
+  opacity: 1;
+}
+.side-panel-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.side-panel-spinner {
+  width: 20px;
+  height: 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side-panel-frame { transition: none; }
+}
+
+@media (max-width: 1023.98px) {
+  /* Below the breakpoint the panel is not drawn at all, and the rules below
+     do not apply, so the app has the whole window back. */
+  #platform-side-panel {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  html[data-side-panel] #app-view {
+    margin-right: var(--side-panel-w);
+    min-width: 480px;
+  }
+  html[data-side-panel] #app-frame-host {
+    border-top-right-radius: 0;
+  }
+}
+
+/* ── THE SIDE PANEL'S OWN DOCUMENT (`?panel=1`) ──────────────────────────
+   The platform, framed beside a running app, showing one page: no header,
+   no tab bar or rail, no parked strip, no banners — the top window has all
+   of those — and none of the space they reserve. `in-side-panel` is put on
+   <html> by head.html before the first paint, and only when the document is
+   framed by a same-origin top window (a `?panel=1` address opened on its own
+   is the ordinary platform). The frame is narrow, so every screen takes its
+   phone layout, which is the point: the panel is a phone-width column. */
+html.in-side-panel :is(#platform-header, #platform-tabs, #platform-rail-peek,
+    #platform-parked, #chromeless-pill, #offline-banner, #mobile-install-banner,
+    #view-as-non-admin-banner, #platform-side-panel) {
+  display: none !important;
+}
+html.in-side-panel {
+  /* Nothing sits above a screen here, so nothing measured from the header's
+     foot (the Workshop's fitted area, a sheet's cap) reserves its 52px. */
+  --platform-header-h: 0px;
+}
+html.in-side-panel body {
+  /* The bar's band, its parked-strip addition and the rail's width, all nil —
+     !important because the rules that reserve them key off the bar's own
+     visibility, which the router publishes only once it has routed. */
+  --platform-tabs-h: 0px !important;
+  --platform-bar-h: 0px !important;
+  --platform-rail-w: 0px !important;
 }

@@ -180,6 +180,8 @@ function toRow(session, appNameFallback) {
     // Streamlined Concept: the app-context sheet's change rows show a
     // relative time, the way the Figma board draws them.
     lastActivityAt: session.last_activity_at || session.created_at || null,
+    // #2779: the agent session this change was started from, if any.
+    agentSessionId: session.agent_session_id || null,
   };
 }
 
@@ -259,6 +261,7 @@ const Improve = {
         slug: null,
         name: '',
         selfHosted: false,
+        restricted: false,
         repoUrl: null,
         iconUrl: null,
         iconEmoji: null,
@@ -288,6 +291,9 @@ const Improve = {
       slug: target.slug,
       name: target.name || '',
       selfHosted: !!target.selfHosted,
+      // Homeroom for a viewer not served its row (../app-context/
+      // platform-target.js): the menu hides the rows that would 404.
+      restricted: target.kind === 'platform' && !!target.restricted,
       repoUrl: target.repoUrl || null,
       iconUrl: target.iconUrl || null,
       iconEmoji: target.iconEmoji || null,
@@ -967,10 +973,65 @@ const Improve = {
    */
   startSession() {
     Improve.close();
+    // #2779: with agent sessions on, new work starts in a conversation with
+    // the Mayor, focused on the app Improve is pointed at (Improve's "New
+    // change" and the Workshop's "Start here" both come through here).
+    if (Improve._startAgentSession({ slug: improveStore.get().slug, entry: 'improve' })) return;
+    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
+    // THE SIDE PANEL (desktop): New change on a running app opens the unsent
+    // change in a panel BESIDE the app, which keeps running
+    // (frontend/src/features/side-panel/). The one-shot hint rides along to
+    // the panel's own document, where the screen is drawn. Declined whenever
+    // that is not the moment, and the change opens here as before.
+    const { slug } = improveStore.get();
+    const panel = window.UsernodeReact?.sidePanel;
+    if (slug && panel?.take?.(`app/${encodeURIComponent(slug)}/dev/sessions/${ref}`,
+      { proposalHint: true })) return;
+    Improve._nextSessionOrigin = '#messages';
+    if (window.AppView) window.AppView._proposalHint = true;
+    Improve._withApp(null, { subTab: 'sessions', ref });
+  },
+
+  /**
+   * #2779: start an agent session instead of a classic one, when the viewer
+   * has them on. True when it took the start; false leaves the caller to go
+   * on as before. The hint carries whatever the entry point knows, and the
+   * server drops an app the viewer cannot see rather than refusing.
+   */
+  _startAgentSession(hint) {
+    const agent = window.UsernodeReact?.agentSession;
+    if (window.App?.user?.agentSessionsEnabled !== true || !agent) return false;
+    const clean = {};
+    if (hint && typeof hint.slug === 'string' && hint.slug) clean.slug = hint.slug;
+    if (hint && Number.isInteger(hint.issueNumber)) clean.issueNumber = hint.issueNumber;
+    if (hint && Number.isInteger(hint.proposalId)) clean.proposalId = hint.proposalId;
+    if (hint && typeof hint.entry === 'string') clean.entry = hint.entry;
+    void agent.start(clean);
+    return true;
+  },
+
+  /**
+   * New change on a NAMED app (#2778): Messages' "+" → Agent chat, once the
+   * viewer has picked which app. The same destination startSession reaches —
+   * `/dev/sessions/new`, lighting the Messages tab, back arrow up to
+   * Messages — for an app that need not be the one Improve is pointed at.
+   * Nothing is created until the first send, exactly as there.
+   *
+   * A later change will point this at a platform-wide agent session instead;
+   * the caller does not need to know which.
+   */
+  async startSessionFor(slug) {
+    if (!slug || !window.App) return;
+    Improve.close();
+    if (Improve._startAgentSession({ slug, entry: 'messages' })) return;
     Improve._nextSessionOrigin = '#messages';
     if (window.AppView) window.AppView._proposalHint = true;
     const ref = window.DevChat?.NEW_SESSION_REF || 'new';
-    Improve._withApp(null, { subTab: 'sessions', ref });
+    if (window.App.currentApp === slug) {
+      await window.App.switchTab('dev', ref, 'sessions');
+    } else {
+      await window.App.navigateToApp(slug, 'dev', ref, 'sessions');
+    }
   },
 
   /**

@@ -56,7 +56,8 @@ test('geolocation is a GATED capability, not part of the ungated base', () => {
 
 test('the React app frame delegates from the grant set, not a constant', () => {
   const src = read('frontend/src/features/app-frame/app-frame.tsx');
-  assert.match(src, /allow=\{state\.allow\}/);
+  // `look` is the frame's own record: the mounted app's, or a kept one's (#2902).
+  assert.match(src, /allow=\{look\.allow\}/);
   // The constant this replaced must be gone, not merely unused.
   assert.ok(!src.includes("const ALLOW = "), 'the flat ALLOW constant is retired');
   assert.ok(!/allow="[^"]*geolocation/.test(src), 'no static geolocation delegation');

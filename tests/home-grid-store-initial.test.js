@@ -62,6 +62,10 @@ test('the initial state renders NOTHING, which is the prerendered markup', () =>
   assert.equal(INITIAL_GRID.resultsHeading, null);
   assert.equal(INITIAL_GRID.emptyQuery, null);
   assert.equal(INITIAL_GRID.notice, null);
+  // …and no Create tile. It is data-placed (after the last tile), so drawing
+  // it before the first Home.render() would add a child the prerendered
+  // #app-list does not have.
+  assert.equal(INITIAL_GRID.create, null);
 });
 
 // ── The SECOND home store ─────────────────────────────────────────────
@@ -112,7 +116,7 @@ test('the initial chrome renders the two EMPTY hosts the shell shipped', () => {
 //
 // home-panels.js's, and a separate one for a separate module's paint:
 // `HomePanels.render()` is called from `Home.render()` but also on its own —
-// an expand toggle, an optimistic hide — and the three blocks below the grid
+// an expand toggle, an optimistic hide — and the two blocks below the grid
 // have nothing to do with the launcher canvas above them.
 
 test('the harness mirrors INITIAL_PANELS exactly', () => {
@@ -124,8 +128,8 @@ test('the harness mirrors INITIAL_PANELS exactly', () => {
     'tests/helpers/home-grid-store.js has drifted from panels-store.ts');
 });
 
-test('the initial panels render the three EMPTY, UN-hidden hosts', () => {
-  // The other two stores ship their hosts hidden; these three do not, and the
+test('the initial panels render the two EMPTY, UN-hidden hosts', () => {
+  // The other two stores ship their hosts hidden; these two do not, and the
   // difference is real rather than an oversight. The hand-written shell shipped
   // `<section class="px-3 pb-3">` with no `hidden`, so that is what the
   // prerendered document contains and what the first client render has to
@@ -135,5 +139,7 @@ test('the initial panels render the three EMPTY, UN-hidden hosts', () => {
   assert.equal(INITIAL_PANELS.painted, false);
   assert.equal(INITIAL_PANELS.discover, null);
   assert.equal(INITIAL_PANELS.challenges, null);
-  assert.equal(INITIAL_PANELS.create, null);
+  // Create left this store with its section: it is the grid's trailing tile,
+  // and its model rides INITIAL_GRID.create above.
+  assert.equal('create' in INITIAL_PANELS, false);
 });

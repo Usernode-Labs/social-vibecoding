@@ -246,6 +246,7 @@ const GroupChat = {
       GroupChat.render();
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
+      GroupChat._applyPendingReveal();
       return;
     }
     GroupChat.connect(appSlug);
@@ -407,6 +408,26 @@ const GroupChat = {
     return [...byId.values()];
   },
 
+  // A block changes which persisted posts this viewer may see. Drop every
+  // cached page (including topic discussions) before reloading from the
+  // filtered API; an in-flight fetch may no longer publish its old result.
+  refreshAfterBlock() {
+    GroupChat._historyLoad = null;
+    GroupChat.messages = [];
+    GroupChat.oldestMessageId = null;
+    GroupChat.hasMore = true;
+    GroupChat.threads = new Map();
+    GroupChat.typingUsers.clear();
+    if (!GroupChat.appSlug) return;
+    GroupChat.render();
+    void GroupChat.loadHistory();
+    const active = GroupChat.activeThread;
+    if (active) {
+      GroupChat.renderThread();
+      void GroupChat.loadThreadHistory(active.type, active.ref);
+    }
+  },
+
   async loadHistory() {
     if (!GroupChat.appSlug || GroupChat._historyLoad) return;
     const load = {};
@@ -441,6 +462,7 @@ const GroupChat = {
       if (isFirstLoad && !GroupChat._didInitialScroll) {
         GroupChat.scrollToBottom();
         GroupChat._didInitialScroll = true;
+        GroupChat._applyPendingReveal();
       } else if (container) {
         const newScrollHeight = container.scrollHeight;
         container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
@@ -682,10 +704,14 @@ const GroupChat = {
     const pr = (isVote || linksProposal) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
     return {
       id: msg.id == null ? null : Number(msg.id),
+      senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
       time: stamp.text,
       timeTitle: stamp.title,
+      // #2783: the raw instant, which the transcript groups consecutive
+      // messages from one person on (groupsWithPrevious); `time` is display.
+      at: msg.createdAt || msg.created_at || null,
       bodyHtml: kind === 'message' ? renderMessageBody(msg.content) : '',
       systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
       mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
@@ -3120,6 +3146,74 @@ const GroupChat = {
     }
   },
 
+  // ── A bell row's message, brought into view ─────────────────────────
+  //
+  // A mention, a reply, a reaction or a saved message names ONE message of an
+  // app's discussion, and the discussion opened at the newest with that
+  // message somewhere above it. The bell asks for it here as it opens the
+  // discussion in Messages (Notifications._openAppDiscussion); the first
+  // history load of that app — or the remount of an app already loaded, or
+  // this call itself when that discussion is the one already open — scrolls
+  // it to the middle of the stream and flashes it, the highlight a quote's
+  // jump-to-original lands on. Only a message inside the page that loaded
+  // can be shown; one older than that leaves the stream at the newest, as
+  // before. The request lapses after REVEAL_TTL_MS, so a discussion opened
+  // much later is not moved by a click it never saw.
+  _pendingReveal: null,
+  REVEAL_TTL_MS: 20000,
+
+  revealMessage(appSlug, messageId) {
+    const id = Number(messageId);
+    if (!appSlug || !Number.isSafeInteger(id) || id <= 0) return;
+    GroupChat._pendingReveal = { slug: appSlug, id, at: Date.now() };
+    // Now, only when the stream on screen is that discussion's pane in
+    // Messages: anywhere else the click is about to move the reader there,
+    // and the mount it lands on applies it.
+    const container = document.getElementById('gc-messages');
+    const pane = container && container.closest && container.closest('[data-discussion-app]');
+    if (pane && pane.getAttribute('data-discussion-app') === appSlug) {
+      GroupChat._applyPendingReveal();
+    }
+  },
+
+  _applyPendingReveal(attempt = 0) {
+    const want = GroupChat._pendingReveal;
+    if (!want) return false;
+    if (Date.now() - want.at > GroupChat.REVEAL_TTL_MS) {
+      GroupChat._pendingReveal = null;
+      return false;
+    }
+    if (GroupChat.appSlug !== want.slug || !GroupChat._didInitialScroll) return false;
+    const container = document.getElementById('gc-messages');
+    if (!container) return false;
+    const row = container.querySelector(`[data-msg-id="${want.id}"]`);
+    if (!row) {
+      // The transcript is published BATCHED (features/group-chat/mount.ts):
+      // its rows land in React's next commit, a frame or so after render().
+      // Wait for them while the message is one this page loaded; one older
+      // than the page is not coming, and the stream stays at the newest.
+      const loaded = GroupChat.messages.some((m) => Number(m && m.id) === want.id);
+      if (loaded && attempt < 30 && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => GroupChat._applyPendingReveal(attempt + 1));
+      } else {
+        GroupChat._pendingReveal = null;
+      }
+      return false;
+    }
+    GroupChat._pendingReveal = null;
+    // Scrolled inside the stream only: scrollIntoView would move every
+    // scrolling ancestor too. Unlocked from the bottom FIRST, or the
+    // ResizeObserver in attachScrollHandlers pins it straight back.
+    GroupChat._lockedToBottom = false;
+    const box = container.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    container.scrollTop += (at.top - box.top) - (box.height - at.height) / 2;
+    GroupChat._savedScrollTop = container.scrollTop;
+    GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
+    setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
+    return true;
+  },
+
   restoreScroll() {
     const container = document.getElementById('gc-messages');
     if (!container) return;
@@ -3146,6 +3240,19 @@ function escapeHtml(str) {
 // current viewer's username get the `-self` variant so their own mentions
 // stand out more than someone else's. A second pass (#130) chips PR#N / #N
 // references so they read as navigable tokens.
+// #2783: the viewer's channel handles — #general and one per app they are a
+// member of — from the Messages store (features/messages/channels.ts), which
+// is what decides whether a `#name` is a channel reference or just text.
+// Empty until that store has loaded its lists, when a `#name` stays text.
+function knownChannelHandles() {
+  try {
+    const list = window.UsernodeReact?.messages?.channels?.() || [];
+    return new Set(list.map((item) => item.handle));
+  } catch {
+    return new Set();
+  }
+}
+
 function renderWithMentions(raw) {
   const escaped = escapeHtml(raw || '');
   const me = (App.user?.username || '').toLowerCase();
@@ -3154,7 +3261,19 @@ function renderWithMentions(raw) {
     const cls = isMe ? 'gc-mention gc-mention-self' : 'gc-mention';
     return `${pre}<span class="${cls}">@${name}</span>`;
   });
-  return renderRefChips(withMentions);
+  return renderChannelChips(renderRefChips(withMentions));
+}
+
+// #2783: `#name` for a channel the viewer knows becomes a link to it. After
+// the issue pass, which only takes digits, so `#123` is never a channel.
+function renderChannelChips(html) {
+  const handles = knownChannelHandles();
+  if (!handles.size) return html;
+  return html.replace(/(^|[^\w&;"=\/])#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-])/g, (m, pre, name) => {
+    const handle = name.toLowerCase();
+    if (!handles.has(handle)) return m;
+    return `${pre}<a class="gc-channel-ref" href="#messages/channel/${handle}" data-channel-ref="${handle}">#${handle}</a>`;
+  });
 }
 
 // #130: second replacement pass over the (already escaped, mention-marked)
@@ -3238,7 +3357,7 @@ function decorateTextNode(textNode) {
   const value = textNode.nodeValue != null ? textNode.nodeValue : (textNode.textContent || '');
   const me = (typeof App !== 'undefined' && App.user && App.user.username
     ? App.user.username : '').toLowerCase();
-  const segs = tokenizeMentionsAndRefs(value, me);
+  const segs = tokenizeMentionsAndRefs(value, me, knownChannelHandles());
   if (segs.length === 1 && segs[0].type === 'text') return; // nothing to decorate
   const parent = textNode.parentNode;
   if (!parent) return;
@@ -3251,6 +3370,15 @@ function decorateTextNode(textNode) {
       span.className = seg.isSelf ? 'gc-mention gc-mention-self' : 'gc-mention';
       span.textContent = `@${seg.name}`;
       frag.appendChild(span);
+    } else if (seg.type === 'channel') {
+      // #2783: a real link — see .gc-channel-ref in app.css for why it is
+      // not a `.gc-ref`.
+      const link = document.createElement('a');
+      link.className = 'gc-channel-ref';
+      link.setAttribute('href', `#messages/channel/${seg.handle}`);
+      link.setAttribute('data-channel-ref', seg.handle);
+      link.textContent = `#${seg.handle}`;
+      frag.appendChild(link);
     } else { // ref
       const span = document.createElement('span');
       span.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
@@ -3271,8 +3399,12 @@ function decorateTextNode(textNode) {
 // path and the server-side mention parser (MENTION_CHARS, length 1..32). The
 // leading boundary char each pattern requires is preserved as text. One
 // combined regex so `PR#12` is never half-consumed by the bare `#N` pattern.
-function tokenizeMentionsAndRefs(text, me) {
-  const RE = /(^|[^\w])(@([A-Za-z0-9_]{1,32})|(pr ?#|#)(\d{1,7})(?!\w))/gi;
+function tokenizeMentionsAndRefs(text, me, channels) {
+  // #2783: a third alternative, `#name` for a channel — a letter first, so it
+  // never competes with `#123`. Only a handle in `channels` is one; any other
+  // `#word` is left as text.
+  const RE = /(^|[^\w])(@([A-Za-z0-9_]{1,32})|(pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
+  const known = channels || new Set();
   const segs = [];
   let pos = 0;
   let m;
@@ -3283,10 +3415,13 @@ function tokenizeMentionsAndRefs(text, me) {
     else segs.push({ type: 'text', value: s });
   };
   while ((m = RE.exec(text)) !== null) {
+    if (m[6] != null && !known.has(m[6].toLowerCase())) continue;
     pushText(text.slice(pos, m.index));
     pushText(m[1]); // boundary char (start-of-string is '')
     if (m[3] != null) {
       segs.push({ type: 'mention', name: m[3], isSelf: m[3].toLowerCase() === me });
+    } else if (m[6] != null) {
+      segs.push({ type: 'channel', handle: m[6].toLowerCase() });
     } else {
       segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5] });
     }
@@ -3645,7 +3780,11 @@ const RefAutocomplete = {
   // renderer wouldn't chip. The `@` vs `#` triggers are mutually exclusive
   // at one caret position, so this menu and MentionAutocomplete's can't
   // both be open at once.
-  _triggerRe: /(^|[^\w&])(pr ?#|#)(\d{0,7})$/i,
+  //
+  // #2783: a bare `#` also offers the viewer's CHANNELS, and a query that
+  // starts with a letter (`#gen`) narrows to them — the same split the
+  // renderer makes, where `#123` is an issue and `#general` a channel.
+  _triggerRe: /(^|[^\w&])(pr ?#|#)(\d{0,7}|[A-Za-z][A-Za-z0-9-]{0,39})$/i,
 
   // Wire (or re-wire) the controller onto a freshly-rendered composer.
   // Idempotent per element; called on every group-chat tab mount. Kicks
@@ -3716,6 +3855,8 @@ const RefAutocomplete = {
     const before = input.value.slice(0, caret);
     const m = before.match(RefAutocomplete._triggerRe);
     if (!m) return null;
+    // A PR is a number, never a channel.
+    if (m[2].length > 1 && !/^\d*$/.test(m[3])) return null;
     return {
       start: m.index + m[1].length,
       query: m[3],
@@ -3727,12 +3868,23 @@ const RefAutocomplete = {
   // Combined mode lists the issues block first, then PRs.
   _filter(query, mode) {
     const c = RefAutocomplete._cacheBySlug.get(RefAutocomplete._slug) || {};
+    const q = String(query || '').toLowerCase();
+    // #2783: the viewer's channels, from the Messages store. Offered on a
+    // bare `#` (after the issues and PRs) and alone once the query is a word.
+    let channels = [];
+    if (mode !== 'pr' && !/^\d+$/.test(q)) {
+      try {
+        channels = (window.UsernodeReact?.messages?.channels?.() || [])
+          .map((item) => ({ number: item.handle, title: item.name || '', kind: 'channel' }));
+      } catch { channels = []; }
+    }
+    const word = /^[a-z]/.test(q);
     const pool = mode === 'pr'
       ? (c.prs || [])
-      : [...(c.issues || []), ...(c.prs || [])];
+      : word ? channels : [...(c.issues || []), ...(c.prs || []), ...channels];
     const out = [];
     for (const item of pool) {
-      if (!query || String(item.number).startsWith(query)) {
+      if (!q || String(item.number).toLowerCase().startsWith(q)) {
         out.push(item);
         if (out.length >= RefAutocomplete.MAX_RESULTS) break;
       }
@@ -3893,7 +4045,7 @@ const RefAutocomplete = {
     const value = input.value;
     const before = value.slice(0, RefAutocomplete._tokenStart);
     const after = value.slice(caret);
-    const insert = kind === 'pr' ? `PR#${number} ` : `#${number} `;
+    const insert = kind === 'pr' ? `PR#${number} ` : `#${number} `; // a channel is `#handle `
     const next = before + insert + after;
 
     const max = parseInt(input.getAttribute('maxlength') || '0', 10);

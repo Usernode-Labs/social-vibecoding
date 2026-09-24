@@ -38,7 +38,7 @@
  */
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, WarningTriangleIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { settingsNavStore } from './settings-nav-store.js';
@@ -157,8 +157,18 @@ function NavRow({ item }: { item: NavItem }) {
       className={item.className}
       onClick={() => navClick(item.key)}
     >
-      {item.label}
+      <SettingsLabel item={item} />
     </button>
+  );
+}
+
+function SettingsLabel({ item }: { item: { key: string; label: string } }) {
+  if (item.key !== 'delete-account') return <>{item.label}</>;
+  return (
+    <span className="flex items-center gap-2 text-red-700 dark:text-red-400">
+      <WarningTriangleIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span>{item.label}</span>
+    </span>
   );
 }
 
@@ -223,7 +233,7 @@ export function SettingsMobileMenu() {
                 // one-word menu entries with no second line, so bold made the
                 // whole menu read as a stack of headings.
                 titleClassName="font-normal"
-                title={item.label}
+                title={<SettingsLabel item={item} />}
                 onClick={() => navClick(item.key)}
               />
             ))}

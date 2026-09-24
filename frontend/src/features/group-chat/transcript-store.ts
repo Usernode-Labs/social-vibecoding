@@ -194,6 +194,7 @@ export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
+  senderId?: number | null;
   /**
    * Rendered stamp — formatted by the module, whose locale rules these are.
    * The time of day alone for today's messages, prefixed with the date once
@@ -202,6 +203,8 @@ export interface TranscriptMessage {
   time: string;
   /** The same instant with nothing elided, for `title`. */
   timeTitle: string;
+  /** #2783: the raw instant (ISO), which consecutive messages group on. */
+  at?: string | null;
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
   systemText: string;

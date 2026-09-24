@@ -362,7 +362,7 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
     try {
       execution = await kubernetes.runEvidenceJob(config, {
         sessionId, stdinPayload: payload,
-        timeoutMs: config.visualEvidence?.maxRunMs || 720_000,
+        timeoutMs: config.visualEvidence?.maxRunMs || 1_440_000,
         maxBuffer: MAX_OUTPUT_BYTES,
         salvagePartial: true,
         onStdoutLine, signal, previewRunId,
@@ -377,7 +377,7 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
         image: require('./visuals').CAPTURE_IMAGE,
         stdinPayload: payload,
         cmd: ['node', '/app/evidence-replay.js'],
-        memory: '6g', cpus: '8', timeoutMs: config.visualEvidence?.maxRunMs || 720_000,
+        memory: '6g', cpus: '8', timeoutMs: config.visualEvidence?.maxRunMs || 1_440_000,
         maxBuffer: MAX_OUTPUT_BYTES, onStdoutLine,
       });
     } catch (err) {
@@ -407,6 +407,63 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
     });
   }
   return parsed;
+}
+
+// Each story/viewport starts from the same prepared database fixture. A
+// control changed on desktop must not change the mobile replay (or a later
+// story). Keep the complete plan in every browser job so its hash is still
+// the one accepted and stored for this run.
+async function runPassCases(config, sessionId, input, {
+  prepareCase, onEvent = null, previewRunId = null, signal = null,
+  runCase = runPass,
+} = {}) {
+  if (typeof prepareCase !== 'function') {
+    throw new EvidenceReplayError('missing_case_reset', 'Replay requires a fresh paired fixture for each story and viewport.');
+  }
+  const plan = planContract.parseReplayPlan(input.plan);
+  const planHash = planContract.planHash(plan);
+  const cases = expectedCoverage(plan);
+  const stories = [];
+  const artifacts = [];
+  const events = [];
+  let provenance = null;
+  for (const [index, item] of cases.entries()) {
+    const prepared = await prepareCase({ storyId: item.storyId, viewport: item.viewport,
+      index, total: cases.length, pass: input.pass });
+    const partial = await runCase(config, sessionId, {
+      ...input, plan, origins: prepared.origins,
+      selection: { storyId: item.storyId, viewport: item.viewport },
+    }, { signal, onEvent, previewRunId });
+    const result = partial?.result;
+    const caseProvenance = comparableProvenance(result?.provenance);
+    if (result?.passed !== true || result.runId !== input.runId || result.pass !== input.pass
+        || result.planHash !== planHash || result.stories?.length !== 1
+        || result.stories[0].id !== item.storyId || result.stories[0].viewport !== item.viewport
+        || (partial.artifacts || []).some((artifact) =>
+          artifact.storyId !== item.storyId || artifact.viewport !== item.viewport)
+        || !caseProvenance
+        || (input.provenance && JSON.stringify(caseProvenance)
+          !== JSON.stringify(comparableProvenance(input.provenance)))
+        || (provenance && JSON.stringify(caseProvenance)
+          !== JSON.stringify(comparableProvenance(provenance)))) {
+      throw new EvidenceReplayError('isolated_replay_mismatch',
+        'An isolated browser job returned a different case, plan, or fixture.');
+    }
+    provenance = result.provenance;
+    stories.push(result.stories[0]);
+    artifacts.push(...(partial.artifacts || []));
+    events.push(...(partial.events || []));
+  }
+  if (!hasExactCoverage(stories, artifacts, plan,
+    { publishArtifacts: input.publishArtifacts === true })) {
+    throw new EvidenceReplayError('incomplete_replay_coverage',
+      'Isolated browser jobs did not produce every declared story, viewport, and artifact.');
+  }
+  return {
+    result: { passed: true, runId: input.runId, pass: input.pass, planHash,
+      provenance, stories, artifactCount: artifacts.length },
+    artifacts, events,
+  };
 }
 
 async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}) {
@@ -469,5 +526,6 @@ module.exports = {
   comparableProvenance,
   reproducibleStories,
   runPass,
+  runPassCases,
   storeArtifacts,
 };

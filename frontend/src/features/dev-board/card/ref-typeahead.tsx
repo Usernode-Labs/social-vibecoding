@@ -310,7 +310,7 @@ export function useRefTypeahead({
     e.preventDefault();
     e.stopPropagation();
     if (key === 'close') close();
-    else if (key === 'accept') accept(item.kind, item.number);
+    else if (key === 'accept') accept(item.kind, Number(item.number));
     else setActive((prev) => (prev + (key === 'down' ? 1 : -1) + items.length) % items.length);
     return true;
   }, [items, active, accept, close]);

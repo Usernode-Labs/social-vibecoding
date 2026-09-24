@@ -11,7 +11,8 @@ const row = id => ({
   created_at: new Date(Date.UTC(2026, 8, 14) + id * 1000).toISOString(),
 });
 const key = item => `${item.row_type || 'pr'}:${item.id}`;
-const compare = (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)
+const completed = row => row.completed_at || row.merged_at || row.payload?.appliedAt || row.created_at;
+const compare = (a, b) => Date.parse(completed(b)) - Date.parse(completed(a))
   || (b.row_type === 'close_issue' ? 0 : 1) - (a.row_type === 'close_issue' ? 0 : 1)
   || b.id - a.id;
 const deferred = () => {
@@ -35,7 +36,7 @@ function fixture(rows = Array.from({ length: 100 }, (_, i) => row(i + 1))) {
       if (url.pathname.endsWith('/merged')) {
         const sorted = state.rows.slice().sort(compare);
         const q = url.searchParams;
-        const cursor = q.has('before') ? { created_at: q.get('before'), id: Number(q.get('before_id')), row_type: q.get('before_type') } : null;
+        const cursor = q.has('before') ? { completed_at: q.get('before_completed_at') || q.get('before'), id: Number(q.get('before_id')), row_type: q.get('before_type') } : null;
         const remaining = cursor ? sorted.filter(r => compare(r, cursor) > 0) : sorted;
         const limit = Number(q.get('limit')) || 20;
         data = { merged: remaining.slice(0, limit), hasMore: remaining.length > limit, total: sorted.length };
@@ -84,6 +85,27 @@ test('live refresh preserves three loaded pages, updates rows and continues afte
   assert.equal(av._merged.length, 81);
   assert.equal(new Set(av._merged.map(key)).size, 81);
   assert.equal(av._mergedCursor.id, 21);
+});
+
+test('paging and expanded refresh follow merge time when creation order is reversed', async () => {
+  const rows = Array.from({ length: 100 }, (_, i) => ({
+    ...row(100 - i), merged_at: row(i + 1).created_at,
+  }));
+  const { av, state, expand, load } = fixture(rows);
+  await expand();
+  assert.equal(av._merged[0].id, 1);
+  assert.equal(av._mergedCursor.id, 60);
+  assert.equal(av._mergedCursor.completed_at, row(41).created_at);
+  const calls = state.calls.filter(url => url.searchParams.has('before'));
+  assert.equal(calls[0].searchParams.get('before_completed_at'), row(81).created_at);
+  state.rows.push({ ...row(0), merged_at: row(101).created_at });
+  await load();
+  assert.equal(av._merged[0].id, 0, 'old-created work merged now appears immediately');
+  assert.equal(av._merged.length, 61, 'loaded history survives the new merge');
+  await av.loadMoreMerged();
+  assert.equal(av._merged.length, 81);
+  assert.equal(av._mergedCursor.id, 80);
+  assert.equal(new Set(av._merged.map(key)).size, 81);
 });
 
 test('refresh removes stale rows, tolerates a removed boundary and keeps a working cursor', async () => {

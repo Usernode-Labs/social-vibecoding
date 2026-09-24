@@ -1294,6 +1294,25 @@ async function deleteWorker(config, sessionId, { deleteVolume = false } = {}) {
   if (deleteVolume) await deleteIfPresent(core, 'deleteNamespacedPersistentVolumeClaim', withSuffix(name, 'state'), namespace);
 }
 
+// A deletion acceptance is not proof that pods/PVCs finished terminating.
+// Account erasure keeps its durable task pending while finalizers run.
+async function eraseWorker(config, sessionId) {
+  await deleteWorker(config, sessionId, { deleteVolume: true });
+  const { apps, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const name = dnsName(`sv-worker-s${sessionId}`);
+  const absent = async (api, method, resourceName) => {
+    try { await api[method]({ namespace, name: resourceName }); }
+    catch (err) { if (isNotFound(err)) return; throw err; }
+    throw new Error('worker_erasure_pending');
+  };
+  await absent(apps, 'readNamespacedDeployment', name);
+  await absent(core, 'readNamespacedSecret', withSuffix(name, 'env'));
+  await absent(core, 'readNamespacedPersistentVolumeClaim', withSuffix(name, 'state'));
+  const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${name}` });
+  if (pods.items?.length) throw new Error('worker_erasure_pending');
+}
+
 async function listWorkers(config) {
   const namespace = config.kubernetes.workerNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
@@ -1666,7 +1685,7 @@ async function runCheckJob(config, {
   const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
   const resources = {
     requests: {
-      cpu: checkResourceRequest('1', cpuLimit, 'CPU'),
+      cpu: checkResourceRequest('4', cpuLimit, 'CPU'),
       memory: checkResourceRequest(unitSuite ? '1Gi' : '3Gi', memoryLimit, 'memory'),
       'ephemeral-storage': '1Gi',
     },
@@ -1712,9 +1731,26 @@ async function runCheckJob(config, {
       secret: { secretName: inputSecretName, items: [{ key: 'tests.json', path: 'tests.json' }] },
     });
   }
-  const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: {
+  // Count all check kinds and sessions together, excluding resident workers.
+  const checkSelector = {
+    'app.kubernetes.io/managed-by': MANAGED_BY,
+    'app.kubernetes.io/part-of': PART_OF,
+    'social.usernode.io/workload': 'check',
+  };
+  const checkLabels = { ...labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }), ...checkSelector };
+  const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: { ...checkLabels } }, spec: {
     backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: 3600,
-    template: { metadata: { labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: { restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount, automountServiceAccountToken: false, securityContext: nodePodSecurityContext(), containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}) } },
+    template: { metadata: { labels: { ...checkLabels } }, spec: {
+      restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
+      automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
+      // Prefer spare hosts without stranding checks when only one host fits.
+      topologySpreadConstraints: [{
+        maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
+        nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
+        labelSelector: { matchLabels: checkSelector },
+      }],
+      containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}),
+    } },
   } };
   const { batch, core } = getClients();
   if (previewRunId) {
@@ -2192,7 +2228,7 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runEvidenceJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
-  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, listWorkers, cloneWorkerVolume,
+  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,

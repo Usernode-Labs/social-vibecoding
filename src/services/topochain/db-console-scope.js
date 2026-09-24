@@ -120,6 +120,10 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'cli_auth_rate_limits',
   'mcp_clients',
   'mcp_auth_audit_events',
+  // Delegated connector grants (#2779): who holds a grant, of which kind, for
+  // which change, and until when. The bearer itself lives in mcp_tokens,
+  // whose hash and hint stay masked.
+  'mcp_delegations',
   'user_agent_files',
   'profile_reports',
   // Lifecycle rows without bearer/envelope material. Opaque ids, public
@@ -138,6 +142,8 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'chat_session_spec_conversation_shares',
   'user_blocks',
   'conversation_message_reports',
+  'app_reports',
+  'chat_message_reports',
   // Global Chat transcript rows are private user data, which keeps them out
   // of the automated production-debug role. The signed-in human-admin console
   // already follows the same deliberate policy for platform Messages above:
@@ -237,6 +243,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // exact action payload. This mirrors debug-access.js explicitly so adding a
   // new whole-table denial always has a reviewed console-side decision.
   global_chat_action_tokens: ['token_hash', 'input_hash', 'normalized_input'],
+  // The agent-session Mayor's confirmation cards (#2779): the lifecycle
+  // columns stay readable for diagnosis; the sealed input and its
+  // fingerprint do not.
+  agent_session_actions: ['input_hash', 'sealed_input'],
 };
 
 // Columns denied per table: the prod-debug list, the topochain export's

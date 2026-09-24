@@ -30,6 +30,7 @@ import './admin-homeroom-bot.tsx';
 import './admin-features.tsx';
 import './admin-limits.tsx';
 import './admin-users.tsx';
+import './admin-reports.tsx';
 import './admin-rollover.tsx';
 import './admin-staging-reap.tsx';
 import './admin-status.tsx';

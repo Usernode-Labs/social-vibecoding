@@ -50,9 +50,20 @@ selects a skill.
   quote a SHA. **Do not assume the branch you were handed is based
   correctly**, and do not reach for the fork's default branch as the base —
   that is the thing most likely to be stale.
-- **Establish the base commit before the first edit.** It comes from the work
-  order (`prepare_work`), from the guided hand-off's `Base commit:` line, or —
-  with neither to hand — from asking. Inspect the current checkout with
+- **Choose the proposal workflow before resolving the base.** For a native
+  locally authored proposal, follow `usernode-proposal`: resolve the app and
+  exact base through the authenticated Homeroom API, then use `proposal_start`
+  and the platform-managed commit upload. This path needs no personal GitHub
+  link and no `prepare_work`. That tool prepares an external fork contribution
+  and requires GitHub identity for that different workflow; do not call it
+  merely to discover a native proposal's base.
+- **Establish the base commit before the first edit.** Use an already supplied
+  work order or guided hand-off's `Base commit:` when present. For a new native
+  proposal, use the exact canonical revision resolved through Homeroom as
+  described in `usernode-proposal`; a verified API result is sufficient and
+  does not require another user confirmation. Ask only when no trustworthy
+  exact revision can be resolved or the user has requested an ambiguous base.
+  Inspect the current checkout with
   `git status --short --branch`, `git rev-parse HEAD`, and
   `git rev-parse --abbrev-ref HEAD`; compare all forty characters of `HEAD`.
   This is the check step 2 of the `usernode-proposal` skill already makes,

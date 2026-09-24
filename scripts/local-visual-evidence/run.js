@@ -116,6 +116,9 @@ async function createGitFixture() {
 
 async function exportReviewVideos(outputDir, pairedArtifacts) {
   const exports = [];
+  // The Docker daemon sees the physical host path, which may differ from a
+  // caller's symlinked path (notably /tmp on macOS).
+  const mountDir = await fs.realpath(outputDir);
   for (const paired of pairedArtifacts) {
     const source = `${paired.storyId}-${paired.viewport}-paired-animation.webm`;
     for (const side of ['base', 'head']) {
@@ -125,7 +128,7 @@ async function exportReviewVideos(outputDir, pairedArtifacts) {
       const crop = side === 'base' ? 'crop=iw/2:ih-36:0:36' : 'crop=iw/2:ih-36:iw/2:36';
       await docker([
         'run', '--rm', '--network', 'none', '--read-only', '--tmpfs', '/tmp',
-        '--mount', `type=bind,source=${outputDir},target=/evidence`,
+        '--mount', `type=bind,source=${mountDir},target=/evidence`,
         'usernode-capture:latest', 'ffmpeg', '-hide_banner', '-loglevel', 'error',
         '-i', `/evidence/${source}`, '-vf', crop,
         '-an', '-c:v', 'libvpx-vp9', '-crf', '36', '-b:v', '0', '-y',
@@ -193,11 +196,13 @@ async function runWithFixture(options, plan, fixture) {
       }
     };
 
-    await startPair();
-    const first = await replay.runPass(config, sessionId, inputFor(1), { onEvent });
-    await stopFixtures(containerNames);
-    await startPair();
-    const second = await replay.runPass(config, sessionId, inputFor(2), { onEvent });
+    const prepareCase = async () => {
+      await stopFixtures(containerNames);
+      await startPair();
+      return { origins };
+    };
+    const first = await replay.runPassCases(config, sessionId, inputFor(1), { prepareCase, onEvent });
+    const second = await replay.runPassCases(config, sessionId, inputFor(2), { prepareCase, onEvent });
     const verdict = replay.comparePasses(first, second, { plan, provenance, runId });
     if (!verdict.passed) throw new Error(`${verdict.code}: ${verdict.reason}`);
 

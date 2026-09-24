@@ -42,6 +42,8 @@
  * SecurityError, which a `.catch()` never sees.
  */
 
+import { isEmbeddedPanel } from './side-panel-mode';
+
 /**
  * Fired when the worker reports that a cached API answer it already served
  * is now out of date. `detail.url` is the request it applies to.
@@ -100,6 +102,11 @@ export function registerServiceWorker(): void {
   if (!container) return;
   try {
     listenForApiUpdates(container);
+    // The side panel's document (`?panel=1`, framed beside a running app)
+    // listens — the worker answers ITS reads too — but does not register:
+    // the top window already did, at the same scope, and a second
+    // registration from a frame is one more update check for nothing.
+    if (isEmbeddedPanel()) return;
     container.register('/sw.js').catch(() => {
       // Unsupported / blocked contexts (e.g. some WebViews) just keep
       // today's online-only behaviour.

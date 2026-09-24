@@ -189,7 +189,10 @@ test('no portal outlives its surface', () => {
   // away.
   assert.doesNotMatch(APP_VIEW, /subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots/);
   // `mountTopicSubView(content)` — no options object any more: the back bar
-  // the two props fed retired in favour of the platform header's chevron.
+  // the two props fed retired in favour of the platform header's chevron, and
+  // that in turn became the "‹ Workshop" chip at the top of the topic head
+  // (#2916), which TopicHead renders. Neither is the frame's, so the mount
+  // still takes nothing but its host.
   assert.match(APP_VIEW, /mountTopicSubView\(content\);/, 'the topic sub-view is mounted');
 
   // What replaces it for every host a caller is NOT in a position to know

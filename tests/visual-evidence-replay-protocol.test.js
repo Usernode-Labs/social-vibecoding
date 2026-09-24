@@ -98,6 +98,58 @@ test('Kubernetes streams action and failure events into the live diagnostics cal
   assert.equal(observed[0].actionId, 'open-settings');
 });
 
+test('each story and viewport runs after a fresh paired fixture reset', async () => {
+  const plan = require('./fixtures/visual-evidence').plan();
+  plan.stories[0].viewports.push({ name: 'mobile', width: 390, height: 844 });
+  const planHash = require('../src/services/visual-evidence-plan').planHash(plan);
+  const runId = 'a'.repeat(32);
+  let settingEnabled = true;
+  let resets = 0;
+  const selected = [];
+  const result = await replay.runPassCases({}, 42,
+    { runId, pass: 1, plan, publishArtifacts: false }, {
+      prepareCase: async (item) => {
+        settingEnabled = false;
+        resets += 1;
+        selected.push(`${item.storyId}/${item.viewport}`);
+        return { origins: { base: 'http://base:3000', head: 'http://head:3000' } };
+      },
+      runCase: async (_config, _sessionId, input) => {
+        assert.equal(settingEnabled, false, 'the preceding viewport must not change this fixture');
+        assert.equal(input.plan.stories[0].viewports.length, 2, 'each job carries the full hashed plan');
+        settingEnabled = true;
+        return {
+          result: { passed: true, runId, pass: 1, planHash,
+            provenance: { fixtureFingerprint: 'same-pair' },
+            stories: [{ id: input.selection.storyId, viewport: input.selection.viewport }] },
+          artifacts: [], events: [],
+        };
+      },
+    });
+  assert.equal(resets, 2);
+  assert.deepEqual(selected, ['invite-suggestions/desktop', 'invite-suggestions/mobile']);
+  assert.deepEqual(result.result.stories.map((item) => item.viewport), ['desktop', 'mobile']);
+  assert.equal(result.result.planHash, planHash);
+});
+
+test('an isolated case cannot return another viewport or fixture identity', async () => {
+  const plan = require('./fixtures/visual-evidence').plan();
+  const runId = 'a'.repeat(32);
+  const planHash = require('../src/services/visual-evidence-plan').planHash(plan);
+  await assert.rejects(replay.runPassCases({}, 42, {
+    runId, pass: 1, plan, publishArtifacts: false,
+    provenance: { fixtureFingerprint: 'expected' },
+  }, {
+    prepareCase: async () => ({ origins: { base: 'http://base:3000', head: 'http://head:3000' } }),
+    runCase: async () => ({
+      result: { passed: true, runId, pass: 1, planHash,
+        provenance: { fixtureFingerprint: 'changed' },
+        stories: [{ id: 'invite-suggestions', viewport: 'desktop' }] },
+      artifacts: [],
+    }),
+  }), { code: 'isolated_replay_mismatch' });
+});
+
 test('a browser job launcher error keeps its original code with bounded runtime context', async (t) => {
   const saved = kubernetes.runEvidenceJob;
   const launchError = Object.assign(new Error('Job timed out at http://internal/?token=secret.jwt'), {

@@ -38,6 +38,7 @@ import type { DevCardModel } from '../card/model';
 import { swatchFor } from '../../group-chat/swatch';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
+import { TopicBack } from './topic-back';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -512,7 +513,10 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
 export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
-  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} />;
+  // `back`: this IS the topic page, whose one back control is the chip at the
+  // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
+  // through here, a change page and an issue/governance thread head alike.
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} back />;
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */
@@ -1124,9 +1128,13 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
  * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
  * dev session (#2605). An issue or a governance vote keeps the card and
  * `TopicBodySections`.
+ *
+ * `back` puts the topic page's "‹ Workshop" chip (./topic-back.tsx) first in
+ * `.dev-topic`, above the hero or the card (#2916). Only `TopicHead` passes
+ * it: the chip is the page's back control, not part of the card.
  */
-export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false }: {
-  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean;
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false, back = false }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean; back?: boolean;
 }): ReactNode {
   const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
@@ -1172,6 +1180,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   const linkedIssues = Array.isArray(session?.linked_issues) ? session.linked_issues : [];
   return (
     <div ref={root} className="dev-topic">
+      {back ? <TopicBack /> : null}
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       {changePage ? (
         <>

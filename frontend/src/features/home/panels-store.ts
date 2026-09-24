@@ -1,6 +1,8 @@
 /**
- * The home screen's three fixed sections — Discover, Challenges, Create app —
- * as view models.
+ * The home screen's two fixed sections — Discover and Challenges — as view
+ * models. (Create app was a third until it became the launcher grid's trailing
+ * tile; that tile's view model rides the grid store, ./grid-store.ts, because
+ * it is placed by the same paint as the app tiles.)
  *
  * ── The split ─────────────────────────────────────────────────────────
  *
@@ -8,20 +10,20 @@
  * fetch and its TTL, the per-key expand flags, the hidden/removable rules, the
  * ⋮ menu's rows and both destinations. What it used to do on top of that —
  * build ~800 lines of HTML string per paint and re-attach eight families of
- * listener afterwards — is now this: compute three plain objects and push
- * them. `panels/sections.tsx` renders them.
+ * listener afterwards — is now this: compute plain objects and push them.
+ * `panels/sections.tsx` renders them.
  *
  * Every derivation the renderers did inline is resolved HERE, where the data
- * lives: which rows fit, whether the list reserves a meter lane, whether the
- * viewer may create an app. A component reads facts.
+ * lives: which rows fit, whether the list reserves a meter lane. A component
+ * reads facts.
  *
  * ── `painted` ─────────────────────────────────────────────────────────
  *
- * The three hosts ship WITHOUT `hidden` and empty, because that is what the
+ * The hosts ship WITHOUT `hidden` and empty, because that is what the
  * hand-written shell shipped and hydration has to agree. A section with
  * nothing to show is `hidden` — but only once a render has decided so.
  * `painted: false` is the difference between "not yet" and "nothing", and it
- * is why the flag exists rather than being inferred from three nulls.
+ * is why the flag exists rather than being inferred from the nulls.
  */
 
 import { createStore } from '../../lib/plain-store.js';
@@ -36,8 +38,6 @@ export interface PanelStamps {
   popular?: number;
   /** The Challenges block's composition: how many challenge rows it drew. */
   rows?: number;
-  /** The Create block's quota state. */
-  createEnabled?: boolean;
 }
 
 // ── Discover ──────────────────────────────────────────────────────────
@@ -192,27 +192,16 @@ export interface ChallengesView {
   groups?: ChallengeGroupView[];
 }
 
-// ── Create app ────────────────────────────────────────────────────────
-
-export interface CreateView {
-  key: string;
-  canCreate: boolean;
-  /** The compact ask-an-admin sentence shared by the tooltip and ⋮ note. */
-  hint: string;
-}
-
 export interface HomePanelsState {
   painted: boolean;
   discover: DiscoverView | null;
   challenges: ChallengesView | null;
-  create: CreateView | null;
 }
 
 export const INITIAL_PANELS: HomePanelsState = {
   painted: false,
   discover: null,
   challenges: null,
-  create: null,
 };
 
 export const panelsStore = createStore<HomePanelsState>(INITIAL_PANELS);

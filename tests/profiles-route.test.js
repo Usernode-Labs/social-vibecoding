@@ -127,11 +127,7 @@ function makePool() {
       return { rows: user ? [{ id: user.id, username: user.username }] : [] };
     }
     if (/SELECT id FROM users/.test(s) && /FOR UPDATE/.test(s)) {
-      const user = state.users.find((candidate) => (
-        candidate.username === params[0]
-        && candidate.profile_published
-        && !candidate.profile_disabled_at
-      ));
+      const user = state.users.find((candidate) => candidate.username === params[0]);
       return { rows: user ? [{ id: user.id }] : [] };
     }
     if (/INSERT INTO profile_reports/.test(s)) {
@@ -172,6 +168,17 @@ function makePool() {
       ));
       if (!report) return { rows: [] };
       report.status = 'dismissed';
+      report.resolved_by = params[0];
+      report.resolved_at = new Date().toISOString();
+      return { rows: [{ id: report.id, status: report.status }] };
+    }
+    if (/UPDATE profile_reports/.test(s) && /status = 'resolved'/.test(s)
+        && /WHERE id = \$2/.test(s)) {
+      const report = state.reports.find((candidate) => (
+        candidate.id === params[1] && candidate.status === 'pending'
+      ));
+      if (!report) return { rows: [] };
+      report.status = 'resolved';
       report.resolved_by = params[0];
       report.resolved_at = new Date().toISOString();
       return { rows: [{ id: report.id, status: report.status }] };
@@ -392,11 +399,29 @@ test('reports are authenticated, generic, idempotent, and lock against moderatio
       jsonOptions('alice', { reason: 'other' })
     );
     assert.equal(self.status, 400);
-    const lock = pool.state.calls.find((call) => (
-      /SELECT id FROM users/.test(call.sql) && /profile_published/.test(call.sql)
-    ));
+    const lock = pool.state.calls.find((call) => /SELECT id FROM users/.test(call.sql));
     assert.match(lock.sql, /FOR UPDATE/);
     assert.doesNotMatch(lock.sql, /FOR KEY SHARE/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('unpublished accounts can be reported and resolved without taking down their profile', async () => {
+  const pool = makePool();
+  const server = await start(pool);
+  try {
+    assert.equal((await request(server, '/api/users/admin/report',
+      jsonOptions('alice', { reason: 'harassment' }))).status, 202);
+    assert.equal(pool.state.reports.length, 1);
+    assert.equal(pool.state.reports[0].profile_user_id, 9);
+    const denied = await request(server, '/api/admin/profile-reports/1/resolve',
+      jsonOptions('viewer', {}));
+    assert.equal(denied.status, 403);
+    const resolved = await request(server, '/api/admin/profile-reports/1/resolve',
+      jsonOptions('admin', {}));
+    assert.equal(resolved.body.report.status, 'resolved');
+    assert.equal(pool.state.users.find((user) => user.id === 9).profile_disabled_at, null);
   } finally {
     await server.close();
   }

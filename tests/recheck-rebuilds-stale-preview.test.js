@@ -111,42 +111,44 @@ test('previewIsOfAnotherCommit and recheckHeadSha read the row pins', () => {
 
 // ── 1b. the recheck path takes the rebuild branch ──────────────────────
 
-test('recheckSessionChecks rebuilds a preview a clean sync left behind, and re-runs directly otherwise', async () => {
-  const { subject, restore } = loadRecovery(running);
-  const visuals = require('../src/services/visuals');
-  const saved = {
-    setChecksPending: visuals.setChecksPending,
-    notifyChecksPending: visuals.notifyChecksPending,
-    captureForSession: visuals.captureForSession,
-    storeChecksSkipped: visuals.storeChecksSkipped,
-    maybeAutoMergeAfterChecks: visuals.maybeAutoMergeAfterChecks,
-  };
-  let captured = 0;
-  let skippedReason = null;
-  visuals.setChecksPending = async () => true;
-  visuals.notifyChecksPending = () => {};
-  visuals.captureForSession = async () => { captured += 1; };
-  visuals.storeChecksSkipped = async (_pool, _id, _sha, reason) => { skippedReason = reason; return true; };
-  visuals.maybeAutoMergeAfterChecks = () => {};
-  const pool = { query: async () => ({ rows: [], rowCount: 1 }) };
-  try {
-    // The sync carried checks_commit_sha to the merge commit; the preview is
-    // still of the commit before it. No repo_url, so the rebuild branch
-    // short-circuits to 'skipped' — which is how we see it was taken.
-    const behind = { ...LIVE, app_id: 9, app_slug: 'app', status: 'promoted', source: 'native',
-      staging_commit_sha: 'pre-sync', checks_commit_sha: 'sync-commit' };
-    assert.equal(await subject.recheckSessionChecks({ config: null, pool, session: behind, reason: 'manual-recheck' }), 'skipped');
-    assert.equal(captured, 0, 'the old build was not tested');
-    assert.match(String(skippedReason), /GitHub is not configured/);
-    // Same commit: the healthy preview is re-run directly, as before.
-    const current = { ...behind, staging_commit_sha: 'sync-commit' };
-    assert.equal(await subject.recheckSessionChecks({ config: null, pool, session: current, reason: 'manual-recheck' }), 'rechecked');
-    assert.equal(captured, 1);
-  } finally {
-    Object.assign(visuals, saved);
-    restore();
-  }
-});
+for (const status of ['promoted', 'paused']) {
+  test(`recheckSessionChecks rebuilds a stale ${status} preview, and re-runs a current preview directly`, async () => {
+    const { subject, restore } = loadRecovery(running);
+    const visuals = require('../src/services/visuals');
+    const saved = {
+      setChecksPending: visuals.setChecksPending,
+      notifyChecksPending: visuals.notifyChecksPending,
+      captureForSession: visuals.captureForSession,
+      storeChecksSkipped: visuals.storeChecksSkipped,
+      maybeAutoMergeAfterChecks: visuals.maybeAutoMergeAfterChecks,
+    };
+    let captured = 0;
+    let skippedReason = null;
+    visuals.setChecksPending = async () => true;
+    visuals.notifyChecksPending = () => {};
+    visuals.captureForSession = async () => { captured += 1; };
+    visuals.storeChecksSkipped = async (_pool, _id, _sha, reason) => { skippedReason = reason; return true; };
+    visuals.maybeAutoMergeAfterChecks = () => {};
+    const pool = { query: async () => ({ rows: [], rowCount: 1 }) };
+    try {
+      // The sync carried checks_commit_sha to the merge commit; the preview is
+      // still of the commit before it. No repo_url, so the rebuild branch
+      // short-circuits to 'skipped' — which is how we see it was taken.
+      const behind = { ...LIVE, app_id: 9, app_slug: 'app', status, source: 'native',
+        staging_commit_sha: 'pre-sync', checks_commit_sha: 'sync-commit' };
+      assert.equal(await subject.recheckSessionChecks({ config: null, pool, session: behind, reason: 'manual-recheck' }), 'skipped');
+      assert.equal(captured, 0, 'the old build was not tested');
+      assert.match(String(skippedReason), /GitHub is not configured/);
+      // Same commit: the healthy preview is re-run directly, as before.
+      const current = { ...behind, staging_commit_sha: 'sync-commit' };
+      assert.equal(await subject.recheckSessionChecks({ config: null, pool, session: current, reason: 'manual-recheck' }), 'rechecked');
+      assert.equal(captured, 1);
+    } finally {
+      Object.assign(visuals, saved);
+      restore();
+    }
+  });
+}
 
 // ── 1c. the stamp ──────────────────────────────────────────────────────
 

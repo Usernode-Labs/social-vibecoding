@@ -3,16 +3,21 @@
 // challenges, as three top-level sections of one screen.
 //
 // Two levels of tabs:
-//   1. SECTION (Challenges | Kudos | Leaderboard), rendered into
+//   1. SECTION (Challenges | Kudos | Standings | History), rendered into
 //      #standings-tabs by this module. 'challenges' — the one a fresh visit
 //      opens on (#2374) — reveals #challenges-root and hands off to
-//      TopochainChallenges; 'topochain', labelled simply "Leaderboard",
+//      TopochainChallenges; 'topochain', labelled "Standings" (it was
+//      "Leaderboard" while that was also the screen's own heading),
 //      reveals #topochain-leaderboard-root and hands off to the
 //      TopochainLeaderboard module. Both are Topochain-domain
 //      views of one EVENT, so they also share the screen-level event bar
 //      (#leaderboard-event-bar, owned by TopochainEventContext) — hidden
-//      on Kudos, which has no event dimension. Everything below this
-//      point is the Kudos pane and is unchanged by the merge.
+//      on Kudos, which has no event dimension. 'seasons', labelled
+//      "History", reveals #leaderboard-history-root: the seasons that have
+//      ENDED, their winners and each event's winner (./history.js). It
+//      spans seasons, so the one-event bar is hidden there too.
+//      Everything below this point is the Kudos pane and is unchanged by
+//      the merge.
 //   2. Within Kudos: three sub-views (Top PRs, Top Users, My history)
 //      and — for the two leaderboard tabs — two window tabs.
 //
@@ -83,7 +88,7 @@ const Leaderboard = {
   // re-opening the screen lands where you left it; a fresh page load
   // starts on Challenges (#2374) — the first tab of the strip, what you
   // can do next ahead of the ranking it feeds.
-  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges'
+  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges' | 'seasons'
   // Whether TopochainLeaderboard.open() / TopochainChallenges.open() have
   // run for this screen mount — each Topochain-domain pane loads lazily,
   // only once its tab is first shown, and so does the shared event bar
@@ -91,6 +96,7 @@ const Leaderboard = {
   _topoMounted: false,
   _challengesMounted: false,
   _eventBarMounted: false,
+  _historyMounted: false,
   sub: 'prs',           // 'prs' | 'users' | 'history'
   window: 'all',         // 'all' | 'week'
   // (#60) Profile drill-in from the Top-users tab. Non-null = the
@@ -114,6 +120,7 @@ const Leaderboard = {
     Leaderboard._open = true;
     Leaderboard._renderSectionTabs();
     Leaderboard._applySection();
+    Leaderboard._syncTitle();
     if (Leaderboard.section === 'kudos') {
       Leaderboard._render();
       Leaderboard._load();
@@ -141,9 +148,13 @@ const Leaderboard = {
     if (Leaderboard._eventBarMounted && window.TopochainEventContext?.close) {
       TopochainEventContext.close();
     }
+    if (Leaderboard._historyMounted && window.LeaderboardHistory?.close) {
+      LeaderboardHistory.close();
+    }
     Leaderboard._topoMounted = false;
     Leaderboard._challengesMounted = false;
     Leaderboard._eventBarMounted = false;
+    Leaderboard._historyMounted = false;
   },
 
   // ── Section (Kudos | Topochain | Challenges) ─────────────────────
@@ -151,7 +162,7 @@ const Leaderboard = {
   // Every section. The strip's ORDER lives in the island's SECTION_TABS
   // (./index.tsx), Challenges first since #1917. The two that live in the Topochain event domain (i.e. the ones the shared
   // event bar applies to) are declared separately below.
-  SECTIONS: ['topochain', 'kudos', 'challenges'],
+  SECTIONS: ['topochain', 'kudos', 'challenges', 'seasons'],
   EVENT_SECTIONS: ['topochain', 'challenges'],
 
   // Switch the screen's top-level section. Mirrors _setSub's contract:
@@ -169,6 +180,7 @@ const Leaderboard = {
     if (!Leaderboard._open) return;
     Leaderboard._renderSectionTabs();
     Leaderboard._applySection();
+    Leaderboard._syncTitle();
     if (section === 'kudos') {
       Leaderboard._render();
       Leaderboard._load();
@@ -187,6 +199,7 @@ const Leaderboard = {
       'leaderboard-root': Leaderboard.section === 'kudos',
       'topochain-leaderboard-root': Leaderboard.section === 'topochain',
       'challenges-root': Leaderboard.section === 'challenges',
+      'leaderboard-history-root': Leaderboard.section === 'seasons',
     };
     for (const [id, visible] of Object.entries(panes)) {
       const el = document.getElementById(id);
@@ -210,15 +223,41 @@ const Leaderboard = {
       Leaderboard._challengesMounted = true;
       TopochainChallenges.open();
     }
+    if (Leaderboard.section === 'seasons' && !Leaderboard._historyMounted
+        && window.LeaderboardHistory?.open) {
+      Leaderboard._historyMounted = true;
+      LeaderboardHistory.open();
+    }
+  },
+
+  // THE BAR SAYS WHICH TAB IS SHOWING (bug f of the navigation audit).
+  //
+  // App._routeLeaderboard titles the screen on the way IN, but a tab press
+  // never goes back through the router: _syncHash rewrites the address with
+  // replaceState, which fires no hashchange, so the bar went on saying
+  // "Challenges" over Kudos or Standings. Every point where the section, the
+  // Kudos sub-view or the profile drill-in changes while the screen is open
+  // calls this, and the WORDS stay App's (App._leaderboardTitle), so the
+  // cold load and the tab press can never name one section two ways.
+  _syncTitle() {
+    if (!Leaderboard._open) return;
+    // A challenge's detail page is a level of the Challenges tab with its own
+    // bar ("Challenge", TopochainChallenges._syncChrome); it restores the
+    // section's name itself when the page closes.
+    if (Leaderboard.section === 'challenges' && window.TopochainChallenges?._detailChallenge) return;
+    const app = window.App;
+    if (!app || typeof app.setHeaderTitle !== 'function'
+        || typeof app._leaderboardTitle !== 'function') return;
+    app.setHeaderTitle(app._leaderboardTitle(Leaderboard.section, Leaderboard.profileUser));
   },
 
   // Publish the active section; <LeaderboardScreen/> renders the strip from
   // it. The tab LABELS and the active/inactive class tables moved with the
   // markup — labels into the island's SECTION_TABS list, classes into the Tabs
   // primitive (frontend/@/components/ui/tabs.tsx) — and the standings tab is
-  // still labelled "Leaderboard" rather than "Topochain" there: it is the
-  // primary ranking on this platform and the screen's own title. The
-  // `data-standings-tab` KEYS stay as they are — every hash alias in app.js and
+  // labelled "Standings" there, the navigation prototype's word, rather than
+  // "Topochain". The `data-standings-tab` KEYS stay as they are — every hash
+  // alias in app.js and
   // every dapp.json check speaks in them, and this method's SECTIONS list still
   // validates against them in _setSection.
   _renderSectionTabs() {
@@ -297,6 +336,7 @@ const Leaderboard = {
     if (!Leaderboard._open) return;
     Leaderboard._renderSectionTabs();
     Leaderboard._applySection();
+    Leaderboard._syncTitle();
     Leaderboard._render();
     Leaderboard._load();
   },
@@ -315,6 +355,7 @@ const Leaderboard = {
     if (!Leaderboard._open) return;
     Leaderboard._renderSectionTabs();
     Leaderboard._applySection();
+    Leaderboard._syncTitle();
     Leaderboard._render();
     Leaderboard._load();
   },
@@ -336,9 +377,11 @@ const Leaderboard = {
       ? '#leaderboard/topochain'
       : Leaderboard.section === 'challenges'
         ? '#leaderboard/challenges'
-        : Leaderboard.profileUser
-          ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
-          : `#leaderboard/${Leaderboard.sub}`;
+        : Leaderboard.section === 'seasons'
+          ? '#leaderboard/seasons'
+          : Leaderboard.profileUser
+            ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
+            : `#leaderboard/${Leaderboard.sub}`;
     if (location.hash.startsWith('#leaderboard') && location.hash !== target) {
       history.replaceState(null, '', target);
     }
@@ -360,6 +403,12 @@ const Leaderboard = {
   },
 
   async _load() {
+    // Pull-to-refresh lands here for every section it does not name itself
+    // (App._refreshLeaderboard); on History that is the past seasons, which
+    // ./history.js loads, not a Kudos pane nobody is looking at.
+    if (Leaderboard.section === 'seasons') {
+      return window.LeaderboardHistory?.refresh?.();
+    }
     const key = Leaderboard._key(Leaderboard.sub, Leaderboard.window);
     if (Leaderboard._cache.has(key)) {
       Leaderboard._renderBody();
@@ -457,7 +506,12 @@ const Leaderboard = {
     // body (stats + PR list) renders via _renderBody once data lands.
     if (Leaderboard.profileUser) {
       const who = Leaderboard.profileUser;
-      return { kind: 'profile', who, initial: (who[0] || '?').toUpperCase() };
+      return {
+        kind: 'profile',
+        who,
+        initial: (who[0] || '?').toUpperCase(),
+        canMessage: Leaderboard._canMessage(who),
+      };
     }
     const isHistory = Leaderboard.sub === 'history';
     const subTabs = ['prs', 'users', 'history'].map((s) => ({
@@ -593,6 +647,17 @@ const Leaderboard = {
     if (status === 'merging') return { tone: 'amber', label: 'merging' };
     if (status === 'archived') return { tone: 'zinc', label: 'closed' };
     return { tone: 'violet', label: 'open' };
+  },
+
+  // Whether this person page draws the prototype's "Message" button: someone
+  // ELSE's page, seen by a signed-in viewer who can use Messages. The same
+  // gate the public profile page applies (features/profile/profile-store.js);
+  // blocking and message requests are the Messages path's own rules
+  // (features/profile/message-person.ts).
+  _canMessage(who) {
+    const viewer = (typeof window !== 'undefined' && window.App && window.App.user) || null;
+    if (!viewer || !viewer.username || viewer.hasPlatformAccess === false) return false;
+    return String(viewer.username).toLowerCase() !== String(who || '').toLowerCase();
   },
 
   // Top-users rows route to the user's profile via a real hash change

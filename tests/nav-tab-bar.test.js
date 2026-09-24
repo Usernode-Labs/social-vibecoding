@@ -300,8 +300,10 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // inside its own `max-content` row, which is no movement at all.
   assert.match(block, /display: flex;\s*\n\s*flex-direction: column;/,
     'and stops being five equal columns');
-  assert.match(block, /#platform-tab-me \{\s*\n\s*margin-top: auto;/,
+  // The auto margin is on the rule drawn above Me (#2800), which Me follows.
+  assert.match(block, /\.platform-tabs::after \{[^}]*order: 1;[^}]*margin: auto 4px 6px;/,
     'Me is the rail\'s foot: the four above are places, this is the reader');
+  assert.match(block, /#platform-tab-me \{\s*\n\s*order: 2;/, 'and Me comes after the rule');
   // A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review). The
   // rail's hairline was the content's left margin, so a card began where the
   // rail ended while the page had air on the right and none on the left — a
@@ -395,7 +397,7 @@ test('every screen change clears the peek, and nothing else does', () => {
   // exactly that rate. Nothing in the shipped router does that today; the
   // guard is here so that nothing ever can.
   assert.match(mount, /const changed = navStore\.get\(\)\.screen !== screen;/);
-  assert.match(mount, /\.\.\.\(changed \? \{ peek: false \} : null\),/);
+  assert.match(mount, /\.\.\.\(changed \? \{ peek: false, peekOut: false \} : null\),/);
 });
 
 test('the desktop rail folds by hand, and a phone can never lose its bar', () => {
@@ -472,10 +474,10 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(css,
     /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: none;/);
   assert.match(css,
-    /body:has\(#platform-tabs:not\(\.hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
     '…unless the toggle is in it, which needs both a rail and the width');
   assert.match(css,
-    /body:has\(#platform-tabs:not\(\.hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/,
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/,
     'which is what replaces the `return null` the component used to do');
   // FOLDED RESERVES NOTHING, and only on the desktop layout.
   const zero = css.indexOf('body:has(#platform-tabs.platform-tabs-folded)');
@@ -483,6 +485,32 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.ok(css.lastIndexOf('@media (min-width: 768px) {', zero) > 0,
     'the zeroing rule is inside the desktop block, so a phone never sees it');
   assert.match(css.slice(zero, zero + 120), /\{\s*--platform-rail-w: 0px;/);
+});
+
+test('a peek over a running app never brings the sidebar toggle into the app\'s strip', () => {
+  // THE BUG: the peek takes `hidden` off #platform-tabs over a running app,
+  // and the toggle's rule asked `#platform-tabs:not(.hidden)` alone — so
+  // pointing at the window's left edge inside an app drew the toggle into the
+  // app's own strip, pushed ✕, the tile and the name 34px right, and a press
+  // on it folded the docked rail behind the app.
+  //
+  // The ROUTE'S answer rides beside the peek's as its own class, applied
+  // through a ref like the others (never a rendered className, so nothing
+  // about it can reach hydration)…
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(bar, /useClassToggle\(barRef, 'platform-tabs-route-hidden', !visible\);/);
+  assert.match(bar, /useHiddenClass\(barRef, !visible && !peek\);/,
+    'while `hidden` is still the OR of the route and the peek, so the peek works');
+  // …and every rule that decides whether the toggle EXISTS reads it. A rail
+  // the viewer folded is still the route's rail, so its toggle stays: that is
+  // how the fold comes undone.
+  const decides = css.match(/body:has\(#platform-tabs:not\(\.hidden\)[^)]*\)[^{]*(?:platform-sidebar-toggle|platform-header-left)[^{]*\{/g) || [];
+  assert.equal(decides.length, 2, 'the toggle\'s own rule and its group\'s');
+  for (const rule of decides) {
+    assert.match(rule, /:not\(\.platform-tabs-route-hidden\)/, rule);
+    assert.doesNotMatch(rule, /platform-tabs-folded|platform-tabs-peek/,
+      'folding and peeking are not what decides it: the route is');
+  }
 });
 
 test('the reservation is keyed off the bar\'s own hidden class', () => {
@@ -564,6 +592,43 @@ test('a tab label has room for its descenders', () => {
     'a unitless multiplier is the one value correct at both sizes');
 });
 
+test('the Messages count is the quiet one: grey on the phone, at the row\'s end on the rail (#2912)', () => {
+  // Unread messages are counted in the bell as well, so a second RED count on
+  // the Messages tab said the same thing twice in the loudest colour on the
+  // screen. The bell keeps the red (#notifications-badge is not touched);
+  // this badge used to match it on purpose and now deliberately does not.
+  const phone = css.match(/\n\.platform-tab-badge \{[^}]*\}/);
+  assert.ok(phone, 'the badge has its base (phone) rule');
+  assert.match(phone[0], /background: var\(--text-faint, #8e8e93\);/,
+    'a grey disc on the phone, one value in both themes');
+  assert.doesNotMatch(phone[0], /--danger|#ef4444/, 'the red is the bell\'s alone');
+  assert.match(phone[0], /position: absolute;\s*top: -3px;\s*left: calc\(100% - 7px\);/,
+    'and it keeps its place on the glyph\'s corner');
+
+  // On the rail the count moves to the row's far end, where Recents draws its
+  // unread dots, as a pill in the rail's own muted ink. The glyph's wrapper
+  // dissolves so the badge is an item of the row, back in the flow, so the
+  // label can shrink before it but never run under it.
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
+  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+  assert.match(block, /\n {2}\.platform-tab-mark \{\s*display: contents;\s*\}/,
+    'the wrapper dissolves on the rail and only there');
+  const rail = block.match(/\n {2}\.platform-tab-badge \{[^}]*\}/);
+  assert.ok(rail, 'the rail restyles the badge inside the desktop block');
+  for (const decl of [
+    /position: static;/, /order: 1;/, /flex: none;/, /margin-left: auto;/,
+    /background: color-mix\(in srgb, var\(--text-muted\) 16%, transparent\);/,
+    /color: var\(--text-muted\);/,
+  ]) assert.match(rail[0], decl);
+
+  // THE MARKUP DOES NOT MOVE, which is what lets the phone keep its anchor
+  // and the declared checks keep finding the badge inside the Messages tab.
+  const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
+  assert.match(html,
+    /id="platform-tab-messages"[^>]*><span class="platform-tab-mark"><svg[^>]*class="platform-tab-glyph"[\s\S]*?<\/svg><span id="platform-tabs-badge"/,
+    'the badge is still the glyph wrapper\'s child, inside #platform-tab-messages');
+});
+
 test('the Messages tab cannot be dead, whatever the flag says', () => {
   // navigateToMessages returns EARLY when `_inMessages` is set — routing the
   // island and revealing nothing, because the screen is supposed to be up
@@ -607,4 +672,54 @@ test('an app\'s discussion belongs to Messages, and says so', () => {
   assert.match(session.slice(0, session.indexOf('\n    }')),
     /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
     'a dev session shows the way up to Messages');
+});
+
+// ── #2824: the lit tab's sliding marker ───────────────────────────────
+
+test('the marker ships bare, so the first render matches the prerender', () => {
+  const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
+  const marker = html.match(/<span[^>]*class="platform-tabs-marker"[^>]*>/);
+  assert.ok(marker, 'the marker is part of the bar\'s markup');
+  assert.match(marker[0], /aria-hidden="true"/, 'aria-current already announces the lit tab');
+  assert.doesNotMatch(marker[0], /style=|data-marker-at|data-marker-slide/,
+    'unmeasured: no geometry and not visible, or hydration disagrees and it slides in from the edge');
+  // Rendered BEFORE the tabs so it paints behind them.
+  assert.ok(html.indexOf('platform-tabs-marker') < html.indexOf('id="platform-tab-home"'));
+});
+
+test('the marker is an inset of the lit tab, and an unlaid-out bar keeps the last box', () => {
+  const { markerBoxFor } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  assert.deepEqual(
+    { ...markerBoxFor({ offsetLeft: 150, offsetTop: 0, offsetWidth: 72, offsetHeight: 56 }) },
+    { x: 154, y: 4, w: 64, h: 48 },
+  );
+  assert.equal(markerBoxFor({ offsetLeft: 0, offsetTop: 0, offsetWidth: 0, offsetHeight: 0 }), null,
+    'a hidden bar (an app, the keyboard) has no geometry to report');
+});
+
+test('only a selection change slides, the Workshop\'s way (#2824)', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(src, /slide: !!prev && selectionChanged/,
+    'the first placement and a re-measure land; only a new tab slides');
+  assert.match(src, /new ResizeObserver\(\(\) => measure\(false\)\)/);
+  assert.match(src, /querySelector<HTMLElement>\('\.platform-tab\[aria-current="page"\]'\)/,
+    'the marker follows the same attribute the declared checks and screen readers read');
+});
+
+test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only', () => {
+  const rule = css.match(/\.platform-tabs-marker \{[^}]*\}/);
+  assert.ok(rule);
+  assert.match(rule[0], /position: absolute;/);
+  assert.match(rule[0], /background: var\(--brand-tint\);/);
+  assert.match(rule[0], /box-shadow: inset 0 0 0 1px var\(--brand-line\);/);
+  assert.match(rule[0], /opacity: 0;/, 'hidden until measured');
+  assert.match(css, /\.platform-tabs-marker\[data-marker-at\] \{ opacity: 1; \}/);
+  assert.match(css,
+    /@media \(prefers-reduced-motion: no-preference\) \{\s*\.platform-tabs-marker\[data-marker-slide\] \{\s*transition:\s*transform \.26s cubic-bezier\(\.32, \.72, 0, 1\)/,
+    'the slide is the Workshop marker\'s, and reduced motion does without it');
+  assert.match(css, /\.platform-tab \{\s*position: relative;\s*z-index: 1;\s*\}/,
+    'the tabs sit over the marker');
+  // The rail keeps its row fill; the marker is not drawn there.
+  const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--brand-tint);'));
+  assert.match(desktop.slice(0, 400), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
 });

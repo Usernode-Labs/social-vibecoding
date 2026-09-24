@@ -142,16 +142,21 @@ test('the Homeroom-app settings section ARE field’s SectionHeading, rule inclu
   assert.match(html, /border-t border-zinc-200 dark:border-zinc-800/);
 });
 
-test('the profile’s public-profile card is a form section, and says so', () => {
-  // PublicControls is internal to the module and needs the profile store to
-  // reach it, so this one is anchored on the source: what matters is that the
-  // card opens with the primitive and carries no class string of its own.
-  const src = read('frontend/src/features/profile/profile-view.tsx');
-  assert.match(src, /import \{ SectionHeading \} from '@\/components\/ui\/field';/);
-  assert.match(src, /<SectionHeading title="Public profile">/,
-    'the “Public profile” heading is the primitive, not a hand-written <h2>');
-  assert.doesNotMatch(src, /className="font-semibold text-base"/,
+test('the public-profile controls are a group of the Edit profile sheet, headed like its others', () => {
+  // They were a card of their own on Me, opening with SectionHeading. The
+  // prototype's Me has no room for them, so they moved into the sheet that
+  // edits what the public page shows — and there a section is the sheet's own
+  // inset-grouped `Group` (the kit's `.un-group-header` vocabulary), the
+  // heading every other section of that sheet uses. Anchored on the source:
+  // what matters is that it is that shared heading and no class string of its
+  // own.
+  const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
+  assert.match(sheet, /<Group title="Public page">/,
+    'the “Public page” heading is the sheet’s shared Group, not a hand-written <h2>');
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  assert.doesNotMatch(view, /className="font-semibold text-base"/,
     'the old hand-written heading class is gone');
+  assert.doesNotMatch(view, /title="Public profile"/, 'and Me carries no second copy');
 });
 
 test('one site keeps its own treatment, deliberately', () => {

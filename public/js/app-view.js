@@ -721,6 +721,9 @@ const AppView = {
    * whole of the option.
    */
   async open(slug, { needsToken = true } = {}) {
+    // #2813: an app view is opening, so a session in the Messages pane must
+    // give up the ids it holds before this view renders its own.
+    AppView._retireEmbeddedSession();
     const openId = ++AppView._openId;
     const isCurrentOpen = () => openId === AppView._openId;
     // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
@@ -1594,7 +1597,25 @@ const AppView = {
 
   startTokenRefresh() {
     AppView.stopTokenRefresh();
-    AppView.tokenRefreshInterval = setInterval(async () => {
+    // #2902: a RESUMED frame's document booted with a token minted up to a
+    // full period ago, so its first refresh is due that much sooner than a
+    // fresh launch's. Counted from the frame's own last load; a frame that
+    // just loaded (every ordinary launch) keeps the plain interval.
+    const age = AppView._appFrame().navigatedAgo();
+    if (age > AppView.TOKEN_FRESH_MS && age < AppView.TOKEN_REFRESH_MS) {
+      AppView.tokenRefreshTimeout = setTimeout(() => {
+        AppView.tokenRefreshTimeout = null;
+        AppView._startTokenRefreshInterval(true);
+      }, AppView.TOKEN_REFRESH_MS - age);
+      return;
+    }
+    AppView._startTokenRefreshInterval(false);
+  },
+
+  tokenRefreshTimeout: null,
+
+  _startTokenRefreshInterval(tickNow) {
+    const tick = async () => {
       await AppView.refreshToken(AppView.appData && AppView.appData.slug);
       // Rewrite the iframe src so the child app picks up the fresh token.
       // Only when a frame is actually mounted. Reuses the inner deep link so a
@@ -1611,10 +1632,16 @@ const AppView = {
           && AppView.tokenForSlug(AppView.appData.slug)) {
         frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow() });
       }
-    }, AppView.TOKEN_REFRESH_MS);
+    };
+    AppView.tokenRefreshInterval = setInterval(tick, AppView.TOKEN_REFRESH_MS);
+    if (tickNow) tick();
   },
 
   stopTokenRefresh() {
+    if (AppView.tokenRefreshTimeout) {
+      clearTimeout(AppView.tokenRefreshTimeout);
+      AppView.tokenRefreshTimeout = null;
+    }
     if (AppView.tokenRefreshInterval) {
       clearInterval(AppView.tokenRefreshInterval);
       AppView.tokenRefreshInterval = null;
@@ -1930,11 +1957,21 @@ const AppView = {
       return !!dom._el('app-iframe');
     },
     keeps() { return false; },
+    slug() { return ''; },
     activate() { return !!AppView._appFrameDom._el('app-iframe'); },
     // No-ops: in a DOM-only shell the next #app-content write is what removes
     // the frame, exactly as it always was.
     park() {},
     unmount() {},
+    // #2902: nothing survives an #app-content write here, so nothing is kept
+    // alive either — every open is a fresh frame, exactly as before.
+    retire() { return false; },
+    resume() { return false; },
+    resumed() { return false; },
+    evict() { return false; },
+    evictAll() {},
+    liveSlugs() { return []; },
+    navigatedAgo() { return 0; },
     isActive() { return !!AppView._appFrameDom._el('app-iframe'); },
     frame() { return AppView._appFrameDom._el('app-iframe'); },
     hasFrame() { return !!AppView._appFrameDom._el('app-iframe'); },
@@ -2032,6 +2069,60 @@ const AppView = {
     AppView._appFrame().unmount();
   },
 
+  // ── Apps kept alive (#2902) ──────────────────────────────────────────
+  //
+  // Leaving an app for Home no longer throws its document away: the last few
+  // apps opened stay loaded in hidden frames (features/app-frame/
+  // app-frame-bridge.js holds the list and its least-recently-used cut), so
+  // Resume — the Recents row, the Resume strip, the app's tile — shows the app
+  // exactly as it was left instead of reloading it.
+  //
+  // A kept document is only resumed while it is younger than the token
+  // refresh period. Past that the token it booted with is due a refresh, and
+  // the refresh is a reload anyway (startTokenRefresh), so it reloads.
+  _retireAppFrame() {
+    AppView._issueStateSource = null;
+    AppView._appFrame().retire();
+  },
+
+  // Bring `slug`'s kept (or still-mounted) frame back as it was. False, and
+  // nothing changed, when there is none to bring back or it is too old.
+  _resumeAppFrame(slug) {
+    const frame = AppView._appFrame();
+    if (!frame.resume(slug, { maxAgeMs: AppView.TOKEN_REFRESH_MS })) return false;
+    // #685: an issue-state provider that announced itself from this document
+    // is still that document. Believe it again, and only if it is.
+    const prior = AppView._issueStateBySlug[slug] || null;
+    const win = frame.frame() && frame.frame().contentWindow;
+    AppView._issueStateSource = prior && win === prior ? prior : null;
+    AppView._setSurface('app');
+    AppView.scheduleSafeAreaBroadcast();
+    return true;
+  },
+
+  // The issue-state provider each app's document announced, by slug, so a
+  // resumed document keeps it (see _resumeAppFrame).
+  _issueStateBySlug: {},
+
+  // A build that just landed for an app that is kept alive, or an app that
+  // stopped running: its hidden document is the previous build (or nothing),
+  // so let it go and the next open loads afresh. The app on screen is not
+  // touched here — its reload is the Improve panel's offer to make.
+  evictKeptApp(slug) {
+    if (!slug) return false;
+    const frame = AppView._appFrame();
+    if (frame.slug && frame.slug() === slug && frame.isActive()) return false;
+    delete AppView._issueStateBySlug[slug];
+    return frame.evict(slug);
+  },
+
+  // Sign-out: nothing of one viewer's apps outlives their session.
+  evictAllAppFrames() {
+    AppView._issueStateSource = null;
+    AppView._issueStateBySlug = {};
+    AppView._appFrame().evictAll();
+  },
+
   // Mount the launch surface and start the app loading. Called from inside
   // PlatformUI.transition's reveal callback in App.navigateToApp, so the
   // frame exists before the zoom's first frame paints. Returns true when it
@@ -2072,6 +2163,12 @@ const AppView = {
     // status-driven re-render that arrives mid-launch) has something
     // consistent to read. open() replaces it with the full detail payload.
     AppView.appData = rec;
+
+    // #2902: an app still loaded from the last time it was open comes back as
+    // it was left — no cover, no navigation. A deep link into it is the one
+    // exception, and renderAppTab settles that: it adopts a resumed frame only
+    // when no inner path is pending, and navigates it otherwise.
+    if (!AppView.pendingInnerPath && AppView._resumeAppFrame(slug)) return true;
 
     // #1085 chunk H: through the frame seam. The store write is flushed
     // synchronously, so the element exists on the next line — which it has to,
@@ -2395,6 +2492,12 @@ const AppView = {
     App._setScreenVisible('app-view', true);
   },
 
+  // #2902: `?shot=apps-kept` — see App._applyKeptAppsShot. Frames with no
+  // document, so no origin is ever loaded into one.
+  showKeptAppsShot(slugs) {
+    AppView._appFrame().keepForShot?.(slugs);
+  },
+
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
   // (#487 follow-up): the two outcomes of the offline App tab — an app whose
   // own service worker can serve its document gets its frame mounted, one
@@ -2647,7 +2750,18 @@ const AppView = {
     // the user had on screen inside someone else's app. (The DOM adapter
     // answers false here: it has no frame that survives an #app-content write,
     // so for it every later render still rebuilds, exactly as before.)
-    if (adopts || frame.keeps({ slug: appData.slug, src: iframeSrc })) {
+    // #2902: …and a frame RESUMED from being kept alive is the user's document
+    // as they left it. Its src carries the token it booted with, not the one
+    // just minted, so keeps() would call it stale and reload it — which is the
+    // very state loss keeping it alive exists to prevent. Unless a deep link
+    // is pending: then the app is being sent somewhere, and it goes.
+    if (!AppView.pendingInnerPath && frame.slug() !== appData.slug
+        && AppView._resumeAppFrame(appData.slug)) {
+      frame.activate();
+      return;
+    }
+    const resumed = !AppView.pendingInnerPath && frame.resumed(appData.slug);
+    if (adopts || resumed || frame.keeps({ slug: appData.slug, src: iframeSrc })) {
       // The surface flag still has to be asserted (#970): beginLaunch set it,
       // but a render that keeps the frame must not depend on that, or it could
       // carry a stale flag over from the Dev surface it just left.
@@ -2797,7 +2911,125 @@ const AppView = {
   // falling back to #app-content (defensive — every call site should be
   // inside renderDevView these days).
   _devContainer() {
+    // #2813: a session open in the Messages pane owns the Dev container
+    // while no app view is up. `App.currentApp` is the guard: the moment an
+    // app is navigated to, the app view's own #app-content is the container
+    // again, whatever the pane's teardown has not caught up with yet.
+    const embedded = AppView._embeddedSessionHost;
+    if (embedded && !(typeof App !== 'undefined' && App.currentApp) && embedded.isConnected) {
+      return embedded.querySelector('#dev-section') || embedded;
+    }
     return document.getElementById('dev-section') || document.getElementById('app-content');
+  },
+
+  // ── A dev session in the Messages pane (#2813) ────────────────────
+  //
+  // On a desktop an agent thread of the Messages inbox opens BESIDE the list,
+  // as a conversation does. For a dev session that is the whole session view
+  // — the transcript, the composer, the header, the spec and staging slots —
+  // and all of it is DevChat's, which is one surface with one owner and
+  // fixed ids. So, like an app's discussion (`renderGroupChatTab({host})`),
+  // the pane renders a HOST and this fills it: the same `<DevSessionShell/>`
+  // the app view mounts, and the same `renderDevChatTab` into it.
+  //
+  // What makes that sound is that the two can never both be up. The pane
+  // exists only on the Messages screen, and the Messages screen and the app
+  // view are sibling screen roots — `App.currentApp` is null for as long as
+  // the pane is showing, and every path into an app sets it first. The
+  // container switch in `_devContainer` keys on exactly that.
+  //
+  // The app travels with the mount, as the discussion's does: AppView.appData
+  // is read throughout DevChat (the composer's budget and venue, the dev
+  // caches, readOnly), so it is loaded for this app when the app view has
+  // nothing open. Nothing here opens the app view, mints an iframe token or
+  // starts the app's activity tracking — this is not a visit to the app.
+  //
+  // THE SIDE PANES. The spec viewer and the staging preview are slots INSIDE
+  // #dc-view, so they open inside the pane, docked beside the transcript,
+  // exactly as they do in the app view — the pane is as wide as a laptop's
+  // app view less the list. Nothing is hidden or re-implemented for the pane.
+  _embeddedSessionHost: null,
+  _embeddedSessionSeq: 0,
+
+  /**
+   * Fill `host` with session `sessionId` of app `slug`. Resolves 'ready',
+   * 'unavailable' (no such session for this viewer, and no published chat to
+   * read instead) or 'stale' (a newer mount or an app navigation won).
+   */
+  async mountSessionInHost(host, { slug, sessionId } = {}) {
+    if (!host || !slug || !sessionId) return 'unavailable';
+    const seq = ++AppView._embeddedSessionSeq;
+    const inApp = () => typeof App !== 'undefined' && !!App.currentApp;
+    const live = () => seq === AppView._embeddedSessionSeq
+      && AppView._embeddedSessionHost === host && host.isConnected && !inApp();
+    if (inApp()) return 'stale';
+    // A full-screen session left behind in the hidden app view holds the
+    // same ids (#dev-section, #dc-view, #dc-messages…) DevChat looks up by
+    // `getElementById`. Retire it before the pane's copy exists.
+    const appContent = document.getElementById('app-content');
+    if (appContent && appContent.querySelector('#dev-section')) {
+      AppView._reactDevBoard()?.unmount?.(appContent);
+    }
+    AppView._embeddedSessionHost = host;
+    if (!AppView.appData || AppView.appData.slug !== slug) {
+      if (window.DevChat) DevChat.reset();
+      let app = null;
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
+        if (res.ok) app = ((await res.json()) || {}).app || null;
+      } catch (_) { app = null; }
+      if (!live()) return 'stale';
+      if (!app) return 'unavailable';
+      // The same per-app reset AppView.open makes on an app switch: another
+      // app's board caches are another board.
+      Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
+      AppView._govApplying = Object.create(null);
+      AppView._govDueSince = Object.create(null);
+      AppView._devDataReady = false;
+      AppView._resetMergedPagination();
+      AppView.appData = AppView._applyPendingAppStatus(app);
+    }
+    AppView._reactDevBoard()?.mountSessionShell(host);
+    const result = await AppView.renderDevChatTab(sessionId, { embedded: true });
+    if (!live()) return 'stale';
+    return result === 'unavailable' ? 'unavailable' : 'ready';
+  },
+
+  /**
+   * An app view is opening while the pane still holds a session (#2813):
+   * "Open full view", a link out of the transcript, a deep link. The pane's
+   * screen is only hidden at the END of that navigation's transition, and
+   * until then its #dev-section / #dc-view / #dc-messages would be the ones
+   * `getElementById` finds — the app view would render its session into the
+   * pane. So the pane's copy goes first. DevChat and AppView.appData are
+   * left alone: the app view's open is about to own them.
+   */
+  _retireEmbeddedSession() {
+    const host = AppView._embeddedSessionHost;
+    if (!host) return;
+    AppView._embeddedSessionSeq += 1;
+    AppView._embeddedSessionHost = null;
+    AppView._reactDevBoard()?.unmount?.(host);
+    PlatformUI.detachScreenFx('dev-chat');
+  },
+
+  /**
+   * The pane is going away. Drops the session and the app it loaded — but
+   * only while no app view has taken over: an app navigation from the pane
+   * sets App.currentApp before the Messages screen unmounts, and the app
+   * view's own open is then what owns DevChat and AppView.appData.
+   */
+  unmountSessionHost(host) {
+    if (!host || AppView._embeddedSessionHost !== host) return;
+    AppView._embeddedSessionSeq += 1;
+    AppView._embeddedSessionHost = null;
+    AppView._reactDevBoard()?.unmount?.(host);
+    if (typeof App !== 'undefined' && App.currentApp) return;
+    PlatformUI.detachScreenFx('dev-chat');
+    if (window.DevChat) DevChat.reset();
+    AppView.appData = null;
+    AppView._devDataReady = false;
+    AppView._resetMergedPagination();
   },
 
   // ── The React seam for the Dev surfaces (#1084 chunk G) ────────────
@@ -3044,14 +3276,14 @@ const AppView = {
     // repeated segment. The bar names the SECTION, the chip names the scope.
     App.setHeaderTitle?.('Workshop');
     // NO BACK ARROW HERE ANY MORE (#2718 review). This used to publish a ← to
-    // the Workshop screen whenever `App._appBackHref` said that is where the
-    // app was opened from — the one thing standing between a reader and the
-    // rest of the platform, on a surface that had no rail.
+    // the Workshop screen whenever the app had been opened from it — the one
+    // thing standing between a reader and the rest of the platform, on a
+    // surface that had no rail.
     //
     // It has one now. The Workshop tab in the rail IS the way back, on the
     // exact screen the arrow pointed at, and it is there whether or not this
-    // app was reached from it. `_appBackHref` still earns its keep on the app
-    // tab, where the ✕ leaves to wherever the visit began.
+    // app was reached from it. The ✕ lives on the app tab alone, and leaves to
+    // the page the app was opened from (App.closeApp).
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.
@@ -3087,6 +3319,18 @@ const AppView = {
     AppView._devBodyAbort = devBodyAc;
     const devBodySignal = devBodyAc.signal;
     const bodyEl = document.getElementById('dev-body');
+    // #2847: ANY click on a proposal card — unfolding it in the Workshop,
+    // a pill, the ⋯ menu, a vote button — means the viewer has seen it, so
+    // its "New proposal" nudge clears. Capture phase, because several card
+    // controls stop propagation and the bubbling handler below returns early
+    // for folds and controls. Only marks read; never changes what the click does.
+    bodyEl.addEventListener('click', (e) => {
+      const card = e.target.closest
+        && e.target.closest('[data-proposal-row], [data-shared-session-row], [data-session-chip]');
+      if (!card) return;
+      const id = card.dataset.proposalRow || card.dataset.sharedSessionRow || card.dataset.sessionChip;
+      window.Notifications?.markProposalSeen?.(parseInt(id, 10));
+    }, { capture: true, signal: devBodySignal });
     bodyEl.addEventListener('click', (e) => {
       // #313/#827: the card-level "Explore in dev chat" button is a
       // <button>, so the guard below would swallow it — handle it first,
@@ -3224,6 +3468,11 @@ const AppView = {
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // #2847: arriving at a proposal's page (card tap, deep link, notification
+    // row) is the viewer seeing it — clear its "New proposal" nudge.
+    if (ref.kind === 'proposal' || ref.kind === 'session') {
+      window.Notifications?.markProposalSeen?.(ref.id);
+    }
     // The roster is cached per proposal (see `_loadVoteRoster`, and why it
     // has to be). Arriving here is a fresh read, so mark the entry stale and
     // let the paint below re-read it once — returning to a topic shows the
@@ -3242,11 +3491,12 @@ const AppView = {
     // composer is pinned). The topic's icon, title and number live on that
     // header card, so repeating them up here would be pure duplication.
     //
-    // The back bar that used to be pinned is gone with its props: the platform
-    // header carries a chevron to this page's Board on this route, so the bar
-    // was a second back control one row under the first. Its `_devPageHref()`
-    // and the NavLink-guarded click both live on that chevron instead — see
-    // features/dev-board/topic-frame.tsx.
+    // The back bar that used to be pinned is gone with its props: it sat one
+    // row under the header's chevron to the same Board, two back controls one
+    // row apart. The one control left is the "‹ Workshop" chip at the top of
+    // the topic head (#2916, features/dev-board/topic/topic-back.tsx), which
+    // scrolls with the page and carries the NavLink-guarded click; the header
+    // draws no arrow on this route. See features/dev-board/topic-frame.tsx.
     AppView._reactDevBoard()?.mountTopicSubView(content);
 
     const ok = await AppView._loadDevData();
@@ -3438,6 +3688,7 @@ const AppView = {
       const data = await res.json();
       const row = data.proposal || null;
       if (!row) return null;
+      AppView._overlayPendingVote(row);
       AppView._topicProposal = row;
       // Keep the inline vote/kudos controls in sync so the discussion
       // thread's activity row renders its tally + per-viewer state, just
@@ -4262,6 +4513,11 @@ const AppView = {
   _buildDoorView(item) {
     if (!item || item.source === 'imported') return null;
     if (App.user && Number(item.user_id) === Number(App.user.id)) {
+      // #2779: a change started from an agent session is built from that
+      // conversation, so its owner's door leads back there.
+      if (item.agent_session_id) {
+        return { kind: 'owner', label: 'Continue in agent session', agentSessionId: Number(item.agent_session_id) };
+      }
       return { kind: 'owner', label: ['active', 'paused'].includes(item.status) ? 'Continue building' : 'Open build' };
     }
     return (item.transcript_shared || item.transcript_shared_at)
@@ -4277,6 +4533,14 @@ const AppView = {
   // card now send a reader to the same address. A reader who does not own
   // the session lands on its read-only published chat (`renderDevChatTab`).
   openChangeWorkspace(id) {
+    // #2779: the owner of a change started from an agent session goes back
+    // to that conversation; its own dev chat takes no new messages.
+    const item = typeof AppView._findItem === 'function' ? AppView._findItem('proposal', id) : null;
+    const door = item ? AppView._buildDoorView(item) : null;
+    if (door && door.agentSessionId) {
+      window.location.hash = `#messages/agent/${door.agentSessionId}`;
+      return;
+    }
     AppView.openProposalSession(id);
   },
 
@@ -4987,10 +5251,22 @@ const AppView = {
   // (_setDraft → _restoreDraft on render), exactly like createPrForIssue's
   // #609 flow. A composer that already holds text is never clobbered — the
   // seed is appended below it.
+  // #2779: hand a start to an agent session when the viewer has them on.
+  // True when taken; false leaves the caller to go on as before.
+  _startAgentSession(hint) {
+    const agent = window.UsernodeReact && window.UsernodeReact.agentSession;
+    if (!(App.user && App.user.agentSessionsEnabled === true) || !agent) return false;
+    agent.start(hint);
+    return true;
+  },
+
   async exploreProposalInDevChat(id, btnEl) {
     const pid = parseInt(id, 10);
     const slug = AppView.appData && AppView.appData.slug;
     if (!pid || !slug || typeof DevChat === 'undefined') return;
+    // #2779: with agent sessions on, a conversation with the Mayor opens
+    // focused on this proposal instead of a dev chat seeded with it.
+    if (AppView._startAgentSession({ slug, proposalId: pid, entry: 'proposal' })) return;
     const pr = (AppView._proposals || []).find((p) => p.id === pid)
       // Skip close-issue rows: issues.id can collide with a session id.
       || (AppView._merged || []).find((p) => p.id === pid && p.row_type !== 'close_issue');
@@ -5585,11 +5861,23 @@ const AppView = {
     }, 20000);
   },
 
+  // Returns the refresh's promise (or undefined when there is nothing on
+  // screen to refresh), so castVote can tell when its post-vote read landed.
   refreshDevData(kind) {
-    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return;
+    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
+    // Every caller here (a session/vote/checks event over the WS, the 20s
+    // checks poll, a late-answer correction) is refreshing a board already
+    // on screen, so the service worker must fetch rather than answer from
+    // its boot lane — see App.refreshActiveScreen for the loop that caused.
+    App._announceRefreshIntent?.();
+    // #2782: a vote refresh must read data written AFTER the vote. Joining a
+    // load already in flight — the 20s checks poll, another voter's WS
+    // refresh — hands it a snapshot taken before the vote was recorded, and
+    // both the WS refresh and the POST's own refresh used to repaint the
+    // pre-vote tally that way. `fresh` queues a new load behind it instead.
+    const opts = kind === 'vote' ? { fresh: true } : undefined;
     if (App.currentSubTab === 'chat') {
-      AppView.loadVoteState(AppView.appData.slug);
-      return;
+      return AppView.loadVoteState(AppView.appData.slug);
     }
     if (App.currentSubTab === 'topic') {
       // Refresh the header card / roster in place; the mounted thread
@@ -5605,19 +5893,27 @@ const AppView = {
       // watched the tally flicker on a timer while nothing about it changed.
       // The roster now stays on screen until a vote actually moves it.
       if (kind === 'vote' && AppView._devTopic) AppView._invalidateVoteRoster(AppView._devTopic.id);
+      // #2782: re-read the roster now rather than after the whole board load
+      // below (seven requests, GitHub issues among them) — it is the one part
+      // of the page a vote changes, and it has its own endpoint.
+      if (kind === 'vote' && AppView._devTopic && AppView._devTopic.kind === 'proposal') {
+        const open = AppView._findTopicItem();
+        if (open && ['promoted', 'merging'].includes(open.status)) AppView._loadVoteRoster(open.id);
+      }
       // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
       // lists, and a topic the lists do not hold would otherwise repaint
       // from a snapshot frozen when the page opened. It no-ops for every
       // topic the lists do cover.
-      AppView._loadDevData()
+      return AppView._loadDevData(opts)
         .then(() => AppView._refreshTopicOnDemandRow())
         .then(() => AppView._renderTopicHead());
-      return;
     }
-    if (App.currentSubTab !== 'forum') return;
+    if (App.currentSubTab !== 'forum') return undefined;
     // Session rows render inside the board/feed now, so the full-feed
     // reload below covers session_update events too (no separate strip).
-    AppView._loadDevFeed();
+    // A fresh run started first is the one the feed's own load then joins.
+    if (opts) AppView._loadDevData(opts);
+    return AppView._loadDevFeed();
   },
 
   // Fetch the vote snapshot (promoted + merged) that powers the inline
@@ -5636,6 +5932,7 @@ const AppView = {
       // Promoted/merging fill in last so an open PR's live row always
       // wins over its merged snapshot.
       const voteRows = [...(merged || []), ...promoted];
+      promoted.forEach((pr) => AppView._overlayPendingVote(pr));
       AppView.voteState = {
         bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
         byPrNumber: Object.fromEntries(
@@ -5941,9 +6238,14 @@ const AppView = {
   // current state" (a pull-to-refresh, a merge broadcast, a vote), and
   // serving those from a stale snapshot would be a behaviour change nobody
   // asked for. Sharing a run that has not finished yet changes nothing about
-  // freshness — the answer is the same answer.
+  // freshness — the answer is the same answer — EXCEPT for a caller that has
+  // just written something and must read it back (#2782): a run sent before a
+  // vote landed answers with the tally from before it. That caller passes
+  // `fresh` to _loadDevData.
   _devDataInflight: null,
   _devDataInflightFor: null,
+  // #2782: the fresh load waiting in the pager queue, not yet sent — { slug, started, run }.
+  _devDataQueued: null,
 
   // One queue per app visit. A refresh must see the boundary established by
   // an earlier Load more, and a queued Load more must use the refreshed cursor.
@@ -5980,12 +6282,15 @@ const AppView = {
     return run;
   },
   _mergedRowKey(row) { return `${row.row_type || 'pr'}:${row.id}`; },
+  _completedAt(row) {
+    return row.completed_at || row.merged_at || row.payload?.appliedAt || row.closed_at || row.created_at;
+  },
   _mergedRowCursor(row) {
-    return row ? { created_at: row.created_at, id: row.id, row_type: row.row_type || 'pr' } : null;
+    return row ? { completed_at: AppView._completedAt(row), created_at: row.created_at, id: row.id, row_type: row.row_type || 'pr' } : null;
   },
   // Match /merged's keyset order, including independent PR / close-issue ids.
   _compareMergedRows(a, b) {
-    return Date.parse(b.created_at) - Date.parse(a.created_at)
+    return Date.parse(AppView._completedAt(b)) - Date.parse(AppView._completedAt(a))
       || Number(b.row_type !== 'close_issue') - Number(a.row_type !== 'close_issue')
       || Number(b.id) - Number(a.id);
   },
@@ -5993,6 +6298,7 @@ const AppView = {
     const qs = AppView._demoQS();
     const params = [];
     if (cursor) params.push(`before=${encodeURIComponent(cursor.created_at)}`,
+      `before_completed_at=${encodeURIComponent(AppView._completedAt(cursor))}`,
       `before_id=${encodeURIComponent(cursor.id)}`, `before_type=${encodeURIComponent(cursor.row_type || 'pr')}`);
     if (limit) params.push(`limit=${limit}`);
     const after = params.length ? (qs ? '&' : '?') + params.join('&') : '';
@@ -6068,31 +6374,43 @@ const AppView = {
   //
   // `!ok` is still true for null, so the one other caller that reads this
   // (the topic sub-view's fall-back-to-the-board branch) is unchanged.
-  _loadDevData() {
+  //
+  // `opts.fresh` (#2782) declines to join a run already in flight: that run
+  // may have been sent before a write the caller needs to read back (a vote),
+  // and it would answer with the state from before it. The new run queues
+  // behind the old one on the pager, so they never race to publish.
+  _loadDevData(opts = null) {
     if (!AppView.appData) return Promise.resolve(null);
     const slug = AppView.appData.slug;
     const pager = AppView._mergedPagerFor(slug);
     // Join the run already going for this app rather than opening a second
     // set of the same six requests beside it.
-    if (AppView._devDataInflight && AppView._devDataInflightFor === slug) {
+    const fresh = !!(opts && opts.fresh);
+    if (AppView._devDataInflight && AppView._devDataInflightFor === slug && !fresh) {
       return AppView._devDataInflight;
     }
-    const run = AppView._queueMergedOperation(pager, () => AppView._fetchDevData(slug)).then(
-      (ok) => {
-        if (AppView._devDataInflight === run) {
-          AppView._devDataInflight = null;
-          AppView._devDataInflightFor = null;
-        }
-        return ok;
-      },
-      (err) => {
-        if (AppView._devDataInflight === run) {
-          AppView._devDataInflight = null;
-          AppView._devDataInflightFor = null;
-        }
-        throw err;
+    // A fresh load still waiting in the queue has not sent a request yet, so
+    // it is as fresh as a new one would be: a burst of vote_update events
+    // coalesces onto it instead of queueing a run apiece.
+    const queued = AppView._devDataQueued;
+    if (fresh && queued && queued.slug === slug && !queued.started) return queued.run;
+    const entry = { slug, started: false, run: null };
+    const clear = () => {
+      if (AppView._devDataInflight === run) {
+        AppView._devDataInflight = null;
+        AppView._devDataInflightFor = null;
       }
+      if (AppView._devDataQueued === entry) AppView._devDataQueued = null;
+    };
+    const run = AppView._queueMergedOperation(pager, () => {
+      entry.started = true;
+      return AppView._fetchDevData(slug);
+    }).then(
+      (ok) => { clear(); return ok; },
+      (err) => { clear(); throw err; }
     );
+    entry.run = run;
+    if (!entry.started) AppView._devDataQueued = entry;
     AppView._devDataInflight = run;
     AppView._devDataInflightFor = slug;
     return run;
@@ -6200,6 +6518,10 @@ const AppView = {
       const majority = promotedData.majority || 1;
       const activeUsers = promotedData.activeUsers || 1;
       const locked = !!promotedData.locked;
+      // #2782: a vote still on its way to the server survives a snapshot
+      // that was read before it landed — on the board, the proposal page and
+      // the chat's inline rows alike, which all read these row objects.
+      promoted.forEach((pr) => AppView._overlayPendingVote(pr));
 
       // Shared inline-vote snapshot (same shape loadVoteState builds) so
       // the chat view's activity rows stay in sync without a refetch.
@@ -6264,13 +6586,7 @@ const AppView = {
       // its last surviving row, not after the first page of the refresh.
       AppView._mergedHasMore = !!mergedData.hasMore;
       AppView._mergedCursor = merged.length
-        ? {
-          created_at: merged[merged.length - 1].created_at,
-          id: merged[merged.length - 1].id,
-          // The stream mixes PR + close-issue rows from independent id
-          // sequences, so the cursor carries the last row's type too.
-          row_type: merged[merged.length - 1].row_type || 'pr',
-        }
+        ? AppView._mergedRowCursor(merged[merged.length - 1])
         // Keyset cursors need not name an existing row. If every row in the
         // loaded range disappeared, older history must remain reachable.
         : (mergedData.hasMore ? mergedData.boundary : null);
@@ -7548,6 +7864,17 @@ const AppView = {
       mySessions: AppView._mySessions || [],
       sharedSessions: AppView._sharedSessions || [],
     });
+    // ── THE SEARCH AND FILTERS ARE ALL ITEMS' ALONE (#2915) ──
+    //
+    // The controls live in All items' pane head and nowhere else, so they
+    // narrow what that tab draws — the themes, and the stage pane, which is
+    // `_kanbanView()` — and nothing on the other two. They used to narrow
+    // every card before it entered `entries`, so a search typed on All items
+    // quietly followed the viewer to Current status: "open items" fell from
+    // 146 to 2 on a tab with no search box to say why, while "waiting on
+    // votes" beside it stayed whole. So every card enters `entries` now and
+    // carries `matched`; only the theme grouping reads the narrowed subset,
+    // and `meta.filtered` tells the tab strip there is a search waiting there.
     const f = AppView._kanbanMatchFilters();
     const filtering = AppView._kanbanFiltersActive();
     const matchKind = (kind) => (kind === 'my-session' || kind === 'shared-session' ? 'session' : kind);
@@ -7599,7 +7926,6 @@ const AppView = {
     // vote and own-work strips, which are not grouped by category.
     const underThemeHeading = AppView._getWorkshopGroup() === 'category';
     const add = (kind, item, lane, build) => {
-      if (!match(kind, item)) return;
       let card = build();
       if (!card) return;
       if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'attr:category')) {
@@ -7616,6 +7942,8 @@ const AppView = {
         itemKey: AppView._workshopItemKey(kind, item),
         kind, item, lane, row, people, created,
         t: activityOf(kind, item),
+        // Whether All items' search and filters keep it (#2915).
+        matched: match(kind, item),
       });
     };
     for (const x of buckets.inReview) {
@@ -7802,53 +8130,71 @@ const AppView = {
       ...(ungrouped ? { ungrouped: true } : {}),
       _people: new Map(),
     });
-    const themes = themeDefs.map((d) => mkTheme(d, false));
-    const byId = new Map(themes.map((t) => [t.id, t]));
-    // While no themes have arrived the one group is everything; once they
-    // have, the remainder is what they did not name — titled below, once
-    // it is known whether those cards are on their way or were declined.
-    const rest = mkTheme(tData
-      ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the categories do not name yet.' }
-      : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
-    let placingCount = 0;
-    for (const e of entries) {
-      if (e.lane === 'done') continue;
-      let id = e.itemKey ? themeOf.get(e.itemKey) : null;
-      if (!id && e.kind === 'my-session') id = linkedTheme(e.item);
-      const theme = (id && byId.get(id)) || rest;
-      if (theme === rest && placingPossible && e.kind !== 'my-session' && e.itemKey && !unplacedSet.has(e.itemKey)) {
-        e.row.placing = true;
-        placingCount += 1;
-      }
-      const lane = theme.lanes.find((l) => l.key === e.lane);
-      theme.counts[e.lane] += 1;
-      if (e.row.fresh) theme.counts.fresh += 1;
-      if (e.t > theme.lastActive) theme.lastActive = e.t;
-      for (const p of e.people) theme._people.set(p, (theme._people.get(p) || 0) + 1);
-      if (lane.rows.length < AppView.WORKSHOP_LANE_MAX) lane.rows.push(e.row);
-      else lane.more += 1;
-    }
     const finish = (t) => {
       t.people = [...t._people.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
       delete t._people;
       return t;
     };
-    const drawn = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
-    if (rest.lanes.some((l) => l.rows.length)) {
-      if (tData) {
-        const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);
-        rest.placing = placingCount;
-        if (placingCount && placingCount === restCount) {
-          rest.name = 'Being placed';
-          rest.description = 'New cards are placed into a category within a minute or two of arriving.';
-        } else if (placingCount) {
-          rest.description = `Cards the categories do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
-        } else {
-          rest.description = 'Cards the categories do not cover yet. They count towards the next re-draft of the categories.';
+    // One grouping of a list of entries into the drawn themes, returned with
+    // how many of its rows are being placed. A function because it runs over
+    // two lists (#2915): All items draws the entries its search and filters
+    // kept, and the status tab's category count and busiest theme are facts
+    // about the whole app, so they read the grouping of all of them.
+    const groupThemes = (list) => {
+      const themes = themeDefs.map((d) => mkTheme(d, false));
+      const byId = new Map(themes.map((t) => [t.id, t]));
+      // While no themes have arrived the one group is everything; once they
+      // have, the remainder is what they did not name — titled below, once
+      // it is known whether those cards are on their way or were declined.
+      const rest = mkTheme(tData
+        ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the categories do not name yet.' }
+        : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
+      let placingCount = 0;
+      for (const e of list) {
+        if (e.lane === 'done') continue;
+        let id = e.itemKey ? themeOf.get(e.itemKey) : null;
+        if (!id && e.kind === 'my-session') id = linkedTheme(e.item);
+        const theme = (id && byId.get(id)) || rest;
+        if (theme === rest && placingPossible && e.kind !== 'my-session' && e.itemKey && !unplacedSet.has(e.itemKey)) {
+          e.row.placing = true;
+          placingCount += 1;
         }
+        const lane = theme.lanes.find((l) => l.key === e.lane);
+        theme.counts[e.lane] += 1;
+        if (e.row.fresh) theme.counts.fresh += 1;
+        if (e.t > theme.lastActive) theme.lastActive = e.t;
+        for (const p of e.people) theme._people.set(p, (theme._people.get(p) || 0) + 1);
+        if (lane.rows.length < AppView.WORKSHOP_LANE_MAX) lane.rows.push(e.row);
+        else lane.more += 1;
       }
-      drawn.push(finish(rest));
-    }
+      const drawnOf = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
+      if (rest.lanes.some((l) => l.rows.length)) {
+        if (tData) {
+          const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);
+          rest.placing = placingCount;
+          if (placingCount && placingCount === restCount) {
+            rest.name = 'Being placed';
+            rest.description = 'New cards are placed into a category within a minute or two of arriving.';
+          } else if (placingCount) {
+            rest.description = `Cards the categories do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
+          } else {
+            rest.description = 'Cards the categories do not cover yet. They count towards the next re-draft of the categories.';
+          }
+        }
+        drawnOf.push(finish(rest));
+      }
+      // A pair rather than an object: every `return {` in _workshopView is
+      // one of its view models, and each of those states `loading`
+      // (tests/dev-board-loading.test.js reads them all).
+      return [drawnOf, placingCount];
+    };
+    // All items' themes: the entries its search and filters kept.
+    const [drawn, placingCount] = groupThemes(filtering ? entries.filter((e) => e.matched) : entries);
+    // ...and every theme the app has, for the status tab's category count and
+    // busiest theme. Grouped a second time only while a search or filter is
+    // narrowing, and HERE rather than beside the dashboard: grouping is what
+    // marks a row `placing`, so every row is marked before "since" copies it.
+    const wholeThemes = filtering ? groupThemes(entries)[0] : drawn;
 
     // ── Since your last visit ──
     let since = null;
@@ -7926,7 +8272,9 @@ const AppView = {
     const idle = openEntries
       .filter((e) => e.lane === 'open' && e.kind === 'issue' && AppView._issueUnclaimed(e.item))
       .sort((a, b) => b.t - a.t);
-    const named = drawn.filter((t) => !t.ungrouped);
+    // Every theme the app has, not the ones All items' search left standing
+    // (#2915): the count and the busiest theme are on the status tab.
+    const named = wholeThemes.filter((t) => !t.ungrouped);
     // #1922: the server counts both weeks over the WHOLE merged history, so
     // those numbers are exact whatever the page holds. Without them (an older
     // server) the loaded page is counted, and `partial` below says it is a
@@ -8063,7 +8411,10 @@ const AppView = {
     // nobody on it. Recency rather than age on purpose: an issue the group is
     // still talking about has context to start from, where the oldest one on
     // the board is usually oldest for a reason.
-    const nextUp = (!filtering && idle.length)
+    //
+    // It stood down while a filter was on. The filter is All items' now and
+    // this is not (#2915), so it is offered whatever that tab is narrowed to.
+    const nextUp = idle.length
       ? { ...idle[0].row, key: `next:${idle[0].row.key}` }
       : null;
     // #1934: the rest of the unclaimed list, behind a "Show N more" under the
@@ -8078,9 +8429,9 @@ const AppView = {
     // ── The discussion row ──
     // Drawn whether or not anything has been said: on a lander it is the
     // door to the general chat, as the kanban's card is above its columns.
-    // Dropped while a filter is active, as the feed dropped it — it carries
-    // nothing to match on.
-    const discCard = filtering ? null : AppView._discussionCardModel();
+    // It was dropped while a filter was active, as the feed dropped it; the
+    // filter narrows All items alone now (#2915), and this is not on it.
+    const discCard = AppView._discussionCardModel();
     const discussion = discCard ? { t: 'card', key: discCard.key, card: discCard } : null;
 
     // ── The capture deep link ──
@@ -8109,9 +8460,13 @@ const AppView = {
       if (r) autoExpand = { theme: 'mine', key: r.key };
     }
 
+    // The BOARD holding nothing, which no search can cause: `entries` is
+    // every card, so `filtered` is always false here (#2915). All items says
+    // "Nothing here matches" for itself, from `meta.filtered`, when its
+    // search empties the themes.
     const emptyNote = entries.length
       ? null
-      : { loadFailed: !!meta.note, filtered: filtering };
+      : { loadFailed: !!meta.note, filtered: false };
     // `loading` is on EVERY return path, never omitted. The store MERGES a
     // patch (lib/plain-store.js), so a view model that simply left the key out
     // would inherit the previous publish's `true` and leave the lander on its
@@ -8148,6 +8503,9 @@ const AppView = {
         digestError: (tData && tData.digestError) || null,
         coverage: (tData && tData.coverage) || null,
         placing: placingCount,
+        // All items' search and filters are narrowing its themes. Only that
+        // tab's surfaces read it, and the tab strip's dot on All items
+        // (#2915), which says so from the other two.
         filtered: filtering,
       },
       autoExpand,
@@ -8594,7 +8952,6 @@ const AppView = {
     const issueT = (i) => Math.max(ts(i.updatedAt), ts(i.lastMessageAt));
     const prT = (p) => Math.max(ts(p.promoted_at || p.created_at), ts(p.last_message_at));
     const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
-    const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
     // Merge-pipeline pin rank (#388), and since THE UI OVERHAUL the board is
     // the ONLY place it applies. It used to have a twin, AppView
     // ._proposalPinRank, which ordered the retired List view's proposal
@@ -8671,7 +9028,7 @@ const AppView = {
     for (const g of gov) review.push({ kind: 'gov', item: g, _r: 4, _t: govT(g) });
     review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
 
-    const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
+    const done = merged.slice().sort(AppView._compareMergedRows);
 
     // In progress = pinned own sessions (most recent activity first) →
     // headless-working issues → other users' shared sessions (oldest
@@ -9644,7 +10001,7 @@ const AppView = {
       const t = Date.parse(v || '');
       return Number.isFinite(t) ? t : 0;
     };
-    const fresh = list.filter((m) => Math.max(ts(m.created_at), ts(m.last_message_at)) >= cutoff);
+    const fresh = list.filter((m) => ts(AppView._completedAt(m)) >= cutoff);
     return fresh.length >= AppView.DONE_RECENT_MIN ? fresh : list.slice(0, AppView.DONE_RECENT_MIN);
   },
   showAllDone() {
@@ -9808,6 +10165,10 @@ const AppView = {
 
   _sessionCardMeta(s, subtitle) {
     const meta = [{ t: 'text', s: subtitle }];
+    if (s?.pr_url && s?.pr_number) meta.push({
+      t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
+      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
+    });
     const f = s && s.failing_checks;
     if (!f || !f.total || !Array.isArray(f.rows) || !f.rows.length) return meta;
     const shown = f.rows.slice(0, 2).map((r) => r.name).filter(Boolean);
@@ -9954,6 +10315,10 @@ const AppView = {
     }
 
     const menu = imported ? AppView._importedUnderwayMenuItems(s) : [];
+    if (!imported && s.pr_url) menu.push({
+      label: 'View PR on GitHub', icon: 'github', title: s.pr_url,
+      act: () => window.open(s.pr_url, '_blank', 'noopener'),
+    });
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
     if (shared && !imported) {
@@ -10071,6 +10436,10 @@ const AppView = {
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
     const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
+    if (!imported && s.pr_url) menu.push({
+      label: 'View PR on GitHub', icon: 'github', title: s.pr_url,
+      act: () => window.open(s.pr_url, '_blank', 'noopener'),
+    });
     menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
@@ -10100,7 +10469,10 @@ const AppView = {
         s: imported
           ? `Imported pull request by ${author} · imported by ${owner}`
           : `${owner} is working on this`,
-      }],
+      }, ...(s.pr_url && s.pr_number ? [{
+        t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
+        cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
+      }] : [])],
       pill: null,
       linked: [],
       badges: [
@@ -10116,8 +10488,7 @@ const AppView = {
       // dense band renders reserved-and-empty.
       actions: [],
       actionPreview: null,
-      // Ordinary shared sessions keep the chevron-only rail. Imported PRs
-      // add their proposal attribute editors / GitHub destination.
+      // A shared session with a PR exposes its GitHub destination here.
       rail: {
         menuKey: AppView._registerCardMenu(`session:${s.id}`, menu),
         chevron: !noNav,
@@ -12399,8 +12770,8 @@ const AppView = {
   _recheckAction(pr) {
     if (!pr) return null;
     if (AppView.readOnly) return null;
-    if (pr.status && !['active', 'promoted'].includes(pr.status)) return null;
-    if (pr.status === 'active' && !pr.check_state) return null;
+    if (pr.status && !['active', 'paused', 'promoted'].includes(pr.status)) return null;
+    if (['active', 'paused'].includes(pr.status) && !pr.check_state) return null;
     if (pr.check_state === 'passing') return null;
     const owner = !!(App.user && pr.user_id === App.user.id);
     // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
@@ -15829,6 +16200,10 @@ const AppView = {
   async createPrForIssue(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug || typeof DevChat === 'undefined') return;
+    // #2779: with agent sessions on, the work starts in a conversation with
+    // the Mayor focused on this request; it links and claims the request
+    // when it starts the change (the user confirms that on a card).
+    if (AppView._startAgentSession({ slug, issueNumber, entry: 'issue' })) return;
     const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
 
     // #287: pass the issue number so the session is persistently linked
@@ -18258,6 +18633,46 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
+  // #2782: votes sent but not yet read back, by session id → { vote, token }.
+  // A dev-data load that was already in flight when the vote was cast answers
+  // with the row as it stood before, and publishing that repainted the vote
+  // away until the next refresh. Every load re-applies these to the rows it
+  // publishes; castVote drops its entry on a refusal, or once the refresh it
+  // started after the server answered has landed.
+  _pendingVotes: new Map(),
+  // The optimistic change to one cached row: the viewer's side and the raw
+  // counts. `qualified_yes_count` is left to the server — whether this voter
+  // qualifies is the invited-approver roster's call, not the client's.
+  _applyVoteToRow(row, vote) {
+    if (!row || row.my_vote === vote) return;
+    const bump = (key, by) => {
+      if (row[key] == null) return;
+      row[key] = Math.max(0, (parseInt(row[key], 10) || 0) + by);
+    };
+    if (row.my_vote === 'yes') bump('yes_count', -1);
+    if (row.my_vote === 'no') bump('no_count', -1);
+    bump(vote === 'yes' ? 'yes_count' : 'no_count', 1);
+    row.my_vote = vote;
+  },
+  _overlayPendingVote(row) {
+    if (!row || row.status === 'merged') return;
+    const held = AppView._pendingVotes.get(Number(row.id));
+    if (held) AppView._applyVoteToRow(row, held.vote);
+  },
+  // The board paints from `#dev-body`; an open proposal page is a sheet
+  // over it with its own header, which that repaint never reached — so on the
+  // page itself a Yes showed nothing until the round-trip and two refetches
+  // had finished. Both now repaint from the same cached row.
+  _repaintAfterVote(sessionId) {
+    AppView._repaintDevBody();
+    const t = AppView._devTopic;
+    if (t && (t.kind === 'proposal' || t.kind === 'session') && Number(t.id) === Number(sessionId)) {
+      AppView._renderTopicHead();
+    }
+    if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+      GroupChat.refreshVoteControls();
+    }
+  },
   // #2038: the epoch each proposal was last seen at, so a rejection can
   // re-arm the next click without waiting on a refetch to land. The old
   // code fired the refresh without awaiting it and released the click lock
@@ -18327,17 +18742,29 @@ const AppView = {
     // setting it and repainting from cache is the whole optimistic step. The
     // server is still the authority: a refused vote puts the old value back
     // and repaints, and every path ends in the usual refetch.
-    const pr = (AppView._proposals || []).find((p) => p.id === sessionId) || null;
-    const prevVote = pr ? pr.my_vote : null;
-    const optimistic = !!pr && prevVote !== vote;
+    //
+    // #2782: the row is looked up the way the proposal PAGE finds it (the
+    // board lists, then the on-demand row a deep link loads), the page's
+    // header is repainted beside the board, and the vote is held as pending
+    // so a load that was already in flight cannot paint it away.
+    const pr = AppView._findItem('proposal', sessionId);
+    const prevRow = pr ? { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count } : null;
+    const optimistic = !!pr && pr.my_vote !== vote;
+    const token = {};
+    AppView._pendingVotes.set(Number(sessionId), { vote, token });
     if (optimistic) {
-      pr.my_vote = vote;
-      AppView._repaintDevBody();
+      AppView._applyVoteToRow(pr, vote);
+      AppView._repaintAfterVote(sessionId);
     }
+    const settle = () => {
+      const held = AppView._pendingVotes.get(Number(sessionId));
+      if (held && held.token === token) AppView._pendingVotes.delete(Number(sessionId));
+    };
     const rollback = () => {
+      settle();
       if (optimistic && pr.my_vote === vote) {
-        pr.my_vote = prevVote;
-        AppView._repaintDevBody();
+        Object.assign(pr, prevRow);
+        AppView._repaintAfterVote(sessionId);
       }
     };
     try {
@@ -18367,7 +18794,9 @@ const AppView = {
         return;
       }
       AppView._seenEpoch.delete(sessionId);
-      AppView.refreshDevData('vote');
+      // The overlay stays until the post-vote read has landed: a load queued
+      // ahead of it still publishes the pre-vote row first.
+      Promise.resolve(AppView.refreshDevData('vote')).then(settle, settle);
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
@@ -18612,9 +19041,17 @@ const AppView = {
   // missing/unopenable id bounces back to the card list. The App
   // secrets / display-name shortcuts that used to live here now sit
   // directly in the "+" menu (#645).
-  async renderDevChatTab(restoreSessionId) {
+  async renderDevChatTab(restoreSessionId, { embedded = false } = {}) {
     const content = AppView._devContainer();
     if (!content) return;
+    // #2813: in the Messages pane there is no Board to fall back to — the
+    // pane says the session could not be opened instead — and a redirect
+    // to another Dev surface goes through that surface's own address.
+    const unavailable = () => {
+      if (embedded) return 'unavailable';
+      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      return undefined;
+    };
     if (!restoreSessionId) {
       if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
       return;
@@ -18685,8 +19122,7 @@ const AppView = {
     // link) falls back to the forum rather than stranding an empty view.
     if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
       if (await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
-      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
-      return;
+      return unavailable();
     }
 
     // #846: an imported PR has NO dev chat — its code lives on GitHub and
@@ -18700,6 +19136,10 @@ const AppView = {
     if (DevChat.currentSession.source === 'imported') {
       const importedId = Number(restoreSessionId);
       DevChat.currentSession = null;
+      if (embedded) {
+        window.location.hash = `#app/${encodeURIComponent(AppView.appData.slug)}/dev/proposals/${importedId}`;
+        return 'unavailable';
+      }
       AppView.openTopic('proposal', importedId);
       return;
     }
@@ -20844,6 +21284,11 @@ const AppView = {
     const appIframe = document.getElementById('app-iframe');
     if (!appIframe || e.source !== appIframe.contentWindow) return;
     AppView._issueStateSource = type === 'available' ? e.source : null;
+    const slug = AppView.appData && AppView.appData.slug;
+    if (slug) {
+      if (AppView._issueStateSource) AppView._issueStateBySlug[slug] = e.source;
+      else delete AppView._issueStateBySlug[slug];
+    }
   },
 
   // True iff a provider announced itself from the currently mounted

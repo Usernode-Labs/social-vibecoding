@@ -18,8 +18,14 @@
  * wallpaper, the sheet tokens and the header's brand tokens off that
  * attribute, next to `.dark`, so the strip repaints without the shell's own
  * theme moving: `.dark` on <html> stays the theme module's alone
- * (frontend/src/head.html), and every sheet or dialog opened from the bar
- * keeps the shell's theme.
+ * (frontend/src/head.html).
+ *
+ * The sheets, dialogs and menus opened over a dark app follow it too (#2803,
+ * which reversed the earlier rule that they keep the viewer's own mode):
+ * lib/surface-tone.ts reads this same attribute and puts `.dark` on each
+ * floating surface rather than on <html>, so they are drawn in the shell's
+ * dark palette while the page under the frame keeps the shell's theme. A
+ * light app under the dark shell leaves them in the shell's dark mode.
  *
  * Plain JS with no React import, like app-frame-store.js and for the same
  * reason: tests/app-tone.test.js drives this code directly.

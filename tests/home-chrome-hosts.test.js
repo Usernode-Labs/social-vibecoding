@@ -301,7 +301,7 @@ test('"Show all N apps" expands the grid and repaints', () => {
 });
 
 
-// ── The three panel sections ──────────────────────────────────────────
+// ── The panel sections ────────────────────────────────────────────────
 //
 // tests/home-panels-render.test.js covers what they DRAW, end to end. What
 // belongs here is the one thing that is about the screen rather than about a
@@ -343,9 +343,12 @@ test('nothing on the home screen is an innerHTML host any more', () => {
   // empty <section> left for a module to find by id and fill.
   const island = read('frontend/src/features/home/index.tsx');
   for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
-    '<DiscoverSection />', '<ChallengesSection />', '<CreateSection />']) {
+    '<DiscoverSection />', '<ChallengesSection />']) {
     assert.ok(island.includes(tag), `the island mounts ${tag}`);
   }
+  // Create is no host of its own: it is #app-list's trailing tile, rendered by
+  // AppGrid from the grid model (tests/home-create-tile.test.js).
+  assert.ok(!island.includes('<CreateSection />'), 'the Create section is retired');
 });
 
 test('the panel sections publish through a store, on one paint', () => {
@@ -371,6 +374,11 @@ test('the panel sections publish through a store, on one paint', () => {
   const state = JSON.parse(JSON.stringify(store.get()));
   assert.equal(state.painted, true, 'Home.render() paints the panels too');
   assert.equal(state.discover.title, 'Discover');
-  assert.equal(state.create.canCreate, false, 'no App.user quota in this harness');
   assert.equal(state.challenges, null, 'a block the registry does not carry is absent');
+  // The server's registry still lists `create` (an older cached shell renders
+  // its section from it), but the panels no longer build it: Create is the
+  // grid's trailing tile, and it arrives on the grid model in the same paint.
+  assert.equal('create' in state, false, 'no create block in the panels model');
+  const grid = JSON.parse(JSON.stringify(sandbox.gridStore.get()));
+  assert.equal(grid.create.enabled, false, 'no App.user quota in this harness');
 });

@@ -62,6 +62,27 @@ function layoutViewportHeight() {
   return Math.max(innerHeight, (root && root.clientHeight) || 0);
 }
 
+// WHERE THE PAINT LAYER ACTUALLY IS, in the same coordinates as the surface
+// (#2822). Send feedback with the keyboard up still showed the top of the
+// screen undimmed and the bottom dimmed: the cutout was placed in client
+// coordinates and painted as if the layer's own top-left were (0, 0) and its
+// height the layout viewport's. While iOS pans the visual viewport for the
+// keyboard neither is guaranteed — the layer is a fixed box, and so is the
+// dialog, but the band on screen need not be where either assumes. So the layer
+// is measured too, and the cutout is placed relative to IT: both rects come
+// from the same getBoundingClientRect, so whatever space the engine reports
+// them in, the hole lands on the dialog. app.css also extends the layer a
+// viewport above and below its fixed box (`.overlay-scrim`), so the band the
+// keyboard pans to is inside it wherever it is. Where the layer has no box
+// to measure (tests, a detached node) this falls back to the old origin.
+function paintBox(paint) {
+  const rect = typeof paint.getBoundingClientRect === 'function' ? paint.getBoundingClientRect() : null;
+  if (rect && rect.width > 0 && rect.height > 0) {
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  }
+  return { left: 0, top: 0, width: innerWidth, height: layoutViewportHeight() };
+}
+
 export function attachOverlayScrim(surface, backdrop, paint) {
   if (!surface || !backdrop || !paint) return () => {};
   let disposed = false;
@@ -95,7 +116,9 @@ export function attachOverlayScrim(surface, backdrop, paint) {
         rect.height / (radii[0][1] + radii[3][1] || 1),
         rect.height / (radii[1][1] + radii[2][1] || 1));
       radii.forEach(pair => { pair[0] *= scale; pair[1] *= scale; });
-      const box = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      const layer = paintBox(paint);
+      const box = { left: rect.left - layer.left, top: rect.top - layer.top,
+        right: rect.right - layer.left, bottom: rect.bottom - layer.top };
       // Focus outlines paint outside the border box. Leave them above the dim
       // as they were with the original outer shadow (including UA auto rings).
       const outline = style.outlineStyle === 'none' ? 0
@@ -106,15 +129,15 @@ export function attachOverlayScrim(surface, backdrop, paint) {
         radii.forEach(pair => { pair[0] += outline; pair[1] += outline; });
       }
       // The kit extends its glass beyond the docked edge during overshoot.
-      if (surface.classList.contains('un-sheet')) box.bottom = Math.max(box.bottom, innerHeight);
+      if (surface.classList.contains('un-sheet')) box.bottom = Math.max(box.bottom, layer.height);
       if (surface.classList.contains('un-panel')) {
         if (surface.dataset.unSide === 'left') box.left = Math.min(box.left, 0);
-        else box.right = Math.max(box.right, innerWidth);
+        else box.right = Math.max(box.right, layer.width);
       }
       const cardFade = surface.classList.contains('un-modal');
       const opacity = cardFade ? style.opacity : getComputedStyle(backdrop).opacity;
       return {
-        background: scrimBackground(box, radii, innerWidth, layoutViewportHeight(), window.devicePixelRatio || 1),
+        background: scrimBackground(box, radii, layer.width, layer.height, window.devicePixelRatio || 1),
         opacity, zIndex: style.zIndex, visibility: 'visible',
         animating: [surface, backdrop].some(el => el.getAnimations().some(a => a.playState === 'running')),
       };
@@ -136,12 +159,23 @@ export function attachOverlayScrim(surface, backdrop, paint) {
   mutations.observe(backdrop, { attributes: true, attributeFilter: ['class', 'style', 'data-open'] });
   const resize = new ResizeObserver(updateVisible);
   resize.observe(surface);
+  // The kit's keyboard inset and the visual-viewport pan both reach the
+  // dialog as custom properties on <html> (`--un-kb-inset`,
+  // `--platform-vv-top`), and a change to them MOVES the dialog without
+  // resizing it. Only the `top` transition's events and the viewport events
+  // reported that, and a move that runs no transition, or lands after the
+  // last viewport event, left the cutout where the dialog used to be (#2822).
+  // Re-measure whenever <html>'s style or class changes.
+  const root = typeof document === 'undefined' ? null : document.documentElement;
+  const rootChanges = new MutationObserver(updateVisible);
+  if (root) rootChanges.observe(root, { attributes: true, attributeFilter: ['style', 'class'] });
   surface.addEventListener('focusin', update);
   surface.addEventListener('focusout', update);
   surface.addEventListener('transitionrun', update);
   surface.addEventListener('transitionend', update);
   surface.addEventListener('transitioncancel', update);
   window.addEventListener('resize', updateVisible);
+  window.addEventListener('scroll', updateVisible, { passive: true });
   window.visualViewport?.addEventListener('resize', updateVisible);
   window.visualViewport?.addEventListener('scroll', updateVisible);
   // Opening must not paint even one frame with a missing or stale hole.
@@ -152,12 +186,14 @@ export function attachOverlayScrim(surface, backdrop, paint) {
     if (!pending.size && frame) { cancelAnimationFrame(frame); frame = 0; }
     mutations.disconnect();
     resize.disconnect();
+    rootChanges.disconnect();
     surface.removeEventListener('focusin', update);
     surface.removeEventListener('focusout', update);
     surface.removeEventListener('transitionrun', update);
     surface.removeEventListener('transitionend', update);
     surface.removeEventListener('transitioncancel', update);
     window.removeEventListener('resize', updateVisible);
+    window.removeEventListener('scroll', updateVisible);
     window.visualViewport?.removeEventListener('resize', updateVisible);
     window.visualViewport?.removeEventListener('scroll', updateVisible);
     paint.style.visibility = 'hidden';

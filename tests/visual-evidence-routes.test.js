@@ -55,6 +55,8 @@ test('run diagnostics are private to the author or app manager, available live, 
     trace_summary: {
       replayPasses: [{ pass: 1, durationMs: 20 }], replayRuntime: 'kubernetes', agentAttempts: 1,
       agentDispatches: [{ requestedBackend: 'codex_openrouter', requestedModel: 'glm-4', backend: 'claude_code', model: 'claude-sonnet', fallbackReason: 'model_without_tools', outcome: 'completed' }],
+      agentActivity: { budgetMs: 240000, events: [{ atMs: 1200, kind: 'agent_deadline' }] },
+      agentFinalResponse: { excerpt: 'The model stopped after context.', characters: 32 },
       lastReplayEvent: { pass: 2, type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' },
       replayEvents: [{ pass: 2, type: 'action_started', actionId: 'open-settings', side: 'head' }],
       planSource: 'hosted_planner', tokenUsage: { inputTokens: 123 }, artifactBytes: 345,
@@ -110,6 +112,8 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.deepEqual(diagnostics.trace.replayPasses, [{ pass: 1, durationMs: 20 }]);
   assert.equal(diagnostics.trace.agentDispatches[0].backend, 'claude_code');
   assert.equal(diagnostics.trace.agentDispatches[0].fallbackReason, 'model_without_tools');
+  assert.equal(diagnostics.trace.agentActivity.events[0].kind, 'agent_deadline');
+  assert.equal(diagnostics.trace.agentFinalResponse.excerpt, 'The model stopped after context.');
   assert.equal(diagnostics.trace.lastReplayEvent.pass, 2);
   assert.equal(diagnostics.trace.replayEvents[0].actionId, 'open-settings');
   assert.equal(diagnostics.trace.replayRuntime, 'kubernetes');
@@ -171,76 +175,87 @@ test('the binary route is authenticated, current-run fenced, exact-head fenced, 
   assert.doesNotMatch(src, /\/visuals\//, 'evidence never uses the public legacy media route');
 });
 
-test('the change author can submit only a matching plan for the current proposal revision', async (t) => {
-  const head = 'b'.repeat(40);
-  const session = {
-    id: 42, user_id: 7, app_id: 9, status: 'promoted', source: 'imported',
-    imported_pr_head_sha: head, visual_evidence_state: 'planned',
-    visual_evidence_run_id: null, visual_evidence_detail: { intent: fixtures.intent() },
-  };
-  const pool = { query: async () => ({ rows: [{ ...session }] }) };
-  const savedPool = db.getPool;
-  const savedAccess = appAccess.getAppForUser;
-  const savedSchedule = orchestrator.scheduleForSession;
-  const savedRerun = state.rerunSameHead;
-  db.getPool = () => pool;
-  appAccess.getAppForUser = async () => ({ id: 9, slug: 'demo' });
-  const scheduled = [];
-  orchestrator.scheduleForSession = async (_config, options) => {
-    scheduled.push(options);
-    return { scheduled: true, runId: '1'.repeat(32) };
-  };
-  const routePath = require.resolve('../src/routes/visual-evidence');
-  delete require.cache[routePath];
-  const isolatedRoutes = require('../src/routes/visual-evidence');
-  const app = express();
-  app.use((req, _res, next) => { req.user = { id: 7 }; next(); });
-  app.use(isolatedRoutes.visualEvidenceRoutes({ visualEvidence: { execute: true } }));
-  const server = app.listen(0);
-  await new Promise((resolve) => server.once('listening', resolve));
-  t.after(() => {
-    server.close();
-    db.getPool = savedPool;
-    appAccess.getAppForUser = savedAccess;
-    orchestrator.scheduleForSession = savedSchedule;
-    state.rerunSameHead = savedRerun;
+for (const status of ['active', 'paused', 'promoted']) {
+  test(`${status}: only the change author can submit a matching plan for the current revision`, async (t) => {
+    const head = 'b'.repeat(40);
+    const session = {
+      id: 42, user_id: 7, app_id: 9, status, source: 'imported',
+      imported_pr_head_sha: head, visual_evidence_state: 'planned',
+      visual_evidence_run_id: null, visual_evidence_detail: { intent: fixtures.intent() },
+    };
+    const pool = { query: async () => ({ rows: [{ ...session }] }) };
+    const savedPool = db.getPool;
+    const savedAccess = appAccess.getAppForUser;
+    const savedSchedule = orchestrator.scheduleForSession;
+    const savedRerun = state.rerunSameHead;
+    db.getPool = () => pool;
+    appAccess.getAppForUser = async () => ({ id: 9, slug: 'demo' });
+    const scheduled = [];
+    orchestrator.scheduleForSession = async (_config, options) => {
+      scheduled.push(options);
+      return { scheduled: true, runId: '1'.repeat(32) };
+    };
+    const routePath = require.resolve('../src/routes/visual-evidence');
     delete require.cache[routePath];
-  });
-  const submit = async (body) => {
-    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence/plan`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    const isolatedRoutes = require('../src/routes/visual-evidence');
+    const app = express();
+    app.use((req, _res, next) => { req.user = { id: 7 }; next(); });
+    app.use(isolatedRoutes.visualEvidenceRoutes({ visualEvidence: { execute: true } }));
+    const server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    t.after(() => {
+      server.close();
+      db.getPool = savedPool;
+      appAccess.getAppForUser = savedAccess;
+      orchestrator.scheduleForSession = savedSchedule;
+      state.rerunSameHead = savedRerun;
+      delete require.cache[routePath];
     });
-    return { status: res.status, body: await res.json() };
-  };
-  const stale = await submit({ headSha: 'c'.repeat(40), plan: fixtures.plan() });
-  assert.equal(stale.status, 409);
-  assert.equal(stale.body.error, 'evidence_head_moved');
-  const changed = fixtures.plan({ rationale: 'A different claim' });
-  const mismatch = await submit({ headSha: head, plan: changed });
-  assert.equal(mismatch.status, 409);
-  assert.equal(mismatch.body.error, 'evidence_intent_mismatch');
-  const accepted = await submit({ headSha: head, plan: fixtures.plan() });
-  assert.equal(accepted.status, 202);
-  assert.equal(accepted.body.runId, '1'.repeat(32));
-  assert.equal(scheduled.length, 1);
-  assert.equal(scheduled[0].headSha, head);
-  assert.equal(scheduled[0].authorPlan.version, 1);
-  session.user_id = 8;
-  const otherUser = await submit({ headSha: head, plan: fixtures.plan() });
-  assert.equal(otherUser.status, 404);
-  assert.equal(scheduled.length, 1);
-  session.user_id = 7;
-  session.visual_evidence_state = 'failed';
-  session.visual_evidence_run_id = '2'.repeat(32);
-  const retries = [];
-  state.rerunSameHead = async (_pool, runId, options) => {
-    retries.push({ runId, options });
-    return { id: '3'.repeat(32), head_sha: head, state: 'planned' };
-  };
-  const retry = await submit({ headSha: head, plan: fixtures.plan() });
-  assert.equal(retry.status, 202);
-  assert.deepEqual(retries, [{ runId: '2'.repeat(32), options: {
-    trigger: 'author-plan', authorPlan: planContract.parseReplayPlan(fixtures.plan()),
-  } }]);
-  assert.equal(scheduled.length, 2);
-});
+    const submit = async (body) => {
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence/plan`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    const stale = await submit({ headSha: 'c'.repeat(40), plan: fixtures.plan() });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error, 'evidence_head_moved');
+    const changed = fixtures.plan({ rationale: 'A different claim' });
+    const mismatch = await submit({ headSha: head, plan: changed });
+    assert.equal(mismatch.status, 409);
+    assert.equal(mismatch.body.error, 'evidence_intent_mismatch');
+    const accepted = await submit({ headSha: head, plan: fixtures.plan() });
+    assert.equal(accepted.status, 202);
+    assert.equal(accepted.body.runId, '1'.repeat(32));
+    assert.equal(scheduled.length, 1);
+    assert.equal(scheduled[0].headSha, head);
+    assert.equal(scheduled[0].authorPlan.version, 1);
+    assert.equal(session.status, status, 'evidence submission does not resume coding');
+    for (const closed of ['archived', 'merged', 'merging']) {
+      session.status = closed;
+      assert.equal((await submit({ headSha: head, plan: fixtures.plan() })).body.error, 'proposal_not_open');
+    }
+    session.status = status;
+    session.visual_evidence_run_id = '4'.repeat(32);
+    session.visual_evidence_state = 'provisioning';
+    assert.equal((await submit({ headSha: head, plan: fixtures.plan() })).body.error, 'evidence_run_in_progress');
+    session.user_id = 8;
+    const otherUser = await submit({ headSha: head, plan: fixtures.plan() });
+    assert.equal(otherUser.status, 404);
+    assert.equal(scheduled.length, 1);
+    session.user_id = 7;
+    session.visual_evidence_state = 'failed';
+    session.visual_evidence_run_id = '2'.repeat(32);
+    const retries = [];
+    state.rerunSameHead = async (_pool, runId, options) => {
+      retries.push({ runId, options });
+      return { id: '3'.repeat(32), head_sha: head, state: 'planned' };
+    };
+    const retry = await submit({ headSha: head, plan: fixtures.plan() });
+    assert.equal(retry.status, 202);
+    assert.deepEqual(retries, [{ runId: '2'.repeat(32), options: {
+      trigger: 'author-plan', authorPlan: planContract.parseReplayPlan(fixtures.plan()),
+    } }]);
+    assert.equal(scheduled.length, 2);
+  });
+}

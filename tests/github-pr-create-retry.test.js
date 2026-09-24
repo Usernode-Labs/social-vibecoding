@@ -74,6 +74,40 @@ test('500 twice then success → resolves with the PR after retries', async () =
   }
 });
 
+test('draft is opt-in on creation and ready-for-review uses GitHub GraphQL', async () => {
+  const calls = [];
+  const mutations = [];
+  const octokit = scriptedOctokit([
+    { number: 91, html_url: 'https://example/pr/91' },
+    { number: 92, html_url: 'https://example/pr/92' },
+  ], calls);
+  octokit.graphql = async (query, variables) => {
+    mutations.push({ query, variables });
+    return { markPullRequestReadyForReview: { pullRequest: { id: 'PR_91', isDraft: false } } };
+  };
+  github._setOctokitFactoryForTests(() => octokit);
+  try {
+    await github.createPR('acme', 'app', { branch: 'feat/a', title: 'a', body: '', draft: true });
+    await github.createPR('acme', 'app', { branch: 'feat/b', title: 'b', body: '' });
+    assert.equal(calls[0].draft, true);
+    assert.equal(Object.hasOwn(calls[1], 'draft'), false);
+    const ready = await github.markPrReadyForReview('acme', 'app', 91, {
+      node_id: 'PR_91', draft: true,
+    });
+    assert.equal(ready.draft, false);
+    assert.match(mutations[0].query, /markPullRequestReadyForReview/);
+    assert.equal(mutations[0].variables.pullRequestId, 'PR_91');
+    await github.markPrReadyForReview('acme', 'app', 92, { draft: false });
+    assert.equal(mutations.length, 1);
+    await assert.rejects(
+      github.markPrReadyForReview('acme', 'app', 93, { node_id: 'PR_93' }),
+      /did not report.*draft state/,
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 test('500 on every attempt → typed github_unavailable with status + request id', async () => {
   const calls = [];
   withScript([

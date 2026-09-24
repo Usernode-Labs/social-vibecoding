@@ -85,9 +85,12 @@ const DENIED_TABLES = new Set([
   'chat_session_spec_conversation_shares', // private spec access grants
   'user_blocks',          // private user safety relationships
   'conversation_message_reports', // private abuse evidence and reporter identity
+  'app_reports',             // private mini-app report details and reporter identity
+  'chat_message_reports',    // private Workshop post evidence and reporter identity
   'mcp_clients',              // hosted-connector client registrations
   'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
   'mcp_tokens',               // hosted-connector bearer hashes and hints
+  'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
@@ -97,6 +100,7 @@ const DENIED_TABLES = new Set([
   'global_chat_messages', // private user/assistant transcript content
   'global_chat_tool_runs', // private action inputs and authoritative results
   'global_chat_action_tokens', // one-use action capabilities and sealed payloads
+  'agent_session_actions', // the agent-session Mayor's sealed confirmation cards (#2779)
 ]);
 
 const DENIED_COLUMNS = {
@@ -127,6 +131,11 @@ const DENIED_COLUMNS = {
     'token_hash',
     'input_hash',
     'normalized_input',
+  ],
+  agent_session_actions: [
+    // The sealed exact input of a pending write and its fingerprint (#2779).
+    'input_hash',
+    'sealed_input',
   ],
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)

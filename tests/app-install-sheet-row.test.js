@@ -64,21 +64,25 @@ test('the app chip menu renders no Add to Home Screen row, with or without an ap
   assert.doesNotMatch(SHEET, /AddToHomeScreenRow|detectInstallHost/);
 });
 
-// #2718 put a home-screen SENTENCE in the sheet's About pane, and it is not
-// this row coming back. The distinction is what #2320 was about: this row was
-// a per-app install of ONE app, reached from the only surface that knows
-// which app you are inside — so somebody looking for it had to already be in
-// the app. About says how to add whatever you are looking at to a home
-// screen, in words, because there is no install API to call (iOS Safari has
-// none and Android's `beforeinstallprompt` fires when Chrome decides it
-// should). Instructions are not an entrance, and the entrance is still the
-// card menu.
-test('About explains the home screen in words, and offers no per-app install route', () => {
+// #2718 put a home-screen SENTENCE in the sheet's About pane. The navigation
+// prototype draws it as a ROW ("Add to home screen", beside Share and Fork),
+// and the row it now is, is not the one #2320 moved out of this sheet coming
+// back: that was a per-app install built INTO the chip's sheet. About is the
+// app's page as a pop-up, so its row is the item the app's page already has —
+// Home.menuItemsFor's `install` (or the native pin), taken by key and run as
+// is — and never a second copy of the install address. For Homeroom, which
+// IS this page's PWA, it is still the OS's own steps in words, because there
+// is no install API to call (iOS Safari has none and Android's
+// `beforeinstallprompt` fires when Chrome decides it should).
+test('About\'s home-screen row is the app page\'s own item, or the OS\'s steps for Homeroom', () => {
   const about = read('frontend/src/features/app-context/about-pane.tsx');
+  assert.match(about, /i\.key === 'add-to-homescreen' \|\| i\.key === 'install'/,
+    'the app\'s row is the card menu\'s install item, found by key');
+  assert.match(about, /menuItemsFor\(row\)/, 'from the list the app\'s page renders');
   assert.match(about, /A2HS_STEPS/,
-    'the sentence is the one ../mobile-install/detect.ts already wrote');
-  assert.doesNotMatch(about, /app-context-add-to-home|\/install/,
-    'and no per-app install address is offered from here');
+    'the platform\'s sentence is the one ../mobile-install/detect.ts already wrote');
+  assert.doesNotMatch(about, /app-context-add-to-home|\/install['"`]/,
+    'and no install address of its own: the one address is home.js\'s');
 });
 
 // ── Whether the device has a home screen ────────────────────────────

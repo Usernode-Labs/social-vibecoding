@@ -7,6 +7,8 @@ description: Inspect or change Homeroom app or platform state through the generi
 
 Use `production` unless the user explicitly requests `local`. Perform setup and authentication yourself; ask the user only for browser approval when a device login requires it.
 
+The committed `production` default is `https://app.onhomeroom.com`; the hosted remote MCP endpoint is `https://app.onhomeroom.com/mcp`. An explicit `USERNODE_DOMAIN` or named profile can select another origin. Respect the user's selected profile, and distinguish that local override from the repository's default when reporting which server tooling uses. Credentials remain bound to their issuing origin; do not transfer an old-host login to the new host.
+
 ## Choose the route and client
 
 1. Resolve the user-facing route from `src/routes/`.

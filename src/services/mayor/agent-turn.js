@@ -1,0 +1,866 @@
+'use strict';
+
+// One Mayor turn in an agent session (#2779, spec: docs/agent-sessions.md,
+// "The Mayor").
+//
+// The classic turn (./turn.js) is built around one change: its spec, its
+// worker, its pull request, the per-change dispatch tail and its recovery.
+// An agent session's turn is built around the conversation instead, and it
+// is kept a separate module on purpose: classic sessions keep running the code
+// that the golden tests pin byte for byte, and nothing here can change how
+// they behave.
+//
+// Shape of a turn:
+//
+//   1. The user's message is recorded, on the active change's slice when
+//      there is one, and on the conversation in every case. A follow-up turn
+//      (after the user pressed Confirm on a card) records nothing: the card's
+//      outcome is already in the conversation.
+//   2. The Mayor runs a bounded tool loop. Its tools are the platform MCP
+//      (reads run at once), its own moves (switch_active_change,
+//      set_focus_app), web_fetch, reply suggestions, get_prod_status for an
+//      admin on a platform change, and the two dispatches when the active
+//      change can take one.
+//   3. A tool that changes something never runs from the model. It becomes a
+//      sealed confirmation card (services/agent-session-actions.js), and the
+//      model is told nothing happened yet. recheck_change is the one
+//      exception: it re-runs checks on a commit already there, moves no code
+//      and clears no vote, so it runs at once with a one-action write grant.
+//   4. The reply so far is recorded. A dispatch then runs the coding agent on
+//      the active change (./agent-dispatch.js), and the Mayor writes a short
+//      wrap-up from its result. The wrap-up cannot be stopped, as in a classic
+//      session.
+//   5. Spend is billed as Mayor calls as it happens; the coding agent's own
+//      spend is recorded by the change's tools, as it always is.
+//   6. When the replayed history has grown past its budget, the oldest turns
+//      are summarized after the turn ends (./agent-compaction.js).
+//
+// Transport: every event is written to the turn's own SSE response and
+// published on the conversation's bus (`agent:<id>`), so a client whose POST
+// stream drops can resume through GET /api/agent-sessions/:id/events. The
+// Mayor's own words are never broadcast on the global WebSocket: the
+// conversation is private to its owner. A dispatch's events also reach the
+// change's own channels, as any build's do.
+
+const crypto = require('node:crypto');
+const log = require('../logger');
+
+const MAX_TOOL_ROUNDS = 6;
+// A safety bound on what one turn replays. Compaction keeps the replayed
+// history well under it in practice.
+const HISTORY_ROWS = 400;
+const TITLE_MAX = 80;
+const LEASE_RENEW_MS = 60_000;
+const EMPTY_REPLY_TEXT = 'I could not put an answer together that time. Could you say that again?';
+
+const IMMEDIATE_WRITE_TOOLS = new Set(['recheck_change']);
+const SUGGEST_REPLIES = 'suggest_replies';
+const WEB_FETCH = 'web_fetch';
+const GET_PROD_STATUS = 'get_prod_status';
+
+const SWITCH_ACTIVE_CHANGE_TOOL = Object.freeze({
+  name: 'switch_active_change',
+  description: 'Make one of this conversation\'s earlier changes the active change again, parking the current one. '
+    + 'Only changes this conversation started, and only ones still open. Use it when the user wants to go back to '
+    + 'earlier work ("the dark-mode one").',
+  input_schema: {
+    type: 'object',
+    properties: {
+      changeId: { type: 'integer', description: 'The change id, from the CHANGES list or get_change.' },
+    },
+    required: ['changeId'],
+  },
+});
+
+const SET_FOCUS_APP_TOOL = Object.freeze({
+  name: 'set_focus_app',
+  description: 'Record which app the user means when they do not name one. It changes nothing on the app; it is '
+    + 'the default this conversation uses from now on.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      slug: { type: 'string', description: 'The app slug, as list_apps returns it.' },
+    },
+    required: ['slug'],
+  },
+});
+
+// Stop handles for the turns this process is running, by agent session id.
+const stopRegistry = new Map();
+
+function busKey(agentSessionId) {
+  return `agent:${agentSessionId}`;
+}
+
+function defaults(deps = {}) {
+  return {
+    llm: deps.llm || require('../llm'),
+    models: deps.models || require('../models'),
+    limits: deps.limits || require('../limits'),
+    openrouterMayor: deps.openrouterMayor || require('../openrouter-mayor'),
+    openMayorMcp: deps.openMayorMcp || require('./mcp-shim').openMayorMcp,
+    agentSessions: deps.agentSessions || require('../agent-sessions'),
+    actions: deps.actions || require('../agent-session-actions'),
+    sessionBus: deps.sessionBus || require('../session-bus'),
+    getAgentMayorPrompt: deps.getAgentMayorPrompt || require('./agent-prompt').getAgentMayorPrompt,
+    buildMayorMessages: deps.buildMayorMessages || require('./messages').buildMayorMessages,
+    stripFakeCompletionMarker: deps.stripFakeCompletionMarker || require('./messages').stripFakeCompletionMarker,
+    dispatch: deps.dispatch || require('./agent-dispatch'),
+    dispatchDeps: deps.dispatchDeps || {},
+    compaction: deps.compaction || require('./agent-compaction'),
+    tools: deps.tools || require('./tools'),
+    dataTools: deps.dataTools || require('./data-tools'),
+    debugAccess: deps.debugAccess || require('../debug-access'),
+  };
+}
+
+// ── Who runs the Mayor, and who pays ───────────────────────────────────
+//
+// The same rules as a classic session's Mayor, keyed on the user's default
+// coding backend because an agent session has no backend of its own yet: an
+// OpenRouter user's Mayor runs on their OpenRouter model and key (and an
+// included key is gated on, and billed to, the shared weekly pool); everyone
+// else's runs on Anthropic through the limit-first platform or BYOK path.
+async function resolveAgentMayor({ pool, config, userId, agentSessionId, requestedModel, deps = {} }) {
+  const d = defaults(deps);
+  const { rows } = await pool.query(
+    `SELECT backend, model_id FROM user_agent_preferences
+      WHERE user_id = $1 AND is_default = TRUE`,
+    [userId]
+  );
+  const pref = rows[0];
+  if (pref && pref.backend === 'codex_openrouter') {
+    const resolved = await d.openrouterMayor.resolveForSession({
+      pool,
+      config,
+      session: { id: null, agent_model: pref.model_id },
+      userId,
+      sessionKey: `homeroom-agent-${agentSessionId}`,
+    });
+    if (resolved.error) {
+      return {
+        ok: false, status: 503, code: 'mayor_unavailable',
+        error: `Your OpenRouter setup cannot run the Mayor (${resolved.error}). Check your coding agent in Settings.`,
+      };
+    }
+    if (resolved.usesIncludedKey) {
+      const budget = await d.limits.checkBudget(pool, userId);
+      if (budget.error) {
+        return {
+          ok: false, status: 429, code: 'budget_exceeded', error: budget.error,
+          reason: budget.reason || null, verificationRequired: !!budget.verificationRequired,
+        };
+      }
+    }
+    return {
+      ok: true,
+      provider: 'openrouter',
+      client: resolved.client,
+      model: resolved.modelLabel,
+      apiKey: null,
+      spendRecorded: !!resolved.usesIncludedKey,
+      byok: false,
+    };
+  }
+  if (!d.llm.isEnabled()) return { ok: false, status: 503, code: 'llm_not_configured', error: 'LLM not configured' };
+  const billing = await d.limits.resolveBillingPath(pool, config.dataEncryptionKey, userId);
+  if (billing.error) {
+    return {
+      ok: false, status: 429, code: 'budget_exceeded', error: billing.error,
+      reason: billing.reason || null, verificationRequired: !!billing.verificationRequired,
+    };
+  }
+  return {
+    ok: true,
+    provider: 'anthropic',
+    client: d.llm,
+    model: d.models.resolve(requestedModel),
+    apiKey: billing.apiKey || null,
+    spendRecorded: true,
+    byok: !!billing.apiKey,
+  };
+}
+
+// The payer for a later call in the same turn (the wrap-up after a
+// dispatch, a compaction): the dispatch may have used the last platform cent,
+// or the user may have removed their key while it ran. Null when nobody can
+// pay; the caller then falls back to fixed text.
+async function rebillMayor({ pool, config, userId, mayor, d }) {
+  if (mayor.provider !== 'anthropic') {
+    if (mayor.spendRecorded) {
+      const budget = await d.limits.checkBudget(pool, userId);
+      if (budget.error) return null;
+    }
+    return { apiKey: null, byok: false };
+  }
+  const billing = await d.limits.resolveBillingPath(pool, config.dataEncryptionKey, userId);
+  if (billing.error) return null;
+  return { apiKey: billing.apiKey || null, byok: !!billing.apiKey };
+}
+
+// ── History ────────────────────────────────────────────────────────────
+
+// The rows a turn replays: those after the summary, if there is one.
+async function loadHistory(pool, agentSessionId, afterId = 0) {
+  const { rows } = await pool.query(
+    `SELECT id, session_id, role, content, metadata
+       FROM chat_session_messages
+      WHERE agent_session_id = $1 AND id > $3
+        AND (role IN ('user', 'assistant')
+             OR (role = 'system' AND (metadata->>'agentSessionEvent' IS NOT NULL
+                                      OR metadata->>'ccOutput' IS NOT NULL)))
+      ORDER BY id DESC
+      LIMIT $2`,
+    [agentSessionId, HISTORY_ROWS, Number(afterId) || 0]
+  );
+  return rows.reverse();
+}
+
+async function loadSummary(pool, agentSessionId) {
+  const { rows } = await pool.query(
+    'SELECT summary_md, summary_through_id FROM agent_sessions WHERE id = $1',
+    [agentSessionId]
+  );
+  return rows[0]
+    ? { text: rows[0].summary_md || null, throughId: rows[0].summary_through_id || 0 }
+    : { text: null, throughId: 0 };
+}
+
+// The conversation as the model reads it. What the platform did between
+// turns — a change started, a card confirmed or dismissed, a change merged —
+// is folded in as a labelled note on the Mayor's side, so it can say what
+// happened without having been asked. A coding agent's result is labelled
+// with the change it ran on, because one conversation spans several. The
+// history must open with the user.
+function historyToMessages(rows, buildMayorMessages) {
+  const mapped = rows.map((row) => {
+    const metadata = row.metadata || {};
+    if (row.role === 'system' && metadata.agentSessionEvent) {
+      return { ...row, role: 'assistant', content: `[HOMEROOM] ${row.content}`, metadata: {} };
+    }
+    if (row.role === 'system' && metadata.ccOutput && row.session_id) {
+      return { ...row, metadata: { ...metadata, ccOutput: `(change ${row.session_id}) ${metadata.ccOutput}` } };
+    }
+    return row;
+  });
+  const messages = buildMayorMessages(mapped);
+  while (messages.length && messages[0].role !== 'user') messages.shift();
+  return messages;
+}
+
+// A follow-up turn has no user message of its own; the model is asked to
+// carry on from the card's outcome, which history already holds.
+function followUpNote(followUp) {
+  const what = followUp && followUp.title ? `"${followUp.title}"` : 'a card';
+  const how = followUp && followUp.ok === false ? 'it did not go through' : 'it went through';
+  return `[HOMEROOM] The user pressed Confirm on ${what}, and ${how}. Carry on from here: say in one or two `
+    + 'short sentences what happened. If the user had already asked for work that this unblocks (for example, '
+    + 'building the change that was just started), do it now.';
+}
+
+function withTrailingUserText(messages, text) {
+  const last = messages[messages.length - 1];
+  if (last && last.role === 'user' && typeof last.content === 'string') {
+    return [...messages.slice(0, -1), { role: 'user', content: `${last.content}\n\n${text}` }];
+  }
+  return [...messages, { role: 'user', content: text }];
+}
+
+function lastUserText(rows) {
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (rows[i].role === 'user' && rows[i].content) return String(rows[i].content);
+  }
+  return '';
+}
+
+function titleFromMessage(text) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= TITLE_MAX) return clean;
+  const cut = clean.slice(0, TITLE_MAX);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+}
+
+function costOf(mayor, result, d) {
+  if (!result || !result.usage) return 0;
+  const served = result.servedModel || mayor.model;
+  try {
+    return mayor.provider === 'anthropic'
+      ? d.llm.estimateCostCents(result.usage, served)
+      : mayor.client.estimateCostCents(result.usage, served);
+  } catch {
+    return 0;
+  }
+}
+
+// What the conversation says when a wrap-up cannot be written by the model.
+function fallbackWrapUp(outcome) {
+  if (!outcome.ran) {
+    const reason = String(outcome.toolResultText || '').replace(/^[a-z_]+:\s*/, '');
+    return reason || 'The coding agent could not run on this change.';
+  }
+  if (outcome.isError) return 'The coding agent did not finish this run. The details are above.';
+  if (outcome.kind === 'scout') return 'The spec is updated. Tell me when you want it built.';
+  return 'The coding agent has finished. The details are above.';
+}
+
+// ── The turn ───────────────────────────────────────────────────────────
+
+async function runAgentTurn({
+  pool,
+  config,
+  user,
+  agentSessionId,
+  turnId,
+  messageText = null,
+  followUp = null,
+  mayor,
+  res,
+  scheduleInteractiveRecovery = null,
+  deps = {},
+}) {
+  const d = defaults(deps);
+  const seqPrefix = String(turnId).slice(0, 8);
+  let eventSeq = 0;
+  const send = (type, data = {}) => {
+    const event = { type, _seq: `${seqPrefix}-${++eventSeq}`, agentSessionId, ...data };
+    try { if (res) res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* the client left; the bus still has it */ }
+    d.sessionBus.publish(busKey(agentSessionId), event);
+  };
+  const stop = {
+    abort: new AbortController(), stopped: false, stoppedBy: null, send, phase: 'mayor', change: null,
+  };
+  const prior = stopRegistry.get(agentSessionId);
+  if (prior && prior !== stop) { try { prior.abort.abort(); } catch { /* already gone */ } }
+  stopRegistry.set(agentSessionId, stop);
+  const setPhase = (phase, extra = {}) => {
+    stop.phase = phase;
+    send('phase', { phase, ...extra });
+  };
+
+  // The turn keeps its lease fresh while it runs: a dispatch can outlast the
+  // stale window, and only a turn whose process died should lose it.
+  const leaseTimer = setInterval(() => {
+    d.agentSessions.renewTurnLease(pool, { agentSessionId, turnId }).catch(() => {});
+  }, LEASE_RENEW_MS);
+  if (typeof leaseTimer.unref === 'function') leaseTimer.unref();
+
+  let shim = null;
+  let unbilled = 0;
+  let phaseOneCost = 0;
+  let totalCost = 0;
+  let visibleText = '';
+  // What the current model call has streamed so far. A stop that aborts the
+  // call mid-stream keeps it, because the user has already read it.
+  let roundText = '';
+  let persisted = false;
+  let quickReplies = null;
+  let compactionPlan = null;
+  let summary = { text: null, throughId: 0 };
+  let failed = false;
+  const cards = [];
+  const toolLog = [];
+
+  const recordSpend = async (cents, byok = mayor.byok) => {
+    if (!(cents > 0) || !mayor.spendRecorded) return;
+    await d.limits.recordSpend(pool, user.id, cents, { byok: !!byok }).catch((err) => {
+      log.warn('agent-mayor', 'Could not record Mayor spend', { agentSessionId, err: err.message });
+    });
+  };
+  const bill = (cents) => {
+    if (!(cents > 0)) return;
+    unbilled += cents;
+    totalCost += cents;
+  };
+  const flushSpend = async (byok) => {
+    const cents = unbilled;
+    unbilled = 0;
+    await recordSpend(cents, byok);
+  };
+
+  const insertAssistant = async ({ text, cost, metadata, changeId }) => {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_session_messages
+         (session_id, agent_session_id, role, content, model, cost_cents, metadata)
+       VALUES ($1, $2, 'assistant', $3, $4, $5, $6::jsonb)
+       RETURNING id`,
+      [changeId || null, agentSessionId, text, mayor.model, cost, JSON.stringify(metadata)]
+    );
+    return rows[0].id;
+  };
+
+  // The Mayor's reply before any dispatch, its cards and what its tools did,
+  // as one assistant row. Written once, whether the turn went on to dispatch,
+  // was stopped or failed part way, so a card the user can still press is
+  // never missing from the transcript.
+  const persistReply = async (flags = {}) => {
+    if (persisted || (!visibleText && !cards.length)) return null;
+    persisted = true;
+    const after = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
+    return insertAssistant({
+      text: visibleText,
+      cost: phaseOneCost,
+      changeId: after && after.activeChange ? after.activeChange.id : null,
+      metadata: {
+        agentTurnId: turnId,
+        ...(cards.length ? { confirmations: cards } : {}),
+        ...(toolLog.length ? { tools: toolLog } : {}),
+        ...(quickReplies && !flags.dispatch ? { quickReplies } : {}),
+        ...flags,
+      },
+    });
+  };
+
+  const keepStreamedText = () => {
+    const partial = d.stripFakeCompletionMarker(roundText).trim();
+    roundText = '';
+    if (partial) visibleText = visibleText ? `${visibleText}\n\n${partial}` : partial;
+  };
+
+  // What the model may call this round. The dispatches and get_prod_status
+  // depend on the active change, which a tool in an earlier round can move.
+  const toolOffer = async () => {
+    const change = await d.dispatch.loadActiveChange(pool, { agentSessionId, userId: user.id });
+    const dispatchable = d.dispatch.canDispatch(change, d.dispatchDeps);
+    let prodEligible = false;
+    if (change) {
+      try { prodEligible = await d.debugAccess.isEligible(pool, change.id); } catch { prodEligible = false; }
+    }
+    const tools = [
+      ...shim.modelTools,
+      SWITCH_ACTIVE_CHANGE_TOOL,
+      SET_FOCUS_APP_TOOL,
+      d.tools.WEB_FETCH_TOOL,
+      d.tools.SUGGEST_REPLIES_TOOL,
+      ...(dispatchable ? [d.dispatch.SCOUT_TOOL, d.dispatch.BUILD_TOOL] : []),
+      ...(prodEligible ? [d.tools.GET_PROD_STATUS_TOOL] : []),
+    ];
+    return { tools, change, dispatchable, prodEligible };
+  };
+
+  // One tool call from the model, answered with the text the model reads.
+  const resolveTool = async (use, offer) => {
+    const input = use.input && typeof use.input === 'object' ? use.input : {};
+    try {
+      if (use.name === SWITCH_ACTIVE_CHANGE_TOOL.name) {
+        const switched = await d.agentSessions.switchActiveChange(pool, {
+          agentSessionId, userId: user.id, changeId: input.changeId,
+        });
+        send('active_change', { changeId: switched.change.id });
+        return { ok: true, text: JSON.stringify({ ok: true, activeChangeId: switched.change.id, changed: switched.changed }) };
+      }
+      if (use.name === SET_FOCUS_APP_TOOL.name) {
+        const app = await d.agentSessions.setFocusApp(pool, { agentSessionId, user, slug: input.slug });
+        send('focus_app', { slug: app.slug });
+        return { ok: true, text: JSON.stringify({ ok: true, focusApp: app.slug }) };
+      }
+      if (use.name === WEB_FETCH) {
+        return { ok: true, text: await d.dataTools.resolveWebFetchToolResult(input.url) };
+      }
+      if (use.name === GET_PROD_STATUS) {
+        if (!offer.prodEligible || !offer.change) return { ok: false, text: 'not_eligible' };
+        return {
+          ok: true,
+          text: await d.dataTools.resolveProdStatusToolResult({ pool, config, sessionId: offer.change.id }),
+        };
+      }
+      if (d.actions.isConfirmedTool(use.name)) {
+        const card = await d.actions.prepareAction(pool, {
+          config, userId: user.id, agentSessionId, toolName: use.name, input,
+        });
+        cards.push(card);
+        send('confirmation_required', { card });
+        return {
+          ok: true,
+          text: JSON.stringify({
+            status: 'pending_confirmation',
+            actionId: card.id,
+            note: 'Shown to the user as a confirmation card. Nothing has happened yet: it runs only if they press '
+              + 'Confirm on the card. Tell them in one line what it will do.',
+          }),
+        };
+      }
+      if (IMMEDIATE_WRITE_TOOLS.has(use.name)) {
+        const { READ_SCOPE, WRITE_SCOPE } = require('../mcp-connect-constants');
+        const changeId = Number(input.changeId);
+        const { rows } = await pool.query(
+          'SELECT app_id FROM chat_sessions WHERE id = $1 AND user_id = $2',
+          [Number.isSafeInteger(changeId) ? changeId : 0, user.id]
+        );
+        if (!rows.length) return { ok: false, text: 'no_access: that change is not one of the user\'s.' };
+        const writer = await d.openMayorMcp({
+          pool, config, userId: user.id, agentSessionId,
+          scopes: [READ_SCOPE, WRITE_SCOPE], changeId, appId: rows[0].app_id, ttlSeconds: 60,
+        });
+        try {
+          const result = await writer.call(use.name, input);
+          return { ok: !result.isError, text: result.text };
+        } finally {
+          await writer.close('action_done');
+        }
+      }
+      if (shim && shim.toolNames.includes(use.name)) {
+        const result = await shim.call(use.name, input);
+        return { ok: !result.isError, text: result.text };
+      }
+      return { ok: false, text: `unknown_tool: ${use.name} is not available in this conversation.` };
+    } catch (err) {
+      const message = err && typeof err.status === 'number' ? err.message : 'The tool could not run.';
+      if (!(err && typeof err.status === 'number')) {
+        log.warn('agent-mayor', 'Tool call failed', { agentSessionId, tool: use.name, err: err && err.message });
+      }
+      return { ok: false, text: `failed: ${message}` };
+    }
+  };
+
+  // The dispatch, then the wrap-up. `dispatchUse` is the model's tool call;
+  // `pendingResults` are that round's tool results, the dispatch's still
+  // empty; `convo` ends with the assistant message that made the call.
+  const runDispatchAndWrapUp = async ({ dispatchUse, pendingResults, convo, rows, systemPrompt }) => {
+    const kind = d.dispatch.DISPATCH_KINDS[dispatchUse.name];
+    const input = dispatchUse.input && typeof dispatchUse.input === 'object' ? dispatchUse.input : {};
+    setPhase('cc', { kind });
+    send('tool', { name: dispatchUse.name, state: 'running' });
+    const outcome = await d.dispatch.runDispatch({
+      pool,
+      config,
+      user,
+      agentSessionId,
+      kind,
+      prompt: typeof input.prompt === 'string' ? input.prompt.trim() : '',
+      userMessage: messageText || lastUserText(rows),
+      apiKey: mayor.apiKey,
+      sendAgent: send,
+      res,
+      onStopHandle: (handle) => { stop.change = handle; },
+      scheduleInteractiveRecovery,
+      deps: d.dispatchDeps,
+    });
+    stop.change = null;
+    const ok = outcome.ran && !outcome.isError && !outcome.stopped;
+    toolLog.push({ name: dispatchUse.name, ok });
+    send('tool', { name: dispatchUse.name, state: ok ? 'done' : 'failed' });
+    if (outcome.stopped) {
+      send('stopped', { phase: 'cc', by: outcome.stoppedBy || null });
+      return;
+    }
+    // Whatever happens below, the change's operation and its durable turn
+    // are released: the wrap-up is marked posted only once its row exists.
+    let wrapUpPosted = false;
+    try {
+      wrapUpPosted = await writeWrapUp({ outcome, kind, dispatchUse, pendingResults, convo, systemPrompt });
+    } finally {
+      if (typeof outcome.finish === 'function') {
+        await outcome.finish({ wrapUpPosted }).catch((err) => {
+          log.warn('agent-mayor', 'Dispatch cleanup failed', { agentSessionId, err: err.message });
+        });
+      }
+    }
+  };
+
+  // The wrap-up. It answers every tool call of the dispatching round, and it
+  // cannot be stopped: the work it describes has already happened. Resolves
+  // true once its row is written.
+  const writeWrapUp = async ({ outcome, kind, dispatchUse, pendingResults, convo, systemPrompt }) => {
+    setPhase('mayor2');
+    const results = pendingResults.map((r) => (r.tool_use_id === dispatchUse.id
+      ? {
+        type: 'tool_result',
+        tool_use_id: r.tool_use_id,
+        content: outcome.toolResultText || '(no result)',
+        ...(outcome.isError || !outcome.ran ? { is_error: true } : {}),
+      }
+      : r));
+    let wrapText = '';
+    let wrapReplies = null;
+    let wrapCost = 0;
+    let wrapByok = mayor.byok;
+    try {
+      const payer = await rebillMayor({ pool, config, userId: user.id, mayor, d });
+      if (payer) {
+        wrapByok = payer.byok;
+        const session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
+        const wrap = await mayor.client.streamChat({
+          messages: [...convo, { role: 'user', content: results }],
+          systemPrompt: session
+            ? d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text })
+            : systemPrompt,
+          model: mayor.model,
+          tools: [d.tools.SUGGEST_REPLIES_TOOL],
+          onToken: (text) => send('token', { text }),
+          apiKey: payer.apiKey,
+          telemetryContext: {
+            pool, appId: null, sessionId: outcome.changeId || null, backend: 'mayor', component: 'mayor_phase_2',
+          },
+        });
+        wrapCost = costOf(mayor, wrap, d);
+        bill(wrapCost);
+        wrapText = d.stripFakeCompletionMarker(wrap.text || '').trim();
+        const repliesUse = (wrap.toolUses || []).find((u) => u.name === SUGGEST_REPLIES);
+        wrapReplies = repliesUse ? d.tools.sanitizeQuickReplies(repliesUse.input) : null;
+      }
+    } catch (err) {
+      log.warn('agent-mayor', 'Wrap-up failed; using fixed text', { agentSessionId, err: err.message });
+    }
+    if (!wrapText) wrapText = fallbackWrapUp(outcome);
+    const wrapId = await insertAssistant({
+      text: wrapText,
+      cost: wrapCost,
+      changeId: outcome.changeId || null,
+      metadata: {
+        agentTurnId: turnId,
+        wrapUp: true,
+        dispatch: kind,
+        ...(wrapReplies ? { quickReplies: wrapReplies } : {}),
+      },
+    });
+    send('mayor_reasoning', { text: wrapText, messageId: wrapId, wrapUp: true });
+    if (wrapReplies) send('quick_replies', { replies: wrapReplies });
+    await flushSpend(wrapByok);
+    return true;
+  };
+
+  try {
+    const session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
+    if (!session || session.status !== 'open') throw new Error('agent session is not open');
+
+    if (messageText) {
+      // The user's message: on the active change's slice when there is one,
+      // so the change page reads the conversation that shaped it, and on the
+      // conversation always.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata)
+         VALUES ($1, $2, 'user', $3, $4::jsonb)`,
+        [session.activeChange ? session.activeChange.id : null, agentSessionId, messageText,
+          JSON.stringify({ agentTurnId: turnId })]
+      );
+      if (!session.title) {
+        await pool.query(
+          `UPDATE agent_sessions SET title = $1
+            WHERE id = $2 AND title IS NULL AND title_source = 'auto'`,
+          [titleFromMessage(messageText), agentSessionId]
+        );
+      }
+    }
+
+    setPhase('mayor', followUp ? { followUp: true } : {});
+    summary = await loadSummary(pool, agentSessionId);
+    const history = await loadHistory(pool, agentSessionId, summary.throughId);
+    compactionPlan = d.compaction.planCompaction(history);
+    let convo = historyToMessages(history, d.buildMayorMessages);
+    if (!messageText) convo = withTrailingUserText(convo, followUpNote(followUp));
+    const systemPrompt = d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text });
+    shim = await d.openMayorMcp({ pool, config, userId: user.id, agentSessionId });
+
+    let dispatchUse = null;
+    let pendingResults = null;
+    for (let round = 0; ; round += 1) {
+      const lastRound = round >= MAX_TOOL_ROUNDS;
+      const offer = await toolOffer();
+      roundText = '';
+      const result = await mayor.client.streamChat({
+        messages: convo,
+        systemPrompt,
+        model: mayor.model,
+        tools: offer.tools,
+        ...(lastRound ? { toolChoice: { type: 'none' } } : {}),
+        signal: stop.abort.signal,
+        onToken: (text) => { roundText += text; send('token', { text }); },
+        apiKey: mayor.apiKey,
+        telemetryContext: {
+          pool, appId: null, sessionId: null, backend: 'mayor',
+          component: round === 0 ? 'mayor_phase_1' : 'mayor_data_iteration',
+        },
+      });
+      const cents = costOf(mayor, result, d);
+      bill(cents);
+      phaseOneCost += cents;
+      roundText = '';
+      const text = d.stripFakeCompletionMarker(result.text || '').trim();
+      if (text) visibleText = visibleText ? `${visibleText}\n\n${text}` : text;
+      const toolUses = Array.isArray(result.toolUses) ? result.toolUses : [];
+      if (stop.stopped || !toolUses.length || lastRound) break;
+
+      convo = [...convo, { role: 'assistant', content: result.rawContent }];
+      const dispatchCalls = toolUses.filter((use) => d.dispatch.isDispatchTool(use.name));
+      const chosen = offer.dispatchable
+        ? (dispatchCalls.find((use) => use.name === d.dispatch.SCOUT_TOOL.name) || dispatchCalls[0] || null)
+        : null;
+      const toolResults = [];
+      for (const use of toolUses) {
+        if (d.dispatch.isDispatchTool(use.name)) {
+          if (use === chosen) {
+            toolResults.push({ type: 'tool_result', tool_use_id: use.id, content: '' });
+            continue;
+          }
+          toolLog.push({ name: use.name, ok: false });
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: use.id,
+            content: offer.dispatchable
+              ? 'skipped: only one dispatch runs per turn.'
+              : 'not_available: there is no active change that can take a dispatch right now.',
+            is_error: true,
+          });
+          continue;
+        }
+        if (use.name === SUGGEST_REPLIES) {
+          quickReplies = d.tools.sanitizeQuickReplies(use.input) || quickReplies;
+          toolResults.push({ type: 'tool_result', tool_use_id: use.id, content: 'Shown to the user as reply buttons.' });
+          continue;
+        }
+        send('tool', { name: use.name, state: 'running' });
+        // eslint-disable-next-line no-await-in-loop
+        const answer = await resolveTool(use, offer);
+        toolLog.push({ name: use.name, ok: answer.ok });
+        send('tool', { name: use.name, state: answer.ok ? 'done' : 'failed' });
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: use.id,
+          content: answer.text,
+          ...(answer.ok ? {} : { is_error: true }),
+        });
+      }
+      if (chosen && !stop.stopped) {
+        dispatchUse = chosen;
+        pendingResults = toolResults;
+        break;
+      }
+      convo = [...convo, { role: 'user', content: toolResults }];
+    }
+
+    if (stop.stopped) send('stopped', { by: stop.stoppedBy });
+    if (!visibleText && !cards.length && !stop.stopped && !dispatchUse) visibleText = EMPTY_REPLY_TEXT;
+
+    const dispatchKind = dispatchUse ? d.dispatch.DISPATCH_KINDS[dispatchUse.name] : null;
+    const messageId = await persistReply(stop.stopped ? { stopped: true } : (dispatchKind ? { dispatch: dispatchKind } : {}));
+    if (messageId || cards.length) send('mayor_reasoning', { text: visibleText, messageId, cards });
+    if (quickReplies && !dispatchUse) send('quick_replies', { replies: quickReplies });
+    await flushSpend();
+
+    if (dispatchUse && !stop.stopped) {
+      await runDispatchAndWrapUp({ dispatchUse, pendingResults, convo, rows: history, systemPrompt });
+    }
+    send('usage', { costCents: totalCost });
+  } catch (err) {
+    failed = true;
+    await flushSpend();
+    if (stop.stopped) keepStreamedText();
+    const messageId = await persistReply(stop.stopped ? { stopped: true } : { failed: true }).catch((persistErr) => {
+      log.warn('agent-mayor', 'Could not record a cut-short reply', { agentSessionId, err: persistErr.message });
+      return null;
+    });
+    if (messageId) send('mayor_reasoning', { text: visibleText, messageId, cards });
+    if (stop.stopped) {
+      send('stopped', { by: stop.stoppedBy });
+    } else {
+      log.error('agent-mayor', 'Agent turn failed', { agentSessionId, err: err.message });
+      send('error', { error: 'The Mayor could not finish this turn. Try again.' });
+      await d.agentSessions.appendConversationEvent(pool, {
+        agentSessionId,
+        content: 'The last turn did not finish.',
+        event: 'turn_failed',
+        metadata: { agentTurnId: turnId },
+      }).catch(() => {});
+    }
+  } finally {
+    clearInterval(leaseTimer);
+    if (shim) await shim.close('turn_finished');
+    if (stopRegistry.get(agentSessionId) === stop) stopRegistry.delete(agentSessionId);
+    await d.agentSessions.releaseTurnLease(pool, { agentSessionId, turnId }).catch((err) => {
+      log.warn('agent-mayor', 'Could not release the turn lease', { agentSessionId, err: err.message });
+    });
+    send('done', {});
+    try { if (res) res.end(); } catch { /* already closed */ }
+    setTimeout(() => d.sessionBus.clearSession(busKey(agentSessionId)), 30_000).unref?.();
+  }
+
+  // After the turn, and off its critical path: fold the oldest turns into
+  // the summary when the replayed history has grown past its budget.
+  if (compactionPlan && !failed) {
+    await compactHistory({ pool, config, user, agentSessionId, mayor, summary, plan: compactionPlan, d });
+  }
+}
+
+async function compactHistory({ pool, config, user, agentSessionId, mayor, summary, plan, d }) {
+  try {
+    const payer = await rebillMayor({ pool, config, userId: user.id, mayor, d });
+    if (!payer) return;
+    const cents = await d.compaction.compact({
+      pool,
+      agentSessionId,
+      mayor: { ...mayor, apiKey: payer.apiKey },
+      previousSummary: summary.text,
+      plan,
+      costOf: (result) => costOf(mayor, result, d),
+    });
+    if (cents > 0 && mayor.spendRecorded) {
+      await d.limits.recordSpend(pool, user.id, cents, { byok: !!payer.byok });
+    }
+  } catch (err) {
+    log.warn('agent-mayor', 'Compaction failed', { agentSessionId, err: err.message });
+  }
+}
+
+// POST /stop. The Mayor's own phase is stopped here: the model call is
+// aborted and the turn records what it had said, including what the aborted
+// call had streamed, and any cards it prepared. A running dispatch is the
+// change's: its stop goes through POST /api/sessions/:changeId/stop, which
+// confirms the kill and escalates, so this answers with the change to stop.
+// The wrap-up cannot be stopped.
+function stopAgentTurn(agentSessionId, { by = null } = {}) {
+  const handle = stopRegistry.get(agentSessionId);
+  if (!handle) return { stopped: false, reason: 'no_active_turn' };
+  if (handle.phase === 'mayor2') return { stopped: false, reason: 'wrap_up_not_stoppable' };
+  if (handle.phase === 'cc') {
+    return {
+      stopped: false,
+      reason: 'dispatch_running',
+      changeId: handle.change ? handle.change.changeId : null,
+    };
+  }
+  handle.stopped = true;
+  handle.stoppedBy = by;
+  try { handle.send('stopping', { by }); } catch { /* best effort */ }
+  try { handle.abort.abort(); } catch { /* already aborted */ }
+  return { stopped: true, phase: handle.phase };
+}
+
+// Where the running turn is, for a client that joins mid-turn.
+function turnState(agentSessionId) {
+  const handle = stopRegistry.get(agentSessionId);
+  if (!handle) return null;
+  return {
+    phase: handle.phase,
+    stopping: !!handle.stopped,
+    changeId: handle.change ? handle.change.changeId : null,
+  };
+}
+
+function newTurnId() {
+  return crypto.randomUUID();
+}
+
+module.exports = {
+  MAX_TOOL_ROUNDS,
+  HISTORY_ROWS,
+  LEASE_RENEW_MS,
+  EMPTY_REPLY_TEXT,
+  IMMEDIATE_WRITE_TOOLS,
+  SWITCH_ACTIVE_CHANGE_TOOL,
+  SET_FOCUS_APP_TOOL,
+  busKey,
+  resolveAgentMayor,
+  rebillMayor,
+  loadHistory,
+  loadSummary,
+  historyToMessages,
+  followUpNote,
+  titleFromMessage,
+  fallbackWrapUp,
+  runAgentTurn,
+  stopAgentTurn,
+  turnState,
+  newTurnId,
+  _stopRegistry: stopRegistry,
+};

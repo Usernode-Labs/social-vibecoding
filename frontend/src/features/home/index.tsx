@@ -12,17 +12,20 @@
  *
  *   * `<AppGrid/>`, `<WidgetStrip/>` and `<AppsMore/>` are stateful islands
  *     rendering plain view models `home.js` pushes (./grid-store.ts and
- *     ./chrome-store.ts);
- *   * `<DiscoverSection/>`, `<ChallengesSection/>` and `<CreateSection/>` are
- *     the same arrangement for the three blocks below the grid, from
- *     ./panels-store.ts.
+ *     ./chrome-store.ts) — the grid's trailing "Create an app" tile
+ *     (./create-tile.tsx) included;
+ *   * `<DiscoverSection/>` and `<ChallengesSection/>` are the same
+ *     arrangement for the two blocks below the grid, from ./panels-store.ts.
  *
- * ── FOUR AREAS, in this order ──────────────────────────────────────────
+ * ── THREE AREAS, in this order ─────────────────────────────────────────
  *
  * THE UI OVERHAUL gave this screen a shape: Your apps, Discover, Challenges,
- * Create app, stacked. The last three used to be draggable WIDGETS on the
+ * Create app, stacked. The middle two used to be draggable WIDGETS on the
  * launcher canvas — see the block comment beside them below for what that
  * traded away and why the fixed order is worth more than the freedom was.
+ * Create app has since moved INTO Your apps, as the grid's last tile (the
+ * prototype's scrHome), so the page reads: your apps and a way to make
+ * another, then what to try next, then what the group is working towards.
  *
  * That is deliberate rather than incidental. Two things depend on it:
  *
@@ -51,9 +54,9 @@
  *     the kit attachment all stayed in home.js.
  *   * `#home-widget-strip-section` and `#home-apps-more`: the same split for
  *     the two hosts outside the canvas, on the same push.
- *   * the three panel sections: `HomePanels.render()` computes three view
- *     models where it used to build ~800 lines of HTML string and then
- *     re-attach eight families of listener over the result.
+ *   * the panel sections: `HomePanels.render()` computes their view models
+ *     where it used to build ~800 lines of HTML string and then re-attach
+ *     eight families of listener over the result.
  *
  * Nothing on this screen is an `innerHTML` host any more. The data, the
  * fetches and the gestures all stayed where they were.
@@ -86,7 +89,7 @@ import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
-import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
+import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
 import { WidgetStrip } from './widget-strip';
 
@@ -237,7 +240,7 @@ export function HomeScreen() {
         */}
         <section id="home-apps-section" className="px-3">
           {/*
-              The area's label, in the same treatment the four below it use —
+              The area's label, in the same treatment the two below it use —
               see ./panels/ui.tsx's SectionHeading for why every area on this
               screen is now "grey label, then the thing". This one is what the
               reference screen calls "Your saved apps"; "Your apps" is the name
@@ -256,9 +259,9 @@ export function HomeScreen() {
           <AppsMore />
         </section>
         {/*
-            ── AREAS 2-4: DISCOVER, CHALLENGES, CREATE APP ────────────
+            ── AREAS 2-3: DISCOVER, CHALLENGES ────────────────────────
 
-            These three were WIDGETS until THE UI OVERHAUL — draggable blocks
+            These were WIDGETS until THE UI OVERHAUL — draggable blocks
             placed on the launcher canvas alongside the app tiles, each with
             its own footprint, its own anchor cell and a per-column-count
             size table. They are fixed sections in a fixed order now, and the
@@ -266,30 +269,35 @@ export function HomeScreen() {
 
             What that bought: the home screen has a shape you can describe.
             "Your apps, then what to try next, then what the group is working
-            towards, then make something" is a page; the same four things at
-            wherever-you-dropped-them was a canvas with no reading order, and
-            it made every one of them optional in a way none of them are.
+            towards" is a page; the same things at wherever-you-dropped-them
+            was a canvas with no reading order, and it made every one of them
+            optional in a way none of them are.
+
+            CREATE APP WAS A FOURTH SECTION HERE, below Challenges. It is the
+            launcher grid's trailing tile now (./create-tile.tsx, placed by
+            Home.render()), as the prototype draws it: making an app is a
+            thing you do from your shelf of apps, not a destination two
+            sections further down. `#home-create-section` went with it
+            (tests/shell-id-inventory.test.js records why).
 
             Each renders its own host now (./panels/sections.tsx) from a view
-            model HomePanels.render() pushes — the three `innerHTML` hosts and
-            the `_stampState` pass that mirrored each block's state up onto
-            them went together. All three still ship EMPTY and un-hidden: the
-            panels cache is fetched, so drawing anything at hydration would
-            disagree with the prerendered document.
+            model HomePanels.render() pushes — the `innerHTML` hosts and the
+            `_stampState` pass that mirrored each block's state up onto them
+            went together. Both still ship EMPTY and un-hidden: the panels
+            cache is fetched, so drawing anything at hydration would disagree
+            with the prerendered document.
 
             `data-panel-slot` rides along from the grid host each one
             replaces. It names WHICH block a host is for, which is as true of
             a section as it was of a cell, and it is the hook everything
-            outside this file already selects on: the dapp.json checks
-            (`[data-panel-slot="create"][data-create-enabled="true"]`) and the
-            screenshot assertions. That selector is why the block's own state
-            attributes appear on the host as well as on the block — one model
-            now feeds both, rather than a second pass copying one to the
-            other.
+            outside this file already selects on: the dapp.json checks and
+            the screenshot assertions. That selector is why the block's own
+            state attributes appear on the host as well as on the block — one
+            model now feeds both, rather than a second pass copying one to
+            the other.
         */}
         <DiscoverSection />
         <ChallengesSection />
-        <CreateSection />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth
             area held one row — an avatar, "Profile", "Your points, settings
@@ -300,7 +308,7 @@ export function HomeScreen() {
             row was a second door to the same screen, on the one screen
             people open to reach their apps, and the design's own answer is
             a Profile tab in a bottom bar rather than a card at the foot of
-            the launcher. Home ends on "make something" now.
+            the launcher.
 
             App.applyUserAvatar went with it: Home's pair was the only one
             left (the header chip's copy was retired in the same #1443
@@ -311,7 +319,7 @@ export function HomeScreen() {
             #home-panels — the widgets' FALLBACK host — is gone with the
             placement it existed for. It caught the moment before the first
             grid paint and the active-search view, because a widget that
-            lived IN the grid vanished whenever the grid did. The three
+            lived IN the grid vanished whenever the grid did. The two
             sections above are outside #app-list and never re-rendered by a
             search keystroke, so there is nothing left to catch.
         */}

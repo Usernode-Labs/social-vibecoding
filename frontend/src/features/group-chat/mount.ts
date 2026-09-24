@@ -60,7 +60,10 @@ import {
 /** Mount (or re-establish) the transcript inside the host app-view just built. */
 export function mountTranscript(host: Element | null, key = 'main'): void {
   if (!host) return;
-  mountLegacyPortal(host, createElement(Transcript, { source: key }));
+  // #2884: an app's discussion opened as a Messages channel folds its runs of
+  // cards; the same transcript on the app's own Discussion page draws them all.
+  const channel = !!host.closest('#messages-screen');
+  mountLegacyPortal(host, createElement(Transcript, { source: key, foldCards: channel }));
 }
 
 export function unmountTranscript(host: Element | null): void {

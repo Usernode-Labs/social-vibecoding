@@ -13,6 +13,7 @@ test('visual evidence lifecycle permits only the documented progression and one 
     ['planned', 'provisioning'],
     ['provisioning', 'exploring'],
     ['exploring', 'replaying'],
+    ['replaying', 'replaying'],
     ['replaying', 'reviewing'],
     ['reviewing', 'replaying'],
     ['reviewing', 'verified'],
@@ -22,6 +23,46 @@ test('visual evidence lifecycle permits only the documented progression and one 
   for (const [from, to] of [['planned', 'verified'], ['failed', 'planned'], ['stale', 'verified'], ['cancelled', 'planned']]) {
     assert.throws(() => state.assertTransition(from, to), { code: 'invalid_evidence_transition' });
   }
+});
+
+test('replaying may replace a failed plan only once with a different plan', async () => {
+  const runId = 'e'.repeat(32);
+  const rejected = plan();
+  const corrected = plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const row = {
+    id: runId, session_id: 42, current_run_id: runId, state: 'replaying',
+    base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), intent: intent(),
+    replay_plan: rejected, plan_hash: contract.planHash(rejected), repair_attempt: 0,
+    updated_at: new Date('2026-09-22T00:00:00Z'),
+  };
+  let updates = 0;
+  const pool = { query: async (sql) => {
+    if (/SELECT r\.\*/.test(sql)) return { rows: [row] };
+    if (/UPDATE visual_evidence_runs/.test(sql)) {
+      updates += 1;
+      Object.assign(row, {
+        replay_plan: corrected, plan_hash: contract.planHash(corrected), repair_attempt: 1,
+      });
+      return { rows: [row] };
+    }
+    if (/UPDATE chat_sessions/.test(sql)) return { rowCount: 1 };
+    throw new Error(`Unexpected query: ${sql}`);
+  } };
+  await assert.rejects(state.transitionRun(pool, runId, 'replaying', {
+    replayPlan: rejected, planHash: contract.planHash(rejected), repairAttempt: 1,
+  }), { code: 'invalid_evidence_repair' });
+  assert.equal(updates, 0);
+  await state.transitionRun(pool, runId, 'replaying', {
+    replayPlan: corrected, planHash: contract.planHash(corrected), repairAttempt: 1,
+  });
+  assert.equal(updates, 1);
+  await assert.rejects(state.transitionRun(pool, runId, 'replaying', {
+    replayPlan: rejected, planHash: contract.planHash(rejected), repairAttempt: 1,
+  }), { code: 'invalid_evidence_repair' });
+  assert.equal(updates, 1);
 });
 
 test('terminal-state and required-evidence policy distinguish an explicit no-impact rationale', () => {
@@ -60,6 +101,14 @@ test('evidence heartbeat renews only the current active run and stores a bounded
   });
   assert.deepEqual(JSON.parse(statement.values[2]), {
     lastReplayEvent: event, replayEvents: [event],
+  });
+  await state.heartbeatRun(pool, id, 'agent_exploration', {
+    agentActivity: { version: 1, events: [{ kind: 'tool_start', tool: 'browser_navigate' }] },
+    agentFinalResponse: { excerpt: 'Planner stopped.', characters: 16 },
+  });
+  assert.deepEqual(JSON.parse(statement.values[2]), {
+    agentActivity: { version: 1, events: [{ kind: 'tool_start', tool: 'browser_navigate' }] },
+    agentFinalResponse: { excerpt: 'Planner stopped.', characters: 16 },
   });
   await assert.rejects(state.heartbeatRun(pool, id, 'pass_1', {
     replayEvents: Array.from({ length: 40 }, () => ({ message: 'x'.repeat(2000) })),

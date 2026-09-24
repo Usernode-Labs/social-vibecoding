@@ -1,3 +1,4 @@
+import { AccountDeletions } from './account-deletions';
 'use strict';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -190,12 +191,12 @@ function Kebab({ user, open, onToggle, onReload }: {
     setOpen(false);
     const ok = await console_()._confirm({
       title: 'Delete user?',
-      message: 'This will remove all their data.',
+      message: 'Permanently remove this account and sign-in access? Shared messages and attachments stay under “Deleted user.” External cleanup may remain pending.',
       confirmLabel: 'Delete',
       danger: true,
     });
     if (!ok) return;
-    const res = await fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/users/${user.id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: 'DELETE' }) });
     if (res.ok) onReload();
     else {
       const data = await res.json().catch(() => ({}));
@@ -741,6 +742,7 @@ function UsersSection() {
           ))}
         </div>
       </div>
+      {canWrite ? <AccountDeletions /> : null}
       <div id="admin-users-programme" className="mt-6">
         <ProgrammeUsers />
       </div>

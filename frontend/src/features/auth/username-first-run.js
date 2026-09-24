@@ -121,6 +121,13 @@
           return;
         }
       } catch (_) { /* ignore */ }
+      // The side panel's document (`?panel=1`, beside a running app) is the
+      // platform a second time over: the TOP window asks, once, and a second
+      // copy of the gate would stack its sheet inside the panel.
+      if (document.documentElement?.classList?.contains('in-side-panel')) {
+        UsernameFirstRun._resolve();
+        return;
+      }
 
       // A snapshot-derived offline boot is display-only and unverified: the
       // session-authed endpoints below cannot answer, and the snapshot's

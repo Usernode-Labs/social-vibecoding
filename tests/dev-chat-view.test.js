@@ -46,7 +46,15 @@ test('embedded workspace keeps the real composer and transcript without a second
   assert.match(embedded, /id="dc-composer-bar"/);
   assert.match(embedded, /id="dc-messages"/);
   assert.doesNotMatch(embedded, /Change overview|aria-label="Change views"/);
-  assert.match(html({ ...SESSION, change }), /Change overview/, 'old session bookmarks retain a route back to the card');
+});
+
+test('#2821: the full-screen workspace has no "Agent workspace" strip above its header', () => {
+  // The route back to the card is the session header's "Open proposal card"
+  // now (tests/dev-session-header.test.js), not a second navigation strip.
+  const change = { item: { id: 4073 }, card: {}, body: {} };
+  const full = html({ ...SESSION, change });
+  assert.match(full, /id="dc-messages"/);
+  assert.doesNotMatch(full, /Change overview|Agent workspace|aria-label="Change views"|dev-change-tabs/);
 });
 
 const html = (s) => renderToHtml(createElement(mod().DevChatViewView, {
@@ -425,8 +433,8 @@ test('the first-use capture renders the real explainer without changing saved pr
   assert.equal(view().returnHint, true, 'capture works even for a returning user');
   const out = html(view());
   assert.match(out, /You can leave this page and return anytime/);
-  assert.match(out, /<strong>Improve<\/strong>/);
-  assert.match(out, /session’s status/);
+  assert.match(out, /<strong>Messages<\/strong>/);
+  assert.match(out, /change’s status/);
   assert.match(out, /id="dc-return-hint-dismiss"[^>]*>Got it<\/button>/);
   assert.match(out,
     /id="dc-return-hint"[^>]*class="[^"]*flex flex-col items-stretch[^"]*sm:flex-row/,

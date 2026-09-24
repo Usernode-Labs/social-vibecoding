@@ -230,7 +230,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M12 4.5v15m7.5-7.5h-15',
     'M12 5.5v13',
     'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
-    'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z',
+    // WarningTriangleIcon left this list with #2716: Settings → Delete
+    // account draws it on the initial confirmation-entry button, including
+    // when the lazily mounted Settings interior first renders.
     'M13 7l5 5m0 0l-5 5m5-5H6',
     'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
     'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
@@ -273,6 +275,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
+    // HashIcon (#2802): a channel's glyph in the desktop rail's Recents,
+    // whose rows render only after mount, so it is never in a cold document.
+    'M7 20l4-16m2 16l4-16M6 9h14M4 15h14',
     'M7 3v5h8',
     'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
     // THE SPEECH BUBBLE, added by #2718's review. It was the leading glyph of

@@ -1,10 +1,23 @@
 import { useEffect, useRef } from 'react';
 
-export function nativeBackEnabled({ visible, mode, href, slug, tab }: {
+/**
+ * Whether the native back-swipe is on: only where the page HAS a back control
+ * with a destination, and never over embedded App-tab content.
+ *
+ * That control is the header's arrow (`mode === 'arrow'` with an `href`)
+ * everywhere but one family of routes. On a Workshop topic (an issue, a
+ * proposal, a governance vote or a shared session) the back is the
+ * "‹ Workshop" chip at the top of the pane, and the header draws none (#2916),
+ * so the header passes the chip's destination as `paneHref`. Without it the
+ * swipe would switch off on exactly the pages whose back control moved.
+ */
+export function nativeBackEnabled({ visible, mode, href, slug, tab, paneHref = null }: {
   visible: boolean; mode: string; href: string | null;
   slug: string | null; tab: string | null;
+  paneHref?: string | null;
 }): boolean {
-  return visible && mode === 'arrow' && !!href && !(slug && tab === 'app');
+  if (!visible || (slug && tab === 'app')) return false;
+  return (mode === 'arrow' && !!href) || !!paneHref;
 }
 
 type NativeHost = {

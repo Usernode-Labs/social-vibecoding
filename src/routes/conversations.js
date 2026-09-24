@@ -103,6 +103,17 @@ function demoConversations(user) {
       lastActivityAt: '2026-08-13T11:00:00Z', unreadCount: 0,
       canSend: false, canInvite: false, canManage: false,
     },
+    {
+      // #2783: the platform-wide room. A channel carries no roster (it is
+      // everybody) — only the count — and nobody owns or manages it.
+      id: 910004, kind: 'channel', title: 'general', channelKey: 'general',
+      status: 'active', archived: false,
+      members: [], memberCount: 128, membershipStatus: 'member', myRole: 'member',
+      requester: null, peer: null, latestMessage: null,
+      latestSummary: 'Anyone else trying the new #general room?',
+      lastActivityAt: '2026-08-13T13:10:00Z', unreadCount: 1,
+      canSend: true, canInvite: false, canManage: false,
+    },
   ];
 }
 
@@ -185,6 +196,55 @@ function demoMessages(user, conversationId) {
       viewUrl: null,
     }], objects: [],
   }];
+  if (conversationId === 910004) {
+    const lin = demoUser(910002, 'lin');
+    // Three from ada in a row, then lin: the transcript draws ada's name and
+    // face ONCE and her next two as continuation lines (#2783), which is the
+    // grouping the declared checks look for.
+    return [
+      {
+        id: 9100401, conversationId, sender: ada,
+        content: 'Morning all! The Messages list is sectioned now.', createdAt: '2026-08-13T13:00:00Z', editedAt: null,
+        reply: null, reactions: [{ emoji: '🎉', count: 3, reacted: false, users: ['lin'] }], attachments: [], objects: [],
+      },
+      {
+        id: 9100402, conversationId, sender: ada,
+        content: 'Direct messages and agents on top, channels underneath.', createdAt: '2026-08-13T13:01:00Z', editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [],
+      },
+      {
+        id: 9100403, conversationId, sender: ada,
+        content: 'Issue #488 has the background.', createdAt: '2026-08-13T13:02:00Z', editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [],
+      },
+      {
+        id: 9100404, conversationId, sender: lin,
+        content: 'Anyone else trying the new #general room?', createdAt: '2026-08-13T13:10:00Z', editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [],
+      },
+      {
+        id: 9100405, conversationId, sender: self,
+        content: 'Yes, from here.', createdAt: '2026-08-13T13:12:00Z', editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [],
+      },
+      // #2884: four cards in a row and nothing said between them — the run
+      // the transcript draws as its first card and "… 3 more".
+      ...[
+        [9100406, 3327, 'Platform Messages'],
+        [9100407, 3328, 'Collapse runs of cards in a channel'],
+        [9100408, 3329, 'One outline on the message box'],
+        [9100409, 3330, 'Messages at the list’s reading size'],
+      ].map(([id, sessionId, title], index) => ({
+        id, conversationId, sender: lin, content: '',
+        createdAt: `2026-08-13T13:${String(14 + index).padStart(2, '0')}:00Z`, editedAt: null,
+        reply: null, reactions: [], attachments: [], objects: [{
+          type: 'proposal', appId: 1, appSlug: 'usernode', available: true,
+          sessionId, title, subtitle: 'Homeroom', state: 'active',
+          author: 'lin', href: `#app/usernode/dev/proposals/${sessionId}`,
+        }],
+      })),
+    ];
+  }
   return [];
 }
 
@@ -417,9 +477,9 @@ function conversationRoutes(config) {
   // conversation, so a readable id from one cannot be used to save a message
   // out of another.
   async function readableMessage(user, conversationId, messageId) {
-    const membership = await conversations.loadMembership(pool, conversationId, user.id);
+    const membership = await conversations.loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
     if (!membership) return false;
-    if (!await conversations.canDirectInteract(pool, membership, user.id)) return false;
+    if (!await conversations.canReadConversation(pool, membership, user.id)) return false;
     return !!await conversations.getMessage(pool, user, conversationId, messageId);
   }
 
@@ -489,6 +549,10 @@ function conversationRoutes(config) {
           userId: req.user.id, messageId: result.messageId,
         });
       });
+      // #2904: reading a conversation clears its message notifications, but
+      // announces itself as `conversation_read`, not `notifications_changed`
+      // — so re-badge the reader's iPhone here explicitly.
+      try { require('../services/mobile-push').scheduleBadgeSync(req.user.id); } catch {}
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'mark read failed', { id, err: err.message });
@@ -625,8 +689,8 @@ function conversationRoutes(config) {
         };
       }
     }
-    const membership = await conversations.loadMembership(pool, id, req.user.id);
-    if (!membership || !(await conversations.canDirectInteract(pool, membership, req.user.id))) return null;
+    const membership = await conversations.loadMembership(pool, id, req.user.id, { allowDeletedPeer: true });
+    if (!membership || !(await conversations.canReadConversation(pool, membership, req.user.id))) return null;
     const { rows } = await pool.query(
       `SELECT id, kind, filename, content_type, data, message_id, user_id
          FROM conversation_message_attachments
@@ -636,6 +700,14 @@ function conversationRoutes(config) {
     const row = rows[0];
     if (!row || (htmlOnly && row.kind !== 'html')) return null;
     if (row.message_id == null && row.user_id !== req.user.id) return null;
+    if (row.message_id != null && row.user_id !== req.user.id) {
+      const { rows: blocks } = await pool.query(
+        `SELECT 1 FROM user_blocks
+          WHERE blocker_id = $1 AND blocked_user_id = $2 LIMIT 1`,
+        [req.user.id, row.user_id]
+      );
+      if (blocks.length) return null;
+    }
     return row;
   }
 
@@ -699,8 +771,12 @@ function conversationRoutes(config) {
           type: 'conversation_membership_changed', conversationId: audience.conversationId,
         });
       }
+      for (const conversationId of result.privateRefreshConversationIds || []) {
+        pushAudience([req.user.id], { type: 'conversation_membership_changed', conversationId });
+      }
       const { pushToUser } = require('../services/ws');
       for (const userId of result.memberIds) pushToUser(userId, { type: 'notifications_changed' });
+      pushToUser(req.user.id, { type: 'user_blocks_changed', userId: targetId, blocked: true });
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'block failed', { targetId, err: err.message });
@@ -719,8 +795,12 @@ function conversationRoutes(config) {
           type: 'conversation_membership_changed', conversationId: audience.conversationId,
         });
       }
+      for (const conversationId of result.privateRefreshConversationIds || []) {
+        pushAudience([req.user.id], { type: 'conversation_membership_changed', conversationId });
+      }
       const { pushToUser } = require('../services/ws');
       for (const userId of result.memberIds) pushToUser(userId, { type: 'notifications_changed' });
+      pushToUser(req.user.id, { type: 'user_blocks_changed', userId: targetId, blocked: false });
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'unblock failed', { targetId, err: err.message });

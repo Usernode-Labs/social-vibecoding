@@ -29,9 +29,9 @@ const {
   DATA_TOOL_THINKING_STATUS,
 } = require('../src/routes/sessions.js');
 
-const sessionsSrc = fs.readFileSync(
-  path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8'
-);
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+const sessionsSrc = [['src', 'services', 'mayor', 'turn.js'], ['src', 'routes', 'sessions.js']]
+  .map((p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')).join('\n');
 
 // ── 1. The status text ──────────────────────────────────────────────────
 

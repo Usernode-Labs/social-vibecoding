@@ -446,6 +446,12 @@ function HomeroomBotSection() {
                 }}
               />
             </div>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-turn-tokens-note">
+              Only binds on models that report what they have read while they are
+              still reading. The model the bot runs today reports once, at the end,
+              so this is a warning in the logs rather than a stop. The minute limit
+              above is what actually ends a runaway turn.
+            </p>
           </div>
         </div>
 
