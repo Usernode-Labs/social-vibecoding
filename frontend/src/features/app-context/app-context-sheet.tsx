@@ -177,9 +177,11 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
  * the rest are <a>s. One fragment is what keeps "the buttons look like the
  * links" true by construction rather than by three copies staying in step.
  */
-function RowBody({ icon, label, trailing }: {
+function RowBody({ icon, label, lead, trailing }: {
   icon: ReactNode;
   label: string;
+  // A mark drawn just before the label: an agent session's state (#3013).
+  lead?: ReactNode;
   trailing?: ReactNode;
 }): ReactNode {
   return (
@@ -187,6 +189,7 @@ function RowBody({ icon, label, trailing }: {
       <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
         {icon}
       </span>
+      {lead}
       <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
       {trailing}
       <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
@@ -195,7 +198,7 @@ function RowBody({ icon, label, trailing }: {
 }
 
 function MenuRow({
-  id, href, icon, label, trailing, onClick, elRef, shipsHidden, dataContextRow,
+  id, href, icon, label, lead, trailing, onClick, elRef, shipsHidden, dataContextRow,
 }: {
   id: string;
   // Names the destination for selectors that key on it rather than on the id.
@@ -203,6 +206,7 @@ function MenuRow({
   href: string;
   icon: ReactNode;
   label: string;
+  lead?: ReactNode;
   trailing?: ReactNode;
   onClick?: (e: React.MouseEvent) => void;
   elRef?: React.Ref<HTMLAnchorElement>;
@@ -223,7 +227,7 @@ function MenuRow({
         AppContext.dismissForNav();
       }}
     >
-      <RowBody icon={icon} label={label} trailing={trailing} />
+      <RowBody icon={icon} label={label} lead={lead} trailing={trailing} />
     </a>
   );
 }
@@ -679,11 +683,10 @@ export function AppsSwitcherSheet(): ReactNode {
                   href={row.href}
                   icon={<SparklesIcon />}
                   label={row.title}
+                  // The session's state leads its name, as in Recents (#3013).
+                  lead={<AgentActivityMark activity={row.activity} />}
                   trailing={(
-                    <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                      <AgentActivityMark activity={row.activity} />
-                      {row.detail}
-                    </span>
+                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{row.detail}</span>
                   )}
                 />
               ))}

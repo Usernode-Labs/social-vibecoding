@@ -130,12 +130,14 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
     >
       {app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
+      {/* #2779: an agent session working (a spinner) or finished unseen (a
+          green dot), leading its name (#3013) so it reads as the session's
+          state rather than one more mark at the row's end. The row's
+          accessible name says it too (`doing`). */}
+      {item.activity ? <AgentActivityMark activity={item.activity} className="platform-recent-activity" /> : null}
       <span className="platform-recent-label">{item.label}</span>
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
-      {/* #2779: an agent session working (a spinner) or finished unseen (a
-          green dot). The row's accessible name says it too (`doing`). */}
-      {item.activity ? <AgentActivityMark activity={item.activity} className="platform-recent-activity" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
   );

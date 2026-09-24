@@ -352,8 +352,7 @@ test('each model says what a typical change costs on it, never as a bare amount'
   const options = choice.pickerOptions(catalog, null);
   const sonnet = options.find((o) => o.value === 'anthropic:claude-sonnet-5');
   assert.equal(sonnet.detail, 'general coding work · about $1.55 for a typical change');
-  assert.equal(sonnet.cost, 'about $1.55 for a typical change');
-  assert.equal(options.find((o) => o.value === 'openrouter:z-ai/glm-5').cost, 'about $0.42 for a typical change');
+  assert.equal(options.find((o) => o.value === 'openrouter:z-ai/glm-5').detail, 'about $0.42 for a typical change');
 
   const { LabeledSelect } = loadTsx('frontend/src/features/agent-session/index.tsx');
   const html = renderToHtml(createElement(LabeledSelect, {
@@ -361,7 +360,11 @@ test('each model says what a typical change costs on it, never as a bare amount'
   }));
   assert.match(html, />Sonnet 5 · general coding work · about \$1\.55 for a typical change \(default\)<\/option>/, 'open: the cost after the name');
   assert.match(html, />Model: Sonnet 5<\/span>/, 'closed: still "Model: X"');
-  assert.match(read('frontend/src/features/agent-session/index.tsx'), /data-agent-session-model-cost>\{cost\}</, 'the chosen model\'s cost beside it');
+  // #3008: the estimate is in the open list only. Beside the closed control
+  // it read as a standing price under every message.
+  assert.doesNotMatch(html, /Model: Sonnet 5[^<]*about/, 'closed: no estimate');
+  assert.doesNotMatch(read('frontend/src/features/agent-session/index.tsx'), /data-agent-session-model-cost|typical change<\/span>/,
+    'and nothing beside it');
   assert.match(read('frontend/src/features/agent-session/api.ts'), /request\('\/api\/model-notes'\)/, 'the dev chat\'s figures, from its route');
 });
 

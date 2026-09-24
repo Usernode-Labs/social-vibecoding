@@ -115,7 +115,7 @@ export function VenuePicker({ disabled, className = '' }: { disabled: boolean; c
     <button
       type="button"
       data-agent-session-venue
-      className={`${className ? `${className} ` : ''}inline-flex shrink-0 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800`}
+      className={`${className ? `${className} ` : ''}inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800`}
       title="Where this change is built"
       aria-haspopup="menu"
       aria-expanded={open}

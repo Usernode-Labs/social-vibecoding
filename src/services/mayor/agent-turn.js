@@ -495,11 +495,15 @@ async function runAgentTurn({
         });
         cards.push(card);
         send('confirmation_required', { card });
+        // `input` is what the card will run, which is not always what the
+        // model sent: a change started from the request the conversation was
+        // opened on links that request (agent-session-actions.js).
         return {
           ok: true,
           text: JSON.stringify({
             status: 'pending_confirmation',
             actionId: card.id,
+            input: card.input,
             note: 'Shown to the user as a confirmation card. Nothing has happened yet: it runs only if they press '
               + 'Confirm on the card. Tell them in one line what it will do.',
           }),
