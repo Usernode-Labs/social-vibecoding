@@ -9281,6 +9281,15 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 @media (pointer: coarse) {
   .dc-model-select { min-height: 32px; }
 }
+/* The same 32px where the class is on a SHOWN LINE rather than the control:
+   agent-session's LabeledSelect draws "Model: …" in a span and lays a
+   transparent select over the whole wrapper. A button or select centres its
+   own text; a block span leaves its one line at the top of the taller box,
+   below which the wrapper centres the caret. The line is 32px tall instead,
+   so the text and the caret stay level and the select over them is 32px. */
+@media (pointer: coarse) {
+  span.dc-model-select { line-height: 32px; }
+}
 /* Shared with the proposal-workshop select, which uses this utility to keep
    a long model name from widening its control. */
 .dc-model-name {
