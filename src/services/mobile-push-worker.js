@@ -12,6 +12,7 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  'conversation_thread_reply',
 ]);
 
 const DEFAULTS = Object.freeze({

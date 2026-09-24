@@ -18,6 +18,8 @@ const notifications = require('../src/services/notifications');
 const CURRENT_KINDS = [
   'conversation_invite', 'conversation_message', 'conversation_mention',
   'conversation_reply', 'conversation_reaction',
+  // #2387: a reply in a conversation thread, beside the other Messages kinds.
+  'conversation_thread_reply',
   'mention', 'reply', 'reaction', 'kudos', 'stale_pr', 'check_failed',
   'pr_proposed', 'spec_shared', 'collab_invite', 'collab_invite_accepted',
   'approver_invite', 'approver_invite_accepted', 'session_done',

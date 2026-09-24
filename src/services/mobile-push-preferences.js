@@ -97,6 +97,9 @@ const CATEGORY_DEFINITIONS = Object.freeze([
       'conversation_mention',
       'conversation_reply',
       'conversation_reaction',
+      // #2387: a reply in a thread you started or replied in. "Replies" in
+      // the description already covers it, so the copy does not change.
+      'conversation_thread_reply',
     ]),
   }),
 ]);

@@ -119,6 +119,12 @@ function buildCopy(kind, context, now) {
         title: withConversation(`@${actor} replied to you`),
         body: message,
       };
+    // #2387: the thread is the news, so the title says where it happened.
+    case 'conversation_thread_reply':
+      return actor && {
+        title: withConversation(`@${actor} replied in a thread`),
+        body: message,
+      };
     case 'conversation_reaction':
       return actor && {
         title: withConversation(detail

@@ -4873,7 +4873,9 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('conversation_message', 'messages', TRUE),
   ('conversation_mention', 'messages', TRUE),
   ('conversation_reply', 'messages', TRUE),
-  ('conversation_reaction', 'messages', TRUE)
+  ('conversation_reaction', 'messages', TRUE),
+  -- #2387: a reply in a conversation thread you started or replied in.
+  ('conversation_thread_reply', 'messages', TRUE)
 ON CONFLICT (kind) DO UPDATE
   SET category = EXCLUDED.category,
       default_enabled = EXCLUDED.default_enabled;
@@ -4895,7 +4897,9 @@ DELETE FROM mobile_push_kind_categories
    -- #1688's two.
    'revision_recheck', 'weekly_digest',
    'conversation_invite', 'conversation_message', 'conversation_mention',
-   'conversation_reply', 'conversation_reaction'
+   'conversation_reply', 'conversation_reaction',
+   -- #2387.
+   'conversation_thread_reply'
  );
 
 -- Sparse account overrides. The closed policy above supplies defaults, so
@@ -7229,6 +7233,28 @@ CREATE INDEX IF NOT EXISTS idx_conversation_messages_reply
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_messages_idempotency
   ON conversation_messages (conversation_id, sender_id, idempotency_key)
   WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL;
+
+-- ── Messages overhaul (#2387): soft delete and threads ─────────────────
+-- `deleted_at` marks an author's own soft delete. The row stays (so thread
+-- replies, quotes and read cursors that point at it keep resolving) and is
+-- served as a placeholder: services/conversations.js clears the content and
+-- removes its attachments, cards, reactions, saves and notifications in the
+-- same transaction that stamps this column.
+--
+-- `thread_root_id` files a reply under a main-stream message of the same
+-- conversation (group or channel; never direct, never nested — the service
+-- enforces both). NULL is the main stream, which is all that the transcript,
+-- unread counts and the list's latest message read. CASCADE rather than SET
+-- NULL: a thread is never re-parented into the main stream, and roots are
+-- only ever soft-deleted, so the cascade fires only with the conversation.
+-- Both columns inherit conversation_messages' table-level staging:private
+-- tag, and neither references users, so account deletion is unaffected.
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS thread_root_id INTEGER
+  REFERENCES conversation_messages(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread
+  ON conversation_messages (thread_root_id, id) WHERE thread_root_id IS NOT NULL;
+-- ── end messages overhaul (#2387) ──────────────────────────────────────
 
 DO $$
 BEGIN
