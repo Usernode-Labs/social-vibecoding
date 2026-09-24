@@ -7,7 +7,7 @@
     "mappedRoutes": 540,
     "exemptRoutes": 154,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 394,
+    "clientApiReferences": 392,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -3953,8 +3953,6 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
-        "public/js/group-chat.js",
-        "public/js/group-chat.js",
         "public/js/group-chat.js"
       ]
     },
@@ -3974,7 +3972,6 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
-        "public/js/group-chat.js",
         "public/js/group-chat.js"
       ]
     },
@@ -3994,7 +3991,6 @@
       "mobileSupported": true,
       "classicPath": "#messages",
       "clientReferences": [
-        "public/js/group-chat.js",
         "public/js/group-chat.js"
       ]
     },

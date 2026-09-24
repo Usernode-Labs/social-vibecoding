@@ -1580,8 +1580,9 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 
 /* ── A reply thread beside its chat (#2387) ─────────────────────────────
    A second sheet on the strip, to the right of the chat, Slack's layout.
-   Below 1180px the list steps aside while a thread is open, so the chat
-   between them keeps a readable measure; on a phone the thread covers the
+   Below 1600px the list steps aside while a thread is open, so the chat
+   between them keeps a readable measure (a 1360px laptop with the rail
+   open left the chat under 300px wide); on a phone the thread covers the
    chat entirely and the header bar's back arrow returns to it. */
 .messages-reply-pane {
   position: relative;
@@ -1600,8 +1601,10 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .messages-reply-pane { flex: 0 0 min(420px, 42%); margin: 14px 12px 0 0; }
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-right: 8px; }
 }
-@media (min-width: 768px) and (max-width: 1179px) {
+@media (min-width: 768px) and (max-width: 1599px) {
   .messages-layout.messages-has-reply-thread > .messages-list-pane { display: none; }
+  /* The list is already out of the way; its toggle would do nothing. */
+  .messages-layout.messages-has-reply-thread .messages-list-toggle { display: none; }
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-left: 12px; }
 }
 .messages-reply-count {

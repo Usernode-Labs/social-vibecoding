@@ -1674,7 +1674,9 @@ const GroupChat = {
     if (!newest || newest <= (GroupChat._readUpTo || 0) || GroupChat._unreadHold === slug) return;
     GroupChat._readUpTo = newest;
     try {
-      await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read`, {
+      // `?demo=1`: a staging demo stream's newest rows are mock ones, which
+      // only the demo branch of the route knows (src/routes/chat.js).
+      await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read${GroupChat._specDemoQS()}`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ message_id: newest }),
@@ -1686,7 +1688,7 @@ const GroupChat = {
   async markUnread(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/unread`, {
+    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/unread${GroupChat._specDemoQS()}`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ message_id: Number(id) }),
