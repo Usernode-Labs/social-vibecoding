@@ -32,6 +32,7 @@ import {
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { MorePanel } from './account-panel';
+import { FriendsSection } from './friends-section';
 import { ProfileEditSheet } from './profile-edit-sheet';
 import { PublicProfileCard } from './public-profile-card';
 
@@ -327,6 +328,7 @@ export function ProfileRoot(): ReactNode {
         profile={view.profile}
         allowReport={view.allowReport}
         allowMessage={view.allowMessage}
+        friendship={view.friendship}
       />
     );
   }
@@ -352,6 +354,12 @@ export function ProfileRoot(): ReactNode {
           (features/settings/account-rows.tsx).
       */}
       <MorePanel rows={view.rows} />
+      {/* #2386: private to you — requests to answer, then your friends. */}
+      <FriendsSection
+        view={view.friends ?? { loaded: false, incoming: [], friends: [], outgoing: [] }}
+        pendingId={state.friendsPending ?? null}
+        status={state.friendsStatus || ''}
+      />
       <Contributions view={view.contributions} />
     </>
   );

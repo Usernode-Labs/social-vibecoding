@@ -630,6 +630,9 @@ const Notifications = {
   async _onRowAction(id, key) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return false;
+    if ((key === 'friend_accept' || key === 'friend_decline') && item.kind === 'friend_request') {
+      return Notifications._answerFriendRequest(item, key === 'friend_accept');
+    }
     const sessionId = Number(item.sessionId);
     if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
         && window.AppView && typeof AppView.castVote === 'function') {
@@ -639,6 +642,55 @@ const Notifications = {
       return true;
     }
     return Notifications._onItemClick(id);
+  },
+
+  // #2386: Accept / Decline right on a friend request row. The server marks
+  // the row read and answers the relationship; the row stops offering the
+  // buttons (`friendRequestPending`), and the page's friend caches hear about
+  // it through the same DOM event the profile button raises
+  // (features/friends/api.ts FRIENDS_CHANGED_EVENT) — an event, not an
+  // import, because this module stays import-free. A decline tells the sender
+  // nothing; the toast is only ever the viewer's own confirmation.
+  async _answerFriendRequest(item, accept) {
+    const userId = Number(item.sourceUserId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) return false;
+    const toast = (message) => {
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) PlatformUI.toast(message);
+    };
+    try {
+      const init = {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: '{}',
+      };
+      const res = accept
+        ? await fetch(`/api/friends/${userId}/accept`, init)
+        : await fetch(`/api/friends/${userId}/decline`, init);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error && res.status === 429 ? data.error : 'Couldn’t answer this friend request. Try again.');
+        return false;
+      }
+      item.friendRequestPending = false;
+      if (!item.readAt) {
+        item.readAt = new Date().toISOString();
+        if (Notifications.unread > 0) Notifications.unread -= 1;
+        Notifications._renderBadge();
+      }
+      Notifications._renderList();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('usernode:friends-changed'));
+      }
+      const who = item.sourceUsername ? `@${item.sourceUsername}` : 'them';
+      if (accept) toast(data.state === 'friends' ? `You and ${who} are friends` : 'This request was withdrawn');
+      else toast('Request declined');
+      return true;
+    } catch (err) {
+      console.warn('[notifications] friend answer failed', err);
+      toast('Couldn’t answer this friend request. Try again.');
+      return false;
+    }
   },
 
   _onItemClick(id) {
@@ -674,6 +726,15 @@ const Notifications = {
         const href = conversationNotificationHref(item);
         if (messages?.openAddress) messages.openAddress(href);
         else window.location.hash = href;
+      }
+      return;
+    }
+    // #2386: a friend request or acceptance is about a PERSON, so it opens
+    // their page — where the relationship's own button lives.
+    if (FRIEND_NOTIF_KINDS.has(item.kind)) {
+      if (item.sourceUsername) {
+        Notifications._dismissSheetForNav();
+        window.location.hash = `#profile/${encodeURIComponent(item.sourceUsername)}`;
       }
       return;
     }
@@ -1406,6 +1467,10 @@ function conversationNotificationHref(n) {
   return `#messages/${conversationId}`;
 }
 
+// #2386: the two friend kinds (src/services/notifications.js
+// FRIEND_NOTIFICATION_KINDS). No app and no conversation — a person.
+const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
+
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
 //
@@ -1770,6 +1835,29 @@ function rowView(n) {
       // a rendering fault rather than as attribution.
       appLine: 'Messages',
       ...copy,
+    };
+  }
+
+  // #2386: the person is the SUBJECT of both friend rows, so their name is
+  // the headline and `by` stays null (as on the key rows). A request still
+  // waiting on you carries Accept and Decline beside the row; once answered —
+  // here, on your profile, or withdrawn by its sender — it is a plain row that
+  // opens their page.
+  if (FRIEND_NOTIF_KINDS.has(n.kind)) {
+    const request = n.kind === 'friend_request';
+    return {
+      ...base,
+      appLine: 'Friends',
+      wrap: true,
+      icon: request ? '👋' : '🤝',
+      label: request ? 'Friend request' : 'Accepted your friend request',
+      segments: [{ t: 'who', v: who }],
+      ...(request && n.friendRequestPending ? {
+        actions: [
+          { key: 'friend_accept', label: 'Accept', primary: true },
+          { key: 'friend_decline', label: 'Decline' },
+        ],
+      } : {}),
     };
   }
 

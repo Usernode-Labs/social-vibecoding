@@ -776,6 +776,11 @@ async function createDirect(pool, user, targetUserId) {
     const [low, high] = await lockPair(db, user.id, targetUserId);
     const target = await db.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [targetUserId]);
     if (!target.rows.length || await blockedEitherWay(db, user.id, targetUserId)) return null;
+    // #2386: friendship is standing consent both ways, so a DM between
+    // friends has no invitation step (services/friends.js). Lazy require:
+    // friends.js builds on this module.
+    const friendsService = require('./friends');
+    const friends = await friendsService.areFriends(db, user.id, targetUserId);
     const existing = await db.query(
       `SELECT c.id, c.status, c.created_by,
               mine.status AS my_status, theirs.status AS their_status
@@ -791,6 +796,10 @@ async function createDirect(pool, user, targetUserId) {
     );
     if (existing.rows.length) {
       const row = existing.rows[0];
+      if (friends && !(row.status === 'active' && row.my_status === 'member' && row.their_status === 'member')) {
+        await friendsService.openDirectBetweenFriends(db, row.id);
+        return { conversationId: row.id, notifications: [], memberIds: [user.id, targetUserId] };
+      }
       // A reciprocal request is affirmative consent: accept the pending
       // invitation atomically instead of creating a second pair. Following a
       // decline, only the former recipient may reverse their decision; the
@@ -840,6 +849,10 @@ async function createDirect(pool, user, targetUserId) {
               ($1, $3, 'member', 'invited', $2, NULL, NULL)`,
       [conversationId, user.id, targetUserId]
     );
+    if (friends) {
+      await friendsService.openDirectBetweenFriends(db, conversationId);
+      return { conversationId, notifications: [], memberIds: [user.id, targetUserId] };
+    }
     const notification = await insertNotification(db, {
       userId: targetUserId, conversationId, sourceUserId: user.id, kind: 'conversation_invite',
     });
@@ -1688,6 +1701,9 @@ async function setBlock(pool, userId, targetId, blocked) {
       `INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)
        ON CONFLICT DO NOTHING`, [userId, targetId]
     );
+    // #2386: a block ends any friendship or friend request between the pair,
+    // under the pair lock taken above (services/friends.js).
+    await require('./friends').removePairOnBlock(db, userId, targetId);
 
     // A block is a consent decision for every still-pending invitation
     // between the pair (direct or group). Accepted shared groups remain

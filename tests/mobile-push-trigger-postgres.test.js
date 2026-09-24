@@ -251,9 +251,10 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
   // policy said otherwise. This count running against a real server is what
   // proves they survive now. 27 → 29 with #1688's two (revision_recheck,
   // weekly_digest), seeded and reaped in the same two lists. 29 → 31 with
+  // #2386's two (friend_request, friend_accept), the same way; 31 → 33 with
   // #2387's two: conversation_thread_reply (under messages) and thread_reply
   // (an app-chat reply-thread reply, direct_interactions).
-  assert.equal(policy.length, 31, 'the seed carries the reviewed closed set');
+  assert.equal(policy.length, 33, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

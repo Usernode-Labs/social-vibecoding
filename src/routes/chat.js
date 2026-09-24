@@ -1107,8 +1107,15 @@ function chatRoutes(config) {
       // keeps the canonical/original casing. LOWER(u.username) must be in
       // the SELECT list because SELECT DISTINCT requires ORDER BY
       // expressions to appear there.
+      // #2386: the viewer's friends lead, flagged `friend: true`. Every
+      // caller filters this list by prefix in the order it arrives, so the
+      // order is the whole benefit.
       const { rows } = await pool.query(
-        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name
+        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name,
+                EXISTS (SELECT 1 FROM friendships f
+                         WHERE f.status = 'accepted'
+                           AND f.user_low_id = LEAST(u.id, $3::int)
+                           AND f.user_high_id = GREATEST(u.id, $3::int)) AS friend
            FROM users u
           WHERE NOT EXISTS (
                   SELECT 1 FROM user_blocks blocked
@@ -1119,12 +1126,16 @@ function chatRoutes(config) {
                SELECT m.user_id FROM chat_messages m
                 WHERE m.app_id = $1 AND m.user_id IS NOT NULL
              ))
-          ORDER BY sort_name
+          ORDER BY friend DESC, sort_name
           LIMIT 500`,
         [appId, ids, req.user.id]
       );
 
-      res.json({ users: rows.map((r) => ({ username: r.username })) });
+      res.json({
+        users: rows.map((r) => (r.friend
+          ? { username: r.username, friend: true }
+          : { username: r.username })),
+      });
     } catch (err) {
       log.error('chat', 'Failed to load mention suggestions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

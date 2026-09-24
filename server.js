@@ -20,6 +20,7 @@ const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/cha
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
+const { friendRoutes } = require('./src/routes/friends');
 const { contentReportRoutes } = require('./src/routes/content-reports');
 const { sessionRoutes } = require('./src/routes/sessions');
 const { agentSessionRoutes } = require('./src/routes/agent-sessions');
@@ -554,6 +555,8 @@ app.use(illustrationRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(conversationRoutes(config));
+// #2386: mutual friends — the viewer's own lists, requests and answers.
+app.use(friendRoutes(config));
 app.use(contentReportRoutes(config));
 app.use(proposalHandoffRoutes(config));
 // #2779: agent sessions, the per-user conversation that starts changes.

@@ -97,6 +97,20 @@ const CHAT_SENDER_ACCESS_SQL = `(
   )
 )`;
 
+// #2386: the two friend kinds. A friend_request row carries Accept / Decline
+// only while it still ASKS something — the same sender's request to this
+// recipient is still pending — so that is read live off `friendships` rather
+// than remembered on the row: a request withdrawn, answered elsewhere or
+// ended by a block stops offering buttons at once. FALSE for every other kind.
+const FRIEND_NOTIFICATION_KINDS = new Set(['friend_request', 'friend_accept']);
+const FRIEND_REQUEST_PENDING_SQL = `(n.kind = 'friend_request' AND EXISTS (
+  SELECT 1 FROM friendships pending_friend
+   WHERE pending_friend.user_low_id = LEAST(n.user_id, n.source_user_id)
+     AND pending_friend.user_high_id = GREATEST(n.user_id, n.source_user_id)
+     AND pending_friend.requester_id = n.source_user_id
+     AND pending_friend.status = 'pending'
+))`;
+
 function parseMentions(text) {
   if (!text || typeof text !== 'string') return [];
   const out = new Set();
@@ -720,6 +734,8 @@ async function hydrateAndPush(pool, row) {
               conversation_message.content AS conversation_message_content,
               conversation_message.thread_root_id AS conversation_thread_root_id,
               su.username AS source_username,
+              n.source_user_id,
+              ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
               n.detail,
               pv.reason AS vote_reason
        FROM notifications n
@@ -1050,6 +1066,8 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             conversation_message.content AS conversation_message_content,
             conversation_message.thread_root_id AS conversation_thread_root_id,
             su.username AS source_username,
+            n.source_user_id,
+            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
             n.detail,
             pv.reason AS vote_reason
      FROM notifications n
@@ -1089,6 +1107,8 @@ async function getForUser(pool, userId, id) {
             conversation_message.content AS conversation_message_content,
             conversation_message.thread_root_id AS conversation_thread_root_id,
             su.username AS source_username,
+            n.source_user_id,
+            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
             n.detail,
             pv.reason AS vote_reason
        FROM notifications n
@@ -1383,6 +1403,12 @@ function serialize(row) {
     voteReason: row.kind === 'proposal_vote' ? (row.vote_reason || null) : null,
     // #2387: the Messages address this row opens, when it has one.
     href: isConversation ? null : notificationHref(row),
+    // #2386: who to answer, and whether there is still a question. Only on
+    // the two friend kinds, so every other row's shape is unchanged.
+    ...(FRIEND_NOTIFICATION_KINDS.has(row.kind) ? {
+      sourceUserId: row.source_user_id || null,
+      friendRequestPending: row.kind === 'friend_request' && !!row.friend_request_pending,
+    } : {}),
   };
 }
 
@@ -1433,6 +1459,7 @@ module.exports = {
   CONVERSATION_NOTIFICATION_KINDS,
   APP_CHAT_MESSAGE_KINDS,
   notificationHref,
+  FRIEND_NOTIFICATION_KINDS,
   serialize,
 };
 

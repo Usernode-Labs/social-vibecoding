@@ -633,6 +633,18 @@
       "expectSelector": "#leaderboard-root:not(.hidden) header:has([data-lb-back]) button[data-message-person=\"usernode-capture\"]"
     },
     {
+      "name": "Friends: a person who asked you gets Accept and Decline under their name, beside Message (#2386)",
+      "path": "/?demo=1#profile/lin",
+      "expectText": "Decline",
+      "expectSelector": "#profile-screen:not(.hidden) #public-profile-card:has([data-message-person=\"lin\"]) #public-profile-friend [data-friend-state=\"incoming\"] button[data-friend-action=\"accept\"] + button[data-friend-action=\"decline\"]"
+    },
+    {
+      "name": "Me: a private Friends section lists requests to answer, then your friends (#2386)",
+      "path": "/?demo=1#profile",
+      "expectText": "Only you can see your friends",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-more ~ #profile-friends:has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
+    },
+    {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
       "path": "/?shot=profile-edit#profile",
       "expectSelector": "#profile-edit-sheet #profile-edit-github:not(:has(input)) + #profile-edit-x:not(:has(input)) + a[href='#settings/connectors']",

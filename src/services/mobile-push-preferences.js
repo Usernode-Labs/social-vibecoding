@@ -8,12 +8,14 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'direct_interactions',
     label: 'Direct interactions',
-    description: 'Mentions and replies to your messages.',
+    description: 'Mentions, replies to your messages, and friend requests.',
     defaultEnabled: true,
     // #2387: a reply in an app-chat reply thread you started or joined is a
-    // reply to your message in all but name. Kept in lockstep with the seed
-    // in db/schema.sql.
-    kinds: Object.freeze(['mention', 'reply', 'thread_reply']),
+    // reply to your message in all but name. #2386: a friend request and its
+    // acceptance are one person reaching you directly — this category's
+    // promise — so they join it rather than getting a switch of their own.
+    // Kept in lockstep with the seed in db/schema.sql.
+    kinds: Object.freeze(['mention', 'reply', 'thread_reply', 'friend_request', 'friend_accept']),
   }),
   Object.freeze({
     key: 'invitations',

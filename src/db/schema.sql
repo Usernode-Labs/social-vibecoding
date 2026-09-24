@@ -4905,6 +4905,10 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- #2387: a reply in an app-chat reply thread you started or joined. A
   -- direct interaction like a reply to your message, so the same category.
   ('thread_reply', 'direct_interactions', TRUE),
+  -- #2386: a friend request and its acceptance are one person reaching you
+  -- directly, which is what this category already promises.
+  ('friend_request', 'direct_interactions', TRUE),
+  ('friend_accept', 'direct_interactions', TRUE),
   ('collab_invite', 'invitations', TRUE),
   ('collab_invite_accepted', 'invitations', TRUE),
   ('approver_invite', 'invitations', TRUE),
@@ -4965,6 +4969,8 @@ DELETE FROM mobile_push_kind_categories
    'revision_recheck', 'weekly_digest',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction',
+   -- #2386's two.
+   'friend_request', 'friend_accept',
    -- #2387.
    'conversation_thread_reply'
  );
@@ -7756,6 +7762,80 @@ BEGIN
       FOR EACH ROW EXECUTE FUNCTION prepare_conversations_for_user_delete();
   END IF;
 END $$;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Mutual friends (#2386).
+-- ═══════════════════════════════════════════════════════════════════════
+--
+-- ONE ROW PER UNORDERED PAIR, normalised exactly like
+-- conversation_direct_pairs (user_low_id < user_high_id). A pair therefore
+-- can never hold two requests, or a request beside a friendship: the row IS
+-- the relationship, and `status` says which one it is.
+--
+--   pending  — `requester_id` asked; the other person sees an incoming request.
+--   declined — the other person said no. SILENTLY: the requester keeps seeing
+--              "Requested" (and may cancel it), the recipient sees nothing.
+--   accepted — friends, in both directions.
+--
+-- src/services/friends.js takes the same normalised pair advisory lock as a
+-- direct message and a block (`conversation-direct:<low>:<high>`) before it
+-- touches a row, so a request, an accept and a block on one pair serialise,
+-- and conversations.setBlock deletes the pair's row inside its own
+-- transaction. A friends list is readable only by its owner; nothing here is
+-- counted or published.
+--
+-- Account deletion: every reference CASCADEs. There is nothing to retain — a
+-- relationship with nobody on the other end of it is not history — and the
+-- friend notifications the deleted person sent go with the rest of their
+-- `source_user_id` rows in services/account-deletion.js.
+CREATE TABLE IF NOT EXISTS friendships (
+  user_low_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_high_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status       VARCHAR(16) NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending', 'declined', 'accepted')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  responded_at TIMESTAMPTZ,
+  PRIMARY KEY (user_low_id, user_high_id),
+  CHECK (user_low_id < user_high_id),
+  CHECK (requester_id IN (user_low_id, user_high_id))
+);
+-- The primary key answers "the pair"; a person's own lists read the pair
+-- from either side, and the pending-outgoing cap counts one requester's
+-- open rows (a declined one still looks open to its sender, so it counts).
+CREATE INDEX IF NOT EXISTS idx_friendships_high
+  ON friendships (user_high_id, user_low_id);
+CREATE INDEX IF NOT EXISTS idx_friendships_requester_open
+  ON friendships (requester_id) WHERE status IN ('pending', 'declined');
+
+-- The rolling-day send cap (50 requests a day) needs a ledger that a cancel
+-- cannot erase, or cancel-and-resend would reset it. One row per request
+-- actually sent; the service prunes a requester's rows older than a day on
+-- each send, so the table stays at most a day deep per person.
+CREATE TABLE IF NOT EXISTS friend_request_sends (
+  id           BIGSERIAL PRIMARY KEY,
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_friend_request_sends_requester
+  ON friend_request_sends (requester_id, created_at DESC);
+
+-- A decline's 30-day quiet period, kept apart from `friendships` because it
+-- must outlive the request row: a requester who cancels a declined request
+-- and sends it again gets an ordinary "Requested" back, but the recipient is
+-- neither notified nor shown it until the period is over. Keyed by direction
+-- — it protects the person who declined, from the person they declined.
+CREATE TABLE IF NOT EXISTS friend_request_declines (
+  recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  declined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (recipient_id, requester_id),
+  CHECK (recipient_id <> requester_id)
+);
+
+COMMENT ON TABLE friendships IS 'staging:private';
+COMMENT ON TABLE friend_request_sends IS 'staging:private';
+COMMENT ON TABLE friend_request_declines IS 'staging:private';
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- Username changes — the retired-handle ledger.
