@@ -342,15 +342,19 @@ const QUESTION_REPLY = 'Read the map code.\n```json\n{"verdict":"question","dete
 // Drive the wall clock without waiting twenty minutes for it: the dispatch
 // hangs until the bot stops it, and mocked timers fire the budget at once.
 // `kill` is what stopTurn returns, so a test can hold the kill in flight.
-async function runToWallClock(t, harness, opts = {}, { kill = null, onStopped = null } = {}) {
+async function runToWallClock(t, harness, opts = {}, {
+  kill = null, onStopped = null, ctx = {}, result = { lastResultText: '' },
+} = {}) {
   const stopped = [];
   let release;
   const hung = new Promise((resolve) => { release = resolve; });
   harness.deps.worker.stopTurn = (id) => { stopped.push(id); release(); return kill || Promise.resolve(); };
   harness.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce }) => {
-    await dispatchOnce({ openrouterApiKey: 'k' });
+    await dispatchOnce({ openrouterApiKey: 'k', ...ctx });
     await hung;
-    return { result: { lastResultText: '' }, error: null };
+    // A stopped attempt never reaches turn.completed, so the ledger has no
+    // cost for it: `estimatedCostUsd` is absent, as it is in production.
+    return { result, error: null };
   };
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const running = bot.runTriage(harness.pool, {}, {
@@ -477,6 +481,83 @@ test('issues dropped by those spurious stops come back on the next refresh', () 
   assert.match(q, /AND budget_stop IS DISTINCT FROM 'input tokens'/);
   assert.match(q, /AND \(error IS NULL OR error NOT LIKE 'collateral:%'\)/);
   assert.ok(!/spendBudget\('input tokens'\)/.test(SRC), 'and no new token stops are written, so the filter is a one-off recovery');
+});
+
+// ── A stopped turn is priced from what its finished requests used (#3038) ──
+
+const PRICING = { available: true, inputPricePerMillion: 0.075, outputPricePerMillion: 0.3 };
+const realEstimator = require('../src/services/agent-turn').estimateRequestedModelCost;
+
+test('a turn stopped by the clock is priced from the requests that finished before the stop', async (t) => {
+  // The one genuine wall-clock stop in the 2026-09-24 export (#3027, 20.3
+  // minutes) recorded $0.00: the agent reports usage only at turn.completed,
+  // which a stopped turn never reaches. The relay's per-request lines do
+  // survive the kill, and they are priced here exactly as the ledger prices
+  // a finished turn.
+  const harness = triageHarness({ verdictText: 'x', sessionId: 901 });
+  harness.deps.agentTurn.estimateRequestedModelCost = realEstimator;
+  const { out } = await runToWallClock(t, harness, {}, {
+    ctx: { pricingSnapshot: PRICING },
+    result: {
+      lastResultText: '',
+      relayUsage: { requests: 7, inputTokens: 40_000_000, cachedInputTokens: 36_000_000, outputTokens: 5_000, reasoningOutputTokens: 900 },
+    },
+  });
+  assert.equal(out.budget, 'wall clock');
+  const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[14], 3.0015, 'cost: 40M input at $0.075/M plus 5k output at $0.30/M');
+  assert.equal(insert.params[15], 40_000_000, 'and the tokens the relay counted');
+  assert.equal(insert.params[16], 5_000);
+  assert.ok(insert.params.includes('wall clock'), 'still recorded as the stop it was');
+  assert.deepEqual(harness.calls.spend, [{ userId: 77, cents: 300.15, opts: { byok: false } }],
+    'and it reaches the weekly cap like any other spend');
+});
+
+test('the ledger figure wins whenever the agent reported one', async () => {
+  // A finished turn has the platform's own figure; the relay's sum is only
+  // for the turn that has none, so the two never add up to a double count.
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 902,
+    result: {
+      lastResultText: 'Read the map code.\n```json\n{"verdict":"question","determined":false,"missing_fact":"which screen","question":"Which screen?","default":"Route map"}\n```',
+      inputTokens: 1000, outputTokens: 50,
+      relayUsage: { requests: 3, inputTokens: 999_999, cachedInputTokens: 0, outputTokens: 999, reasoningOutputTokens: 0 },
+    },
+  });
+  deps.agentTurn.estimateRequestedModelCost = realEstimator;
+  await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[14], 0.0123, "the harness's ledger cost, not the relay's");
+  assert.equal(insert.params[15], 1000, "and the agent's own tokens");
+  assert.deepEqual(calls.spend, [{ userId: 77, cents: 1.23, opts: { byok: false } }], 'debited once');
+});
+
+test('with no price to apply, a stopped turn records its tokens and invents no cost', async (t) => {
+  const harness = triageHarness({ verdictText: 'x', sessionId: 903 });
+  harness.deps.agentTurn.estimateRequestedModelCost = realEstimator;
+  await runToWallClock(t, harness, {}, {
+    ctx: {},
+    result: { lastResultText: '', relayUsage: { requests: 2, inputTokens: 120_000, cachedInputTokens: 0, outputTokens: 800, reasoningOutputTokens: 0 } },
+  });
+  const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[14], null, 'unknown, not zero');
+  assert.equal(insert.params[15], 120_000);
+  assert.deepEqual(harness.calls.spend, [], 'nothing to debit');
+});
+
+test('relaySpend: no finished request means no figure at all', () => {
+  assert.equal(bot.relaySpend(null, PRICING, { estimateRequestedModelCost: realEstimator }), null);
+  assert.equal(bot.relaySpend({ requests: 0, inputTokens: 0, outputTokens: 0 }, PRICING, { estimateRequestedModelCost: realEstimator }), null);
+  assert.deepEqual(
+    bot.relaySpend({ requests: 1, inputTokens: 1_000_000, outputTokens: 0 }, PRICING, { estimateRequestedModelCost: realEstimator }),
+    { requests: 1, inputTokens: 1_000_000, outputTokens: 0, costUsd: 0.075 },
+  );
+});
+
+test('the stopped-run detail says its cost is a floor', () => {
+  const ui = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(ui, /Its cost counts the model requests that finished before the stop\./);
+  assert.match(ui, /so the real cost is a little higher/);
 });
 
 test('the totals count a budget stop separately and stop calling it a failure', () => {
