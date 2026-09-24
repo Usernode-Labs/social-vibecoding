@@ -55,8 +55,19 @@ export interface AgentMessage {
   changeId: number | null;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  /** The model that wrote an assistant row, as recorded. */
+  model?: string | null;
+  /** What the row cost, in (fractional) cents; null or 0 for none recorded. */
+  costCents?: number | null;
   metadata: Record<string, unknown>;
   createdAt: string | null;
+}
+
+/** One saved draft (#798's list, per account): the server's wire shape. */
+export interface SavedDraft {
+  id: string;
+  text: string;
+  savedAt: string | null;
 }
 
 export interface AgentCard {
@@ -115,6 +126,9 @@ export interface AnthropicModel {
 export interface OpenRouterModel {
   id: string;
   name?: string;
+  /** The catalog's published prices, for the cost of a typical change. */
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
   supportsReasoning?: boolean;
   isRecommended?: boolean;
   isDefaultFavorite?: boolean;
@@ -132,6 +146,18 @@ export interface ModelCatalog {
   codexAvailable: boolean;
   openrouter: OpenRouterModel[];
   recommendedOpenRouterId: string | null;
+  /** What a typical change costs on each model (GET /api/model-notes). */
+  notes: ModelNotes | null;
+}
+
+/**
+ * The platform's per-model notes and estimates (#2570): an estimate for each
+ * curated model, and the token profile of a typical change, which prices any
+ * other model from its catalog prices.
+ */
+export interface ModelNotes {
+  typicalChange: { inputTokens: number; outputTokens: number } | null;
+  models: Record<string, { note?: string | null; estimateCents?: number | null }>;
 }
 
 async function json<T>(response: Response, fallback: string): Promise<T> {
@@ -203,10 +229,12 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     codexAvailable: false,
     openrouter: [],
     recommendedOpenRouterId: null,
+    notes: null,
   };
-  const [models, prefs] = await Promise.all([
+  const [models, prefs, notes] = await Promise.all([
     request('/api/models').then((r) => (r.ok ? r.json() : null)).catch(() => null),
     request('/api/me/coding-agent').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    request('/api/model-notes').then((r) => (r.ok ? r.json() : null)).catch(() => null),
   ]) as [
     { models?: Array<{ id?: unknown; label?: unknown }>; default?: unknown } | null,
     {
@@ -215,7 +243,17 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
       codexAvailable?: unknown;
       defaultReasoningEffort?: unknown;
     } | null,
+    { typicalChange?: { inputTokens?: unknown; outputTokens?: unknown } | null; models?: unknown } | null,
   ];
+  if (notes && notes.models && typeof notes.models === 'object') {
+    const profile = notes.typicalChange;
+    const input = Number(profile?.inputTokens);
+    const output = Number(profile?.outputTokens);
+    catalog.notes = {
+      typicalChange: Number.isFinite(input) && Number.isFinite(output) ? { inputTokens: input, outputTokens: output } : null,
+      models: notes.models as ModelNotes['models'],
+    };
+  }
   if (models && Array.isArray(models.models)) {
     catalog.anthropic = models.models
       .filter((m) => m && typeof m.id === 'string')
@@ -244,6 +282,27 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     }
   }
   return catalog;
+}
+
+export async function listDrafts(id: number): Promise<SavedDraft[]> {
+  const body = await json<{ drafts: SavedDraft[] }>(await request(`/api/agent-sessions/${id}/drafts`), 'Could not load your saved drafts.');
+  return body.drafts || [];
+}
+
+export async function saveDraft(id: number, draft: SavedDraft): Promise<SavedDraft[]> {
+  const body = await json<{ drafts: SavedDraft[] }>(
+    await request(`/api/agent-sessions/${id}/drafts`, { method: 'POST', body: JSON.stringify(draft) }),
+    'Could not save that draft.',
+  );
+  return body.drafts || [];
+}
+
+export async function deleteDraft(id: number, draftId: string): Promise<SavedDraft[]> {
+  const body = await json<{ drafts: SavedDraft[] }>(
+    await request(`/api/agent-sessions/${id}/drafts/${encodeURIComponent(draftId)}`, { method: 'DELETE' }),
+    'Could not delete that draft.',
+  );
+  return body.drafts || [];
 }
 
 export async function listSessions(): Promise<AgentSession[]> {

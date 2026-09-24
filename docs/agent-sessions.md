@@ -679,6 +679,24 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - A preview waiting on a rebuild hears the same events (`AppView.onStagingRebuildResult`), which this conversation may not otherwise receive: the app-room socket only reaches people on that app's screen.
 - **Staging** gives the seeded conversation's change two build rows, written as a real build writes them: a failed build, then a deployed one at a fixture address (`.invalid`). So the conversation shows a superseded card and a live one. A declared check pins them. Open preview there reports honestly that the fixture's preview is not running.
 
+*Follow-up: the composer and the live turn, with what the dev chat's had.*
+
+- **Saved drafts** (the dev chat's #798 list, per account like #940).
+  - While the Mayor works, the composer's one button is a green Save when something is typed (Stop when nothing is). Enter does the same. Saving parks the text in a list above the box ("Saved drafts (N) · on all your devices"), so nothing typed mid-turn can join the running turn.
+  - A draft is sent only by a tap, never on its own, and not while the Mayor works ("sending unlocks when the Mayor finishes"). Edit puts it back in the box; Delete drops it. Sending or editing keeps what the box held as a draft of its own first.
+  - The server: `agent_session_drafts` (per conversation, `ON DELETE CASCADE`, `staging:private`) and `GET/POST/DELETE /api/agent-sessions/:id/drafts[/:draftId]` (`routes/agent-session-drafts.js`). Its limits and helpers are the dev chat's own (`routes/chat-drafts.js`): 20 drafts, 10,000 characters, client ids, idempotent writes, the conversation row as the cap's lock. Every write answers with the list and tells the owner's other devices (`agent_session_drafts_changed` over `pushToUser`), which re-read.
+- **Unsent text is kept** per conversation in this browser (`unsent.ts`, `usernode:agent-session-unsent:<id|new>`), so a reload or a switch brings it back.
+- **Stop hands the message back** to an empty box (the one still waiting, or the newest sent), as the dev chat's does. The busy placeholder says what to do: "The Mayor is working. Type your next message and save it for later."
+- **Costs.**
+  - The model picker says what a typical change costs on each model, the dev chat's figures (#2570, `GET /api/model-notes`): the platform's estimate for a model it curates, otherwise the catalog's prices times the typical change's token profile (`modelCost`). The open list reads "GLM 5 · about $0.42 for a typical change"; the chosen model's cost sits beside the closed control. Never a bare amount.
+  - Each Mayor reply says what it cost, "Mayor · reply $0.012" (`replyCostLabel`). An OpenRouter Mayor's figure is the list-price estimate and carries "~" (`costEstimated`, now written on its rows).
+- **A turn that did not finish** (failed, or stopped after it said something) offers the dev chat's pair, "Try that again" and "What went wrong?", when it left no suggestions of its own.
+- **The Mayor at work** is its name and three dots where its reply will appear, with what it is doing beside them ("Reading the app", "Wrapping up", the coding agent's progress and clock), instead of a box across the pane. Once it has said something the dots follow the words. Still dots under reduced motion. A screen reader hears "The Mayor is thinking".
+- **The outline is the composer card's**, as on Messages (#1954, #2882, #2387): the whole card turns accent while anything in it has focus. The field draws no edge of its own in any engine: `outline: none` at two classes' specificity beats preflight's `:-moz-focusring`, and WebKit's native box and tap flash are reset.
+- **The transcript follows new output only while the reader is at the bottom**, as the dev chat's does. Opening a conversation or sending in it goes back to the bottom.
+- **The browser tab** says "⏳ Thinking…" while the conversation on screen is working. The dev chat's module stays the title's one writer (`DevChat.setAgentSessionThinking`), so the marker composes with the unread count and the "done" marker as the dev chat's does.
+- **Staging** gives the seeded conversation one saved draft and a cost on the Mayor's reply. A declared check pins both.
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;

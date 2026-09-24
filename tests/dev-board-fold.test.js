@@ -1240,7 +1240,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // older build superseded and the newest offering Open preview and View
   // change, one selector over the staging conversation 990801's two build
   // rows. 27 slots left under 830.
-  assert.equal(DAPP.tests.length, 803);
+  //
+  // 803 → 804: +1 (#2779): an agent session's saved draft above the message
+  // box, in a conversation whose Mayor reply shows what it cost: one
+  // selector over the staging conversation 990801's seeded draft. 26 slots
+  // left under 830.
+  assert.equal(DAPP.tests.length, 804);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

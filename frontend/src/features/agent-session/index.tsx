@@ -14,6 +14,10 @@ import {
   ArrowUpIcon,
   CheckIcon,
   ChevronDownIcon,
+  DraftEditIcon,
+  DraftSendIcon,
+  DraftTrashIcon,
+  SaveDraftIcon,
   SparklesIcon,
   SpinnerArcIcon,
   XIcon,
@@ -22,7 +26,7 @@ import {
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { Attached } from '../dev-chat/transcript';
 import { nowStore, type TranscriptRow } from '../dev-chat/transcript-store';
-import type { AgentChange, AgentSession } from './api';
+import type { AgentChange, AgentSession, SavedDraft } from './api';
 import {
   choiceFromValue,
   choiceValue,
@@ -52,6 +56,8 @@ import {
   closeSpec,
   composerId,
   decideCard,
+  deleteSavedDraft,
+  editSavedDraft,
   loadModelCatalog,
   openAgentSession,
   openSpec,
@@ -64,6 +70,8 @@ import {
   proposeChange,
   retryStaging,
   PREVIEW_SLOT_ID,
+  saveComposerDraft,
+  sendSavedDraft,
   stopAgentTurn,
   switchActiveChange,
   useAgentSessionState,
@@ -85,6 +93,7 @@ import {
   writeSpecWidth,
   type SpecSplit,
 } from './spec-layout';
+import { readUnsent, writeUnsent } from './unsent';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -276,7 +285,12 @@ function Item({ item }: { item: TranscriptItem }) {
     case 'mayor':
       return (
         <article data-agent-session-mayor>
-          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
+          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+            Mayor
+            {item.cost ? (
+              <span className="font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-reply-cost>{` · ${item.cost}`}</span>
+            ) : null}
+          </p>
           {item.text ? <MayorText text={item.text} /> : null}
           {item.cards.map((card) => <Card key={card.id} card={card} />)}
         </article>
@@ -776,6 +790,24 @@ function SidePane({ sheet, preview, tab, containerRef }: {
   );
 }
 
+/**
+ * The Mayor at work, as a conversation shows someone typing (#2779
+ * follow-up): its name and three dots where its reply will appear, and what
+ * it is doing beside them when that is known ("Reading the app", "Wrapping
+ * up", the coding agent's progress with its clock). Once it has said
+ * something the dots follow the words. Not a box across the pane: the old
+ * full-width bubble read as a message of its own.
+ */
+function TypingDots() {
+  return (
+    <span className="inline-flex h-5 shrink-0 items-center gap-1" aria-hidden="true" data-agent-session-typing>
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+    </span>
+  );
+}
+
 function LiveTurn({ runShown }: { runShown: boolean }) {
   const snapshot = useAgentSessionState();
   const turn = snapshot.turn;
@@ -788,6 +820,14 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
   if (!turn.running && !turn.pendingUserText) return null;
   const actions = new Map(snapshot.actions.map((action) => [action.id, action]));
   const seconds = turn.startedAt ? Math.max(0, Math.round((clock - turn.startedAt) / 1000)) : 0;
+  // A running build draws its own card with the progress and the clock.
+  const working = turn.running && !(runShown && turn.phase === 'cc');
+  const said = !!(turn.streamText || turn.cards.length);
+  const status = turn.stopping
+    ? 'Stopping…'
+    : turn.phase === 'cc'
+      ? (turn.progress || turn.activity || 'The coding agent is working')
+      : (turn.activity || (turn.phase === 'mayor2' ? 'Wrapping up' : ''));
   return (
     <>
       {turn.pendingUserText ? (
@@ -795,25 +835,23 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
           <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{turn.pendingUserText}</p>
         </div>
       ) : null}
-      {turn.streamText || turn.cards.length ? (
-        <article>
+      {said || working ? (
+        <article data-agent-session-live>
           <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
           {turn.streamText ? <MayorText text={turn.streamText} /> : null}
           {turn.cards.map((card) => <Card key={card.id} card={cardView(card, actions)} live />)}
+          {working ? (
+            <div
+              className={`flex min-w-0 items-center gap-2 text-[13px] text-zinc-500 dark:text-zinc-400 ${said ? 'mt-2' : ''}`}
+              data-agent-session-activity={turn.phase || 'mayor'}
+              aria-live="polite"
+            >
+              <TypingDots />
+              {status ? <span className="min-w-0 truncate">{status}</span> : <span className="sr-only">The Mayor is thinking</span>}
+              {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
+            </div>
+          ) : null}
         </article>
-      ) : null}
-      {turn.running && !(runShown && turn.phase === 'cc') ? (
-        <div
-          className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
-          data-agent-session-activity={turn.phase || 'mayor'}
-          aria-live="polite"
-        >
-          <SpinnerArcIcon className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">
-            {turn.stopping ? 'Stopping…' : (turn.phase === 'cc' ? (turn.progress || turn.activity || 'The coding agent is working') : (turn.activity || (turn.phase === 'mayor2' ? 'Wrapping up' : 'Thinking')))}
-          </span>
-          {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs text-zinc-500">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
-        </div>
       ) : null}
     </>
   );
@@ -879,6 +917,10 @@ function Replies({ replies }: { replies: string[] }) {
  * instead: the select lies transparent over the shown line and keeps the
  * focus, the keyboard and the platform's own list. The shown line is the dev
  * chat picker's (`dc-model-select`).
+ *
+ * A model's cost rides along as the dev chat's does (#2570): its note and
+ * "about $X for a typical change" after its name in the open list (the
+ * chosen one's cost is drawn beside the control by ModelPicker).
  */
 export function LabeledSelect({ label, ariaLabel, value, options, disabled, muted = false, onChange, dataKey }: {
   label: string;
@@ -907,7 +949,7 @@ export function LabeledSelect({ label, ariaLabel, value, options, disabled, mute
       >
         {options.map((option) => (
           <option key={option.value} value={option.value} title={option.title || undefined}>
-            {option.isDefault ? `${option.label} (default)` : option.label}
+            {`${option.label}${option.detail ? ` · ${option.detail}` : ''}${option.isDefault ? ' (default)' : ''}`}
           </option>
         ))}
       </select>
@@ -932,20 +974,27 @@ function ModelPicker() {
   const archived = snapshot.session?.status === 'archived';
   const disabled = archived || snapshot.choosing || snapshot.phase === 'loading';
   const reasoning = offersReasoning(current, catalog);
+  const value = choiceValue(current);
+  const cost = options.find((option) => option.value === value)?.cost || '';
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1" data-agent-session-model>
-      <LabeledSelect
-        label="Model"
-        ariaLabel="Model"
-        dataKey="model"
-        value={choiceValue(current)}
-        options={options}
-        disabled={disabled}
-        onChange={(value) => {
-          const next = choiceFromValue(value, catalog, current);
-          if (next) void chooseAgent(next);
-        }}
-      />
+      <span className="inline-flex min-w-0 items-baseline gap-1">
+        <LabeledSelect
+          label="Model"
+          ariaLabel="Model"
+          dataKey="model"
+          value={value}
+          options={options}
+          disabled={disabled}
+          onChange={(picked) => {
+            const next = choiceFromValue(picked, catalog, current);
+            if (next) void chooseAgent(next);
+          }}
+        />
+        {cost ? (
+          <span className="truncate text-xs text-zinc-500 dark:text-zinc-400" data-agent-session-model-cost>{cost}</span>
+        ) : null}
+      </span>
       {reasoning ? (
         <LabeledSelect
           label="Thinking Level"
@@ -962,52 +1011,180 @@ function ModelPicker() {
   );
 }
 
+const BUSY_PLACEHOLDER = 'The Mayor is working. Type your next message and save it for later.';
+const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
+
+/**
+ * The saved drafts above the composer (the dev chat's #798 list, per account):
+ * each can be sent once the Mayor is free, put back in the box to reword, or
+ * deleted. Sending is always a tap here, never automatic.
+ */
+export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
+  drafts: SavedDraft[];
+  busy: boolean;
+  onSend: (draft: SavedDraft) => void;
+  onEdit: (draft: SavedDraft) => void;
+}) {
+  if (!drafts.length) return null;
+  const button = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-500 transition-colors '
+    + 'hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent '
+    + 'dark:text-zinc-400 dark:hover:bg-zinc-800';
+  return (
+    <section
+      aria-label="Saved drafts"
+      className="mb-2 max-h-40 overflow-y-auto rounded-2xl bg-zinc-100 p-1.5 dark:bg-zinc-800/70"
+      data-agent-session-drafts={drafts.length}
+    >
+      <p className="flex flex-wrap items-baseline gap-x-1.5 px-2 pb-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <span className="font-semibold uppercase tracking-wide">{`Saved drafts (${drafts.length})`}</span>
+        <span>· on all your devices</span>
+        {busy ? <span className="ml-auto">sending unlocks when the Mayor finishes</span> : null}
+      </p>
+      <ul className="flex flex-col gap-1">
+        {drafts.map((draft) => (
+          <li
+            key={draft.id}
+            className="flex items-center gap-0.5 rounded-xl bg-white py-0.5 pl-3 pr-0.5 dark:bg-zinc-900"
+            data-agent-session-draft={draft.id}
+          >
+            <span className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-200" title={draft.text}>{draft.text}</span>
+            <button
+              type="button"
+              className={`${button} hover:text-emerald-700 dark:hover:text-emerald-400`}
+              aria-label="Send this draft"
+              title={busy ? 'The Mayor is still working. You can send this when it finishes' : 'Send this draft now'}
+              disabled={busy}
+              data-agent-session-draft-send
+              onClick={() => onSend(draft)}
+            >
+              <DraftSendIcon width={16} height={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`${button} hover:text-violet-700 dark:hover:text-violet-300`}
+              aria-label="Edit this draft"
+              title="Put this draft back in the box to edit"
+              data-agent-session-draft-edit
+              onClick={() => onEdit(draft)}
+            >
+              <DraftEditIcon width={16} height={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`${button} hover:text-red-700 dark:hover:text-red-300`}
+              aria-label="Delete this draft"
+              title="Delete this draft"
+              data-agent-session-draft-delete
+              onClick={() => deleteSavedDraft(draft.id)}
+            >
+              <DraftTrashIcon width={16} height={16} aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * The message box. Its ONE button follows the dev chat's (#798, #810):
+ * Send while the Mayor is free; while it works, Stop with nothing typed and
+ * a green Save with something typed, which parks the text as a saved draft
+ * (Enter does the same) so nothing typed mid-turn can leak into the running
+ * turn. What is typed and not sent is kept for the conversation (./unsent.ts).
+ *
+ * THE OUTLINE IS THE CARD'S, as on Messages' composer (#1954, #2882, #2387):
+ * `.agent-session-composer:focus-within` rings the whole card, and the field
+ * inside draws no edge of its own in any engine (public/css/app.css).
+ */
 function Composer({ id }: { id: string }) {
   const snapshot = useAgentSessionState();
   const [value, setValue] = useState('');
+  const input = useRef<HTMLTextAreaElement | null>(null);
   const running = snapshot.turn.running;
   const archived = snapshot.session?.status === 'archived';
   const returned = snapshot.returnedText;
+  const target = snapshot.id ?? (snapshot.draft ? 'new' : null);
+  // Save needs something typed, and a turn not already stopping: Stop hands
+  // the message back to the box, and the button must stay Stop under the
+  // same click rather than become a Save that the click then submits.
+  const saving = running && !snapshot.turn.stopping && !!value.trim();
 
-  // A message the server refused comes back here, unless something new has
-  // been typed since.
+  const update = (next: string) => {
+    setValue(next);
+    if (target != null) writeUnsent(target, next);
+  };
+
+  // The conversation's unsent text, back after a reload or a switch.
+  useEffect(() => {
+    if (target != null) setValue(readUnsent(target));
+  }, [target]);
+
+  // A message the server refused, or a Stop, hands its text back, unless
+  // something new has been typed since.
   useEffect(() => {
     if (returned == null) return;
-    setValue((current) => current || returned);
+    if (!value.trim()) update(returned);
     clearReturnedText();
   }, [returned]);
+
+  // The field grows with what it holds, typed or put back.
+  useEffect(() => {
+    const field = input.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    field.style.height = `${Math.min(field.scrollHeight, 144)}px`;
+  }, [value]);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
     const text = value.trim();
-    if (!text || running) return;
-    setValue('');
+    if (!text) return;
+    if (running) {
+      if (saveComposerDraft(text)) update('');
+      return;
+    }
+    update('');
     void sendAgentMessage(text);
   }
 
+  const onSendDraft = (draft: SavedDraft) => {
+    if (running) return;
+    const typed = value;
+    update('');
+    void sendSavedDraft(draft.id, typed);
+  };
+  const onEditDraft = (draft: SavedDraft) => {
+    const text = editSavedDraft(draft.id, value);
+    if (text == null) return;
+    update(text);
+    input.current?.focus();
+  };
+
+  const kind = saving ? 'save' : running ? 'stop' : 'send';
   return (
     // `platform-safe-bar` on the outer box: its padding clears the tab bar
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
     <div className="platform-safe-bar shrink-0 px-3 pt-1">
+    <SavedDrafts drafts={snapshot.drafts} busy={running} onSend={onSendDraft} onEdit={onEditDraft} />
     <form
       className="agent-session-composer flex flex-col gap-1 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
       onSubmit={submit}
     >
       <textarea
+        ref={input}
         id={id}
         rows={1}
         maxLength={20_000}
         value={value}
         disabled={archived || snapshot.phase === 'loading'}
-        placeholder={archived ? 'This session is archived.' : 'Describe a change to any app in plain English. No coding needed.'}
+        placeholder={archived
+          ? 'This session is archived.'
+          : running ? BUSY_PLACEHOLDER : 'Describe a change to any app in plain English. No coding needed.'}
         aria-label="Message the Mayor"
-        className="max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
-        onChange={(event) => {
-          setValue(event.target.value);
-          event.currentTarget.style.height = 'auto';
-          event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 144)}px`;
-        }}
+        className="agent-session-composer-input max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
+        onChange={(event) => update(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
@@ -1017,21 +1194,38 @@ function Composer({ id }: { id: string }) {
       />
       <div className="flex items-center gap-2">
       <div className="min-w-0 flex-1"><ModelPicker /></div>
-      <Button
-        type={running ? 'button' : 'submit'}
-        data-agent-session-send={running ? 'stop' : 'send'}
-        variant={running ? 'pillDanger' : 'pillAccent'}
-        disabledStyle="dim"
-        size="icon"
-        ink={running ? 'dangerTint' : 'solid'}
-        className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
-        disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : !value.trim()}
-        aria-label={running ? 'Stop' : 'Send'}
-        title={running ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop') : 'Send'}
-        onClick={running ? () => void stopAgentTurn() : undefined}
-      >
-        {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
-      </Button>
+      {kind === 'save' ? (
+        <Button
+          key="save"
+          type="submit"
+          data-agent-session-send="save"
+          variant="unstyled"
+          size="icon"
+          ink="solid"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 hover:bg-emerald-700"
+          aria-label="Save as draft"
+          title={SAVE_TITLE}
+        >
+          <SaveDraftIcon width={20} height={20} aria-hidden="true" />
+        </Button>
+      ) : (
+        <Button
+          key="send"
+          type={running ? 'button' : 'submit'}
+          data-agent-session-send={kind}
+          variant={running ? 'pillDanger' : 'pillAccent'}
+          disabledStyle="dim"
+          size="icon"
+          ink={running ? 'dangerTint' : 'solid'}
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
+          disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : !value.trim()}
+          aria-label={running ? 'Stop' : 'Send'}
+          title={running ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop') : 'Send'}
+          onClick={running ? () => void stopAgentTurn() : undefined}
+        >
+          {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
+        </Button>
+      )}
       </div>
     </form>
     </div>
@@ -1161,16 +1355,37 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const empty = snapshot.phase === 'ready' && !items.length && !snapshot.turn.running && !snapshot.turn.pendingUserText;
   const about: About = snapshot.session || snapshot.draft;
 
+  // Follow new output only while the reader is at the bottom (the dev chat's
+  // rule): scrolling up to read is not undone by the next token. Opening a
+  // conversation, or sending in it, goes back to the bottom.
+  const stick = useRef(true);
+  const onScroll = () => {
+    const el = scroll.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+  useEffect(() => { stick.current = true; }, [snapshot.id]);
+  useEffect(() => { if (snapshot.turn.pendingUserText) stick.current = true; }, [snapshot.turn.pendingUserText]);
   useEffect(() => {
-    if (!scroll.current) return;
+    if (!scroll.current || !stick.current) return;
     scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length]);
+  }, [snapshot.id, items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length, snapshot.turn.pendingUserText]);
+  // The transcript shrinks when something grows under it (the saved drafts,
+  // a taller message box): a reader at the bottom stays there.
+  useEffect(() => {
+    const el = scroll.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div ref={root} className={`relative flex min-h-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
-        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}

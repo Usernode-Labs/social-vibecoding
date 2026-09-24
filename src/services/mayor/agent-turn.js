@@ -401,12 +401,15 @@ async function runAgentTurn({
   };
 
   const insertAssistant = async ({ text, cost, metadata, changeId }) => {
+    // An OpenRouter Mayor's figure is the list-price estimate, never a
+    // provider-reported amount, and the reply's cost label says so (#2118).
+    const estimated = mayor.provider === 'openrouter' && cost > 0 ? { costEstimated: true } : {};
     const { rows } = await pool.query(
       `INSERT INTO chat_session_messages
          (session_id, agent_session_id, role, content, model, cost_cents, metadata)
        VALUES ($1, $2, 'assistant', $3, $4, $5, $6::jsonb)
        RETURNING id`,
-      [changeId || null, agentSessionId, text, mayor.model, cost, JSON.stringify(metadata)]
+      [changeId || null, agentSessionId, text, mayor.model, cost, JSON.stringify({ ...metadata, ...estimated })]
     );
     return rows[0].id;
   };
