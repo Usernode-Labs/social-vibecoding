@@ -201,6 +201,41 @@ function SectionHead({ children }: { children: ReactNode }): ReactNode {
   );
 }
 
+/**
+ * A row's own buttons, beside the tap that opens the thing (#1688).
+ *
+ * #2386: a row with TWO actions (a friend request's Accept and Decline) puts
+ * them on their own line under the text, lined up with it past the tile.
+ * Beside the text, two pills leave a phone's row a few letters wide. One
+ * action ("Still yes") keeps its place at the row's end.
+ */
+function RowActions({ view, actions }: {
+  view: { id: number };
+  actions: { key: string; label: string; primary?: boolean }[];
+}): ReactNode {
+  const buttons = actions.map((a) => (
+    // The widget language's filled pill, through the shell's <Button>:
+    // the accent one for the row's primary act, the neutral one beside it.
+    <Button
+      key={a.key}
+      type="button"
+      data-notif-action={a.key}
+      variant={a.primary ? 'pillAccent' : 'pillNeutral'}
+      size="default"
+      ink={a.primary ? 'solid' : 'neutral'}
+      className="shrink-0"
+      onClick={(event) => {
+        event.stopPropagation();
+        controller()?._onRowAction(view.id, a.key);
+      }}
+    >
+      {a.label}
+    </Button>
+  ));
+  if (actions.length > 1) return <div className="flex items-center gap-2 pl-[3.75rem]">{buttons}</div>;
+  return <>{buttons}</>;
+}
+
 function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
   // Everything between the row's left edge and its chevron: the tile, the
   // three lines, the count, the dot.
@@ -293,7 +328,11 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
     return (
       <div
         data-notif-id={view.id}
-        className="notifications-row w-full px-4 py-3.5 flex items-center gap-3"
+        // #2386: two actions (a friend request's Accept and Decline) stack
+        // under the text; see RowActions.
+        className={actions.length > 1
+          ? 'notifications-row w-full px-4 py-3.5 flex flex-col gap-2'
+          : 'notifications-row w-full px-4 py-3.5 flex items-center gap-3'}
       >
         <button
           className="min-w-0 flex-1 text-left flex items-center gap-4"
@@ -304,25 +343,7 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
         >
           {body}
         </button>
-        {actions.map((a) => (
-          // The widget language's filled pill, through the shell's <Button>:
-          // the accent one for the row's primary act, the neutral one beside it.
-          <Button
-            key={a.key}
-            type="button"
-            data-notif-action={a.key}
-            variant={a.primary ? 'pillAccent' : 'pillNeutral'}
-            size="default"
-            ink={a.primary ? 'solid' : 'neutral'}
-            className="shrink-0"
-            onClick={(event) => {
-              event.stopPropagation();
-              controller()?._onRowAction(view.id, a.key);
-            }}
-          >
-            {a.label}
-          </Button>
-        ))}
+        <RowActions view={view} actions={actions} />
       </div>
     );
   }

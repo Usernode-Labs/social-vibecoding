@@ -84,6 +84,9 @@ const DENIED_TABLES = new Set([
   'conversation_message_objects', // private shared-object activity
   'chat_session_spec_conversation_shares', // private spec access grants
   'user_blocks',          // private user safety relationships
+  'friendships',          // private friend graph and pending requests (#2386)
+  'friend_request_declines', // who declined whom — silent by product rule (#2386)
+  'friend_request_sends', // per-person request activity (#2386)
   'conversation_message_reports', // private abuse evidence and reporter identity
   'app_reports',             // private mini-app report details and reporter identity
   'chat_message_reports',    // private Workshop post evidence and reporter identity
@@ -100,6 +103,7 @@ const DENIED_TABLES = new Set([
   'global_chat_messages', // private user/assistant transcript content
   'global_chat_tool_runs', // private action inputs and authoritative results
   'global_chat_action_tokens', // one-use action capabilities and sealed payloads
+  'agent_session_actions', // the agent-session Mayor's sealed confirmation cards (#2779)
 ]);
 
 const DENIED_COLUMNS = {
@@ -130,6 +134,11 @@ const DENIED_COLUMNS = {
     'token_hash',
     'input_hash',
     'normalized_input',
+  ],
+  agent_session_actions: [
+    // The sealed exact input of a pending write and its fingerprint (#2779).
+    'input_hash',
+    'sealed_input',
   ],
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)

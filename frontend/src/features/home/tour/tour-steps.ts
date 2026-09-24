@@ -127,7 +127,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // a Next that only moved the counter would land on nothing.
     id: 'app-menu',
     title: "The app's own menu",
-    body: 'The mark opens the menu for the app you are in. Press it.',
+    body: 'The mark opens the menu for the app you are in. Tap it, or tap Next to open it.',
     targets: ['#platform-mark-btn'],
     interactive: true,
     advanceOn: 'menu-open',

@@ -143,6 +143,8 @@ test('runner: fresh and resumed GLM invocations put catalog limits into actual H
     assert.equal(result.code, 0, result.stdout + result.stderr);
     assert.match(result.stdout, /agent_thread_id=mock-glm-thread/);
     assert.match(result.stdout, /"type":"usernode.openrouter.request"/);
+    assert.match(result.stdout, /__USERNODE_CODING_PROVIDER__ \{"kind":"provider_request_start"/);
+    assert.match(result.stdout, /__USERNODE_CODING_PROVIDER__ \{"kind":"provider_request_end"/);
     assert.doesNotMatch(result.stdout + result.stderr, /sk-or-v1-test/);
     const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
     assert.ok(config.includes(env.OPENROUTER_API_BASE), 'the persistent config keeps the upstream URL');
@@ -610,6 +612,43 @@ exit 0
   const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
   assert.match(config, /\[shell_environment_policy\][\s\S]*exclude = \["OPENROUTER_API_KEY"\]/,
     'model-launched commands do not inherit the provider credential');
+});
+
+test('runner: the redacted stream stays live after a very long line', {
+  skip: spawnSync('sh', ['-c', 'command -v mawk'], { encoding: 'utf8' }).status !== 0
+    && 'mawk (the worker image awk) is not installed',
+}, async t => {
+  // Session 4868: a 165,640-byte esbuild output line grew mawk's input buffer,
+  // and the journal then advanced only in ~166 KB bursts, minutes apart.
+  const fakeCodex = `#!/bin/sh
+while IFS= read -r _line; do :; done
+echo '{"type":"thread.started","thread_id":"stream-123"}'
+printf '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"'
+head -c 200000 /dev/zero | tr '\\0' x
+echo '"}}'
+echo '{"type":"item.started","item":{"id":"after-long-line"}}'
+while [ ! -f "$RELEASE_FILE" ]; do sleep 0.05; done
+exit 0
+`;
+  const { dir, env } = makeEnv(fakeCodex);
+  // Run under mawk as the image does, whatever this host's default awk is.
+  const mawk = spawnSync('sh', ['-c', 'command -v mawk'], { encoding: 'utf8' }).stdout.trim();
+  fs.symlinkSync(mawk, path.join(dir, 'bin', 'awk'));
+  env.RELEASE_FILE = path.join(dir, 'release');
+  const child = spawn('sh', [RUNNER], { env });
+  t.after(() => { fs.writeFileSync(env.RELEASE_FILE, ''); child.kill(); });
+  let out = '';
+  const closed = new Promise(resolve => child.once('close', resolve));
+  const streamed = await new Promise(resolve => {
+    const timer = setTimeout(() => resolve(false), 10_000);
+    child.stdout.on('data', chunk => {
+      out += chunk;
+      if (out.includes('after-long-line')) { clearTimeout(timer); resolve(true); }
+    });
+  });
+  fs.writeFileSync(env.RELEASE_FILE, '');
+  assert.equal(await closed, 0);
+  assert.ok(streamed, 'the line after the long one reached the journal while Codex was still running');
 });
 
 test('Claude runner: scout succeeds without WORKER_JWT, while build still requires it', () => {

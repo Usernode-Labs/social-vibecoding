@@ -48,6 +48,7 @@ function makeHarness() {
     events: require.resolve('../src/services/events'),
     sessionLifecycle: require.resolve('../src/services/session-lifecycle'),
     proposalUpdate: require.resolve('../src/services/proposal-update'),
+    prMetadata: require.resolve('../src/services/pr-metadata'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
     // #907: the staging/checks half of a handoff build now lives in a shared
     // module so a locally-run coding turn goes through the very same pipeline.
@@ -68,6 +69,7 @@ function makeHarness() {
     messages: [],
     specs: [],
     github: [],
+    prMetadata: [],
     staging: [],
     teardowns: [],
     captures: [],
@@ -422,6 +424,20 @@ function makeHarness() {
       }
       state.votes = 0;
       return { ok: true, headSha: params.expectedHeadSha, checksDeferred: true };
+    },
+  });
+  stubModule(ids.prMetadata, {
+    sanitizeIssueNumbers: require(ids.prMetadata).sanitizeIssueNumbers,
+    applyPrMetadata: async (args) => {
+      state.prMetadata.push(args);
+      const row = state.sessions.find((candidate) => candidate.id === Number(args.session.id));
+      if (row) {
+        row.pr_number = 62;
+        row.pr_url = 'https://github.com/acme/demo/pull/62';
+      }
+      args.session.pr_number = 62;
+      args.session.pr_url = 'https://github.com/acme/demo/pull/62';
+      return { prNumber: 62, prUrl: args.session.pr_url };
     },
   });
   stubModule(ids.prImportSync, {
@@ -1557,6 +1573,9 @@ test('native CLI handoff persists context, adopts an exact commit, and reaches r
     assert.equal(pushRes.statusCode, 201);
     assert.equal(pushRes.body.localCommitSha, HEAD);
     assert.equal(pushRes.body.headSha, BOT_HEAD);
+    assert.equal(pushRes.body.prNumber, 62);
+    assert.equal(pushRes.body.prUrl, 'https://github.com/acme/demo/pull/62');
+    assert.equal(state.prMetadata.length, 1, 'the first pushed diff opens the PR');
     assert.equal(pushRes.body.treeSha, TREE);
     assert.equal(state.sessions[0].handoff_uploaded_sha, BOT_HEAD);
     assert.equal(state.sessions[0].handoff_local_commit_sha, HEAD);

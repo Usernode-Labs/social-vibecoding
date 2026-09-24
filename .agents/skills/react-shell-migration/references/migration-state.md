@@ -407,7 +407,7 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | the voting-help popover | `#voting-help-popover` |
    | the kanban filter bar | `#dev-kanban-filterbar` |
    | an issue's GitHub thread | `#dev-issue-comments` |
-   | the locked-app banner | `#dev-locked-notice` |
+   | the locked-app banner (removed in #2786) | `#dev-locked-notice` |
    | **the list feed, every card in it** | `#dev-feed` |
    | **the kanban board, its columns and tabs** | `#dev-kanban-board` |
    | **the opened topic's head — the card AND its body** | `#gc-thread-head` |

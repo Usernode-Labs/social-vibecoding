@@ -233,8 +233,12 @@ test('a quoted reply draws its icon, who, and the snippet', () => {
   const html = quoted();
   assert.match(html, /<span class="gc-quoted-author">↩ alice<\/span>/);
   assert.match(html, /<span class="gc-quoted-snippet">the original message<\/span>/);
-  // Not "1 reply", which is the thread control and a different sentence.
-  assert.ok(!/\breply\b/.test(html), 'no thread-reply wording');
+  // Not "1 reply", which is the thread control and a different sentence. The
+  // quote block is what is checked: the row around it now carries the shared
+  // hover bar (#2387), whose Reply button is a different control.
+  const at = html.indexOf('<div class="gc-quoted"');
+  const block = html.slice(at, html.indexOf('</div>', at));
+  assert.ok(at >= 0 && !/\breply\b/i.test(block), 'no thread-reply wording');
 
   assert.match(quoted({ source: 'pr', username: 'PR #12', icon: '🔀', href: '/x' }),
     /class="gc-quoted-author">🔀 PR #12</);

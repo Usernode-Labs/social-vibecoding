@@ -12,6 +12,7 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  'conversation_thread_reply',
 ]);
 
 const DEFAULTS = Object.freeze({
@@ -244,6 +245,7 @@ class MobilePushWorker {
               n.id AS notification_id, n.user_id AS notification_user_id,
               n.kind, n.read_at, n.detail, n.conversation_id, n.chat_message_id,
               a.name AS app_name,
+              a.self_hosted AS app_self_hosted,
               c.title AS conversation_title,
               c.status AS conversation_status,
               su.username AS source_username,
@@ -491,6 +493,9 @@ class MobilePushWorker {
         // policy degrades to the generic copy rather than failing a delivery.
         context: {
           appName: row.app_name,
+          // #2897: the platform's own merge is released outside this
+          // process, after the merge; a child app's is rebuilt before it.
+          appSelfHosted: row.app_self_hosted === true,
           conversationTitle: row.conversation_title,
           sourceUsername: row.source_username,
           messageContent: row.conversation_message_content ?? row.message_content,

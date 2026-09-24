@@ -247,6 +247,10 @@ const GroupChat = {
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
       GroupChat._applyPendingReveal();
+      // #2387: coming back to a channel whose socket stayed up is opening it
+      // too — what arrived while it was off screen is read now. After this
+      // turn, once the remounted transcript is on the page.
+      setTimeout(() => { if (GroupChat.appSlug === appSlug) void GroupChat.markRead(); }, 0);
       return;
     }
     GroupChat.connect(appSlug);
@@ -265,6 +269,10 @@ const GroupChat = {
     GroupChat._didInitialScroll = false;
     GroupChat._reconnectAttempts = 0;
     GroupChat.replyDraft = null;
+    GroupChat.replyDraftScope = null;
+    // #2387: a new channel starts unread-cursor bookkeeping afresh.
+    GroupChat._readUpTo = 0;
+    GroupChat._unreadHold = null;
     GroupChat._longPressed = false;
     GroupChat._pressActive = false;
     GroupChat._clearPressTimer();
@@ -463,6 +471,8 @@ const GroupChat = {
         GroupChat.scrollToBottom();
         GroupChat._didInitialScroll = true;
         GroupChat._applyPendingReveal();
+        // #2387: opening the channel reads it.
+        void GroupChat.markRead();
       } else if (container) {
         const newScrollHeight = container.scrollHeight;
         container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
@@ -477,9 +487,17 @@ const GroupChat = {
       case 'chat': {
         // #194: thread messages never land in the general stream — they
         // route to the mounted thread (if it matches) or bump the
-        // chat-count badge on their issue/proposal row.
+        // chat-count badge on their issue/proposal row. #2387 follow-up:
+        // except a REPLY thread's, which also lands in the general stream,
+        // drawn there as a line where it happened.
         if (msg.thread && msg.thread.type) {
           GroupChat._handleThreadIncoming(msg);
+          if (msg.thread.type === 'message' && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
+            const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
+            GroupChat.messages.push(msg);
+            GroupChat.appendMessage(msg);
+            if (shouldStick) GroupChat.scrollToBottom();
+          }
           break;
         }
         // #2389: your own message always brings you to the bottom, even when
@@ -488,6 +506,8 @@ const GroupChat = {
         GroupChat.messages.push(msg);
         GroupChat.appendMessage(msg);
         if (shouldStick) GroupChat.scrollToBottom();
+        // #2387: a message landing on the open channel is read.
+        void GroupChat.markRead();
         break;
       }
       case 'reaction': {
@@ -499,6 +519,16 @@ const GroupChat = {
         // Author edited a message — patch content + the "edited" marker in
         // place (preserves scroll, reactions, and the row's quote block).
         GroupChat._applyEdit(msg);
+        break;
+      }
+      case 'chat_delete': {
+        // #2387: its author deleted it — the placeholder, wherever it is drawn.
+        GroupChat._applyDelete(msg);
+        break;
+      }
+      case 'thread_summary': {
+        // #2387: a reply landed in a thread — the chip under its first message.
+        GroupChat._applyThreadSummary(msg);
         break;
       }
       case 'typing': {
@@ -555,7 +585,9 @@ const GroupChat = {
     // Only human messages bump the 💬 badge — dual-posted lifecycle
     // system rows would otherwise inflate a count that the server now
     // computes from msg_type='message' rows only.
-    if (msg.msgType === 'message'
+    // A reply thread (#2387) has no badge of its own: its count is the chip
+    // under its first message, which the `thread_summary` frame repaints.
+    if (msg.msgType === 'message' && type !== 'message'
         && typeof AppView !== 'undefined' && AppView.bumpThreadBadge) {
       AppView.bumpThreadBadge(type, Number(ref));
     }
@@ -602,16 +634,27 @@ const GroupChat = {
     // same replyDraft, and mount/unmount of a thread clears it, so the
     // quote always belongs to the surface doing the send. We send a
     // minimal reference; the server re-derives author/snippet.
-    const quote = GroupChat.replyDraft;
-    GroupChat.replyDraft = null;
-    GroupChat._renderQuotePreview();
-    if (quote) payload.quote = GroupChat._wireQuote(quote);
+    // #2387: only a quote staged in THIS composer rides along — with a reply
+    // thread open beside the channel, the other composer's belongs to it.
+    const sendScope = payload.thread ? 'thread' : 'general';
+    const quote = !GroupChat.replyDraftScope || GroupChat.replyDraftScope === sendScope
+      ? GroupChat.replyDraft : null;
+    if (quote) {
+      GroupChat.replyDraft = null;
+      GroupChat.replyDraftScope = null;
+      GroupChat._renderQuotePreview();
+      payload.quote = GroupChat._wireQuote(quote);
+    }
 
     // #694: consume this composer scope's uploaded attachments. Entries
     // still uploading are never consumed (the submit handlers block the
     // send while any upload is in flight).
     const atts = GroupChat._takePendingAttachments(thread);
     if (atts.length) payload.attachmentIds = atts.map((a) => a.id);
+    // #2938: whatever the error line said was about the composer this send
+    // just emptied — a "Still uploading" notice from an earlier tap above
+    // all, which nothing else would ever take down.
+    GroupChat._setAttachError(null, thread);
 
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
       GroupChat.ws.send(JSON.stringify(payload));
@@ -702,17 +745,34 @@ const GroupChat = {
     // A row on the proposal's own page (`here`) is not a door to that page.
     const linksProposal = !!event && event.type !== 'weekly' && !event.here;
     const pr = (isVote || linksProposal) ? GroupChat._resolvePr(...GroupChat._voteRef(msg)) : null;
+    // #2387: a deleted message keeps its row and its thread, and loses its
+    // words, files, quote and reactions (the server sends it that way; a live
+    // `chat_delete` patches the same fields).
+    const deleted = !!msg.deleted;
+    const threadType = msg.thread_type || (msg.thread && msg.thread.type) || null;
     return {
       id: msg.id == null ? null : Number(msg.id),
       senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
+      text: deleted ? '' : String(msg.content == null ? '' : msg.content),
+      deleted,
+      // The reply thread under a general-chat message (#2387), as the chip
+      // under it draws it; `thread` on a row is the server's summary, not the
+      // live frame's `{ type, ref }` scope, which never reaches a general row.
+      thread: GroupChat._threadSummaryView(msg),
+      canThread: !threadType && !deleted && (kind === 'message' || kind === 'spec_share'),
+      threadRoot: !!msg._threadRoot,
+      // #2387 follow-up: a reply-thread reply, which the general transcript
+      // draws as a line where it landed (TranscriptRows); `thread_root` on a
+      // loaded row, `threadRoot` on a live frame.
+      replyOf: GroupChat._replyOfView(msg, threadType),
       time: stamp.text,
       timeTitle: stamp.title,
       // #2783: the raw instant, which the transcript groups consecutive
       // messages from one person on (groupsWithPrevious); `time` is display.
       at: msg.createdAt || msg.created_at || null,
-      bodyHtml: kind === 'message' ? renderMessageBody(msg.content) : '',
+      bodyHtml: kind === 'message' && !deleted ? renderMessageBody(msg.content) : '',
       systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
       mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
       editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
@@ -731,7 +791,7 @@ const GroupChat = {
         && !GroupChat._readOnly(),
       showReact: !GroupChat._readOnly(),
       showBookmark: !!(window.App && App.user),
-      quote: q ? {
+      quote: q && !deleted ? {
         icon: q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9'),
         username: q.author || (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system'),
         excerpt: GroupChat._collapseSnippet(q.snippet).slice(0, 160),
@@ -742,11 +802,11 @@ const GroupChat = {
       // Set by a jump-to-original and cleared 1.5s later; never true on a
       // freshly built row.
       flash: false,
-      reactions: ((msg.reactions) || []).map((r) => {
+      reactions: (deleted ? [] : (msg.reactions || [])).map((r) => {
         const users = Array.isArray(r.users) ? r.users : [];
         return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
       }),
-      attachments: GroupChat._attachmentsView(msg),
+      attachments: deleted ? [] : GroupChat._attachmentsView(msg),
       voteRowClass: isVote ? GroupChat._rowVoteClass(pr) : '',
       // Whether the vote is still open, which the general chat's event row
       // marks (features/group-chat/proposal-event.tsx). Vote rows only, so
@@ -919,7 +979,7 @@ const GroupChat = {
         // block the send (input keeps its text).
         const threadScope = { type, ref };
         if (GroupChat.attachmentsUploading(threadScope)) {
-          GroupChat._setAttachError('Still uploading, one moment…', threadScope);
+          GroupChat._setAttachError(GroupChat.UPLOAD_WAIT_NOTICE, threadScope);
           return;
         }
         if (!content && !GroupChat.hasPendingAttachments(threadScope)) return;
@@ -954,13 +1014,17 @@ const GroupChat = {
       // #694: paperclip / paste / drag-and-drop attachment wiring for
       // this thread's composer.
       GroupChat.setupAttachments({ type, ref });
-      // #87/#130 parity with the general composer: @mention and #/PR#
-      // reference autocomplete on the thread input.
+      // #87/#130 parity with the general composer: @mention, #/PR#
+      // reference and `:emoji` autocomplete on the thread input.
       if (typeof MentionAutocomplete !== 'undefined') {
         MentionAutocomplete.attach(input, slug);
       }
       if (typeof RefAutocomplete !== 'undefined') {
         RefAutocomplete.attach(input, slug);
+      }
+      // `:th` emoji shortcodes, and `:tada:` → 🎉 (same as the general one).
+      if (typeof EmojiAutocomplete !== 'undefined') {
+        EmojiAutocomplete.attach(input);
       }
       // #15 parity: Escape clears a staged reply quote (when the input is
       // empty so we don't fight other Escape semantics mid-typing).
@@ -1007,8 +1071,11 @@ const GroupChat = {
         + `&limit=50${beforeParam}${beforeParam ? '' : GroupChat._demoParam()}`
       );
       if (!res.ok) return;
-      const { messages } = await res.json();
+      const data = await res.json();
+      const messages = Array.isArray(data.messages) ? data.messages : [];
       if (GroupChat.threads.get(GroupChat.threadKey(type, ref)) !== st) return;
+      // #2387: a reply thread's first message, which heads the thread.
+      if (type === 'message' && data.root) st.root = data.root;
       if (messages.length < 50) st.hasMore = false;
       if (messages.length > 0) {
         st.messages = GroupChat._mergeHistory(messages, st.messages);
@@ -1057,8 +1124,16 @@ const GroupChat = {
     const language = a.language === 'chat' ? 'chat' : 'flat';
     const chat = language === 'chat';
     GroupChat._react()?.mountTranscript(el, 'thread');
+    // #2387: a reply thread opens with the message it hangs off — from the
+    // server's `root`, or the general stream's copy until that lands.
+    let root = null;
+    if (a.type === 'message') {
+      root = st.root || GroupChat.messages.find((m) => Number(m.id) === Number(a.ref)) || null;
+    }
+    const rows = st.messages.map((m) => GroupChat._messageView(m, { language }));
+    if (root) rows.unshift(GroupChat._messageView({ ...root, _threadRoot: true }, { language }));
     GroupChat._react()?.publishTranscript(
-      st.messages.map((m) => GroupChat._messageView(m, { language })),
+      rows,
       'thread',
       {
         earlier: !!(st.loaded && st.hasMore && st.messages.length),
@@ -1101,18 +1176,32 @@ const GroupChat = {
   // and by AppView (PR titles). No-op when no composer exists (read-only
   // merged-proposal thread): staging an invisible quote would silently
   // attach to a later message elsewhere.
-  setQuote(quote) {
+  setQuote(quote, scope) {
     if (!quote) return;
-    const input = document.getElementById('gc-thread-input')
-      || document.getElementById('gc-input');
+    // #2387: with a reply thread open BESIDE the general chat both composers
+    // are on screen, so the row's own transcript names the one to reply in.
+    // Without a scope, the old rule: the thread composer when a topic is open.
+    const input = scope === 'main'
+      ? document.getElementById('gc-input')
+      : scope === 'thread'
+        ? document.getElementById('gc-thread-input')
+        : (document.getElementById('gc-thread-input') || document.getElementById('gc-input'));
     if (!input) return;
     GroupChat.replyDraft = quote;
+    GroupChat.replyDraftScope = input.id === 'gc-thread-input' ? 'thread' : 'general';
     GroupChat._renderQuotePreview();
-    input.focus();
+    // The caret goes to the box where there is a mouse or trackpad (a
+    // hardware keyboard, as a rule). On a touch-only phone, focusing pops the
+    // on-screen keyboard over the message being replied to; the quote is
+    // staged and the box is one tap away (message-actions/focus.ts).
+    let fine = false;
+    try { fine = !!(window.matchMedia && window.matchMedia('(any-pointer: fine)').matches); } catch (_) { fine = false; }
+    if (fine) input.focus();
   },
 
   clearQuote() {
     GroupChat.replyDraft = null;
+    GroupChat.replyDraftScope = null;
     GroupChat._renderQuotePreview();
   },
 
@@ -1141,8 +1230,11 @@ const GroupChat = {
         : (q.author ? `@${q.author}` : (q.source === 'event' ? 'a platform message' : 'a message')),
       snippet: GroupChat._collapseSnippet(q.snippet).slice(0, 120),
     } : null;
-    GroupChat._publishComposer('general', { quote: view });
-    GroupChat._publishComposer('thread', { quote: view });
+    // #2387: the chip goes to the composer the quote was staged in, now that
+    // both can be on screen at once (a reply thread beside the channel).
+    const scope = GroupChat.replyDraftScope;
+    GroupChat._publishComposer('general', { quote: !scope || scope === 'general' ? view : null });
+    GroupChat._publishComposer('thread', { quote: !scope || scope === 'thread' ? view : null });
   },
 
   // True only for a clean tap: pointer barely moved AND no text is
@@ -1256,9 +1348,13 @@ const GroupChat = {
       GroupChat._clearPressTimer();
       // Don't arm long-press on interactive children (links, buttons,
       // pills, the quote block) — those have their own click semantics.
-      if (e.target.closest('a, button, .gc-quoted, .gc-ref')) return;
+      if (e.target.closest('a, button, .gc-quoted, .gc-ref, .msgx-bar')) return;
       const row = e.target.closest(ROW_SEL);
       if (!row || !container.contains(row)) return;
+      // #2387: a person's row answers a long press itself — the shared
+      // message sheet (features/message-actions) — so this module's bar
+      // stands down for it and keeps only the system and spec rows.
+      if (row.classList.contains('gc-msg')) return;
       // Suppress native text selection while the press is stationary, so a
       // long-press opens the reaction bar cleanly instead of highlighting
       // the message text (and popping the iOS selection magnifier). If the
@@ -1294,6 +1390,10 @@ const GroupChat = {
     container.addEventListener('pointercancel', endPress, true);
 
     container.addEventListener('click', (e) => {
+      // #2387: the shared bar, its picker and menu, and the thread chip are
+      // React controls with their own handlers; a click inside them (the
+      // picker's search box included) is never a tap-to-quote.
+      if (e.target.closest('.msgx-bar, .msgx-thread-chip, .msgx-thread-activity, .gc-msg-deleted-text')) return;
       // A reaction pill is NOT dispatched here. The reskin draws it with
       // @/components/ui/feed's `ReactionPill`, so no node carries
       // `.gc-react-pill` any more and this branch had nothing to match; the
@@ -1367,7 +1467,11 @@ const GroupChat = {
       const rowId = parseInt(row.dataset.msgId || '', 10);
       if (rowId) GroupChat._clearMessageDot(rowId);
       const quote = GroupChat._quoteFromRow(row);
-      if (quote) GroupChat.setQuote(quote);
+      // #2387: the transcript tapped names the composer — with a reply
+      // thread open beside the channel, both are on screen.
+      const scope = container.id === 'gc-thread-messages' ? 'thread'
+        : container.id === 'gc-messages' ? 'main' : undefined;
+      if (quote) GroupChat.setQuote(quote, scope);
     });
 
     // #130: chips are spans with role="link" tabindex="0" — give keyboard
@@ -1469,6 +1573,204 @@ const GroupChat = {
   //
   // patchTranscriptMessage patches EVERY transcript by design, which is
   // exactly what the two-selector sweep was doing by hand.
+  // ── #2387: the shared bar's acts that are new to this module ─────────
+
+  // A row's thread summary as the chip under it draws it, or null.
+  _threadSummaryView(msg) {
+    const t = msg && msg.thread;
+    if (!t || typeof t !== 'object' || t.type) return null;
+    const count = Number(t.reply_count ?? t.replyCount) || 0;
+    if (count < 1) return null;
+    const people = Array.isArray(t.participants) ? t.participants : [];
+    const last = t.last_reply || t.lastReply || null;
+    return {
+      replyCount: count,
+      lastReplyAt: t.last_reply_at || t.lastReplyAt || null,
+      participants: people.map((p) => (p && typeof p === 'object' ? p.username : p)).filter(Boolean).slice(0, 3),
+      // #2387 follow-up: the newest reply, which the card under the message shows.
+      lastReply: last && typeof last === 'object'
+        ? { name: String(last.username || 'someone'), text: String(last.content || '') }
+        : null,
+    };
+  },
+
+  // A reply-thread reply's place in the general stream (#2387 follow-up):
+  // which thread, and the start of its first message. Null for any other row.
+  _replyOfView(msg, threadType) {
+    if (threadType !== 'message') return null;
+    const ref = Number(msg.thread_ref ?? (msg.thread && msg.thread.ref));
+    if (!Number.isSafeInteger(ref) || ref <= 0) return null;
+    const root = msg.thread_root || msg.threadRoot || null;
+    return {
+      rootId: ref,
+      rootText: root && !root.deleted ? String(root.content || '') : '',
+      rootDeleted: !!(root && root.deleted),
+    };
+  },
+
+  // Every loaded copy of one message — the general stream's and any cached
+  // thread's (a reply thread's head is a general message too).
+  _eachCopy(id, fn) {
+    const n = Number(id);
+    for (const m of GroupChat.messages) if (Number(m.id) === n) fn(m);
+    for (const st of GroupChat.threads.values()) {
+      if (st.root && Number(st.root.id) === n) fn(st.root);
+      for (const m of st.messages) if (Number(m.id) === n) fn(m);
+    }
+  },
+
+  // Reply to a row — the same quote a tap on it stages, built from the model
+  // rather than read out of the row's markup, into the composer of the
+  // transcript the row is in.
+  replyToMessage(id, surface) {
+    const n = Number(id);
+    let msg = null;
+    GroupChat._eachCopy(n, (m) => { if (!msg) msg = m; });
+    if (!msg) return;
+    const meta = msg.metadata || msg.meta || {};
+    const kind = msg.msgType || msg.msg_type || 'message';
+    let snippet = GroupChat._collapseSnippet(msg.content || '');
+    if (!snippet && Array.isArray(meta.attachments) && meta.attachments[0]) {
+      snippet = `\u{1F4CE} ${meta.attachments[0].filename || meta.attachments[0].name || 'file'}`;
+    }
+    const quote = kind === 'spec_share'
+      ? { source: 'spec', refMsgId: n, author: msg.username || null, snippet: (meta.specShare && meta.specShare.title) || 'Spec' }
+      : { source: 'message', refMsgId: n, author: msg.username || null, snippet };
+    GroupChat.setQuote(quote, surface === 'thread' ? 'thread' : 'main');
+  },
+
+  // The address a message link opens — the channel in Messages, scrolled to
+  // it (#messages/app/<slug>/m/<id>).
+  //
+  // Only for the general stream and its reply threads, which is what the
+  // address can find: a message in an issue's or a proposal's discussion is
+  // not in the channel, and its link would open the channel at the bottom.
+  messageAddress(id) {
+    const slug = GroupChat.appSlug;
+    if (!slug) return null;
+    let msg = null;
+    GroupChat._eachCopy(id, (m) => { if (!msg) msg = m; });
+    const type = msg && (msg.thread_type || (msg.thread && msg.thread.type) || null);
+    if (!msg || (type && type !== 'message')) return null;
+    return `#messages/app/${encodeURIComponent(slug)}/m/${Number(id)}`;
+  },
+
+  // Open the reply thread under a general-chat message: beside the channel in
+  // Messages, which is where a reply thread lives — also when the row was
+  // tapped on the app's own Discussion page.
+  openReplyThread(id) {
+    const slug = GroupChat.appSlug;
+    if (!slug || !id) return;
+    location.hash = `#messages/app/${encodeURIComponent(slug)}/thread/${Number(id)}`;
+  },
+
+  isReplyThreadOpen(id) {
+    const a = GroupChat.activeThread;
+    return !!a && a.type === 'message' && Number(a.ref) === Number(id);
+  },
+
+  // Delete one of your own messages. Over the socket when it is open (the
+  // same path an edit takes), else the REST route; the row turns into its
+  // placeholder at once, and the server's `chat_delete` confirms it.
+  async deleteMessage(id) {
+    const slug = GroupChat.appSlug;
+    if (!slug || !id) return;
+    const before = [];
+    GroupChat._eachCopy(id, (m) => { before.push([m, { ...m }]); });
+    GroupChat._applyDelete({ id });
+    if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+      GroupChat.ws.send(JSON.stringify({ type: 'delete', id: Number(id) }));
+      return;
+    }
+    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(id)}`, {
+      method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      for (const [m, copy] of before) Object.assign(m, copy, { deleted: false });
+      GroupChat.render();
+      if (GroupChat.activeThread) GroupChat.renderThread();
+      throw new Error(`Delete failed (${res.status})`);
+    }
+  },
+
+  _applyDelete(data) {
+    const id = Number(data && (data.id ?? data.messageId ?? data.message_id));
+    if (!id) return;
+    GroupChat._eachCopy(id, (m) => {
+      m.deleted = true;
+      m.content = '';
+      m.reactions = [];
+      const meta = { ...(m.metadata || m.meta || {}) };
+      delete meta.attachments;
+      delete meta.quote;
+      m.metadata = meta;
+    });
+    GroupChat._react()?.patchTranscriptMessage(id, {
+      deleted: true, text: '', bodyHtml: '', quote: null, attachments: [], reactions: [], editedTitle: null,
+    });
+  },
+
+  // A thread's new summary on its first message (the `thread_summary` frame).
+  _applyThreadSummary(data) {
+    const id = Number(data && (data.root_id ?? data.rootId));
+    if (!id) return;
+    GroupChat._eachCopy(id, (m) => { m.thread = data.thread || null; });
+    GroupChat._react()?.patchTranscriptMessage(id, { thread: GroupChat._threadSummaryView({ thread: data.thread }) });
+  },
+
+  // The viewer's read cursor on this app's channel (#2387). Read up to the
+  // newest general message while the channel is on screen; "Mark unread"
+  // moves it back. Both answer with the channel's unread count, which the
+  // Messages list re-reads.
+  async markRead() {
+    const slug = GroupChat.appSlug;
+    if (!slug || !window.App || !App.user) return;
+    // Read means SEEN: the socket also connects for an app whose chat is not
+    // on screen, and loading its history there must not clear the channel.
+    if (document.visibilityState === 'hidden' || !document.getElementById('gc-messages')) return;
+    // The general stream's own newest message: its thread replies drawn in
+    // it (#2387 follow-up) are no position for the channel's read cursor.
+    const newest = GroupChat.messages.reduce((top, m) => (
+      m && !m.thread_type && !(m.thread && m.thread.type) ? Math.max(top, Number(m.id) || 0) : top
+    ), 0);
+    if (!newest || newest <= (GroupChat._readUpTo || 0) || GroupChat._unreadHold === slug) return;
+    GroupChat._readUpTo = newest;
+    try {
+      // `?demo=1`: a staging demo stream's newest rows are mock ones, which
+      // only the demo branch of the route knows (src/routes/chat.js).
+      await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read${GroupChat._specDemoQS()}`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ message_id: newest }),
+      });
+      window.UsernodeReact?.messages?.refresh?.();
+    } catch (_) { /* the next open reads it again */ }
+  },
+
+  // The channel's pane closed (#2387). "Mark unread" holds only while the
+  // channel stays open: the socket outlives the pane, so without this the
+  // hold lasted until another app's chat was opened, and the channel was
+  // never read again before then.
+  releaseUnreadHold(appSlug) {
+    if (GroupChat._unreadHold && GroupChat._unreadHold === appSlug) GroupChat._unreadHold = null;
+  },
+
+  async markUnread(id) {
+    const slug = GroupChat.appSlug;
+    if (!slug || !id) return;
+    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/unread${GroupChat._specDemoQS()}`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ message_id: Number(id) }),
+    });
+    if (!res.ok) throw new Error(`Mark unread failed (${res.status})`);
+    // Stays unread while it is still the open channel: reading it again the
+    // moment it was marked would undo the act.
+    GroupChat._unreadHold = slug;
+    GroupChat._readUpTo = 0;
+    window.UsernodeReact?.messages?.refresh?.();
+  },
+
   _paintBookmark(messageId, on) {
     const gc = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.groupChat : null;
@@ -2118,6 +2420,12 @@ const GroupChat = {
         entry.kind = data.kind;
         entry.meta = data.meta || null;
         entry.uploading = false;
+        // #2938: a send tapped mid-upload left the wait notice up; once the
+        // last upload in this composer lands there is nothing to wait for.
+        if (!GroupChat.attachmentsUploading(thread)
+            && GroupChat._attachErrors[GroupChat._composerScope(thread)] === GroupChat.UPLOAD_WAIT_NOTICE) {
+          GroupChat._setAttachError(null, thread);
+        }
       } catch (err) {
         GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a !== entry);
         if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch { /* already revoked */ } }
@@ -2162,8 +2470,17 @@ const GroupChat = {
   // — the component draws the row either way, so the module has one thing to
   // say rather than two to keep in step.
   _setAttachError(msg, thread) {
-    GroupChat._publishComposer(GroupChat._composerScope(thread), { attachError: msg || null });
+    const scope = GroupChat._composerScope(thread);
+    GroupChat._attachErrors[scope] = msg || null;
+    GroupChat._publishComposer(scope, { attachError: msg || null });
   },
+
+  // What each composer's error line currently says, so an upload finishing
+  // can take down the wait notice without erasing a real error (#2938).
+  _attachErrors: { general: null, thread: null },
+
+  // Shown when Send is tapped while an attachment is still uploading.
+  UPLOAD_WAIT_NOTICE: 'Still uploading, one moment…',
 
   _humanAttSize(bytes) {
     const n = Number(bytes) || 0;
@@ -2406,8 +2723,9 @@ const GroupChat = {
   // The wordings are the server's own (routes/votes.js). A promote or an
   // import posts "<who> promoted PR #N: <title> for voting" as a `vote` row;
   // a merge posts "<title> is live (PR #N). Thanks to everyone who voted
-  // (a/b votes)", or "PR #N: <title> force-merged by admin <who> (a/b votes
-  // at the time)". Every vote row is a submission whatever its wording (the
+  // (a/b votes)" (on the platform's own app, "<title> merged (PR #N) and
+  // will be live in a few minutes. …"), or "PR #N: <title> force-merged by
+  // admin <who> (a/b votes at the time)". Every vote row is a submission whatever its wording (the
   // number comes from _voteRef then); a system row that matches neither
   // merge wording is not an event.
   _proposalEvent(msg, kind) {
@@ -2432,22 +2750,30 @@ const GroupChat = {
     // them read back out of the sentence. `credits` is on the event only
     // when somebody is named, so a row naming nobody keeps its old shape.
     const credits = GroupChat._mergeCredits(msg);
+    // Follow-up to #2897: a merge on the platform's own app posts "<title>
+    // merged (PR #N) and will be live in a few minutes. …" (or "PR #N merged
+    // and will be live in a few minutes. …"), because its release runs after
+    // the merge. Every other merge, and every row stored before that, says
+    // "is live". Both wordings are merges; `liveSoon` says which it was, from
+    // the row's metadata where it rides, else from the wording. It is on the
+    // event only when true, so an "is live" row keeps its old shape.
+    const soonMeta = GroupChat._mergeLiveSoon(msg);
+    const merged = (prNumber, title, sentence, votes, soonText) => {
+      const named = credits || GroupChat._parseCredits(sentence);
+      return {
+        type: 'merged', sessionId, prNumber, title, actor: '', force: false, votes,
+        ...(named ? { credits: named } : {}),
+        ...(soonMeta || soonText ? { liveSoon: true } : {}),
+      };
+    };
     let m = /^([\s\S]*?) is live \(PR #(\d+)\)\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
-    if (m) {
-      const named = credits || GroupChat._parseCredits(m[3]);
-      return {
-        type: 'merged', sessionId, prNumber: m[2], title: m[1], actor: '', force: false, votes: m[4],
-        ...(named ? { credits: named } : {}),
-      };
-    }
+    if (m) return merged(m[2], m[1], m[3], m[4], false);
+    m = /^([\s\S]*?) merged \(PR #(\d+)\) and will be live in a few minutes\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) return merged(m[2], m[1], m[3], m[4], true);
     m = /^PR #(\d+) is live\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
-    if (m) {
-      const named = credits || GroupChat._parseCredits(m[2]);
-      return {
-        type: 'merged', sessionId, prNumber: m[1], title: '', actor: '', force: false, votes: m[3],
-        ...(named ? { credits: named } : {}),
-      };
-    }
+    if (m) return merged(m[1], '', m[2], m[3], false);
+    m = /^PR #(\d+) merged and will be live in a few minutes\. ([\s\S]*?) \((\d+\/\d+) votes?\)$/.exec(text);
+    if (m) return merged(m[1], '', m[2], m[3], true);
     m = /^PR #(\d+)(?:: ([\s\S]*?))? force-merged by admin (\S+) \((\d+\/\d+) votes? at the time\)$/.exec(text);
     if (m) return { type: 'merged', sessionId, prNumber: m[1], title: m[2] || '', actor: m[3], force: true, votes: m[4] };
     return null;
@@ -2477,6 +2803,14 @@ const GroupChat = {
         openTotal: Number(w.openTotal) || 0,
       },
     };
+  },
+
+  // True when a merge announcement's metadata says its release is still to
+  // come (routes/votes.js finalizeMerge sets `liveSoon` on a self-hosted
+  // merge); false on a row without it, whose wording then decides.
+  _mergeLiveSoon(msg) {
+    const meta = (msg.metadata || msg.meta || {}).merged;
+    return !!(meta && typeof meta === 'object' && meta.liveSoon === true);
   },
 
   // The names a merge announcement carries as metadata (routes/votes.js
@@ -3186,6 +3520,22 @@ const GroupChat = {
     if (GroupChat.appSlug !== want.slug || !GroupChat._didInitialScroll) return false;
     const container = document.getElementById('gc-messages');
     if (!container) return false;
+    // A reply in a reply thread (#2387 follow-up): the general stream holds
+    // it now, but as a line of a thread card rather than a row of its own —
+    // the link opens its thread beside the channel instead.
+    const loadedReply = GroupChat.messages.find((m) => Number(m && m.id) === want.id
+      && (m.thread_type === 'message' || (m.thread && m.thread.type === 'message')));
+    if (loadedReply) {
+      const root = Number(loadedReply.thread_ref ?? (loadedReply.thread && loadedReply.thread.ref));
+      GroupChat._pendingReveal = null;
+      if (Number.isSafeInteger(root) && root > 0) {
+        const address = `#messages/app/${encodeURIComponent(want.slug)}/thread/${root}`;
+        const messages = window.UsernodeReact?.messages;
+        if (messages?.openAddress) messages.openAddress(address);
+        else window.location.hash = address;
+      }
+      return false;
+    }
     const row = container.querySelector(`[data-msg-id="${want.id}"]`);
     if (!row) {
       // The transcript is published BATCHED (features/group-chat/mount.ts):
@@ -3195,6 +3545,11 @@ const GroupChat = {
       const loaded = GroupChat.messages.some((m) => Number(m && m.id) === want.id);
       if (loaded && attempt < 30 && typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(() => GroupChat._applyPendingReveal(attempt + 1));
+      } else if (!loaded && !want.located) {
+        // #2387: a message link can name any message — one older than the
+        // page that loaded, or a reply inside a reply thread. Go and find it.
+        want.located = true;
+        void GroupChat._locateReveal(want);
       } else {
         GroupChat._pendingReveal = null;
       }
@@ -3212,6 +3567,51 @@ const GroupChat = {
     GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
     setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
     return true;
+  },
+
+  // Where a message link's message is (#2387), when the first page did not
+  // have it. The server's permalink window says whether it is a reply in a
+  // reply thread — then the thread opens beside the channel — and otherwise
+  // the stream pages back to it, a bounded number of pages, so the stream
+  // stays one unbroken run to the present rather than a window with a gap.
+  REVEAL_MAX_PAGES: 20,
+
+  async _locateReveal(want) {
+    const slug = want.slug;
+    const live = () => GroupChat._pendingReveal === want && GroupChat.appSlug === slug;
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/messages?around=${want.id}&limit=1${GroupChat._demoParam()}`
+      );
+      if (!live()) return;
+      if (!res.ok) { GroupChat._pendingReveal = null; return; }
+      const body = await res.json();
+      const root = Number(body && body.focus && body.focus.thread_ref);
+      if (Number.isSafeInteger(root) && root > 0 && root !== want.id) {
+        GroupChat._pendingReveal = null;
+        const address = `#messages/app/${encodeURIComponent(slug)}/thread/${root}`;
+        const messages = window.UsernodeReact?.messages;
+        if (messages?.openAddress) messages.openAddress(address);
+        else window.location.hash = address;
+        return;
+      }
+      for (let page = 0; page < GroupChat.REVEAL_MAX_PAGES; page += 1) {
+        if (!live()) return;
+        if (GroupChat.messages.some((m) => Number(m && m.id) === want.id)) break;
+        const oldest = Number(GroupChat.oldestMessageId);
+        if (!GroupChat.hasMore || (oldest && oldest < want.id)) break;
+        if (GroupChat._historyLoad) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
+        }
+        await GroupChat.loadHistory();
+      }
+      if (!live()) return;
+      want.at = Date.now();
+      GroupChat._applyPendingReveal();
+    } catch {
+      if (live()) GroupChat._pendingReveal = null;
+    }
   },
 
   restoreScroll() {
@@ -4065,6 +4465,283 @@ const RefAutocomplete = {
   },
 };
 
+// ── `:shortcode` emoji autocomplete ─────────────────────────────────────
+//
+// Discord's `:th` → "Emoji matching :th" → `👍 :thumbsup:`, in #gc-input and
+// #gc-thread-input. Modeled on MentionAutocomplete and RefAutocomplete above:
+// same body-level menu host (`#gc-emoji-menu`, children React's —
+// features/group-chat/autocomplete.tsx), same capture-phase keydown, same
+// _detectToken/_sync/accept lifecycle, same dismiss and positioning. Two
+// differences:
+//
+//   - The matching is not here. The emoji, their shortcodes and the token
+//     rules are features/message-actions/emoji-shortcodes.ts, which the
+//     Messages composer uses directly; this module calls the same functions
+//     through window.UsernodeReact.groupChat. Before the bundle has loaded
+//     there is nothing to call, and the menu simply does not open.
+//   - A complete, known `:tada:` becomes 🎉 the moment its closing colon is
+//     typed, menu or no menu (_convert, from the `input` listener).
+//
+// A `:` only starts a token at the start of the text or after whitespace or
+// an opening bracket, so `10:30` and `https://` never open it, and the query
+// is name characters only — so it never shares a caret with an `@name` or a
+// `#123` token, and at most one of the three menus is open at once.
+const EmojiAutocomplete = {
+  MAX_RESULTS: 8,
+
+  _input: null,
+  _menu: null,
+  _items: [],      // currently-shown { emoji, shortcode }
+  _active: -1,
+  _open: false,
+  _tokenStart: -1, // index of the `:` in input.value for the active token
+  _query: '',
+  _composing: false,
+  _dismissBound: null,
+
+  _api() {
+    const api = window.UsernodeReact?.groupChat;
+    return api && typeof api.emojiShortcodeToken === 'function' ? api : null;
+  },
+
+  // Wire (or re-wire) the controller onto a freshly-rendered composer.
+  // Idempotent per element; called on every group-chat tab mount and every
+  // thread mount. Each listener re-targets the controller at ITS input, so
+  // the general composer and an open thread's never answer for each other.
+  attach(input) {
+    if (!input) return;
+    EmojiAutocomplete._input = input;
+
+    if (input._gcEmojiBound) return;
+    input._gcEmojiBound = true;
+
+    const own = () => {
+      if (EmojiAutocomplete._input !== input) {
+        EmojiAutocomplete.close();
+        EmojiAutocomplete._input = input;
+      }
+    };
+    input.addEventListener('compositionstart', () => { EmojiAutocomplete._composing = true; });
+    input.addEventListener('compositionend', () => {
+      EmojiAutocomplete._composing = false;
+      own(); EmojiAutocomplete._sync();
+    });
+    input.addEventListener('input', (e) => {
+      own();
+      // Only a typed colon completes a code — not a paste, and not the
+      // synthetic `input` accept() and _convert() dispatch themselves.
+      if (e.inputType === 'insertText' && e.data === ':' && EmojiAutocomplete._convert()) return;
+      EmojiAutocomplete._sync();
+    });
+    input.addEventListener('click', () => { own(); EmojiAutocomplete._sync(); });
+    input.addEventListener('keyup', (e) => {
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+      own(); EmojiAutocomplete._sync();
+    });
+    // Capture phase so we win over the composer's own keydown handler and
+    // the form's implicit Enter-submit while the menu is open. Only
+    // consumes keys while this menu is open, so it can't fight the mention
+    // and reference menus' identical handlers.
+    input.addEventListener('keydown', (e) => {
+      if (EmojiAutocomplete._input === input) EmojiAutocomplete._onKeydown(e);
+    }, true);
+    input.addEventListener('blur', () => {
+      setTimeout(() => { if (document.activeElement !== input) EmojiAutocomplete.close(); }, 0);
+    });
+  },
+
+  // Detect an active `:query` immediately before the caret.
+  // Returns { start, query } or null.
+  _detectToken() {
+    const input = EmojiAutocomplete._input;
+    const api = EmojiAutocomplete._api();
+    if (!input || !api) return null;
+    return api.emojiShortcodeToken(input.value, input.selectionStart, input.selectionEnd);
+  },
+
+  // Re-evaluate the token under the caret and open/close/refresh the menu.
+  _sync() {
+    if (EmojiAutocomplete._composing) return;
+    const token = EmojiAutocomplete._detectToken();
+    if (!token) { EmojiAutocomplete.close(); return; }
+    const items = EmojiAutocomplete._api().matchEmojiShortcodes(token.query, EmojiAutocomplete.MAX_RESULTS);
+    if (!items.length) { EmojiAutocomplete.close(); return; }
+    EmojiAutocomplete._tokenStart = token.start;
+    EmojiAutocomplete._query = token.query;
+    EmojiAutocomplete._items = items;
+    EmojiAutocomplete._active = 0;
+    EmojiAutocomplete._render();
+  },
+
+  _ensureMenu() {
+    if (EmojiAutocomplete._menu) return EmojiAutocomplete._menu;
+    const menu = document.createElement('div');
+    menu.id = 'gc-emoji-menu';
+    // The mention menu's box; its rows are gc-mention-option too, so the
+    // hover and highlight are theirs. No role on the host: the heading is not
+    // an option, so the listbox is a child (autocomplete.tsx).
+    menu.className = 'gc-mention-menu gc-emoji-menu hidden';
+    // mousedown (not click) so we can preventDefault and keep the input
+    // focused — a blur-then-click would close the menu before the click.
+    menu.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('.gc-emoji-option');
+      if (!opt) return;
+      e.preventDefault();
+      EmojiAutocomplete.accept(opt.dataset.emoji);
+    });
+    document.body.appendChild(menu);
+    // Same split as the other two menus: ours to place, React's to fill.
+    window.UsernodeReact?.groupChat?.mountEmojiMenu?.(menu);
+    EmojiAutocomplete._menu = menu;
+    return menu;
+  },
+
+  _publish() {
+    window.UsernodeReact?.groupChat?.publishEmojiMenu?.(
+      EmojiAutocomplete._query,
+      EmojiAutocomplete._items.map((item) => ({ emoji: item.emoji, shortcode: item.shortcode })),
+      EmojiAutocomplete._active
+    );
+  },
+
+  _render() {
+    const menu = EmojiAutocomplete._ensureMenu();
+    // Publishing goes through flushSync (features/group-chat/mount.ts), so the
+    // rows exist before _position() measures the menu's height.
+    EmojiAutocomplete._publish();
+
+    if (!EmojiAutocomplete._open) {
+      menu.classList.remove('hidden');
+      EmojiAutocomplete._open = true;
+      EmojiAutocomplete._bindDismiss();
+    }
+    EmojiAutocomplete._position();
+  },
+
+  // Anchor above the composer, flipping below if it would clip the top.
+  // Matches the input width — same mechanics as MentionAutocomplete.
+  _position() {
+    const input = EmojiAutocomplete._input;
+    const menu = EmojiAutocomplete._menu;
+    if (!input || !menu) return;
+    const r = input.getBoundingClientRect();
+    menu.style.left = `${r.left}px`;
+    menu.style.width = `${r.width}px`;
+    const h = menu.offsetHeight || 0;
+    let top = r.top - h - 4;
+    if (top < 8) top = Math.min(r.bottom + 4, window.innerHeight - h - 8);
+    menu.style.top = `${top}px`;
+  },
+
+  _bindDismiss() {
+    if (EmojiAutocomplete._dismissBound) return;
+    EmojiAutocomplete._dismissBound = (e) => {
+      if (e.type === 'scroll') { EmojiAutocomplete.close(); return; }
+      if (EmojiAutocomplete._menu && EmojiAutocomplete._menu.contains(e.target)) return;
+      if (e.target === EmojiAutocomplete._input) return;
+      EmojiAutocomplete.close();
+    };
+    document.addEventListener('mousedown', EmojiAutocomplete._dismissBound, true);
+    const msgs = document.getElementById('gc-messages');
+    if (msgs) msgs.addEventListener('scroll', EmojiAutocomplete._dismissBound, true);
+  },
+
+  close() {
+    if (!EmojiAutocomplete._open) return;
+    EmojiAutocomplete._open = false;
+    EmojiAutocomplete._active = -1;
+    EmojiAutocomplete._items = [];
+    EmojiAutocomplete._tokenStart = -1;
+    EmojiAutocomplete._query = '';
+    if (EmojiAutocomplete._menu) {
+      EmojiAutocomplete._menu.classList.add('hidden');
+      EmojiAutocomplete._publish();
+    }
+    if (EmojiAutocomplete._dismissBound) {
+      document.removeEventListener('mousedown', EmojiAutocomplete._dismissBound, true);
+      const msgs = document.getElementById('gc-messages');
+      if (msgs) msgs.removeEventListener('scroll', EmojiAutocomplete._dismissBound, true);
+      EmojiAutocomplete._dismissBound = null;
+    }
+  },
+
+  // The index is the state; the class and the scroll follow from it.
+  _move(delta) {
+    const n = EmojiAutocomplete._items.length;
+    if (!n) return;
+    EmojiAutocomplete._active = (EmojiAutocomplete._active + delta + n) % n;
+    EmojiAutocomplete._publish();
+  },
+
+  // Capture-phase keydown. Consumes the event only when the menu is open
+  // and the key is one we own.
+  _onKeydown(e) {
+    if (!EmojiAutocomplete._open || e.isComposing) return;
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault(); e.stopPropagation(); EmojiAutocomplete._move(1); break;
+      case 'ArrowUp':
+        e.preventDefault(); e.stopPropagation(); EmojiAutocomplete._move(-1); break;
+      case 'Enter':
+      case 'Tab': {
+        if (e.key === 'Tab' && e.shiftKey) break;
+        const item = EmojiAutocomplete._items[EmojiAutocomplete._active];
+        if (item) {
+          e.preventDefault(); e.stopPropagation();
+          EmojiAutocomplete.accept(item.emoji);
+        }
+        break;
+      }
+      case 'Escape':
+        e.preventDefault(); e.stopPropagation(); EmojiAutocomplete.close(); break;
+      default:
+        break;
+    }
+  },
+
+  // Put `emoji` and a space where the `:query` token was, restore the caret,
+  // and fire a synthetic `input` event so draft persistence and the typing
+  // indicator run exactly as if the user typed it.
+  accept(emoji) {
+    const input = EmojiAutocomplete._input;
+    if (!input || !emoji || EmojiAutocomplete._tokenStart < 0) { EmojiAutocomplete.close(); return; }
+    const caret = input.selectionStart;
+    const value = input.value;
+    const before = value.slice(0, EmojiAutocomplete._tokenStart);
+    const insert = `${emoji} `;
+    const next = before + insert + value.slice(caret);
+    // `:query` is at least three characters and an emoji plus a space at
+    // most four, but the maxlength rule is the other menus', so keep it.
+    const max = parseInt(input.getAttribute('maxlength') || '0', 10);
+    if (max && next.length > max) { EmojiAutocomplete.close(); return; }
+
+    input.value = next;
+    const pos = (before + insert).length;
+    input.setSelectionRange(pos, pos);
+    EmojiAutocomplete.close();
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+
+  // A typed closing colon that completes a known code — `:tada:` — swaps the
+  // code for its emoji in place. True when it did (the synthetic `input` it
+  // dispatches has already re-synced every menu).
+  _convert() {
+    const input = EmojiAutocomplete._input;
+    const api = EmojiAutocomplete._api();
+    if (!input || !api || input.selectionStart !== input.selectionEnd) return false;
+    const done = api.completedEmojiShortcode(input.value, input.selectionStart);
+    if (!done) return false;
+    const value = input.value;
+    input.value = value.slice(0, done.start) + done.emoji + value.slice(done.end);
+    const pos = done.start + done.emoji.length;
+    input.setSelectionRange(pos, pos);
+    EmojiAutocomplete.close();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  },
+};
+
 // Expose on window so app.js's WS dispatcher can reconcile the in-chat
 // unread dots on notification events. (A top-level `const` is a lexical
 // global accessible by bare name within the realm, but is NOT a property
@@ -4072,3 +4749,4 @@ const RefAutocomplete = {
 window.GroupChat = GroupChat;
 window.MentionAutocomplete = MentionAutocomplete;
 window.RefAutocomplete = RefAutocomplete;
+window.EmojiAutocomplete = EmojiAutocomplete;

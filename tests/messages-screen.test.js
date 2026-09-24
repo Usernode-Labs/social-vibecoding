@@ -71,9 +71,12 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   const routeStart = app.indexOf("if (parts[0] === 'messages')");
   const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
   assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox owns the address');
-  assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\]\)/);
-  // #2813 added the agent thread as a third argument, last in precedence.
-  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent\)/);
+  // #2387: what follows the slug — a reply thread, a message link — rides
+  // along as a fourth argument (App._messagesExtras).
+  assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\], null, App\._messagesExtras\(parts\.slice\(3\)\)\)/);
+  // #2813 added the agent thread as a third argument, last in precedence;
+  // #2387 the thread/link extras as a fourth.
+  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
   // The ROW points here, not at the app view.
   assert.match(screen, /href=\{`#messages\/app\/\$\{encodeURIComponent\(discussion\.slug\)\}`\}/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
@@ -147,8 +150,10 @@ test('message creation realtime carries ids and refetches viewer-authorized REST
   ]) {
     assert.match(app, new RegExp(`case '${type}'`));
   }
+  // #2387: created and updated share one block (a thread reply re-reads its
+  // thread as well as the conversation), so the slice runs to the next case.
   const created = store.slice(store.indexOf("case 'conversation_message_created'"),
-    store.indexOf("case 'conversation_message_updated'"));
+    store.indexOf("case 'conversation_reaction_updated'"));
   assert.match(created, /loadThread\(conversationId, true\)/);
   assert.doesNotMatch(created, /normalizeMessage\(event\.message/,
     'WS must never trust a sender-hydrated private object card');

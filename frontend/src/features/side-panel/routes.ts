@@ -25,6 +25,16 @@
  *                                  pointer, rewritten to the channel's own
  *                                  address (isPointer)
  *   chat[/<uuid>]                  an agent chat
+ *   agent/<id>[/changes]           an agent session (#2779): one conversation
+ *                                  with the Mayor, on any app — `changes`
+ *                                  is the same page with its drawer up
+ *   agent/new                      a session not sent yet (New change): no
+ *                                  row until its first message, when the
+ *                                  address becomes the session's own
+ *   messages/agent/<id|new>        the same, by the address Messages links
+ *                                  it with; a numeric id or `new` only (a
+ *                                  UUID there is a Global Chat thread, which
+ *                                  the panel does not take)
  *   messages                       the inbox itself — never opened INTO the
  *                                  panel from outside it (it is a tab root,
  *                                  and a tab leaves the app), but it is where
@@ -46,6 +56,7 @@ export type PanelKind =
   | 'discussion'
   | 'thread'
   | 'chat'
+  | 'agent'
   | 'messages';
 
 /** The parsed shape of a route the panel knows about. */
@@ -58,6 +69,8 @@ export interface PanelPage {
 }
 
 const NUMERIC = /^[1-9]\d{0,15}$/;
+// An agent session's serial id, or `new` for the one not sent yet.
+const isAgentSessionId = (segment: string | undefined) => segment === 'new' || NUMERIC.test(segment || '');
 
 function decode(seg: string): string {
   try { return decodeURIComponent(seg); } catch { return seg; }
@@ -160,11 +173,20 @@ export function panelPage(route: string): PanelPage | null {
       // A `#name` channel reference (#2783) — see isPointer below.
       return { kind: 'thread', slug: null, key: `messages/channel/${parts[2]}` };
     }
+    if (parts[1] === 'agent' && isAgentSessionId(parts[2])) {
+      // An agent session (#2779). The panel is phone-width, so its document
+      // swaps this for `agent/<id>` in place (App.restoreFromHash) — the same
+      // page, which is why the key is the session's own.
+      return { kind: 'agent', slug: null, key: `agent/${parts[2]}` };
+    }
     // A malformed id: the router degrades it to the list.
     return { kind: 'messages', slug: null, key: 'messages' };
   }
   if (head === 'chat') {
     return { kind: 'chat', slug: null, key: parts[1] ? `chat/${parts[1]}` : 'chat' };
+  }
+  if (head === 'agent' && isAgentSessionId(parts[1])) {
+    return { kind: 'agent', slug: null, key: `agent/${parts[1]}` };
   }
   return null;
 }
@@ -223,6 +245,7 @@ export function parentRoute(route: string): string | null {
     case 'discussion':
     case 'thread':
     case 'chat':
+    case 'agent':
       return 'messages';
     case 'proposal':
     case 'issue':
@@ -252,6 +275,7 @@ const KIND_TITLE: Record<PanelKind, string> = {
   discussion: 'Discussion',
   thread: 'Messages',
   chat: 'Chat',
+  agent: 'Agent session',
   messages: 'Messages',
 };
 
@@ -280,13 +304,25 @@ export function titleFor(route: string | null | undefined, reported?: string | n
 }
 
 /**
+ * Where Expand takes `route`: the page itself, full width — except an agent
+ * session, whose desktop home is the Messages pane beside the inbox
+ * (`messages/agent/<id>`), not the phone screen the panel draws it as.
+ */
+export function expandRoute(route: string): string {
+  const page = panelPage(route);
+  if (page && page.kind === 'agent') return `messages/${page.key}`;
+  return route;
+}
+
+/**
  * Query parameters the panel's document must NOT inherit from the top window:
  * its own flag (set fresh below), the chromeless app's inner path, a
  * screenshot state and a post-login return target (both belong to the top's
- * load), and the forced native presentation (the panel is never the native
- * top frame).
+ * load), the forced native presentation (the panel is never the native
+ * top frame), and the top's note of what the panel shows (`side`, see
+ * ./controller.ts).
  */
-const DROPPED_PARAMS = new Set(['panel', 'path', 'shot', 'return_to', 'un-native-webview']);
+const DROPPED_PARAMS = new Set(['panel', 'path', 'shot', 'return_to', 'un-native-webview', 'side']);
 
 /**
  * The address the panel's document is loaded at: the platform root with

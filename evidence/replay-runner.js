@@ -22,6 +22,7 @@ const execFileAsync = promisify(execFile);
 let planContract;
 try { planContract = require('../src/services/visual-evidence-plan'); }
 catch (_) { planContract = require('./visual-evidence-plan'); }
+const sessionBootstrap = require('../worker/session-bootstrap');
 
 const ARTIFACT_PREFIX = '__USERNODE_EVIDENCE_ARTIFACT__ ';
 const EVENT_PREFIX = '__USERNODE_EVIDENCE__ ';
@@ -35,6 +36,8 @@ const STEPS_TARGET_BYTES = 1_500_000;
 const STEPS_MAX_BYTES = 4_000_000;
 const MOTION_TARGET_BYTES = 2_000_000;
 const MOTION_MAX_BYTES = 6_000_000;
+const INITIAL_NAVIGATION_RETRY_DELAY_MS = 500;
+const RETRYABLE_INITIAL_NAVIGATION = /\bnet::ERR_(NETWORK_CHANGED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE)\b/i;
 
 const CHROMIUM_ARGS = Object.freeze([
   '--disable-dev-shm-usage',
@@ -338,6 +341,23 @@ function authorizedUrl(origin, relativePath, token) {
   const url = new URL(joinedUrl(origin, relativePath));
   if (token) url.searchParams.set('token', token);
   return url.toString();
+}
+
+// A freshly reset internal service can change its network endpoint between
+// session bootstrap and Chromium's first document request. Retry only that
+// pre-document transport failure, never an app response, action, or assertion.
+// The same plan still has to pass both independent clean replays.
+async function navigateStart(page, url, onRetry = () => {}, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await page.goto(url, { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
+    } catch (error) {
+      const code = RETRYABLE_INITIAL_NAVIGATION.exec(String(error?.message || ''))?.[1]?.toLowerCase();
+      if (!code || attempt === 2) throw error;
+      onRetry({ attempt: attempt + 1, code });
+      await wait(INITIAL_NAVIGATION_RETRY_DELAY_MS);
+    }
+  }
 }
 
 function publicRelativePath(value) {
@@ -765,70 +785,13 @@ async function addCookies(context, origin, values) {
   if (cookies.length) await context.addCookies(cookies);
 }
 
-function sessionCookieValue(headers) {
-  for (const header of headers || []) {
-    if (String(header?.name || '').toLowerCase() !== 'set-cookie') continue;
-    const first = String(header.value || '').split(';', 1)[0];
-    const separator = first.indexOf('=');
-    if (separator < 0 || first.slice(0, separator).trim() !== 'session') continue;
-    const value = first.slice(separator + 1).trim();
-    // RFC 6265 cookie-octet, bounded before the value ever reaches
-    // Playwright. Never include the rejected value in an error.
-    if (!value || value.length > 4096
-        || !/^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value)) {
-      throw new ReplayFailure('invalid_session_cookie', 'The evidence origin returned an invalid session cookie.');
-    }
-    return value;
-  }
-  return null;
-}
+const sessionCookieValue = sessionBootstrap.sessionCookieValue;
 
 async function bootstrapInternalSession(context, origin, startPath, authToken, diagnostic = null) {
-  if (diagnostic) diagnostic.attempted = origin.startsWith('http:');
-  if (!origin.startsWith('http:')) return false;
-  const existing = await context.cookies(origin);
-  if (existing.some((cookie) => cookie.name === 'session')) {
-    if (diagnostic) diagnostic.cookieAlreadyPresent = true;
-    return false;
-  }
-
-  let response;
-  try {
-    // The request cannot follow a redirect to another origin. Its only job
-    // is to let a staging self-app exchange the short-lived, app-scoped JWT
-    // for a local session row before page JavaScript starts cookie-only API
-    // calls. Ordinary apps that do not set a session cookie remain on the
-    // x-usernode-token path below.
-    response = await context.request.get(authorizedUrl(origin, startPath, authToken), {
-      headers: { 'x-usernode-token': authToken },
-      failOnStatusCode: false,
-      maxRedirects: 0,
-      timeout: planContract.MAX_WAIT_MS,
-    });
-    if (diagnostic) diagnostic.responseStatus = response.status();
-    const value = sessionCookieValue(await Promise.resolve(response.headersArray()));
-    if (!value) return false;
-    try {
-      // The app deliberately emitted Secure because it runs in production
-      // mode. Evidence reaches the same private service directly over HTTP,
-      // so install the already-authenticated clone-local session with the
-      // transport bit adjusted only for this isolated browser context.
-      await context.addCookies([{
-        name: 'session', value, url: origin, httpOnly: true,
-        secure: false, sameSite: 'Lax',
-      }]);
-    } catch (_) {
-      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser could not install its private session cookie.');
-    }
-    const installed = await context.cookies(origin);
-    if (!installed.some((cookie) => cookie.name === 'session')) {
-      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser did not retain its private session cookie.');
-    }
-    if (diagnostic) diagnostic.sessionCookieInstalled = true;
-    return true;
-  } finally {
-    await response?.dispose?.().catch(() => {});
-  }
+  return sessionBootstrap.bootstrapInternalSession(
+    context, origin, authorizedUrl(origin, startPath, authToken), authToken,
+    diagnostic, planContract.MAX_WAIT_MS
+  );
 }
 
 async function startMotionCapture(page) {
@@ -974,9 +937,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   let failureStage = { phase: 'navigate_start' };
   try {
     emitEvent({ type: 'navigation_started', ...eventBase });
-    const response = await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), {
-      waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS,
-    });
+    const response = await navigateStart(page, authorizedUrl(origin, sidePlan.startPath, authToken),
+      ({ attempt, code }) => emitEvent({ type: 'navigation_retry', ...eventBase, attempt, code }));
     navigation = {
       status: typeof response?.status === 'function' ? response.status() : null,
     };
@@ -1322,6 +1284,7 @@ module.exports = {
   waitForAnyVisible,
   waitForVisibleText,
   authorizedUrl,
+  navigateStart,
   publicRelativePath,
   redactedUrl,
   sessionCookieValue,

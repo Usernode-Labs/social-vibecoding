@@ -35,9 +35,23 @@
  * you visit, not a conversation waiting on you, so it does not jump over a
  * DM because somebody said something in it. Within the section the clock
  * orders the app channels, and one nobody has spoken in sits at the end.
+ *
+ * ── Your apps first, the rest behind "Show more" (#2967) ──────────────
+ *
+ * The app channels split in two, the way Home's own list does: YOUR apps —
+ * the ones you are a member of and have not hidden, and the ones you added —
+ * and then every other app you have been active in (posted or reacted in its
+ * chat, voted, proposed, filed a request). The server says which is which
+ * (`section` on each row, src/routes/messages-overview.js); the second group
+ * is marked `more` here and the view folds it behind "Show N more". A server
+ * that sends no section is an older one whose rows are all member apps, so
+ * they are all yours, in the order they always had.
  */
 
-export type InboxKind = 'person' | 'channel' | 'app' | 'agent' | 'session';
+// `mayor` is an agent session (#2779): a conversation with the Mayor that
+// works on any app, as opposed to `agent` (a Global Chat thread) and
+// `session` (one change's classic dev chat).
+export type InboxKind = 'person' | 'channel' | 'app' | 'agent' | 'session' | 'mayor';
 
 /** Which part of the list an entry is drawn in. */
 export type InboxSection = 'chats' | 'channels';
@@ -50,6 +64,8 @@ export interface InboxEntry {
   section: InboxSection;
   /** ISO, or null when the source has no clock (see the header). */
   at: string | null;
+  /** An app channel outside Your apps, folded behind "Show more" (#2967). */
+  more?: boolean;
 }
 
 /**
@@ -66,6 +82,10 @@ export interface AppDiscussion {
   lastMessage: string;
   lastAt: string | null;
   lastBy: string | null;
+  /** #2967: one of Your apps, or another app the viewer has been active in. */
+  section?: 'yours' | 'more';
+  /** #2387: general-chat messages from others since the viewer last read it. */
+  unreadCount?: number;
 }
 
 export interface AgentChat {
@@ -108,8 +128,9 @@ export function admits(filter: InboxFilter, kind: InboxKind): boolean {
   if (filter === 'people') return kind === 'person';
   // #general and the app channels are one section, and one filter (#2783).
   if (filter === 'channels') return kind === 'channel' || kind === 'app';
-  // A session is an agent conversation (#2770), so Agents admits both.
-  return kind === 'agent' || kind === 'session';
+  // A session is an agent conversation (#2770), and so is a conversation
+  // with the Mayor (#2779): Agents admits all three.
+  return kind === 'agent' || kind === 'session' || kind === 'mayor';
 }
 
 function stamp(value: string | null | undefined): number {
@@ -141,11 +162,14 @@ export function buildInbox(input: {
   agents: AgentChat[];
   /** Optional so a caller with no Improve store still merges three kinds. */
   sessions?: AgentSession[];
+  /** Agent sessions (#2779), newest activity first like everything else. */
+  mayors?: Array<{ id: number; lastActivityAt: string | null }>;
   filter: InboxFilter;
 }): InboxEntry[] {
   const chats: InboxEntry[] = [];
   const rooms: InboxEntry[] = [];
   const apps: InboxEntry[] = [];
+  const moreApps: InboxEntry[] = [];
   for (const item of input.conversations) {
     if (item.kind === 'channel') {
       if (admits(input.filter, 'channel')) {
@@ -157,7 +181,11 @@ export function buildInbox(input: {
   }
   if (admits(input.filter, 'app')) {
     for (const item of input.discussions) {
-      apps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt });
+      if (item.section === 'more') {
+        moreApps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt, more: true });
+      } else {
+        apps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt });
+      }
     }
   }
   if (admits(input.filter, 'agent')) {
@@ -175,8 +203,13 @@ export function buildInbox(input: {
       chats.push({ key: `session:${item.key}`, kind: 'session', section: 'chats', at: item.lastActivityAt || null });
     }
   }
+  if (admits(input.filter, 'mayor')) {
+    for (const item of input.mayors || []) {
+      chats.push({ key: `mayor:${item.id}`, kind: 'mayor', section: 'chats', at: item.lastActivityAt || null });
+    }
+  }
   // Stable within a timestamp: `sort` is stable in every engine this ships
   // to, so two rows that happened in the same second keep the order their
   // own source gave them — which for conversations is the server's.
-  return [...chats.sort(byClock), ...rooms, ...apps.sort(byClock)];
+  return [...chats.sort(byClock), ...rooms, ...apps.sort(byClock), ...moreApps.sort(byClock)];
 }

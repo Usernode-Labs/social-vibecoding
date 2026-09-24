@@ -572,6 +572,17 @@ async function generatePrMetadata(args) {
 //                 Used as a THEME signal: it describes intended scope (which
 //                 may run ahead of what's actually built), so the prompt
 //                 leans on requests/summaries for the concrete changes.
+//
+// A change started from an agent session (#2779) is the exception to
+// `requests`. One conversation carries several changes, and a message is
+// filed under whichever change was active when it was sent: the message
+// that asks for the NEXT change lands under this one, and the first message
+// under a new change is usually the go-ahead ("Build the spec"), not a
+// description of it. So its only request is the name the Mayor gave it at
+// start_change (`changeName`), and everything concrete comes from what is
+// this change's alone: its spec, its builds' summaries and its coding
+// agent's descriptions. `personTitle` is a title a person set themselves
+// (PATCH /api/sessions/:id/title), which applyPrMetadata keeps.
 async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDescription = null) {
   const ctx = {
     requests: [], summaries: [], descriptions: [], specs: [], linkedIssues: [], appliedIssues: [],
@@ -579,6 +590,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
     visuals: null, appliedVisuals: null,
     visualEvidenceDetail: null, appSlug: null, currentPrBody: null,
     appliedSummary: null,
+    agentSessionChange: false, changeName: null, personTitle: null,
   };
   if (pool && sessionId != null) {
     try {
@@ -634,10 +646,14 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
                 visual_evidence_detail, pr_body,
                 (SELECT slug FROM apps WHERE id = chat_sessions.app_id) AS app_slug,
                 imported_pr_head_sha, reviewed_head_sha,
-                checks_commit_sha, handoff_head_sha
+                checks_commit_sha, handoff_head_sha,
+                agent_session_id, session_title, proposed_pr_title
            FROM chat_sessions WHERE id = $1`,
         [sessionId]
       );
+      if (liveRows[0] && liveRows[0].agent_session_id != null) {
+        await agentSessionRequests(pool, sessionId, liveRows[0], ctx);
+      }
       const live = (liveRows[0] && liveRows[0].spec_md ? String(liveRows[0].spec_md) : '').trim();
       if (live) specTexts.push(live);
 
@@ -699,6 +715,36 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
   return ctx;
 }
 
+// The request of an agent-session change (see gatherSessionContext): the
+// name the Mayor gave it, as its change_started event recorded it. The
+// session_title is only the fallback, for a change started before the event
+// carried the name: it follows the PR title once the PR exists (#249), so
+// reading it back would feed the last generated title in as the request.
+async function agentSessionRequests(pool, sessionId, live, ctx) {
+  let changeName = null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT metadata->>'title' AS title FROM chat_session_messages
+        WHERE agent_session_id = $1 AND session_id IS NULL AND role = 'system'
+          AND metadata->>'agentSessionEvent' = 'change_started'
+          AND metadata->>'changeId' = $2::text
+        ORDER BY id DESC LIMIT 1`,
+      [live.agent_session_id, String(sessionId)]
+    );
+    changeName = rows[0] && typeof rows[0].title === 'string' ? rows[0].title.trim() : null;
+  } catch (err) {
+    log.warn('pr-metadata', 'Failed to read the change name', { err: err.message, sessionId });
+  }
+  changeName = changeName || String(live.session_title || '').trim() || null;
+  ctx.agentSessionChange = true;
+  ctx.changeName = changeName;
+  ctx.requests = changeName ? [changeName] : [];
+  // A title a person chose, unless it is only the Mayor's own name (a change
+  // started before start_change stopped writing it here).
+  const person = String(live.proposed_pr_title || '').trim();
+  ctx.personTitle = person && person !== changeName ? person : null;
+}
+
 // Either open a new PR with the generated title/body, or update the
 // existing PR's title/body on GitHub when it changed. Persists to DB
 // and fires a broadcast callback so connected clients update in real
@@ -740,7 +786,15 @@ async function applyPrMetadata({
     testingMd, testingPath, appliedTesting,
     visuals, appliedVisuals, appliedSummary,
     visualEvidenceDetail, appSlug, currentPrBody,
+    agentSessionChange, changeName, personTitle,
   } = await gatherSessionContext(pool, session && session.id, ccSummary, currentDescription);
+  // An agent-session change is described by itself on every path (the
+  // build, recovery, promote, the title heal): its name stands in for the
+  // message that triggered this call, and a title a person gave it wins.
+  if (agentSessionChange) {
+    if (changeName) userMessage = changeName;
+    if (!preferredTitle && personTitle) preferredTitle = personTitle;
+  }
 
   // Deterministic `Closes #N` block (#75), regenerated from the linked set
   // on every turn so it's always current and never doubled.
@@ -899,6 +953,7 @@ async function applyPrMetadata({
         branch: session.branch_name,
         title: prTitle,
         body: prBody,
+        draft: session.status === 'active' || session.status === 'paused',
       });
       session.pr_number = pr.number;
       session.pr_url = pr.html_url;

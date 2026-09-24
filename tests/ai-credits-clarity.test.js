@@ -401,5 +401,6 @@ test('?shot=credits-exhausted reaches the refusal state (#1348)', () => {
   const html = bannerHtml();
   assert.match(html, /Add API key/);
   assert.match(html, /data-credits-venue="1"/);
-  assert.equal((html.match(/<button/g) || []).length, 2);
+  // QA 2026-09-24 Q27: count the doors, not the phone's "Details" toggle.
+  assert.equal((html.match(/<button[^>]*class="dc-credits-banner-btn/g) || []).length, 2);
 });

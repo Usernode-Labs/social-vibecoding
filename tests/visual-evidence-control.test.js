@@ -75,6 +75,58 @@ test('hosted replay submission attaches accepted intent before spending a replay
   assert.deepEqual(contract.semanticIntentFromPlan(submitted), contract.parseIntent(accepted));
 });
 
+test('hosted plan submission acknowledges while replay is pending and retries are idempotent', async () => {
+  let releaseReplay;
+  const pendingReplay = new Promise((resolve) => { releaseReplay = resolve; });
+  let calls = 0;
+  const replays = [{ id: 'invite-suggestions', replay: fixtures.plan().stories[0].replay }];
+  const fullPlan = contract.replayPlanFromIntent(fixtures.intent(), replays);
+  const planHash = contract.planHash(fullPlan);
+  const control = new RunControl({
+    runId: 'f'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 10_000,
+    resetSide: async () => ({ ok: true }),
+    runPlan: async () => {
+      calls += 1;
+      await pendingReplay;
+      return { hardVerdict: { passed: true }, planHash };
+    },
+  });
+
+  assert.deepEqual(control.submitReplays(replays), {
+    accepted: true, attempt: 1, planHash, duplicate: false,
+  });
+  assert.equal(control.busy, 'replaying the submitted plan');
+  assert.deepEqual(control.submitReplays(replays), {
+    accepted: true, attempt: 1, planHash, duplicate: true,
+  });
+  assert.equal(control.planCalls, 1);
+  await assert.rejects(control.resetSide('base'), { code: 'evidence_control_busy' });
+  releaseReplay();
+  assert.equal((await control.waitForPlan()).hardVerdict.passed, true);
+  assert.equal(calls, 1);
+  assert.equal(control.latestHard.planHash, planHash);
+  assert.equal(control.busy, null);
+});
+
+test('a background replay error survives duplicate submission and is available for repair', async () => {
+  const mismatch = Object.assign(new Error('Browse matched no visible controls.'), {
+    code: 'ambiguous_locator',
+  });
+  const control = new RunControl({
+    runId: '9'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async () => { throw mismatch; },
+  });
+  const plan = fixtures.plan();
+  assert.equal(control.submitPlan(plan).accepted, true);
+  await assert.rejects(control.waitForPlan(), { code: 'ambiguous_locator' });
+  assert.equal(control.submitPlan(plan).duplicate, true);
+  assert.equal(control.lastReplayFailure.error, mismatch);
+  control.allowRepair('Inspect the actual button.', { code: 'ambiguous_locator' });
+  assert.equal(control.getContext().attempt, 2);
+});
+
 test('a rejected locator exposes the failed plan and permits one changed replay only', async () => {
   const rejected = fixtures.plan();
   const corrected = fixtures.plan();

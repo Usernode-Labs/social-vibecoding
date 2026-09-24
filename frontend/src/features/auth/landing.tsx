@@ -32,7 +32,7 @@
  *     is what the legacy module did for exactly the same reason.
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, memo, useCallback, useEffect, useRef, useState } from 'react';
 
 
 import { alertVariants } from '@/components/ui/alert';
@@ -188,13 +188,15 @@ const ViewerRegion = memo(function ViewerRegion() {
           "geolocation", delegated to every public app a visitor opened here.
           A gated capability needs a per-user grant, and this viewer serves
           signed-out visitors, so there is nobody to hold one — see
-          ../app-frame/app-frame-policy.js.
+          ../app-frame/app-frame-policy.js, and BASE_ALLOW there for why
+          `pointer-lock` is not written (QA 2026-09-24 Q35): this frame has
+          no sandbox, so pointer lock was never restricted in the first place.
       */}
       <iframe
         id="app-viewer-frame"
         className="flex-1 w-full border-0"
         title="App"
-        allow="clipboard-write; pointer-lock"
+        allow="clipboard-write"
       ></iframe>
     </div>
   );
@@ -239,7 +241,21 @@ export function LandingTile({
       }
       data-slug={app.slug || ''}
       data-gated={gated ? 'true' : 'false'}
+      // A card that opens something IS a button (#1918, #2988): in the tab
+      // order, named by the app it opens, and Enter/Space open it exactly as
+      // a tap does. The tile holds no controls of its own today, but a key
+      // that bubbled up from inside it is still not a press on the card.
+      role="button"
+      tabIndex={0}
+      aria-label={label}
       onClick={() => onOpen(app)}
+      onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(app);
+        }
+      }}
     >
       <div className="relative w-14 h-14 shrink-0">
         {app.icon_url ? (

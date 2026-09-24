@@ -154,7 +154,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, agentSessionsEnabled: false, agentSessionsChoosable: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -206,6 +206,11 @@
     _pushedFromMenu: false,
     // #settings-screen scrollTop saved on drill-in, restored on the way back.
     _menuScrollTop: 0,
+    // A deep-linked section that is registered but not offered YET (#2893):
+    // its gate resolves after the route did — the Homeroom app one waits on
+    // the native bridge. _renderNavIfOpen spends it once the gate opens,
+    // provided the address still names it. open() and close() drop it.
+    _pendingSection: null,
     _mediaBound: false,
     _socialPushStateListener: null,
     // True between an open({ chrome: false }) and the syncChrome() that
@@ -519,6 +524,13 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
+      // #2779: agent sessions, same shape again. Where new work starts is
+      // read from App.user by the entry points, so it moves with the save.
+      const agentSessionsToggle = document.getElementById('agent-sessions-enabled');
+      if (agentSessionsToggle) {
+        agentSessionsToggle.addEventListener('change', (e) => this._saveAgentSessions(e.target.checked));
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -655,6 +667,8 @@
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
+        this.state.agentSessionsEnabled = !!j.user?.agentSessionsEnabled;
+        this.state.agentSessionsChoosable = !!j.user?.agentSessionsChoosable;
         this.state.locale = j.user?.locale || null;
         this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
@@ -676,6 +690,7 @@
         // all, and it lands here too — a cold-boot deep link paints before
         // this resolves. Same reasoning as the two rows above.
         this._renderLanguageSection();
+        this._renderAgentSessionsRow();
         this._renderNavIfOpen();
       } catch {}
     },
@@ -791,10 +806,12 @@
       // visit to Settings, not once per document.
       Settings._usernodeAuthRetryUsed = false;
       Settings._ensureMediaListener();
+      Settings._pendingSection = null;
       Settings._renderAllSections();
 
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
+      Settings._notePendingSection(section, valid);
       const fallback = visible.some((s) => s.key === Settings._section)
         ? Settings._section
         : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION);
@@ -844,6 +861,7 @@
       Settings._ensureMounted();
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
+      Settings._notePendingSection(section, valid);
       const mobile = Settings._isMobile();
       // The level and section this call WOULD end on. Level 1 keeps whatever
       // section sits behind the menu, so there the level is the whole target.
@@ -985,12 +1003,33 @@
     // gate node is absent or currently un-hidden. Reading the node rather
     // than re-deriving the condition is what keeps this in step with
     // _renderWalletSection / _renderUsernodeSection / _renderAdminSection.
+    //
+    // ONE GATE IS READ FROM ITS MODEL (#2893). The Homeroom app gate is
+    // decided here, in _renderUsernodeSection, and reaches its node through
+    // usernodeSectionStore — which, unlike the nav store, commits on React's
+    // next tick rather than synchronously. On the first open of the screen in
+    // a document, open() reads the gate straight after that decision, so a
+    // deep link to #settings/usernode (the block-production challenge's
+    // button) found the node still hidden and fell back to the Settings
+    // root. `_usernodeGated` is the value the node is rendered FROM, so once
+    // it has been decided it is the truth; before that the node still is.
     _visibleSections() {
       return Settings.SECTIONS.filter((s) => {
         if (!s.gate) return true;
+        if (s.gate === 'settings-usernode-section' && typeof Settings._usernodeGated === 'boolean') {
+          return Settings._usernodeGated;
+        }
         const el = document.getElementById(s.gate);
         return !!el && !el.classList.contains('hidden');
       });
+    },
+
+    // Remember a deep link to a REGISTERED section that is not offered yet
+    // (its gate resolves later), so _renderNavIfOpen can finish the route
+    // instead of leaving the viewer on the menu. Anything else clears it.
+    _notePendingSection(section, valid) {
+      Settings._pendingSection = (!!section && !valid
+        && Settings.SECTIONS.some((s) => s.key === section && s.gate)) ? section : null;
     },
 
     // The visible sections bucketed by `group`, in first-appearance order.
@@ -1418,6 +1457,18 @@
     // menu would be missing those rows until the next navigation.
     _renderNavIfOpen() {
       if (!Settings._open) return;
+      // A deep link that arrived before its section's gate opened (#2893):
+      // finish it now, once, if the address still asks for that section —
+      // a viewer who has since moved elsewhere is not pulled back.
+      const want = Settings._pendingSection;
+      if (want && Settings._visibleSections().some((s) => s.key === want)) {
+        Settings._pendingSection = null;
+        const hash = String((typeof location !== 'undefined' && location.hash) || '');
+        if (hash === `#settings/${want}` || hash.startsWith(`#settings/${want}?`)) {
+          Settings.route(want);
+          return;
+        }
+      }
       Settings._ensureActiveGroupExpanded();
       Settings._renderNav();
       // A section that just became unavailable must not stay on screen.
@@ -1442,7 +1493,20 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
+      this._renderAgentSessionsRow();
+      const agentStatus = document.getElementById('agent-sessions-status');
+      if (agentStatus) { agentStatus.classList.add('hidden'); agentStatus.textContent = ''; }
       this._renderLocalAgentsSection();
+    },
+
+    // #2779: offered only to a user the server lets choose. Painted again by
+    // refresh(), because a cold deep link to #settings/experimental paints
+    // the pane before /api/auth/me has answered.
+    _renderAgentSessionsRow() {
+      const agentRow = document.getElementById('settings-agent-sessions-row');
+      if (agentRow) agentRow.classList.toggle('hidden', !this.state.agentSessionsChoosable);
+      const agentToggle = document.getElementById('agent-sessions-enabled');
+      if (agentToggle) agentToggle.checked = !!this.state.agentSessionsEnabled;
     },
 
     // #907: the machines currently attached to one of this account's dev
@@ -2705,6 +2769,38 @@
       }
     },
 
+    // #2779: where new work starts. The server decides who may choose (403
+    // otherwise) and answers with the effective value; a failed save puts
+    // the checkbox back, as the two toggles above do.
+    async _saveAgentSessions(enabled) {
+      const toggle = document.getElementById('agent-sessions-enabled');
+      const status = document.getElementById('agent-sessions-status');
+      const fail = (msg) => {
+        if (toggle) toggle.checked = !!this.state.agentSessionsEnabled;
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/agent-sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled: !!enabled }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return fail(j.error || 'Failed to save.');
+        this.state.agentSessionsEnabled = !!j.enabled;
+        if (toggle) toggle.checked = !!j.enabled;
+        if (typeof App !== 'undefined' && App.user) App.user.agentSessionsEnabled = !!j.enabled;
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
+    },
+
     // Show the admin-preview section only when the server reports the
     // user as a *real* admin. App._realIsAdmin is the un-masked value
     // captured in app.js before the localStorage override gets
@@ -2749,6 +2845,7 @@
     close() {
       Settings._open = false;
       Settings._pushedFromMenu = false;
+      Settings._pendingSection = null;
       const input = document.getElementById('settings-api-key');
       if (input) input.value = '';
       this._stopWalletPolling();
@@ -6226,6 +6323,16 @@
         if (window.PlatformUI) PlatformUI.toast('Request sent. An admin will release your keys');
         this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
         this._publishUsernode();
+        // #2960: the Android "Set up your device" sheet (exact alarms +
+        // unrestricted background) waits for exactly this moment. Re-run the
+        // first-run trigger now that the account has asked to produce; it
+        // re-reads the queue, and on iOS or an already-answered device it
+        // presents nothing.
+        // `force`: the user just asked, so skip the once-a-day wait.
+        if (window.NativeChrome &&
+            typeof NativeChrome.maybeShowFirstRunPermissions === 'function') {
+          NativeChrome.maybeShowFirstRunPermissions({ force: true });
+        }
       } catch (e) {
         if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
       }

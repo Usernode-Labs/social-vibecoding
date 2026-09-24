@@ -148,7 +148,7 @@ function executionDetail(execution) {
     const end = stdout.indexOf('\n', start);
     try {
       const event = JSON.parse(stdout.slice(start + EVENT_PREFIX.length, end < 0 ? undefined : end));
-      if (/^(?:started|browser_launch_started|browser_launch_completed|scratch_context_started|scratch_context_ready|viewport_started|viewport_finished|side_started|side_finished|side_failed|session_bootstrap|navigation_started|navigation_completed|action_started|action_completed|assertion_started|assertion_completed|animation_started|animation_completed)$/.test(event?.type || '')) {
+      if (/^(?:started|browser_launch_started|browser_launch_completed|scratch_context_started|scratch_context_ready|viewport_started|viewport_finished|side_started|side_finished|side_failed|session_bootstrap|navigation_started|navigation_retry|navigation_completed|action_started|action_completed|assertion_started|assertion_completed|animation_started|animation_completed)$/.test(event?.type || '')) {
         detail.lastEvent = {
           type: event.type,
           ...(typeof event.storyId === 'string' ? { storyId: event.storyId.slice(0, 96) } : {}),
@@ -156,6 +156,9 @@ function executionDetail(execution) {
           ...(['base', 'head'].includes(event.side) ? { side: event.side } : {}),
           ...(typeof event.actionId === 'string' ? { actionId: event.actionId.slice(0, 96) } : {}),
           ...(typeof event.phase === 'string' ? { phase: event.phase.slice(0, 40) } : {}),
+          ...(event.type === 'navigation_retry' && event.attempt === 2 ? { attempt: 2 } : {}),
+          ...(event.type === 'navigation_retry' && /^[a-z_]{1,40}$/.test(String(event.code || ''))
+            ? { code: event.code } : {}),
           ...(Number.isInteger(event.assertionIndex) ? { assertionIndex: event.assertionIndex } : {}),
         };
         break;
@@ -362,7 +365,7 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
     try {
       execution = await kubernetes.runEvidenceJob(config, {
         sessionId, stdinPayload: payload,
-        timeoutMs: config.visualEvidence?.maxRunMs || 720_000,
+        timeoutMs: config.visualEvidence?.maxRunMs || 1_440_000,
         maxBuffer: MAX_OUTPUT_BYTES,
         salvagePartial: true,
         onStdoutLine, signal, previewRunId,
@@ -377,7 +380,7 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
         image: require('./visuals').CAPTURE_IMAGE,
         stdinPayload: payload,
         cmd: ['node', '/app/evidence-replay.js'],
-        memory: '6g', cpus: '8', timeoutMs: config.visualEvidence?.maxRunMs || 720_000,
+        memory: '6g', cpus: '8', timeoutMs: config.visualEvidence?.maxRunMs || 1_440_000,
         maxBuffer: MAX_OUTPUT_BYTES, onStdoutLine,
       });
     } catch (err) {

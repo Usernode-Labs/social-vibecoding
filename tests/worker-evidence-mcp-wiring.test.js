@@ -10,18 +10,23 @@ const path = require('node:path');
 const workerDir = path.join(__dirname, '..', 'worker');
 const read = (name) => fs.readFileSync(path.join(workerDir, name), 'utf8');
 
-test('both evidence agent backends launch the Playwright MCP executable installed by the worker image', () => {
+test('both evidence backends launch Playwright through the content-free timing observer', () => {
   const dockerfile = read('Dockerfile');
   const claudeRunner = read('run-cc.sh');
   const codexRunner = read('run-codex-agent.sh');
-  const command = 'mcp-server-playwright';
+  const command = 'node';
 
   assert.match(dockerfile, /npm install -g @playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
   assert.match(dockerfile, /command -v mcp-server-playwright/);
   assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-evidence-browser-mcp\.js/);
+  assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-evidence-browser-auth\.js/);
   assert.match(claudeRunner, /command -v mcp-server-playwright[^\n]*\n\s*\|\| die/);
   assert.match(codexRunner, /command -v mcp-server-playwright[^\n]*\n\s*\|\| die/);
-  assert.equal((codexRunner.match(/command = "mcp-server-playwright"/g) || []).length, 2);
+  assert.match(dockerfile, /COPY evidence-browser-observer\.js \/usr\/local\/bin\/evidence-browser-observer\.js/);
+  assert.ok((codexRunner.match(/command = "node"/g) || []).length >= 2);
+  assert.equal((codexRunner.match(/evidence-browser-observer\.js/g) || []).length, 2);
+  assert.match(claudeRunner, /EVIDENCE_BROWSER_DIAGNOSTIC_FILE/);
+  assert.match(codexRunner, /EVIDENCE_BROWSER_DIAGNOSTIC_FILE/);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-config-test-'));
   try {
@@ -41,6 +46,7 @@ test('both evidence agent backends launch the Playwright MCP executable installe
       ['browser_admin', 'read_only_admin.json'],
     ]) {
       assert.equal(config.mcpServers[server].command, command);
+      assert.equal(config.mcpServers[server].args[0], '/usr/local/bin/evidence-browser-observer.js');
       assert.ok(config.mcpServers[server].args.includes(path.join(dir, 'state', state)));
       assert.ok(config.mcpServers[server].args.includes('http://base.example.invalid;http://head.example.invalid'));
       assert.ok(config.mcpServers[server].args.includes('--no-sandbox'));

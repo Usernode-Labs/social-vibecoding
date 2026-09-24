@@ -147,6 +147,19 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workerDockerfile, /@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
 });
 
+test('Kubernetes workflow retains queued releases and only publishes the current branch tip', () => {
+  const workflow = read('.github/workflows/build-kubernetes-images.yml');
+  const release = workflow.slice(workflow.indexOf('\n  release:\n'));
+  assert.match(workflow,
+    /concurrency:\n  group: kubernetes-images-\$\{\{ github\.ref \}\}\n  cancel-in-progress: false\n(?:  #[^\n]*\n)*  queue: max/,
+    'a later waiting push must not cancel an earlier merge before it gets a release run');
+  assert.match(release, /git ls-remote --exit-code origin "\$GITHUB_REF"/);
+  assert.match(release, /if \[ "\$current_sha" = "\$GITHUB_SHA" \]; then/);
+  for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Record atomic release']) {
+    assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
+  }
+});
+
 test('Kubernetes workflow asks Argo CD to refresh on publish, and can never fail the release doing so', () => {
   // The step exists to remove Argo's up-to-three-minute reconcile wait from
   // the merge-to-running gap (#2545). Its safety properties matter more than
@@ -163,7 +176,7 @@ test('Kubernetes workflow asks Argo CD to refresh on publish, and can never fail
   const body = step.slice(0, step.indexOf('- name: Record atomic release'));
   assert.match(body, /continue-on-error: true/,
     'a failed refresh must not turn a published release red — release-watch would call it a stall');
-  assert.match(body, /if: steps\.chart\.outputs\.release_channel == 'stable' && env\.ARGOCD_REFRESH_TOKEN != ''/,
+  assert.match(body, /if: steps\.current_head\.outputs\.publish == 'true' && steps\.chart\.outputs\.release_channel == 'stable' && env\.ARGOCD_REFRESH_TOKEN != ''/,
     'inert until the infra side provisions the token, and only for the releases Argo tracks');
   assert.match(release, /^    env:\n(?:      #.*\n)*      ARGOCD_REFRESH_TOKEN: \$\{\{ secrets\.ARGOCD_REFRESH_TOKEN \}\}/m,
     'the secret is mapped through job env because a step `if:` cannot read `secrets`');

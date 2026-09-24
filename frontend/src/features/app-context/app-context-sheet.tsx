@@ -123,6 +123,7 @@ import {
   ChevronRightIcon,
   InfoCircleIcon,
   PlusWideIcon,
+  SparklesIcon,
   TerminalIcon,
   XIcon,
 } from '@/components/ui/icons';
@@ -134,6 +135,11 @@ import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
+import { continueRows } from './continue-model';
+import { AgentActivityMark, AgentWorkingIcon } from '../agent-session/activity-mark';
+import { ACTIVITY_LABEL } from '../agent-session/activity';
+import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
+import { setFilter as setMessagesFilter } from '../messages/store';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
@@ -172,9 +178,11 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
  * the rest are <a>s. One fragment is what keeps "the buttons look like the
  * links" true by construction rather than by three copies staying in step.
  */
-function RowBody({ icon, label, trailing }: {
+function RowBody({ icon, label, lead, trailing }: {
   icon: ReactNode;
   label: string;
+  // A mark drawn just before the label: an agent session's state (#3013).
+  lead?: ReactNode;
   trailing?: ReactNode;
 }): ReactNode {
   return (
@@ -182,6 +190,7 @@ function RowBody({ icon, label, trailing }: {
       <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
         {icon}
       </span>
+      {lead}
       <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
       {trailing}
       <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
@@ -190,7 +199,7 @@ function RowBody({ icon, label, trailing }: {
 }
 
 function MenuRow({
-  id, href, icon, label, trailing, onClick, elRef, shipsHidden, dataContextRow,
+  id, href, icon, label, lead, trailing, onClick, elRef, shipsHidden, dataContextRow,
 }: {
   id: string;
   // Names the destination for selectors that key on it rather than on the id.
@@ -198,6 +207,7 @@ function MenuRow({
   href: string;
   icon: ReactNode;
   label: string;
+  lead?: ReactNode;
   trailing?: ReactNode;
   onClick?: (e: React.MouseEvent) => void;
   elRef?: React.Ref<HTMLAnchorElement>;
@@ -218,7 +228,7 @@ function MenuRow({
         AppContext.dismissForNav();
       }}
     >
-      <RowBody icon={icon} label={label} trailing={trailing} />
+      <RowBody icon={icon} label={label} lead={lead} trailing={trailing} />
     </a>
   );
 }
@@ -234,6 +244,7 @@ export function AppsSwitcherSheet(): ReactNode {
   const {
     slug, name, showTerminal, target, restricted,
   } = useStoreState(improveStore);
+  const { sessions: agentSessions } = useAgentSessionState();
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to workshop" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
@@ -276,6 +287,26 @@ export function AppsSwitcherSheet(): ReactNode {
   const appLabel = name || slug || 'this app';
 
   const close = useCallback(() => AppContext.close(), []);
+
+  /*
+      CONTINUE (#2779 follow-up): up to three of your agent sessions on this
+      app, below its own rows, so going back to one is a tap from anywhere,
+      each with the lists' mark (a spinner while it works, a green dot once
+      it finished unseen); then "See all sessions", Messages' Agents list.
+      The rules are ./continue-model.ts's.
+
+      AFTER MOUNT and after the list loads, never in the prerender: the rows
+      are the viewer's own data, and the hydrating render has to print what
+      the prerender printed. The conversations are read on open, for any
+      signed-in viewer, the flag or not — Messages' rule: turning agent
+      sessions off never hides a conversation that already exists.
+  */
+  useEffect(() => {
+    if (open && window.App?.user) void loadAgentSessions();
+  }, [open]);
+  const continuing = mounted && view !== 'about'
+    ? continueRows(slug || null, agentSessions || [])
+    : [];
 
 
   // Every way into an app funnels through improveStore.slug, so recording
@@ -636,6 +667,46 @@ export function AppsSwitcherSheet(): ReactNode {
           >
             <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
           </button>
+          {/*
+              CONTINUE (#2779 follow-up), BELOW the app's own rows: Go to
+              workshop, the discussion and About are this app's section, and
+              your agent sessions on it follow under their own heading. See
+              the comment on `continuing` above.
+          */}
+          {continuing.length ? (
+            <div id="app-menu-continue" data-app-menu-continue={continuing.length}>
+              <div className={SECTION}>Continue</div>
+              {continuing.map((row, index) => (
+                <MenuRow
+                  key={row.key}
+                  id={`app-menu-continue-${index}`}
+                  dataContextRow="continue-agent"
+                  href={row.href}
+                  // Working, the spinner takes the icon's place (#3028); the
+                  // icon slot is aria-hidden, so "Working" rides in the lead
+                  // as words. Finished, the dot leads the name (#3013).
+                  icon={row.activity === 'working' ? <AgentWorkingIcon /> : <SparklesIcon />}
+                  label={row.title}
+                  lead={row.activity === 'working'
+                    ? <span className="sr-only">{ACTIVITY_LABEL.working}</span>
+                    : <AgentActivityMark activity={row.activity} />}
+                  trailing={(
+                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{row.detail}</span>
+                  )}
+                />
+              ))}
+              <MenuRow
+                id="app-menu-continue-all"
+                href="#messages"
+                icon={<ChatIcon />}
+                label="See all sessions"
+                onClick={() => {
+                  setMessagesFilter('agents');
+                  AppContext.dismissForNav();
+                }}
+              />
+            </div>
+          ) : null}
           </>
           )}
         </nav>

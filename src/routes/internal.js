@@ -194,12 +194,12 @@ function internalRoutes(_config) {
     } catch (err) { return evidenceError(res, err); }
   });
 
-  router.post('/api/internal/evidence/:runId/run-plan', evidenceAuth, evidenceLimiter, async (req, res) => {
+  router.post('/api/internal/evidence/:runId/run-plan', evidenceAuth, evidenceLimiter, (req, res) => {
     try {
       const control = evidenceControlForRequest(req);
       const result = Object.hasOwn(req.body || {}, 'replays')
-        ? await control.runReplays(req.body.replays)
-        : await control.runPlan(req.body?.plan);
+        ? control.submitReplays(req.body.replays)
+        : control.submitPlan(req.body?.plan);
       return res.json({ ok: true, result });
     } catch (err) { return evidenceError(res, err); }
   });
@@ -658,10 +658,15 @@ function internalRoutes(_config) {
         return res.status(403).json({ ok: false, code: 'session_mismatch' });
       }
       try {
+        // A change an agent session is building also reads the files sent
+        // in that conversation (#2779 follow-up): those rows name the
+        // conversation, not the change (schema.sql, agent_session_id).
         const { rows } = await pool.query(
           `SELECT id, kind, filename, content_type, size_bytes, meta, created_at
              FROM chat_session_attachments
-            WHERE session_id = $1 AND message_id IS NOT NULL
+            WHERE message_id IS NOT NULL
+              AND (session_id = $1
+                   OR agent_session_id = (SELECT agent_session_id FROM chat_sessions WHERE id = $1))
             ORDER BY created_at ASC, id ASC`,
           [sessionId]
         );
@@ -708,7 +713,9 @@ function internalRoutes(_config) {
       try {
         const { rows } = await pool.query(
           `SELECT content_type, data FROM chat_session_attachments
-            WHERE id = $1 AND session_id = $2`,
+            WHERE id = $1
+              AND (session_id = $2
+                   OR agent_session_id = (SELECT agent_session_id FROM chat_sessions WHERE id = $2))`,
           [attId, sessionId]
         );
         if (!rows.length) return res.status(404).json({ ok: false, code: 'not_found' });

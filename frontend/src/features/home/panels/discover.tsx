@@ -66,7 +66,7 @@
  * a scroll cancels the press rather than competing with it.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { CheckIcon, ChevronRightIcon, PlusWideIcon } from '@/components/ui/icons';
 
@@ -141,6 +141,23 @@ function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
   </>;
 }
 
+/**
+ * Enter/Space on a focused card press it like a tap. The press is a real
+ * `click()` on the card, so it goes through the ONE activation path
+ * `Home._wireDiscoveryCards` binds (NavLink.wireModified) with every guard it
+ * already has: a demo tile or an app that is not running stays inert, and
+ * the detail page is where it lands. React only decides WHEN; Home still
+ * owns WHAT a press does. A key aimed at the card's own ⊕ or ⋯ button bubbles
+ * here too, and is that button's, not the card's — hence the target check.
+ */
+export function activateOnKey(e: KeyboardEvent<HTMLDivElement>) {
+  if (e.defaultPrevented || e.target !== e.currentTarget) return;
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    e.currentTarget.click();
+  }
+}
+
 export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: DiscoverTileView; preview?: boolean; previewTheme?: 'light' | 'dark' }) {
   const { added } = tile;
   return (
@@ -153,6 +170,16 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
       data-slug={tile.slug}
       data-status={tile.status}
       {...(tile.demo ? { 'data-demo': 'true' } : null)}
+      // A card that opens something IS a button (#1918, #2988). Everything
+      // here comes AFTER `data-slug`: tests read the card's open tag as
+      // `class="…" data-slug=…`. The preview in the illustration editor is a
+      // picture of a card, not a card, so it stays out of the tab order.
+      {...(preview ? null : {
+        role: 'button',
+        tabIndex: 0,
+        'aria-label': tile.name,
+        onKeyDown: activateOnKey,
+      })}
     >
       <div className="home-discover-art relative">
         <IllustrationArt key={`${tile.illustration?.url}:${tile.illustration?.darkUrl}`} tile={tile} />
@@ -160,7 +187,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
-          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
+          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors un-touch-target ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
@@ -192,8 +219,10 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
             {tile.blurb}
           </span>
         ) : null}
+        {/* zinc-600, the blurb's ink (QA 2026-09-24 Q20): zinc-500 is under
+            4.5:1 on two of the five pastel tints (4.39 and 4.36). */}
         {tile.contributors ? (
-          <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-500 dark:text-zinc-400">
+          <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-600 dark:text-zinc-400">
             {tile.contributors === 1 ? '1 contributor' : `${tile.contributors} contributors`}
           </span>
         ) : null}

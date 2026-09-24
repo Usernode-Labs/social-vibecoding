@@ -80,6 +80,7 @@ async function migrate(config) {
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
+  await seedStagingAgentSession(pool, config);
   await seedStagingSavedDrafts(pool, config);
   await seedStagingDraftDelete(pool, config);
   await seedStagingVenueLine(pool, config);
@@ -2801,6 +2802,225 @@ async function seedStagingStartScreenSession(pool, config) {
     sessionId: STAGING_START_SCREEN_SESSION_ID,
     inserted: rowCount,
   });
+}
+
+// #2779: an agent session for the declared checks to open.
+//
+// A conversation with the Mayor, owned by the check viewer, focused on the
+// platform app, with one change started from it and one confirmation card
+// still waiting: the four things the conversation screen draws that a
+// staging clone has none of (agent_sessions, agent_session_actions and
+// chat_sessions are all staging:private). Checks load it at #agent/990801,
+// #agent/990801/changes and #messages/agent/990801.
+//
+// The change also carries what a coding agent leaves in the conversation:
+// a scout run on Codex, the spec it drafted (two saved versions, so the spec
+// viewer has one to switch to) and a build run with its summary. They are the
+// rows the platform writes for a real run, content and metadata alike, so
+// the screen folds them exactly as it folds a real one.
+//
+// The card can never run: its sealed input is a placeholder that fails the
+// fingerprint check, so a Confirm pressed on staging reports that it could
+// not go through. Its expiry is pushed forward on every boot so the card
+// stays pending for as long as the preview lives. The transcript rows are
+// written once. The viewer's agent-sessions flag is NOT turned on, so every
+// classic flow the other checks load is unchanged.
+//
+// Idempotent on the ids; strict no-op in production.
+const STAGING_AGENT_SESSION_ID = 990801;
+const STAGING_AGENT_CHANGE_ID = 990802;
+const STAGING_AGENT_CARD_ID = '99080100-0000-4000-8000-000000000001';
+// In the two halves every scout spec is written in (routes/sessions.js), so
+// the viewer shows its User-facing and Technical tabs.
+const STAGING_AGENT_SPEC = [
+  '# Dark mode for the dev board',
+  '',
+  'A toggle in the dev board header switches the board between light and dark.',
+  '',
+  '## User-facing changes',
+  '- A sun and moon toggle sits beside the view switcher at the top of the dev board.',
+  '- Tapping it switches the board between light and dark, and the board remembers your choice.',
+  '',
+  '## Technical implementation',
+  '- Add the toggle beside the view switcher.',
+  '- Keep the choice per viewer.',
+  '- Reuse the platform theme tokens; no new colours.',
+].join('\n');
+
+// The rows a scout run and a build run write on the change, in order.
+function stagingAgentRunRows() {
+  const codex = { agentBackend: 'codex_openrouter', agentModel: 'z-ai/glm-5.3-flash' };
+  return [
+    ['system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex],
+    ['system', 'Scout reading the codebase...', codex],
+    ['system', 'Claude Code progress', { progressLog: ['Reading the dev board header', 'Reading the theme tokens', 'Drafting the spec'], ...codex }],
+    ['system', `Scout drafted a ${STAGING_AGENT_SPEC.split('\n').length}-line spec from the codebase.`, {
+      specPreview: STAGING_AGENT_SPEC.slice(0, 200), specLines: STAGING_AGENT_SPEC.split('\n').length,
+      scoutOutput: STAGING_AGENT_SPEC, specVersion: 2, durationMs: 81000, ...codex,
+    }],
+    ['system', 'Starting OpenRouter (z-ai/glm-5.3-flash)...', codex],
+    ['system', 'OpenRouter is running...', codex],
+    ['system', 'Claude Code progress', { progressLog: ['Editing the dev board header', 'Adding the theme toggle', 'Running the tests'], ...codex }],
+    ['system', 'OpenRouter finished', {
+      ccOutput: 'Added a dark mode toggle to the dev board header:\n- it switches the board between light and dark\n- the choice is kept per viewer',
+      ccOutcome: 'success', durationMs: 242000, ...codex,
+    }],
+  ];
+}
+
+async function seedStagingAgentRuns(pool) {
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, built_at)
+     VALUES ($1, 1, $2, NOW() - INTERVAL '4 minutes'), ($1, 2, $3, NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (session_id, version) DO UPDATE SET content = EXCLUDED.content`,
+    [STAGING_AGENT_CHANGE_ID, '# Dark mode for the dev board\n\nFirst draft: a toggle in the header.', STAGING_AGENT_SPEC]
+  );
+  await pool.query('UPDATE chat_sessions SET spec_md = $2 WHERE id = $1', [STAGING_AGENT_CHANGE_ID, STAGING_AGENT_SPEC]);
+  const { rows } = await pool.query(
+    `SELECT 1 FROM chat_session_messages WHERE session_id = $1 AND metadata ? 'specVersion' LIMIT 1`,
+    [STAGING_AGENT_CHANGE_ID]
+  );
+  if (rows.length) return;
+  const runRows = stagingAgentRunRows();
+  for (const [index, [role, content, metadata]] of runRows.entries()) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - make_interval(secs => $6))`,
+      [STAGING_AGENT_CHANGE_ID, STAGING_AGENT_SESSION_ID, role, content, JSON.stringify(metadata),
+        230 - index * 5]
+    );
+  }
+}
+
+async function seedStagingAgentSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { rows: appRows } = await pool.query('SELECT id, name FROM apps WHERE slug = $1', [config.selfAppSlug]);
+  const app = appRows[0];
+  if (!app) {
+    log.warn('db', 'Staging agent-session fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+  const owner = await getStagingCheckViewer(pool, 'Staging agent-session fixture');
+  if (!owner) return;
+
+  await pool.query(
+    `INSERT INTO agent_sessions (id, user_id, title, title_source, status, focus_app_id, focus_context,
+                                 last_activity_at, created_at)
+     VALUES ($1, $2, '[staging fixture] Dark mode for the dev board', 'manual', 'open', $3,
+             '{"entry":"improve"}'::jsonb, NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '5 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, status = 'open', archived_at = NULL,
+                                    focus_app_id = EXCLUDED.focus_app_id`,
+    [STAGING_AGENT_SESSION_ID, owner.id, app.id]
+  );
+  await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, session_title, status, agent_session_id, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/agent-session', '[staging fixture] Dark mode toggle', 'active', $4,
+             NOW() - INTERVAL '4 minutes', NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, agent_session_id = EXCLUDED.agent_session_id`,
+    [STAGING_AGENT_CHANGE_ID, app.id, owner.id, STAGING_AGENT_SESSION_ID]
+  );
+  await pool.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1', [STAGING_AGENT_SESSION_ID, STAGING_AGENT_CHANGE_ID]);
+
+  const card = {
+    id: STAGING_AGENT_CARD_ID,
+    toolName: 'promote_change',
+    title: 'Put the change up for the group vote',
+    input: { changeId: STAGING_AGENT_CHANGE_ID },
+    expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+  };
+  await pool.query(
+    `INSERT INTO agent_session_actions (id, agent_session_id, user_id, tool_name, sealed_input, input_hash,
+                                        status, expires_at, created_at)
+     VALUES ($1, $2, $3, 'promote_change', '{"version":1,"ciphertext":"staging-fixture"}'::jsonb, $4,
+             'pending', NOW() + INTERVAL '30 days', NOW() - INTERVAL '1 minute')
+     ON CONFLICT (id) DO UPDATE SET status = 'pending', result = NULL, decided_at = NULL,
+                                    expires_at = EXCLUDED.expires_at, created_at = EXCLUDED.created_at`,
+    [STAGING_AGENT_CARD_ID, STAGING_AGENT_SESSION_ID, owner.id, '0'.repeat(64)]
+  );
+
+  const { rows: existing } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE agent_session_id = $1 LIMIT 1',
+    [STAGING_AGENT_SESSION_ID]
+  );
+  if (!existing.length) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES (NULL, $1, 'user', 'Add a dark mode toggle to the dev board.', '{}'::jsonb, NOW() - INTERVAL '5 minutes'),
+              (NULL, $1, 'system', $2, '{"agentSessionEvent":"change_started"}'::jsonb, NOW() - INTERVAL '4 minutes')`,
+      [STAGING_AGENT_SESSION_ID, `Started a change on ${app.name || 'Homeroom'}: Dark mode toggle`]
+    );
+    await seedStagingAgentRuns(pool);
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES ($2, $1, 'assistant', 'The change is built. When the preview looks right, confirm the card and I will put it up for the vote.',
+               $3::jsonb, NOW() - INTERVAL '3 minutes')`,
+      [STAGING_AGENT_SESSION_ID, STAGING_AGENT_CHANGE_ID, JSON.stringify({ confirmations: [card] })]
+    );
+  } else {
+    // A preview seeded before the runs were: add them (after the rows it has).
+    await seedStagingAgentRuns(pool);
+    // Keep the card's shown expiry in step with the row's.
+    await pool.query(
+      `UPDATE chat_session_messages SET metadata = $2::jsonb
+        WHERE agent_session_id = $1 AND role = 'assistant' AND metadata ? 'confirmations'`,
+      [STAGING_AGENT_SESSION_ID, JSON.stringify({ confirmations: [card] })]
+    );
+  }
+  await seedStagingAgentBuilds(pool);
+  await seedStagingAgentComposer(pool, owner.id);
+  log.info('db', 'Staging agent-session fixture seeded', {
+    owner: owner.username, agentSessionId: STAGING_AGENT_SESSION_ID, changeId: STAGING_AGENT_CHANGE_ID,
+  });
+}
+
+// The change's staging builds, as cards (#2779 follow-up): one that failed,
+// then one that deployed, written as a real build writes them, so the
+// conversation shows a superseded card and a live one. The address is a
+// fixture's (.invalid never resolves): Open preview asks the platform for
+// this change's preview, which says it is not running. Added once, and to a
+// preview seeded before this.
+const STAGING_AGENT_PREVIEW_URL = 'https://staging-fixture-preview.invalid';
+
+async function seedStagingAgentBuilds(pool) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM chat_session_messages
+      WHERE session_id = $1 AND (metadata ? 'stagingUrl' OR metadata ? 'stagingFailed')
+      LIMIT 1`,
+    [STAGING_AGENT_CHANGE_ID]
+  );
+  if (rows.length) return;
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+     VALUES ($1, $2, 'system', 'Staging build failed', $3::jsonb, NOW() - INTERVAL '170 seconds'),
+            ($1, $2, 'system', 'Staging deployed!', $4::jsonb, NOW() - INTERVAL '165 seconds')`,
+    [
+      STAGING_AGENT_CHANGE_ID,
+      STAGING_AGENT_SESSION_ID,
+      JSON.stringify({ stagingFailed: true, changesReady: true, error: 'npm ci exited with code 1 (staging fixture)', prNumber: null }),
+      JSON.stringify({ stagingUrl: STAGING_AGENT_PREVIEW_URL, prNumber: null }),
+    ]
+  );
+}
+
+// What the composer and the Mayor's replies show (#2779 follow-up): one saved
+// draft, so the list above the message box has a row (sending it would start
+// a real turn, so a check only reads it), and what the Mayor's reply cost, so
+// its "reply $0.012" label has a figure. Both idempotent.
+const STAGING_AGENT_DRAFT_ID = 'dstagingfixture1';
+
+async function seedStagingAgentComposer(pool, ownerId) {
+  await pool.query(
+    `INSERT INTO agent_session_drafts (agent_session_id, user_id, draft_id, content, saved_at)
+     VALUES ($1, $2, $3, $4, NOW() - INTERVAL '2 minutes')
+     ON CONFLICT (agent_session_id, draft_id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [STAGING_AGENT_SESSION_ID, ownerId, STAGING_AGENT_DRAFT_ID, 'Also keep the choice when I switch devices.']
+  );
+  await pool.query(
+    `UPDATE chat_session_messages SET cost_cents = 1.2
+      WHERE agent_session_id = $1 AND role = 'assistant' AND COALESCE(cost_cents, 0) = 0`,
+    [STAGING_AGENT_SESSION_ID]
+  );
 }
 
 // #1350: a session with NO BRANCH at all.

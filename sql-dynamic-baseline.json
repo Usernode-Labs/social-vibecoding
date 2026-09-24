@@ -165,10 +165,10 @@
     },
     {
       "source": "src/routes/chat.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "a8b771920b8319e47251",
+      "kind": "structural-template",
+      "fingerprint": "a8088914fba97dc374b7",
       "count": 1,
-      "preview": "query"
+      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at FROM "
     },
     {
       "source": "src/routes/cli-auth.js",
@@ -369,9 +369,9 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "7674fd3d848f4fdabba1",
+      "fingerprint": "6e15f5a9e6dc781720b1",
       "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, ${allTotalSql} AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) ):"
+      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, ${allTotalSql} AS all_total, ${allDoneSql} AS all_done, COUNT(*) FILTER ( WHERE ${scopeFilter} AND"
     },
     {
       "source": "src/routes/kudos.js",
@@ -740,6 +740,20 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "157017d7b5984923ede2",
+      "count": 1,
+      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.status = 'merged' ${prCursorSql} ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC LIMIT $${prPa"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "163c479c8f47bcec0d9e",
+      "count": 1,
+      "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, COALESCE((i.payload->>'appliedAt')::timest"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "3474bc02c4800e84c12b",
       "count": 1,
       "preview": "`SELECT pv.vote, pv.reason, u.username, pv.user_id, ${currentVotePredicateSql('pv', 'cs')} AS current FROM pr_votes pv JOIN users u ON pv.user_id = u.id JOIN ch"
@@ -757,20 +771,6 @@
       "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
       "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "760e6c035395e025ef99",
-      "count": 1,
-      "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, u.username AS created_by_username, (SELECT"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "8d15b399d44cb045f6a6",
-      "count": 1,
-      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.status = 'merged' ${prCursorSql} ORDER BY cs.created_at DESC, cs.id DESC LIMIT $${prParams.length}`"
     },
     {
       "source": "src/routes/votes.js",
@@ -841,13 +841,6 @@
       "fingerprint": "4ec7c53222c8a758c722",
       "count": 1,
       "preview": "sql"
-    },
-    {
-      "source": "src/services/conversations.js",
-      "kind": "structural-template",
-      "fingerprint": "13c2b3cb224c4420675a",
-      "count": 1,
-      "preview": "`${MESSAGE_SELECT} WHERE m.conversation_id = $1 ${beforeSql} AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sende"
     },
     {
       "source": "src/services/conversations.js",
@@ -992,7 +985,14 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "4b91f922756499412a0f",
+      "fingerprint": "14bc9ec7c4bde86c6783",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "91df73aa6c2d685889c8",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
@@ -1020,6 +1020,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "bf3729bc3cdae40f61c7",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "cf837b937e37a4415dce",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind) SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind FROM"
@@ -1027,23 +1034,9 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "e62b89e44e4fa49ef857",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
       "fingerprint": "eb68b3940172c1cd1033",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "ee4689e980fe324049b7",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
     },
     {
       "source": "src/services/platform-env-check.js",

@@ -15,6 +15,8 @@
 // you; `detail` carries the version number as a string). Actionable managed
 // OpenRouter failures use openrouter_key_review; openrouter_key_created is a
 // historical render-only kind now that successful issuance is routine.
+// #2387 adds 'thread_reply': a reply in an app-chat reply thread you started
+// or replied in (chat_message_id is the reply; its thread_ref the root).
 
 const log = require('./logger');
 const usernames = require('./usernames');
@@ -35,6 +37,8 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  // #2387: a reply in a thread you started or replied in.
+  'conversation_thread_reply',
 ]);
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
@@ -92,6 +96,20 @@ const CHAT_SENDER_ACCESS_SQL = `(
        AND blocked.blocked_user_id = n.source_user_id
   )
 )`;
+
+// #2386: the two friend kinds. A friend_request row carries Accept / Decline
+// only while it still ASKS something — the same sender's request to this
+// recipient is still pending — so that is read live off `friendships` rather
+// than remembered on the row: a request withdrawn, answered elsewhere or
+// ended by a block stops offering buttons at once. FALSE for every other kind.
+const FRIEND_NOTIFICATION_KINDS = new Set(['friend_request', 'friend_accept']);
+const FRIEND_REQUEST_PENDING_SQL = `(n.kind = 'friend_request' AND EXISTS (
+  SELECT 1 FROM friendships pending_friend
+   WHERE pending_friend.user_low_id = LEAST(n.user_id, n.source_user_id)
+     AND pending_friend.user_high_id = GREATEST(n.user_id, n.source_user_id)
+     AND pending_friend.requester_id = n.source_user_id
+     AND pending_friend.status = 'pending'
+))`;
 
 function parseMentions(text) {
   if (!text || typeof text !== 'string') return [];
@@ -192,6 +210,62 @@ async function createReplyNotification(pool, { appId, replyMessageId, senderId, 
       )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     [recipientId, appId, replyMessageId, senderId]
+  );
+  return rows;
+}
+
+// #2387: a reply in an app-chat reply thread (chat_messages thread_type
+// 'message', thread_ref = the root). Addressed to the root's author and to
+// everybody who replied earlier, minus:
+//   * the sender;
+//   * `excludeUserIds` — the people this same message already reached with a
+//     more specific row (a 'mention', or a 'reply' for a quote). One row per
+//     person per message, and the specific one wins;
+//   * anybody blocked either way, and on a collab-private app anybody who is
+//     no longer a member (their row would deep-link to a chat they cannot
+//     read — filterToCollaborators, as for mentions);
+//   * anybody who switched this app's "Replies to you" category off
+//     (notification-preferences.js `thread_replies`, which gates this kind
+//     alongside the quote-reply `reply` kind).
+// Earlier repliers are read from live (non-deleted) replies: deleting your
+// reply is the one way to step out of a thread.
+async function createThreadReplyNotifications(pool, {
+  appId, replyMessageId, rootId, senderId, excludeUserIds = [],
+}) {
+  if (!appId || !replyMessageId || !rootId) return [];
+  const { rows: candidates } = await pool.query(
+    `SELECT root.user_id
+       FROM chat_messages root
+      WHERE root.id = $1 AND root.app_id = $2 AND root.user_id IS NOT NULL
+     UNION
+     SELECT earlier.user_id
+       FROM chat_messages earlier
+      WHERE earlier.app_id = $2 AND earlier.thread_type = 'message'
+        AND earlier.thread_ref = $1 AND earlier.id < $3
+        AND earlier.user_id IS NOT NULL AND earlier.deleted_at IS NULL`,
+    [rootId, appId, replyMessageId]
+  );
+  const skip = new Set([senderId, ...excludeUserIds].map(Number));
+  let ids = [...new Set(candidates.map((r) => Number(r.user_id)))]
+    .filter((id) => Number.isInteger(id) && !skip.has(id));
+  if (!ids.length) return [];
+  ids = await filterToCollaborators(pool, appId, ids);
+  if (!ids.length) return [];
+  ids = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: ids, appId, categoryKey: 'thread_replies',
+  });
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
+     SELECT recipient, $2, $3, $4, 'thread_reply'
+       FROM UNNEST($1::int[]) AS recipient
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE (blocked.blocker_id = recipient AND blocked.blocked_user_id = $4)
+            OR (blocked.blocker_id = $4 AND blocked.blocked_user_id = recipient)
+      )
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
+    [ids, appId, replyMessageId, senderId]
   );
   return rows;
 }
@@ -654,11 +728,15 @@ async function hydrateAndPush(pool, row) {
               cm.thread_type, cm.thread_ref,
               n.session_id,
               cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+              cs.agent_session_id,
               n.conversation_id, c.kind AS conversation_kind,
               c.title AS conversation_title,
               n.conversation_message_id,
               conversation_message.content AS conversation_message_content,
+              conversation_message.thread_root_id AS conversation_thread_root_id,
               su.username AS source_username,
+              n.source_user_id,
+              ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
               n.detail,
               pv.reason AS vote_reason
        FROM notifications n
@@ -983,11 +1061,15 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
+            conversation_message.thread_root_id AS conversation_thread_root_id,
             su.username AS source_username,
+            n.source_user_id,
+            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
             n.detail,
             pv.reason AS vote_reason
      FROM notifications n
@@ -1021,11 +1103,15 @@ async function getForUser(pool, userId, id) {
             cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
+            conversation_message.thread_root_id AS conversation_thread_root_id,
             su.username AS source_username,
+            n.source_user_id,
+            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
             n.detail,
             pv.reason AS vote_reason
        FROM notifications n
@@ -1079,7 +1165,9 @@ const ACTION_COMPLETIONS = {
   // #1688: a vote also answers the re-confirm ask for that proposal — the
   // row's "Still yes" is a vote, and so is a plain Yes or No on the card.
   vote_cast: { kinds: ['pr_proposed', 'stale_pr', 'revision_recheck'], scope: 'session_id' },
-  message_sent: { kinds: ['mention', 'reply', 'reaction'], scope: 'app_id' },
+  // #2387: 'thread_reply' is a chat-actionable kind like the other three —
+  // posting in the app clears it, and it lights the message's unread dot.
+  message_sent: { kinds: ['mention', 'reply', 'reaction', 'thread_reply'], scope: 'app_id' },
   // #161: opening a dev session is the canonical "user saw it" signal —
   // it resolves that session's completion notification even when the
   // user navigated there on their own. Triggered in GET /api/sessions/:id.
@@ -1119,6 +1207,23 @@ async function markReadForAction(pool, userId, action, scopeId) {
         SET read_at = NOW()
       WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`,
     [userId, scopeId, def.kinds]
+  );
+  return rowCount || 0;
+}
+
+// #2779: an agent session's changes finish into the bell as session_done
+// rows, and they are worked on in the conversation, not on a dev chat of
+// their own — so opening the conversation is the "user saw it" signal for
+// every one of them, the way opening a dev session is for its own.
+async function markReadForAgentSession(pool, userId, agentSessionId) {
+  if (!userId || !agentSessionId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications n
+        SET read_at = NOW()
+       FROM chat_sessions cs
+      WHERE n.user_id = $1 AND n.kind = 'session_done' AND n.read_at IS NULL
+        AND n.session_id = cs.id AND cs.agent_session_id = $2`,
+    [userId, agentSessionId]
   );
   return rowCount || 0;
 }
@@ -1238,6 +1343,28 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
   return rowCount || 0;
 }
 
+// App-chat kinds whose row is about ONE message, and so has a Messages
+// address of its own (#2387).
+const APP_CHAT_MESSAGE_KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
+
+// Where an app-chat message notification opens, in the client's Messages
+// addresses: a reply-thread message opens its thread
+// (`#messages/app/<slug>/thread/<rootId>`), a general-stream message opens
+// on the message (`#messages/app/<slug>/m/<messageId>`). A topic-thread
+// message (issue / proposal / governance) and every other kind answer null,
+// and the client keeps routing those as it always has.
+function notificationHref(row) {
+  if (!row || !APP_CHAT_MESSAGE_KINDS.has(row.kind) || !row.app_slug) return null;
+  const slug = encodeURIComponent(row.app_slug);
+  if (row.thread_type === 'message' && row.thread_ref != null) {
+    return `#messages/app/${slug}/thread/${Number(row.thread_ref)}`;
+  }
+  if (!row.thread_type && row.chat_message_id != null) {
+    return `#messages/app/${slug}/m/${Number(row.chat_message_id)}`;
+  }
+  return null;
+}
+
 // Decorate a raw notification row with the fields the client dropdown wants.
 // Keeps the wire format identical whether the notif is fresh (over WS) or
 // loaded from history (`GET /api/notifications`).
@@ -1264,6 +1391,9 @@ function serialize(row) {
     conversationKind: isConversation ? (row.conversation_kind || null) : null,
     conversationTitle: isConversation ? (row.conversation_title || null) : null,
     conversationMessageId: isConversation ? row.conversation_message_id : null,
+    // #2387: the thread the referenced message sits in (null: the main
+    // stream). A thread alert opens #messages/<id>/thread/<root>.
+    conversationThreadRootId: isConversation ? (row.conversation_thread_root_id ?? null) : null,
     messageContent: isConversation
       ? (row.conversation_message_content ?? null)
       : row.message_content,
@@ -1284,6 +1414,9 @@ function serialize(row) {
     // session has neither a session title nor a PR title yet.
     headlessIssueNumber: isConversation ? null : row.headless_issue_number,
     branchName: isConversation ? null : row.branch_name,
+    // #2779: the agent session a change was started from, so its completion
+    // opens the conversation it is worked on in.
+    agentSessionId: isConversation ? null : (row.agent_session_id || null),
     sourceUsername: row.source_username,
     detail: row.detail,
     // #1688: the line the voter left with their vote, read LIVE off their
@@ -1291,6 +1424,14 @@ function serialize(row) {
     // edit of the line shows here without a second notification). Only the
     // vote row has a voter to read it from.
     voteReason: row.kind === 'proposal_vote' ? (row.vote_reason || null) : null,
+    // #2387: the Messages address this row opens, when it has one.
+    href: isConversation ? null : notificationHref(row),
+    // #2386: who to answer, and whether there is still a question. Only on
+    // the two friend kinds, so every other row's shape is unchanged.
+    ...(FRIEND_NOTIFICATION_KINDS.has(row.kind) ? {
+      sourceUserId: row.source_user_id || null,
+      friendRequestPending: row.kind === 'friend_request' && !!row.friend_request_pending,
+    } : {}),
   };
 }
 
@@ -1299,6 +1440,7 @@ module.exports = {
   resolveUsers,
   createMentionNotifications,
   createReplyNotification,
+  createThreadReplyNotifications,
   createReactionNotification,
   createStalePrNotification,
   createIssueOpenedNotifications,
@@ -1332,12 +1474,16 @@ module.exports = {
   markRead,
   markReadForSession,
   markReadForAction,
+  markReadForAgentSession,
   markReadForApp,
   markReadForConversation,
   markReadForMessage,
   unreadMessageIdsForUser,
   ACTION_COMPLETIONS,
   CONVERSATION_NOTIFICATION_KINDS,
+  APP_CHAT_MESSAGE_KINDS,
+  notificationHref,
+  FRIEND_NOTIFICATION_KINDS,
   serialize,
 };
 

@@ -1236,15 +1236,18 @@ function stagingMockCompletedCloseIssues() {
   ];
 }
 
-// Global ordering for the unified Completed stream: newest created_at
+// Global ordering for the unified Completed stream: newest completion
 // first; on a timestamp tie PR rows rank before close-issue rows (rank
 // pr=1 > close_issue=0 — the same constant ranks the SQL keyset
 // predicates encode), then id DESC. Deterministic even across the two
 // id sequences (chat_sessions vs issues), which can collide numerically.
 const COMPLETED_TYPE_RANK = { pr: 1, close_issue: 0 };
+function completedAt(row) {
+  return row.completed_at || row.merged_at || row.payload?.appliedAt || row.closed_at || row.created_at;
+}
 function completedRowCompare(a, b) {
-  const ta = Date.parse(a.created_at) || 0;
-  const tb = Date.parse(b.created_at) || 0;
+  const ta = new Date(completedAt(a)).getTime() || 0;
+  const tb = new Date(completedAt(b)).getTime() || 0;
   if (tb !== ta) return tb - ta;
   const ra = COMPLETED_TYPE_RANK[a.row_type || 'pr'] ?? 1;
   const rb = COMPLETED_TYPE_RANK[b.row_type || 'pr'] ?? 1;
@@ -2021,7 +2024,11 @@ function mergedRowSelect() {
            -- merged before the column existed — consumers must keep the
            -- created_at fallback forever.
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
+           COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
+           -- #2779: the agent session the change was started from. Only its
+           -- id: the conversation itself answers to its owner alone.
+           cs.agent_session_id,
            -- Transcript sharing: true when this proposal's owner published
            -- the dev chat that produced it, so the proposal page can offer
            -- "Read the dev chat". A boolean only — the transcript itself is
@@ -2216,10 +2223,10 @@ function voteRoutes(config) {
         }
       }
 
-      // #183 lazy PR creation: sessions cloned from a headless auto run
-      // arrive here without a PR (the headless contract defers it). Create
-      // it now on THIS session's branch — the clone's, never the auto
-      // branch — so the vote has something to merge. applyPrMetadata reads
+      // Lazy PR recovery: older clones and sessions whose earlier draft
+      // creation failed can arrive here without a PR. Create it on THIS
+      // session's branch — never the unattended auto branch — so the vote
+      // has something to merge. applyPrMetadata reads
       // the clone's copied history via gatherSessionContext, so the PR
       // title/body get the full auto-session context.
       //
@@ -2228,10 +2235,19 @@ function voteRoutes(config) {
       // promotion without a generated title, and a NULL pr_title would
       // otherwise render as "Change by <user>" forever. Backfilling it
       // here updates both GitHub and pr_title/session_title.
-      if (!session.pr_number || !session.pr_title) {
+      //
+      // And for a change an agent session started (#2779), always: this is
+      // the moment the group starts reading it, so its title and description
+      // are written again from the change as it now stands (its name, spec
+      // and every build's summary; pr-metadata's gatherSessionContext), not
+      // left as the first build described it. A title a person set is kept.
+      // Best-effort like the backfill: it never blocks the promotion.
+      const refreshAtSubmission = session.agent_session_id != null && !!session.pr_number;
+      if (!session.pr_number || !session.pr_title || refreshAtSubmission) {
         // Distinguish creating a PR (no pr_number → a failure must block
         // promotion) from merely backfilling a missing title on an
-        // existing PR (best-effort — never block promotion on it).
+        // existing PR, or refreshing one (best-effort — never block
+        // promotion on it).
         const isBackfill = !!session.pr_number;
         const { rows: msgRows } = await pool.query(
           `SELECT content FROM chat_session_messages
@@ -2326,6 +2342,8 @@ function voteRoutes(config) {
       // head), refuse the promote with an actionable error instead of
       // minting a doomed proposal.
       let promotedHeadSha = null;
+      let nativePrForReview = null;
+      let nativePrRepo = null;
       if (github.isEnabled() && session.repo_url && session.pr_number) {
         const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
         if (!owner || !repo) {
@@ -2397,24 +2415,12 @@ function voteRoutes(config) {
             });
           }
 
-          // Native proposals are platform-owned drafts, so crossing the local
-          // review boundary also marks them ready on GitHub. Imported PRs are
-          // externally owned: promotion changes only Homeroom's local state
-          // and must not publish an external author's draft.
+          // Defer GitHub's draft transition until the status CAS succeeds.
+          // Otherwise a concurrent pause/archive could leave a ready PR on
+          // an Underway session that never entered review.
           if (!imported) {
-            try {
-              // octokit.request rather than .rest.pulls.update —
-              // @octokit/app's installation Octokit is a bare core
-              // instance without the rest-endpoint-methods plugin, so
-              // .rest is undefined.
-              const octokit = await github.getInstallationOctokit(owner);
-              await octokit.request(
-                'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
-                { owner, repo, pull_number: session.pr_number, draft: false }
-              );
-            } catch (err) {
-              log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
-            }
+            nativePrForReview = pr;
+            nativePrRepo = { owner, repo };
           }
         }
       }
@@ -2435,6 +2441,42 @@ function voteRoutes(config) {
       );
       if (!promoted.rowCount) {
         return res.status(409).json({ error: 'session_state_changed' });
+      }
+      // Imported PRs retain the external author's GitHub state. For native
+      // drafts, confirm GitHub's supported ready-for-review mutation before
+      // announcing the vote. On failure, restore the pre-review row so a
+      // retry can complete the same transition.
+      if (nativePrRepo) {
+        try {
+          await github.markPrReadyForReview(
+            nativePrRepo.owner, nativePrRepo.repo, session.pr_number, nativePrForReview
+          );
+        } catch (err) {
+          const rolledBack = await pool.query(
+            `UPDATE chat_sessions SET status = $1, promoted_at = $2,
+                    stale_notified_at = $3, reviewed_head_sha = $4
+              WHERE id = $5 AND status = 'promoted' AND reviewed_head_sha IS NOT DISTINCT FROM $6`,
+            [session.status, session.promoted_at || null, session.stale_notified_at || null,
+              session.reviewed_head_sha || null, session.id, promotedHeadSha]
+          ).catch((rollbackErr) => {
+            log.error('votes', 'Failed to restore session after GitHub draft transition', {
+              sessionId: session.id, err: rollbackErr.message,
+            });
+            return null;
+          });
+          log.warn('votes', 'Failed to mark PR ready on GitHub', {
+            sessionId: session.id, pr: session.pr_number, err: err.message,
+            restored: !!rolledBack?.rowCount,
+          });
+          if (!rolledBack?.rowCount) {
+            return res.status(503).json({
+              error: 'GitHub could not mark the pull request ready, and Homeroom could not restore the change to Underway. Check its current status before retrying.',
+            });
+          }
+          return res.status(503).json({
+            error: 'GitHub could not mark the draft pull request ready for review. The change is still underway; try promoting it again shortly.',
+          });
+        }
       }
       if (promotedHeadSha) {
         if (imported) session.imported_pr_head_sha = promotedHeadSha;
@@ -4149,25 +4191,25 @@ function voteRoutes(config) {
 
       // #429: keyset pagination so the Completed list can reach every
       // merged PR, not just the most-recent page. `limit` defaults to 20
-      // (the historical cap) and is clamped to 50. `before` + `before_id`
-      // form the cursor — the (created_at, id) of the last row the client
+      // (the historical cap) and is clamped to 50. `before_completed_at` + `before_id`
+      // form the cursor — the (completed_at, id) of the last row the client
       // already has — and we page strictly older than it. Keyset (not
       // OFFSET) because new merges insert at the top and would otherwise
-      // drift the offset. created_at isn't unique, so id is the tiebreaker.
+      // drift the offset. completed_at isn't unique, so id is the tiebreaker.
       //
       // The stream now interleaves TWO row types (merged PR sessions and
       // applied close-issue proposals — see below), whose ids come from
       // independent sequences, so the cursor carries a third part:
       // `before_type` ('pr' | 'close_issue', defaulting to 'pr' so older
-      // clients keep paging PRs exactly as before). Global order is
-      // (created_at DESC, type-rank DESC, id DESC) with rank pr=1 >
+      // clients can still omit the row type). Global order is
+      // (completed_at DESC, type-rank DESC, id DESC) with rank pr=1 >
       // close_issue=0 — see completedRowCompare.
       let limit = parseInt(req.query.limit, 10);
       if (!Number.isFinite(limit) || limit < 1) limit = 20;
       if (limit > 50) limit = 50;
-      const beforeRaw = req.query.before;
+      const beforeRaw = req.query.before_completed_at ?? req.query.before;
       const beforeIdRaw = parseInt(req.query.before_id, 10);
-      const before = new Date(beforeRaw);
+      let before = new Date(beforeRaw);
       // A cursor only applies when BOTH parts parse cleanly; otherwise we
       // ignore it and return the newest page (defensive against malformed
       // query strings).
@@ -4175,6 +4217,23 @@ function voteRoutes(config) {
         && Number.isFinite(beforeIdRaw);
       const isFirstPage = !hasCursor;
       const beforeType = req.query.before_type === 'close_issue' ? 'close_issue' : 'pr';
+
+      // Older open tabs send the row's creation date in `before`. Resolve
+      // that row within this app so a recent merge of old work cannot skip
+      // pages. New clients send completion time explicitly and need no lookup.
+      if (hasCursor && req.query.before_completed_at == null) {
+        const cursorParams = [appRows[0].id, beforeIdRaw];
+        const { rows: cursorRows } = beforeType === 'pr'
+          ? await pool.query(
+            `SELECT COALESCE(merged_at, created_at) AS completed_at
+               FROM chat_sessions WHERE app_id = $1 AND id = $2 AND status = 'merged'`, cursorParams)
+          : await pool.query(
+            `SELECT COALESCE((payload->>'appliedAt')::timestamptz, created_at) AS completed_at
+               FROM issues WHERE app_id = $1 AND id = $2
+                 AND kind = 'close_issue' AND status = 'closed' AND payload ? 'appliedAt'`, cursorParams);
+        const resolved = new Date(cursorRows[0]?.completed_at);
+        if (!Number.isNaN(resolved.getTime())) before = resolved;
+      }
 
       // Same kudos subqueries as /promoted so the merged card can show
       // its count + per-viewer "you gave kudos" state without a second
@@ -4197,8 +4256,8 @@ function voteRoutes(config) {
       // they page <= ; at a close cursor they use their own tuple.
       const prCursorSql = !hasCursor ? ''
         : beforeType === 'pr'
-          ? 'AND (cs.created_at, cs.id) < ($3, $4)'
-          : 'AND cs.created_at < $3';
+          ? 'AND (COALESCE(cs.merged_at, cs.created_at), cs.id) < ($3, $4)'
+          : 'AND COALESCE(cs.merged_at, cs.created_at) < $3';
       const prParams = !hasCursor
         ? [appRows[0].id, userId, limit + 1]
         : beforeType === 'pr'
@@ -4208,7 +4267,7 @@ function voteRoutes(config) {
         `${mergedRowSelect()}
          WHERE cs.app_id = $1 AND cs.status = 'merged'
            ${prCursorSql}
-         ORDER BY cs.created_at DESC, cs.id DESC
+         ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC
          LIMIT $${prParams.length}`,
         // Fetch limit+1 so an extra row signals there's another page.
         prParams
@@ -4230,8 +4289,8 @@ function voteRoutes(config) {
       // behave identically.
       const closeCursorSql = !hasCursor ? ''
         : beforeType === 'close_issue'
-          ? 'AND (i.created_at, i.id) < ($2, $3)'
-          : 'AND i.created_at <= $2';
+          ? "AND (COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at), i.id) < ($2, $3)"
+          : "AND COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at) <= $2";
       const closeParams = !hasCursor
         ? [appRows[0].id, limit + 1]
         : beforeType === 'close_issue'
@@ -4240,6 +4299,7 @@ function voteRoutes(config) {
       const { rows: closeRows } = await pool.query(
         `SELECT i.id, i.kind, i.title, i.description, i.payload, i.status,
                 i.github_issue_number, i.created_by, i.created_at,
+                COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at) AS completed_at,
                 u.username AS created_by_username,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up') AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count,
@@ -4253,7 +4313,7 @@ function voteRoutes(config) {
           WHERE i.app_id = $1 AND i.kind = 'close_issue' AND i.status = 'closed'
             AND i.payload ? 'appliedAt'
             ${closeCursorSql}
-          ORDER BY i.created_at DESC, i.id DESC
+          ORDER BY COALESCE((i.payload->>'appliedAt')::timestamptz, i.created_at) DESC, i.id DESC
           LIMIT $${closeParams.length}`,
         closeParams
       );
@@ -4432,6 +4492,7 @@ function voteRoutes(config) {
         }
       }
 
+      for (const row of rows) row.completed_at = completedAt(row);
       let deployment = await annotateDeploymentState(pool, appRows[0], rows);
       // A proposal preview runs the platform app from the proposal head, so
       // its boot-time main_sha intentionally has no merged-session match.
@@ -5297,11 +5358,21 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // merge, or a read that failed — the line reads as it did.
     const credits = mergedCredits;
     const creditLine = credits ? creditsSentence(credits) : 'Thanks to everyone who voted';
+    // Follow-up to #2897: a child app's merge rebuilt production above, so
+    // "is live" is true when this posts. The platform's own app
+    // (self_hosted) releases AFTER the merge and outside this process
+    // (GitHub Actions builds the image, Argo CD rolls it out,
+    // services/release-watch.js reports a stall), so its line says the
+    // change merged and will be live in a few minutes. group-chat.js
+    // _proposalEvent recognises both wordings (older rows keep "is live"
+    // forever) and reads `liveSoon` from the metadata where it rides.
+    const liveSoon = !!(app && app.self_hosted);
+    const liveClause = liveSoon
+      ? (session.pr_title ? `merged (${prRef}) and will be live in a few minutes` : 'merged and will be live in a few minutes')
+      : (session.pr_title ? `is live (${prRef})` : 'is live');
     const mergedLine = force && forceBy
       ? `${mergedLabel} force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
-      : session.pr_title
-        ? `${session.pr_title} is live (${prRef}). ${creditLine} (${yesCount}/${activeCount} votes)`
-        : `${prRef} is live. ${creditLine} (${yesCount}/${activeCount} votes)`;
+      : `${session.pr_title || prRef} ${liveClause}. ${creditLine} (${yesCount}/${activeCount} votes)`;
     // The names ride as metadata too, so the general chat's event row draws
     // from data rather than from the wording.
     const mergedMeta = credits ? {
@@ -5313,6 +5384,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         backers: credits.backers,
         shapers: credits.shapers,
         votes: `${yesCount}/${activeCount}`,
+        ...(liveSoon ? { liveSoon: true } : {}),
       },
     } : null;
     await sendSystemMessage(pool, session.app_id, mergedLine, 'system', mergedMeta);

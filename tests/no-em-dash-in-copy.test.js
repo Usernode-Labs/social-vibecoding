@@ -1,3 +1,4 @@
+// test:changed: always (the shell copy, for em dashes; scripts/test-changed.js)
 'use strict';
 
 // Regression guard for #1389 ("Remove AI hyphen").

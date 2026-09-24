@@ -141,6 +141,11 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'conversation_message_objects',
   'chat_session_spec_conversation_shares',
   'user_blocks',
+  // Mutual friends (#2386): private relationships, like user_blocks beside
+  // them, and no credential among their columns.
+  'friendships',
+  'friend_request_sends',
+  'friend_request_declines',
   'conversation_message_reports',
   'app_reports',
   'chat_message_reports',
@@ -243,6 +248,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // exact action payload. This mirrors debug-access.js explicitly so adding a
   // new whole-table denial always has a reviewed console-side decision.
   global_chat_action_tokens: ['token_hash', 'input_hash', 'normalized_input'],
+  // The agent-session Mayor's confirmation cards (#2779): the lifecycle
+  // columns stay readable for diagnosis; the sealed input and its
+  // fingerprint do not.
+  agent_session_actions: ['input_hash', 'sealed_input'],
 };
 
 // Columns denied per table: the prod-debug list, the topochain export's

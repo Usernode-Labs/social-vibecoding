@@ -762,6 +762,29 @@ test('a challenge the expanded list carries while not open shows no countdown', 
     'organiser-closed or outside its window: no "3d left" on a challenge nobody can do');
 });
 
+// QA 2026-09-24 Q17: Home said "2/6 done" (the OPEN challenges) where the
+// profile said "4 of 15 done" for the same season, and the figure flipped to
+// the other when "See all" expanded the block. The season progress counts
+// every challenge in the season now, the profile's rule, from `all_done` of
+// `all_total`; an older payload without `all_done` keeps the open counts.
+test('QA 2026-09-24 Q17: the season progress counts the whole season, as the profile does', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const season = { id: 1, name: 'Season 1' };
+  const whole = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
+  assert.deepEqual({ ...whole.season }, { done: 4, total: 15, caption: 'done in Season 1' });
+  const expanded = HP.seasonView(panel({ season, total: 15, done: 4, all_total: 15, all_done: 4 }));
+  assert.deepEqual({ ...expanded }, { ...whole.season }, 'expanding the block does not change it');
+  const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15 }));
+  assert.deepEqual({ ...older.season }, { done: 2, total: 6, caption: 'done in Season 1' },
+    'no all_done: the open counts, as before');
+  const gated = HP.seasonView(panel({
+    season, total: 6, done: 2, all_total: 15, all_done: 4,
+    onboarding: { unlocked: false, total: 3, completed: 1 },
+  }));
+  assert.deepEqual({ ...gated }, { done: 1, total: 3, caption: 'done in Get started' },
+    'setup still gates the scope while it is closed');
+});
+
 test('the season progress names its scope, and leaves deadlines to the cards and their headers', () => {
   const ends = new Date(Date.now() + 71 * 3600000).toISOString();
   const { HP } = makeHomePanels({ slots: [] });

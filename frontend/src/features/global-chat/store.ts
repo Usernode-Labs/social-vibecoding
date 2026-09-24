@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
+import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
 import type {
   GlobalChatBootstrap,
@@ -304,8 +305,20 @@ export function getGlobalChatState() {
   return state;
 }
 
+let bootstrapDeferred = false;
 export async function initializeGlobalChat({ force = false } = {}): Promise<GlobalChatBootstrap | null> {
   if (state.bootstrap && !force) return state.bootstrap;
+  // Messages asks at mount on every document, the signed-out landing and the
+  // waiting room included, where the bootstrap is a guaranteed 401 or 403
+  // and a red console line (QA 2026-09-24 Q35). Wait for a viewer it
+  // answers; `sv:authed` asks again (../../lib/platform-viewer.ts).
+  if (!hasPlatformViewer()) {
+    if (!bootstrapDeferred) {
+      bootstrapDeferred = true;
+      whenPlatformViewer(() => { bootstrapDeferred = false; void initializeGlobalChat(); });
+    }
+    return null;
+  }
   if (bootstrapPromise && !force) return bootstrapPromise;
   publish({ phase: state.open ? 'booting' : state.phase, error: '' });
   bootstrapPromise = api.bootstrap().then((value) => {

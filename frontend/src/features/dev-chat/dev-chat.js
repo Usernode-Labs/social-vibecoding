@@ -6199,6 +6199,19 @@ const DevChat = {
     DevChat.applyTitleStatus();
   },
 
+  // #2779 follow-up: an agent session's turn wears the same "⏳ Thinking…"
+  // while its conversation is on screen and working. The agent-session store
+  // says when (it knows what is open, this tab's dev-chat scoping does not
+  // apply); this module stays the title's one writer, so the marker composes
+  // with the unread count and the completion tier exactly as the dev chat's.
+  _agentSessionThinking: false,
+  setAgentSessionThinking(on) {
+    const next = !!on;
+    if (DevChat._agentSessionThinking === next) return;
+    DevChat._agentSessionThinking = next;
+    DevChat.applyTitleStatus();
+  },
+
   // Re-derive document.title from the current base title + status
   // marker. Composes with Notifications._updateTitle's "(N) " unread
   // prefix: the count stays outermost — `(2) ⏳ MyApp` — because the
@@ -6218,7 +6231,8 @@ const DevChat = {
     // Precedence (#161): completion marker outranks the streaming
     // status; clearing the completion falls back to the live status, so
     // a still-streaming watched session reverts to "⏳ Thinking…".
-    const active = DevChat._titleCompletion || DevChat._titleStatus;
+    const active = DevChat._titleCompletion || DevChat._titleStatus
+      || (DevChat._agentSessionThinking ? 'thinking' : null);
     const marker = active ? DevChat.TITLE_STATUS_MARKERS[active] : '';
     const next = count + marker + base;
     if (next === full) return;
@@ -9123,28 +9137,21 @@ const DevChat = {
     // row matches the board and the cog drawer without widening that payload.
     const busy = (typeof window !== 'undefined' && window.SessionState)
       ? SessionState.isBusy(s.id, false) : false;
+    // No Pause and no Resume (#2779 follow-up): pausing is the platform's
+    // bookkeeping. It pauses an idle session by itself, pauses the least
+    // recently used one when new work needs the slot, and resumes a session
+    // when it is opened or messaged, so neither is a step anybody takes.
+    //
     // Promoted sessions can't be demoted to 'paused' (their PR must stay
     // votable), but a warm worker can still be freed — same endpoint, server
     // keeps status 'promoted' (keptPromoted). Once the worker is gone
     // (`warm` false) there's nothing left to free, so no button.
     const actions = [];
-    if (s.status === 'active') {
-      actions.push({
-        key: 'pause', label: 'Pause', busy: 'Pausing…', tone: 'quiet',
-        fn: '_sessionListPause', args: [s.id, 'pause'],
-      });
-    }
     if (s.status === 'promoted' && s.warm) {
       actions.push({
         key: 'free', label: 'Free worker', busy: 'Freeing…', tone: 'quiet',
         title: 'Frees the AI worker. The PR stays up for voting.',
         fn: '_sessionListPause', args: [s.id, 'pause'],
-      });
-    }
-    if (s.status === 'paused') {
-      actions.push({
-        key: 'resume', label: 'Resume', busy: 'Resuming…', tone: 'go',
-        fn: '_sessionListPause', args: [s.id, 'resume'],
       });
     }
     if (s.status === 'archived') {
@@ -9166,11 +9173,12 @@ const DevChat = {
         fn: '_sessionListArchive', args: [s.id, title],
       });
     }
+    // A paused session is shown as the active one it is.
+    const shownStatus = s.status === 'paused' ? 'active' : s.status;
     return {
       id: s.id,
-      status: s.status,
-      statusTone: (s.status === 'active' || s.status === 'promoted' || s.status === 'paused')
-        ? s.status : 'other',
+      status: shownStatus,
+      statusTone: (shownStatus === 'active' || shownStatus === 'promoted') ? shownStatus : 'other',
       title,
       branch: s.branch_name || '',
       busy,
@@ -9656,6 +9664,8 @@ const DevChat = {
   // the banner — the user is presumably still refining that change.
   _newChangeBannerView(session) {
     if (!session || !session.pr_number) return null;
+    // #2779: its conversation starts the next change, not this chat.
+    if (DevChat._agentSessionBannerView(session)) return null;
     const status = session.status;
     if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return null;
     const proposed = status === 'promoted' || status === 'merging';
@@ -9706,6 +9716,13 @@ const DevChat = {
   async startNewChange() {
     const slug = DevChat._sessionAppSlug(DevChat.currentSession);
     if (!slug) return;
+    // #2779: with agent sessions on, a new change starts in a conversation
+    // with the Mayor, focused on this session's app.
+    const agent = window.UsernodeReact?.agentSession;
+    if (window.App?.user?.agentSessionsEnabled === true && agent) {
+      void agent.start({ slug, entry: 'banner' });
+      return;
+    }
     DevChat._newChangePending = true;
     DevChat._publishBanners();
     try {
@@ -9746,7 +9763,18 @@ const DevChat = {
       newChange: session ? DevChat._newChangeBannerView(session) : null,
       credits: session ? DevChat._creditsBannerView() : null,
       creditsLow: session ? DevChat._creditsLowBannerView() : null,
+      agentSession: session ? DevChat._agentSessionBannerView(session) : null,
     };
+  },
+
+  // #2779: a change its owner started from an agent session is revised in
+  // that conversation (this chat's own route answers 409 for it), so the
+  // composer gives way to a strip that leads there. Other readers see the
+  // chat as they always have.
+  _agentSessionBannerView(session) {
+    if (!session || !session.agent_session_id) return null;
+    if (typeof App === 'undefined' || !App.user || Number(session.user_id) !== Number(App.user.id)) return null;
+    return { href: `#messages/agent/${Number(session.agent_session_id)}` };
   },
 
   // Start a sync, from the banner's button. Named, because the component
@@ -9960,7 +9988,7 @@ const DevChat = {
       // in the box while still not re-explaining a settled fact on the next
       // full render. See `renderChatView`.
       venueNoteHtml: DevChat._venueNoteForRender || '',
-      hidden: !!DevChat._launchpadVenue(),
+      hidden: !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession),
       models: DevChat._modelPickerView(),
       drafts: DevChat._savedDraftsView(),
       attachError: DevChat._attachError,
@@ -11710,6 +11738,8 @@ const DevChat = {
   // so the chat is never squeezed between two panels.
   openStagingPanel() {
     if (!DevChat.currentSession) return;
+    // #2779: the dock is the dev chat's again, whoever held it last.
+    if (typeof AppView !== 'undefined' && AppView.setStagingDockHost) AppView.setStagingDockHost(null);
     DevChat.stagingPanel.open = true;
     if (DevChat.specViewer.open) {
       DevChat.specViewer.open = false;
@@ -12161,7 +12191,22 @@ if (typeof window !== 'undefined') {
   // Fire-and-forget: refreshes MODELS from the server's allowlist. If
   // the page rendered the dropdown before this resolves, the next
   // renderChatView() pass will pick up the new entries.
-  DevChat.loadModels();
+  //
+  // Only for a viewer the endpoint answers (QA 2026-09-24 Q35). This runs
+  // at module load on EVERY document, the signed-out landing and the
+  // waiting room included, where /api/models is a guaranteed 401 or 403
+  // and a red console line. Otherwise it waits for the authed boot's
+  // once-per-document `sv:authed`, the same test as
+  // frontend/src/lib/platform-viewer.ts (not imported: the vm-based suites
+  // evaluate this file as a classic script).
+  const hasPlatformViewer = () => !!(window.App && window.App.user
+    && window.App.user.hasPlatformAccess !== false);
+  if (hasPlatformViewer()) DevChat.loadModels();
+  else if (typeof document !== 'undefined') {
+    document.addEventListener('sv:authed', () => {
+      if (hasPlatformViewer()) DevChat.loadModels();
+    }, { once: true });
+  }
 }
 
 // Combined away/return handler (#142, #161). On leaving (tab hidden or

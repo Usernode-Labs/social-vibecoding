@@ -25,7 +25,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
-import { CheckIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusIcon } from '@/components/ui/icons';
 import { ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Button } from '@/components/ui/button';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
@@ -122,8 +122,11 @@ function Row({ view }: { view: RowView }): ReactNode {
       )}
       subtitle={(
         <>
+          {/* `truncate`, not just `block` (QA 2026-09-24 Q10): the subtitle box
+              clips, so without its own ellipsis this line was cut mid-word
+              ("Reviewed workir") on a phone. */}
           {view.app.directory?.label ? (
-            <span className="block text-xs text-zinc-600 dark:text-zinc-400">{view.app.directory.label}</span>
+            <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{view.app.directory.label}</span>
           ) : null}
           <span className="block truncate">{view.meta}</span>
           {hasAppPills(view.app) ? (
@@ -142,19 +145,24 @@ function Row({ view }: { view: RowView }): ReactNode {
         data-slug={view.slug}
         data-added={String(view.added)}
         aria-pressed={view.added}
+        aria-label={view.added ? undefined : 'Add to Your apps'}
         title={view.addTitle}
         onClick={(e) => {
           e.stopPropagation();
           controller()?.toggleRowAdded(view);
         }}
       >
-        {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /> : null}
-        {/* #1553: "Add" alone never said add to WHAT. Every other surface that
-            offers this already spells out the destination — the detail page's
-            button, the app-chip menu, this button's own title attribute — so
-            the row stops being the one place it is a guess. "Added" stays
-            short: it is a state, and the row it sits on says which app. */}
-        {view.added ? 'Added' : 'Add to Your apps'}
+        {view.added
+          ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
+          : <PlusIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
+        {/* #1553: "Add" alone never said add to WHAT, so the row spelled out
+            "Add to Your apps". QA 2026-09-24 Q10: that 127px pill left the
+            app's NAME ten characters on a desktop box and nothing at all at
+            1024. The visible label is "+ Add" again, and the destination
+            stays where #1553 put it for everyone who is not reading the
+            glyph: the accessible name and the title attribute both say
+            "Add to Your apps". "Added" is a state and stays short. */}
+        {view.added ? 'Added' : 'Add'}
       </button>
         </>
       )}
@@ -220,7 +228,7 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
             </Button>
           </div>
           <div id="browse-more-apps" className={moreExpanded
-            ? 'md:col-span-full md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3'
+            ? 'md:col-span-full md:grid md:grid-cols-2 xl:grid-cols-3 md:gap-3'
             : 'hidden'}>
             {moreExpanded ? renderRows(more) : null}
           </div>

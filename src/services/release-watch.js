@@ -126,8 +126,8 @@ function stallMessage(record) {
   const run = record.runUrl ? ` ${record.runUrl}` : '';
   switch (record.kind) {
     case 'workflow_failed':
-      return `⚠️ ${merged}${ago} but was not released: the "Build Kubernetes images" workflow failed.${run}`
-        + `${running} Re-run its failed jobs to release it; the next merge would carry it too.`;
+      return `⚠️ ${merged}${ago} but was not released: the "Build Kubernetes images" workflow did not complete.${run}`
+        + `${running} Run it on main to release the latest commit; a later merge would also carry this change.`;
     case 'workflow_running':
       return `⚠️ ${merged}${ago} and its release workflow is still running; a release normally takes `
         + `a couple of minutes.${run}${running}`;

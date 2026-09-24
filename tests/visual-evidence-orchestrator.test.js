@@ -2,6 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const contract = require('../src/services/visual-evidence-plan');
 const controlPlane = require('../src/services/visual-evidence-control');
 const orchestrator = require('../src/services/visual-evidence-orchestrator');
@@ -20,7 +23,7 @@ const provenance = {
 
 function setup({ dispatch, storeArtifacts } = {}) {
   const transitions = [];
-  const calls = { resets: 0, passes: [], stored: 0, cleaned: 0, dispatches: 0 };
+  const calls = { resets: 0, passes: [], stored: 0, cleaned: 0, dispatches: 0, stopClears: 0 };
   let currentState = 'planned';
   const pool = {
     query: async (sql) => {
@@ -95,7 +98,10 @@ function setup({ dispatch, storeArtifacts } = {}) {
       },
     },
     evidenceControl: controlPlane,
-    worker: { isInFlight: () => false },
+    worker: {
+      isInFlight: () => false,
+      clearPendingStop: () => { calls.stopClears += 1; },
+    },
   };
   dependencies.replay.runPassCases = async (config, sessionId, input, options) => {
     const deployment = await options.prepareCase({ storyId: 'invite-suggestions', viewport: 'desktop' });
@@ -136,6 +142,155 @@ test('a successful agent plan publishes captured media without a model verdict',
   assert.deepEqual(fixture.transitions.map((entry) => entry.next),
     ['provisioning', 'exploring', 'replaying', 'reviewing', 'verified']);
   assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
+});
+
+test('first hosted evidence turn does not resume the proposal coding thread', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      assert.equal(options.resumeThreadId, null);
+      assert.equal(fixture.calls.stopClears, 1, 'a new run retires the previous stop before dispatch');
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await control.runPlan(fixtures.plan());
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  fixture.session.agent_thread_id = 'coding-thread';
+  fixture.session.cc_session_id = 'coding-thread';
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.calls.stopClears, 1);
+});
+
+test('evidence context includes a relevant check beyond the first 80 manifest entries', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-checks-'));
+  try {
+    const tests = Array.from({ length: 100 }, (_, index) => ({
+      name: `Generic screen ${index}`, path: `/screen-${index}`,
+    }));
+    tests.push({
+      name: 'Workshop plus button closes the view tab strip',
+      path: '/workshop', expectSelector: '.dev-ws-plus',
+    });
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests }));
+    const intent = { stories: [{
+      claim: 'The Workshop plus button sits below the tab strip.',
+      intent: { steps: ['Open the Workshop'] },
+    }] };
+    const selected = orchestrator.declaredCheckSummary(checkout, intent);
+    assert.equal(selected.length, 80);
+    assert.equal(selected[0].path, '/workshop');
+    assert.equal(orchestrator.declaredCheckSummary(checkout)[0].path, '/screen-0');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('recorded testing route guides a vague intent to the exact declared screen', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-testing-route-'));
+  const route = '/?demo=1&ws=status#app/demo/workshop';
+  try {
+    const tests = Array.from({ length: 100 }, (_, index) => ({
+      name: `Generic screen ${index}`, path: `/screen-${index}`,
+    }));
+    tests.push({ name: 'View strip', path: route, expectSelector: '.dev-ws-plus' });
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests }));
+    const context = orchestrator.evidenceContext({
+      run: { id: RUN_ID },
+      session: {
+        pr_title: 'Small spacing change', testing_path: route,
+        testing_paths: [{ path: route, viewport: 'desktop' },
+          { path: '/?token=secret.jwt#app/demo/workshop', viewport: 'phone' }],
+        testing_md: 'Open the Workshop and inspect the view strip.',
+      },
+      revision: { baseSha: BASE, headSha: HEAD, files: [], filesComplete: true },
+      pair: { fixtureFingerprint: 'fixture-1', sides: {
+        base: { imageDigest: 'sha256:base' },
+        head: { imageDigest: 'sha256:head', checkout },
+      } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: { stories: [{ claim: 'The control has a small gap.', intent: {
+        startPath: '/', steps: ['Open the changed page'], checkpoint: 'A gap is visible', focus: 'The control',
+      } }] },
+    });
+    assert.deepEqual(context.changeContext.testingPaths, [route]);
+    assert.equal(context.changeContext.testingSteps, 'Open the Workshop and inspect the view strip.');
+    assert.equal(context.declaredChecks[0].path, route);
+    assert.equal(context.acceptedIntent.stories[0].intent.startPath, '/',
+      'a testing hint must not rewrite the accepted claim');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('platform waits for a background replay after the hosted planner receives its acknowledgement', async () => {
+  let releaseReplay;
+  const pendingReplay = new Promise((resolve) => { releaseReplay = resolve; });
+  let acknowledge;
+  const acknowledged = new Promise((resolve) => { acknowledge = resolve; });
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      const result = control.submitPlan(fixtures.plan());
+      acknowledge(result);
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    await pendingReplay;
+    return runPass(...args);
+  };
+  const execution = execute(fixture);
+  const receipt = await acknowledged;
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.duplicate, false);
+  assert.equal(fixture.calls.stored, 0, 'acknowledgement cannot publish pending media');
+  releaseReplay();
+  const result = await execution;
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+  assert.equal(fixture.calls.stored, 1);
+});
+
+test('a background locator failure starts a fresh hosted correction turn', async () => {
+  const rejected = fixtures.plan();
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const mismatch = Object.assign(new Error('Browse matched no visible controls.'), {
+    code: 'ambiguous_locator',
+    detail: { side: 'base', phase: 'action', actionId: 'open-browse' },
+  });
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) {
+        assert.equal(control.submitPlan(rejected).accepted, true);
+      } else {
+        assert.equal(options.repairAttempt, 1);
+        assert.equal(options.resumeThreadId, 'evidence-thread');
+        assert.equal(control.getContext().repair.failure.code, 'ambiguous_locator');
+        assert.equal(control.submitPlan(corrected).accepted, true);
+      }
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      throw mismatch;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.equal(fixture.calls.stored, 1);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 1);
 });
 
 test('a replay failure survives a correction turn that submits no new plan', async () => {
@@ -482,7 +637,8 @@ test('a planner timeout keeps a bounded, content-free record of its last active 
       options.onEvidenceDiagnostic({ kind: 'worker_prepare_end' });
       options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
       options.onEvidenceDiagnostic({ kind: 'tool_start', sequence: 1,
-        tool: 'browser_navigate', persona: 'member', url: 'https://private.invalid/?token=secret' });
+        tool: 'browser_navigate', persona: 'member', side: 'base', routeOrdinal: 2,
+        url: 'https://private.invalid/?token=secret' });
       options.onEvidenceDiagnostic({ kind: 'agent_deadline' });
       throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
     },
@@ -493,8 +649,87 @@ test('a planner timeout keeps a bounded, content-free record of its last active 
   assert.equal(trace.agentActivity.counts.tool_start, 1);
   assert.equal(trace.agentActivity.toolCounts.browser_navigate, 1);
   assert.equal(trace.agentActivity.pendingTools[0].tool, 'browser_navigate');
+  assert.equal(trace.agentActivity.pendingTools[0].side, 'base');
+  assert.equal(trace.agentActivity.pendingTools[0].routeOrdinal, 2);
   assert.equal(trace.agentActivity.events.at(-1).kind, 'agent_deadline');
   assert.doesNotMatch(JSON.stringify(trace.agentActivity), /private|token|secret|url/i);
+});
+
+test('planner authentication records both personas and sides without retaining credentials', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      for (const persona of ['member', 'admin']) {
+        for (const side of ['base', 'head']) {
+          options.onEvidenceDiagnostic({
+            kind: 'auth_bootstrap', persona, side, attempted: true,
+            responseStatus: 200, sessionCookieInstalled: true,
+            sessionCookiePresent: true, token: 'private-token',
+            cookie: 'private-session', url: 'http://private.invalid/',
+          });
+        }
+      }
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'missing_evidence_replay' });
+  const events = fixture.transitions.at(-1).patch.traceSummary.agentActivity.events
+    .filter((event) => event.kind === 'auth_bootstrap');
+  assert.equal(events.length, 4);
+  assert.deepEqual(events.map(({ persona, side }) => [persona, side]), [
+    ['member', 'base'], ['member', 'head'], ['admin', 'base'], ['admin', 'head'],
+  ]);
+  assert.ok(events.every((event) => event.responseStatus === 200
+    && event.sessionCookieInstalled && event.sessionCookiePresent));
+  assert.doesNotMatch(JSON.stringify(events), /private|credential|token|\.invalid/i);
+});
+
+test('a timeout retains browser-boundary timing and document outcome without raw page data', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onEvidenceDiagnostic({ kind: 'browser_call_start', persona: 'member',
+        callOrdinal: 2, tool: 'browser_navigate', side: 'base', routeOrdinal: 1,
+        routeHint: 'declared_check', checkRank: 3, url: 'https://private.invalid/token' });
+      options.onEvidenceDiagnostic({ kind: 'document_request', side: 'base', documentOrdinal: 1 });
+      options.onEvidenceDiagnostic({ kind: 'document_response', side: 'base', documentOrdinal: 1,
+        outcome: 'http_error', httpStatus: 404, durationMs: 482, bodyBytes: 1274,
+        text: 'private page content' });
+      options.onEvidenceDiagnostic({ kind: 'browser_call_pending', persona: 'member',
+        callOrdinal: 2, tool: 'browser_navigate', side: 'base', routeOrdinal: 1,
+        durationMs: 30_000 });
+      throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  const activity = fixture.transitions.at(-1).patch.traceSummary.agentActivity;
+  assert.equal(activity.browserCallCounts.browser_navigate, 1);
+  assert.equal(activity.pendingBrowserCalls[0].durationMs, 30_000);
+  assert.equal(activity.pendingBrowserCalls[0].checkRank, 3);
+  assert.deepEqual(activity.pendingDocumentRequests, []);
+  assert.equal(activity.events[2].httpStatus, 404);
+  assert.equal(activity.events[2].durationMs, 482);
+  assert.doesNotMatch(JSON.stringify(activity), /private|page content|\.invalid|\/token/i);
+});
+
+test('a timeout identifies an unfinished GLM request and its last observed stage', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onEvidenceDiagnostic({ kind: 'provider_request_start', requestOrdinal: 1,
+        prompt: 'private user prompt' });
+      options.onEvidenceDiagnostic({ kind: 'provider_response_headers', requestOrdinal: 1,
+        httpStatus: 200, durationMs: 4200, providerUrl: 'https://private.invalid' });
+      options.onEvidenceDiagnostic({ kind: 'provider_request_pending', requestOrdinal: 1,
+        stage: 'await_first_byte', durationMs: 45_000, output: 'private model output' });
+      throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  const activity = fixture.transitions.at(-1).patch.traceSummary.agentActivity;
+  assert.equal(activity.pendingProviderRequests.length, 1);
+  assert.equal(activity.pendingProviderRequests[0].requestOrdinal, 1);
+  assert.equal(activity.pendingProviderRequests[0].stage, 'await_first_byte');
+  assert.equal(activity.pendingProviderRequests[0].durationMs, 45_000);
+  assert.equal(activity.pendingProviderRequests[0].httpStatus, 200);
+  assert.doesNotMatch(JSON.stringify(activity), /private|prompt|output|\.invalid/i);
 });
 
 test('a completed planner turn without tool calls retains tool availability and resume mode', async () => {
@@ -707,6 +942,8 @@ test('an agent opinion cannot veto replay-checked captures meant for human revie
 test('a Codex model that fails before submitting a plan falls back to the platform planner', async () => {
   const fixture = setup({
     dispatch: async (options, attempt) => {
+      assert.equal(fixture.calls.stopClears, 1,
+        'fallback is part of the same run and must not erase a newly requested stop');
       if (attempt === 1) throw Object.assign(new Error('model cannot use browser tools'), { code: 'evidence_agent_failed' });
       assert.equal(options.forceBackend, 'claude_code');
       const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
@@ -719,6 +956,23 @@ test('a Codex model that fails before submitting a plan falls back to the platfo
   assert.equal(result.state, 'verified');
   assert.equal(fixture.calls.dispatches, 2);
   assert.deepEqual(fixture.calls.passes, [1, 2]);
+});
+
+test('a Codex planner that already explored does not launch a second model after timing out', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'codex_openrouter',
+        requestMode: 'agent_new' });
+      options.onEvidenceDiagnostic({ kind: 'tool_start', sequence: 1,
+        tool: 'browser_navigate', side: 'base', routeOrdinal: 1 });
+      throw Object.assign(new Error('The planner timed out.'), { code: 'evidence_agent_timeout' });
+    },
+  });
+  fixture.session.agent_backend = 'codex_openrouter';
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.equal(fixture.calls.stopClears, 1);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.agentDispatches.length, 1);
 });
 
 test('a stale artifact fence cannot publish or transition the superseded run to verified', async () => {

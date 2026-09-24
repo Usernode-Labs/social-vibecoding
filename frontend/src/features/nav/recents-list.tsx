@@ -60,6 +60,9 @@ import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
+import { ACTIVITY_LABEL } from '../agent-session/activity';
+import { AgentActivityMark, AgentWorkingIcon } from '../agent-session/activity-mark';
 import { useGlobalChatState } from '../global-chat/store';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
@@ -115,17 +118,27 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
   const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
+  const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
+  const working = item.activity === 'working';
   return (
     <a
       className="platform-recent"
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${unread}`}
+      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
       {...(live ? { 'data-live': 'true' } : null)}
       onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
     >
-      {app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
+      {/* #2779: an agent session working (a spinner) or finished unseen (a
+          green dot). The spinner takes the icon's place (#3028) rather than
+          sitting beside it; the dot leads the name (#3013) so it reads as
+          the session's state rather than one more mark at the row's end.
+          The row's accessible name says either (`doing`). */}
+      {working
+        ? <AgentWorkingIcon className="platform-recent-glyph" />
+        : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
+      {item.activity && !working ? <AgentActivityMark activity={item.activity} className="platform-recent-activity" /> : null}
       <span className="platform-recent-label">{item.label}</span>
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
@@ -146,7 +159,7 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
   onToggleOlder: () => void;
   now?: number;
 }) {
-  const { days, older } = groupRecents(items, now);
+  const { days, earlier, older } = groupRecents(items, now);
   const row = (item: RecentItem) => (
     <RecentRow key={item.key} item={item} live={!!item.app && live.includes(item.app.slug)} />
   );
@@ -158,9 +171,19 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
           {day.items.map(row)}
         </Fragment>
       ))}
+      {/* QA 2026-09-24 Q31: the newest older rows, shown while folded so
+          the list is never just a heading over a button. Opened, the rest
+          follow straight on: they are earlier too, and a second label
+          ("Older") under "Earlier" would say nothing new. */}
+      {earlier.length ? (
+        <>
+          <div className="platform-recents-day">Earlier</div>
+          {earlier.map(row)}
+        </>
+      ) : null}
       {showOlder && older.length ? (
         <>
-          <div className="platform-recents-day">Older</div>
+          {earlier.length ? null : <div className="platform-recents-day">Older</div>}
           {older.map(row)}
         </>
       ) : null}
@@ -226,12 +249,21 @@ export function RecentsList() {
   // the experimental chat is off shows no agent rows here either.
   const agentsOn = !!chat.bootstrap?.parityReady
     && chat.bootstrap.profiles.globalChat.enabled === true;
+  // Agent sessions (#2779 follow-up), read once the viewer is named; the
+  // store keeps the list current as conversations start and move. The flag
+  // or not, as Messages lists them: turning agent sessions off never hides a
+  // conversation that already exists.
+  const { sessions: agentSessions } = useAgentSessionState();
+  useEffect(() => {
+    if (viewer) void loadAgentSessions();
+  }, [viewer]);
   const items = mounted && viewer
     ? buildRecents({
       apps,
       conversations: snap.conversations,
       discussions: snap.discussions,
       agents: agentsOn ? (chat.threads as AgentChat[]) : [],
+      agentSessions,
       viewerId: Number(window.App?.user?.id) || null,
     })
     : [];

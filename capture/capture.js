@@ -201,6 +201,87 @@ const MAX_SCROLL_VIEWPORTS = 3;
 const MAX_CONSOLE_ERRORS = 20;
 const MAX_CONSOLE_MSG_LEN = 500;
 const CONSOLE_ONLY_SETTLE_MS = 1500;
+const CONSOLE_ARG_RESOLVE_MS = 2000;
+
+// `msg.text()` renders an object argument as its handle's description, so
+// `console.error(err)` — how React reports an error an <Island> boundary
+// caught — arrived as "JSHandle@error". That named nothing, and because the
+// list dedupes by message, two different such errors collapsed into one.
+const OPAQUE_CONSOLE_ARG_RE = /JSHandle@/;
+
+// Newer puppeteer renders an Error argument as its bare message instead —
+// still without the stack or the island — so an Error is also recognised by
+// its protocol subtype.
+function isErrorHandle(h) {
+  try {
+    const ro = h && typeof h.remoteObject === 'function' ? h.remoteObject() : null;
+    return !!ro && ro.subtype === 'error';
+  } catch {
+    return false;
+  }
+}
+
+// Runs in the page. An Error becomes `Name: message`, tagged with the island
+// that caught it when `window.UsernodeReact.islandErrors` has recorded one,
+// followed by its stack frames.
+function describeConsoleArgInPage(v) {
+  if (v instanceof Error) {
+    const head = `${v.name || 'Error'}: ${v.message}`;
+    const root = typeof window !== 'undefined' ? window : {};
+    const caught = (root.UsernodeReact && root.UsernodeReact.islandErrors) || [];
+    let island = '';
+    for (let i = caught.length - 1; i >= 0; i -= 1) {
+      if (caught[i] && caught[i].message === v.message) { island = ` [island ${caught[i].island}]`; break; }
+    }
+    const frames = String(v.stack || '').split('\n').filter((l) => /^\s+at /.test(l)).join('\n');
+    return head + island + (frames ? `\n${frames}` : '');
+  }
+  if (typeof v === 'string') return v;
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+async function describeConsoleArgs(args) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('console arg resolve timeout')), CONSOLE_ARG_RESOLVE_MS);
+  });
+  try {
+    const parts = await Promise.race([
+      Promise.all(args.map((h) => h.evaluate(describeConsoleArgInPage))),
+      deadline,
+    ]);
+    return parts.filter((p) => p != null && p !== '').join(' ');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The console listener both runners share. A message with an opaque argument
+// is resolved in the page before it is recorded; `settle()` waits for those
+// still in flight, so a caller that freezes the list afterwards counts each
+// error where it fired rather than wherever its resolution happened to land.
+function makeConsoleErrorSink(pushErr) {
+  const inFlight = new Set();
+  const onConsole = (msg) => {
+    if (msg.type() !== 'error') return;
+    const loc = typeof msg.location === 'function' ? msg.location() : null;
+    const src = loc && loc.url
+      ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
+      : '';
+    const text = msg.text();
+    const args = typeof msg.args === 'function' ? (msg.args() || []) : [];
+    if (!args.length || !(OPAQUE_CONSOLE_ARG_RE.test(text) || args.some(isErrorHandle))) {
+      pushErr('console', text, src);
+      return;
+    }
+    const pending = describeConsoleArgs(args)
+      .then((detail) => pushErr('console', detail || text, src), () => pushErr('console', text, src))
+      .finally(() => inFlight.delete(pending));
+    inFlight.add(pending);
+  };
+  const settle = () => Promise.all([...inFlight]);
+  return { onConsole, settle };
+}
 
 // ── Settle: a bounded QUIET WINDOW, not a fixed sleep (#1144) ──
 //
@@ -670,6 +751,11 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
       source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
     });
   };
+  const consoleSink = makeConsoleErrorSink(pushErr);
+  const settledConsoleErrors = async () => {
+    await consoleSink.settle();
+    return consoleErrors;
+  };
 
   const page = await browser.newPage();
   if (collectConsole) {
@@ -679,14 +765,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     // console.error(); pageerror covers uncaught exceptions; Chromium
     // surfaces unhandled rejections through pageerror too.
     page.on('console', (msg) => {
-      try {
-        if (msg.type() !== 'error') return;
-        const loc = typeof msg.location === 'function' ? msg.location() : null;
-        const src = loc && loc.url
-          ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
-          : '';
-        pushErr('console', msg.text(), src);
-      } catch { /* ignore a single malformed console message */ }
+      try { consoleSink.onConsole(msg); } catch { /* ignore a single malformed console message */ }
     });
     page.on('pageerror', (err) => {
       try { pushErr('pageerror', (err && (err.stack || err.message)) || String(err), ''); }
@@ -730,7 +809,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     // the console frame (loadStatus 0) before the media-fail frames.
     if (collectConsole) {
       pushErr('load', `navigation failed: ${err.message}`, url);
-      emitConsole(index, consoleErrors, 0);
+      emitConsole(index, await settledConsoleErrors(), 0);
     }
     if (media) {
       emitFail(kind, 'png', err.message, index);
@@ -758,7 +837,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   } catch (err) {
     if (collectConsole) {
       pushErr('assertion', err.message, url);
-      emitConsole(index, consoleErrors, status);
+      emitConsole(index, await settledConsoleErrors(), status);
     }
     if (media) {
       emitFail(kind, 'png', err.message, index);
@@ -781,7 +860,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   if (!media) {
     if (collectConsole) {
       await sleep(CONSOLE_ONLY_SETTLE_MS);
-      emitConsole(index, consoleErrors, status);
+      emitConsole(index, await settledConsoleErrors(), status);
     }
     await page.close().catch(() => {});
     return;
@@ -799,7 +878,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   // errors (if wired) and stop before the expensive recording steps.
   if (stillOnly) {
     if (collectConsole) {
-      emitConsole(index, consoleErrors, status);
+      emitConsole(index, await settledConsoleErrors(), status);
     }
     await shootCompanion(page, kind, opts.companion, status, usedFallback,
       kind === 'after' ? opts.ready : null);
@@ -831,7 +910,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     emitFail(kind, 'webm', 'page-not-scrollable', index);
     emitFail(kind, 'gif', 'page-not-scrollable', index);
     if (collectConsole) {
-      emitConsole(index, consoleErrors, status);
+      emitConsole(index, await settledConsoleErrors(), status);
     }
     await shootCompanion(page, kind, opts.companion, status, usedFallback,
       kind === 'after' ? opts.ready : null);
@@ -909,7 +988,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   // always described this target's own load, and the companion re-boots
   // the page, so emitting first keeps that frame's content unchanged.
   if (collectConsole) {
-    emitConsole(index, consoleErrors, status);
+    emitConsole(index, await settledConsoleErrors(), status);
   }
 
   await shootCompanion(page, kind, opts.companion, status, usedFallback,
@@ -1328,6 +1407,7 @@ async function runTestGroup(browser, group, opts) {
       source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
     });
   };
+  const consoleSink = makeConsoleErrorSink(pushErr);
   const emitAll = (status, reasonFor) => {
     for (const t of tests) {
       const failureReason = reasonFor(t);
@@ -1395,14 +1475,7 @@ async function runTestGroup(browser, group, opts) {
     };
     on('console', (msg) => {
       activity.bump();
-      try {
-        if (msg.type() !== 'error') return;
-        const loc = typeof msg.location === 'function' ? msg.location() : null;
-        const src = loc && loc.url
-          ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
-          : '';
-        pushErr('console', msg.text(), src);
-      } catch { /* ignore a single malformed console message */ }
+      try { consoleSink.onConsole(msg); } catch { /* ignore a single malformed console message */ }
     });
     on('pageerror', (err) => {
       activity.bump();
@@ -1450,6 +1523,7 @@ async function runTestGroup(browser, group, opts) {
         activity.bump();
         await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
       } else {
+        await consoleSink.settle();
         cohortFrom = consoleErrors.length;
         try {
           await page.evaluate((h) => {
@@ -1535,6 +1609,7 @@ async function runTestGroup(browser, group, opts) {
       // verdicts across the checks judging it. Frozen AFTER the poll, so an
       // error that fires while assertions wait is still heard — the flat
       // settle this replaced would have been listening through that window.
+      await consoleSink.settle();
       if (ci === 0) sharedErrorCount = consoleErrors.length;
       const cohortErrors = ci === 0
         ? consoleErrors.slice(0, sharedErrorCount)
@@ -1888,4 +1963,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

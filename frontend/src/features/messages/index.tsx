@@ -3,13 +3,17 @@ import { createPortal } from 'react-dom';
 
 import { groupsWithPrevious } from '@/components/ui/chat';
 import {
-  ChatIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
+  SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
+import { unmountLegacyPortal } from '../../lib/legacy-portals';
+import { confirmAction } from '../../lib/confirm';
+import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
-import { agoStamp } from '../../lib/timestamp';
+import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
@@ -17,22 +21,32 @@ import { AgentAppDialog } from './agent-dialog';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { UserAvatar } from './format';
+import { fullTime, UserAvatar } from './format';
 import { MessageRow } from './message-row';
+import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import {
   agentThreadAddress,
+  closeThread,
   fullScreenAddress,
   initializeMessagesStore,
   finishDirectBlock,
+  jumpToPresent,
   loadConversations,
+  loadNewer,
   loadOlder,
+  loadOlderReplies,
+  loadReplyThread,
   messagesController,
   open as openConversation,
   openAgentThread,
+  renameConversation,
+  openThread,
   respond,
   setUserBlocked,
   selectConversation,
+  setListCollapsed,
+  setShowMoreChannels,
   syncChrome,
   setFilter,
   typingUsers,
@@ -40,7 +54,22 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
+import { AgentSessionPanel } from '../agent-session';
+import { useSidePaneBeside } from '../agent-session/spec-layout';
+import { agentActivity } from '../agent-session/activity';
+import { AgentActivityMark } from '../agent-session/activity-mark';
+import {
+  agentSessionsEnabled,
+  deactivateAgentSession,
+  getAgentSessionState,
+  loadAgentSessions,
+  openAgentSession,
+  startAgentSession,
+  useAgentSessionState,
+} from '../agent-session/store';
+import type { AgentSession as MayorSession } from '../agent-session/api';
 import {
   deactivateGlobalChat,
   getGlobalChatState,
@@ -96,8 +125,23 @@ function conversationPeer(conversation: ConversationSummary) {
     : null);
 }
 
+/**
+ * QA 2026-09-24 Q33a: who a direct conversation is WITH, for its name and
+ * face. An accepted one is its peer. A request the viewer has not answered
+ * yet carries no peer — the roster stays hidden until acceptance — but it
+ * does carry its requester, deliberately, "so the recipient can decide"
+ * (services/conversations.js serializeConversation). That requester IS the
+ * other person of a direct request, so the row and the header name them
+ * rather than reading "Direct message" over an anonymous "DM" tile.
+ */
+function directPerson(conversation: ConversationSummary) {
+  if (conversation.kind !== 'direct') return null;
+  return conversationPeer(conversation)
+    || (conversation.membershipStatus === 'invited' ? conversation.requester || null : null);
+}
+
 function ConversationRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
-  const peer = conversationPeer(conversation);
+  const peer = directPerson(conversation);
   const invited = conversation.membershipStatus === 'invited';
   const unread = conversation.unreadCount > 0;
   // #1808: the shared ago ladder, which stops being relative at a week — a
@@ -116,7 +160,7 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
       className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
     >
-      <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={conversation.title} size="lg" shape="square" />
+      <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="lg" shape="square" />
       <div className="min-w-0 flex-1">
         {/* Two lines, the row's own geometry: the name with the time on its
             trailing edge, then the preview with the unread count on its. The
@@ -124,7 +168,7 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
             unread row state itself three ways — bold name, accent time, count
             pill — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}{conversation.kind === 'group' ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
+          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}{conversation.kind === 'group' && !invited ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
@@ -214,6 +258,9 @@ function GeneralChannelRow({ conversation, active }: { conversation: Conversatio
  */
 function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; active: boolean }) {
   const activity = discussion.lastAt ? agoStamp(discussion.lastAt) : null;
+  // #2387: app channels keep a read cursor now, so they carry a count like
+  // #general's — only while the viewer is not reading it.
+  const unread = !active && (discussion.unreadCount || 0) > 0 ? discussion.unreadCount || 0 : 0;
   const record = {
     icon_url: discussion.iconUrl,
     icon_emoji: discussion.iconEmoji,
@@ -238,7 +285,7 @@ function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; acti
         <div className="messages-row-line">
           <span className="messages-row-name">{discussion.name}<span className="messages-channel-handle">#{handle}</span></span>
           {activity
-            ? <time className="messages-row-time" dateTime={discussion.lastAt || undefined} title={activity.title}>{activity.text}</time>
+            ? <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={discussion.lastAt || undefined} title={activity.title}>{activity.text}</time>
             : null}
         </div>
         <div className="messages-row-line">
@@ -247,6 +294,7 @@ function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; acti
               ? (discussion.lastBy ? `@${discussion.lastBy}: ${discussion.lastMessage}` : discussion.lastMessage)
               : 'No messages yet'}
           </span>
+          {unread ? <span className="messages-unread" aria-label={`${unread} unread`}>{unread > 99 ? '99+' : unread}</span> : null}
         </div>
       </div>
     </a>
@@ -475,11 +523,21 @@ const NEW_CHOICES = [
 ] as const;
 type NewChoice = typeof NEW_CHOICES[number]['key'];
 
+// #2779: with agent sessions on, the third choice is a conversation with the
+// Mayor that works on any app, so there is no app to pick first.
+function newChoices() {
+  if (!agentSessionsEnabled()) return NEW_CHOICES;
+  return NEW_CHOICES.map((item) => (item.key === 'agent'
+    ? { ...item, label: 'Agent session', hint: 'Plan and build a change on any app' }
+    : item));
+}
+
 function startNew(choice: NewChoice) {
   // DM and group are the create dialog, opened on the matching tab. Agent
-  // asks which app first (./agent-dialog.tsx), then opens a new dev session
-  // there — for now; a platform-wide agent session will take its place.
-  if (choice === 'agent') openDialog('messagesAgent');
+  // asks which app first (./agent-dialog.tsx) and opens a new dev session
+  // there, unless agent sessions are on: then it is one new conversation.
+  if (choice === 'agent' && agentSessionsEnabled()) void startAgentSession({ entry: 'messages' });
+  else if (choice === 'agent') openDialog('messagesAgent');
   else openDialog('messagesCreate', choice);
 }
 
@@ -495,6 +553,11 @@ function startNew(choice: NewChoice) {
  * Nothing is rendered until the button is pressed, so the prerendered
  * document holds the button alone and hydration has nothing to disagree
  * about.
+ *
+ * KEYBOARD (QA 2026-09-24 Q18): opening moves focus to the first row, the
+ * arrows move between rows, Escape and Tab close it back onto the "+"
+ * (lib/menu-keys.ts). Before, Enter opened a menu that focus never reached:
+ * it is portalled to the end of <body>, so Tab walked the whole page first.
  */
 function NewMessageButton() {
   const [rect, setRect] = useState<AnchorRect | null>(null);
@@ -503,6 +566,7 @@ function NewMessageButton() {
   const open = !!rect;
   const shut = () => setRect(null);
   useAnchoredDismiss(open, [btnRef, popRef], shut);
+  const menuKeys = useMenuKeyboard(open, popRef, btnRef, shut);
 
   const toggle = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -510,13 +574,16 @@ function NewMessageButton() {
     const pu = (window as any).PlatformUI;
     if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
       pu.actionSheet({
-        actions: NEW_CHOICES.map((item) => ({ label: item.label, handler: () => startNew(item.key) })),
+        actions: newChoices().map((item) => ({ label: item.label, handler: () => startNew(item.key) })),
       });
       return;
     }
     setRect(anchorRectOf(event.currentTarget));
   };
-  const choose = (choice: NewChoice) => { shut(); startNew(choice); };
+  // Focus goes back to the "+" BEFORE the dialog opens, so the dialog's own
+  // focus restore (the kit records what was focused when it presents) lands
+  // on the button rather than on a row this close is about to unmount.
+  const choose = (choice: NewChoice) => { btnRef.current?.focus({ preventScroll: true }); shut(); startNew(choice); };
   const pos = rect
     ? placeUnderAnchor(rect, { width: 240, height: 164 }, { width: window.innerWidth, height: window.innerHeight })
     : null;
@@ -545,8 +612,9 @@ function NewMessageButton() {
           aria-label="Start a new conversation"
           style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
           onClick={(event) => event.stopPropagation()}
+          onKeyDown={menuKeys.onKeyDown}
         >
-          {NEW_CHOICES.map((item) => (
+          {newChoices().map((item) => (
             <button
               key={item.key}
               type="button"
@@ -663,16 +731,34 @@ function ConversationList() {
   };
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  // A change started from an agent session (#2779) is that conversation's:
+  // its row below says where it stands, so it is not listed twice.
   const sessions: SessionRowView[] = mounted
-    ? [...(improve.sessions || []), ...(improve.otherSessions || [])].map(inboxSessionView)
+    ? [...(improve.sessions || []), ...(improve.otherSessions || [])]
+      .filter((row) => !row.agentSessionId)
+      .map(inboxSessionView)
     : [];
+  // Agent sessions (#2779), from their own store and, like the sessions
+  // above, only after mount. Listed whatever the flag says: turning it off
+  // never hides a conversation that already exists.
+  const mayor = useAgentSessionState();
+  useEffect(() => { void loadAgentSessions(); }, []);
+  const mayors: MayorSession[] = mounted ? mayor.sessions : [];
+  // The side pane open BESIDE an agent session's chat (#2779 follow-up), a
+  // spec or a preview, takes this column's width while it is open: at 1280
+  // the thread pane alone is too narrow for two readable columns. Closing it
+  // brings the list back. False until mounted, like everything above
+  // (../agent-session/spec-layout).
+  const specBeside = useSidePaneBeside('messages');
   const inbox = buildInbox({
     conversations: snap.conversations,
     discussions: snap.discussions,
     agents,
     sessions,
+    mayors,
     filter: snap.filter,
   });
+  const byMayor = new Map(mayors.map((item) => [String(item.id), item]));
   const byConversation = new Map(snap.conversations.map((item) => [String(item.id), item]));
   const byApp = new Map(snap.discussions.map((item) => [item.slug, item]));
   const byAgent = new Map(agents.map((item) => [item.id, item]));
@@ -688,7 +774,7 @@ function ConversationList() {
     if (entry.kind === 'person') {
       const c = byConversation.get(entry.key.slice('person:'.length));
       if (!c) return false;
-      const peer = conversationPeer(c);
+      const peer = directPerson(c) || conversationPeer(c);
       return inboxMatches(c.title, q)
         || inboxMatches(peer?.username, q)
         || inboxMatches(peer?.displayName, q);
@@ -701,13 +787,39 @@ function ConversationList() {
       const c = bySession.get(entry.key.slice('session:'.length));
       return !!c && (inboxMatches(c.title, q) || inboxMatches(c.appName, q));
     }
+    if (entry.kind === 'mayor') {
+      const m = byMayor.get(entry.key.slice('mayor:'.length));
+      return !!m && (inboxMatches(m.title, q) || inboxMatches(m.focusApp?.name, q)
+        || inboxMatches(m.activeChange?.title, q));
+    }
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
   };
-  const shown = inbox.filter(matches);
+  // #2967: the channels outside Your apps fold behind "Show N more" — except
+  // while searching (a query looks through everything), and except the one
+  // that is open, which stays in view wherever it lives.
+  const moreEntries = inbox.filter((entry) => entry.more);
+  const openSlug = snap.route.appSlug;
+  const shown = inbox.filter(matches).filter((entry) => !entry.more || !!q || snap.showMoreChannels
+    || (entry.kind === 'app' && entry.key === `app:${openSlug}`));
+  const moreToggle = moreEntries.length && !q ? (
+    <button
+      key="more-channels"
+      type="button"
+      id="messages-more-channels"
+      className="messages-more-channels"
+      aria-expanded={snap.showMoreChannels}
+      onClick={() => setShowMoreChannels(!snap.showMoreChannels)}
+    >
+      <span className="messages-more-channels-glyph" aria-hidden="true">
+        <ChevronDownIcon className={snap.showMoreChannels ? 'rotate-180' : ''} />
+      </span>
+      <span>{snap.showMoreChannels ? 'Show less' : `Show ${moreEntries.length} more`}</span>
+    </button>
+  ) : null;
 
   return (
-    <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+    <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -770,8 +882,13 @@ function ConversationList() {
             ? <h3 key={`head-${entry.section}`} className="messages-section-head" data-inbox-section={entry.section}>{SECTION_LABELS[entry.section]}</h3>
             : null;
           const row = inboxRow(entry);
-          return head ? [head, row] : row;
+          // #2967: the toggle sits where the channels outside Your apps
+          // begin — above them once they are shown, so "Show less" is next to
+          // what it folds.
+          const toggle = entry.more && (i === 0 || !shown[i - 1].more) ? moreToggle : null;
+          return [head, toggle, row].filter(Boolean);
         })}
+        {moreToggle && !shown.some((entry) => entry.more) && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
       </div>
     </section>
   );
@@ -798,6 +915,13 @@ function ConversationList() {
       const open = snap.route.agent;
       return session
         ? <AgentSessionRow key={entry.key} session={session} active={open?.kind === 'session' && open.id === session.id} />
+        : null;
+    }
+    if (entry.kind === 'mayor') {
+      const session = byMayor.get(entry.key.slice('mayor:'.length));
+      const open = snap.route.agent;
+      return session
+        ? <MayorSessionRow key={entry.key} session={session} active={open?.kind === 'agent' && open.id === session.id} />
         : null;
     }
     const agent = byAgent.get(entry.key.slice('agent:'.length));
@@ -850,6 +974,47 @@ function InvitationBanner() {
 }
 
 /**
+ * #2387: FULL WIDTH. On a desktop the list and the open discussion sit side
+ * by side; this folds the list away so the discussion (and a thread beside
+ * it) has the whole width, and brings it back. Only the list: the platform's
+ * own sidebar is navigation and stays. It is remembered on this device.
+ *
+ * ONE CONTROL, ONE PLACE, EVERY PANE. It sits at the right of the header,
+ * just before ⋯ where a pane has one — where a video player or a document
+ * editor puts its full-screen control — on a conversation, #general, an
+ * app's channel, an agent chat and both kinds of session alike. The agent
+ * panels are drawn by their own features, so they take it as `headerAction`
+ * rather than importing this store.
+ *
+ * The glyph is the verb a press performs: arrows out while the list is
+ * shown, arrows in once it is hidden. A phone shows one pane at a time
+ * already, so there it is not drawn (app.css).
+ */
+function FullWidthToggle() {
+  const snap = useMessagesSnapshot();
+  // A Mayor session's side pane (its spec or a preview) open beside its chat
+  // has already moved the list aside (ConversationList), so here the control
+  // would do nothing. It is not drawn, as app.css does for an open reply
+  // thread below 1600px.
+  const specBeside = useSidePaneBeside('messages');
+  const collapsed = snap.listCollapsed;
+  if (specBeside) return null;
+  const label = collapsed ? 'Show the conversation list' : 'Full width';
+  return (
+    <button
+      type="button"
+      className="messages-thread-action messages-list-toggle"
+      aria-pressed={collapsed}
+      aria-label={label}
+      title={label}
+      onClick={() => setListCollapsed(!collapsed)}
+    >
+      {collapsed ? <ArrowsPointingInIcon aria-hidden="true" /> : <ArrowsPointingOutIcon aria-hidden="true" />}
+    </button>
+  );
+}
+
+/**
  * The sheet's title row: who this conversation is with, and its actions as
  * floating discs. No back control of its own — on a phone the platform
  * header's back arrow already points at the list (see syncChrome in
@@ -860,10 +1025,36 @@ function ThreadHeader() {
   const active = snap.active;
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
+  // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
+  // outside it and on Escape (it used to stay open until its own button was
+  // pressed again), takes focus to its first row when it opens, moves
+  // between rows on the arrow keys, and hands focus back to the ⋯ on
+  // Escape. Hooks before the early return below, so their order is stable.
+  const menuWrapRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const closeMenu = () => setMenu(false);
+  useDismiss(menu, [menuWrapRef], closeMenu);
+  const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
+  // Another conversation is another header: a menu left open does not follow.
+  useEffect(() => { setMenu(false); }, [active?.id]);
   const peer = active ? conversationPeer(active) : null;
   if (!active) return null;
   async function blockPeer() {
-    if (!peer || !window.confirm(`Block @${peer.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
+    if (!peer) return;
+    // The menu goes first and focus returns to the ⋯, so the confirm below
+    // hands focus back there whichever way it is answered.
+    menuBtnRef.current?.focus({ preventScroll: true });
+    setMenu(false);
+    // QA 2026-09-24 Q15: the app's own confirm (lib/confirm.ts), not the
+    // browser's, which some webview hosts suppress.
+    const ok = await confirmAction({
+      title: `Block @${peer.username}?`,
+      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
+      confirmLabel: 'Block',
+      danger: true,
+    });
+    if (!ok) return;
     const conversationId = active?.id;
     if (!conversationId) return;
     setBusy(true);
@@ -871,23 +1062,66 @@ function ThreadHeader() {
     catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : 'Couldn’t block this user.'); }
     finally { setBusy(false); setMenu(false); }
   }
+  // QA 2026-09-24 Q14: rename, for whoever the server lets rename — the
+  // group's owner (`canManage`, the same gate PATCH /api/conversations/:id
+  // applies). The kit's own one-field dialog, pre-filled with the name.
+  async function renameGroup() {
+    setMenu(false);
+    const current = active?.title || '';
+    // PlatformUI.prompt (public/js/platform-ui.js) is the kit alert's inset
+    // text field, resolving the string or null on Cancel.
+    const ui = window.PlatformUI as undefined | {
+      prompt?: (opts: { title: string; value?: string; placeholder?: string; confirmLabel?: string; maxLength?: number }) => Promise<string | null>;
+      toast?: (message: string) => void;
+    };
+    if (!ui?.prompt) return;
+    const next = await ui.prompt({ title: 'Rename group', value: current, placeholder: 'Group name', confirmLabel: 'Save', maxLength: 80 });
+    if (next == null) return;
+    try { await renameConversation(next); }
+    catch (err) { ui.toast?.(err instanceof Error ? err.message : 'Couldn’t rename this group.'); }
+  }
   const channel = active.kind === 'channel';
+  const invited = active.membershipStatus === 'invited';
+  // QA 2026-09-24 Q33a: an unanswered request names its requester.
+  const person = directPerson(active);
+  const count = (n: number) => `${n} ${n === 1 ? 'member' : 'members'}`;
+  // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
+  // the roster until they accept, so the count the server gives them is 0 —
+  // they read the invitation's state instead of "0 members".
   const subtitle = channel
-    ? `Everyone on Homeroom · ${active.memberCount} ${active.memberCount === 1 ? 'member' : 'members'}`
-    : active.kind === 'group'
-      ? `${active.memberCount} members${active.myRole === 'owner' ? ' · you own this group' : ''}`
-      : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message';
+    ? `Everyone on Homeroom · ${count(active.memberCount)}`
+    : invited
+      ? 'Invitation pending'
+      : active.kind === 'group'
+        ? `${count(active.memberCount)}${active.myRole === 'owner' ? ' · you own this group' : ''}`
+        : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
-        : <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} shape="square" />}
+        : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
       <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
-        <div className="messages-thread-name">{active.kind === 'direct' && peer ? `@${peer.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
+        <div className="messages-thread-name">{active.kind === 'direct' && person ? `@${person.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
         <div className="messages-thread-sub">{subtitle}</div>
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
-      <div className="relative"><button type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>{menu ? <div className="messages-thread-menu">{active.kind === 'group' ? <button type="button" onClick={() => { setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button> : active.kind === 'direct' ? <button type="button" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button> : null}<button type="button" onClick={() => { setMenu(false); void loadConversations(true); }}>Refresh conversation</button></div> : null}</div>
+      <FullWidthToggle />
+      <div className="relative" ref={menuWrapRef}>
+        <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
+        {menu ? (
+          <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label="Conversation actions" onKeyDown={menuKeys.onKeyDown}>
+            {active.kind === 'group' && active.canManage
+              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>Rename group</button>
+              : null}
+            {active.kind === 'group'
+              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button>
+              : active.kind === 'direct'
+                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>
+                : null}
+            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
+          </div>
+        ) : null}
+      </div>
     </header>
   );
 }
@@ -1000,6 +1234,8 @@ function AppDiscussionThread({ slug }: { slug: string }) {
       const list = el.querySelector('#gc-messages');
       if (list) chat?.unmountTranscript?.(list);
       chat?.unmountGeneralChat?.(el);
+      // #2387: a "Mark unread" lasts while the channel is open, not after.
+      (window as any).GroupChat?.releaseUnreadHold?.(slug);
     };
   }, [slug, ready, name, readOnly]);
 
@@ -1034,6 +1270,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           <span className="messages-thread-name block">{name}</span>
           <span className="messages-thread-sub block">{handle ? `#${handle} · ` : ''}Everyone building this app</span>
         </span>
+        <FullWidthToggle />
       </header>
       {/* NO `dc-lift dc-lift-session` HERE, unlike the conversation pane
           beside it: features/group-chat/general-chat.tsx opens with exactly
@@ -1072,6 +1309,83 @@ function AppDiscussionThread({ slug }: { slug: string }) {
  * following a `#chat/<id>` link from here reopens the store for the screen
  * before this unmounts, and that open is not this pane's to undo.
  */
+/**
+ * An agent session (#2779), as a thread of this inbox: the same panel its
+ * own screen draws (features/agent-session), told it is drawn here. Leaving
+ * the pane deactivates it only if the pane still owns it, as above — and
+ * only if it is still THIS conversation: an unsent one (`new`) becomes its
+ * session on the first message, and the thread for that address takes over
+ * a store that is already showing it.
+ */
+function MayorSessionThread({ id }: { id: number | 'new' }) {
+  useEffect(() => {
+    void openAgentSession({ id, host: 'messages' });
+    return () => {
+      const current = getAgentSessionState();
+      const same = id === 'new' ? current.id === null : current.id === id;
+      if (current.open && current.host === 'messages' && same) deactivateAgentSession();
+    };
+  }, [id]);
+  return (
+    <section
+      className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
+      aria-label="Agent session"
+      data-agent-session-thread={id}
+    >
+      <AgentSessionPanel embedded headerAction={<FullWidthToggle />} />
+    </section>
+  );
+}
+
+/**
+ * One agent session's row (#2779): its title, the app it is about, and
+ * where its active change stands. A link to the inbox's own address for it,
+ * which a phone's router swaps for the conversation's screen.
+ */
+function MayorSessionRow({ session, active }: { session: MayorSession; active: boolean }) {
+  const at = session.lastActivityAt || session.createdAt || null;
+  const activity = at ? agoStamp(at) : null;
+  const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
+  const href = agentThreadAddress(thread);
+  const change = session.activeChange;
+  const status = change
+    ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${
+      change.status === 'promoted' ? 'In vote' : change.status === 'merged' ? 'Merged' : 'In progress'}`
+    : 'No active change';
+  return (
+    <a
+      href={href}
+      data-inbox-agent-session={session.id}
+      className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
+      aria-current={active ? 'page' : undefined}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+        if (window.location.hash === href) { event.preventDefault(); openAgentThread(thread); }
+      }}
+    >
+      <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
+        <SparklesIcon className="w-5 h-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="messages-row-line">
+          <span className="messages-row-name">{session.title || 'New session'}</span>
+          {activity
+            ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
+            : null}
+        </div>
+        <div className="messages-row-line">
+          <span className="messages-row-preview">
+            {session.busy ? 'Working…' : `${session.focusApp?.name ? `${session.focusApp.name} · ` : ''}${status}`}
+          </span>
+          {/* #2779: where a conversation's unread count goes, the lists' mark:
+              a spinner while it works, a green dot once it finished unseen. */}
+          <AgentActivityMark activity={agentActivity(session)} />
+        </div>
+      </div>
+    </a>
+  );
+}
+
 function AgentChatThread({ id }: { id: string }) {
   useEffect(() => {
     void openGlobalChat({ threadId: id, host: 'messages' });
@@ -1086,7 +1400,7 @@ function AgentChatThread({ id }: { id: string }) {
       aria-label="Agent chat"
       data-agent-chat={id}
     >
-      <GlobalChatPanel embedded />
+      <GlobalChatPanel embedded headerAction={<FullWidthToggle />} />
     </section>
   );
 }
@@ -1156,6 +1470,7 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
     >
       <div className="messages-session-bar">
         <a className="messages-session-full" href={full}>Open full view</a>
+        <FullWidthToggle />
       </div>
       {phase === 'unavailable' ? (
         <div className="messages-state messages-state-error">
@@ -1181,6 +1496,10 @@ function ConversationThread() {
   const typing = conversationId ? typingUsers(conversationId) : [];
   // #2884: the runs of cards the viewer has opened, by their first message.
   const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
+  // #2387: the message a link pointed at, flashed once it is drawn.
+  const focusId = snap.route.focusMessageId;
+  const [flashId, setFlashId] = useState<number | null>(null);
+  const shownFocus = useRef<number | null>(null);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -1192,13 +1511,27 @@ function ConversationThread() {
     const lastMessage = snap.messages.at(-1);
     const last = lastMessage?.id || null;
     if (!el || !last) return;
+    // #2387: a message link lands on its message, centred and flashed, once
+    // — not at the bottom, and not again on every refresh after.
+    if (focusId && shownFocus.current !== focusId) {
+      const row = document.getElementById(`messages-message-${focusId}`);
+      if (row) {
+        shownFocus.current = focusId;
+        previousLast.current = last;
+        requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+        setFlashId(focusId);
+        window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
+        return;
+      }
+    }
+    if (focusId && shownFocus.current === focusId && snap.nextAfter) { previousLast.current = last; return; }
     // The viewer's own send always lands in view, wherever they had scrolled.
     const sentNow = !!lastMessage?.pending && last !== previousLast.current;
     if (previousLast.current === null || sentNow || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
       requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     }
     previousLast.current = last;
-  }, [snap.messages]);
+  }, [snap.messages, focusId, snap.nextAfter]);
 
   async function older() {
     const el = scroller.current;
@@ -1212,6 +1545,7 @@ function ConversationThread() {
 
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
   if (snap.route.agent?.kind === 'chat') return <AgentChatThread key={snap.route.agent.id} id={snap.route.agent.id} />;
+  if (snap.route.agent?.kind === 'agent') return <MayorSessionThread key={`agent/${snap.route.agent.id}`} id={snap.route.agent.id} />;
   if (snap.route.agent?.kind === 'session') {
     const { slug, id } = snap.route.agent;
     return <AgentSessionThread key={`${slug}/${id}`} slug={slug} id={id} />;
@@ -1236,13 +1570,41 @@ function ConversationThread() {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
     }
+    // #2387 follow-up: a thread's reply, drawn where it landed — one card for
+    // the run of replies to that thread with nothing else said between them
+    // on the same day. A deleted reply is gone from the run; the next message
+    // after the card carries its own name.
+    if (message.threadRootId) {
+      const run = [message];
+      while (index + 1 < snap.messages.length) {
+        const next = snap.messages[index + 1];
+        if (next.threadRootId !== message.threadRootId || dayKey(next) !== day) break;
+        run.push(next);
+        index += 1;
+      }
+      const live = run.filter((item) => !item.deleted);
+      if (live.length) {
+        rows.push(<ThreadActivityRow key={`thread-activity-${live[0].clientKey || live[0].id}`} replies={live} />);
+      }
+      previous = null;
+      continue;
+    }
     // A failed or unsent row is its own line: it carries a status of its own.
     const grouped = !!previous && !previous.failed && !message.failed
       && groupsWithPrevious(
         { author: previous.sender.id, at: previous.createdAt },
         { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
       );
-    rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversationId} grouped={grouped} channels={channels} />);
+    rows.push(<MessageRow
+      key={message.clientKey || message.id}
+      message={message}
+      conversationId={conversationId}
+      grouped={grouped}
+      channels={channels}
+      kind={kind}
+      threadOpen={snap.route.threadRootId === message.id}
+      focused={flashId === message.id}
+    />);
     previous = message;
     const length = runs.get(index);
     const runKey = String(message.clientKey || message.id);
@@ -1280,14 +1642,197 @@ function ConversationThread() {
             is one — re-reads it silently: this row drawn above the messages
             pushed the whole transcript down on each message sent. */}
         {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
-        {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p><button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button></div> : null}
+        {/* QA 2026-09-24 Q16: a conversation that cannot come back offers the
+            way out, not a Try again that reads the same answer. Leaving it
+            here is said plainly, in the ordinary state colour: it is what
+            the viewer asked for, not an error. */}
+        {snap.threadGone === 'left' ? <div className="messages-state" data-thread-gone="left"><p>You left this group.</p><button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button></div> : null}
+        {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p>{snap.threadGone === 'missing'
+          ? <button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button>
+          : <button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button>}</div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
         {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button></div> : null}
         {rows}
+        {/* #2387: a message link opened the transcript part-way back. */}
+        {snap.nextAfter ? (
+          <div className="messages-newer">
+            <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? 'Loading…' : 'Load newer messages'}</button>
+            <button type="button" className="messages-load-older" onClick={() => jumpToPresent()}>Jump to present</button>
+          </div>
+        ) : null}
       </div>
       <div className="messages-typing" aria-live="polite">{typing.length === 1 ? `${typing[0]} is typing…` : typing.length > 1 ? `${typing.slice(0, 2).join(', ')} are typing…` : ''}</div>
       <MessageComposer />
     </section>
+  );
+}
+
+/**
+ * A run of one thread's replies in the main transcript (#2387 follow-up):
+ * the shared card, told who replied and what, and to open that thread.
+ */
+function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
+  const first = replies[0];
+  const last = replies[replies.length - 1];
+  const rootId = first.threadRootId as number;
+  const root = first.threadRoot;
+  const start = timeOfDay(first.createdAt);
+  const end = timeOfDay(last.createdAt);
+  return (
+    <ThreadActivityCard
+      rootText={root?.content || ''}
+      rootDeleted={!!root?.deleted}
+      time={start === end ? start : `${start} – ${end}`}
+      timeTitle={fullTime(last.createdAt)}
+      replies={replies.map((reply) => ({
+        key: reply.clientKey || reply.id,
+        face: <span className="msgx-thread-face"><UserAvatar user={reply.sender} size="sm" shape="square" /></span>,
+        name: reply.sender.username,
+        text: reply.content,
+      }))}
+      onOpen={() => openThread(rootId)}
+    />
+  );
+}
+
+/**
+ * A REPLY THREAD beside its conversation (#2387): the message it hangs off,
+ * its replies, and a composer of its own. Slack's arrangement — the
+ * conversation stays readable on the left while the side conversation runs
+ * on the right — drawn as a second sheet on the same strip. On a phone it
+ * covers the conversation instead (app.css), and Back returns to it.
+ *
+ * DMs have no threads: a thread is how a room keeps a side conversation out
+ * of everyone's way, and a DM has no one else in it (store: canThread).
+ */
+function ReplyThreadPanel() {
+  const snap = useMessagesSnapshot();
+  const channels = useChannelHandles();
+  const conversationId = snap.route.conversationId;
+  const rootId = snap.route.threadRootId;
+  const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
+  const scroller = useRef<HTMLDivElement>(null);
+  const count = useRef(0);
+  useEffect(() => {
+    if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {
+      void loadReplyThread(conversationId, rootId);
+    }
+  }, [conversationId, rootId, snap.active?.id, snap.loadingThread]);
+  // New replies land in view, as the conversation's do.
+  useEffect(() => {
+    const el = scroller.current;
+    const n = thread?.messages.length || 0;
+    if (el && n !== count.current) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    count.current = n;
+  }, [thread?.messages.length]);
+  if (!conversationId || !rootId) return null;
+  const active = snap.active;
+  const kind = active?.kind || 'group';
+  const where = active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
+  const root = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
+  const replies = thread?.messages || [];
+  let previous: ConversationMessage | null = null;
+  return (
+    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label="Thread" data-reply-thread={rootId}>
+      <header className="messages-thread-header">
+        <div className="min-w-0 flex-1">
+          <div className="messages-thread-name">Thread</div>
+          {where ? <div className="messages-thread-sub">{where}</div> : null}
+        </div>
+        <button type="button" className="messages-thread-action" aria-label="Close thread" title="Close thread" onClick={() => closeThread()}>
+          <XIcon aria-hidden="true" />
+        </button>
+      </header>
+      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
+        {/* The root's Reply quotes it into THIS thread's composer (#2387): its
+            own threadRootId is null, being the main stream's message. */}
+        {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread /> : null}
+        <div className="messages-reply-count" aria-hidden={!replies.length}>
+          <span>{replies.length ? `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : thread?.loading ? 'Loading replies…' : 'No replies yet'}</span>
+        </div>
+        {thread?.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? 'Loading…' : 'Load earlier replies'}</button></div> : null}
+        {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>Try again</button></div> : null}
+        {replies.map((message) => {
+          const grouped = !!previous && !previous.failed && !message.failed
+            && groupsWithPrevious(
+              { author: previous.sender.id, at: previous.createdAt },
+              { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
+            );
+          previous = message;
+          return <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped} channels={channels} kind={kind} inThread />;
+        })}
+      </div>
+      <MessageComposer threadRootId={rootId} />
+    </aside>
+  );
+}
+
+/**
+ * A reply thread beside an app's channel (#2387) — the same side sheet as a
+ * conversation's, filled the way the channel itself is: by the group chat
+ * (public/js/group-chat.js), which owns the app chat's transcript, composer,
+ * drafts, @ and # menus and its socket. `GroupChat.mountThread` puts a
+ * thread's shell and transcript into this host, exactly as it does for an
+ * issue's or a proposal's own discussion; this pane is the frame around it.
+ *
+ * It waits for the channel: the module can only mount a thread for the app
+ * it is connected to, and that is the channel pane's to establish.
+ */
+function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number }) {
+  const snap = useMessagesSnapshot();
+  const host = useRef<HTMLDivElement | null>(null);
+  const context = snap.discussionContext;
+  const ready = !!context && context.slug === slug;
+  const readOnly = ready ? context.readOnly : true;
+  const handle = snap.discussions.find((item) => item.slug === slug)?.channel || null;
+  useEffect(() => {
+    const el = host.current;
+    if (!el || !ready) return undefined;
+    const chat = (window as any).GroupChat;
+    let live = true;
+    let tries = 0;
+    let timer = 0;
+    const mount = () => {
+      if (!live) return;
+      // The channel pane connects the module a macrotask after it mounts;
+      // wait for it rather than connecting a second time from here.
+      if (chat?.appSlug !== slug && tries < 40) { tries += 1; timer = window.setTimeout(mount, 50); return; }
+      chat?.mountThread?.({
+        type: 'message',
+        ref: rootId,
+        container: el,
+        fullHeight: true,
+        readOnly,
+        placeholder: 'Reply in thread…',
+        notice: 'Only members of this app can reply here.',
+      });
+    };
+    timer = window.setTimeout(mount, 0);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      const list = el.querySelector('#gc-thread-messages');
+      if (list) (window as any).UsernodeReact?.groupChat?.unmountTranscript?.(list);
+      unmountLegacyPortal(el);
+      if (chat?.activeThread?.type === 'message' && Number(chat.activeThread.ref) === rootId) chat.unmountThread?.();
+    };
+  }, [slug, rootId, ready, readOnly]);
+  const back = `#messages/app/${encodeURIComponent(slug)}`;
+  return (
+    <aside className="messages-reply-pane messages-reply-pane-app" aria-label="Thread" data-reply-thread={rootId}>
+      <header className="messages-thread-header">
+        <div className="min-w-0 flex-1">
+          <div className="messages-thread-name">Thread</div>
+          <div className="messages-thread-sub">{handle ? `#${handle}` : (ready ? context.name : slug)}</div>
+        </div>
+        <a className="messages-thread-action" href={back} aria-label="Close thread" title="Close thread">
+          <XIcon aria-hidden="true" />
+        </a>
+      </header>
+      {/* The host's class string is constant and its subtree is the group
+          chat's — the one-owner rule, satisfied at this boundary. */}
+      <div ref={host} className="messages-reply-host flex-1 min-h-0" />
+    </aside>
   );
 }
 
@@ -1334,16 +1879,25 @@ export function MessagesScreen() {
     // the bar and puts the chevron back to the list. Without them, opening a
     // discussion kept the previous thread's name.
     [snap.active?.title, snap.route.open, snap.route.conversationId,
-      snap.route.appSlug, snap.route.agent, snap.discussionContext?.name]);
+      snap.route.appSlug, snap.route.agent, snap.discussionContext?.name, snap.route.threadRootId]);
+  // #2387: full width applies to any open discussion — a conversation, an
+  // app channel, or an agent thread (every one carries the toggle). With
+  // nothing open the list is there: it is the only thing to show. Reply
+  // threads hang off conversations and channels alone.
+  const chatOpen = !!(snap.route.conversationId || snap.route.appSlug);
+  const discussionOpen = chatOpen || !!snap.route.agent;
+  const layout = `messages-layout dc-lift dc-lift-strip${snap.listCollapsed && discussionOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
   return (
     <>
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
-        <div className="messages-layout dc-lift dc-lift-strip">
+        <div className={layout}>
           <ConversationList />
           <ConversationThread />
+          {snap.route.conversationId && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
+          {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>
       </main>
       <CreateConversationDialog />

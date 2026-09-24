@@ -568,3 +568,60 @@ test('closing the dialog does not leave the question behind for the next open', 
   assert.equal(h.el('feedback-submit').disabled, false, 'Submit is live for the single option');
   assert.equal(h.hintShown(), false);
 });
+
+// ── QA 2026-09-24: what the dialog calls itself, and what a failure says ──
+
+test('the dialog is headed with the words of the way in', () => {
+  const h = makeHarness({ appData: OPEN_APP });
+  const heading = () => h.el('feedback-form').querySelector('h2').textContent;
+  h.sandbox.Feedback._open({ fromDev: true, intent: 'issue' });
+  assert.equal(heading(), 'File an issue', 'the Workshop "+" menu\'s row says File an issue');
+  h.sandbox.Feedback._open({ fromDev: true });
+  assert.equal(heading(), 'Send feedback', 'every other way in is feedback, and the next open resets it');
+});
+
+function failingSubmit(status, error) {
+  const h = makeHarness({ appData: OPEN_APP });
+  const warns = [];
+  h.sandbox.console.warn = (...args) => warns.push(args.join(' '));
+  const inner = h.sandbox.fetch;
+  h.sandbox.fetch = async (url, opts = {}) => {
+    if (url !== '/api/feedback') return inner(url, opts);
+    h.fetchCalls.push({ url, opts });
+    return { ok: false, status, json: async () => ({ error }) };
+  };
+  h.open();
+  h.el('feedback-target-platform').fire('click');
+  h.type('The Workshop list does not remember my scroll position.');
+  return { h, warns };
+}
+
+test('a server-side refusal reads as plain words; the reason goes to the console', async () => {
+  const { h, warns } = failingSubmit(503, 'GitHub token not configured');
+  await h.submit();
+  assert.equal(h.filed().length, 1, 'the submit did go out');
+  const status = h.el('feedback-status');
+  assert.equal(status.textContent, "Couldn't file this right now. Please try again later.");
+  assert.doesNotMatch(status.textContent, /GitHub token/, 'no server configuration on screen');
+  assert.ok(warns.some((w) => /GitHub token not configured/.test(w)), 'the technical reason is kept for whoever debugs it');
+});
+
+test('a refusal about what was sent keeps the server\'s own words', async () => {
+  const { h } = failingSubmit(409, 'This app has no repository yet. Try platform feedback instead');
+  await h.submit();
+  assert.equal(h.el('feedback-status').textContent, 'This app has no repository yet. Try platform feedback instead');
+});
+
+test('the title hint fits a phone-width field, and the resting heading is sentence case', () => {
+  // "Title, generated as you type; edit as you like" was 312px of text in a
+  // 300px field at 390px wide, so it read "... edit as you lik". The hint
+  // only has to say the title is written for you; that it can be changed is
+  // what a text field already says.
+  const tsx = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  const hint = /id="feedback-title"[\s\S]{0,120}?placeholder="([^"]*)"/.exec(tsx);
+  assert.ok(hint, 'the title field carries a hint');
+  assert.equal(hint[1], 'Suggested as you type');
+  assert.ok(hint[1].length <= 24, 'short enough for the narrowest supported phone');
+  assert.match(tsx, /<h2 className="text-lg font-bold mb-4">\s*Send feedback\s*<\/h2>/,
+    'the prerendered heading is the one the controller resets to');
+});

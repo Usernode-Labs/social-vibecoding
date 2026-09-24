@@ -72,7 +72,9 @@ const DDL = `
     idempotency_key VARCHAR(64),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    edited_at TIMESTAMPTZ
+    edited_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    thread_root_id INTEGER REFERENCES conversation_messages(id) ON DELETE CASCADE
   );
   CREATE UNIQUE INDEX conversation_message_idempotency
     ON conversation_messages (conversation_id, sender_id, idempotency_key)
@@ -133,6 +135,19 @@ const DDL = `
     detail VARCHAR(32),
     read_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  -- #2386: createDirect reads it (friends skip the invitation) and setBlock
+  -- clears it. The full DDL is schema.sql's; tests/friends-postgres.test.js
+  -- runs that.
+  CREATE TABLE friendships (
+    user_low_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_high_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    responded_at TIMESTAMPTZ,
+    PRIMARY KEY (user_low_id, user_high_id),
+    CHECK (user_low_id < user_high_id)
   );
   CREATE TABLE chat_session_spec_conversation_shares (
     session_id INTEGER NOT NULL,
@@ -222,6 +237,13 @@ test('postgres serializes conversation consent, retries, and revocation', async 
     assert.equal(await conversations.listMessages(pool, dave, pending.conversationId), null,
       'invitee cannot read retained history before acceptance');
 
+    // QA 2026-09-24 Q2: the requester's side says it is waiting, and may
+    // still send its one opening message; the invitee's side does not.
+    const beforeOpening = await conversations.getConversation(pool, carol, pending.conversationId);
+    assert.equal(beforeOpening.awaitingAcceptance, true);
+    assert.equal(beforeOpening.canSend, true, 'the opening message is still available');
+    assert.equal((await conversations.getConversation(pool, dave, pending.conversationId)).awaitingAcceptance, false);
+
     // A lost-response retry of the one allowed opening message returns the
     // same row even when both requests overlap. A new key remains rejected.
     const retryInput = { content: 'opening message', idempotency_key: 'opening-retry-1' };
@@ -235,9 +257,33 @@ test('postgres serializes conversation consent, retries, and revocation', async 
       'SELECT COUNT(*) AS n FROM conversation_messages WHERE conversation_id = $1',
       [pending.conversationId]
     )).rows[0].n), 1);
-    assert.equal(await conversations.sendMessage(pool, carol, pending.conversationId, {
+    // QA 2026-09-24 Q2: refused as awaiting acceptance (the route's 409),
+    // not as a missing conversation, and the requester's canSend says so.
+    assert.deepEqual(await conversations.sendMessage(pool, carol, pending.conversationId, {
       content: 'second opening', idempotency_key: 'opening-retry-2',
-    }), null);
+    }), { error: 'awaiting_acceptance' });
+    const afterOpening = await conversations.getConversation(pool, carol, pending.conversationId);
+    assert.equal(afterOpening.awaitingAcceptance, true);
+    assert.equal(afterOpening.canSend, false, 'the opening message is spent until they accept');
+
+    // ...and once the other person accepts, sending works as it always did.
+    const gina = await addUser(pool, 'gina');
+    const hank = await addUser(pool, 'hank');
+    const request = await conversations.createDirect(pool, gina, hank.id);
+    assert.ok(await conversations.sendMessage(pool, gina, request.conversationId, {
+      content: 'hello hank', idempotency_key: 'gina-opening-1',
+    }));
+    assert.deepEqual(await conversations.sendMessage(pool, gina, request.conversationId, {
+      content: 'are you there?', idempotency_key: 'gina-second-1',
+    }), { error: 'awaiting_acceptance' });
+    assert.ok(await conversations.respond(pool, hank, request.conversationId, 'accept'));
+    const accepted = await conversations.getConversation(pool, gina, request.conversationId);
+    assert.equal(accepted.awaitingAcceptance, false);
+    assert.equal(accepted.canSend, true);
+    const second = await conversations.sendMessage(pool, gina, request.conversationId, {
+      content: 'are you there?', idempotency_key: 'gina-second-2',
+    });
+    assert.ok(second && !second.error && second.messageId, 'a follow-up sends once accepted');
 
     await conversations.setBlock(pool, dave.id, carol.id, true);
     const terminal = (await pool.query(

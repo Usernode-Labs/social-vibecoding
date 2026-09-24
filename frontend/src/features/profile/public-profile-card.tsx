@@ -12,6 +12,11 @@
  * button (./message-button.tsx): on for someone else's page and a viewer who
  * can use Messages, off in the owner's preview and on your own page.
  *
+ * `friendship` (#2386) is the signed-in viewer's own relationship with this
+ * person, straight off the profile payload; when present the friend control
+ * (features/friends/friend-button.tsx) gets its own row under the name, so
+ * the name keeps the width Message already shares with it.
+ *
  * The avatar keeps its layout trick: the initial sits in the box and the photo
  * is absolutely positioned over it, so a failed load drops the image and
  * reveals the fallback without shifting anything. The legacy code did that by
@@ -25,6 +30,8 @@ import { useState, type ReactNode } from 'react';
 import { publicAvatarView, verifiedSocialLinksView } from './profile-store.js';
 import { Profile } from './profile.js';
 import { MessageButton } from './message-button';
+import { FriendButton } from '../friends/friend-button';
+import type { FriendState } from '../friends/api';
 
 const REPORT_REASONS: Array<[string, string]> = [
   ['impersonation', 'Impersonation'],
@@ -126,10 +133,12 @@ export function PublicProfileCard({
   profile,
   allowReport,
   allowMessage = false,
+  friendship = null,
 }: {
   profile: any;
   allowReport: boolean;
   allowMessage?: boolean;
+  friendship?: { userId: number; state: FriendState } | null;
 }): ReactNode {
   const socialLinks = verifiedSocialLinksView(profile);
   return (
@@ -157,6 +166,15 @@ export function PublicProfileCard({
               </div>
               {allowMessage ? <MessageButton username={profile.username} /> : null}
             </div>
+            {friendship ? (
+              <div id="public-profile-friend" className="mt-3">
+                <FriendButton
+                  userId={friendship.userId}
+                  username={profile.username}
+                  initialState={friendship.state}
+                />
+              </div>
+            ) : null}
             {profile.bio ? (
               <p className="mt-3 text-sm whitespace-pre-wrap break-words">{profile.bio}</p>
             ) : null}

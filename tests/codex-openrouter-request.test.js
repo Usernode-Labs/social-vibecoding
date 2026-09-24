@@ -82,6 +82,51 @@ test('the wire cap is enforced on every GLM request, independently of history si
   assert.doesNotMatch(JSON.stringify(diagnostics), /test-openrouter-key|coding instructions|Short request|long history/);
 });
 
+test('evidence timing separates provider wait, first byte, and stream completion without content', async t => {
+  const privateText = 'private model output';
+  const base = await upstream(t, async (req, res) => {
+    await json(req);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ delta: privateText })}\n\n`);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    res.end('data: [DONE]\n\n');
+  });
+  const events = [];
+  const instance = await adapter(t, base, {
+    onTiming: event => events.push(event), timingIntervalMs: 5,
+  });
+  const response = await request(instance, {
+    model: MODEL, stream: true, input: [{ role: 'user', content: 'private input' }],
+    instructions: 'private instructions', previous_response_id: 'private-response-id',
+  });
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /private model output/);
+  assert.equal(events[0].kind, 'provider_request_start');
+  assert.ok(events[0].payloadBytes > events[0].inputBytes + events[0].instructionBytes);
+  assert.equal(events[0].inputBytes, Buffer.byteLength(JSON.stringify([
+    { role: 'user', content: 'private input' },
+  ])));
+  assert.equal(events[0].instructionBytes, Buffer.byteLength(JSON.stringify('private instructions')));
+  assert.equal(events[0].inputItems, 1);
+  assert.equal(events[0].previousResponseLinked, true);
+  assert.equal(events[0].maxOutputTokens, 32000);
+  assert.ok(events.some(event => event.kind === 'provider_request_pending'
+    && event.stage === 'await_headers'));
+  assert.ok(events.some(event => event.kind === 'provider_request_pending'
+    && event.stage === 'streaming' && event.responseBytes > 0 && event.chunkCount > 0));
+  assert.deepEqual(events.filter(event => [
+    'provider_response_headers', 'provider_response_first_byte', 'provider_request_end',
+  ].includes(event.kind)).map(event => event.kind), [
+    'provider_response_headers', 'provider_response_first_byte', 'provider_request_end',
+  ]);
+  assert.equal(events.at(-1).outcome, 'ok');
+  assert.ok(events.at(-1).durationMs >= events.find(event => event.kind === 'provider_response_first_byte').durationMs);
+  assert.ok(events.at(-1).responseBytes > 0);
+  assert.equal(events.at(-1).httpStatus, 200);
+  assert.doesNotMatch(JSON.stringify(events), /private|api\/v1/i);
+});
+
 test('a real HTTP refusal is retried with the smaller limit on the wire and safe ledger evidence', async t => {
   // The attempt-loop's database behavior is covered in agent-ledger-codex;
   // this test connects its decision to the HTTP boundary without a paid call.
@@ -284,4 +329,108 @@ test('closing the invocation releases its listener', async t => {
     const req = http.get(`${instance.baseUrl}/responses`, () => reject(new Error('listener still open')));
     req.on('error', err => err.code === 'ECONNREFUSED' ? resolve() : reject(err));
   });
+});
+
+// ── Per-request usage, for a turn that never reaches turn.completed (#3038) ──
+
+const sse = event => `data: ${JSON.stringify(event)}\n\n`;
+const COMPLETED_USAGE = {
+  input_tokens: 1200, input_tokens_details: { cached_tokens: 800 },
+  output_tokens: 90, output_tokens_details: { reasoning_tokens: 30 }, total_tokens: 1290,
+};
+
+test('each finished request reports its usage as it ends, counts only, even when the final event is large', async t => {
+  // The terminal event carries the whole response object. A long answer or
+  // a big tool call makes it far larger than an error envelope, which is
+  // exactly when losing its usage would hurt.
+  const secret = 'model output that must not leave the worker ';
+  const body = sse({ type: 'response.output_text.delta', delta: 'hello' })
+    + sse({ type: 'response.completed', response: {
+      id: 'resp-1', status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: secret.repeat(5000) }] }],
+      usage: COMPLETED_USAGE,
+    } });
+  assert.ok(body.length > 64 * 1024, 'bigger than the error-diagnostic cap');
+  const base = await upstream(t, (req, res) => {
+    req.resume();
+    res.setHeader('content-type', 'text/event-stream');
+    // Split into small writes so the event boundary search is exercised
+    // across chunks.
+    let i = 0;
+    const next = () => {
+      if (i >= body.length) { res.end(); return; }
+      res.write(body.slice(i, i + 4096));
+      i += 4096;
+      setImmediate(next);
+    };
+    next();
+  });
+  const usages = [];
+  const instance = await adapter(t, base, { onUsage: u => usages.push(u) });
+  const response = await request(instance, { model: MODEL, stream: true, input: [] });
+  assert.equal(await response.text(), body, 'the stream is forwarded byte for byte');
+  assert.deepEqual(usages, [{ inputTokens: 1200, cachedInputTokens: 800, outputTokens: 90, reasoningOutputTokens: 30 }]);
+  assert.doesNotMatch(JSON.stringify(usages), /must not leave|resp-1/);
+});
+
+test('incomplete and failed responses report usage too; a stream cut off before its end reports none', async t => {
+  let mode = 'incomplete';
+  const base = await upstream(t, (req, res) => {
+    req.resume();
+    res.setHeader('content-type', 'text/event-stream');
+    if (mode === 'incomplete') {
+      res.end(sse({ type: 'response.incomplete', response: { status: 'incomplete', usage: { input_tokens: 500, output_tokens: 4000 } } }));
+    } else if (mode === 'failed') {
+      res.end(sse({ type: 'response.failed', response: { status: 'failed', usage: { input_tokens: 300, output_tokens: 0 } } }));
+    } else {
+      // A stream that stops mid-answer: what a stopped turn's last request
+      // looks like. Nothing reports, which is why the turn's figure is a floor.
+      res.end(sse({ type: 'response.output_text.delta', delta: 'partial' }));
+    }
+  });
+  const usages = [];
+  const instance = await adapter(t, base, { onUsage: u => usages.push(u) });
+  await (await request(instance, { model: MODEL, stream: true, input: [] })).text();
+  mode = 'failed';
+  await (await request(instance, { model: MODEL, stream: true, input: [] })).text();
+  mode = 'cut';
+  await (await request(instance, { model: MODEL, stream: true, input: [] })).text();
+  assert.deepEqual(usages.map(u => [u.inputTokens, u.outputTokens]), [[500, 4000], [300, 0]]);
+});
+
+test('a terminal event past the usage cap is forwarded untouched and simply unreported', async t => {
+  const body = sse({ type: 'response.completed', response: {
+    output: [{ type: 'message', content: [{ type: 'output_text', text: 'x'.repeat(5 * 1024 * 1024) }] }],
+    usage: COMPLETED_USAGE,
+  } });
+  const base = await upstream(t, (req, res) => {
+    req.resume();
+    res.setHeader('content-type', 'text/event-stream');
+    res.end(body);
+  });
+  const usages = [];
+  const instance = await adapter(t, base, { onUsage: u => usages.push(u) });
+  const response = await request(instance, { model: MODEL, stream: true, input: [] });
+  assert.equal((await response.text()).length, body.length);
+  assert.deepEqual(usages, [], 'memory stays bounded; the figure is only ever lower, never wrong');
+});
+
+test('the invocation writes each usage as a content-free line the normalizer sums', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'worker', 'codex-openrouter-request.js'), 'utf8');
+  assert.match(src, /onUsage: usage => process\.stdout\.write\(`\$\{JSON\.stringify\(\{ type: 'usernode\.openrouter\.usage', usage \}\)\}\\n`\)/);
+});
+
+test('relay usage lines sum per turn through the real worker parser, apart from the agent totals', () => {
+  const worker = require('../src/services/worker');
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  const feed = line => worker.parseLine(JSON.stringify(line), () => {}, state);
+  feed({ type: 'usernode.openrouter.usage', usage: { inputTokens: 1200, cachedInputTokens: 800, outputTokens: 90, reasoningOutputTokens: 30 } });
+  feed({ type: 'usernode.openrouter.usage', usage: { inputTokens: 1500, cachedInputTokens: 1100, outputTokens: 40, reasoningOutputTokens: null } });
+  feed({ type: 'usernode.openrouter.usage', usage: { inputTokens: -5, outputTokens: 'lots' } });
+  assert.deepEqual(state.relayUsage, {
+    requests: 2, inputTokens: 2700, cachedInputTokens: 1900, outputTokens: 130, reasoningOutputTokens: 30,
+  }, 'a malformed line is ignored rather than counted');
+  assert.equal(state.inputTokens ?? null, null, "the agent's own totals are untouched: the ledger prices those");
+  assert.equal(codex.newCodexState().relayUsage, null);
 });

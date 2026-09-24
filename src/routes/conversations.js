@@ -35,6 +35,22 @@ function sendNotFound(res) {
   return res.status(404).json(NOT_FOUND);
 }
 
+// #2387's two refusals that are not "not found": a thread in a direct
+// conversation (400) and a change to a deleted message (409).
+const THREADS_NOT_SUPPORTED = Object.freeze({ error: 'threads_not_supported' });
+const MESSAGE_DELETED = Object.freeze({ error: 'message_deleted' });
+// QA 2026-09-24 Q2: a second message into a direct request the other person
+// has not accepted yet. The conversation exists and the sender is in it; the
+// send is refused until they accept, so it is a conflict, not a 404.
+const AWAITING_ACCEPTANCE = Object.freeze({ error: 'awaiting_acceptance' });
+
+function sendMessageError(res, error) {
+  if (error === 'threads_not_supported') return res.status(400).json(THREADS_NOT_SUPPORTED);
+  if (error === 'message_deleted') return res.status(409).json(MESSAGE_DELETED);
+  if (error === 'awaiting_acceptance') return res.status(409).json(AWAITING_ACCEPTANCE);
+  return sendNotFound(res);
+}
+
 function pushAudience(memberIds, payload, options) {
   const ws = require('../services/ws');
   if (typeof ws.pushConversationEvent === 'function') {
@@ -117,7 +133,7 @@ function demoConversations(user) {
   ];
 }
 
-function demoMessages(user, conversationId) {
+function demoMessagesRaw(user, conversationId) {
   const self = demoUser(user.id, user.username || 'you');
   const ada = demoUser(910001, 'ada');
   if (conversationId === 910001) return [
@@ -195,6 +211,14 @@ function demoMessages(user, conversationId) {
       url: `/api/conversations/${conversationId}/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1`,
       viewUrl: null,
     }], objects: [],
+  }, {
+    // #2387: a message its author deleted — the placeholder the transcript
+    // draws in its place. Sender and time stay; nothing it said does. It is
+    // the newest row, and the list's latestSummary above still reads the
+    // checklist because a deleted message is never the latest.
+    id: 9100202, conversationId, sender: ada,
+    content: '', createdAt: '2026-08-13T12:50:00Z', editedAt: null, deleted: true,
+    reply: null, reactions: [], attachments: [], objects: [], saved: false,
   }];
   if (conversationId === 910004) {
     const lin = demoUser(910002, 'lin');
@@ -218,9 +242,21 @@ function demoMessages(user, conversationId) {
         reply: null, reactions: [], attachments: [], objects: [],
       },
       {
+        // #2387: the demo THREAD's root. Its three replies are in
+        // demoThreadReplies below; the main stream draws each as a line where
+        // it landed (demoMainStream), and this summary is the card under the
+        // message that opens them.
         id: 9100404, conversationId, sender: lin,
         content: 'Anyone else trying the new #general room?', createdAt: '2026-08-13T13:10:00Z', editedAt: null,
         reply: null, reactions: [], attachments: [], objects: [],
+        thread: {
+          replyCount: 3, lastReplyAt: '2026-08-13T13:30:00Z',
+          participants: [ada, self],
+          lastReply: {
+            id: 9100413, sender: ada, content: 'And the room stays quiet while we talk.',
+            createdAt: '2026-08-13T13:30:00Z',
+          },
+        },
       },
       {
         id: 9100405, conversationId, sender: self,
@@ -246,6 +282,123 @@ function demoMessages(user, conversationId) {
     ];
   }
   return [];
+}
+
+// Every demo message wears the full #2387 shape, so a client never has to
+// guess at a missing `deleted` or `thread`.
+function demoShape(message) {
+  return { deleted: false, threadRootId: null, thread: null, ...message };
+}
+
+function demoMessages(user, conversationId) {
+  return demoMessagesRaw(user, conversationId).map(demoShape);
+}
+
+// #2387: the demo thread under #general's "Anyone else trying the new
+// #general room?" (9100404) — three replies from two people, the viewer's own
+// in the middle so the thread shows both sides of a conversation. They land
+// after the run of cards, so ids and times agree and the main stream draws
+// them as ONE card of consecutive replies (the follow-up's merged line).
+function demoThreadReplies(user, conversationId) {
+  if (conversationId !== 910004) return [];
+  const self = demoUser(user.id, user.username || 'you');
+  const ada = demoUser(910001, 'ada');
+  const lin = demoUser(910002, 'lin');
+  const threadRoot = { id: 9100404, senderUsername: lin.username, content: 'Anyone else trying the new #general room?', deleted: false };
+  const reply = (id, sender, content, createdAt) => demoShape({
+    id, conversationId, sender, content, createdAt, editedAt: null,
+    reply: null, reactions: [], attachments: [], objects: [], threadRootId: 9100404, threadRoot,
+  });
+  return [
+    reply(9100411, ada, 'Yes! Threads keep the room readable.', '2026-08-13T13:21:00Z'),
+    reply(9100412, self, 'Replying here instead of in the room.', '2026-08-13T13:23:00Z'),
+    reply(9100413, ada, 'And the room stays quiet while we talk.', '2026-08-13T13:30:00Z'),
+  ];
+}
+
+// The main stream as the real one reads it since the #2387 follow-up: the
+// conversation's messages and its threads' replies, in the order they landed.
+function demoMainStream(user, conversationId) {
+  return [...demoMessages(user, conversationId), ...demoThreadReplies(user, conversationId)]
+    .sort((a, b) => a.id - b.id);
+}
+
+function demoLimit(raw) {
+  return Math.min(Math.max(Number(raw) || 50, 1), 100);
+}
+
+// The demo transcript paged the way listMessages pages the real one: `before`
+// (default), `after`, or an `around` window with its `focus`.
+function demoMessagePage(user, conversationId, { before = null, after = null, around = null, limit } = {}) {
+  const all = demoMainStream(user, conversationId);
+  const size = demoLimit(limit);
+  if (around) {
+    const target = all.find((row) => row.id === around)
+      || demoThreadReplies(user, conversationId).find((row) => row.id === around);
+    if (!target) return null;
+    const index = all.findIndex((row) => row.id === (target.threadRootId || target.id));
+    if (index < 0) return null;
+    const olderCount = Math.floor(size / 2);
+    const start = Math.max(0, index - olderCount);
+    const end = Math.min(all.length, index + 1 + Math.max(size - olderCount - 1, 0));
+    const messages = all.slice(start, end);
+    return {
+      messages,
+      nextBefore: start > 0 ? messages[0].id : null,
+      nextAfter: end < all.length ? messages[messages.length - 1].id : null,
+      focus: { messageId: target.id, threadRootId: target.threadRootId || null },
+    };
+  }
+  if (after) {
+    const newer = all.filter((row) => row.id > after);
+    const messages = newer.slice(0, size);
+    return { messages, nextAfter: newer.length > size ? messages[messages.length - 1].id : null };
+  }
+  const older = before ? all.filter((row) => row.id < before) : all;
+  const messages = older.slice(-size);
+  return { messages, nextBefore: older.length > size ? messages[0].id : null };
+}
+
+function demoThread(user, conversationId, rootId, { before = null, limit } = {}) {
+  const root = demoMessages(user, conversationId).find((row) => row.id === rootId);
+  if (!root) return null;
+  const replies = demoThreadReplies(user, conversationId)
+    .filter((row) => row.threadRootId === rootId && (!before || row.id < before));
+  const size = demoLimit(limit);
+  const messages = replies.slice(-size);
+  return { root, messages, nextBefore: replies.length > size ? messages[0].id : null };
+}
+
+function demoThreadReply(user, conversationId, rootId, content) {
+  if (!rootId || !demoMessages(user, conversationId).some((row) => row.id === rootId)) return null;
+  return demoShape({
+    id: 9109999, conversationId, sender: demoUser(user.id, user.username || 'you'),
+    content: typeof content === 'string' && content.trim() ? content.trim().slice(0, 8000) : 'Demo reply',
+    createdAt: new Date().toISOString(), editedAt: null,
+    reply: null, reactions: [], attachments: [], objects: [], threadRootId: rootId,
+  });
+}
+
+// DELETE on a demo message: only the viewer's own, answered with the
+// placeholder the real route returns. Nothing is stored, so a reload brings
+// it back — the demo is a request-time fiction like every branch here.
+function demoDeletedMessage(user, conversationId, messageId) {
+  const message = [...demoMessages(user, conversationId), ...demoThreadReplies(user, conversationId)]
+    .find((row) => row.id === messageId);
+  if (!message || message.sender.id !== user.id) return null;
+  return {
+    ...message, content: '', attachments: [], objects: [], reactions: [],
+    editedAt: null, saved: false, deleted: true,
+  };
+}
+
+// POST /unread on a demo conversation: the count the real route would give
+// had the cursor moved back to just before this message.
+function demoUnreadCount(user, conversationId, messageId) {
+  if (!demoConversations(user).some((row) => row.id === conversationId && row.membershipStatus === 'member')) return null;
+  const all = demoMessages(user, conversationId);
+  if (!all.some((row) => row.id === messageId)) return null;
+  return all.filter((row) => row.id >= messageId && row.sender.id !== user.id && !row.deleted).length;
 }
 
 function isDemo(req) {
@@ -378,16 +531,51 @@ function conversationRoutes(config) {
   router.get('/api/conversations/:id/messages', async (req, res) => {
     const id = conversations.strictId(req.params.id);
     const before = req.query.before == null ? null : conversations.strictId(req.query.before);
-    if (!id || (req.query.before != null && !before)) return sendNotFound(res);
+    // #2387: `after` pages forward from a permalink window; `around` opens
+    // that window. At most one cursor per request.
+    const after = req.query.after == null ? null : conversations.strictId(req.query.after);
+    const around = req.query.around == null ? null : conversations.strictId(req.query.around);
+    const cursors = [req.query.before, req.query.after, req.query.around].filter((v) => v != null);
+    if (!id || (req.query.before != null && !before) || (req.query.after != null && !after)
+        || (req.query.around != null && !around) || cursors.length > 1) return sendNotFound(res);
     try {
       if (isDemo(req)) {
         if (!demoConversations(req.user).some((row) => row.id === id && row.membershipStatus === 'member')) return sendNotFound(res);
-        return res.json({ messages: demoMessages(req.user, id), nextBefore: null, demo: true });
+        const page = demoMessagePage(req.user, id, { before, after, around, limit: req.query.limit });
+        return page ? res.json({ ...page, demo: true }) : sendNotFound(res);
       }
-      const page = await conversations.listMessages(pool, req.user, id, { before, limit: req.query.limit });
+      const page = await conversations.listMessages(pool, req.user, id, {
+        before, after, around, limit: req.query.limit,
+      });
       return page ? res.json(page) : sendNotFound(res);
     } catch (err) {
       log.error('conversations', 'messages list failed', { id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #2387: one thread — its root and a page of replies, oldest first.
+  router.get('/api/conversations/:id/threads/:rootId', async (req, res) => {
+    const id = conversations.strictId(req.params.id);
+    const rootId = conversations.strictId(req.params.rootId);
+    const before = req.query.before == null ? null : conversations.strictId(req.query.before);
+    if (!id || !rootId || (req.query.before != null && !before)) return sendNotFound(res);
+    try {
+      if (isDemo(req)) {
+        const conversation = demoConversations(req.user)
+          .find((row) => row.id === id && row.membershipStatus === 'member');
+        if (!conversation) return sendNotFound(res);
+        if (conversation.kind === 'direct') return res.status(400).json(THREADS_NOT_SUPPORTED);
+        const thread = demoThread(req.user, id, rootId, { before, limit: req.query.limit });
+        return thread ? res.json({ ...thread, demo: true }) : sendNotFound(res);
+      }
+      const thread = await conversations.listThread(pool, req.user, id, rootId, {
+        before, limit: req.query.limit,
+      });
+      if (thread?.error === 'threads_not_supported') return res.status(400).json(THREADS_NOT_SUPPORTED);
+      return thread ? res.json(thread) : sendNotFound(res);
+    } catch (err) {
+      log.error('conversations', 'thread list failed', { id, rootId, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -396,8 +584,20 @@ function conversationRoutes(config) {
     const id = conversations.strictId(req.params.id);
     if (!id) return sendNotFound(res);
     try {
-      if (isDemo(req)) return res.status(201).json({ message: demoMessages(req.user, 910001)[1], demo: true });
+      if (isDemo(req)) {
+        const threadRoot = req.body?.thread_root_id;
+        if (threadRoot == null) {
+          return res.status(201).json({ message: demoMessages(req.user, 910001)[1], demo: true });
+        }
+        const conversation = demoConversations(req.user)
+          .find((row) => row.id === id && row.membershipStatus === 'member');
+        if (!conversation) return sendNotFound(res);
+        if (conversation.kind === 'direct') return res.status(400).json(THREADS_NOT_SUPPORTED);
+        const reply = demoThreadReply(req.user, id, conversations.strictId(threadRoot), req.body?.content);
+        return reply ? res.status(201).json({ message: reply, demo: true }) : sendNotFound(res);
+      }
       const result = await conversations.sendMessage(pool, req.user, id, req.body || {});
+      if (result?.error) return sendMessageError(res, result.error);
       if (!result) return sendNotFound(res);
       if (!result.duplicate) {
         await pushNotifications(pool, result.notifications);
@@ -407,6 +607,8 @@ function conversationRoutes(config) {
             // the sender-authorized card payload to other members; recipients
             // refetch the thread through their own membership/object gates.
             type: 'conversation_message_created', conversationId: id, messageId: result.message.id,
+            // #2387: which thread it joined (null: the main stream).
+            threadRootId: result.message.threadRootId,
           });
         });
       }
@@ -423,15 +625,49 @@ function conversationRoutes(config) {
     if (!id || !messageId) return sendNotFound(res);
     try {
       const result = await conversations.editMessage(pool, req.user, id, messageId, req.body?.content);
+      if (result?.error) return sendMessageError(res, result.error);
       if (!result) return sendNotFound(res);
       await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {
         pushAudience(memberIds, {
           type: 'conversation_message_updated', conversationId: id, messageId: result.message.id,
+          threadRootId: result.message.threadRootId,
         });
       });
       return res.json({ message: result.message });
     } catch (err) {
       log.error('conversations', 'edit failed', { id, messageId, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #2387: delete your own message. Soft: the row stays as a placeholder so
+  // its thread and any quote of it keep their place; see
+  // services/conversations.js deleteMessage for what goes with it.
+  router.delete('/api/conversations/:id/messages/:messageId', conversationMessageLimiter, async (req, res) => {
+    const id = conversations.strictId(req.params.id);
+    const messageId = conversations.strictId(req.params.messageId);
+    if (!id || !messageId) return sendNotFound(res);
+    try {
+      if (isDemo(req)) {
+        const message = demoDeletedMessage(req.user, id, messageId);
+        return message ? res.json({ message, demo: true }) : sendNotFound(res);
+      }
+      const result = await conversations.deleteMessage(pool, req.user, id, messageId);
+      if (!result) return sendNotFound(res);
+      if (result.changed) {
+        await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {
+          pushAudience(memberIds, {
+            type: 'conversation_message_updated', conversationId: id, messageId,
+            threadRootId: result.threadRootId,
+          });
+        });
+        // Their bells lost a row (and possibly a queued push): recount.
+        const { pushToUser } = require('../services/ws');
+        for (const userId of result.notifiedUserIds) pushToUser(userId, { type: 'notifications_changed' });
+      }
+      return res.json({ message: result.message });
+    } catch (err) {
+      log.error('conversations', 'delete failed', { id, messageId, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -442,6 +678,7 @@ function conversationRoutes(config) {
     if (!id || !messageId) return sendNotFound(res);
     try {
       const result = await conversations.toggleReaction(pool, req.user, id, messageId, req.body?.emoji);
+      if (result?.error) return sendMessageError(res, result.error);
       if (!result) return sendNotFound(res);
       await pushNotifications(pool, result.notifications);
       await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {
@@ -478,9 +715,9 @@ function conversationRoutes(config) {
   // out of another.
   async function readableMessage(user, conversationId, messageId) {
     const membership = await conversations.loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
-    if (!membership) return false;
-    if (!await conversations.canReadConversation(pool, membership, user.id)) return false;
-    return !!await conversations.getMessage(pool, user, conversationId, messageId);
+    if (!membership) return null;
+    if (!await conversations.canReadConversation(pool, membership, user.id)) return null;
+    return conversations.getMessage(pool, user, conversationId, messageId);
   }
 
   router.put(
@@ -491,7 +728,10 @@ function conversationRoutes(config) {
       const messageId = conversations.strictId(req.params.messageId);
       if (!id || !messageId) return sendNotFound(res);
       try {
-        if (!await readableMessage(req.user, id, messageId)) return sendNotFound(res);
+        const message = await readableMessage(req.user, id, messageId);
+        if (!message) return sendNotFound(res);
+        // #2387: there is nothing left of a deleted message to keep.
+        if (message.deleted) return sendMessageError(res, 'message_deleted');
         await messageBookmarks.saveConversationMessage(pool, req.user.id, messageId);
         return res.json({ saved: true });
       } catch (err) {
@@ -547,6 +787,9 @@ function conversationRoutes(config) {
         pushAudience(memberIds, {
           type: 'conversation_read', conversationId: id,
           userId: req.user.id, messageId: result.messageId,
+          // #2387: set when a THREAD was read up to message_id; the
+          // main-stream cursor (messageId) did not move.
+          threadRootId: result.threadRootId || null,
         });
       });
       // #2904: reading a conversation clears its message notifications, but
@@ -556,6 +799,31 @@ function conversationRoutes(config) {
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'mark read failed', { id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #2387: mark unread from a message. The cursor only moves back; the
+  // answer is the conversation's new unread count, and the reader's own tabs
+  // hear it as a `conversation_read` flagged `unread`.
+  router.post('/api/conversations/:id/unread', conversationMessageLimiter, async (req, res) => {
+    const id = conversations.strictId(req.params.id);
+    const messageId = conversations.strictId(req.body?.message_id);
+    if (!id || !messageId) return sendNotFound(res);
+    try {
+      if (isDemo(req)) {
+        const unreadCount = demoUnreadCount(req.user, id, messageId);
+        return unreadCount == null ? sendNotFound(res) : res.json({ unreadCount, demo: true });
+      }
+      const result = await conversations.markUnread(pool, req.user, id, messageId);
+      if (!result) return sendNotFound(res);
+      pushAudience([req.user.id], {
+        type: 'conversation_read', conversationId: id,
+        userId: req.user.id, messageId: result.messageId, unread: true,
+      });
+      return res.json({ unreadCount: result.unreadCount });
+    } catch (err) {
+      log.error('conversations', 'mark unread failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -586,6 +854,7 @@ function conversationRoutes(config) {
       const result = await conversations.reportMessage(
         pool, req.user, id, messageId, req.body?.reason, req.body?.detail
       );
+      if (result?.error) return sendMessageError(res, result.error);
       return result ? res.status(202).json({ ok: true }) : sendNotFound(res);
     } catch (err) {
       log.error('conversations', 'report failed', { id, messageId, err: err.message });
@@ -691,10 +960,14 @@ function conversationRoutes(config) {
     }
     const membership = await conversations.loadMembership(pool, id, req.user.id, { allowDeletedPeer: true });
     if (!membership || !(await conversations.canReadConversation(pool, membership, req.user.id))) return null;
+    // #2387: a deleted message's attachment survives only as moderation
+    // evidence on a report (admin route below); members never reach it.
     const { rows } = await pool.query(
-      `SELECT id, kind, filename, content_type, data, message_id, user_id
-         FROM conversation_message_attachments
-        WHERE id = $1 AND conversation_id = $2`,
+      `SELECT a.id, a.kind, a.filename, a.content_type, a.data, a.message_id, a.user_id
+         FROM conversation_message_attachments a
+        WHERE a.id = $1 AND a.conversation_id = $2
+          AND NOT EXISTS (SELECT 1 FROM conversation_messages m
+                           WHERE m.id = a.message_id AND m.deleted_at IS NOT NULL)`,
       [attachmentId, id]
     );
     const row = rows[0];
@@ -932,6 +1205,9 @@ module.exports = {
   privateJson,
   demoConversations,
   demoMessages,
+  demoThreadReplies,
+  demoMessagePage,
+  demoThread,
   MAX_CONVERSATION_ATTACHMENT_BYTES,
   MAX_USER_ATTACHMENT_BYTES,
 };

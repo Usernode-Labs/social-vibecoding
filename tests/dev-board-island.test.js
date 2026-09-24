@@ -312,12 +312,9 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
 });
 
 test('the other legacy-owned leaves render empty or constant, never live', () => {
-  // #dev-locked-notice is NOT on this list any more. It was the fragile member
-  // of it — the module wrote its innerHTML and toggled `hidden`, and that only
-  // worked because React rendered the className as a constant it never
-  // rewrote. #1191 made it a one-boolean store instead, so the node has one
-  // writer; the banner's own coverage is below.
-  assert.doesNotMatch(FRAME, /<div id="dev-locked-notice" className="px-3 pt-2 hidden"><\/div>/);
+  // #dev-locked-notice is NOT on this list any more: #1191 made it a store,
+  // and #2786 removed the banner altogether (see its test below).
+  assert.ok(!FRAME.includes('dev-locked-notice'));
   // #dc-secrets-state — refreshDevChatSecretsState writes its textContent.
   assert.match(FRAME, /id="dc-secrets-state"[\s\S]{0,140}?><\/span>/,
     'the secrets-state slot is an empty leaf');
@@ -330,20 +327,16 @@ test('the other legacy-owned leaves render empty or constant, never live', () =>
     '#dev-section ships empty, so it needs no constant string to keep React out');
 });
 
-test('the locked-app banner has one writer', () => {
-  // The module publishes server truth (`_proposalsCtx.locked`, loaded with the
-  // feed) and the frame draws the banner or does not — including its `hidden`,
-  // which used to be the module's `classList.toggle` over React's constant.
-  assert.match(FRAME, /const \{ locked, inviteOnly \} = useStoreState<LockedNoticeState>\(lockedNoticeStore\);/);
-  assert.match(FRAME, /id="dev-locked-notice" className=\{locked \? 'px-3 pt-2' : 'px-3 pt-2 hidden'\}/);
-  // #1896: the banner says who can build, not "App is locked".
-  assert.match(FRAME, /\{lockedNoticeText\(inviteOnly\)\}/);
-  assert.doesNotMatch(FRAME, /App is locked/);
-  const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-  const fn = code.match(/_renderLockedNotice\(\) \{([\s\S]*?)\n {2}\},/);
-  assert.ok(fn, '_renderLockedNotice() found');
-  assert.doesNotMatch(fn[1], /innerHTML|classList/, 'the module writes neither the markup nor the class');
-  assert.match(fn[1], /publishLockedNotice\(\s*!!\(AppView\._proposalsCtx && AppView\._proposalsCtx\.locked\),\s*!!\(AppView\.appData && AppView\.appData\.collab_visibility === 'private'\)\)/);
+test('#2786: the Workshop draws no locked-app banner', () => {
+  // "Anyone can build on this app. A change goes live once the group votes it
+  // in and an admin approves it." sat above every locked app's card list. It
+  // is gone, with its store and its publisher; a locked card still names the
+  // admin's approval in its own ledger ("An admin approves it").
+  assert.ok(!FRAME.includes('dev-locked-notice'), 'no banner host in the frame');
+  assert.doesNotMatch(FRAME, /lockedNotice|Anyone can build/);
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'locked-notice-store.ts')),
+    'the banner\'s store is deleted');
+  assert.doesNotMatch(APP_VIEW, /_renderLockedNotice|publishLockedNotice/);
 });
 
 test('the view toggle is real React state, and the className writer is gone', () => {
@@ -507,18 +500,4 @@ test('no Dev-board id leaked into the prerendered shell', () => {
   assert.match(APP_VIEW_ISLAND, /id="app-content"/, '#app-content is still rendered');
   assert.match(APP_VIEW_ISLAND, /id="app-content"[\s\S]{0,220}?\{\/\* Tab content renders here \*\/\}/,
     '#app-content is still EMPTY — the interim roots and every innerHTML render fill it');
-});
-
-test('#1896: the locked banner says who can build, by the app\'s setting', () => {
-  const { loadTsx } = require('./lib/render-tsx');
-  const { lockedNoticeText, lockedNoticeStore } = loadTsx('frontend/src/features/dev-board/locked-notice-store.ts');
-  assert.equal(lockedNoticeText(false),
-    'Anyone can build on this app. A change goes live once the group votes it in and an admin approves it.');
-  assert.equal(lockedNoticeText(true),
-    'Only invited collaborators can build on this app. A change goes live once the group votes it in and an admin approves it.');
-  assert.deepEqual({ ...lockedNoticeStore.get() }, { locked: false, inviteOnly: false },
-    'the initial render is the hidden, empty banner the shell shipped');
-
-  const MOUNT = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'mount.ts'), 'utf8');
-  assert.match(MOUNT, /publishLockedNotice\(locked, inviteOnly = false\) \{\s*lockedNoticeStore\.set\(\{ locked, inviteOnly: !!inviteOnly \}\);/);
 });

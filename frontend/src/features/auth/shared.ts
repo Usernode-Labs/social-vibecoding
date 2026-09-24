@@ -29,6 +29,25 @@ export const AUTH_SCREEN_IDS: Record<string, string> = {
   'reset-password': 'auth-login-screen',
 };
 
+/**
+ * The account rules, stated where a new account is made (QA 2026-09-24 Q11,
+ * Q12). They are the server's, not new ones: `validateUsername` in
+ * src/services/usernames.js and `validatePassword` in
+ * src/services/password-policy.js, which now also gate POST
+ * /api/auth/register and the email-code sign-up's username. The first-run
+ * "Choose your username" step says the same thing in its own sentence.
+ */
+export const USERNAME_RULE = 'Letters, numbers and underscores, 3 to 32 characters.';
+export const PASSWORD_RULE = 'At least 8 characters.';
+
+/**
+ * The attributes every username field carries, so a phone does not
+ * capitalise, autocorrect or underline a handle (QA 2026-09-24 Q11).
+ * Sign-in matches handles case-insensitively now, but a corrected or
+ * capitalised name is still a different name in the register form.
+ */
+export const HANDLE_FIELD = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false } as const;
+
 /** One public app as `/api/public/apps` returns it. */
 export interface PublicApp {
   slug?: string;

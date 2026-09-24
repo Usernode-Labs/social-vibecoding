@@ -10,6 +10,7 @@ const stagingRecovery = require('../services/staging-recovery');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
+const prMetadata = require('../services/pr-metadata');
 const prImportSync = require('../services/pr-import-sync');
 const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
@@ -1179,7 +1180,11 @@ function proposalHandoffRoutes(config) {
       );
       const replacedActiveSlot = replacementSession?.status === 'active' ? 1 : 0;
       if (Number(ownCounts[0].cnt) - replacedActiveSlot >= caps.activeSessions) {
-        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
+        // Paused for the user rather than refused (session-lifecycle.freeUserSlot).
+        const { freed } = await sessionLifecycle.freeUserSlot({
+          pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
+        });
+        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
       }
       const { rows: globalCounts } = await pool.query(
         `SELECT COUNT(*) AS cnt FROM chat_sessions
@@ -1478,6 +1483,22 @@ function proposalHandoffRoutes(config) {
               return res.status(409).json({ error: 'session_state_changed' });
             }
           }
+          if (revisionKind === 'session' && !session.pr_number) {
+            try {
+              await prMetadata.applyPrMetadata({
+                pool, session, repoOwner: repo.owner, repoName: repo.repo,
+                userMessage: '', ccSummary: '', username: req.user.username,
+                userId: req.user.id, allowModelGeneration: false,
+                preferredTitle: session.proposed_pr_title || session.session_title || null,
+              });
+            } catch (err) {
+              // The commit is durable. A retry can adopt a PR that GitHub
+              // created before the DB write, or promotion can create it.
+              log.warn('proposal-handoff', 'Draft PR creation deferred after commit upload', {
+                sessionId: session.id, code: err.code || null, err: err.message,
+              });
+            }
+          }
           if (revisionKind === 'proposal') {
             const reconciled = await proposalUpdate.reconcileManagedCommitUpload(
               { config, pool },
@@ -1506,6 +1527,8 @@ function proposalHandoffRoutes(config) {
             headSha: uploaded.sha,
             treeSha: uploaded.treeSha,
             branch: session.branch_name,
+            prNumber: session.pr_number || null,
+            prUrl: session.pr_url || null,
             uploaded: alreadyRecorded ? false : uploaded.created,
             webPath: changeHashPath(session.app_slug, session.id),
           });

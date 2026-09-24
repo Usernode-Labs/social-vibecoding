@@ -327,7 +327,7 @@ test('the next step walks a change through its whole life', () => {
   assert.match(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }), /conflicts with main\. sync_change/);
   assert.match(step({ status: 'active', check_state: 'error' }), /errored before any test reported/);
   assert.match(step({ status: 'active', check_state: 'passing' }), /ready to go up for a vote: promote_change/);
-  assert.match(step({ status: 'paused', check_state: 'passing' }), /It is paused/);
+  assert.match(step({ status: 'paused', check_state: 'passing' }), /It is idle/);
   assert.match(step({ status: 'promoted', check_state: 'passing', pr_number: 9, yes_count: 1, votes_required: 3, behind_main: 2 }),
     /PR #9 \(change 50\) is up for the group's vote\. It has 1 of 3 yes votes\. It is 2 commit\(s\) behind main/);
   assert.match(step({ status: 'merging' }), /is merging now/);

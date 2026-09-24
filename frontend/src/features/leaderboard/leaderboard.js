@@ -745,7 +745,7 @@ const Leaderboard = {
         marker = { kind: 'proposal_vote', up: it.vote === 'up' };
         title = it.issue?.title || `Proposal #${it.issue?.number ?? '?'}`;
         if (it.issue?.kind && it.issue.kind !== 'general') {
-          metaBits.push({ kind: 'badge', tone: 'sky', text: it.issue.kind });
+          metaBits.push({ kind: 'badge', tone: 'sky', text: Leaderboard._kindLabel(it.issue.kind) });
         }
         metaBits.push({ kind: 'text', text: appName });
         metaBits.push({ kind: 'italic', text: 'current vote' });
@@ -758,6 +758,28 @@ const Leaderboard = {
 
       return { key: `${it.type}|${it.created_at}|${i}`, marker, title, meta: metaBits, when, slug: it.app?.slug || '' };
     }).filter(Boolean);
+  },
+
+  // A proposal's kind as a person would say it (QA 2026-09-24 Q32c). The
+  // chip printed the column value, so a secret proposal read "secret_change".
+  // The five governance kinds (src/services/governance-kinds.js) have words
+  // of their own; anything newer falls back to the value with its
+  // underscores spaced out and the first letter raised, never the raw token.
+  _KIND_LABELS: Object.freeze({
+    secret_change: 'Secret change',
+    rename: 'Rename',
+    close_issue: 'Close issue',
+    maintenance_campaign: 'Maintenance campaign',
+    featured_illustration: 'Featured illustration',
+  }),
+
+  _kindLabel(kind) {
+    const key = String(kind || '');
+    if (Object.prototype.hasOwnProperty.call(Leaderboard._KIND_LABELS, key)) {
+      return Leaderboard._KIND_LABELS[key];
+    }
+    const words = key.replace(/[_-]+/g, ' ').trim();
+    return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
   },
 
   _fmtDate(ts) {

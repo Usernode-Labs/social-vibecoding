@@ -131,7 +131,10 @@ function ChallengeLine(
           reads as theirs. "done" is the word Home uses for this same number;
           the two must not drift apart again. */}
       {line.done == null ? null : `${line.done} of ${line.total} challenges done `}
-      <span className="text-zinc-500 dark:text-zinc-500">·</span>
+      {/* QA 2026-09-24 Q32c: a space after the dot as well as before it,
+          inside the span rather than as a whitespace-only child (React
+          #418, see notifications-list.tsx). */}
+      <span className="text-zinc-500 dark:text-zinc-500">{'· '}</span>
       <button
         id="tc-lb-to-challenges"
         className="font-medium text-violet-700 dark:text-violet-400 hover:underline"

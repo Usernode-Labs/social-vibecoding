@@ -1039,6 +1039,23 @@ export function init() {
       });
     };
 
+    // QA 2026-09-24: what a refused submit says. A 5xx is the server's own
+    // trouble (no GitHub token configured, GitHub refusing the issue, a
+    // database error), and its wording was written for whoever runs the
+    // server: the dialog printed "GitHub token not configured" under the
+    // form. The person gets a plain sentence; the reason goes to the console
+    // (a warning, not an error: an error there fails a proposal's checks).
+    // A 4xx is about what was sent ("Description is required", "This app has
+    // no repository yet…") and is already written for the person, so it is
+    // shown as it is.
+    const submitErrorText = (status, error) => {
+      if (status >= 500 || !error) {
+        try { console.warn('[feedback] submit refused', status, error || '(no message)'); } catch { /* console is optional */ }
+        return "Couldn't file this right now. Please try again later.";
+      }
+      return error;
+    };
+
     // Save `body` (the exact /api/feedback payload) for later, with the
     // screenshot bytes if one is attached. Mirrors the successful-submit
     // cleanup: the draft is consumed, the dialog locks, and it closes after
@@ -1334,7 +1351,7 @@ export function init() {
           }
           return;
         }
-        feedbackStatus.textContent = data.error || 'Failed to submit';
+        feedbackStatus.textContent = submitErrorText(res.status, data.error);
         feedbackStatus.className = 'text-sm mt-2 text-red-400';
         feedbackStatus.classList.remove('hidden');
       } catch {
@@ -1362,6 +1379,12 @@ export function init() {
       firstFeedback = null;
       // Every open hands back an editable composer (showFirstFeedback re-locks).
       setComposerLocked(false);
+      // QA 2026-09-24: the heading says what was asked for. The Workshop "+"
+      // menu's "File an issue" row opened a dialog headed "Send Feedback",
+      // which read as the wrong thing having opened. Same dialog either way;
+      // it passes `intent: 'issue'`, and every other way in is feedback.
+      const heading = feedbackForm?.querySelector('h2');
+      if (heading) heading.textContent = opts.intent === 'issue' ? 'File an issue' : 'Send feedback';
       firstSuccess?.classList.add('hidden');
       feedbackForm?.classList.remove('hidden');
       // Opening a queued success must not consume a failed outbox draft or

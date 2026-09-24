@@ -41,12 +41,12 @@ import { BASE_ALLOW } from './app-frame-policy.js';
  * }} LaunchCoverState
  * @typedef {{
  *   slug: string, seq: number, background: string, sandboxReady: boolean,
- *   allow: string, navigatedAt: number,
+ *   allow: string, navigatedAt: number, title: string,
  * }} KeptFrame
  * @typedef {{
  *   slug: string, active: boolean, faded: boolean, background: string,
  *   sandboxReady: boolean, allow: string, cover: LaunchCoverState | null,
- *   seq: number, navigatedAt: number, kept: KeptFrame[],
+ *   seq: number, navigatedAt: number, title: string, kept: KeptFrame[],
  * }} AppFrameState
  */
 
@@ -130,6 +130,12 @@ export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
   seq: 0,
   /** #2902: when the mounted frame last navigated (ms), 0 before it has. */
   navigatedAt: 0,
+  /**
+   * The app's name, as the frame's `title` (QA 2026-09-24 Q20): an iframe is
+   * announced by its title, and without one a screen reader says only
+   * "frame". '' until a mount names it.
+   */
+  title: '',
   /**
    * #2902: the apps you left that are still loaded, hidden, most recently used
    * first. The mounted frame is NOT in here; it is the top-level fields above.

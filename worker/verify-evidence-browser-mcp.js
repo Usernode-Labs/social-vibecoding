@@ -19,9 +19,11 @@ const REQUIRED_TOOLS = [
   'browser_close',
 ];
 
-function verifyBrowser(server) {
+function verifyBrowser(server, navigationChecks = []) {
   return new Promise((resolve, reject) => {
-    const child = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(server.command, server.args, {
+      env: { ...process.env, ...server.env }, stdio: ['pipe', 'pipe', 'pipe'],
+    });
     let output = '';
     let errors = '';
     let settled = false;
@@ -35,7 +37,7 @@ function verifyBrowser(server) {
       if (error) reject(error);
       else resolve(tools);
     };
-    const timeout = setTimeout(() => finish(new Error(`Browser MCP ${phase} timed out after 30 seconds: ${errors.slice(-500)}`)), 30_000);
+    const timeout = setTimeout(() => finish(new Error(`Browser MCP ${phase} timed out after 60 seconds: ${errors.slice(-500)}`)), 60_000);
     child.on('error', (error) => finish(error));
     child.on('exit', (code, signal) => finish(new Error(`Browser MCP exited during ${phase} (${code ?? signal}): ${errors.slice(-1000)}`)));
     child.stdin.on('error', (error) => finish(error));
@@ -67,7 +69,23 @@ function verifyBrowser(server) {
           if (!response.includes('Open tabs')) {
             return finish(new Error(`Browser MCP browser_tabs returned no tab listing: ${response.slice(0, 500)}`));
           }
-          return finish(null, tools);
+          if (navigationChecks.length) {
+            phase = 'browser_navigate';
+            child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: {
+              name: 'browser_navigate', arguments: { url: navigationChecks[0].url },
+            } })}\n`);
+          } else return finish(null, tools);
+        } else if (message.id >= 4 && message.id < 4 + navigationChecks.length) {
+          const index = message.id - 4;
+          const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+          if (message.error || message.result?.isError || !response.includes(navigationChecks[index].expectedText)) {
+            return finish(new Error(`Browser MCP ${phase} did not load its authenticated state: ${response.slice(0, 500)}`));
+          }
+          const next = navigationChecks[index + 1];
+          if (!next) return finish(null, tools);
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id + 1, method: 'tools/call', params: {
+            name: 'browser_navigate', arguments: { url: next.url },
+          } })}\n`);
         }
       }
     });
@@ -91,10 +109,13 @@ async function main() {
       fs.writeFileSync(path.join(stateDir, `${persona}.json`), '{"cookies":[],"origins":[]}');
     }
     const output = path.join(dir, 'mcp.json');
+    const diagnosticFile = path.join(dir, 'browser-diagnostics.log');
+    fs.writeFileSync(diagnosticFile, '');
     execFileSync(process.execPath, [path.join(__dirname, 'write-evidence-mcp-config.js'), output], {
       env: {
         ...process.env,
         EVIDENCE_BROWSER_STATE_DIR: stateDir,
+        EVIDENCE_BROWSER_DIAGNOSTIC_FILE: diagnosticFile,
         EVIDENCE_PROXY_SERVER: 'http://127.0.0.1:17891',
         EVIDENCE_BASE_ORIGIN: 'http://base.example.invalid',
         EVIDENCE_HEAD_ORIGIN: 'http://head.example.invalid',
@@ -102,7 +123,19 @@ async function main() {
     });
     const config = JSON.parse(fs.readFileSync(output, 'utf8'));
     for (const persona of ['browser_member', 'browser_admin']) {
+      fs.writeFileSync(diagnosticFile, '');
       const tools = await verifyBrowser(config.mcpServers[persona]);
+      const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
+        .filter((line) => line.startsWith('__USERNODE_EVIDENCE_BROWSER__ '))
+        .flatMap((line) => {
+          try { return [JSON.parse(line.slice('__USERNODE_EVIDENCE_BROWSER__ '.length))]; }
+          catch { return []; }
+        })
+        .filter((event) => event.persona === (persona === 'browser_admin' ? 'admin' : 'member'));
+      if (!records.some((event) => event.kind === 'browser_call_start')
+          || !records.some((event) => event.kind === 'browser_call_end')) {
+        throw new Error(`Browser observer did not record ${persona} tool timing`);
+      }
       process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab\n`);
     }
   } finally {
@@ -110,7 +143,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { verifyBrowser };

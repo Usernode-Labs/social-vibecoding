@@ -804,7 +804,7 @@ export function WeekWalk({ weeks, firstWeek, note, shown, onMore }: {
       {more ? (
         <button
           type="button"
-          className="dev-ws-reveal dev-ws-week-more"
+          className="dev-ws-reveal dev-ws-week-more un-touch-target"
           data-ws-week-more=""
           onClick={onMore}
         >
@@ -1400,6 +1400,12 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const [kbUp, setKbUp] = useState(false);
   // Answered here, this session: the pinned row's confirmation.
   const [answered, setAnswered] = useState<Record<string, string>>({});
+  // QA 2026-09-24 Q3: votes on their way, by row. Set when castVote commits
+  // to sending (the line is in hand), cleared when the server answers. The
+  // ref is the re-entry guard, read synchronously by a second press; the
+  // state is what the rail button draws from.
+  const [sending, setSending] = useState<Record<string, string>>({});
+  const sendingRef = useRef<Set<string>>(new Set());
   // The pins, keyed by row, with the index each held when it was answered.
   // A ref with a version counter rather than state, because a pin is set in
   // the same breath as the vote and read back in the very next publish.
@@ -1620,28 +1626,65 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
    * Answering the item: a vote, or taking an issue. The row is pinned BEFORE
    * the act, because the act's publish removes it from the queue, and the
    * pin is what keeps it on screen with its confirmation.
+   *
+   * QA 2026-09-24 Q3: THE CONFIRMATION WAITS FOR THE SERVER. The card used
+   * to be marked answered here, before `castVote` had even asked for a No's
+   * line, so cancelling "What's not working for you?" left "Voted no · press
+   * ↓ for the next" on a card nothing had been sent for, and a reload put it
+   * back. `castVote` resolves true only once the server has the vote: until
+   * then the rail says it is sending, a cancel leaves the card exactly as it
+   * was (and drops a pin this press added), and a refusal or a network
+   * failure is reported by `castVote`'s own toast.
    */
   const answer = (which: 'yes' | 'no') => {
     if (!row) return;
     const spec = which === 'yes' ? row.yes : row.no;
     if (!spec) return;
-    if (row.kind === 'vote') {
-      // PINNED FOR THE SESSION, not until the next move. The vote makes the
-      // row leave `rows` (it is no longer owed), and the pin keeps it in its
-      // slot, so nothing under the viewer shifts: a row leaving ABOVE the
-      // one in view moves every index after it, and with it the counter,
-      // and the scroll position has to be corrected under the reader. The
-      // pins used to go once the next card had settled, which was exactly
-      // when that correction was most visible — the card you had just
-      // arrived on re-numbered and slid.
-      if (!pinsRef.current.has(row.key)) {
-        pinsRef.current.set(row.key, { row, index: i });
-        setPinsVersion((v) => v + 1);
-      }
-      setAnswered((cur) => ({ ...cur, [row.key]: which }));
+    if (row.kind !== 'vote' || !spec.act) {
+      closeSheet();
+      if (spec.act) callAppView(spec.act.fn, ...(spec.act.args as unknown[]));
+      return;
+    }
+    const key = row.key;
+    if (sendingRef.current.has(key)) return;
+    sendingRef.current.add(key);
+    // PINNED FOR THE SESSION, not until the next move. The vote makes the
+    // row leave `rows` (it is no longer owed), and the pin keeps it in its
+    // slot, so nothing under the viewer shifts: a row leaving ABOVE the
+    // one in view moves every index after it, and with it the counter,
+    // and the scroll position has to be corrected under the reader. The
+    // pins used to go once the next card had settled, which was exactly
+    // when that correction was most visible — the card you had just
+    // arrived on re-numbered and slid.
+    const pinnedHere = !pinsRef.current.has(row.key);
+    if (pinnedHere) {
+      pinsRef.current.set(row.key, { row, index: i });
+      setPinsVersion((v) => v + 1);
     }
     closeSheet();
-    if (spec.act) callAppView(spec.act.fn, ...(spec.act.args as unknown[]));
+    // castVote(sessionId, vote, expectedEpoch, opts): the model leaves the
+    // epoch out when the row has none, so the slots are padded to put the
+    // options bag fourth (VoteButton's VOTE_ARITY does the same).
+    const args = [...(spec.act.args as unknown[])];
+    while (args.length < 3) args.push(null);
+    const onSend = () => setSending((cur) => ({ ...cur, [key]: which }));
+    Promise.resolve(callAppView(spec.act.fn, ...args, { onSend }))
+      .catch(() => false)
+      .then((ok) => {
+        sendingRef.current.delete(key);
+        setSending((cur) => {
+          if (!(key in cur)) return cur;
+          const next = { ...cur };
+          delete next[key];
+          return next;
+        });
+        if (ok === true) {
+          setAnswered((cur) => ({ ...cur, [key]: which }));
+        } else if (pinnedHere) {
+          pinsRef.current.delete(key);
+          setPinsVersion((v) => v + 1);
+        }
+      });
   };
 
   const preview = row ? (row.card.rail.preview || row.card.actionPreview || null) : null;
@@ -1906,10 +1949,11 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
               data-ws-rail-btn="vote"
               aria-haspopup="dialog"
               aria-expanded={sheet === 'vote'}
+              disabled={!voted && !!sending[row.key]}
               onClick={() => toggleSheet('vote')}
             >
               <span className="dev-ws-rail-ic">{voted ? <CheckIcon aria-hidden="true" /> : <BallotIcon aria-hidden="true" />}</span>
-              <span className="dev-ws-rail-lab">{voted ? `Voted ${voted}` : 'Vote'}</span>
+              <span className="dev-ws-rail-lab">{voted ? `Voted ${voted}` : (sending[row.key] ? 'Sending…' : 'Vote')}</span>
               <kbd className="dev-ws-rail-key" aria-hidden="true">V</kbd>
             </button>
           ) : (
@@ -2249,6 +2293,17 @@ const EAR_GAP_PX = 10;
  */
 const EAR_PROPS = ['--dev-ws-ear-left', '--dev-ws-group-w', '--dev-ws-head-top'];
 
+/**
+ * QA 2026-09-24 Q7: where the pinned strip's band reaches, as offsets from the
+ * nav's own edges to the pane's. Zero on By category, where the nav and the
+ * pane are the same reading column; negative on By stage, where the pane goes
+ * full-bleed and the band has to cover the board columns either side of the
+ * column, or the cards scroll past the strip in plain view. Cleared with the
+ * ear's below the breakpoint, and on a tab with no pane, so the band falls
+ * back to the nav's own width there.
+ */
+const BAND_PROPS = ['--dev-ws-band-left', '--dev-ws-band-right'];
+
 /** The ear's own horizontal padding (`padding: 5px 10px`, app.css). */
 const EAR_PAD_X = 10;
 
@@ -2329,11 +2384,15 @@ function useEarInset(
     // host for the next crossing to inherit.
     if (!earUp || !bar) {
       for (const k of EAR_PROPS) host.style.removeProperty(k);
+      for (const k of BAND_PROPS) host.style.removeProperty(k);
       return undefined;
     }
     const track = bar.querySelector<HTMLElement>('.dev-ws-tabtrack');
     const pane = host.querySelector<HTMLElement>('[data-ws-pane]');
-    if (!track || !pane) return undefined;
+    if (!track || !pane) {
+      for (const k of BAND_PROPS) host.style.removeProperty(k);
+      return undefined;
+    }
     const measure = () => {
       const t = track.getBoundingClientRect();
       const n = bar.getBoundingClientRect();
@@ -2367,6 +2426,11 @@ function useEarInset(
       // them. Pinned too high, the head would slide under the strip; too low
       // and a band of the list shows through between the two.
       host.style.setProperty('--dev-ws-head-top', `${Math.round(n.height) + WS_GAP_PX}px`);
+      // The band behind the pinned strip spans the PANE, not the nav (see
+      // BAND_PROPS). Offsets from the nav's edges, which is the box the
+      // band's pseudo-element is positioned in.
+      host.style.setProperty('--dev-ws-band-left', `${Math.round(p.left - n.left)}px`);
+      host.style.setProperty('--dev-ws-band-right', `${Math.round(n.right - p.right)}px`);
     };
     measure();
     if (typeof ResizeObserver !== 'function') return undefined;
@@ -2395,6 +2459,155 @@ function useEarInset(
     // which re-renders on data changes rather than on a timer. Correctness
     // over that: the version with deps shipped a visible bug.
   });
+}
+
+/**
+ * QA 2026-09-24 Q7: IS THE TAB STRIP PINNED?
+ *
+ * Above 700px the strip is `position: sticky` at the scroller's top, and the
+ * pane head pins under it. What scrolled past them showed: the strip had no
+ * z-index, so the pane (positioned, and later in the tree) painted OVER it and
+ * the tabs went under the cards, and the air around the pill (the gap to the
+ * ear, the 10px down to the head, the board columns either side of the column
+ * on By stage) had nothing behind it. app.css now stacks the strip above the
+ * cards and draws a band behind it, but only while it is pinned: at rest the
+ * pill sits on the page beside the ear, and a band there would swallow the
+ * ear's shape.
+ *
+ * Pinned means the tab body has started to slide up under the strip: at rest
+ * the body starts one column gap below it, and it only comes closer once the
+ * strip has stuck and the page keeps scrolling. Measured, rather than read off
+ * a scrollTop, because which element scrolls depends on the shell (the dev
+ * frame's own scroller, or the document on a touch browser); a capturing
+ * listener on the document hears a scroll from either.
+ *
+ * The attribute is written straight onto the host, like useEarInset's
+ * properties: it changes on scroll, and a React state for it would re-render
+ * the whole Workshop, board included, on the frame the strip sticks.
+ */
+function usePinnedStrip(
+  bar: HTMLElement | null,
+  hostRef: React.RefObject<HTMLDivElement | null>,
+  enabled: boolean,
+  tab: string,
+): void {
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return undefined;
+    if (!enabled || !bar || typeof document === 'undefined') {
+      host.removeAttribute('data-ws-pinned');
+      return undefined;
+    }
+    let frame = 0;
+    const check = () => {
+      frame = 0;
+      const body = host.querySelector<HTMLElement>(':scope > .dev-ws-tabbody');
+      if (!body) return;
+      const pinned = body.getBoundingClientRect().top < bar.getBoundingClientRect().bottom + WS_GAP_PX - 0.5;
+      if (pinned !== host.hasAttribute('data-ws-pinned')) host.toggleAttribute('data-ws-pinned', pinned);
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(check);
+    };
+    document.addEventListener('scroll', schedule, { capture: true, passive: true });
+    window.addEventListener('resize', schedule);
+    check();
+    return () => {
+      document.removeEventListener('scroll', schedule, { capture: true });
+      window.removeEventListener('resize', schedule);
+      if (frame) cancelAnimationFrame(frame);
+      host.removeAttribute('data-ws-pinned');
+    };
+  }, [bar, hostRef, enabled, tab]);
+}
+
+/**
+ * The widest the scope chip may be once it moves beside the tab pill. Its
+ * name truncates past this. app.css spells the same number on
+ * `.dev-ws[data-ws-scope-inline] > .dev-ws-scope > button`.
+ */
+const SCOPE_INLINE_MAX_PX = 220;
+
+/**
+ * The space between the chip's right edge and the pill's left edge
+ * (`right: calc(100% + 12px)` in app.css), which is also the least space
+ * left between the chip and the edge of the content area.
+ */
+const SCOPE_INLINE_GAP_PX = 12;
+
+/**
+ * The rule `useScopeInline` applies, kept apart so it can be tested without a
+ * browser. `gutter` is the space from `#dev-body`'s left edge to the reading
+ * column's left edge. `chipWidth` is the chip as drawn. The chip fits when the
+ * gutter holds the chip (capped, because its name truncates there) plus the gap
+ * to the pill and the same gap again before the content's edge.
+ */
+export function scopeFitsInline(gutter: number, chipWidth: number): boolean {
+  if (!(gutter > 0) || !(chipWidth > 0)) return false;
+  return gutter >= Math.min(chipWidth, SCOPE_INLINE_MAX_PX) + SCOPE_INLINE_GAP_PX * 2;
+}
+
+/**
+ * #2837: DOES THE SCOPE CHIP FIT BESIDE THE TAB PILL?
+ *
+ * The chip had a row of its own above the pill. That works while the reading
+ * column fills the window. On a large desktop window it looked wrong: the
+ * 760px column sits in the middle of a wide page, and on By stage and Needs
+ * you everything under it spans the width. The chip was then a small pill
+ * alone on a row, far from both edges, with nothing next to it.
+ *
+ * It can't join the pill's row INSIDE the column. The row is already full:
+ * a 444px pill and the 240px ear (EAR_MIN_PX) fill most of 760px, so a chip
+ * in front of the pill would push it into the ear on By category. So the chip
+ * goes OUTSIDE the column. It sits in the empty space to the left, on the same
+ * row as the pill, with its right edge 12px from the pill's left edge. The pill,
+ * the ear and their measurements don't move at all.
+ *
+ * That only works when the space to the left is wide enough. How wide it is
+ * depends on the window, whether the sidebar is folded, and whether a side
+ * panel is open, and CSS alone can't see all of that. So this measures it: the
+ * distance from `#dev-body`'s left edge to the column's left edge, compared
+ * with the chip's width (capped at SCOPE_INLINE_MAX_PX) plus a gap on each
+ * side. When there isn't room, the chip keeps its own row as before. That
+ * covers every phone, and any desktop window where the column fills the page.
+ *
+ * The result is state, so the attribute is rendered by React. A layout effect
+ * sets it before the browser paints, so a wide window never shows the chip in
+ * its old row first. There is no dependency array, for the same reason as
+ * `useEarInset`: the column can move without changing size.
+ */
+function useScopeInline(hostRef: React.RefObject<HTMLDivElement | null>, enabled: boolean): boolean {
+  const [inline, setInline] = useState(false);
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!enabled || !host) {
+      setInline(false);
+      return undefined;
+    }
+    const scope = host.querySelector<HTMLElement>('[data-ws-scope]');
+    const chip = scope ? scope.querySelector<HTMLElement>(':scope > button') : null;
+    const body = host.closest<HTMLElement>('#dev-body') || host.parentElement;
+    if (!scope || !chip || !body) return undefined;
+    const measure = () => {
+      const s = scope.getBoundingClientRect();
+      const b = body.getBoundingClientRect();
+      const c = chip.getBoundingClientRect();
+      // A hidden chip (a phone, where `display: none` zeroes both boxes)
+      // measures as 0 and does not fit. That turns the attribute off on the
+      // way down from a wide window, rather than leaving the last answer.
+      if (!b.width) return;
+      setInline(scopeFitsInline(s.left - b.left, c.width));
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const ro = new ResizeObserver(measure);
+    // The body tracks the window, the sidebar folding and a side panel; the
+    // chip tracks its own name, which changes once the apps list arrives.
+    ro.observe(body);
+    ro.observe(chip);
+    return () => ro.disconnect();
+  });
+  return inline;
 }
 
 /**
@@ -2590,6 +2803,13 @@ export function DevWorkshop(): ReactNode {
   // ...and how wide it is: from just clear of the pill to the pane's right
   // edge, which only a measurement knows. See `useEarInset`.
   useEarInset(bar, hostRef, earUp);
+  // QA 2026-09-24 Q7: whether the strip is pinned, for app.css's band behind
+  // it. Only where the strip is sticky at all. See `usePinnedStrip`.
+  const stripSticks = useMediaFlag(WIDE_QUERY);
+  usePinnedStrip(bar, hostRef, stripSticks, tab);
+  // #2837: whether the scope chip sits in the space left of the tab pill
+  // rather than on a row of its own. See `useScopeInline`.
+  const scopeInline = useScopeInline(hostRef, !!v.slug);
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.
@@ -2833,7 +3053,12 @@ export function DevWorkshop(): ReactNode {
   );
 
   return (
-    <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
+    <div
+      ref={hostRef}
+      className="dev-ws"
+      data-ws-tab={tab}
+      {...(scopeInline ? { 'data-ws-scope-inline': '' } : {})}
+    >
       {/* WHICH WORKSHOP YOU ARE IN, and the way to another (#2718 review).
           It names this app and its panel offers the others — and All apps,
           which is the way back up.
@@ -2841,7 +3066,11 @@ export function DevWorkshop(): ReactNode {
           ABOVE THE RAIL in the markup, so the panel drops down over the tabs
           rather than under them. On a phone the chip itself is hidden
           (app.css) and the header's tile and name open the same panel
-          (#2768), so there it is the panel alone, right under the header. */}
+          (#2768), so there it is the panel alone, right under the header.
+          On a large desktop window (#2837) the chip moves into the space
+          left of the reading column, on the tab pill's row. That is CSS
+          keyed on `data-ws-scope-inline` above; see `useScopeInline`. The
+          markup stays the same at every width. */}
       {slug ? (
         <AppWorkshopScope
           slug={slug}
@@ -3068,11 +3297,14 @@ export function DevWorkshop(): ReactNode {
                 pane down — were centred muted text with a caret. Three
                 spellings of one gesture. It is `.dev-ws-reveal` now, and the
                 caret turns over when there is nothing left to reveal, which
-                is what that class already does for the since list. */}
+                is what that class already does for the since list.
+                Its hit area is `touch-target-32`, not the kit's 44px one the
+                other two carry (QA 2026-09-24 Q19): it sits 4px under the
+                last row, and a 44px box would take that row's bottom edge. */}
             {v.mine.rows.length > v.mine.shown ? (
               <button
                 type="button"
-                className="dev-ws-reveal dev-ws-mine-more"
+                className="dev-ws-reveal dev-ws-mine-more touch-target-32"
                 aria-expanded={allMine}
                 data-ws-mine-more=""
                 onClick={() => setAllMine(!allMine)}
@@ -3132,7 +3364,7 @@ export function DevWorkshop(): ReactNode {
             <span className="dev-ws-since-n">{v.since.total}</span>
             <button
               type="button"
-              className="dev-ws-since-clear"
+              className="dev-ws-since-clear un-touch-target"
               data-ws-since-clear=""
               disabled={!v.since.rows.length && !seenShown}
               onClick={clearSince}
@@ -3198,7 +3430,7 @@ export function DevWorkshop(): ReactNode {
               nobody learns to reach for. */}
           <button
             type="button"
-            className="dev-ws-reveal dev-ws-since-more"
+            className="dev-ws-reveal dev-ws-since-more un-touch-target"
             data-ws-since-more=""
             disabled={!sinceMore}
             onClick={showOlder}

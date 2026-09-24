@@ -59,6 +59,8 @@ function load(answers) {
     // stamps, the controller's recency sort).
     Date: { now: () => clock, parse: (v) => Date.parse(v) },
     location: { search: '', hash: '' },
+    // The viewer: the mark's working indicator counts their own sessions only.
+    App: { user: { id: 7 } },
     document: { hidden: false, visibilityState: 'visible', getElementById: () => null, addEventListener() {} },
     fetch: (url) => {
       fetches.push(url);
@@ -133,7 +135,13 @@ test('a turn STARTING flips the row to Working the same way', async () => {
   await Improve.loadSessions();
   assert.equal(store.state.sessions[0].busy, false);
 
-  SessionState.applyEvent({ sessionId: 5, busy: true, phase: 'cc', status: 'active' });
+  // Somebody else's shared build on the same app: the row list does not
+  // carry it and the mark stays quiet (#2779 follow-up: own work only).
+  SessionState.applyEvent({ sessionId: 9, userId: 8, busy: true, phase: 'cc', status: 'active' });
+  Improve.onSessionStateChanged();
+  assert.equal(store.state.working, false, 'another member\'s build does not light the mark');
+
+  SessionState.applyEvent({ sessionId: 5, userId: 7, busy: true, phase: 'cc', status: 'active' });
   Improve.onSessionStateChanged();
 
   assert.equal(store.state.sessions[0].busy, true);
@@ -214,6 +222,8 @@ test('the row reads the shared accessor rather than the payload alone', () => {
   assert.match(CONTROLLER, /seed\(sessions, issuedAt\)/);
   assert.match(CONTROLLER, /const issuedAt = Date\.now\(\);[\s\S]{0,400}?fetch\(`\/api\/me\/active-sessions/,
     'stamped before the request goes out, as DevChat.loadActiveSessions does');
-  assert.match(body, /href: `#app\/\$\{session\.app_slug\}\/dev\/proposals\/\$\{session\.id\}`/,
+  assert.match(body, /: `#app\/\$\{session\.app_slug\}\/dev\/proposals\/\$\{session\.id\}`/,
     'the row opens the full change page rather than dropping directly into chat');
+  // #2779: except a change an agent session started, which opens that conversation.
+  assert.match(body, /href: session\.agent_session_id\s*\? `#messages\/agent\/\$\{session\.agent_session_id\}`/);
 });
