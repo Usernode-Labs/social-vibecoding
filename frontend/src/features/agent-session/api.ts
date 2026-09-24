@@ -48,6 +48,8 @@ export interface AgentTurnState {
   phase: 'mayor' | 'cc' | 'mayor2';
   stopping: boolean;
   changeId: number | null;
+  /** Epoch ms the running work started: the build once dispatched, else the turn. */
+  startedAt?: number | null;
 }
 
 export interface AgentMessage {

@@ -202,7 +202,15 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         limit: req.query.limit,
         before: req.query.before ? String(req.query.before) : null,
       });
-      return res.json(result);
+      // Recents, Continue and Messages mark a conversation from `busy`, which
+      // reads the Mayor's lease. A recovered build on the active change is
+      // working too, though the turn that dispatched it died in a restart.
+      const sessions = result.sessions.map((session) => (
+        !session.busy && session.activeChange
+          && agentTurn.recoveredRunState(session.id, session.activeChange.id)
+          ? { ...session, busy: true, doneUnseen: false }
+          : session));
+      return res.json({ ...result, sessions });
     } catch (err) {
       return sendError(res, err, 'List agent sessions');
     }
@@ -234,8 +242,18 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       // that opens the conversation mid-turn shows the right controls. A
       // recovered build on the active change counts: the Mayor turn that
       // dispatched it died in a restart, and its lease reads as idle.
-      const turn = agentTurn.turnState(session.id)
-        || agentTurn.recoveredRunState(session.id, session.activeChange ? session.activeChange.id : null);
+      let turn = agentTurn.turnState(session.id);
+      const recovered = !turn
+        && agentTurn.recoveredRunState(session.id, session.activeChange ? session.activeChange.id : null);
+      if (recovered) {
+        // Its clock counts from the dispatch, which the change's run records.
+        const { rows } = await pool.query(
+          `SELECT active_turn->>'startedAt' AS started_at FROM chat_sessions WHERE id = $1`,
+          [recovered.changeId]
+        );
+        const startedAt = Date.parse((rows[0] && rows[0].started_at) || '');
+        turn = Number.isFinite(startedAt) ? { ...recovered, startedAt } : recovered;
+      }
       return res.json({ session: turn && !session.busy ? { ...session, busy: true } : session, turn });
     } catch (err) {
       return sendError(res, err, 'Read agent session');

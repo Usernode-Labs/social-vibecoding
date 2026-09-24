@@ -76,6 +76,8 @@ test('recovery hands back its change\'s conversations, and waits out a lease sti
   assert.deepEqual(calls.published.map(([key, event]) => [key, event.type]),
     [[agentTurn.busKey(5), 'done'], [agentTurn.busKey(8), 'done']],
     'conversation 8 is still inside the stale window, but the run its screen follows is over');
+  assert.deepEqual(calls.notified.map(([userId, payload]) => [userId, payload.agentSessionId, payload.busy]),
+    [[7, 5, false], [7, 8, false]], 'the lists stop marking both as working');
 
   stale.add(8);
   await new Promise((resolve) => setTimeout(resolve, 40));
@@ -94,6 +96,20 @@ test('a recovered build on the active change is the conversation\'s running disp
     assert.equal(agentTurn.recoveredRunState(3, 50, deps), null, 'a live Mayor turn answers for itself');
   } finally {
     agentTurn._stopRegistry.delete(3);
+  }
+});
+
+test('a running turn reports when its work started: the build once dispatched, else the turn', () => {
+  const handle = { phase: 'mayor', startedAt: 1_000, buildStartedAt: null, change: null };
+  agentTurn._stopRegistry.set(4, handle);
+  try {
+    assert.equal(agentTurn.turnState(4).startedAt, 1_000);
+    Object.assign(handle, { phase: 'cc', buildStartedAt: 5_000, change: { changeId: 50 } });
+    assert.equal(agentTurn.turnState(4).startedAt, 5_000);
+    handle.phase = 'mayor2';
+    assert.equal(agentTurn.turnState(4).startedAt, 5_000, 'the wrap-up keeps the build\'s clock');
+  } finally {
+    agentTurn._stopRegistry.delete(4);
   }
 });
 
@@ -158,5 +174,24 @@ test('a lease still live elsewhere keeps the screen working, but not stuck on st
     const { turn } = store.getAgentSessionState();
     assert.equal(turn.running, true, 'its own done ends it');
     assert.equal(turn.stopping, false);
+  });
+});
+
+test('a screen opened or reconnected mid-build counts from the dispatch, not from its arrival', async () => {
+  const dispatchedAt = Date.now() - 40 * 60_000;
+  await withStore((url) => {
+    if (/\/messages\?/.test(url)) return { messages: [], nextAfter: null };
+    if (/\/actions$/.test(url)) return { actions: [] };
+    return {
+      session: { ...SESSION, busy: true, activeChange: { id: 50 } },
+      turn: { phase: 'cc', stopping: false, changeId: 50, startedAt: dispatchedAt },
+    };
+  }, async (store) => {
+    await store.openAgentSession({ id: 3, host: 'messages' });
+    assert.equal(store.getAgentSessionState().turn.startedAt, dispatchedAt);
+
+    const redispatchedAt = dispatchedAt + 60_000;
+    store.handleEvent(3, { type: 'phase', phase: 'cc', startedAt: redispatchedAt, _seq: 'x-1' });
+    assert.equal(store.getAgentSessionState().turn.startedAt, redispatchedAt, 'the phase event carries the build\'s start');
   });
 });
