@@ -562,6 +562,13 @@
       "description": "Public HTTPS observability origin for the admitted native chain, without /ui/nodes or /v1/observability. The device reads this service directly; its read-only epoch endpoints must allow browser CORS requests from Homeroom and previews. Changes apply on the next platform deployment and are inherited by rebuilt previews."
     }
   ],
+  "inLoopCheckAuth": {
+    "path": "/api/auth/login",
+    "body": {
+      "username": "staging-code-signin@usernode.test",
+      "password": "staging-code-password"
+    }
+  },
   "tests": [
     {
       "name": "Account email and recovery is discoverable in Settings (#1841)",

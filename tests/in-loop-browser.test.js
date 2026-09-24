@@ -74,9 +74,11 @@ test('guidance carries the usage hooks that make it likely to be used', () => {
   assert.match(g, /TESTING block/);
   assert.match(g, /path:/);
   // staging launch contract
+  assert.match(g, /usernode-run-inloop node server\.js/);
   assert.match(g, /USERNODE_ENV=\$INLOOP_ENV/);
   assert.match(g, /\$INLOOP_PORT/);
   assert.match(g, /\$INLOOP_DATABASE_URL/);
+  assert.match(g, /--changed.*zero checks/s);
   assert.match(g, /FRESH, EMPTY local database/i);
   // "blank page = missing seed data, not a bug"
   assert.match(g, /BLANK[\s\S]*MISSING SEED DATA, not a bug/);

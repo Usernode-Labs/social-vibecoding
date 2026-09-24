@@ -160,9 +160,10 @@ JSON
 #   --isolated : ephemeral profile per session, no on-disk profile state.
 #   --no-sandbox : Chromium's own sandbox cannot start in the worker container.
 #   --config   : the software-WebGL launch args seeded just above.
-# `npx @playwright/mcp` resolves the globally-installed pinned package, so
-# there's no network fetch at launch, and Chromium itself launches lazily
-# on the first browser tool call.
+# Launch the image's pinned MCP executable directly. `npx @playwright/mcp`
+# may resolve a newer registry package instead of this global install,
+# requiring a different browser revision at the first tool call. Chromium
+# still launches lazily when the agent first uses a browser tool.
 BROWSER_MCP_CONFIG=/home/node/.usernode-mcp.json
 cat > "$BROWSER_MCP_CONFIG" <<JSON
 {
@@ -172,8 +173,8 @@ cat > "$BROWSER_MCP_CONFIG" <<JSON
       "args": ["/usr/local/bin/build-evidence-mcp.js"]
     },
     "playwright": {
-      "command": "npx",
-      "args": ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG"]
+      "command": "/usr/local/bin/mcp-server-playwright",
+      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG"]
     }
   }
 }

@@ -93,6 +93,14 @@ if [ "$MODE" != "evidence" ]; then
   fi
 fi
 
+# The same throwaway Postgres preparation that Claude build turns receive.
+# Without it the supplied INLOOP_DATABASE_URL points at no server, and the
+# agent burns its turn trying to repair a test environment it did not break.
+if [ "$MODE" = "build" ]; then
+  sh "$(dirname "$0")/start-inloop-db.sh" \
+    || echo "__USERNODE_WARN__ in-loop postgres setup failed"
+fi
+
 # Codex home lives INSIDE the persistent Claude volume so session/rollout
 # state survives worker eviction. Export it so Codex reads the direct
 # OpenRouter config and persistent rollout dir.
@@ -258,9 +266,9 @@ TOML
     cat <<'TOML'
 
 [mcp_servers.playwright]
-command = "npx"
+command = "/usr/local/bin/mcp-server-playwright"
 TOML
-    printf 'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
+    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
     cat <<'TOML'
 startup_timeout_sec = 30
 tool_timeout_sec = 60
