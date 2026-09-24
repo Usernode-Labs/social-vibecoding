@@ -845,13 +845,6 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "13c2b3cb224c4420675a",
-      "count": 1,
-      "preview": "`${MESSAGE_SELECT} WHERE m.conversation_id = $1 ${beforeSql} AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sende"
-    },
-    {
-      "source": "src/services/conversations.js",
-      "kind": "structural-template",
       "fingerprint": "1ed50d96de6aeca2b5eb",
       "count": 1,
       "preview": "`SELECT c.id, c.kind, c.title, c.status AS conversation_status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, cm.role, cm.status AS membership_statu"

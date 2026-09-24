@@ -275,11 +275,57 @@ function attachmentGroups(rows, conversationId) {
   return map;
 }
 
+// #2387: the thread line under a main-stream message — how many replies the
+// viewer can see, when the last one landed, and the (up to three) people who
+// replied most recently. A reply the viewer cannot see (its sender is one
+// they blocked) or one its author deleted is not counted, so a thread whose
+// every visible reply is gone has no summary at all rather than "0 replies".
+async function threadSummaries(db, user, rootIds) {
+  if (!rootIds.length) return new Map();
+  const { rows } = await db.query(
+    `WITH replies AS (
+       SELECT r.id, r.thread_root_id, r.sender_id, r.created_at
+         FROM conversation_messages r
+        WHERE r.thread_root_id = ANY($1::int[]) AND r.deleted_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE b.blocker_id = $2 AND b.blocked_user_id = r.sender_id)
+     ), summary AS (
+       SELECT thread_root_id, COUNT(*)::int AS reply_count, MAX(created_at) AS last_reply_at
+         FROM replies GROUP BY thread_root_id
+     ), repliers AS (
+       SELECT thread_root_id, sender_id,
+              ROW_NUMBER() OVER (PARTITION BY thread_root_id ORDER BY MAX(id) DESC) AS rank
+         FROM replies WHERE sender_id IS NOT NULL
+        GROUP BY thread_root_id, sender_id
+     )
+     SELECT s.thread_root_id AS root_id, s.reply_count, s.last_reply_at,
+            COALESCE(jsonb_agg(jsonb_build_object(
+              'id', u.id, 'username', u.username, 'avatarId', ua.id
+            ) ORDER BY p.rank) FILTER (WHERE u.id IS NOT NULL), '[]'::jsonb) AS participants
+       FROM summary s
+       LEFT JOIN repliers p ON p.thread_root_id = s.thread_root_id AND p.rank <= 3
+       LEFT JOIN users u ON u.id = p.sender_id
+       LEFT JOIN user_avatars ua ON ua.user_id = u.id
+      GROUP BY s.thread_root_id, s.reply_count, s.last_reply_at`,
+    [rootIds, user.id]
+  );
+  return new Map(rows.map((row) => [row.root_id, {
+    replyCount: row.reply_count,
+    lastReplyAt: row.last_reply_at,
+    participants: (row.participants || []).map((person) => ({
+      id: person.id,
+      username: person.username,
+      avatarUrl: person.avatarId ? `/avatars/${person.avatarId}` : null,
+    })),
+  }]));
+}
+
 async function hydrateMessages(db, user, rows) {
   if (!rows.length) return [];
   const ids = rows.map((row) => row.id);
   const replyAuthors = [...new Set(rows.map((row) => row.reply_sender_id).filter(Boolean))];
-  const [reactionResult, attachmentResult, objects, savedIds, blockResult] = await Promise.all([
+  const rootIds = rows.filter((row) => row.thread_root_id == null).map((row) => row.id);
+  const [reactionResult, attachmentResult, objects, savedIds, blockResult, threads] = await Promise.all([
     db.query(
       `SELECT r.message_id, r.user_id, r.emoji, u.username
          FROM conversation_message_reactions r
@@ -311,41 +357,55 @@ async function hydrateMessages(db, user, rows) {
         [user.id, replyAuthors]
       )
       : Promise.resolve({ rows: [] }),
+    threadSummaries(db, user, rootIds),
   ]);
   const reactions = reactionGroups(reactionResult.rows, user.id);
   const attachments = attachmentGroups(attachmentResult.rows, rows[0].conversation_id);
   const blockedIds = new Set(blockResult.rows.map((row) => row.blocked_user_id));
-  return rows.map((row) => ({
-    id: row.id,
-    conversationId: row.conversation_id,
-    sender: {
-      id: row.sender_id || 0,
-      username: row.sender_username || 'Deleted user',
-      avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
-    },
-    content: row.content,
-    createdAt: row.created_at,
-    editedAt: row.edited_at,
-    reply: row.reply_id && !blockedIds.has(row.reply_sender_id) ? {
-      id: row.reply_id,
+  return rows.map((row) => {
+    // #2387: a deleted message keeps its place, its sender and its thread,
+    // and nothing it said. Its attachments, cards, reactions and saves were
+    // removed when it was deleted; the empty values here are the contract
+    // even for a report-retained attachment the moderation queue still holds.
+    const deleted = !!row.deleted_at;
+    return {
+      id: row.id,
+      conversationId: row.conversation_id,
       sender: {
-        id: row.reply_sender_id || 0,
-        username: row.reply_sender_username || 'Deleted user',
-        avatarUrl: row.reply_sender_avatar_id ? `/avatars/${row.reply_sender_avatar_id}` : null,
+        id: row.sender_id || 0,
+        username: row.sender_username || 'Deleted user',
+        avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
       },
-      content: row.reply_content || '',
-    } : null,
-    reactions: reactions.get(row.id) || [],
-    attachments: attachments.get(row.id) || [],
-    objects: objects.get(row.id) || [],
-    saved: savedIds.has(row.id),
-  }));
+      content: deleted ? '' : row.content,
+      createdAt: row.created_at,
+      editedAt: deleted ? null : row.edited_at,
+      reply: row.reply_id && !blockedIds.has(row.reply_sender_id) ? {
+        id: row.reply_id,
+        sender: {
+          id: row.reply_sender_id || 0,
+          username: row.reply_sender_username || 'Deleted user',
+          avatarUrl: row.reply_sender_avatar_id ? `/avatars/${row.reply_sender_avatar_id}` : null,
+        },
+        content: row.reply_deleted_at ? '' : (row.reply_content || ''),
+        deleted: !!row.reply_deleted_at,
+      } : null,
+      reactions: deleted ? [] : (reactions.get(row.id) || []),
+      attachments: deleted ? [] : (attachments.get(row.id) || []),
+      objects: deleted ? [] : (objects.get(row.id) || []),
+      saved: deleted ? false : savedIds.has(row.id),
+      deleted,
+      threadRootId: row.thread_root_id ?? null,
+      thread: row.thread_root_id == null ? (threads.get(row.id) || null) : null,
+    };
+  });
 }
 
 const MESSAGE_SELECT = `
   SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at,
+         m.deleted_at, m.thread_root_id,
          su.username AS sender_username, sua.id AS sender_avatar_id,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
+         rm.deleted_at AS reply_deleted_at,
          ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id
     FROM conversation_messages m
     LEFT JOIN users su ON su.id = m.sender_id
@@ -365,31 +425,154 @@ async function getMessage(db, user, conversationId, messageId) {
   return hydrated[0] || null;
 }
 
-async function listMessages(pool, user, conversationId, { before = null, limit = 50 } = {}) {
-  const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
-  if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
-  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
-  const params = [conversationId, user.id];
-  let beforeSql = '';
+function pageLimit(limit) {
+  return Math.min(Math.max(Number(limit) || 50, 1), 100);
+}
+
+// The main stream (#2387): every page below reads `thread_root_id IS NULL`,
+// so a thread reply never appears in the transcript — it is reached through
+// its root's `thread` summary and listThread() instead. Each direction is its
+// own fully static statement rather than one with an optional bound, so the
+// SQL linter validates all three and each keeps its index-ordered plan.
+async function mainStreamBefore(db, user, conversationId, before, count) {
   if (before) {
-    params.push(before);
-    beforeSql = `AND m.id < $${params.length}`;
+    return (await db.query(
+      `${MESSAGE_SELECT}
+        WHERE m.conversation_id = $1 AND m.thread_root_id IS NULL AND m.id < $3
+          AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
+        ORDER BY m.id DESC LIMIT $4`,
+      [conversationId, user.id, before, count]
+    )).rows;
   }
-  params.push(safeLimit + 1);
-  const { rows } = await pool.query(
+  return (await db.query(
     `${MESSAGE_SELECT}
-      WHERE m.conversation_id = $1 ${beforeSql}
+      WHERE m.conversation_id = $1 AND m.thread_root_id IS NULL
         AND NOT EXISTS (SELECT 1 FROM user_blocks b
                          WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
-      ORDER BY m.id DESC LIMIT $${params.length}`,
-    params
+      ORDER BY m.id DESC LIMIT $3`,
+    [conversationId, user.id, count]
+  )).rows;
+}
+
+async function mainStreamAfter(db, user, conversationId, after, count) {
+  return (await db.query(
+    `${MESSAGE_SELECT}
+      WHERE m.conversation_id = $1 AND m.thread_root_id IS NULL AND m.id > $3
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
+      ORDER BY m.id ASC LIMIT $4`,
+    [conversationId, user.id, after, count]
+  )).rows;
+}
+
+// One message of this conversation the viewer may see (its sender is not
+// someone they blocked), with where it lives. Deleted messages are visible:
+// they are placeholders, not absences.
+async function visibleMessageRef(db, user, conversationId, messageId) {
+  const { rows } = await db.query(
+    `SELECT m.id, m.thread_root_id, m.sender_id, m.deleted_at
+       FROM conversation_messages m
+      WHERE m.id = $1 AND m.conversation_id = $2
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)`,
+    [messageId, conversationId, user.id]
   );
+  return rows[0] || null;
+}
+
+// A permalink window (#2387): about half a page either side of the target.
+// A thread reply is shown where its thread lives — the window centres on its
+// root and `focus.threadRootId` tells the client to open that thread. A reply
+// whose root the viewer cannot see is as invisible as the thread itself.
+async function messagesAround(db, user, conversationId, targetId, limit) {
+  const target = await visibleMessageRef(db, user, conversationId, targetId);
+  if (!target) return null;
+  const anchorId = target.thread_root_id || target.id;
+  if (target.thread_root_id
+      && !(await visibleMessageRef(db, user, conversationId, target.thread_root_id))) return null;
+  const olderCount = Math.floor(limit / 2);
+  const newerCount = Math.max(limit - olderCount - 1, 0);
+  const [older, newer, anchor] = await Promise.all([
+    mainStreamBefore(db, user, conversationId, anchorId, olderCount + 1),
+    mainStreamAfter(db, user, conversationId, anchorId, newerCount + 1),
+    db.query(
+      `${MESSAGE_SELECT} WHERE m.id = $1 AND m.conversation_id = $2`,
+      [anchorId, conversationId]
+    ),
+  ]);
+  const olderPage = older.slice(0, olderCount).reverse();
+  const newerPage = newer.slice(0, newerCount);
+  const page = [...olderPage, ...anchor.rows, ...newerPage];
+  const messages = await hydrateMessages(db, user, page);
+  return {
+    messages,
+    nextBefore: older.length > olderCount && page.length ? page[0].id : null,
+    nextAfter: newer.length > newerCount && page.length ? page[page.length - 1].id : null,
+    focus: { messageId: target.id, threadRootId: target.thread_root_id || null },
+  };
+}
+
+async function listMessages(pool, user, conversationId, {
+  before = null, after = null, around = null, limit = 50,
+} = {}) {
+  const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
+  if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
+  const safeLimit = pageLimit(limit);
+  if (around) return messagesAround(pool, user, conversationId, around, safeLimit);
+  if (after) {
+    // Catching up from a permalink window: ascending, oldest first.
+    const rows = await mainStreamAfter(pool, user, conversationId, after, safeLimit + 1);
+    const page = rows.slice(0, safeLimit);
+    return {
+      messages: await hydrateMessages(pool, user, page),
+      nextAfter: rows.length > safeLimit && page.length ? page[page.length - 1].id : null,
+    };
+  }
+  const rows = await mainStreamBefore(pool, user, conversationId, before, safeLimit + 1);
   const hasMore = rows.length > safeLimit;
   const page = rows.slice(0, safeLimit).reverse();
   const messages = await hydrateMessages(pool, user, page);
   return {
     messages,
     nextBefore: hasMore && page.length ? page[0].id : null,
+  };
+}
+
+// GET /api/conversations/:id/threads/:rootId (#2387). The root plus a page of
+// its replies, oldest first, paged backwards with `before` exactly like the
+// main stream. Direct conversations have no threads.
+async function listThread(pool, user, conversationId, rootId, { before = null, limit = 50 } = {}) {
+  const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
+  if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
+  if (membership.kind === 'direct') return { error: 'threads_not_supported' };
+  const root = await pool.query(
+    `${MESSAGE_SELECT}
+      WHERE m.id = $1 AND m.conversation_id = $2 AND m.thread_root_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)`,
+    [rootId, conversationId, user.id]
+  );
+  if (!root.rows.length) return null;
+  const safeLimit = pageLimit(limit);
+  const { rows } = await pool.query(
+    `${MESSAGE_SELECT}
+      WHERE m.thread_root_id = $1 AND m.conversation_id = $2
+        AND ($3::int IS NULL OR m.id < $3)
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = $4 AND b.blocked_user_id = m.sender_id)
+      ORDER BY m.id DESC LIMIT $5`,
+    [rootId, conversationId, before, user.id, safeLimit + 1]
+  );
+  const page = rows.slice(0, safeLimit).reverse();
+  const [hydratedRoot, messages] = await Promise.all([
+    hydrateMessages(pool, user, root.rows),
+    hydrateMessages(pool, user, page),
+  ]);
+  return {
+    root: hydratedRoot[0],
+    messages,
+    nextBefore: rows.length > safeLimit && page.length ? page[0].id : null,
   };
 }
 
@@ -416,8 +599,11 @@ async function conversationRow(db, user, conversationId) {
        LEFT JOIN users peer_user ON peer_user.id = peer.user_id
        LEFT JOIN user_avatars peer_avatar ON peer_avatar.user_id = peer.user_id
        LEFT JOIN LATERAL (
+         -- #2387: the list's latest message is the main stream's latest
+         -- message anyone still has: thread replies and deletions skip.
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id
+            AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -427,6 +613,22 @@ async function conversationRow(db, user, conversationId) {
     [conversationId, user.id]
   );
   return rows[0] || null;
+}
+
+// The unread count behind a cursor (#2387): main stream only, other people's
+// messages only, and neither a deleted message nor one from someone the
+// viewer blocked counts. Shared by the list and by markUnread's answer.
+async function countUnread(db, conversationId, userId, cursor) {
+  const result = await db.query(
+    `SELECT COUNT(*)::int AS count FROM conversation_messages m
+      WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
+        AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+        AND m.sender_id IS DISTINCT FROM $3
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)`,
+    [conversationId, cursor, userId]
+  );
+  return result.rows[0]?.count || 0;
 }
 
 async function serializeConversation(db, user, row, { includeMembers = true } = {}) {
@@ -448,15 +650,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     : null;
   let unread = 0;
   if (row.membership_status === 'member' && !row.deleted_peer) {
-    const result = await db.query(
-      `SELECT COUNT(*)::int AS count FROM conversation_messages m
-        WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
-          AND m.sender_id IS DISTINCT FROM $3
-          AND NOT EXISTS (SELECT 1 FROM user_blocks b
-                           WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)`,
-      [row.id, row.last_read_message_id, user.id]
-    );
-    unread = result.rows[0]?.count || 0;
+    unread = await countUnread(db, row.id, user.id, row.last_read_message_id);
   }
   // An invitation is a consent envelope, not conversation access. The
   // requester identity is shown so the recipient can decide; roster, peer,
@@ -937,9 +1131,13 @@ async function sendMessage(pool, user, conversationId, input) {
   const allowEmpty = attachmentIds.length > 0 || refsRaw.length > 0;
   const content = normalizeContent(input.content ?? '', { allowEmpty });
   const replyId = input.reply_to_id == null ? null : strictId(input.reply_to_id);
+  // #2387: a reply filed under a main-stream message's thread.
+  const rawThreadRoot = input.thread_root_id ?? input.threadRootId;
+  const threadRootId = rawThreadRoot == null ? null : strictId(rawThreadRoot);
   const hasKey = Object.prototype.hasOwnProperty.call(input, 'idempotency_key');
   const key = normalizeIdempotencyKey(input.idempotency_key);
   if (content == null || (input.reply_to_id != null && !replyId) || (hasKey && !key)) return null;
+  if (rawThreadRoot != null && !threadRootId) return null;
 
   const result = await transaction(pool, async (db) => {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
@@ -953,6 +1151,29 @@ async function sendMessage(pool, user, conversationId, input) {
       if (existing.rows.length) {
         return { messageId: existing.rows[0].id, memberIds: await activeMemberIds(db, conversationId), notifications: [], duplicate: true };
       }
+    }
+    // #2387: threads live in groups and channels only, and one level deep —
+    // the root is a main-stream message of this conversation that the sender
+    // can see. FOR SHARE holds it against a concurrent delete, so a first
+    // reply and the root's deletion serialize: a deleted message cannot start
+    // a new thread, but a thread that already has replies stays open.
+    let threadRoot = null;
+    if (threadRootId) {
+      if (membership.kind === 'direct') return { error: 'threads_not_supported' };
+      const root = await db.query(
+        `SELECT m.id, m.sender_id, m.deleted_at,
+                EXISTS (SELECT 1 FROM conversation_messages r
+                         WHERE r.thread_root_id = m.id) AS has_replies
+           FROM conversation_messages m
+          WHERE m.id = $1 AND m.conversation_id = $2 AND m.thread_root_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                             WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)
+          FOR SHARE OF m`,
+        [threadRootId, conversationId, user.id]
+      );
+      if (!root.rows.length) return null;
+      if (root.rows[0].deleted_at && !root.rows[0].has_replies) return { error: 'message_deleted' };
+      threadRoot = root.rows[0];
     }
     if (membership.kind === 'direct') {
       // Before acceptance only the requester is an active member, and may
@@ -995,10 +1216,10 @@ async function sendMessage(pool, user, conversationId, input) {
     }
     const inserted = await db.query(
       `INSERT INTO conversation_messages
-         (conversation_id, sender_id, content, reply_to_id, idempotency_key)
-       VALUES ($1, $2, $3, $4, $5)
+         (conversation_id, sender_id, content, reply_to_id, idempotency_key, thread_root_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id`,
-      [conversationId, user.id, content, replyId, key]
+      [conversationId, user.id, content, replyId, key, threadRootId]
     );
     const messageId = inserted.rows[0].id;
     if (attachmentIds.length) {
@@ -1026,11 +1247,15 @@ async function sendMessage(pool, user, conversationId, input) {
         );
       }
     }
-    await db.query(
-      `UPDATE conversation_members SET last_read_message_id = $1
-        WHERE conversation_id = $2 AND user_id = $3`,
-      [messageId, conversationId, user.id]
-    );
+    // Posting to the main stream means the sender is at its end; posting in
+    // a thread says nothing about the main stream, whose cursor stays put.
+    if (!threadRootId) {
+      await db.query(
+        `UPDATE conversation_members SET last_read_message_id = $1
+          WHERE conversation_id = $2 AND user_id = $3`,
+        [messageId, conversationId, user.id]
+      );
+    }
     await db.query(`UPDATE conversations SET updated_at = NOW() WHERE id = $1`, [conversationId]);
 
     const members = await db.query(
@@ -1043,11 +1268,35 @@ async function sendMessage(pool, user, conversationId, input) {
       `SELECT sender_id FROM conversation_messages WHERE id = $1`, [replyId]
     ) : { rows: [] };
     const replyAuthorId = replyAuthor.rows[0]?.sender_id;
+    // #2387: a thread reply rings the thread's participants — its root's
+    // author and everyone who replied before — rather than the room. A block
+    // in either direction drops the thread alert (insertNotification covers
+    // the recipient's block; the sender's own is checked here).
+    const threadParticipants = new Set();
+    if (threadRoot) {
+      const participants = await db.query(
+        `SELECT sender_id FROM conversation_messages
+          WHERE sender_id IS NOT NULL AND (id = $1 OR (thread_root_id = $1 AND id < $2))`,
+        [threadRoot.id, messageId]
+      );
+      const senderBlocks = await db.query(
+        `SELECT blocked_user_id FROM user_blocks WHERE blocker_id = $1`, [user.id]
+      );
+      const blockedBySender = new Set(senderBlocks.rows.map((row) => row.blocked_user_id));
+      for (const row of participants.rows) {
+        if (!blockedBySender.has(row.sender_id)) threadParticipants.add(row.sender_id);
+      }
+    }
     const notifications = [];
     for (const member of members.rows) {
       let kind = 'conversation_message';
       if (member.user_id === replyAuthorId) kind = 'conversation_reply';
       else if (mentionsUsername(content, member.username)) kind = 'conversation_mention';
+      else if (threadRoot) {
+        // One row per person: a quote or an @mention above outranks this.
+        if (!threadParticipants.has(member.user_id)) continue;
+        kind = 'conversation_thread_reply';
+      }
       // A channel is everybody (#2783): an ordinary message there would ring
       // every bell on the platform. Only a reply or an @mention does.
       if (membership.kind === 'channel' && kind === 'conversation_message') continue;
@@ -1058,7 +1307,7 @@ async function sendMessage(pool, user, conversationId, input) {
     }
     return { messageId, memberIds: [user.id, ...members.rows.map((row) => row.user_id)], notifications, duplicate: false };
   });
-  if (!result) return null;
+  if (!result || result.error) return result;
   return { ...result, message: await getMessage(pool, user, conversationId, result.messageId) };
 }
 
@@ -1071,16 +1320,105 @@ async function editMessage(pool, user, conversationId, messageId, rawContent) {
     const { rows } = await db.query(
       `UPDATE conversation_messages SET content = $1, edited_at = NOW()
         WHERE id = $2 AND conversation_id = $3 AND sender_id = $4
+          AND deleted_at IS NULL
         RETURNING id`,
       [content, messageId, conversationId, user.id]
     );
-    return rows.length ? { memberIds: await activeMemberIds(db, conversationId) } : null;
+    if (!rows.length) {
+      // #2387: your own deleted message answers 409, not 404, so a stale
+      // editor can say what happened instead of that the message vanished.
+      const deleted = await db.query(
+        `SELECT 1 FROM conversation_messages
+          WHERE id = $1 AND conversation_id = $2 AND sender_id = $3
+            AND deleted_at IS NOT NULL`,
+        [messageId, conversationId, user.id]
+      );
+      return deleted.rows.length ? { error: 'message_deleted' } : null;
+    }
+    return { memberIds: await activeMemberIds(db, conversationId) };
   });
-  if (!result) return null;
+  if (!result || result.error) return result;
   return {
     message: await getMessage(pool, user, conversationId, messageId),
     memberIds: result.memberIds,
   };
+}
+
+// DELETE /api/conversations/:id/messages/:messageId (#2387). Your own
+// message only, and idempotent: deleting it again answers with the same
+// placeholder and changes nothing. In one transaction the row keeps its place
+// and loses its words, and everything hanging off it goes — cards, reactions,
+// every member's save of it, and every notification that points at it (which
+// also drops any push still queued for them). Attachments go too, EXCEPT
+// where the message has been reported: the moderation queue's evidence is
+// the one thing a delete must not be able to destroy, and members can no
+// longer reach those bytes (routes/conversations.js refuses an attachment of
+// a deleted message). A spec version shared into the room by this message
+// stops being shared unless another live message still carries it.
+//
+// Thread replies under a deleted root, and quotes of it, stay: they render
+// the placeholder.
+async function deleteMessage(pool, user, conversationId, messageId) {
+  const result = await transaction(pool, async (db) => {
+    const membership = await lockInteractionMembership(db, conversationId, user.id);
+    if (!membership) return null;
+    const { rows } = await db.query(
+      `SELECT id, deleted_at, thread_root_id FROM conversation_messages
+        WHERE id = $1 AND conversation_id = $2 AND sender_id = $3
+        FOR UPDATE`,
+      [messageId, conversationId, user.id]
+    );
+    if (!rows.length) return null;
+    const threadRootId = rows[0].thread_root_id || null;
+    if (rows[0].deleted_at) {
+      return { changed: false, threadRootId, memberIds: [], notifiedUserIds: [] };
+    }
+    await db.query(
+      `DELETE FROM chat_session_spec_conversation_shares spec_share
+        USING conversation_message_objects shared_object
+        WHERE shared_object.message_id = $1 AND shared_object.object_type = 'spec'
+          AND spec_share.conversation_id = $2
+          AND spec_share.session_id = shared_object.object_ref
+          AND spec_share.version = shared_object.object_version
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_message_objects other_object
+              JOIN conversation_messages carrier ON carrier.id = other_object.message_id
+             WHERE carrier.conversation_id = $2 AND carrier.id <> $1
+               AND carrier.deleted_at IS NULL AND other_object.object_type = 'spec'
+               AND other_object.object_ref = shared_object.object_ref
+               AND other_object.object_version = shared_object.object_version
+          )`,
+      [messageId, conversationId]
+    );
+    await db.query(`DELETE FROM conversation_message_objects WHERE message_id = $1`, [messageId]);
+    await db.query(`DELETE FROM conversation_message_reactions WHERE message_id = $1`, [messageId]);
+    await db.query(`DELETE FROM conversation_message_bookmarks WHERE message_id = $1`, [messageId]);
+    await db.query(
+      `DELETE FROM conversation_message_attachments a
+        WHERE a.message_id = $1
+          AND NOT EXISTS (SELECT 1 FROM conversation_message_reports r
+                           WHERE r.message_id = a.message_id)`,
+      [messageId]
+    );
+    const removed = await db.query(
+      `DELETE FROM notifications WHERE conversation_message_id = $1 RETURNING user_id`,
+      [messageId]
+    );
+    await db.query(
+      `UPDATE conversation_messages
+          SET deleted_at = NOW(), content = '', edited_at = NULL, metadata = '{}'::jsonb
+        WHERE id = $1`,
+      [messageId]
+    );
+    return {
+      changed: true,
+      threadRootId,
+      memberIds: await activeMemberIds(db, conversationId),
+      notifiedUserIds: [...new Set(removed.rows.map((row) => row.user_id))],
+    };
+  });
+  if (!result) return null;
+  return { ...result, message: await getMessage(pool, user, conversationId, messageId) };
 }
 
 async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
@@ -1090,7 +1428,7 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
     if (!membership) return null;
     const message = await db.query(
-      `SELECT id, sender_id FROM conversation_messages
+      `SELECT id, sender_id, deleted_at FROM conversation_messages
         WHERE id = $1 AND conversation_id = $2
           AND NOT EXISTS (SELECT 1 FROM user_blocks b
                            WHERE b.blocker_id = $3 AND b.blocked_user_id = sender_id)
@@ -1098,6 +1436,7 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
       [messageId, conversationId, user.id]
     );
     if (!message.rows.length) return null;
+    if (message.rows[0].deleted_at) return { error: 'message_deleted' };
     const deleted = await db.query(
       `DELETE FROM conversation_message_reactions
         WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
@@ -1126,7 +1465,7 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
     }
     return { notifications, memberIds: await activeMemberIds(db, conversationId) };
   });
-  if (!result) return null;
+  if (!result || result.error) return result;
   const message = await getMessage(pool, user, conversationId, messageId);
   return { ...result, reactions: message?.reactions || [] };
 }
@@ -1136,24 +1475,86 @@ async function markRead(pool, user, conversationId, messageId) {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
     if (!membership) return null;
     const message = await db.query(
-      `SELECT id FROM conversation_messages WHERE id = $1 AND conversation_id = $2`,
+      `SELECT id, thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2`,
       [messageId, conversationId]
     );
     if (!message.rows.length) return null;
     const current = membership.last_read_message_id || 0;
+    const threadRootId = message.rows[0].thread_root_id;
+    if (threadRootId) {
+      // #2387: reading a THREAD up to a reply clears that thread's alerts up
+      // to it. The main-stream cursor is not a thread position — ids of the
+      // two interleave — so moving it here would silently mark unread
+      // transcript messages read.
+      await db.query(
+        `UPDATE notifications n SET read_at = NOW()
+           FROM conversation_messages m
+          WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL
+            AND m.id = n.conversation_message_id
+            AND m.thread_root_id = $3 AND m.id <= $4`,
+        [user.id, conversationId, threadRootId, messageId]
+      );
+      return {
+        messageId: membership.last_read_message_id || null,
+        threadRootId,
+        memberIds: await activeMemberIds(db, conversationId),
+      };
+    }
     const cursor = Math.max(current, messageId);
     await db.query(
       `UPDATE conversation_members SET last_read_message_id = $1
         WHERE conversation_id = $2 AND user_id = $3`,
       [cursor, conversationId, user.id]
     );
+    // Main-stream reading clears main-stream alerts. An alert about a thread
+    // reply waits for that thread to be read (above), or for its own row.
     await db.query(
-      `UPDATE notifications SET read_at = NOW()
-        WHERE user_id = $1 AND conversation_id = $2 AND read_at IS NULL
-          AND (conversation_message_id IS NULL OR conversation_message_id <= $3)`,
+      `UPDATE notifications n SET read_at = NOW()
+        WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL
+          AND (n.conversation_message_id IS NULL
+               OR (n.conversation_message_id <= $3
+                   AND NOT EXISTS (SELECT 1 FROM conversation_messages m
+                                    WHERE m.id = n.conversation_message_id
+                                      AND m.thread_root_id IS NOT NULL)))`,
       [user.id, conversationId, cursor]
     );
-    return { messageId: cursor, memberIds: await activeMemberIds(db, conversationId) };
+    return { messageId: cursor, threadRootId: null, memberIds: await activeMemberIds(db, conversationId) };
+  });
+}
+
+// POST /api/conversations/:id/unread (#2387): "mark unread from here". The
+// cursor moves BACK to the message before this one, so it and everything
+// after it count again — and only back: marking an already-unread message
+// never reads the ones before it. The cursor is a foreign key, so it lands on
+// the nearest earlier row of this conversation (any row: the count reads the
+// main stream only), or NULL when there is none. A thread reply has no place
+// in the main stream's cursor and is refused like a missing message.
+async function markUnread(pool, user, conversationId, messageId) {
+  return transaction(pool, async (db) => {
+    const membership = await lockInteractionMembership(db, conversationId, user.id);
+    if (!membership) return null;
+    const target = await visibleMessageRef(db, user, conversationId, messageId);
+    if (!target || target.thread_root_id) return null;
+    const previous = await db.query(
+      `SELECT MAX(id) AS id FROM conversation_messages
+        WHERE conversation_id = $1 AND id < $2`,
+      [conversationId, messageId]
+    );
+    const earlier = previous.rows[0]?.id || null;
+    const current = membership.last_read_message_id || null;
+    // Only ever backwards. A NULL cursor already reads as all-unread.
+    const next = current == null || earlier == null ? null : Math.min(current, earlier);
+    if (next !== current) {
+      await db.query(
+        `UPDATE conversation_members SET last_read_message_id = $1
+          WHERE conversation_id = $2 AND user_id = $3`,
+        [next, conversationId, user.id]
+      );
+    }
+    return {
+      messageId: next,
+      unreadCount: await countUnread(db, conversationId, user.id, next),
+    };
   });
 }
 
@@ -1166,7 +1567,7 @@ async function reportMessage(pool, user, conversationId, messageId, rawReason, r
     const membership = await lockInteractionMembership(db, conversationId, user.id);
     if (!membership) return null;
     const message = await db.query(
-      `SELECT m.id, m.sender_id, m.content, m.created_at, m.edited_at,
+      `SELECT m.id, m.sender_id, m.content, m.created_at, m.edited_at, m.deleted_at,
               COALESCE(jsonb_agg(jsonb_build_object('emoji', r.emoji, 'userId', r.user_id))
                 FILTER (WHERE r.id IS NOT NULL), '[]'::jsonb) AS reactions
          FROM conversation_messages m
@@ -1176,6 +1577,8 @@ async function reportMessage(pool, user, conversationId, messageId, rawReason, r
       [messageId, conversationId]
     );
     if (!message.rows.length || message.rows[0].sender_id === user.id) return null;
+    // #2387: a deleted message has nothing left to report.
+    if (message.rows[0].deleted_at) return { error: 'message_deleted' };
     const row = message.rows[0];
     const [objectResult, attachmentResult] = await Promise.all([
       db.query(
@@ -1347,7 +1750,8 @@ async function setBlock(pool, userId, targetId, blocked) {
       `DELETE FROM notifications
         WHERE user_id = $1 AND source_user_id = $2
           AND (kind IN ('conversation_invite', 'conversation_message',
-                        'conversation_mention', 'conversation_reply', 'conversation_reaction')
+                        'conversation_mention', 'conversation_reply', 'conversation_reaction',
+                        'conversation_thread_reply')
                OR chat_message_id IS NOT NULL)`,
       [userId, targetId]
     );
@@ -1397,6 +1801,7 @@ module.exports = {
   getConversation,
   listConversations,
   listMessages,
+  listThread,
   getMessage,
   createDirect,
   createGroup,
@@ -1409,8 +1814,10 @@ module.exports = {
   ensureChannelMemberships,
   sendMessage,
   editMessage,
+  deleteMessage,
   toggleReaction,
   markRead,
+  markUnread,
   reportMessage,
   setBlock,
   listBlocks,
