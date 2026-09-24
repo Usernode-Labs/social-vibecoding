@@ -3235,7 +3235,7 @@ const AppView = {
     // was the cause of filters vanishing on Back / tab switches.
 
     // <DevBoardFrame/> — the header bar (caption, view-mode toggle, the "+"
-    // menu), #dev-forum-scroll, the locked notice, the General-chat card and
+    // menu), #dev-forum-scroll, the General-chat card and
     // the #dev-body host, all React-rendered from this call. Every id, class
     // string and data-* attribute is the one the template emitted; the wiring
     // below is untouched, because listeners and `hidden` toggles are the two
@@ -6634,7 +6634,6 @@ const AppView = {
       body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
       return;
     }
-    AppView._renderLockedNotice();
     AppView._renderMainPauseNotice();
     AppView._renderReleaseStallNotice();
     AppView._repaintDevBodyKeepingPosition();
@@ -6772,18 +6771,6 @@ const AppView = {
   _rewirePlusMenu() {
     const content = document.getElementById('app-content');
     if (content) AppView._wirePlusMenu(content);
-  },
-
-  // Locked-app banner at the very top of the card list (above the
-  // General chat card), per the card-list polish revision.
-  // The banner and its `hidden` are features/dev-board/board-frame.tsx's now;
-  // this publishes the one fact it draws from. `_proposalsCtx.locked` is
-  // server truth, loaded with the feed. The second fact (#1896) is the app's
-  // "Who can build it" setting, so the banner can say who that is.
-  _renderLockedNotice() {
-    AppView._reactDevBoard()?.publishLockedNotice(
-      !!(AppView._proposalsCtx && AppView._proposalsCtx.locked),
-      !!(AppView.appData && AppView.appData.collab_visibility === 'private'));
   },
 
   // The "merges are paused" banner (features/dev-board/main-pause-store.ts),
@@ -13569,8 +13556,8 @@ const AppView = {
   // The locked-app suppression is load-bearing: on a locked app a
   // threshold-met proposal legitimately waits for an admin's Yes, which
   // this client cannot verify, so it would otherwise show a spinner for a
-  // proposal that is not being applied at all. The locked notice above the
-  // list already explains that wait.
+  // proposal that is not being applied at all. The card's own ledger (its
+  // "An admin approves it" step) explains that wait.
   _derivedGovApplying(issue) {
     if (!issue || issue.status !== 'open') return null;
     const ctx = AppView._proposalsCtx || {};

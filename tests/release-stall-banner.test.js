@@ -103,8 +103,8 @@ test('without a run there is no link, and the kind still shows', () => {
 test('the store is published from the promoted list beside the other two notices', () => {
   assert.match(MOUNT_SRC, /publishReleaseStall\(state\) \{\s*releaseStallStore\.set\(state\);/);
   assert.match(APP_VIEW_SRC,
-    /AppView\._renderLockedNotice\(\);\s*AppView\._renderMainPauseNotice\(\);\s*AppView\._renderReleaseStallNotice\(\);/,
-    'published where the locked and pause notices are, on every promoted-list load');
+    /AppView\._renderMainPauseNotice\(\);\s*AppView\._renderReleaseStallNotice\(\);/,
+    'published where the pause notice is, on every promoted-list load');
   const fn = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('_renderReleaseStallNotice() {'));
   const body = fn.slice(0, fn.indexOf('\n  },'));
   assert.match(body, /publishReleaseStall\?\.\(\{/);
