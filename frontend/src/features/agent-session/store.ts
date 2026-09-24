@@ -57,6 +57,17 @@ export interface LiveTurn {
   pendingUserText: string | null;
 }
 
+/** The spec viewer over the conversation: one change's spec, one version. */
+export interface SpecSheetState {
+  changeId: number;
+  /** The version on screen; null is the latest. */
+  version: number | null;
+  versions: number[];
+  text: string;
+  phase: 'loading' | 'ready' | 'error';
+  error: string;
+}
+
 export interface AgentSessionState {
   open: boolean;
   host: AgentSessionHost;
@@ -79,6 +90,7 @@ export interface AgentSessionState {
   choosing: boolean;
   /** A message the server refused, handed back to the composer to send again. */
   returnedText: string | null;
+  specSheet: SpecSheetState | null;
 }
 
 const IDLE_TURN: LiveTurn = {
@@ -111,6 +123,7 @@ export const INITIAL_STATE: AgentSessionState = {
   catalog: null,
   choosing: false,
   returnedText: null,
+  specSheet: null,
 };
 
 let state: AgentSessionState = INITIAL_STATE;
@@ -326,7 +339,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     phase: same ? state.phase : 'loading',
     error: '',
     drawerOpen: drawer || (same ? state.drawerOpen : false),
-    ...(same ? {} : { session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN }),
+    ...(same ? {} : { session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null }),
   });
   syncTitle();
   if (same) return;
@@ -390,6 +403,7 @@ function openDraft(host: AgentSessionHost) {
     phase: 'ready',
     error: '',
     drawerOpen: false,
+    specSheet: null,
     turn: IDLE_TURN,
   });
   syncTitle();
@@ -410,7 +424,7 @@ export function deactivateAgentSession() {
   closeEvents();
   if (turnAbort) turnAbort.abort();
   turnAbort = null;
-  publish({ open: false, drawerOpen: false, turn: IDLE_TURN });
+  publish({ open: false, drawerOpen: false, specSheet: null, turn: IDLE_TURN });
 }
 
 /** Where a conversation lives: beside the inbox on a desktop, its own screen on a phone (app.js swaps). */
@@ -607,6 +621,43 @@ export async function switchActiveChange(changeId: number) {
 
 export function setDrawerOpen(open: boolean) {
   publish({ drawerOpen: open });
+}
+
+// ── The spec viewer ────────────────────────────────────────────────────
+
+let specRequest = 0;
+
+/**
+ * Open a change's spec over the conversation: the version a spec card names,
+ * or the latest. The text is the change's own (GET /api/sessions/:id/spec and
+ * /specs/:version), so it is what the change page's viewer shows.
+ */
+export async function openSpec(changeId: number, version: number | null = null) {
+  const ticket = ++specRequest;
+  publish({
+    drawerOpen: false,
+    specSheet: { changeId, version, versions: state.specSheet?.changeId === changeId ? state.specSheet.versions : [], text: '', phase: 'loading', error: '' },
+  });
+  try {
+    const { spec, versions } = await api.getSpec(changeId);
+    const numbers = versions.map((v) => Number(v.version)).filter((v) => Number.isInteger(v) && v > 0);
+    const newest = numbers.length ? Math.max(...numbers) : null;
+    const text = version != null && version !== newest ? await api.getSpecVersion(changeId, version) : spec;
+    if (ticket !== specRequest) return;
+    publish({ specSheet: { changeId, version: version ?? newest, versions: numbers, text, phase: 'ready', error: '' } });
+  } catch (error) {
+    if (ticket !== specRequest) return;
+    publish((current) => ({
+      specSheet: current.specSheet
+        ? { ...current.specSheet, phase: 'error', error: errorText(error, 'Could not load the spec.') }
+        : null,
+    }));
+  }
+}
+
+export function closeSpec() {
+  specRequest += 1;
+  publish({ specSheet: null });
 }
 
 // ── The model ──────────────────────────────────────────────────────────

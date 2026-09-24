@@ -43,10 +43,15 @@
  *   - Dropping the frame when the app leaves the screen by any route:
  *     App._syncPlatformTabs, the one place that decides whether the running
  *     app is on screen, calls `appPresence`.
+ *   - The top window's `?side=<route>` (SIDE_PARAM): the page the panel is
+ *     showing, kept in the address with replaceState so a reload — or Back
+ *     to the app — brings the panel back where it was. Written while the
+ *     panel is open, removed when it closes or goes with the app.
  */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import {
+  embeddedAllows,
   expandRoute,
   frameUrl,
   isPanelRoute,
@@ -127,6 +132,8 @@ let desiredHint: PanelHint | null = null;
 let bootHint: PanelHint | null = null;
 let ready = false;
 let reported = '';
+// A reload's `?side=` being opened, once the app it stood beside is on screen.
+let restoring = false;
 // Set while this module navigates the TOP window itself (Expand, or a link the
 // panel's document handed up), so the Navigation API intercept below lets it
 // through instead of catching its own navigation.
@@ -147,6 +154,83 @@ function publish(route: string, extra?: Record<string, unknown>): void {
     canBack: stack.length > 0 || !!parentRoute(route),
     ...extra,
   });
+  writeAddress(sidePanelStore.get().open ? route : null);
+}
+
+// ── The panel in the top window's address ───────────────────────────────
+
+/** The top window's query parameter naming the page the panel shows. */
+export const SIDE_PARAM = 'side';
+
+function paramKey(part: string): string {
+  const key = part.split('=', 1)[0].replace(/\+/g, ' ');
+  try { return decodeURIComponent(key); } catch { return key; }
+}
+
+/** The panel page a top-window query names, or null. */
+export function sideRouteFrom(search: string): string | null {
+  const raw = String(search || '').replace(/^\?/, '');
+  for (const part of raw ? raw.split('&') : []) {
+    if (paramKey(part) !== SIDE_PARAM) continue;
+    let value = part.slice(part.indexOf('=') + 1).replace(/\+/g, ' ');
+    try { value = decodeURIComponent(value); } catch { return null; }
+    return part.includes('=') && embeddedAllows(value) ? value : null;
+  }
+  return null;
+}
+
+/**
+ * Put `route` in the top window's address (null takes it out), in place: no
+ * history entry, and every other parameter byte for byte, as the router's own
+ * App._routeSearch keeps them. The router carries the query across its own
+ * navigations, so this only has to follow the panel.
+ */
+function writeAddress(route: string | null): void {
+  if (typeof window === 'undefined' || isEmbeddedPanel()) return;
+  try {
+    const loc = window.location;
+    const raw = String(loc.search || '').replace(/^\?/, '');
+    const kept = raw ? raw.split('&').filter((part) => part && paramKey(part) !== SIDE_PARAM) : [];
+    if (route) kept.push(`${SIDE_PARAM}=${encodeURIComponent(route).replace(/%2F/gi, '/')}`);
+    const search = kept.length ? `?${kept.join('&')}` : '';
+    if (search === (loc.search || '')) return;
+    window.history.replaceState(window.history.state, '', `${loc.pathname}${search}${loc.hash}`);
+  } catch {
+    /* an address that cannot be rewritten only loses the panel on reload */
+  }
+}
+
+/**
+ * The app is on screen and the address names a panel page nobody has opened
+ * yet — a reload, or Back to the app: open it. The app's screen is revealed in
+ * a transition after the router reports it, so this waits (briefly) for the
+ * moment the panel may take a page, and gives up by taking the parameter out.
+ */
+function restoreFromAddress(): void {
+  if (restoring || typeof window === 'undefined' || isEmbeddedPanel()) return;
+  if (sidePanelStore.get().frameSrc) return;
+  const route = sideRouteFrom(window.location.search);
+  if (!route) return;
+  restoring = true;
+  let tries = 0;
+  const attempt = () => {
+    if (!restoring) return;
+    if (sidePanelStore.get().frameSrc) { restoring = false; return; }
+    if (sideRouteFrom(window.location.search) !== route) { restoring = false; return; }
+    if (canTake()) {
+      restoring = false;
+      open(route, null);
+      return;
+    }
+    tries += 1;
+    if (tries >= 20) {
+      restoring = false;
+      writeAddress(null);
+      return;
+    }
+    window.setTimeout(attempt, 100);
+  };
+  window.setTimeout(attempt, 0);
 }
 
 function go(route: string, hint: PanelHint | null): void {
@@ -234,6 +318,7 @@ export function close(): void {
   stack = [];
   desiredHint = null;
   if (sidePanelStore.get().open) sidePanelStore.set({ open: false });
+  writeAddress(null);
 }
 
 /** Drop the panel and its document — the app it stood beside is gone. */
@@ -244,8 +329,18 @@ export function drop(): void {
   bootHint = null;
   ready = false;
   reported = '';
+  // The address is cleared only when there was a panel (or a reload's panel
+  // on its way) to clear: the router reports "no app on screen" on its way
+  // through boot, before it reaches the app a reloaded address names, and
+  // that must not take the panel's page out from under it.
+  const pending = restoring;
+  restoring = false;
   const s = sidePanelStore.get();
-  if (!s.frameSrc && !s.open && !s.route) return;
+  if (!s.frameSrc && !s.open && !s.route) {
+    if (pending) writeAddress(null);
+    return;
+  }
+  writeAddress(null);
   sidePanelStore.set({ ...INITIAL, frameKey: s.frameKey });
 }
 
@@ -314,6 +409,7 @@ export function expand(): void {
  */
 export function appPresence(inApp: boolean): void {
   if (!inApp) drop();
+  else restoreFromAddress();
 }
 
 /** Is the panel on screen (the viewer has it open)? */
@@ -505,6 +601,7 @@ export function _resetForTests(): void {
   ready = false;
   reported = '';
   bypass = false;
+  restoring = false;
   sidePanelStore.set({ ...INITIAL });
   sidePanelRefs.frame = null;
 }

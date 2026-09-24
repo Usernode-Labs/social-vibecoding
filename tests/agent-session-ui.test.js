@@ -13,9 +13,10 @@
 //   3. ONE OUTCOME, SAID ONCE. The action_result / action_dismissed note is
 //      written for the Mayor (which reads text); under a card the transcript
 //      draws, the card's own outcome line says it, so the note is skipped.
-//   4. EACH WRITER MAPS TO ONE KIND: conversation events are dividers, the
-//      coding agent's completion is an agent item, a live preview is a
-//      preview item, anything else is a quiet note.
+//   4. EACH WRITER MAPS TO ONE KIND: conversation events are dividers, a
+//      coding-agent run (its start, progress, log and end rows) is ONE run
+//      item named for the agent that actually ran, a drafted spec is a spec
+//      item, a live preview is a preview item, anything else is a quiet note.
 //   5. REPLY SUGGESTIONS BELONG TO THE LAST THING SAID, and only while it is
 //      last.
 //
@@ -91,19 +92,135 @@ test('the transcript maps each writer to one kind, and says a card outcome once'
     row(10, 'system', '   '),
   ], [], NOW);
 
-  assert.deepEqual(items.map((i) => i.kind), ['user', 'divider', 'mayor', 'note', 'agent', 'preview', 'note', 'note']);
+  assert.deepEqual(items.map((i) => i.kind), ['user', 'divider', 'mayor', 'note', 'run', 'preview', 'note', 'note']);
   const [, divider, mayor, foreign, agent, preview, unsafe, failed] = items;
   assert.equal(divider.event, 'change_started');
   assert.deepEqual(mayor.quickReplies, ['Go ahead'], 'a blank suggestion is not a button');
   assert.equal(mayor.cards.length, 1);
   assert.ok(!items.some((i) => i.key === 'm4'), "the drawn card's own outcome note is not repeated under it");
   assert.equal(foreign.tone, 'error', 'an outcome for a card this transcript does not draw is still said');
-  assert.equal(agent.outcome, 'no_changes');
+  assert.equal(agent.status, 'no_changes');
+  assert.equal(agent.output, 'Added a toggle.');
   assert.equal(agent.changeId, 12);
   assert.equal(preview.url, 'https://pr-9.example.test');
   assert.equal(preview.prNumber, 9);
   assert.equal(unsafe.kind, 'note', 'only an http(s) preview URL becomes a link');
   assert.equal(failed.tone, 'error');
+});
+
+test('a coding-agent run is one card named for the agent that ran, and a drafted spec is a card of its own', () => {
+  const codex = { agentBackend: 'codex_openrouter', agentModel: 'z-ai/glm-5.3-flash' };
+  const scout = transcript.buildTranscript([
+    row(1, 'assistant', 'I\'ll have the scout draft the spec now.'),
+    row(2, 'system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex, 12),
+    row(3, 'system', 'Scout reading the codebase...', codex, 12),
+    // Every agent writes this row's content as "Claude Code progress"; only
+    // its metadata says which one ran, so its words are never shown.
+    row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js', 'Drafting the spec'], ...codex }, 12),
+    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', {
+      specPreview: '## Thumbnails\nShow an image per item.', specLines: 93, specVersion: 2, durationMs: 81000, ...codex,
+    }, 12),
+    row(6, 'assistant', 'The spec is drafted.'),
+  ]);
+  assert.deepEqual(scout.map((i) => i.kind), ['mayor', 'run', 'spec', 'mayor'], 'no loose lines');
+  const [, run, spec] = scout;
+  assert.equal(run.mode, 'scout');
+  assert.equal(run.status, 'done');
+  assert.equal(run.agent, 'Codex · glm-5.3-flash', 'an OpenRouter change runs Codex, and says so');
+  assert.deepEqual(run.log, ['Reading src/feed.js', 'Drafting the spec']);
+  assert.equal(transcript.runHeading(run), 'Wrote the spec');
+  assert.equal(transcript.durationLabel(run.durationMs), '1m 21s');
+  assert.ok(!JSON.stringify(scout).includes('Claude Code progress'));
+  assert.deepEqual([spec.changeId, spec.version, spec.lines], [12, 2, 93]);
+  assert.equal(spec.preview, '## Thumbnails\nShow an image per item.', 'its lines kept, since it is rendered as markdown');
+
+  const claude = { agentBackend: 'claude_code', agentModel: 'claude-opus-5-5' };
+  const build = transcript.buildTranscript([
+    row(1, 'system', 'Spinning up coding agent (Opus)...', claude, 12),
+    row(2, 'system', 'Claude Code is running...', claude, 12),
+    row(3, 'system', 'Claude Code progress', { progressLog: ['Editing feed.js'], ...claude }, 12),
+    row(4, 'system', 'PR #9 created', {}, 12),
+    row(5, 'system', 'Staging deployed!', { stagingUrl: 'https://pr-9.example.test', prNumber: 9 }, 12),
+    row(6, 'system', 'Claude Code finished', { ccOutput: 'Added thumbnails.', ccOutcome: 'success', durationMs: 5000, ...claude }, 12),
+  ]);
+  assert.deepEqual(build.map((i) => i.kind), ['run', 'preview']);
+  assert.equal(build[0].agent, 'Claude Code · Opus 5.5');
+  assert.deepEqual(build[0].steps, ['PR #9 created'], 'the run\'s own steps fold into it');
+  assert.equal(build[0].status, 'done');
+  assert.equal(transcript.runHeading(build[0]), 'Built the change');
+
+  // A run still going is drawn running only while one is live; one that never
+  // wrote its end is drawn as ended, never spinning forever.
+  const unfinished = [
+    row(1, 'system', 'Starting OpenRouter (glm-5.3-flash)...', codex, 12),
+    row(2, 'system', 'OpenRouter is running...', codex, 12),
+  ];
+  assert.equal(transcript.buildTranscript(unfinished, [], Date.now(), { liveRun: true })[0].status, 'running');
+  assert.equal(transcript.buildTranscript(unfinished)[0].status, 'ended');
+
+  // A failed run ends there, and its sentence is still said.
+  const failedRun = transcript.buildTranscript([
+    ...unfinished,
+    row(3, 'system', 'This turn failed: the worker went away.', { turnError: true }, 12),
+  ]);
+  assert.deepEqual(failedRun.map((i) => [i.kind, i.status || i.tone]), [['run', 'failed'], ['note', 'error']]);
+
+  assert.equal(transcript.prettyModel('claude-sonnet-5'), 'Sonnet 5');
+  assert.equal(transcript.agentLabel({ localAgentLabel: 'MacBook' }), 'MacBook · your machine');
+  assert.equal(transcript.agentLabel({}), '');
+});
+
+test('the screen draws a run as the dev chat\'s run card and a spec as a card that opens the spec over the conversation', async () => {
+  const { createElement, renderToHtml } = require('./lib/render-tsx');
+  const codex = { agentBackend: 'codex_openrouter', agentModel: 'z-ai/glm-5.3-flash' };
+  const session = { id: 7, title: 'Thumbnails', status: 'open', focusApp: null, focusContext: {}, agent: null, activeChange: null, busy: false, lastActivityAt: null, createdAt: null };
+  const messages = [
+    row(2, 'system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex, 12),
+    row(3, 'system', 'Scout reading the codebase...', codex, 12),
+    row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js'], ...codex }, 12),
+    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
+  ];
+  const requests = [];
+  globalThis.window = { location: { hash: '#agent/7' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
+  globalThis.fetch = async (url) => {
+    requests.push(url);
+    const body = /\/messages\?/.test(url) ? { messages, nextAfter: null }
+      : /\/actions$/.test(url) ? { actions: [] }
+        : url === '/api/sessions/12/spec' ? { spec: '# Thumbnails v3', versions: [{ version: 3 }, { version: 2 }] }
+          : url === '/api/sessions/12/specs/2' ? { spec: { version: 2, content: '# Thumbnails v2' } }
+            : { session, turn: null };
+    return { ok: true, status: 200, json: async () => body };
+  };
+  try {
+    const api = loadTsx('tests/fixtures/agent-session-api.ts');
+    await api.openAgentSession({ id: 7, host: 'screen' });
+    // The panel's server render is its empty first paint by design, so the
+    // cards are rendered from the items the panel would draw.
+    const drawn = api.buildTranscript(api.getAgentSessionState().messages);
+    const html = drawn.map((item) => renderToHtml(item.kind === 'run'
+      ? createElement(api.RunCard, { run: item })
+      : createElement(api.SpecCard, { item }))).join('');
+    assert.match(html, /class="dc-cc-attached"/, 'the dev chat\'s own run card');
+    assert.match(html, /data-agent-session-run="done"/);
+    assert.match(html, /Wrote the spec/);
+    assert.match(html, /Codex · glm-5\.3-flash/, 'captioned with the agent that ran');
+    assert.doesNotMatch(html, /Claude Code progress|Scout reading the codebase/, 'no loose lines');
+    assert.match(html, /class="dc-spec-preview-card"[^>]*data-agent-session-spec="2"/);
+    assert.match(html, /Spec v2 · 93 lines/);
+
+    // The card opens the version it names, over the conversation.
+    await api.openSpec(12, 2);
+    const sheet = api.getAgentSessionState().specSheet;
+    assert.deepEqual([sheet.changeId, sheet.version, sheet.versions, sheet.text, sheet.phase], [12, 2, [3, 2], '# Thumbnails v2', 'ready']);
+    assert.ok(requests.includes('/api/sessions/12/specs/2'), 'an older version is read by its number');
+    await api.openSpec(12);
+    assert.equal(api.getAgentSessionState().specSheet.text, '# Thumbnails v3', 'the latest by default');
+    api.closeSpec();
+    assert.equal(api.getAgentSessionState().specSheet, null);
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+  }
 });
 
 test('reply suggestions belong to the last thing said, and only while it is last', () => {

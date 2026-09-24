@@ -599,6 +599,16 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - The **active change** takes the choice at its next build. A different backend, OpenRouter model or effort switches the change first, through the dev chat's own reset (`switchSessionAgent`, extracted from `POST /api/sessions/:id/reset-agent-context`). The change keeps its branch and conversation, starts a fresh agent context, and its transcript says so. A Claude model is chosen per run instead, as the dev chat chooses it per turn, so it needs no reset. A build already running finishes on the model it started with. A switch refused because the change is busy is logged, and the build runs on what the change has.
   - `mayor_model` stays unused: one choice drives both the Mayor and the coding agent, as in a classic session. That settles the open question under *Cost and models* for now.
 
+*Follow-up: first-use fixes.*
+
+- **The side panel survives a reload.** While it is open, the top window's address carries `?side=<route>`, written with `replaceState` so it adds no history entry, and every other parameter kept as the router keeps them. A reload, or Back to the app, reopens the panel on that page once the app is on screen. Closing the panel or leaving the app takes the parameter out. The panel's own document never inherits it.
+- **A coding-agent run is one card.** A change writes a run as several rows, and the conversation now folds them into one run item. The rows are: the start line, the running line, the progress row, any raw log, the steps on the way (the PR, the preview build), and the end. The end is the drafted spec, the completion, a failure or a stop. The item is drawn with the dev chat's own run card (`Attached`): a status line that opens in place onto the run's log, or onto a build's summary.
+  - The progress row's content is the fixed text "Claude Code progress" whatever agent runs, so it is recognised by its `progressLog` and its words are never shown.
+  - The card's caption names the agent from the rows' `agentBackend`: an OpenRouter change runs the Codex CLI and says "Codex · <model>". It never ran Claude Code; only that text said so.
+  - While a build runs, the card carries the live progress line and clock, and replaces the separate activity line.
+- **A drafted spec is a card.** It is the dev chat's spec card. It opens a read-only spec viewer over the conversation, at the version the card names, with the change's other saved versions to switch to. The viewer reads the change's own `GET /api/sessions/:id/spec` and `/specs/:version`. The changes drawer's active change gets a Spec button that opens the latest version. Sharing and mentions stay on the change page's own viewer.
+- **Staging shows both.** The seeded conversation 990801 now carries, on its change 990802, a scout run on Codex, the spec it drafted (two saved versions) and a build run. These are the same rows a real run writes, so the screen folds them the same way. A preview seeded before this gets the rows added on its next boot.
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;

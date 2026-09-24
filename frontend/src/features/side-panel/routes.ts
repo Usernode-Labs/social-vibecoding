@@ -318,10 +318,11 @@ export function expandRoute(route: string): string {
  * Query parameters the panel's document must NOT inherit from the top window:
  * its own flag (set fresh below), the chromeless app's inner path, a
  * screenshot state and a post-login return target (both belong to the top's
- * load), and the forced native presentation (the panel is never the native
- * top frame).
+ * load), the forced native presentation (the panel is never the native
+ * top frame), and the top's note of what the panel shows (`side`, see
+ * ./controller.ts).
  */
-const DROPPED_PARAMS = new Set(['panel', 'path', 'shot', 'return_to', 'un-native-webview']);
+const DROPPED_PARAMS = new Set(['panel', 'path', 'shot', 'return_to', 'un-native-webview', 'side']);
 
 /**
  * The address the panel's document is loaded at: the platform root with
