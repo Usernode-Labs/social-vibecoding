@@ -1138,8 +1138,9 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
             type="button"
             className="hover:text-sky-700 dark:hover:text-sky-300 dark:text-sky-400"
             title={`Release ${c.username}'s claim (admin)`}
+            aria-label={`Release ${c.username}'s claim (admin)`}
             onClick={() => call({ fn: 'clearIssueClaim', args: [c.issue, c.userId] })}
-          >{'×'}</button>
+          ><span aria-hidden="true">{'×'}</span></button>
         </span>
       ))}
     </div>
