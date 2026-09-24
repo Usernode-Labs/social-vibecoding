@@ -20,6 +20,20 @@ spec:
     - host: {{ .Values.config.domain | quote }}
       http:
         paths:
+          {{- if .Values.databaseControlPlane.migrationsEnabled }}
+          - path: /api/admin/database-migrations
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "social-vibecoding-platform.fullname" . }}-database-migrations
+                port: {name: http}
+          - path: /database-maintenance
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "social-vibecoding-platform.fullname" . }}-database-migrations
+                port: {name: http}
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:

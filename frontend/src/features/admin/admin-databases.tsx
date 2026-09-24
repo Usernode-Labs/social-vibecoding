@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { DatabaseMigrations } from './database-migrations';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
@@ -53,7 +54,7 @@ function DatabaseSection() {
     } finally { if (alive.current) setBusy(''); }
   }
 
-  return <div className={AdminUI.card}>
+  return <><DatabaseMigrations /><div className={AdminUI.card}>
     <div className={AdminUI.cardHeader}>
       <h2 className={AdminUI.cardTitle}>Database clusters</h2>
       <button type="button" className={AdminUI.btn.outline} onClick={() => setRefresh((value) => value + 1)}>Refresh</button>
@@ -82,7 +83,7 @@ function DatabaseSection() {
       </div>
       {!data.targets.length && <p className={AdminUI.muted}>No database targets have been configured.</p>}
     </>}
-  </div>;
+  </div></>;
 }
 
 let host: Element | null = null;

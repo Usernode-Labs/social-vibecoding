@@ -240,3 +240,33 @@ Do not disable binding routing or restore the old URL after destination writes.
 The admin interface still manages clusters; migration initiation is operator-only.
 General app selection, move-back/demotion and worker-driven orchestration remain
 future increments. Backups remain deferred by the staging operator.
+
+## Admin migrations (staging opt-in)
+
+`databaseControlPlane.migrationsEnabled` enables a separate Deployment using the
+platform image, `src/workers/database-migrations.js`. It serves authenticated
+`/api/admin/database-migrations` and `/database-maintenance` on the platform host.
+The ordinary platform can be paused by the migration without taking these routes
+down. The maintenance page reuses the React migration panel and existing session
+cookie; it also works after reloading during maintenance. Login itself remains
+on the platform, so sign in before starting maintenance.
+
+The panel lists selected app bindings/current revisions and configured retained
+destinations. Review runs the operator's read-only preflight; Start requires typing
+the app slug and records an immutable `AppDatabaseMigration` intent. Only full
+admins may plan/start/recover, with same-origin JSON required for mutations.
+View-only admins can inspect status. Requests contain no credentials.
+
+One Recreate worker processes requests sequentially using the infra-packaged,
+staging-guarded Python operator. Running attempts become NeedsAttention after
+worker loss; Resume/Abort are explicit and retain the operator's revision/UID/
+copy-Job guards. Abort is rejected after cutover or while copy Pods are running.
+The request stores the requester, attempt and public result. Runtime errors never
+return child-process output or credential-bearing diagnostics.
+
+The migration identity is distinct from the web and provisioning identities. It
+needs scoped SQL exec on the selected CNPG Pods, copy Jobs/Secrets in their target
+namespace, selected binding status updates and selected workload scaling/Secret
+updates. It cannot delete CNPG Clusters/PVCs/namespaces. Only DATABASE_URL is
+projected for session authentication; GitHub, model and signing keys are not mounted.
+Infra supplies CRD/RBAC/scripts separately. Existing deployments default disabled.

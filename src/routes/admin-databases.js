@@ -5,6 +5,8 @@ const { loadPolicy, createStore, submitRequest, publicRequest } = require('../se
 // Mounted after adminMiddleware. Dependencies are injectable to exercise the
 // actual HTTP boundary without loading the rest of the platform.
 function registerDatabaseRoutes(router, { requireAdminWrite, getPolicy = loadPolicy, getStore = defaultStore }) {
+  // Enabled installations route this prefix to the independent migration service.
+  router.get('/api/admin/database-migrations', (_req, res) => res.json({ enabled: false }));
   router.get('/api/admin/database-clusters', async (_req, res) => {
     try {
       const policy = getPolicy();

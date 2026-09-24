@@ -226,3 +226,6 @@ fs.rmSync(ssrDir, { recursive: true, force: true });
 console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
 console.log(`[build-shell] stamped ${stamp.slice(0, 16)}… over ${files.length} input files`);
 console.log(`[build-shell] platform build id: ${buildSha}${buildSha === 'dev' ? ' (plain asset paths)' : ' (assets scoped under /b/<sha>/)'}`);
+
+// Independent recovery page remains available while the main platform is paused.
+runVite(['build', '--config', 'vite.maintenance.config.ts']);
