@@ -1691,7 +1691,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 430,
+      "line": 434,
       "method": "POST",
       "path": "/api/agent-sessions/:id/active-change",
       "expression": null,
@@ -1700,7 +1700,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 445,
+      "line": 449,
       "method": "GET",
       "path": "/api/agent-sessions/:id/actions",
       "expression": null,
@@ -1709,7 +1709,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 459,
+      "line": 463,
       "method": "POST",
       "path": "/api/agent-sessions/:id/actions/:actionId/confirm",
       "expression": null,
@@ -1718,7 +1718,7 @@
     },
     {
       "source": "src/routes/agent-sessions.js",
-      "line": 476,
+      "line": 480,
       "method": "POST",
       "path": "/api/agent-sessions/:id/actions/:actionId/dismiss",
       "expression": null,

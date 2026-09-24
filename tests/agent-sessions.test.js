@@ -561,6 +561,31 @@ test('stop answers what it stopped, and names the change during a dispatch', asy
   }
 });
 
+test('stop with no turn running here hands back a lease its dead turn left', async () => {
+  const agentTurnMod = require('../src/services/mayor/agent-turn');
+  const saved = { stopAgentTurn: agentTurnMod.stopAgentTurn, handBackOrphanedTurn: agentTurnMod.handBackOrphanedTurn };
+  const handBacks = [];
+  agentTurnMod.stopAgentTurn = () => ({ stopped: false, reason: 'no_active_turn' });
+  agentTurnMod.handBackOrphanedTurn = async (args) => { handBacks.push(args); return true; };
+  try {
+    let lease = { id: 'dead-turn' };
+    await withRoutes({ id: 7, username: 'ada' }, { 'FROM agent_sessions WHERE id': () => ({ rows: [{ active_turn: lease }] }) }, async (call) => {
+      const stopped = await call('POST', '/api/agent-sessions/5/stop');
+      assert.deepEqual(stopped.body, { ok: true, stopped: false, reason: 'no_active_turn', released: true });
+      assert.equal(handBacks.length, 1);
+      assert.equal(handBacks[0].agentSessionId, 5);
+      assert.equal(handBacks[0].userId, 7, 'the owner\'s conversation only');
+
+      lease = null;
+      const idle = await call('POST', '/api/agent-sessions/5/stop');
+      assert.deepEqual(idle.body, { ok: true, stopped: false, reason: 'no_active_turn' });
+      assert.equal(handBacks.length, 1, 'no lease, nothing to hand back');
+    });
+  } finally {
+    Object.assign(agentTurnMod, saved);
+  }
+});
+
 test('the changes drawer switches the active change without a model call', async () => {
   const agentSessionsMod = require('../src/services/agent-sessions');
   const saved = agentSessionsMod.switchActiveChange;

@@ -427,6 +427,65 @@ test('one Mayor turn at a time, and a dead turn\'s lease is taken over', async (
   }
 });
 
+test('a lease its turn stopped renewing is not busy, and only such a lease is handed back', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const detail = () => agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    const listed = async () => (await agentSessions.listAgentSessions(client, { userId: 7 })).sessions.find((s) => s.id === session.id);
+    const age = (mins) => client.query(
+      `UPDATE agent_sessions
+          SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW() - make_interval(mins => $2))
+        WHERE id = $1`,
+      [session.id, mins]
+    );
+    const handBack = (userId = 7, finished = true) => agentSessions.releaseStaleTurnLease(client, { agentSessionId: session.id, userId, finished });
+
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'dead-turn' }), true);
+    assert.equal(await handBack(), false, 'a live lease may be a turn on the other pod');
+    assert.equal((await detail()).busy, true);
+
+    await age(agentSessions.TURN_LEASE_STALE_MINUTES + 1);
+    assert.deepEqual([(await detail()).busy, (await listed()).busy], [false, false],
+      'its process died: the detail and the lists stop saying working');
+    assert.equal(await handBack(8), false, 'another user\'s hand-back clears nothing');
+    assert.equal(await handBack(), true);
+    const { rows: [row] } = await client.query('SELECT active_turn, last_done_at FROM agent_sessions WHERE id = $1', [session.id]);
+    assert.equal(row.active_turn, null);
+    assert.ok(row.last_done_at, 'a recovery that posted the wrap-up finished the dead turn\'s work');
+    assert.equal((await detail()).doneUnseen, true);
+    assert.equal(await handBack(), false, 'nothing left to hand back');
+
+    // A stale lease still on the row: the dot shows, and reading clears it.
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'dead-again' }), true);
+    await age(agentSessions.TURN_LEASE_STALE_MINUTES + 1);
+    assert.equal((await listed()).doneUnseen, true);
+    assert.equal(await agentSessions.markSeen(client, { userId: 7, id: session.id }), true,
+      'the other tabs hear the dot went, as they do once a turn releases');
+  } finally {
+    await done(client);
+  }
+});
+
+test('a change names the open conversations it is the active change of', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    await client.query("INSERT INTO users (id, username) VALUES (7, 'ada') ON CONFLICT DO NOTHING");
+    await client.query("INSERT INTO apps (id, slug, name, created_by) VALUES (1, 'rss', 'RSS', 7) ON CONFLICT DO NOTHING");
+    const { rows: [change] } = await client.query('INSERT INTO chat_sessions (app_id, user_id) VALUES (1, 7) RETURNING id');
+    const open = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const archived = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    await client.query('UPDATE agent_sessions SET active_change_id = $1 WHERE id = ANY($2)', [change.id, [open.id, archived.id]]);
+    await agentSessions.archiveAgentSession(client, { userId: 7, id: archived.id });
+    assert.deepEqual(await agentSessions.conversationsOfChange(client, change.id), [{ agentSessionId: open.id, userId: 7 }]);
+  } finally {
+    await done(client);
+  }
+});
+
 test('the lists\' marks: working while a turn runs, finished until the owner reads it', async (t) => {
   const client = await connect(t);
   if (!client) return;

@@ -215,7 +215,7 @@ A new `getAgentMayorPrompt`, with shared blocks moved out of the classic prompt:
 
 - **Model.** `mayor_model` is separate from the coding agent's model. The provider follows the user's default backend: Anthropic by default, or OpenRouter through `openrouter-mayor.js`, keyed `homeroom-agent-<id>`. Per-user budgets and BYOK are unchanged.
 - **Streaming.** The event protocol is the same, on `POST /api/agent-sessions/:id/turns` with bus key `agent:<id>` and a resumable `GET /api/agent-sessions/:id/events`. The active change's `cc_progress`, `staging_ready`, `pr_created` and similar events are forwarded to the agent bus.
-- **Durability.** `agent_sessions.active_turn` leases mayor1 and mayor2. The dispatch turn stays durable on the change (`chat_sessions.active_turn`) exactly as today. Recovered wrap-ups land in the change's transcript, and the trigger surfaces them in the conversation.
+- **Durability.** `agent_sessions.active_turn` leases mayor1 and mayor2. The dispatch turn stays durable on the change (`chat_sessions.active_turn`) exactly as today. Recovered wrap-ups land in the change's transcript, and the trigger surfaces them in the conversation. The dispatching Mayor turn died with its process, so recovery then hands its stale lease back and sends the conversation's `done` in its place (`handBackAfterRecovery`); a stale lease is never shown as busy, and stop clears one.
 - **Stop.** Stop ends the agent session's turn and forwards to the active change's stop registry, with today's rule that wrap-up cannot be stopped.
 
 ### Riskiest parts

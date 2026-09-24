@@ -4298,6 +4298,13 @@ async function resumeDetachedTurnInner({
         await worker.finishTurn(sessionId, cleanupArgs),
         cleanupArgs,
       );
+      // The conversation whose Mayor dispatched this run is still leased to
+      // that Mayor's dead turn; the wrap-up above was its last word.
+      require('./src/services/mayor/agent-turn')
+        .handBackAfterRecovery({ pool, changeId: sessionId })
+        .catch((err) => log.warn('server', 'Recovered turn: conversation hand-back failed (non-fatal)', {
+          sessionId, err: err.message,
+        }));
     } else {
       log.warn('server', 'Recovered tail failed; retaining durable turn for replay', {
         sessionId,

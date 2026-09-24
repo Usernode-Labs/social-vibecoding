@@ -753,6 +753,18 @@ export async function stopAgentTurn() {
   try {
     const answer = await api.stopTurn(id);
     if (!answer.stopped && answer.reason === 'wrap_up_not_stoppable') patchTurn({ stopping: false });
+    if (!answer.stopped && answer.reason === 'no_active_turn') {
+      // Nothing is running here to send a `done`: settle from the server.
+      patchTurn({ stopping: false });
+      const { session } = await api.getSession(id);
+      if (state.id !== id) return;
+      publish((current) => ({ session, sessions: withListed(current, session) }));
+      if (!session.busy && !turnAbort) {
+        publish({ turn: IDLE_TURN });
+        closeEvents();
+        void refreshAll(id).catch(() => {});
+      }
+    }
   } catch (error) {
     patchTurn({ stopping: false });
     publish({ error: errorText(error, 'Could not stop the Mayor.') });
