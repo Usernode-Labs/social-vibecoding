@@ -147,3 +147,37 @@ SQL allocations are not yet eligible for those moves; integrating them into the
 bulk migration and verified retirement workflow is next. Never roll back to a
 platform image predating SQL allocation routing after enabling this cohort.
 Admission can be paused with placement.enabled=false while routing remains active.
+
+## Reviewed bulk moves (staging)
+
+The database admin page can review a fixed distribution of selected apps across
+operator-created, registered pools. It scores fresh pool capacity plus durable
+reservations using the new-app allocator. Planning creates no PostgreSQL objects.
+The administrator confirms the batch ID to accept one platform maintenance pause
+and deletion of verified source copies. Apps move sequentially.
+
+`app_database_batches` persists the mapping, policy checksum and child checkpoints.
+The separate migration deployment survives the web platform pause. Restarted or
+failed work enters `NeedsAttention`; use **Resume batch** or **Cancel remaining
+moves** on the maintenance page. Completed children are skipped. Before cutover,
+cancellation restores the current source; after cutover it finishes forward and
+cleans the source. It never rolls a written destination back to stale data.
+
+SQL allocations preserve their allocation UUID and advance their revision/target
+using a compare-and-swap. Legacy Kubernetes bindings remain authoritative for
+previously registered apps; their reservations are recorded separately. New-app
+admission is blocked while a batch is active. Reapplying fleet configuration or
+retrying a batch does not create fresh databases for completed assignments.
+
+Source cleanup verifies the destination identity, writable owner connection,
+healthy app and active credential route, then records deletion intent. It checks
+source OIDs, ownership, fencing and absence of declarative managers before dropping
+the source database and owner. A cleanup interruption retains the active target
+and resumes deletion from the recorded intent; it cannot mark a partial cleanup
+complete. Ordinary new single-app moves use the same cleanup step.
+
+Current limits: explicit staging cohort (Stockroom and allocation test apps 17/18),
+20 apps per plan, 256 MiB per copied database, sequential offline copies, and one
+active batch. Retire active previews first. Existing historical moves keep their
+original recorded retention policy. Completed Jobs remain checkpoint records;
+Pod retention is separate. Backup/reconstruction testing remains deferred.

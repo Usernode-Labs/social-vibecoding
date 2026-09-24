@@ -8780,3 +8780,32 @@ CREATE TABLE IF NOT EXISTS app_database_allocations (
       AND cluster_namespace IS NOT NULL AND cluster_name IS NOT NULL))
 );
 COMMENT ON TABLE app_database_allocations IS 'staging:private';
+
+-- Initial pool assignments can advance only through a reviewed migration.
+ALTER TABLE app_database_allocations ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_database_allocations ADD COLUMN IF NOT EXISTS operation TEXT;
+ALTER TABLE app_database_allocations DROP CONSTRAINT IF EXISTS app_database_allocations_phase_check;
+ALTER TABLE app_database_allocations ADD CONSTRAINT app_database_allocations_phase_check
+  CHECK (phase IN ('Waiting','Reserved','Provisioning','Ready','Moving'));
+CREATE TABLE IF NOT EXISTS app_database_batches (
+  id TEXT PRIMARY KEY,
+  batch_uid UUID NOT NULL UNIQUE,
+  phase TEXT NOT NULL CHECK (phase IN ('Planned','Pending','Running','NeedsAttention','Completed','Cancelled')),
+  requested_by INTEGER NOT NULL,
+  plan JSONB NOT NULL,
+  policy_hash TEXT NOT NULL,
+  progress JSONB NOT NULL DEFAULT '{}'::jsonb,
+  command TEXT NOT NULL DEFAULT 'resume' CHECK(command IN ('resume','cancel')),
+  attempt INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_database_batch ON app_database_batches ((true))
+  WHERE phase IN ('Pending','Running','NeedsAttention');
+COMMENT ON TABLE app_database_batches IS 'staging:private';
+-- Capacity accounting for legacy Kubernetes bindings; routing stays with the CR.
+CREATE TABLE IF NOT EXISTS app_database_legacy_reservations (
+  binding TEXT PRIMARY KEY,
+  target_id TEXT NOT NULL,
+  demand JSONB NOT NULL
+);
+COMMENT ON TABLE app_database_legacy_reservations IS 'staging:private';

@@ -44,7 +44,7 @@ function record(row, policy) {
   const t = policy.runtimeTargets?.find(t => t.id === row.target_id);
   if (!t || t.uid !== row.cluster_uid || t.namespace !== row.cluster_namespace || t.clusterName !== row.cluster_name) throw blocked('Database pool identity changed; operator recovery required');
   return { name:`allocation-${row.app_id}`, appId:Number(row.app_id), slug:row.slug, database:row.database_name,
-    owner:`${row.database_name}_owner`, placement:'external', targetId:row.target_id, revision:0,
+    owner:`${row.database_name}_owner`, placement:'external', targetId:row.target_id, revision:row.revision || 0,
     clusterRef:{namespace:t.namespace,name:t.clusterName,uid:t.uid},
     endpoint:{host:`${t.clusterName}-rw.${t.namespace}.svc.cluster.local`,port:5432} };
 }
@@ -66,10 +66,12 @@ async function reserve(client, app, policy, observe, sourceDatabase = null) {
   await client.query('BEGIN');
   try {
     await client.query('SELECT pg_advisory_xact_lock($1)',[LOCK]);
+    if (policy.bulk?.enabled && (await client.query("SELECT 1 FROM app_database_batches WHERE phase IN ('Pending','Running','NeedsAttention') LIMIT 1")).rowCount) throw blocked('Database maintenance is active; retry after the batch finishes');
     const current = (await client.query('SELECT * FROM apps WHERE id=$1 FOR UPDATE',[app.id])).rows[0];
     if (!current || current.self_hosted || current.slug !== app.slug) throw blocked('App identity changed');
     let row = (await client.query('SELECT * FROM app_database_allocations WHERE app_id=$1',[app.id])).rows[0];
     if (row && row.source_database !== sourceDatabase) throw blocked('App database creation intent changed');
+    if (row?.phase === 'Moving') throw blocked('Database migration is active');
     if (row?.target_id) { record(row,policy); await client.query('COMMIT'); return row; }
     // Existing applications are registered/migrated separately, never adopted here.
     if (current.db_password || app.id <= policy.placement.newAppsAfterId) {
@@ -79,7 +81,7 @@ async function reserve(client, app, policy, observe, sourceDatabase = null) {
       (app_id,slug,database_name,allocation_uid,phase,demand,source_database) VALUES ($1,$2,$3,$4,'Waiting',$5,$6) RETURNING *`,
       [app.id,app.slug,`app_${app.slug.replace(/-/g,'_')}`,crypto.randomUUID(),policy.placement.starter,sourceDatabase])).rows[0];
     if (!policy.placement.enabled) { await client.query('COMMIT'); throw blocked('New-app database placement is paused'); }
-    const reservations = (await client.query('SELECT target_id,demand FROM app_database_allocations WHERE target_id IS NOT NULL')).rows;
+    const reservations = (await client.query('SELECT target_id,demand FROM app_database_allocations WHERE target_id IS NOT NULL UNION ALL SELECT target_id,demand FROM app_database_legacy_reservations')).rows;
     const selected = choose({ ...policy, placement: { ...policy.placement, starter: row.demand } },await observe(),reservations);
     if (!selected) { await client.query('COMMIT'); throw blocked(); }
     const t = policy.runtimeTargets.find(t => t.id === selected.id);
@@ -174,6 +176,6 @@ async function summary(policy, observations, pool = platformPool()) {
   if (!policy?.placement?.registry) return { enabled:false, allocations:[] };
   const rows=(await pool.query('SELECT app_id,slug,phase,target_id,demand FROM app_database_allocations ORDER BY app_id')).rows;
   return { enabled:policy.placement.enabled, allocations:rows,
-    canPlace:!!choose(policy,observations,rows), starter:policy.placement.starter };
+    canPlace:!!choose(policy,observations,[...rows,...(await pool.query('SELECT target_id,demand FROM app_database_legacy_reservations')).rows]), starter:policy.placement.starter };
 }
 module.exports={summary,validate,choose,record,records,reserve,provision,ensureDatabase};

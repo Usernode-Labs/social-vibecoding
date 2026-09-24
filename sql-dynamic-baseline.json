@@ -857,6 +857,41 @@
       "preview": "`INSERT INTO credentials.user_ai_credentials (user_id, provider, purpose, secret_enc, secret_last4, secret_fingerprint, status, verified_at, revision) VALUES ($"
     },
     {
+      "source": "src/services/database-allocation.js",
+      "kind": "structural-template",
+      "fingerprint": "704afc929cf4606973da",
+      "count": 1,
+      "preview": "`REVOKE CONNECT ON DATABASE \"${db}\" FROM PUBLIC`"
+    },
+    {
+      "source": "src/services/database-allocation.js",
+      "kind": "structural-template",
+      "fingerprint": "91cc9e76aa7742386dbd",
+      "count": 1,
+      "preview": "`CREATE ROLE \"${role}\" LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE`"
+    },
+    {
+      "source": "src/services/database-allocation.js",
+      "kind": "structural-template",
+      "fingerprint": "9eef8b67d0436e7c41a5",
+      "count": 1,
+      "preview": "`DROP DATABASE \"${db}\"`"
+    },
+    {
+      "source": "src/services/database-allocation.js",
+      "kind": "structural-template",
+      "fingerprint": "a877682a57bb1de90665",
+      "count": 1,
+      "preview": "`CREATE DATABASE \"${db}\" TEMPLATE template0 OWNER \"${role}\"`"
+    },
+    {
+      "source": "src/services/database-allocation.js",
+      "kind": "structural-template",
+      "fingerprint": "b5f911aca0dc140823f1",
+      "count": 1,
+      "preview": "`COMMENT ON ROLE \"${role}\" IS '${marker}'`"
+    },
+    {
       "source": "src/services/database-copy.js",
       "kind": "structural-template",
       "fingerprint": "184ef11ae1dccaf07fbc",

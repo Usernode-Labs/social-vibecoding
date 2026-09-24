@@ -37,6 +37,26 @@ try {
  await a.provision({},fork,forkOptions);assert.equal(attempts,2);
  const completed=(await pool.query('SELECT * FROM app_database_allocations WHERE app_id=23')).rows[0];assert.equal(completed.target_id,interrupted.target_id);assert.equal(completed.allocation_uid,interrupted.allocation_uid);assert.equal(completed.phase,'Ready');
  console.log('Interrupted unpublished fork retries on the same reservation.');
+ // The migration queue and allocation admission share the real SQL lock/schema.
+ p.bulk={enabled:true};
+ const {createBatches}=require('../src/services/database-batches');
+ const sourceRow=(await pool.query('SELECT * FROM app_database_allocations WHERE app_id=5')).rows[0];
+ const destination=sourceRow.target_id==='a'?'b':'a';
+ const batchApp={appId:5,name:'allocation-5',slug:app.slug,phase:'Ready',bytes:100,current:{targetId:sourceRow.target_id,revision:0}};
+ const batches=createBatches({pool,getPolicy:()=>p,store:{list:async()=>[]},observe:expanded.observe,
+  executeBulk:async()=>[batchApp],execute:async(_,args)=>({operation:args.id,binding:args.binding,appId:5,slug:app.slug,from:batchApp.current,to:{targetId:args.target,revision:1},platformUid:'fixture',platformReplicas:1})});
+ const reviewed=await batches.plan({apps:['allocation-5'],targets:[destination]},7);
+ await assert.rejects(batches.start(reviewed.id,{confirmation:reviewed.id},8),/administrator/);
+ await batches.start(reviewed.id,{confirmation:reviewed.id},7);
+ await assert.rejects(a.provision({},app,options),/maintenance/);
+ await assert.rejects(pool.query("INSERT INTO app_database_batches(id,batch_uid,phase,requested_by,plan,policy_hash) VALUES('other',gen_random_uuid(),'Running',7,'{}','hash')"),e=>e.code==='23505');
+ await pool.query("UPDATE app_database_batches SET phase='Running' WHERE id=$1",[reviewed.id]);
+ await batches.tick();assert.equal((await batches.get(reviewed.id)).phase,'NeedsAttention');
+ await batches.action(reviewed.id,{action:'resume',attempt:1});
+ await assert.rejects(batches.action(reviewed.id,{action:'resume',attempt:1}),/changed/);
+ assert.equal((await batches.get(reviewed.id)).plan.moves[0].to.targetId,destination);
+ await pool.query("UPDATE app_database_batches SET phase='Cancelled' WHERE id=$1",[reviewed.id]);
+ console.log('Real SQL batch exclusion, admission lock, frozen mapping and restart/recovery checks passed.');
  await pool.query('DROP DATABASE app_allocation_probe_5');await assert.rejects(a.provision({},app,options),/restore required/);
  assert.equal((await pool.query("SELECT count(*) FROM pg_database WHERE datname='app_allocation_probe_5'")).rows[0].count,'0');
  console.log('Missing Ready database blocks; no empty recreation.');

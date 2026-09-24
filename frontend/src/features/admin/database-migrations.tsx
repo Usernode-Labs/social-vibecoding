@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import {DatabaseBatches} from './database-batches';
 import { AdminUI } from './admin-console.js';
 
 type Operation = { id: string; binding: string; target: string; phase: string; stage: string; attempt: number; requestedBy: string };
@@ -46,7 +47,7 @@ export function DatabaseMigrations({ standalone = false }: { standalone?: boolea
   const label = (id: string) => data?.targets.find(t => t.id === id)?.displayName || id;
   const active = data?.operations.some(o => ['Pending', 'Running', 'NeedsAttention'].includes(o.phase));
   if (data && !data.enabled) return null;
-  return <section className={`${AdminUI.card} p-4 mb-4 space-y-4`} aria-label="App database migrations">
+  return <><DatabaseBatches /><section className={`${AdminUI.card} p-4 mb-4 space-y-4`} aria-label="App database migrations">
     <div className={AdminUI.cardHeader}><h2 className={AdminUI.cardTitle}>Move app databases</h2>
       {!standalone && <a className={AdminUI.btn.outline} href="/database-maintenance" target="_blank" rel="noopener">Open maintenance page</a>}</div>
     <p className={AdminUI.muted}>Move a selected app to another database cluster. The staging platform and app pause during the move. The maintenance page stays available for progress and recovery.</p>
@@ -71,7 +72,7 @@ export function DatabaseMigrations({ standalone = false }: { standalone?: boolea
       {plan && <div className={`${AdminUI.card} p-4 space-y-4`} role="region" aria-label="Confirm database move">
         <h3 className={AdminUI.cardTitle}>{plan.slug}: {label(plan.from)} → {label(plan.target)}</h3>
         <p className={AdminUI.muted}>{plan.downtime}</p>
-        <p className={AdminUI.muted}>{plan.archivesPreviousCopy ? 'The old destination copy will stay fenced under an archive name. Current data will be copied into a fresh database.' : 'Current data will be copied into a fresh database. The source will be retained and fenced after cutover.'}</p>
+        <p className={AdminUI.muted}>{plan.archivesPreviousCopy ? 'A stale destination copy will be archived during copying, then deleted with the source after verification.' : 'Current data is copied and verified. The source database and owner are deleted after the destination and app are healthy.'}</p>
         <label className={AdminUI.muted}>Type {plan.slug} to confirm planned downtime<input aria-label="Confirm app slug" className={AdminUI.input} value={confirmation} onChange={e => setConfirmation(e.target.value)} /></label>
         <button className={AdminUI.btn.primary} disabled={!data.canWrite || busy || !!active || confirmation !== plan.slug}
           onClick={() => void act(async () => { await send('', { id: plan.id, binding: plan.binding, target: plan.target, expectedRevision: plan.expectedRevision, confirmation }); setPlan(null); })}>Start move</button>
@@ -91,5 +92,5 @@ export function DatabaseMigrations({ standalone = false }: { standalone?: boolea
         </>}
       </div>)}
     </>}
-  </section>;
+  </section></>;
 }

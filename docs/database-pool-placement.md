@@ -208,6 +208,7 @@ no unmeasured numeric defaults are being enabled by this document.
    a reconstruction test, then the separately scheduled production migration.
 
 Staging now enables opt-in new-app placement through durable SQL reservations.
-Existing apps keep their assignments; single-app moves still retain their sources.
-The bulk-run API and automatic source cleanup remain outstanding. The one-off cleanup recorded in infra removes existing retired
-copies; automatic post-verification deletion is part of the next executor change.
+Existing apps keep their assignments until explicitly reviewed. The staging bulk
+API freezes a distribution, executes sequentially under one maintenance pause, and
+cleans verified sources. See database-pool-operations.md for limits and recovery.
+Production execution and backup/reconstruction remain separate rollout steps.
