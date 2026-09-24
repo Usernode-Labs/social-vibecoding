@@ -32,7 +32,7 @@
  *     is what the legacy module did for exactly the same reason.
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, memo, useCallback, useEffect, useRef, useState } from 'react';
 
 
 import { alertVariants } from '@/components/ui/alert';
@@ -241,7 +241,21 @@ export function LandingTile({
       }
       data-slug={app.slug || ''}
       data-gated={gated ? 'true' : 'false'}
+      // A card that opens something IS a button (#1918, #2988): in the tab
+      // order, named by the app it opens, and Enter/Space open it exactly as
+      // a tap does. The tile holds no controls of its own today, but a key
+      // that bubbled up from inside it is still not a press on the card.
+      role="button"
+      tabIndex={0}
+      aria-label={label}
       onClick={() => onOpen(app)}
+      onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(app);
+        }
+      }}
     >
       <div className="relative w-14 h-14 shrink-0">
         {app.icon_url ? (
