@@ -402,13 +402,6 @@
       "preview": "`UPDATE app_llm_grants SET ${sets.join(', ')} WHERE app_id = $1 AND user_id = $2 RETURNING app_id, user_id, status, daily_cap_cents, allow_byok, created_at, rev"
     },
     {
-      "source": "src/routes/moderation.js",
-      "kind": "structural-template",
-      "fingerprint": "c7ca09cc53008af93cf2",
-      "count": 1,
-      "preview": "`SELECT id, moderation_hidden_at FROM ${c.target_type === 'app_message' ? 'chat_messages' : 'conversation_messages'} WHERE id = $1`"
-    },
-    {
       "source": "src/routes/profile.js",
       "kind": "structural-template",
       "fingerprint": "30d76681d24c561144ce",
@@ -1023,6 +1016,13 @@
       "fingerprint": "a9dee7364368978b9c59",
       "count": 1,
       "preview": "`UPDATE ${table} SET content = $2, moderation_hidden_at = NOW()${c.target_type === 'app_message' ? \", metadata = '{}'::jsonb\" : ''} WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "c7ca09cc53008af93cf2",
+      "count": 1,
+      "preview": "`SELECT id, moderation_hidden_at FROM ${c.target_type === 'app_message' ? 'chat_messages' : 'conversation_messages'} WHERE id = $1`"
     },
     {
       "source": "src/services/moderation.js",

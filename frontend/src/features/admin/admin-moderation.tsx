@@ -7,6 +7,7 @@ const LABELS: Record<string,string> = {
   app: 'App', user: 'User', app_message: 'App message', conversation_message: 'Private message',
   review: 'Start review', resolve: 'Resolve', dismiss: 'Dismiss', reopen: 'Reopen', note: 'Add internal note',
   hide_message: 'Hide message', restore_message: 'Restore message', suspend_app: 'Suspend app', restore_app: 'Restore app',
+  suspend_user: 'Suspend user',
   hide_profile: 'Hide profile', restore_profile: 'Restore profile', restrict_user: 'Restrict participation', restore_user: 'Restore participation',
 };
 const EFFECTS: Record<string,string> = {
@@ -14,12 +15,13 @@ const EFFECTS: Record<string,string> = {
   restore_message: 'Make the original message and its attachments visible again.',
   suspend_app: 'Remove this app from discovery and block access through Homeroom, including direct app links. Code and data are preserved.',
   restore_app: 'Restore access to this app in Homeroom.',
+  suspend_user: 'Hide this user’s public profile and prevent messaging, posting, invitations, voting, coding work and app creation/publishing. Account settings and existing data remain available.',
   hide_profile: 'Hide this user’s public profile. Their account and messages remain.',
   restore_profile: 'Restore this user’s public profile if they have published it.',
   restrict_user: 'Prevent messaging, posting, invitations, voting, coding work and app creation/publishing. Account settings and existing data remain available.',
   restore_user: 'Allow this user to participate again.',
   resolve: 'Close this case and notify its reporters that review is complete. Existing restrictions remain.',
-  dismiss: 'Close this case and notify its reporters that the case was dismissed. Existing restrictions remain.',
+  dismiss: 'Close this case without taking moderation action and notify its reporters that it was dismissed.',
   reopen: 'Return this case to the review queue. Existing restrictions remain.',
 };
 async function request(url: string, init?: RequestInit) {
@@ -46,6 +48,7 @@ function Evidence({ value }: { value: any }) {
 }
 function targetState(t: any) {
   if (!t) return 'Target was removed; retained evidence remains available.';
+  if (t.profile_disabled_at && t.participation_restricted_at) return 'User suspended';
   const states = [t.moderation_hidden_at && 'Message hidden', t.moderation_suspended_at && 'App suspended', t.profile_disabled_at && 'Public profile hidden', t.participation_restricted_at && 'Participation restricted'].filter(Boolean);
   return states.length ? states.join(' · ') : 'No active moderation restriction';
 }
@@ -55,7 +58,7 @@ export function ModerationSection() {
   const [selected,setSelected] = useState<number | null>(null), [detail,setDetail] = useState<any>(null);
   const [canWrite,setCanWrite] = useState(false), [error,setError] = useState('');
   const [loading,setLoading] = useState(false), [busy,setBusy] = useState(false), [version,setVersion] = useState(0);
-  const [action,setAction] = useState(''), [reason,setReason] = useState('');
+  const [pendingAction,setPendingAction] = useState(''), [reason,setReason] = useState('');
   const seq = useRef(0);
   async function load(before?: string) {
     const run = ++seq.current; setLoading(true); setError('');
@@ -69,8 +72,9 @@ export function ModerationSection() {
     finally { if (run === seq.current) setLoading(false); }
   }
   useEffect(() => { void load(); return () => { seq.current++; }; }, [filters,version]);
+  useEffect(() => { setReason(''); }, [selected]);
   useEffect(() => {
-    setDetail(null); setAction(''); setReason('');
+    setDetail(null);
     if (!selected) return;
     const controller = new AbortController();
     request(`/api/admin/moderation/${selected}`, { signal: controller.signal }).then((data) => { if (!controller.signal.aborted) setDetail(data); }).catch((err) => { if (!controller.signal.aborted) setError(err.message); });
@@ -85,28 +89,26 @@ export function ModerationSection() {
       setDetail((old: any) => old && old.case.id === data.case.id ? { ...old, [kind]: [...old[kind], ...data[kind]], [kind+'Next']: data[kind+'Next'], files: kind === 'reports' ? [...old.files,...data.files] : old.files } : old);
     } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
-  async function act() {
+  async function act(action: string) {
     if (!selected || !detail || !action || !reason.trim() || busy) return;
     if (!(window as any).confirm(`${LABELS[action]}?\n\n${EFFECTS[action] || 'This note is visible only to administrators.'}\n\nReason: ${reason.trim()}`)) return;
-    setBusy(true); setError('');
+    setBusy(true); setPendingAction(action); setError('');
     try {
       await request(`/api/admin/moderation/${selected}/actions`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action,reason,revision:detail.case.revision }) });
       setVersion(v=>v+1);
     } catch (err) { setError((err as Error).message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setPendingAction(''); }
   }
-  const allowed = detail ? ['review','resolve','dismiss','reopen','note',...(detail.availableActions || [])].filter((a) => {
-    const closed = ['resolved','dismissed'].includes(detail.case.status), t = detail.target;
-    if (a === 'reopen') return closed;
-    if (['review','resolve','dismiss'].includes(a)) return !closed;
-    if (!t && !['note'].includes(a)) return false;
-    if (a.includes('message')) return a === (t.moderation_hidden_at ? 'restore_message' : 'hide_message');
-    if (a.includes('_app') && t.self_hosted) return false;
-    if (a.includes('_app')) return a === (t.moderation_suspended_at ? 'restore_app' : 'suspend_app');
-    if (a.includes('_profile')) return a === (t.profile_disabled_at ? 'restore_profile' : 'hide_profile');
-    if (a.includes('_user')) return a === (t.participation_restricted_at ? 'restore_user' : 'restrict_user');
-    return true;
-  }) : [];
+  const closed = detail && ['resolved','dismissed'].includes(detail.case.status);
+  const target = detail?.target;
+  const restriction = detail?.case.target_type === 'app' ? 'suspend_app' : detail?.case.target_type === 'user' ? 'suspend_user' : 'hide_message';
+  const completed = !!(restriction === 'suspend_app' ? target?.moderation_suspended_at : restriction === 'suspend_user'
+    ? target?.profile_disabled_at && target?.participation_restricted_at : target?.moderation_hidden_at);
+  const closingAction = closed ? (detail.case.status === 'resolved' ? 'resolve' : 'dismiss') : detail?.actionTaken ? 'resolve' : 'dismiss';
+  const actionRows = detail ? [
+    { action: restriction, completed, unavailable: !target ? 'This target no longer exists.' : restriction === 'suspend_app' && target.self_hosted ? 'Homeroom itself cannot be suspended here.' : '' },
+    { action: closingAction, completed: !!closed, unavailable: '' },
+  ] : [];
   return <div className="space-y-4">
     <h2 className={AdminUI.sectionTitle}>Moderation</h2>
     <p className={AdminUI.muted}>Private reports about apps, messages and users. Reports alone never impose restrictions.</p>
@@ -128,7 +130,17 @@ export function ModerationSection() {
         <p className={AdminUI.muted}>{`Target owner: ${detail.case.target_username ? '@'+detail.case.target_username : 'Deleted user'}`}</p>
         {detail.reports.map((r:any)=><section key={r.id} className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800"><strong>Report #{r.id} · {r.reason.replace(/_/g,' ')}</strong><p className={AdminUI.muted}>From @{r.reporter || 'Deleted user'} · {new Date(r.created_at).toLocaleString()}</p><p className="whitespace-pre-wrap break-words">{r.detail}</p>{r.evidence ? <Evidence value={r.evidence}/> : <p className={AdminUI.muted}>Evidence retention period ended.</p>}{detail.files.filter((f:any)=>f.report_id===r.id).map((f:any)=><a key={f.id} className={AdminUI.btn.link} href={`/api/admin/moderation/${selected}/files/${f.id}`} download>{f.filename}</a>)}</section>)}
         {detail.reportsNext ? <button className={AdminUI.btn.outlineSm} disabled={busy} onClick={()=>void loadMore('reports')}>Older reports</button> : null}
-        {canWrite && detail.canWrite ? <div className="space-y-3"><label className={AdminUI.label}>Action<select className={AdminUI.select} value={action} onChange={e=>setAction(e.target.value)}><option value="">Choose an action</option>{allowed.map(a=><option key={a} value={a}>{LABELS[a]}</option>)}</select></label>{action ? <p className={AdminUI.muted}>{EFFECTS[action] || 'Internal notes are never shared with the reporter or target.'}</p> : null}<label className={AdminUI.label}>{action === 'note' ? 'Internal note' : 'Reason'}<textarea className={AdminUI.textarea} maxLength={1000} value={reason} onChange={e=>setReason(e.target.value)}/></label><button className={AdminUI.btn.primarySm} disabled={busy || !action || !reason.trim()} onClick={()=>void act()}>{busy ? 'Saving…' : LABELS[action] || 'Apply'}</button></div> : <p className={AdminUI.muted}>View-only access.</p>}
+        <section aria-label="Moderation actions" className="space-y-3">
+          {canWrite && detail.canWrite && !closed ? <label className={`block ${AdminUI.label}`}>Reason<textarea className={AdminUI.textarea} maxLength={1000} value={reason} onChange={e=>setReason(e.target.value)}/></label> : null}
+          {actionRows.map(row=><div key={row.action} className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            <div className="flex items-center justify-between gap-3">
+              <p className="flex min-w-0 items-center gap-2 font-medium">{row.completed ? <svg role="img" aria-label="Completed" className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6"/></svg> : null}{LABELS[row.action]}</p>
+              <button type="button" className={`${row.completed ? AdminUI.btn.outlineSm : AdminUI.btn.primarySm} shrink-0 disabled:cursor-default disabled:opacity-50`} disabled={busy || row.completed || !!row.unavailable || !!closed || !canWrite || !detail.canWrite || !reason.trim()} onClick={()=>void act(row.action)}>{pendingAction === row.action ? 'Saving…' : LABELS[row.action]}</button>
+            </div>
+            <p className={AdminUI.muted}>{row.unavailable || EFFECTS[row.action]}</p>
+          </div>)}
+          {!canWrite || !detail.canWrite ? <p className={AdminUI.muted}>View-only access.</p> : null}
+        </section>
         <h4 className={AdminUI.cardTitle}>Action history</h4>{detail.actions.map((a:any)=><div key={a.id}><strong>{LABELS[a.action] || a.action}</strong><p className={AdminUI.muted}>@{a.actor || 'Deleted user'} · {new Date(a.created_at).toLocaleString()}</p><p className="whitespace-pre-wrap break-words">{a.reason}</p></div>)}
         {detail.actionsNext ? <button className={AdminUI.btn.outlineSm} disabled={busy} onClick={()=>void loadMore('actions')}>Older actions</button> : null}
       </div>}

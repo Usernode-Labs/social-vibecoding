@@ -125,22 +125,51 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     assert.equal(duplicateAppReceipt.id,appReceipt.id);
     assert.equal(duplicateAppReceipt.blockUserId,null,'duplicate app reports use the same receipt contract');
     c=(await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'app'")).rows[0];
+    detail = await (await get(`/api/admin/moderation/${c.id}`)).json();
+    assert.equal(detail.actionTaken,false);
+    await act('note');
+    assert.equal((await moderation.reviewState(pool,c)).actionTaken,false,'an internal note is not a moderation action');
+    await assert.rejects(act('resolve'),{status:409},'a case without action must be dismissed');
     await act('suspend_app');
+    await assert.rejects(act('dismiss'),{status:409},'a case with action must be resolved');
+    await assert.rejects(act('suspend_app'),{status:409},'a completed action cannot be repeated');
+    await pool.query("INSERT INTO moderation_actions (case_id,actor_id,action,reason) SELECT $1,$2,'note','Later note' FROM generate_series(1,51)",[c.id,admin.id]);
+    detail = await (await get(`/api/admin/moderation/${c.id}`)).json();
+    assert.equal(detail.actionTaken,true,'the decision does not depend on the first page of history');
+    assert.ok(detail.actionsNext);
+    assert.ok(detail.actions.every(a=>a.action==='note'));
+    assert.ok(detail.target.moderation_suspended_at);
+    assert.equal(detail.case.status,'in_review','taking action starts review without a separate button');
     assert.equal(await appAccess.getAppForUser(pool,'reported-app',bob),null,'owner has no suspension bypass');
     assert.equal(await appAccess.getAppForUser(pool,'reported-app',admin),null,'admin has no ordinary app access bypass');
     assert.equal((await get('/api/apps/reported-app/messages','alice')).status,403);
     await act('restore_app'); assert.ok(await appAccess.getAppForUser(pool,'reported-app',alice));
+    assert.equal((await moderation.reviewState(pool,c)).actionTaken,true,'restoration does not erase the action taken');
 
     const userReceipt = await moderation.submitReport(pool,alice,{targetType:'user',target:'author',reason:'harassment'});
     assert.equal(userReceipt.blockUserId,bob.id,'user reports still offer the separately chosen block action');
     assert.equal(userReceipt.blockUsername,bob.username);
     c=(await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'user' AND target_id = $1",[bob.id])).rows[0];
-    await act('hide_profile'); await act('restrict_user');
+    const beforeSuspension=(await pool.query('SELECT id FROM moderation_actions WHERE case_id=$1',[c.id])).rowCount;
+    const suspendInput={action:'suspend_user',reason:'Reviewed account suspension',revision:c.revision};
+    assert.equal((await get(`/api/admin/moderation/${c.id}/actions`,'readonly',{method:'POST',body:JSON.stringify(suspendInput)})).status,403);
+    assert.equal((await get(`/api/admin/moderation/${c.id}/actions`,'admin',{method:'POST',body:JSON.stringify(suspendInput)})).status,200);
+    detail=await (await get(`/api/admin/moderation/${c.id}`)).json();
+    assert.equal(detail.actionTaken,true);
+    assert.ok(detail.target.profile_disabled_at,'Suspend user hides the profile');
+    assert.ok(detail.target.participation_restricted_at,'Suspend user restricts participation in the same transaction');
+    assert.equal((await pool.query('SELECT id FROM moderation_actions WHERE case_id=$1',[c.id])).rowCount,beforeSuspension+1,'one action and audit record');
+    await assert.rejects(act('suspend_user'),{status:409});
+    await assert.rejects(act('dismiss'),{status:409});
     assert.ok(await moderation.isRestricted(pool,bob.id));
     for (const route of ['/api/apps','/API/APPS',`/api/conversations/${conv.id}/messages`]) assert.equal((await get(route,'bob',{method:'POST',body:JSON.stringify({content:'bypass'})})).status,403,route);
     assert.equal((await get(`/api/conversations/${conv.id}/messages`,'bob')).status,200,'history stays accessible');
     await act('restore_profile'); await act('restore_user');
     assert.equal(await moderation.isRestricted(pool,bob.id),false);
+    await act('hide_profile');
+    await act('suspend_user');
+    assert.ok(await moderation.isRestricted(pool,bob.id),'suspension also completes a previously partially moderated account');
+    await act('restore_profile'); await act('restore_user');
     assert.equal((await pool.query('SELECT profile_disabled_reason FROM users WHERE id = $1',[bob.id])).rows[0].profile_disabled_reason,null);
     assert.ok((await pool.query("SELECT detail FROM notifications WHERE user_id = $1 AND kind = 'moderation_action'",[bob.id])).rows.every(r=>!r.detail.includes('reporter')));
 
@@ -164,9 +193,12 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
     await pool.query(`INSERT INTO moderation_cases (target_type,target_id,target_label,target_user_id) VALUES ('user',$1::integer,'Moderator',$1::integer),('user',$2::integer,'Moderator2',$2::integer)`,[admin.id,admin2.id]);
     const ca=(await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'user' AND target_id=$1",[admin.id])).rows[0];
     const cb=(await pool.query("SELECT * FROM moderation_cases WHERE target_type = 'user' AND target_id=$1",[admin2.id])).rows[0];
-    await assert.rejects(moderation.moderate(pool,admin,ca.id,{action:'restrict_user',reason:'test',revision:1}),{status:409});
-    await moderation.moderate(pool,admin,cb.id,{action:'restrict_user',reason:'test',revision:1});
-    await assert.rejects(moderation.moderate(pool,admin2,ca.id,{action:'restrict_user',reason:'test',revision:1}),{status:409});
+    await assert.rejects(moderation.moderate(pool,admin,ca.id,{action:'suspend_user',reason:'test',revision:1}),{status:409});
+    await moderation.moderate(pool,admin,cb.id,{action:'suspend_user',reason:'test',revision:1});
+    await assert.rejects(moderation.moderate(pool,admin2,ca.id,{action:'suspend_user',reason:'test',revision:1}),{status:409});
+    const protectedAdmin=(await pool.query('SELECT profile_disabled_at,participation_restricted_at FROM users WHERE id=$1',[admin.id])).rows[0];
+    assert.equal(protectedAdmin.profile_disabled_at,null,'rejected suspension does not partly hide the profile');
+    assert.equal(protectedAdmin.participation_restricted_at,null);
 
     // Legacy reports migrate once; original snapshots, timestamps and decisions survive.
     await pool.query("INSERT INTO profile_reports (profile_user_id,reporter_user_id,reason,detail) VALUES ($1,$2,'spam','Legacy report')",[outsider.id,bob.id]);

@@ -7,7 +7,7 @@ const TYPES = new Set(['app', 'user', 'app_message', 'conversation_message']);
 const STATUSES = new Set(['new', 'in_review', 'resolved', 'dismissed']);
 const ACTIONS = {
   app: ['suspend_app', 'restore_app'],
-  user: ['hide_profile', 'restore_profile', 'restrict_user', 'restore_user'],
+  user: ['suspend_user', 'hide_profile', 'restore_profile', 'restrict_user', 'restore_user'],
   app_message: ['hide_message', 'restore_message'],
   conversation_message: ['hide_message', 'restore_message'],
 };
@@ -181,7 +181,7 @@ async function moderate(pool, actor, caseId, input) {
   const reason = details(input?.reason, true);
   if (!Number.isSafeInteger(input?.revision)) fail(400, 'Case revision required');
   return transaction(pool, async (db) => {
-    if (action === 'restrict_user') await db.query('SELECT pg_advisory_xact_lock($1)', [require('./advisory-locks').ADMIN_MUTATION_LOCK]);
+    if (['restrict_user', 'suspend_user'].includes(action)) await db.query('SELECT pg_advisory_xact_lock($1)', [require('./advisory-locks').ADMIN_MUTATION_LOCK]);
     const { rows } = await db.query('SELECT * FROM moderation_cases WHERE id = $1 FOR UPDATE', [caseId]);
     const c = rows[0];
     if (!c) fail(404, 'Case not found');
@@ -191,6 +191,11 @@ async function moderate(pool, actor, caseId, input) {
     if (['resolved', 'dismissed'].includes(c.status) && action === 'review') fail(409, 'Reopen this case first');
     if (['resolve', 'dismiss'].includes(action) && ['resolved', 'dismissed'].includes(c.status)) fail(409, 'Case already closed');
     if (action === 'reopen' && !['resolved', 'dismissed'].includes(c.status)) fail(409, 'Case is already open');
+    if (['resolve', 'dismiss'].includes(action)) {
+      const { actionTaken } = await reviewState(db, c);
+      if (action === 'resolve' && !actionTaken) fail(409, 'No moderation action has been taken. Dismiss this case instead.');
+      if (action === 'dismiss' && actionTaken) fail(409, 'A moderation action has been taken. Resolve this case instead.');
+    }
     let effect = null;
     if (action === 'hide_message' || action === 'restore_message') {
       const table = c.target_type === 'app_message' ? 'chat_messages' : 'conversation_messages';
@@ -218,8 +223,8 @@ async function moderate(pool, actor, caseId, input) {
       const result = await db.query(`UPDATE apps SET moderation_suspended_at = ${action === 'suspend_app' ? 'NOW()' : 'NULL'} WHERE id = $1 AND self_hosted IS NOT TRUE AND moderation_suspended_at IS ${action === 'suspend_app' ? 'NULL' : 'NOT NULL'} RETURNING id`, [c.target_id]);
       if (!result.rows.length) fail(409, 'App unavailable, already in this state, or the platform app cannot be suspended here');
       effect = { type: 'app', appId: c.target_id, suspended: action === 'suspend_app' };
-    } else if (action === 'restrict_user' || action === 'restore_user') {
-      if (action === 'restrict_user') {
+    } else if (['suspend_user', 'restrict_user', 'restore_user'].includes(action)) {
+      if (action !== 'restore_user') {
         if (Number(c.target_id) === Number(actor.id)) fail(409, 'You cannot restrict your own account');
         const target = await db.query('SELECT is_admin, admin_readonly FROM users WHERE id = $1 FOR UPDATE', [c.target_id]);
         if (!target.rows[0]) fail(404, 'User no longer exists');
@@ -228,13 +233,20 @@ async function moderate(pool, actor, caseId, input) {
           if (!others.rows.length) fail(409, 'Cannot restrict the last full administrator');
         }
       }
-      const changed = await db.query(`UPDATE users SET participation_restricted_at = ${action === 'restrict_user' ? 'NOW()' : 'NULL'} WHERE id = $1 AND participation_restricted_at IS ${action === 'restrict_user' ? 'NULL' : 'NOT NULL'} RETURNING id`, [c.target_id]);
+      const changed = action === 'suspend_user'
+        ? await db.query(`UPDATE users SET participation_restricted_at = COALESCE(participation_restricted_at, NOW()),
+            profile_disabled_at = COALESCE(profile_disabled_at, NOW()),
+            profile_disabled_by = CASE WHEN profile_disabled_at IS NULL THEN $2::integer ELSE profile_disabled_by END,
+            profile_disabled_reason = CASE WHEN profile_disabled_at IS NULL THEN $3::text ELSE profile_disabled_reason END,
+            profile_updated_at = NOW()
+          WHERE id = $1 AND (participation_restricted_at IS NULL OR profile_disabled_at IS NULL) RETURNING id`, [c.target_id, actor.id, reason.slice(0,240)])
+        : await db.query(`UPDATE users SET participation_restricted_at = ${action === 'restrict_user' ? 'NOW()' : 'NULL'} WHERE id = $1 AND participation_restricted_at IS ${action === 'restrict_user' ? 'NULL' : 'NOT NULL'} RETURNING id`, [c.target_id]);
       if (!changed.rows.length) fail(409, 'User unavailable or participation state already changed');
     } else if (action === 'hide_profile' || action === 'restore_profile') {
       const changed = await db.query(`UPDATE users SET profile_disabled_at = CASE WHEN $2::boolean THEN NOW() ELSE NULL END, profile_disabled_by = CASE WHEN $2::boolean THEN $3::integer ELSE NULL END, profile_disabled_reason = CASE WHEN $2::boolean THEN $4::text ELSE NULL END, profile_updated_at = NOW() WHERE id = $1 AND (profile_disabled_at IS NOT NULL) <> $2::boolean RETURNING id`, [c.target_id, action === 'hide_profile', actor.id, reason.slice(0,240)]);
       if (!changed.rows.length) fail(409, 'User unavailable or profile state already changed');
     }
-    const status = { review: 'in_review', resolve: 'resolved', dismiss: 'dismissed', reopen: 'new' }[action] || c.status;
+    const status = { review: 'in_review', resolve: 'resolved', dismiss: 'dismissed', reopen: 'new' }[action] || (!caseAction && c.status === 'new' ? 'in_review' : c.status);
     await db.query(
       `UPDATE moderation_cases SET status = $2::varchar(16), revision = revision + 1, updated_at = NOW(),
          closed_at = CASE WHEN $2::varchar(16) IN ('resolved','dismissed') THEN COALESCE(closed_at,NOW()) ELSE NULL END WHERE id = $1`, [c.id, status]);
@@ -247,11 +259,24 @@ async function moderate(pool, actor, caseId, input) {
       await db.query(`UPDATE app_reports old SET status = $2, resolved_at = NOW(), resolved_by = $3 FROM moderation_reports r WHERE r.case_id = $1 AND r.legacy_type = 'app' AND r.legacy_id = old.id AND old.status = 'pending'`, [c.id,status,actor.id]);
       for (const r of reporters.rows) await notify(db, r.reporter_user_id, 'moderation_report', `Your report has been reviewed. ${action === 'resolve' ? 'Review completed.' : 'The case was dismissed.'}`);
     } else if (!caseAction) {
-      const labels = { hide_message: 'Your message was hidden', restore_message: 'Your message was restored', suspend_app: 'Your app was suspended', restore_app: 'Your app was restored', hide_profile: 'Your public profile was hidden', restore_profile: 'Your public profile was restored', restrict_user: 'Your participation was restricted', restore_user: 'Your participation was restored' };
+      const labels = { hide_message: 'Your message was hidden', restore_message: 'Your message was restored', suspend_app: 'Your app was suspended', restore_app: 'Your app was restored', suspend_user: 'Your account was suspended from participation and your public profile was hidden', hide_profile: 'Your public profile was hidden', restore_profile: 'Your public profile was restored', restrict_user: 'Your participation was restricted', restore_user: 'Your participation was restored' };
       await notify(db, c.target_user_id, 'moderation_action', `${labels[action]}. Reason: ${reason}`);
     }
     return { id: c.id, revision: c.revision + 1, status, effect };
   });
+}
+
+async function reviewState(db, c) {
+  let result;
+  if (c.target_type === 'app') result = await db.query('SELECT id, name, slug, self_hosted, moderation_suspended_at FROM apps WHERE id = $1', [c.target_id]);
+  else if (c.target_type === 'user') result = await db.query('SELECT id, username, profile_disabled_at, participation_restricted_at FROM users WHERE id = $1', [c.target_id]);
+  else result = await db.query(`SELECT id, moderation_hidden_at FROM ${c.target_type === 'app_message' ? 'chat_messages' : 'conversation_messages'} WHERE id = $1`, [c.target_id]);
+  const target = result.rows[0] || null;
+  // Read the full audit, not the paginated history shown in the console. Notes,
+  // review/closure markers and restoration alone do not count as enforcement.
+  const { rows } = await db.query(`SELECT EXISTS (SELECT 1 FROM moderation_actions
+    WHERE case_id = $1 AND action IN ('suspend_app','suspend_user','restrict_user','hide_profile','hide_message')) AS taken`, [c.id]);
+  return { target, actionTaken: !!(rows[0].taken || target?.moderation_suspended_at || target?.moderation_hidden_at || target?.profile_disabled_at || target?.participation_restricted_at) };
 }
 
 async function isRestricted(db, userId) {
@@ -278,4 +303,4 @@ async function purgeExpired(db) {
   await db.query(`DELETE FROM moderation_message_originals o WHERE o.target_type = 'app_message' AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.id = o.target_id)`);
   await db.query(`DELETE FROM moderation_message_originals o WHERE o.target_type = 'conversation_message' AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.id = o.target_id)`);
 }
-module.exports = { REMOVED, REASONS, TYPES, STATUSES, ACTIONS, ModerationError, id, details, transaction, resolveTarget, submitReport, moderate, isRestricted, purgeExpired };
+module.exports = { REMOVED, REASONS, TYPES, STATUSES, ACTIONS, ModerationError, id, details, transaction, resolveTarget, submitReport, moderate, reviewState, isRestricted, purgeExpired };

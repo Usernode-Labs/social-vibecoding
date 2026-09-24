@@ -48,7 +48,7 @@ app, and excluded from staging data and generic debugging tools.
 Admin → Moderation (the existing `/#admin/reports` route) is a private, paginated queue filterable by target type,
 reason, status and date. Group reports by target without losing individual
 submissions/evidence. States: new, in_review, resolved, dismissed; closed
-cases can be reopened. Show target, author/owner, location, report count,
+cases retain their decisions. Show target, author/owner, location, report count,
 each reporter/reason/detail/time, captured evidence, current target state,
 internal notes and action history. Existing profile/conversation reports
 must appear too; preserve old reporting endpoint compatibility.
@@ -56,17 +56,28 @@ must appear too; preserve old reporting endpoint compatibility.
 Platform administrators can inspect; only administrators with write access
 can moderate. App ownership is not moderation permission.
 
-Actions require a reason and confirmation, and are reversible:
+The review screen shows separate action rows, with no action dropdown. A
+completed action has a checkmark and a disabled button, derived from saved
+target state. Actions require a reason and confirmation:
 
-- Message: hide/restore; ordinary viewers see “Removed by moderation”, with
+- Message: **Hide message**; ordinary viewers see “Removed by moderation”, with
   attachments unavailable while hidden.
-- App: suspend/restore access through Homeroom and discovery; preserve code
+- App: **Suspend app** through Homeroom and discovery; preserve code
   and data.
-- User: hide/restore profile; restrict/restore participation. Restrictions
+- User: **Suspend user** atomically hides the public profile and restricts
+  participation in one audited action. Restrictions
   prevent posting, messaging, invitations, voting, coding work and app
   creation/publishing while preserving settings, existing data, shared
   history and other participants' access.
-- Case: dismiss, resolve with explanation, reopen, and internal notes.
+- The final row is **Dismiss** if no moderation action has been taken, or
+  **Resolve** after action. Notes and starting a review do not count as action.
+  The server checks the full action history, including actions outside the
+  visible page. Closing keeps the final row checked and disabled.
+
+Taking action starts review automatically. The screen does not offer separate
+start-review, profile-hiding, participation-restriction, restore, reopen, or
+internal-note controls. Existing restoration and legacy APIs retain their audit
+and permission checks; retained content remains recoverable.
 
 Closing a report does not restore a target. Account deletion stays separate.
 Prevent conflicting concurrent actions and restricting the last full admin.

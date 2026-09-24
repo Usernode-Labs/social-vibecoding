@@ -102,11 +102,8 @@ function moderationRoutes(config, { pool = getPool(config) } = {}) {
       pool.query(`SELECT a.*, u.username AS actor FROM moderation_actions a LEFT JOIN users u ON u.id = a.actor_id WHERE a.case_id = $1 AND ($2::bigint IS NULL OR a.id < $2) ORDER BY a.id DESC LIMIT 51`, [caseId,actionBefore]),
       pool.query(`SELECT r.id AS report_id, f.id, f.filename FROM moderation_reports r JOIN moderation_report_files rf ON rf.report_id = r.id JOIN moderation_evidence_files f ON f.id = rf.file_id WHERE r.id IN (SELECT id FROM moderation_reports WHERE case_id = $1 AND ($2::bigint IS NULL OR id < $2) ORDER BY id DESC LIMIT 50) ORDER BY f.id`, [caseId,reportBefore]),
     ]);
-    let target;
-    if (c.target_type === 'app') target = await pool.query('SELECT id, name, slug, self_hosted, moderation_suspended_at FROM apps WHERE id = $1', [c.target_id]);
-    else if (c.target_type === 'user') target = await pool.query('SELECT id, username, profile_disabled_at, participation_restricted_at FROM users WHERE id = $1', [c.target_id]);
-    else target = await pool.query(`SELECT id, moderation_hidden_at FROM ${c.target_type === 'app_message' ? 'chat_messages' : 'conversation_messages'} WHERE id = $1`, [c.target_id]);
-    res.json({ case: c, target: target.rows[0] || null, reports: reports.rows.slice(0,50), reportsNext: reports.rows.length > 50 ? reports.rows[49].id : null, actions: actions.rows.slice(0,50), actionsNext: actions.rows.length > 50 ? actions.rows[49].id : null, files: files.rows, availableActions: svc.ACTIONS[c.target_type], canWrite: !!req.user.canAdminWrite });
+    const review = await svc.reviewState(pool, c);
+    res.json({ case: c, ...review, reports: reports.rows.slice(0,50), reportsNext: reports.rows.length > 50 ? reports.rows[49].id : null, actions: actions.rows.slice(0,50), actionsNext: actions.rows.length > 50 ? actions.rows[49].id : null, files: files.rows, availableActions: svc.ACTIONS[c.target_type], canWrite: !!req.user.canAdminWrite });
   }));
   router.get('/api/admin/moderation/:id/files/:fileId', run(async (req, res) => {
     const { rows } = await pool.query(
