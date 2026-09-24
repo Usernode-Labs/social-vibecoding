@@ -487,9 +487,17 @@ const GroupChat = {
       case 'chat': {
         // #194: thread messages never land in the general stream — they
         // route to the mounted thread (if it matches) or bump the
-        // chat-count badge on their issue/proposal row.
+        // chat-count badge on their issue/proposal row. #2387 follow-up:
+        // except a REPLY thread's, which also lands in the general stream,
+        // drawn there as a line where it happened.
         if (msg.thread && msg.thread.type) {
           GroupChat._handleThreadIncoming(msg);
+          if (msg.thread.type === 'message' && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
+            const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
+            GroupChat.messages.push(msg);
+            GroupChat.appendMessage(msg);
+            if (shouldStick) GroupChat.scrollToBottom();
+          }
           break;
         }
         // #2389: your own message always brings you to the bottom, even when
@@ -755,6 +763,10 @@ const GroupChat = {
       thread: GroupChat._threadSummaryView(msg),
       canThread: !threadType && !deleted && (kind === 'message' || kind === 'spec_share'),
       threadRoot: !!msg._threadRoot,
+      // #2387 follow-up: a reply-thread reply, which the general transcript
+      // draws as a line where it landed (TranscriptRows); `thread_root` on a
+      // loaded row, `threadRoot` on a live frame.
+      replyOf: GroupChat._replyOfView(msg, threadType),
       time: stamp.text,
       timeTitle: stamp.title,
       // #2783: the raw instant, which the transcript groups consecutive
@@ -1174,7 +1186,13 @@ const GroupChat = {
     GroupChat.replyDraft = quote;
     GroupChat.replyDraftScope = input.id === 'gc-thread-input' ? 'thread' : 'general';
     GroupChat._renderQuotePreview();
-    input.focus();
+    // The caret goes to the box where there is a mouse or trackpad (a
+    // hardware keyboard, as a rule). On a touch-only phone, focusing pops the
+    // on-screen keyboard over the message being replied to; the quote is
+    // staged and the box is one tap away (message-actions/focus.ts).
+    let fine = false;
+    try { fine = !!(window.matchMedia && window.matchMedia('(any-pointer: fine)').matches); } catch (_) { fine = false; }
+    if (fine) input.focus();
   },
 
   clearQuote() {
@@ -1371,7 +1389,7 @@ const GroupChat = {
       // #2387: the shared bar, its picker and menu, and the thread chip are
       // React controls with their own handlers; a click inside them (the
       // picker's search box included) is never a tap-to-quote.
-      if (e.target.closest('.msgx-bar, .msgx-thread-chip, .gc-msg-deleted-text')) return;
+      if (e.target.closest('.msgx-bar, .msgx-thread-chip, .msgx-thread-activity, .gc-msg-deleted-text')) return;
       // A reaction pill is NOT dispatched here. The reskin draws it with
       // @/components/ui/feed's `ReactionPill`, so no node carries
       // `.gc-react-pill` any more and this branch had nothing to match; the
@@ -1560,10 +1578,29 @@ const GroupChat = {
     const count = Number(t.reply_count ?? t.replyCount) || 0;
     if (count < 1) return null;
     const people = Array.isArray(t.participants) ? t.participants : [];
+    const last = t.last_reply || t.lastReply || null;
     return {
       replyCount: count,
       lastReplyAt: t.last_reply_at || t.lastReplyAt || null,
       participants: people.map((p) => (p && typeof p === 'object' ? p.username : p)).filter(Boolean).slice(0, 3),
+      // #2387 follow-up: the newest reply, which the card under the message shows.
+      lastReply: last && typeof last === 'object'
+        ? { name: String(last.username || 'someone'), text: String(last.content || '') }
+        : null,
+    };
+  },
+
+  // A reply-thread reply's place in the general stream (#2387 follow-up):
+  // which thread, and the start of its first message. Null for any other row.
+  _replyOfView(msg, threadType) {
+    if (threadType !== 'message') return null;
+    const ref = Number(msg.thread_ref ?? (msg.thread && msg.thread.ref));
+    if (!Number.isSafeInteger(ref) || ref <= 0) return null;
+    const root = msg.thread_root || msg.threadRoot || null;
+    return {
+      rootId: ref,
+      rootText: root && !root.deleted ? String(root.content || '') : '',
+      rootDeleted: !!(root && root.deleted),
     };
   },
 
@@ -1687,7 +1724,11 @@ const GroupChat = {
     // Read means SEEN: the socket also connects for an app whose chat is not
     // on screen, and loading its history there must not clear the channel.
     if (document.visibilityState === 'hidden' || !document.getElementById('gc-messages')) return;
-    const newest = GroupChat.messages.reduce((top, m) => Math.max(top, Number(m.id) || 0), 0);
+    // The general stream's own newest message: its thread replies drawn in
+    // it (#2387 follow-up) are no position for the channel's read cursor.
+    const newest = GroupChat.messages.reduce((top, m) => (
+      m && !m.thread_type && !(m.thread && m.thread.type) ? Math.max(top, Number(m.id) || 0) : top
+    ), 0);
     if (!newest || newest <= (GroupChat._readUpTo || 0) || GroupChat._unreadHold === slug) return;
     GroupChat._readUpTo = newest;
     try {

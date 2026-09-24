@@ -201,6 +201,20 @@ export interface ThreadSummaryView {
   replyCount: number;
   lastReplyAt: string | null;
   participants: string[];
+  /** The newest reply, which the card under the message shows (#2387 follow-up). */
+  lastReply?: { name: string; text: string } | null;
+}
+
+/**
+ * A reply-thread reply read as part of the GENERAL stream (#2387 follow-up):
+ * which thread it is in, and the start of that thread's first message, which
+ * its line there names. The general transcript draws it as a card where it
+ * landed; a thread's own transcript draws it as the row it always was.
+ */
+export interface ReplyInStream {
+  rootId: number;
+  rootText: string;
+  rootDeleted: boolean;
 }
 
 export interface TranscriptMessage {
@@ -303,6 +317,8 @@ export interface TranscriptMessage {
   canThread?: boolean;
   /** #2387: this row is the message a reply thread hangs off, drawn at the thread's head. */
   threadRoot?: boolean;
+  /** Set on a reply-thread reply; the general transcript draws it as activity. */
+  replyOf?: ReplyInStream | null;
 }
 
 /**

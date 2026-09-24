@@ -1224,7 +1224,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the list toggle; the same bar, chip and placeholder in an app channel; a
   // link to an app-channel reply opening its thread; and #2967's "Show N
   // more". Ten were folded into six with :has(). 32 slots left under 830.
-  assert.equal(DAPP.tests.length, 798);
+  //
+  // 798 → 800: +2 (#2387 follow-up): a thread's replies drawn in the main
+  // transcript where they landed, one card for a run, with the thread card
+  // showing the newest reply — in #general and in an app channel. 30 slots
+  // left under 830.
+  assert.equal(DAPP.tests.length, 800);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

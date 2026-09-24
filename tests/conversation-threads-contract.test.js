@@ -77,6 +77,13 @@ test('every demo message wears the #2387 shape, and the channel transcript is un
   assert.equal(replies.length, 3);
   assert.ok(replies.every((r) => r.threadRootId === 9100404));
   assert.equal(root.thread.lastReplyAt, replies[replies.length - 1].createdAt);
+  // #2387 follow-up: the card under the root shows the newest reply, and
+  // each reply names its root for its line in the main stream. The replies
+  // land after the card run, so ids and times agree and the checks'
+  // adjacency above is untouched.
+  assert.equal(root.thread.lastReply.id, replies[replies.length - 1].id);
+  assert.ok(replies.every((r) => r.threadRoot && r.threadRoot.id === 9100404));
+  assert.ok(replies.every((r) => r.createdAt > routes.demoMessages(VIEWER, 910004).at(-1).createdAt));
 
   const group = routes.demoMessages(VIEWER, 910002);
   assert.equal(group[0].attachments.length, 2, 'the screenshot row the checks use is intact');
@@ -96,7 +103,11 @@ test('demo routes answer the new endpoints without touching the database', async
     assert.equal(channel.status, 200);
     assert.equal(channel.body.demo, true);
     assert.equal(channel.body.nextBefore, null);
-    assert.ok(!channel.body.messages.some((m) => m.threadRootId), 'main stream only');
+    // #2387 follow-up: the main stream carries the thread's replies too,
+    // where they landed — after the run of cards.
+    assert.deepEqual(channel.body.messages.filter((m) => m.threadRootId).map((m) => m.id),
+      [9100411, 9100412, 9100413]);
+    assert.deepEqual(channel.body.messages.slice(-4).map((m) => m.id), [9100409, 9100411, 9100412, 9100413]);
 
     const thread = await call('GET', '/api/conversations/910004/threads/9100404?demo=1');
     assert.equal(thread.status, 200);
@@ -122,7 +133,7 @@ test('demo routes answer the new endpoints without touching the database', async
     assert.equal((await call('GET', '/api/conversations/910004/messages?demo=1&around=1')).status, 404);
 
     const after = await call('GET', '/api/conversations/910004/messages?demo=1&after=9100406');
-    assert.deepEqual(after.body.messages.map((m) => m.id), [9100407, 9100408, 9100409]);
+    assert.deepEqual(after.body.messages.map((m) => m.id), [9100407, 9100408, 9100409, 9100411, 9100412, 9100413]);
     assert.equal(after.body.nextAfter, null);
     const before = await call('GET', '/api/conversations/910004/messages?demo=1&before=9100404&limit=2');
     assert.deepEqual(before.body.messages.map((m) => m.id), [9100402, 9100403]);

@@ -7,6 +7,7 @@ import type { MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
+import { wantsKeyboardFocus } from '../message-actions/focus';
 
 const MAX_ATTACHMENTS = 4;
 
@@ -64,6 +65,13 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   useEffect(() => {
     setValue(draftFor(scope)); setAttachments([]); setObject(null); setError('');
   }, [scope]);
+
+  // Reply puts the caret here where there is a hardware keyboard, so the
+  // next keystroke is the reply (message-actions/focus.ts).
+  const replyId = reply?.id ?? null;
+  useEffect(() => {
+    if (replyId && wantsKeyboardFocus()) inputRef.current?.focus({ preventScroll: true });
+  }, [replyId]);
 
   useEffect(() => {
     if (inThread) return undefined;
@@ -236,7 +244,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
         <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
-      <div className="mt-1 px-1 flex justify-end"><span className={`text-[10px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
+      {/* The count's line is always laid out, empty or not: it appearing
+          with the first keystroke pushed the whole composer up by a line. */}
+      <div className="mt-1 px-1 flex justify-end h-[15px]" aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
       {dragging ? <div className="messages-drop-overlay">Drop files to attach</div> : null}
     </div>

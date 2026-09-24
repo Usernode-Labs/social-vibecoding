@@ -1647,6 +1647,71 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .msgx-thread-chip:hover .msgx-thread-chevron,
 .msgx-thread-chip:focus-visible .msgx-thread-chevron { opacity: 1; }
 
+/* The thread card (#2387 follow-up, Discord's layout): "3 replies ›" over
+   the newest reply, in a white box under the message. `.msgx-thread-chip`
+   stays on it for the selectors that find a thread by it; this block
+   restyles it as the card. */
+.msgx-thread-chip.msgx-thread-card,
+.msgx-thread-activity-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  max-width: 460px;
+  min-width: 0;
+  box-sizing: border-box;
+  margin-top: 8px;
+  padding: 9px 12px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  background: var(--dc-sheet-raise);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.msgx-thread-chip.msgx-thread-card:hover,
+.msgx-thread-chip.msgx-thread-card:focus-visible,
+.msgx-thread-activity-card:hover,
+.msgx-thread-activity-card:focus-visible {
+  border-color: var(--accent-wash);
+  background: var(--dc-sheet-raise);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  outline: none;
+}
+.msgx-thread-activity-card:focus-visible,
+.msgx-thread-chip.msgx-thread-card:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.msgx-thread-chip.msgx-thread-card.msgx-thread-chip-active { border-color: var(--accent); }
+.msgx-thread-card-head { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.msgx-thread-card-glyph { flex: 0 0 auto; width: 16px; height: 16px; color: var(--accent); }
+.msgx-thread-card-chevron { flex: 0 0 auto; width: 14px; height: 14px; color: var(--text-muted); }
+.msgx-thread-line { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; }
+.msgx-thread-line > :first-child { flex: 0 0 auto; }
+.msgx-thread-line-name { flex: 0 0 auto; font-weight: 700; }
+.msgx-thread-line-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.msgx-thread-line-time { flex: 0 0 auto; color: var(--text-muted); font-size: 13px; }
+
+/* A thread's replies where they landed in the main transcript (#2387
+   follow-up): the thread glyph in the column the faces use, then the card. */
+.msgx-thread-activity { display: flex; align-items: flex-start; gap: 12px; padding: 2px 16px 6px; }
+.msgx-thread-activity-glyph { flex: 0 0 36px; display: inline-flex; justify-content: center; padding-top: 18px; color: var(--text-muted); }
+.msgx-thread-activity-glyph svg { width: 18px; height: 18px; }
+.msgx-thread-activity-card { margin-top: 0; max-width: 520px; }
+/* The app chat's faces are 44px wide: the glyph takes the same column, so
+   the card lines up with the messages' text. */
+#gc-messages .msgx-thread-activity-glyph { flex-basis: 44px; }
+.msgx-thread-activity-head { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.msgx-thread-activity-what { flex: 0 0 auto; }
+.msgx-thread-activity-root { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--accent); font-weight: 600; }
+.msgx-thread-activity-root-deleted { color: var(--text-muted); font-style: italic; font-weight: 400; }
+.msgx-thread-activity-time { flex: 0 0 auto; }
+.msgx-thread-activity-head .msgx-thread-card-chevron { margin-left: auto; }
+/* A reply line's face, whichever surface drew it, at the card's 22px. */
+.msgx-thread-face { display: inline-flex; flex: 0 0 auto; }
+.msgx-thread-face > * { width: 22px !important; height: 22px !important; border-radius: 6px !important; font-size: 10px !important; }
+
 /* A deleted message keeps its place and says so (#2387). */
 .messages-deleted { color: var(--text-muted); font-size: 15px; font-style: italic; }
 
