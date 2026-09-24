@@ -857,6 +857,27 @@
       "preview": "`INSERT INTO credentials.user_ai_credentials (user_id, provider, purpose, secret_enc, secret_last4, secret_fingerprint, status, verified_at, revision) VALUES ($"
     },
     {
+      "source": "src/services/database-copy.js",
+      "kind": "structural-template",
+      "fingerprint": "184ef11ae1dccaf07fbc",
+      "count": 1,
+      "preview": "`SELECT last_value::text, is_called FROM ${quote(entry.schema)}.${quote(entry.name)}`"
+    },
+    {
+      "source": "src/services/database-copy.js",
+      "kind": "structural-template",
+      "fingerprint": "6014eb99553be5e0d632",
+      "count": 1,
+      "preview": "`SELECT count(*)::text AS rows, encode(sha256(convert_to(COALESCE(string_agg(h,'' ORDER BY h),''),'UTF8')),'hex') AS digest FROM (SELECT encode(sha256(convert_t"
+    },
+    {
+      "source": "src/services/database-copy.js",
+      "kind": "structural-template",
+      "fingerprint": "a6dc881cfa8966017a38",
+      "count": 1,
+      "preview": "`SELECT count(*)::text AS n FROM ONLY ${table}`"
+    },
+    {
       "source": "src/services/db-manager.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "cab417dc71282a32b0c6",

@@ -65,7 +65,7 @@ FROM node:22-alpine
 # git is for the import-existing flow's `git clone` of foreign repos.
 # postgresql-client lets DB administration work over the normal Postgres
 # Service/network connection in both Docker and Kubernetes modes.
-RUN apk add --no-cache docker-cli docker-cli-buildx git postgresql-client
+RUN apk add --no-cache docker-cli docker-cli-buildx git postgresql-client python3 kubectl
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --production

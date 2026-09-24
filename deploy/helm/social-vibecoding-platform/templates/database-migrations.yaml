@@ -1,0 +1,117 @@
+{{- if and .Values.enabled .Values.databaseControlPlane.migrationsEnabled }}
+{{- if not (and .Values.databaseControlPlane.enabled .Values.databaseControlPlane.bindingsEnabled .Values.databaseControlPlane.runtimeSecret) }}{{ fail "database migrations require bindings, control plane and runtime credentials" }}{{ end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: social-database-migrations}
+automountServiceAccountToken: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-database-migrations
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/component: database-migrations}
+  template:
+    metadata:
+      labels:
+        {{- include "social-vibecoding-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: database-migrations
+      annotations:
+        social.usernode.io/source-revision: {{ .Values.release.sourceRevision | quote }}
+    spec:
+      serviceAccountName: social-database-migrations
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrations
+          image: {{ include "social-vibecoding-platform.image" .Values.platform.image | quote }}
+          command: [node, src/workers/database-migrations.js]
+          securityContext:
+            {{- include "social-vibecoding-platform.containerSecurityContext" . | nindent 12 }}
+          env:
+            - {name: NODE_ENV, value: production}
+            - {name: PYTHONDONTWRITEBYTECODE, value: '1'}
+            - {name: SV_DATABASE_MIGRATIONS_ENABLED, value: 'true'}
+            - {name: SV_DATABASE_CONTROL_PLANE_ENABLED, value: 'true'}
+            - {name: SV_DATABASE_POLICY_FILE, value: /etc/sv-database/policy.json}
+            - {name: SV_DATABASE_ADMIN_ORIGIN, value: {{ printf "https://%s" .Values.config.domain | quote }}}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "social-vibecoding-platform.secretName" . }}
+                  key: DATABASE_URL
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: '1', memory: 512Mi}
+          ports: [{name: http, containerPort: 3002}]
+          readinessProbe: {httpGet: {path: /ready, port: http}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health, port: http}, periodSeconds: 15}
+          volumeMounts:
+            - {name: policy, mountPath: /etc/sv-database, readOnly: true}
+            - {name: operator, mountPath: /opt/sv-database-operator, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: policy
+          configMap: {name: {{ .Values.databaseControlPlane.policyConfigMap }}}
+        - name: operator
+          configMap: {name: social-database-operator}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-database-migrations
+spec:
+  selector: {app.kubernetes.io/component: database-migrations}
+  ports: [{name: http, port: 3002, targetPort: http}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: social-database-migrations}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/component: database-migrations}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "social-vibecoding-platform.postgresqlPodSelector" . | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ .Values.postgresql.port }}}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: social-database-migrations}
+spec:
+  endpointSelector:
+    matchLabels: {app.kubernetes.io/component: database-migrations}
+  ingress:
+    - fromEntities: [ingress]
+      toPorts:
+        - ports: [{port: '3002', protocol: TCP}]
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports: [{port: '443', protocol: TCP}, {port: '6443', protocol: TCP}]
+{{- end }}

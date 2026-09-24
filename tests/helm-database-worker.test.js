@@ -53,3 +53,23 @@ test('cluster administrative credentials are projected only into platform and st
   assert.doesNotMatch(worker,/runtime-targets|database-targets|SV_DATABASE_TARGETS_FILE/);
   assert.throws(()=>execFileSync('helm',[...args,'--set','databaseControlPlane.bindingsEnabled=false'],{stdio:'pipe'}));
 });
+
+test('migration admin stays in a separate deployment with only session DB credentials and scoped ingress', () => {
+  const args = ['template', 'test', 'deploy/helm/social-vibecoding-platform', '--set',
+    'enabled=true,databaseControlPlane.enabled=true,databaseControlPlane.bindingsEnabled=true,databaseControlPlane.runtimeSecret=runtime-targets,databaseControlPlane.migrationsEnabled=true,secrets.create=false,postgresql.enabled=false',
+    '--set', 'secrets.existingSecret=social-vibecoding,postgresql.host=central.social-platform.svc.cluster.local',
+    '--set-json', 'postgresql.podSelector={"cnpg.io/cluster":"central"}',
+    '--set-string', `release.sourceRevision=${'a'.repeat(40)},platform.image.digest=sha256:${'b'.repeat(64)},platform.workerImage.digest=sha256:${'b'.repeat(64)},platform.captureImage.digest=sha256:${'b'.repeat(64)}`];
+  const rendered = execFileSync('helm', [...args, '--show-only', 'templates/database-migrations.yaml'], {encoding:'utf8'});
+  assert.match(rendered, /serviceAccountName: social-database-migrations/);
+  assert.match(rendered, /strategy: \{type: Recreate\}/);
+  assert.match(rendered, /command: \[node, src\/workers\/database-migrations.js\]/);
+  assert.match(rendered, /key: DATABASE_URL/);
+  assert.doesNotMatch(rendered, /envFrom:|DB_ADMIN_URL|GITHUB|SESSION_SECRET|runtime-targets/);
+  assert.match(rendered, /readOnlyRootFilesystem: true/);
+  const ingress = execFileSync('helm', [...args, '--set','ingress.enabled=true', '--show-only', 'templates/ingress.yaml'], {encoding:'utf8'});
+  assert.match(ingress, /path: \/api\/admin\/database-migrations/);
+  assert.match(ingress, /path: \/database-maintenance/);
+  const disabled = execFileSync('helm', [...args, '--set','databaseControlPlane.migrationsEnabled=false'], {encoding:'utf8'});
+  assert.doesNotMatch(disabled, /src\/workers\/database-migrations.js|serviceAccountName: social-database-migrations/);
+});
