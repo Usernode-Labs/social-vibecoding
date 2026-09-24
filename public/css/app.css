@@ -1577,16 +1577,17 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .messages-thread-pane.messages-no-selection { margin: 0; }
 }
 
-/* ── Single-panel mode (#2387) ──────────────────────────────────────────
-   The list folds away on a desktop so the open chat — and a thread beside
-   it — has the whole strip. The toggle leads the chat's title row, and is
-   not drawn below 768px, where one pane is shown at a time anyway. */
+/* ── Full width (#2387) ─────────────────────────────────────────────────
+   The list folds away on a desktop so the open discussion — and a thread
+   beside it — has the whole strip. The toggle ends every discussion pane's
+   header, just before ⋯ where there is one, and is not drawn below 768px,
+   where one pane is shown at a time anyway. Its glyph says the state (arrows
+   out, arrows in), so it keeps the disc's ink rather than turning accent. */
 .messages-list-toggle { display: none; }
 @media (min-width: 768px) {
   .messages-list-toggle { display: inline-flex; }
   .messages-layout.messages-list-collapsed > .messages-list-pane { display: none; }
   .messages-layout.messages-list-collapsed > .messages-thread-pane { margin-left: 12px; }
-  .messages-list-toggle[aria-pressed="true"] { color: var(--accent); }
 }
 
 /* ── A reply thread beside its chat (#2387) ─────────────────────────────
@@ -1829,16 +1830,24 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    pane's sheet, so the panel adds no plane of its own. A dev session is
    DevChat's whole session view in a host, which draws its own sheet — the
    same arrangement as a discussion above, so the host only has to fill the
-   pane. The bar above it carries the one link the pane adds: the session's
-   own full-window address, for the spec and preview at full width. */
+   pane. The bar above it carries what the pane adds: the session's own
+   full-window address, for the spec and preview at full width, and the
+   full-width toggle every discussion pane ends its header with. */
 .messages-thread-agent { overflow: hidden; }
 .global-chat-embedded { flex: 1 1 auto; }
+/* In the pane the toolbar spans the sheet, as every discussion's header
+   does, and only the transcript and composer keep their reading column —
+   so the full-width toggle at its end stays under the pointer when the
+   pane widens, rather than moving in with a centred column. */
+.global-chat-embedded > .global-chat-toolbar { width: 100%; }
 .messages-session-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-session-host > * { flex: 1 1 auto; min-height: 0; }
 .messages-session-host[hidden] { display: none; }
 .messages-session-bar {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 12px;
   flex: 0 0 auto;
   padding: 0 4px 6px;
 }

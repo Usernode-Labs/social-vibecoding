@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import {
   ArrowPathIcon,
@@ -335,8 +335,10 @@ function Unavailable() {
  * drift; `embedded` changes only what is the surface's rather than the
  * chat's — the pane's composer id (ids are document-wide) and the Close
  * button, which the pane does not need because the inbox is right there.
+ * The pane's one addition, `headerAction`, closes the toolbar: the Messages
+ * full-width toggle, which every discussion pane carries in that place.
  */
-export function GlobalChatPanel({ embedded = false }: { embedded?: boolean }) {
+export function GlobalChatPanel({ embedded = false, headerAction = null }: { embedded?: boolean; headerAction?: ReactNode }) {
   const snapshot = useGlobalChatState();
   const scroll = useRef<HTMLDivElement | null>(null);
   const assistantIds = useMemo(() => snapshot.messages
@@ -380,6 +382,7 @@ export function GlobalChatPanel({ embedded = false }: { embedded?: boolean }) {
           <PlusIcon className="w-4 h-4" aria-hidden="true" />
           <span>New</span>
         </button>
+        {headerAction}
       </header>
 
       {/* No `platform-safe-scroll`: the composer below clears the tab bar and

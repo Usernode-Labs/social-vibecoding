@@ -1229,7 +1229,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // transcript where they landed, one card for a run, with the thread card
   // showing the newest reply — in #general and in an app channel. 30 slots
   // left under 830.
-  assert.equal(DAPP.tests.length, 800);
+  //
+  // 800 → 802: +2 (#2387 follow-up): Full width moved to the right of every
+  // discussion pane's header — an app's channel ends its header with it, and
+  // a dev session's bar carries it after Open full view. The conversation
+  // header's place (just before ⋯) rides on the deleted-message check that
+  // already found the toggle. 28 slots left under 830.
+  assert.equal(DAPP.tests.length, 802);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
