@@ -109,7 +109,10 @@ selects a skill.
   `--list` prints the mapping and the command without running; `--files a,b`
   names the changed files yourself. A changed file no suite names is printed
   as such: for a screen, that is the test that does not exist yet; for shared
-  code, it is the cue below.
+  code, it is the cue below. It also runs, on every change, the few fast
+  whole-tree guards that name no file (icons, inks, em dashes, the Global
+  Chat route inventory, …). A guard opts in with a
+  `// test:changed: always (…)` line; mark a new one only if it is fast.
 - **Run `npm test` only when shared code moved and the mapping cannot see
   who depends on it** — a `public/js/**` module other modules reach through
   a global (the mapping runs the suites that name the module, not those of
