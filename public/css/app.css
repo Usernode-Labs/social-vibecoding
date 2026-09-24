@@ -14243,6 +14243,37 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   margin-inline: 0;
   margin-bottom: 0;
 }
+/* #2837: ON A LARGE DESKTOP WINDOW THE CHIP JOINS THE TAB PILL'S ROW. Above,
+   it had a row to itself. On a wide window that row put it alone in the
+   middle of the page, lined up with nothing around it. workshop.tsx's
+   `useScopeInline` checks whether the space left of the reading column is
+   wide enough for the chip. If it is, it sets `data-ws-scope-inline` on the
+   Workshop root, and these rules move the chip into that space. It sits on
+   the pill's row, its right edge 12px from the pill's left edge.
+
+   The pill does not move. The chip's wrapper loses its height and gives back
+   the 10px column gap under it (`.dev-ws { gap: 10px }`), so the tabs row sits
+   exactly where it would with no chip at all. The ear and the selection
+   marker measure from the pill, so they are unchanged too. The chip is 36px
+   tall (`h-9`), the same as the pill's track (32px tabs plus 2px padding on
+   each side), so `top: 0` lines them up.
+
+   With the panel open the wrapper keeps its height. The panel opens in place
+   at the top of the column, level with the chip, and pushes the tabs down,
+   the same way it does on its own row. Its width is capped so it reads as the
+   chip's menu, not as a bar across the whole column. */
+.dev-ws[data-ws-scope-inline] > .dev-ws-scope { position: relative; }
+.dev-ws[data-ws-scope-inline] > .dev-ws-scope:not(:has(> [role='menu'])) {
+  height: 0;
+  margin-bottom: -10px;
+}
+.dev-ws[data-ws-scope-inline] > .dev-ws-scope > button {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 12px);
+  max-width: 220px;
+}
+.dev-ws[data-ws-scope-inline] > .dev-ws-scope > [role='menu'] { max-width: 420px; }
 .dev-ws-strip {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
