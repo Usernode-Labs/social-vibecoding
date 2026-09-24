@@ -337,16 +337,19 @@ export function publicControlsView(state) {
     profile,
     published: !!owner.published,
     moderationDisabled: !!owner.moderationDisabled,
+    // #2787: the second line of the sheet's "Public profile" switch row, so it
+    // says what the state MEANS rather than a bare "Published"/"Private".
     visibility: owner.moderationDisabled
       ? 'Hidden by moderation'
-      : owner.published ? 'Published' : 'Private',
+      : owner.published
+        ? 'On: anyone with the link can view it, no account needed'
+        : 'Off: your profile has no public link',
     visibilityClass: owner.moderationDisabled
       ? 'text-red-700 dark:text-red-400'
       : owner.published
         ? 'text-emerald-700 dark:text-emerald-400'
         : 'text-zinc-500 dark:text-zinc-400',
     openHref: profile.url || `#profile/${encodeURIComponent(profile.username || '')}`,
-    publishLabel: owner.published ? 'Unpublish' : 'Publish profile',
   };
 }
 
