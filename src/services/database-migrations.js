@@ -16,7 +16,7 @@ function publicOperation(o) {
     attempt: o.spec.attempt, ...(o.status?.result ? { result: o.status.result } : {}) };
 }
 
-function createMigrations({ store, execute, getPolicy = loadPolicy }) {
+function createMigrations({ store, execute, getPolicy = loadPolicy, batchActive = async () => false }) {
   function selected(policy, name, target) {
     const binding = policy?.bindingTargets?.find(b => b.bindingName === name);
     if (!binding || (target !== 'central' && !policy.runtimeTargets?.some(t => t.id === target
@@ -64,6 +64,7 @@ function createMigrations({ store, execute, getPolicy = loadPolicy }) {
       if (['binding', 'target', 'expectedRevision', 'requestedBy'].some(k => existing.spec[k] !== spec[k])) throw invalid('Operation ID already belongs to another request');
       return publicOperation(existing);
     }
+    if (await batchActive()) throw invalid('Finish the active bulk migration first');
     if ((await store.list()).some(o => ACTIVE.includes(o.status?.phase || 'Pending'))) throw invalid('Finish the active migration first');
     const live = await store.binding(b.bindingName);
     const current = live?.status?.current || { targetId: 'central', revision: 0 };

@@ -31,6 +31,7 @@ function createStore(namespace) {
   };
   return {
     get: id => get(RESOURCE, id),
+    cluster: (namespace,name) => get('clusters.postgresql.cnpg.io',name,namespace),
     binding: name => get('appdatabasebinding', name),
     hasJob: async id => !!await get('job', id, 'sv-db-stockroom'),
     list: async () => JSON.parse(await kube(['get', RESOURCE, '-n', namespace, '-o', 'json'])).items,
@@ -50,6 +51,12 @@ async function execute(command, { id, binding, target, expectedRevision }) {
   if (command === 'plan') return JSON.parse(output);
   const lines = output.trim().split('\n');
   return JSON.parse(lines.at(-1));
+}
+async function executeBulk(command,{id}={}) {
+  const args=['/opt/sv-database-operator/bulk-app-databases.py',command,'--kubeconfig',KUBECONFIG,'--cache-dir','/tmp/kube-cache'];
+  if(id)args.push('--batch',id);
+  const output=await run('python3',args,undefined,command==='inventory'?60000:60*60*1000);
+  return JSON.parse(output.trim().split('\n').at(-1));
 }
 async function main() {
   if (process.env.SV_DATABASE_MIGRATIONS_ENABLED !== 'true') throw new Error('Migrations disabled');
@@ -72,8 +79,9 @@ async function main() {
   app.use(require('../middleware/admin').adminMiddleware);
   app.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   const store = createStore(loadPolicy().namespace);
-  const service = createMigrations({ store, execute });
-  require('../routes/admin-database-migrations').registerMigrationRoutes(app, service, { origin: process.env.SV_DATABASE_ADMIN_ORIGIN });
+  const batches=require('../services/database-batches').createBatches({store,execute,executeBulk});
+  const service = createMigrations({ store, execute, batchActive:batches.active });
+  require('../routes/admin-database-migrations').registerMigrationRoutes(app, service, { origin: process.env.SV_DATABASE_ADMIN_ORIGIN, batches });
   app.use('/database-maintenance/assets', express.static(path.resolve('public/shell/assets')));
   app.use('/database-maintenance/css', express.static(path.resolve('public/css')));
   app.get('/database-maintenance', (_req, res) => res.type('html').send('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Database maintenance</title><link rel="stylesheet" href="/database-maintenance/css/native.css"><link rel="stylesheet" href="/database-maintenance/css/app.css"><link rel="stylesheet" href="/database-maintenance/css/tailwind.css"></head><body><div id="database-maintenance-root"></div><script type="module" src="/database-maintenance/assets/database-maintenance.js"></script></body></html>'));
@@ -91,6 +99,7 @@ async function main() {
       if (!active) {
         const o = operations.find(r => r.status?.phase === 'Running' || r.status?.observedAttempt !== r.spec.attempt);
         if (o) active = reconcile(o, { store, execute }).catch(() => {}).finally(() => { active = null; });
+        else if(loadPolicy().bulk?.enabled)active=batches.tick().catch(()=>{}).finally(()=>{active=null;});
       }
     } catch { /* readiness reports loss of Kubernetes access */ }
     await delay(2000);

@@ -763,6 +763,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'vrf_obligations.sender_pk_hash',      // a PUBLIC key's digest
     'app_report_ai.input_hash',            // digest of the generation input, for cache reuse
     'app_workshop_themes.input_hash',      // same: digest of the board the themes were grouped from
+    'app_database_batches.policy_hash',   // SHA-256 of public pool policy, not authentication material
     'visual_evidence_runs.plan_hash',      // SHA-256 of the bounded replay plan, not authentication material
 
     // Counters and flags.
