@@ -51,6 +51,7 @@ import {
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
+import { useSpecBeside } from '../agent-session/spec-layout';
 import {
   agentSessionsEnabled,
   deactivateAgentSession,
@@ -710,6 +711,11 @@ function ConversationList() {
   const mayor = useAgentSessionState();
   useEffect(() => { void loadAgentSessions(); }, []);
   const mayors: MayorSession[] = mounted ? mayor.sessions : [];
+  // A spec open BESIDE an agent session's chat (#2779 follow-up) takes this
+  // column's width while it is open: at 1280 the thread pane alone is too
+  // narrow for two readable columns. Closing the spec brings the list back.
+  // False until mounted, like everything above (../agent-session/spec-layout).
+  const specBeside = useSpecBeside('messages');
   const inbox = buildInbox({
     conversations: snap.conversations,
     discussions: snap.discussions,
@@ -779,7 +785,7 @@ function ConversationList() {
   ) : null;
 
   return (
-    <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+    <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is

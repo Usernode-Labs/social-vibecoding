@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -44,10 +52,24 @@ import {
   openSpec,
   sendAgentMessage,
   setDrawerOpen,
+  setSpecTab,
   stopAgentTurn,
   switchActiveChange,
   useAgentSessionState,
+  type SpecSheetState,
+  type SpecTab,
 } from './store';
+import {
+  SPEC_DEFAULT_WIDTH,
+  SPEC_MIN_WIDTH,
+  SPEC_WIDTH_STEP,
+  clampSpecWidth,
+  readSpecWidth,
+  splitSpec,
+  useSpecBeside,
+  writeSpecWidth,
+  type SpecSplit,
+} from './spec-layout';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -62,7 +84,7 @@ import {
 // ships, and everything loads in effects.
 
 function markdown(text: string, breaks = true): string | null {
-  const render = window.DevChat?.renderMarkdown;
+  const render = typeof window === 'undefined' ? null : window.DevChat?.renderMarkdown;
   if (typeof render !== 'function') return null;
   try { return render(text, { breaks }); } catch { return null; }
 }
@@ -346,17 +368,113 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
 }
 
 /**
- * A change's spec over the conversation, read-only, any saved version. The
- * change page's own viewer keeps sharing and mentions; this is for reading
- * what the scout wrote without leaving the conversation.
+ * A change's spec, read-only, any saved version. The change page's own
+ * viewer keeps sharing and mentions; this is for reading what the scout wrote
+ * without leaving the conversation.
+ *
+ * ONE VIEW, TWO FRAMES (./spec-layout.ts): beside the conversation from
+ * 1024px up, with a divider that drags; a sheet over it below that. Both show
+ * the same header and body, so the frame is the only thing the window width
+ * decides.
  */
-function SpecSheet() {
+function SpecMarkdown({ text, tagged = false }: { text: string; tagged?: boolean }) {
+  const html = useMemo(() => markdown(text, false), [text]);
+  const tag = tagged ? { 'data-agent-session-spec-text': '' } : {};
+  return html
+    ? <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" {...tag} dangerouslySetInnerHTML={{ __html: html }} />
+    : <pre className="whitespace-pre-wrap text-sm text-zinc-900 dark:text-zinc-100" {...tag}>{text}</pre>;
+}
+
+function SpecTabButton({ tab, active, label, onTab }: {
+  tab: SpecTab;
+  active: SpecTab;
+  label: string;
+  onTab: (tab: SpecTab) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active === tab}
+      className={active === tab ? 'dc-spec-viewer-tab dc-spec-viewer-tab-active' : 'dc-spec-viewer-tab'}
+      data-spec-tab={tab}
+      onClick={() => onTab(tab)}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * The spec's text: the dev chat viewer's two tabs when it has both halves —
+ * the title and summary above them, the plain-language half first — and the
+ * whole document otherwise. Same classes as that viewer, so the two read alike.
+ */
+export function SpecBody({ text, tab, split, onTab }: {
+  text: string;
+  tab: SpecTab;
+  split: SpecSplit | null;
+  onTab: (tab: SpecTab) => void;
+}) {
+  if (!split) return <SpecMarkdown text={text} tagged />;
+  const half = tab === 'tech' ? split.technical : split.userFacing;
+  return (
+    <>
+      {split.preamble ? <div className="dc-spec-viewer-preamble"><SpecMarkdown text={split.preamble} /></div> : null}
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+        <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
+        <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
+      </div>
+      <div role="tabpanel" data-agent-session-spec-half={tab}>
+        {half ? <SpecMarkdown text={half} tagged /> : <p className="dc-spec-tab-empty">Nothing in this section.</p>}
+      </div>
+    </>
+  );
+}
+
+function SpecContent({ sheet }: { sheet: SpecSheetState }) {
   const snapshot = useAgentSessionState();
-  const sheet = snapshot.specSheet;
-  const html = useMemo(() => (sheet && sheet.text ? markdown(sheet.text, false) : null), [sheet?.text]);
-  if (!sheet) return null;
+  const split = useMemo(() => (sheet.text ? splitSpec(sheet.text) : null), [sheet.text]);
   const change = [snapshot.session?.activeChange, ...(snapshot.session?.changes || [])]
     .find((c) => c && c.id === sheet.changeId) || null;
+  return (
+    <>
+      <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
+          {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
+        </div>
+        {sheet.versions.length > 1 ? (
+          <span className="dc-venue-detail-inline">
+            <select
+              className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
+              aria-label="Spec version"
+              value={sheet.version ?? ''}
+              onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
+            >
+              {sheet.versions.map((v) => <option key={v} value={v}>{`v${v}`}</option>)}
+            </select>
+            <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
+          </span>
+        ) : sheet.version ? <span className="text-xs font-semibold text-zinc-500">{`v${sheet.version}`}</span> : null}
+        <button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close" onClick={closeSpec}>
+          <XIcon className="h-5 w-5" aria-hidden="true" />
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        {sheet.phase === 'loading' ? (
+          <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+        ) : null}
+        {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
+        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
+        {sheet.phase === 'ready' && sheet.text ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
+      </div>
+    </>
+  );
+}
+
+/** Below 1024px, and in the side panel: the spec over the conversation, as a sheet. */
+function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
   return (
     <div
       className="absolute inset-0 z-30 flex flex-col bg-zinc-950/30"
@@ -368,42 +486,89 @@ function SpecSheet() {
         aria-label="Spec"
         className="platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none"
       >
-        <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
-            {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
-          </div>
-          {sheet.versions.length > 1 ? (
-            <span className="dc-venue-detail-inline">
-              <select
-                className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
-                aria-label="Spec version"
-                value={sheet.version ?? ''}
-                onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
-              >
-                {sheet.versions.map((v) => <option key={v} value={v}>{`v${v}`}</option>)}
-              </select>
-              <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
-            </span>
-          ) : sheet.version ? <span className="text-xs font-semibold text-zinc-500">{`v${sheet.version}`}</span> : null}
-          <button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close" onClick={closeSpec}>
-            <XIcon className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          {sheet.phase === 'loading' ? (
-            <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
-          ) : null}
-          {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
-          {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
-          {sheet.phase === 'ready' && sheet.text ? (
-            html
-              ? <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" data-agent-session-spec-text dangerouslySetInnerHTML={{ __html: html }} />
-              : <pre className="whitespace-pre-wrap text-sm text-zinc-900 dark:text-zinc-100" data-agent-session-spec-text>{sheet.text}</pre>
-          ) : null}
-        </div>
+        <SpecContent sheet={sheet} />
       </section>
     </div>
+  );
+}
+
+/**
+ * From 1024px up: the spec beside the conversation, behind a divider that
+ * drags (and moves with the arrow keys). The width is the dev chat viewer's
+ * remembered one, clamped so the chat keeps 320px beside the 4px divider;
+ * `max-w` holds the same ceiling when the window narrows after the drag.
+ */
+function SpecBesidePane({ sheet, containerRef }: {
+  sheet: SpecSheetState;
+  containerRef: { current: HTMLDivElement | null };
+}) {
+  const [width, setWidth] = useState(SPEC_DEFAULT_WIDTH);
+  const paneRef = useRef<HTMLElement | null>(null);
+  const containerWidth = () => containerRef.current?.getBoundingClientRect().width ?? null;
+  useEffect(() => { setWidth(clampSpecWidth(readSpecWidth(), containerWidth())); }, []);
+
+  const commit = (next: number) => {
+    const clamped = clampSpecWidth(next, containerWidth());
+    setWidth(clamped);
+    return clamped;
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    const startWidth = paneRef.current?.getBoundingClientRect().width ?? width;
+    let latest = startWidth;
+    event.preventDefault();
+    try { handle.setPointerCapture(event.pointerId); } catch { /* moves still arrive on the handle */ }
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    // Dragging right narrows the spec: its left edge is the divider.
+    const onMove = (move: PointerEvent) => { latest = commit(startWidth - (move.clientX - startX)); };
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      try { handle.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      writeSpecWidth(latest);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    writeSpecWidth(commit(width + (event.key === 'ArrowLeft' ? SPEC_WIDTH_STEP : -SPEC_WIDTH_STEP)));
+  };
+
+  return (
+    <>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the spec"
+        aria-valuenow={width}
+        aria-valuemin={SPEC_MIN_WIDTH}
+        tabIndex={0}
+        className="w-1 shrink-0 cursor-col-resize touch-none bg-zinc-200 transition-colors hover:bg-violet-500 focus-visible:bg-violet-500 focus-visible:outline-none dark:bg-zinc-800"
+        data-agent-session-spec-resizer
+        onPointerDown={onPointerDown}
+        onKeyDown={onKeyDown}
+      />
+      <aside
+        ref={paneRef}
+        aria-label="Spec"
+        className="flex min-h-0 min-w-[280px] max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900"
+        style={{ width }}
+        data-agent-session-spec-sheet={sheet.changeId}
+        data-agent-session-spec-beside=""
+      >
+        <SpecContent sheet={sheet} />
+      </aside>
+    </>
   );
 }
 
@@ -734,6 +899,10 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
 export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) {
   const snapshot = useAgentSessionState();
   const scroll = useRef<HTMLDivElement | null>(null);
+  const root = useRef<HTMLDivElement | null>(null);
+  // The spec beside the chat, or over it (./spec-layout.ts). False until
+  // mounted, so the first render is the one the prerender printed.
+  const beside = useSpecBeside(embedded ? 'messages' : 'screen');
   const liveRun = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const items = useMemo(
     () => buildTranscript(snapshot.messages, snapshot.actions, Date.now(), { liveRun }),
@@ -761,23 +930,29 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
   }, [items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length]);
 
   return (
-    <div className={`relative flex min-h-0 flex-1 flex-col ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
-      <SessionBar session={snapshot.session} about={about} embedded={embedded} />
-      <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
-        {snapshot.phase === 'loading' ? (
-          <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
-        ) : null}
-        {empty ? <EmptyState about={about} /> : null}
-        {items.map((item) => <Item key={item.key} item={item} />)}
-        <LiveTurn runShown={runShown} />
-        {snapshot.error ? (
-          <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
-        ) : null}
+    <div ref={root} className={`relative flex min-h-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
+        <SessionBar session={snapshot.session} about={about} embedded={embedded} />
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
+          {snapshot.phase === 'loading' ? (
+            <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+          ) : null}
+          {empty ? <EmptyState about={about} /> : null}
+          {items.map((item) => <Item key={item.key} item={item} />)}
+          <LiveTurn runShown={runShown} />
+          {snapshot.error ? (
+            <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
+          ) : null}
+        </div>
+        <Replies replies={empty ? starters(about) : replies} />
+        <Composer id={composerId(embedded ? 'messages' : 'screen')} />
+        {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
       </div>
-      <Replies replies={empty ? starters(about) : replies} />
-      <Composer id={composerId(embedded ? 'messages' : 'screen')} />
-      {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
-      <SpecSheet />
+      {snapshot.specSheet
+        ? (beside
+          ? <SpecBesidePane sheet={snapshot.specSheet} containerRef={root} />
+          : <SpecSheet sheet={snapshot.specSheet} />)
+        : null}
     </div>
   );
 }
