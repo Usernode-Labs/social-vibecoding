@@ -16,7 +16,7 @@
 
 import { type ReactNode, useEffect, useState } from 'react';
 
-import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { ArrowPathIcon, SpinnerArcIcon, SpinnerRingIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -106,11 +106,12 @@ export function ImproveQuickActions(): ReactNode {
  *     This app's OWN build landing is the same kind of thing with its own
  *     row: the frame is still showing the build before it, and what the row
  *     offers is a reload of the frame, not of the tab (Improve.reloadApp).
- *   - WORKING. Nothing is being built, but an agent is mid-turn on a change
- *     the viewer can see: what the pulsing green dot on the Homeroom mark
- *     means, which the dot cannot say itself (#3015). A note, and the lowest
- *     priority of the four, because the other three are about what the
- *     viewer is running.
+ *   - WORKING. Nothing is being deployed, but one of the viewer's own
+ *     changes is mid-turn: what the working indicator on the Homeroom mark
+ *     means, which the mark cannot say itself (#3015; own work only since the
+ *     follow-up, SessionState.anyActiveFor). A note, and the lowest priority
+ *     of the four, because the other three are about what the viewer is
+ *     running.
  *   - IDLE. Nothing. A row saying "up to date" is a row that is right almost
  *     always and therefore never read.
  *
@@ -120,7 +121,7 @@ export function ImproveQuickActions(): ReactNode {
  * built" is what the viewer is asking, and which of the two it is shows in
  * the wording.
  */
-export const WORKING_NOTE = 'An agent is working on a change right now. That is the green dot on the Homeroom mark.';
+export const WORKING_NOTE = 'One of your changes is building right now. The Homeroom mark shows it until it finishes.';
 
 function UpdateStatus(): ReactNode {
   const { versionState, deploying, appUpdateReady, working } = useStoreState(improveStore);
@@ -187,14 +188,14 @@ function UpdateStatus(): ReactNode {
   }
 
   if (mounted && working) {
-    // The mark's own dot, drawn beside the words that say what it is.
+    // The mark's own spinner, drawn beside the words that say what it is.
     return (
       <div
         data-improve-working-note
         className="flex items-center gap-3 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400"
       >
-        <span className="inline-flex w-4 shrink-0 justify-center" aria-hidden="true">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="inline-flex w-4 shrink-0 justify-center text-violet-600 dark:text-violet-400" aria-hidden="true">
+          <SpinnerRingIcon className="w-3 h-3 animate-spin motion-reduce:animate-none" />
         </span>
         <span className="min-w-0 flex-1">{WORKING_NOTE}</span>
       </div>

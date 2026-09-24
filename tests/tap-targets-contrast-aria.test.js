@@ -170,10 +170,9 @@ test('Q19: where a slop cannot hang off the control, the control or its row grow
   assert.match(bandBody, /\.gc-card-actions > \.dev-card-menu-btn \{ width: 32px; \}/);
   // A <select> draws no ::after.
   assert.match(CSS, /@media \(pointer: coarse\) \{\n  \.dc-model-select \{ min-height: 32px; \}\n\}/);
-  // A span that only SHOWS the choice (agent-session LabeledSelect, with a
-  // transparent select over it) centres its line in the 32px box itself, or
-  // the text sits above the caret the wrapper centres.
-  assert.match(CSS, /@media \(pointer: coarse\) \{\n  span\.dc-model-select \{ line-height: 32px; \}\n\}/);
+  // The agent-session composer's shown-line picker (a span under a
+  // transparent select) is gone: its model pill is a 40px button.
+  assert.doesNotMatch(CSS, /span\.dc-model-select/);
 });
 
 test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {

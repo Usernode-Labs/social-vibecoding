@@ -851,9 +851,16 @@ const Improve = {
     }
   },
 
-  /** `SessionState.anyActive()`, as store state. Safe before it exists. */
+  /**
+   * `SessionState.anyActiveFor(<viewer>)`, as store state: one of the
+   * viewer's OWN sessions is mid-turn. Not anyActive(), which also counts
+   * every shared session and auto-run on the apps the viewer can see, so the
+   * mark lit up for other people's builds (#2779 follow-up). Safe before
+   * either exists.
+   */
   refreshWorking() {
-    const working = !!window.SessionState?.anyActive?.();
+    const me = window.App?.user?.id;
+    const working = me != null && !!window.SessionState?.anyActiveFor?.(me);
     if (improveStore.get().working !== working) improveStore.set({ working });
   },
 

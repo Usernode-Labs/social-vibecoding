@@ -10,8 +10,9 @@
 // panel may shrink below its content, and an empty message box is as tall as
 // its hint, which wraps on a phone and was cut off mid-line.
 //
-// #3015: the pulsing emerald dot on the mark means an agent is mid-turn on a
-// change the viewer can see. It said so nowhere. The mark says it on hover,
+// #3015: the working cue on the mark (a pulsing emerald dot then, a blue
+// corner spinner since the #2779 follow-up, and for the viewer's own changes
+// only) means an agent is mid-turn. It said so nowhere. The mark says it on hover,
 // and the menu the mark opens says it in words, which is what a touch screen
 // gets.
 
@@ -45,20 +46,21 @@ test('#3016: the session bar wraps on every surface, and the panel cannot outgro
 test('#3016: an empty message box is sized to its hint, measured without an input event', () => {
   const composer = panel.slice(panel.indexOf('// The field grows with what it holds'), panel.indexOf('function submit('));
   assert.match(composer, /if \(!field\.value && field\.placeholder\) \{\s*field\.value = field\.placeholder;\s*height = field\.scrollHeight;\s*field\.value = '';\s*\}/);
-  assert.match(composer, /\}, \[value, placeholder\]\);/, 're-measured when the hint changes (working, archived)');
+  assert.match(composer, /useEffect\(\(\) => \{ fitField\(\); \}, \[value, placeholder, fitField\]\);/,
+    're-measured when the hint changes (working, archived), and on a width change (tests/agent-session-attachments.test.js)');
   assert.match(panel, /placeholder=\{placeholder\}/);
 });
 
 test('#3015: the mark says what its green dot means on hover, and keeps its name', () => {
   const mark = read('frontend/src/features/header/platform-mark.tsx');
-  assert.match(mark, /const WORKING_TITLE = 'Green dot: an agent is working on a change right now';/);
+  assert.match(mark, /const WORKING_TITLE = 'One of your changes is building';/);
   assert.match(mark, /title=\{working \? WORKING_TITLE : undefined\}/, 'only while the dot is showing');
   assert.match(mark, /aria-label="Homeroom menu"/, 'the name the empty board\'s note uses is unchanged');
 });
 
 test('#3015: the menu says it in words, after mount only', () => {
   const actions = loadTsx('frontend/src/features/improve/actions.tsx');
-  assert.equal(actions.WORKING_NOTE, 'An agent is working on a change right now. That is the green dot on the Homeroom mark.');
+  assert.equal(actions.WORKING_NOTE, 'One of your changes is building right now. The Homeroom mark shows it until it finishes.');
   const src = read('frontend/src/features/improve/actions.tsx');
   assert.match(src, /if \(mounted && working\) \{/, 'the lowest priority of the four states, and never in the prerender');
   assert.match(src, /data-improve-working-note/);

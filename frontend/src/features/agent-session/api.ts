@@ -63,6 +63,21 @@ export interface AgentMessage {
   createdAt: string | null;
 }
 
+/**
+ * A file sent with a message (#2779 follow-up): the dev chat's attachment
+ * shape, as routes/agent-sessions.js answers an upload and as a user row's
+ * `metadata.attachments` carries it.
+ */
+export interface AgentAttachment {
+  id: string;
+  /** 'image' | 'text' | 'zip' | 'binary', decided by the server. */
+  kind: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  meta?: Record<string, unknown> | null;
+}
+
 /** One saved draft (#798's list, per account): the server's wire shape. */
 export interface SavedDraft {
   id: string;
@@ -512,14 +527,19 @@ export async function readEventStream(
 export async function sendTurn(
   id: number,
   message: string,
-  { signal, onEvent }: { signal?: AbortSignal; onEvent: (event: AgentTurnEvent) => void },
+  { signal, onEvent, attachmentIds = [] }: {
+    signal?: AbortSignal;
+    onEvent: (event: AgentTurnEvent) => void;
+    /** Uploads to this conversation (uploadAttachment), sent with the message. */
+    attachmentIds?: string[];
+  },
 ): Promise<void> {
   const response = await fetch(`/api/agent-sessions/${id}/turns`, {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(attachmentIds.length ? { message, attachmentIds } : { message }),
     signal,
   });
   if (!response.ok) {
@@ -527,4 +547,27 @@ export async function sendTurn(
     return;
   }
   await readEventStream(response, onEvent);
+}
+
+/**
+ * One file's bytes, uploaded to the conversation before the message that
+ * sends it (the dev chat's two-step, #450): the server decides its kind from
+ * the name and the bytes, never from what the browser says it is.
+ */
+export async function uploadAttachment(id: number, file: Blob, filename: string): Promise<AgentAttachment> {
+  return json<AgentAttachment>(
+    await fetch(`/api/agent-sessions/${id}/attachments?filename=${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/json' },
+      body: file,
+    }),
+    `Could not attach ${filename}.`,
+  );
+}
+
+/** Where a sent file is served, to the conversation's owner only. */
+export function attachmentUrl(id: number, attachmentId: string): string {
+  return `/api/agent-sessions/${id}/attachments/${encodeURIComponent(attachmentId)}`;
 }

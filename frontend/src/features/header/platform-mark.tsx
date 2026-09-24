@@ -60,7 +60,7 @@
 
 import { useRef } from 'react';
 
-import { ChevronDownIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -93,9 +93,19 @@ import { improveStore } from '../improve/improve-store.js';
  * costs and why the menu row's glyph is where it is paid. A 26px tile with
  * three coloured dots on it is a status readout, not a mark.
  */
+/*
+ * The working cue is a small blue spinner on a neutral disc, a badge on the
+ * tile's corner like the bell's (#2779 follow-up; it was an 8px emerald
+ * pulse). A spinner says "running right now" without a legend, which the
+ * green dot needed a tooltip for (#3015). Still top-right, still no count,
+ * still hidden at rest. The disc is the header's own bg-zinc-200 /
+ * dark:bg-zinc-900 (platform-header.tsx), so it separates the arc from the
+ * tile on any tint an app gives the bar.
+ */
 const WORKING_DOT_CLS =
-  'absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
-const WORKING_TITLE = 'Green dot: an agent is working on a change right now';
+  'absolute -top-1.5 -right-1.5 flex items-center justify-center w-[15px] h-[15px] rounded-full '
+  + 'bg-zinc-200 text-violet-600 dark:bg-zinc-900 dark:text-violet-400';
+const WORKING_TITLE = 'One of your changes is building';
 
 export function PlatformMark() {
   // The trigger reports its surface's state, read from the store rather than
@@ -133,7 +143,7 @@ export function PlatformMark() {
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
       aria-label="Homeroom menu"
-      /* What the green dot means, on hover (#3015). The menu this opens says
+      /* What the spinner means, on hover (#3015). The menu this opens says
          it too, for a touch screen (../improve/actions.tsx UpdateStatus). */
       title={working ? WORKING_TITLE : undefined}
       onClick={() => (window as unknown as {
@@ -171,7 +181,7 @@ export function PlatformMark() {
           id="feedback-queue-dot"
           className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
         />
-        {/* Top-RIGHT: a turn is running right now. A live fact, true only
+        {/* Top-RIGHT: one of your changes is building right now. A live fact, true only
             while it is true, so it needs no dismissal and carries no count —
             the count that used to be here went to the bell in #1610, where
             the list that clears it lives. */}
@@ -180,6 +190,7 @@ export function PlatformMark() {
           className={working ? WORKING_DOT_CLS : `hidden ${WORKING_DOT_CLS}`}
           aria-hidden="true"
         >
+          <SpinnerRingIcon className="w-3 h-3 animate-spin motion-reduce:animate-none" />
         </span>
       </span>
       <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
