@@ -19,7 +19,7 @@
 // draws as the dev chat's run card, captioned with the agent that actually
 // ran (its `agentBackend`). A drafted spec is its own item after it.
 
-import type { AgentAction, AgentActionStatus, AgentCard, AgentMessage } from './api';
+import type { AgentAction, AgentActionStatus, AgentAttachment, AgentCard, AgentMessage } from './api';
 
 export interface CardView {
   id: string;
@@ -31,7 +31,7 @@ export interface CardView {
 }
 
 export type TranscriptItem =
-  | { kind: 'user'; key: string; text: string }
+  | { kind: 'user'; key: string; text: string; attachments: AgentAttachment[] }
   | {
     kind: 'mayor';
     key: string;
@@ -149,12 +149,17 @@ export function cardRows(input: Record<string, unknown>): Array<[string, string]
   return rows;
 }
 
-function actionOutcome(action: AgentAction | undefined): string | null {
+// The server's plain outcome line first (#3017), then the platform's own
+// nextStep or message. A result that is only JSON is never printed: a card
+// that said "Confirmed · {"number":3006,…" was showing the tool's raw answer.
+export function actionOutcome(action: AgentAction | undefined): string | null {
   if (!action || !action.result) return null;
+  if (typeof action.outcome === 'string' && action.outcome.trim()) return clip(action.outcome, 240);
   const structured = action.result.structured || null;
   const said = structured && (structured.nextStep || structured.message);
   if (typeof said === 'string' && said) return clip(said, 240);
-  return action.result.text ? clip(action.result.text, 240) : null;
+  const text = action.result.text ? clip(action.result.text, 240) : '';
+  return text && !/^[[{]/.test(text) ? text : null;
 }
 
 export function cardView(card: AgentCard, actions: Map<string, AgentAction>, now = Date.now()): CardView {
@@ -169,6 +174,21 @@ export function cardView(card: AgentCard, actions: Map<string, AgentAction>, now
     status,
     outcome: actionOutcome(action),
   };
+}
+
+// The server's stand-in for a message that was only files (attachments.js
+// ATTACHMENTS_ONLY_TEXT): the files say it, so the bubble shows no text.
+const ATTACHMENTS_ONLY_TEXT = '(attached files)';
+
+/** A user row's words and the files sent with it (routes/agent-sessions.js). */
+export function userMessage(content: string, listed: unknown): { text: string; attachments: AgentAttachment[] } {
+  const attachments = (Array.isArray(listed) ? listed : []).filter((att): att is AgentAttachment => (
+    !!att && typeof att === 'object'
+    && typeof (att as AgentAttachment).id === 'string' && /^[a-f0-9]{32}$/.test((att as AgentAttachment).id)
+    && typeof (att as AgentAttachment).filename === 'string'
+  ));
+  const text = attachments.length && content.trim() === ATTACHMENTS_ONLY_TEXT ? '' : content;
+  return { text, attachments };
 }
 
 function stringList(value: unknown): string[] {
@@ -262,7 +282,7 @@ export function buildTranscript(
     const meta = (row.metadata || {}) as Record<string, unknown>;
     const key = `m${row.id}`;
     if (row.role === 'user') {
-      items.push({ kind: 'user', key, text: row.content });
+      items.push({ kind: 'user', key, ...userMessage(row.content, meta.attachments) });
       continue;
     }
     if (row.role === 'assistant') {

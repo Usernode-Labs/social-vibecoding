@@ -9344,3 +9344,26 @@ CREATE INDEX IF NOT EXISTS agent_session_drafts_user
 -- Private like its conversation: unsent words, and a foreign key to the
 -- private agent_sessions.
 COMMENT ON TABLE agent_session_drafts IS 'staging:private';
+
+-- Files attached to an agent-session message (#2779 follow-up): the dev
+-- chat's own table, so the validation, the caps, the 24h orphan sweep, the
+-- account-deletion purge and the coding agent's download path
+-- (routes/internal.js) all apply unchanged. A conversation's message need
+-- not have a change, so such a row names the conversation instead of a
+-- session: agent_session_id set, session_id NULL. Every row names one or the
+-- other. The table stays staging:private (above).
+ALTER TABLE chat_session_attachments
+  ADD COLUMN IF NOT EXISTS agent_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE CASCADE;
+ALTER TABLE chat_session_attachments ALTER COLUMN session_id DROP NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'chat_session_attachments_owner_chk'
+  ) THEN
+    ALTER TABLE chat_session_attachments
+      ADD CONSTRAINT chat_session_attachments_owner_chk
+      CHECK (session_id IS NOT NULL OR agent_session_id IS NOT NULL);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_agent_session
+  ON chat_session_attachments(agent_session_id) WHERE agent_session_id IS NOT NULL;

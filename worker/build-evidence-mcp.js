@@ -28,7 +28,8 @@ const story = z.object({
   persona: z.enum(['member', 'read_only_admin']),
   viewports: z.array(viewport).min(1).max(2),
   intent: z.object({
-    startPath: z.string().min(1).max(512),
+    startPath: z.string().min(1).max(512)
+      .describe('Use a concrete relative route from an observed screen or declared check, including query and hash. Use / only when the change is visible on the home screen.'),
     steps: z.array(z.string().min(1).max(200)).min(1).max(40),
     checkpoint: z.string().min(1).max(500),
     focus: z.string().min(1).max(200),

@@ -76,7 +76,9 @@ test('an idle row carries no dot at all — nothing on it is solid green', () =>
 test('a row waiting on its owner is no different in shape', () => {
   const html = row({ ...VIEW, awaitingInput: true });
   assert.doesNotMatch(html, CORNER_DOT);
-  assert.match(html, /Ready for your input/);
+  // QA 2026-09-24 Q29: the waiting pill reads "Needs you" (it was "Ready
+  // for your input", which squeezed the title in a Messages row).
+  assert.match(html, /Needs you/);
 });
 
 test('a handed-off work order lost its outlined dot too (#1417)', () => {

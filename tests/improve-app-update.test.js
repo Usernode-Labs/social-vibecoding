@@ -272,7 +272,7 @@ test('a landed app build offers a reload of the frame, not of the tab', () => {
   // is gone and so is the row. What survives is the OFFER, which is the half
   // that ever did anything: the frame is still showing the build before this
   // one, so the row reloads the frame rather than the tab.
-  assert.match(PANEL, /const \{ versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
+  assert.match(PANEL, /const \{ versionState, deploying, appUpdateReady, working \} = useStoreState\(improveStore\);/);
   assert.match(PANEL, /id="improve-app-update-ready"/);
   assert.match(PANEL, /Improve\.reloadApp/);
   // …and the menu is what renders it, now that the panel does not exist.
@@ -280,7 +280,7 @@ test('a landed app build offers a reload of the frame, not of the tab', () => {
 });
 
 test('the panel offers the reload of the app on its own row, through Improve.reloadApp', () => {
-  assert.match(PANEL, /const \{ versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
+  assert.match(PANEL, /const \{ versionState, deploying, appUpdateReady, working \} = useStoreState\(improveStore\);/);
   const rowAt = PANEL.indexOf('id="improve-app-update-ready"');
   assert.ok(rowAt > 0, 'the row exists');
   const row = PANEL.slice(rowAt, PANEL.indexOf('</button>', rowAt));

@@ -29,8 +29,10 @@
 //    branches that repaint without it), and deliberately NOT inside
 //    _renderShell, which would make the group you are using the one group
 //    you cannot collapse;
-//  - the section rows themselves are untouched: role="tab"/aria-selected on
-//    desktop, neither on mobile (the phone menu is a list, not a tab set).
+//  - the section rows themselves are untouched: section links of the
+//    sidebar's <nav>, the current one `aria-current="page"` on desktop, no
+//    marker on mobile (the phone menu is a list). They were role="tab" /
+//    aria-selected with no tablist around them until QA 2026-09-24 Q20.
 //
 // Run with: node --test tests/admin-nav-collapsible-groups.test.js
 
@@ -122,9 +124,16 @@ test('both menus render group headings as real toggle buttons', () => {
     'the sidebar items container is addressable by group name');
   assert.match(side, /collapsed \? ' class="hidden"' : ''/,
     'and is hidden when the group is collapsed');
-  // Untouched: the rows are still the tab-set contract the sidebar has had.
-  assert.match(side, /role="tab"/, 'sidebar rows are still tabs');
-  assert.match(side, /aria-selected=/, 'with the active row still announced');
+  // The rows are the <nav>'s section links, the active one announced as the
+  // current page. QA 2026-09-24 Q20: they were `role="tab"` with no tablist
+  // parent (axe aria-required-parent), so the tab-set contract is retired.
+  // (This member only: the phone menu's comment after it names the same two
+  // attributes in prose.)
+  const sideOnly = side.slice(0, side.indexOf('\n  },\n'));
+  assert.ok(sideOnly.length > 200, 'sliced to the end of _navItemsHtml');
+  assert.doesNotMatch(sideOnly, /role="tab"/, 'sidebar rows are not orphan tabs');
+  assert.doesNotMatch(sideOnly, /aria-selected=/, 'and carry no tab selection state');
+  assert.match(side, /isActive \? ' aria-current="page"' : ''/, 'the active row is announced as the current page');
 
   const mobile = sliceFn('_mobileMenuHtml() {', 2400);
   assert.match(mobile, /_groupToggleHtml\(g\.name, domId, collapsed,/,

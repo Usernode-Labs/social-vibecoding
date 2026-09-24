@@ -80,8 +80,9 @@ function liveBusy(session) {
 
 /**
  * Whether the session is WAITING ON THE USER (#1959) — the one fact behind
- * both the caption's "Needs you" and the pill's "Ready for your input", so
- * the two cannot say different things.
+ * both the caption's "Needs you" and the pill's "Needs you" (QA 2026-09-24
+ * Q29; it read "Ready for your input" until then), so the two cannot say
+ * different things.
  *
  * `awaiting_input` is the verdict GET /api/me/active-sessions reaches from
  * the transcript (sessionAwaitsInput in routes/sessions.js): the last
@@ -850,9 +851,16 @@ const Improve = {
     }
   },
 
-  /** `SessionState.anyActive()`, as store state. Safe before it exists. */
+  /**
+   * `SessionState.anyActiveFor(<viewer>)`, as store state: one of the
+   * viewer's OWN sessions is mid-turn. Not anyActive(), which also counts
+   * every shared session and auto-run on the apps the viewer can see, so the
+   * mark lit up for other people's builds (#2779 follow-up). Safe before
+   * either exists.
+   */
   refreshWorking() {
-    const working = !!window.SessionState?.anyActive?.();
+    const me = window.App?.user?.id;
+    const working = me != null && !!window.SessionState?.anyActiveFor?.(me);
     if (improveStore.get().working !== working) improveStore.set({ working });
   },
 

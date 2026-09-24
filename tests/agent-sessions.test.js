@@ -576,6 +576,89 @@ test('stop answers what it stopped, and names the change during a dispatch', asy
   }
 });
 
+test('stop with no turn running here hands back a lease its dead turn left', async () => {
+  const agentTurnMod = require('../src/services/mayor/agent-turn');
+  const saved = { stopAgentTurn: agentTurnMod.stopAgentTurn, handBackOrphanedTurn: agentTurnMod.handBackOrphanedTurn };
+  const handBacks = [];
+  agentTurnMod.stopAgentTurn = () => ({ stopped: false, reason: 'no_active_turn' });
+  agentTurnMod.handBackOrphanedTurn = async (args) => { handBacks.push(args); return true; };
+  try {
+    let lease = { id: 'dead-turn' };
+    await withRoutes({ id: 7, username: 'ada' }, { 'FROM agent_sessions WHERE id': () => ({ rows: [{ active_turn: lease }] }) }, async (call) => {
+      const stopped = await call('POST', '/api/agent-sessions/5/stop');
+      assert.deepEqual(stopped.body, { ok: true, stopped: false, reason: 'no_active_turn', released: true });
+      assert.equal(handBacks.length, 1);
+      assert.equal(handBacks[0].agentSessionId, 5);
+      assert.equal(handBacks[0].userId, 7, 'the owner\'s conversation only');
+
+      lease = null;
+      const idle = await call('POST', '/api/agent-sessions/5/stop');
+      assert.deepEqual(idle.body, { ok: true, stopped: false, reason: 'no_active_turn' });
+      assert.equal(handBacks.length, 1, 'no lease, nothing to hand back');
+    });
+  } finally {
+    Object.assign(agentTurnMod, saved);
+  }
+});
+
+test('a build recovery adopted on the active change reads as the conversation\'s running dispatch', async () => {
+  const agentTurnMod = require('../src/services/mayor/agent-turn');
+  const agentSessionsMod = require('../src/services/agent-sessions');
+  const saved = {
+    recoveredRunState: agentTurnMod.recoveredRunState,
+    getAgentSession: agentSessionsMod.getAgentSession,
+    markSeen: agentSessionsMod.markSeen,
+  };
+  let building = true;
+  agentTurnMod.recoveredRunState = (id, changeId) => (building ? { phase: 'cc', stopping: false, changeId } : null);
+  agentSessionsMod.getAgentSession = async () => ({ id: 5, busy: false, activeChange: { id: 50 } });
+  agentSessionsMod.markSeen = async () => false;
+  try {
+    await withRoutes({ id: 7 }, {}, async (call) => {
+      const during = await call('GET', '/api/agent-sessions/5');
+      assert.equal(during.body.session.busy, true, 'the dead Mayor\'s lease reads idle, the build does not');
+      assert.deepEqual(during.body.turn, { phase: 'cc', stopping: false, changeId: 50 });
+
+      building = false;
+      const after = await call('GET', '/api/agent-sessions/5');
+      assert.equal(after.body.session.busy, false);
+      assert.equal(after.body.turn, null);
+    });
+  } finally {
+    agentTurnMod.recoveredRunState = saved.recoveredRunState;
+    Object.assign(agentSessionsMod, { getAgentSession: saved.getAgentSession, markSeen: saved.markSeen });
+  }
+});
+
+test('stop during a build recovery adopted names the change, and hands no lease back', async () => {
+  const agentTurnMod = require('../src/services/mayor/agent-turn');
+  const saved = {
+    stopAgentTurn: agentTurnMod.stopAgentTurn,
+    handBackOrphanedTurn: agentTurnMod.handBackOrphanedTurn,
+    recoveredRunState: agentTurnMod.recoveredRunState,
+  };
+  const handBacks = [];
+  const asked = [];
+  agentTurnMod.stopAgentTurn = () => ({ stopped: false, reason: 'no_active_turn' });
+  agentTurnMod.handBackOrphanedTurn = async (args) => { handBacks.push(args); return true; };
+  agentTurnMod.recoveredRunState = (id, changeId) => {
+    asked.push([id, changeId]);
+    return { phase: 'cc', stopping: false, changeId };
+  };
+  try {
+    const row = { active_turn: { id: 'dead-turn' }, active_change_id: '50' };
+    await withRoutes({ id: 7, username: 'ada' }, { 'FROM agent_sessions WHERE id': () => ({ rows: [row] }) }, async (call) => {
+      const stopped = await call('POST', '/api/agent-sessions/5/stop');
+      assert.deepEqual(stopped.body, { ok: true, stopped: false, reason: 'dispatch_running', changeId: 50 },
+        'the screen stops the change, as it does during a live dispatch');
+      assert.deepEqual(asked, [[5, 50]]);
+      assert.equal(handBacks.length, 0, 'the run\'s own end hands the conversation back');
+    });
+  } finally {
+    Object.assign(agentTurnMod, saved);
+  }
+});
+
 test('the changes drawer switches the active change without a model call', async () => {
   const agentSessionsMod = require('../src/services/agent-sessions');
   const saved = agentSessionsMod.switchActiveChange;

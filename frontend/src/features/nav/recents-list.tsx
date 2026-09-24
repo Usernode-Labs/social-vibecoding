@@ -130,12 +130,14 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
     >
       {app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
+      {/* #2779: an agent session working (a spinner) or finished unseen (a
+          green dot), leading its name (#3013) so it reads as the session's
+          state rather than one more mark at the row's end. The row's
+          accessible name says it too (`doing`). */}
+      {item.activity ? <AgentActivityMark activity={item.activity} className="platform-recent-activity" /> : null}
       <span className="platform-recent-label">{item.label}</span>
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
-      {/* #2779: an agent session working (a spinner) or finished unseen (a
-          green dot). The row's accessible name says it too (`doing`). */}
-      {item.activity ? <AgentActivityMark activity={item.activity} className="platform-recent-activity" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
   );
@@ -153,7 +155,7 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
   onToggleOlder: () => void;
   now?: number;
 }) {
-  const { days, older } = groupRecents(items, now);
+  const { days, earlier, older } = groupRecents(items, now);
   const row = (item: RecentItem) => (
     <RecentRow key={item.key} item={item} live={!!item.app && live.includes(item.app.slug)} />
   );
@@ -165,9 +167,19 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
           {day.items.map(row)}
         </Fragment>
       ))}
+      {/* QA 2026-09-24 Q31: the newest older rows, shown while folded so
+          the list is never just a heading over a button. Opened, the rest
+          follow straight on: they are earlier too, and a second label
+          ("Older") under "Earlier" would say nothing new. */}
+      {earlier.length ? (
+        <>
+          <div className="platform-recents-day">Earlier</div>
+          {earlier.map(row)}
+        </>
+      ) : null}
       {showOlder && older.length ? (
         <>
-          <div className="platform-recents-day">Older</div>
+          {earlier.length ? null : <div className="platform-recents-day">Older</div>}
           {older.map(row)}
         </>
       ) : null}

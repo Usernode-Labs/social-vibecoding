@@ -82,6 +82,26 @@ test('the recovery view is URL-reachable for captures (#1158)', () => {
     'the shot boots the anonymous shell like ?shot=anon');
 });
 
+test('QA Q16: "Forgot password?" is its own history entry, so Back returns to Sign in', () => {
+  // It swapped the card's view on the same #login entry, so Back from it had
+  // no Sign in to land on and went straight on to the marketing landing.
+  const tsx = read(LOGIN_TSX);
+  assert.match(tsx, /const RECOVERY_ROUTE = 'login\/forgot';/);
+  assert.match(tsx, /id="forgot-password-link"\s*href=\{`#\$\{RECOVERY_ROUTE\}`\}/,
+    'the link names the address, so a modified click opens it too');
+  assert.match(tsx,
+    /history\.pushState\(\{ \[RECOVERY_ENTRY\]: true \}, '', `#\$\{RECOVERY_ROUTE\}`\);[\s\S]{0,160}showRecovery\(\);/,
+    'a plain click pushes the entry and shows the view without a router round trip');
+  // Loaded, reloaded or traversed to, the router hands the segment over…
+  assert.match(tsx, /if \(!openSignup && seg === 'forgot'\) showRecovery\(\);/);
+  assert.match(read('public/js/auth-screens.js'),
+    /if \(route === 'login'\) AuthScreens\._loginOnShow\(false, seg\);/);
+  // …and "Back to login" undoes the entry the card pushed rather than
+  // stacking a #login on top of it.
+  assert.match(tsx, /id="btn-recovery-back"[\s\S]{0,240}onClick=\{leaveRecovery\}/);
+  assert.match(tsx, /state\[RECOVERY_ENTRY\] && typeof history\.back === 'function'\) \{\s*history\.back\(\);/);
+});
+
 test('the stale "no email on file" claim is rewritten once the email path exists', () => {
   const tsx = read(LOGIN_TSX);
   // The frozen markup's lead still carries the pre-email copy; the screen

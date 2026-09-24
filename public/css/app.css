@@ -15,7 +15,11 @@
   --border-light: #e3e3e6;
   --text-primary: #0a0a0a;
   --text-secondary: #3a3a3c;
-  --text-muted: #6c6c70;
+  /* #68686c, not the #6c6c70 eyedropped with the rest (QA 2026-09-24 Q20):
+     the same four-step correction tailwind.config.js made to zinc-500, and for
+     the same reason. #6c6c70 is 4.34:1 on the zinc-100 track the theme
+     toggle's idle segments sit in; #68686c clears 4.61. */
+  --text-muted: #68686c;
   --text-faint: #8e8e93;
   --text-code: #3a3a3c;
   /* #0a6ee0, not the #0a7cff eyedropped from the design screenshots.
@@ -39,6 +43,13 @@
      circle needs so its halo reads against it. */
   --accent-wash: #d6e9ff;
   --accent-wash-ink: #0062cc;
+  /* Accent-coloured TEXT sitting on --accent-tint (QA 2026-09-24 Q20). The
+     tint is translucent accent, so it pulls the accent's own contrast down:
+     #0a6ee0 on the 8% tint over white is 4.34:1, under AA for the card band's
+     12px labels ("Start work", "Claim this issue"). One step down the ramp
+     (violet-700) reads at 5.19 and is the same hue. Dark keeps the accent
+     itself, which already clears 5.4 on its tint. */
+  --accent-tint-ink: #0062cc;
   /* Text ON the accent, wherever the shell puts type on a saturated fill.
      It must not follow the page. The outgoing chat bubble used to be the
      headline case and no longer is a fill at all; .messages-state button
@@ -816,15 +827,31 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-message-failed-note button.messages-discard { color: var(--text-muted); font-weight: 400; }
 .messages-message-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 0 8px;
+  min-width: 0;
   min-height: 22px;
   color: var(--text-primary);
   font-size: 17px;
   font-weight: 700;
 }
 .messages-message-head time,
-.messages-message-head time ~ span { color: var(--text-muted); font-size: 15px; font-weight: 400; }
+.messages-message-head time ~ span { color: var(--text-muted); font-size: 15px; font-weight: 400; white-space: nowrap; }
+/* QA 2026-09-24 Q22: a long name gives way before the time does. The name
+   takes what the line has left, up to its own width, and ends in an ellipsis
+   rather than breaking at a hyphen; the time never wraps inside itself. The
+   6em basis is the point at which they stop sharing a line — below it the
+   time drops to a second line of the head instead of squeezing the name to
+   a stub. */
+.messages-message-author {
+  flex: 1 1 6em;
+  min-width: 0;
+  max-width: max-content;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The body at the language's reading size. Doubled up with .gc-msg-content
    because format.tsx puts both classes on the node — that one is the
    markdown vocabulary (its list, code and table rules), and it sets 13px
@@ -1389,6 +1416,20 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .messages-composer-card { transition: none; }
 }
 .messages-composer-disabled { padding: 14px 16px; color: var(--text-muted); font-size: 15px; text-align: center; }
+/* QA 2026-09-24 Q2: a direct request the other person has not accepted yet.
+   Before the opening message, one muted line over the card says what it will
+   be; after it, the card itself gives way to the invitation banner's tinted
+   panel, which names who the thread is waiting for. */
+.messages-composer-hint { margin: 0 4px 6px; color: var(--text-muted); font-size: 13px; line-height: 1.35; }
+.messages-awaiting {
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--accent-tint);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.messages-awaiting strong { display: block; color: var(--accent); font-size: 15px; font-weight: 600; }
+.messages-awaiting p { margin-top: 2px; color: var(--text-muted); }
 .messages-composer-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -1575,6 +1616,10 @@ form.agent-session-composer:focus-within {
 }
 .messages-mention-menu button { display: block; width: 100%; padding: 9px 12px; border-radius: 10px; color: var(--text-primary); font-size: 15px; text-align: left; }
 .messages-mention-menu button:hover { background: var(--messages-surface-2); }
+/* QA 2026-09-24 Q13: the row the arrow keys have highlighted, which Enter or
+   Tab will pick. A tint of the accent rather than the hover grey, so the
+   keyboard's choice still reads when the pointer is resting on another row. */
+.messages-mention-menu button[aria-selected="true"] { background: var(--accent-tint); box-shadow: inset 3px 0 0 var(--accent); }
 .messages-mention-menu .messages-channel-option-name { color: var(--text-muted); font-size: 13px; }
 /* `:th` — the emoji shortcode menu (features/messages/composer.tsx). The
    mention menu's box; the heading stays put while the rows scroll, a row is
@@ -2562,8 +2607,14 @@ form.agent-session-composer:focus-within {
      label the token paints measured 3.2:1 or worse against the dark ground,
      and the create modal's unselected segment pills 2.7:1 against their track.
      One step up the neutral ramp reads at 6.0 on the ground and 5.3 on a card,
-     and is still plainly quieter than --text-secondary above. */
-  --text-muted: #8e8e93;
+     and is still plainly quieter than --text-secondary above.
+
+     #98989d, not #8e8e93 (QA 2026-09-24 Q20): the ground was measured, the
+     raised surfaces were not. On --bg-tertiary (#2c2c2e), which is what the
+     Workshop tabs, the Messages filter track, the theme toggle and the
+     category cards sit on, #8e8e93 is 4.27:1. Five steps lighter clears
+     4.85 there and stays well under --text-secondary. */
+  --text-muted: #98989d;
   --text-faint: #8e8e93;
   --text-code: #e3e3e6;
   --accent: #5aa9ff;
@@ -2574,6 +2625,7 @@ form.agent-session-composer:focus-within {
      on screen, and this is a control, not the message. */
   --accent-wash: #00264d;
   --accent-wash-ink: #85bcff;
+  --accent-tint-ink: #5aa9ff;
   --accent-ink: #0b0b0c;
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
@@ -2900,6 +2952,16 @@ form.agent-session-composer:focus-within {
   -webkit-backdrop-filter: saturate(180%) blur(16px);
   backdrop-filter: saturate(180%) blur(16px);
   box-shadow: 0 0.5px 0 var(--un-hairline);
+}
+
+/* THE KIT'S TOAST CLEARS THE TAB BAR (QA 2026-09-24 Q28). native.css rests
+   the toast 16px above `--un-toast-inset-bottom`; on a phone that is the
+   tab bar's full outer height, which `--platform-tabs-h` already says (0px
+   on a desktop, where the "bar" is the rail). Read on the toast itself, a
+   child of body, so it inherits body's value. PlatformUI.toast overrides it
+   inline when a composer sits above the bar. */
+.un-toast {
+  --un-toast-inset-bottom: var(--platform-tabs-h, 0px);
 }
 
 /* ── Native iOS performance baseline (#787) ──────────────────────────
@@ -3328,6 +3390,28 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
   overflow-x: hidden;
 }
 
+/* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
+   QA 2026-09-24 Q19. `.un-touch-target` (native.css) grows a control's hit
+   box to 44px, which is right for a lone icon in a bar. In a DENSE row it is
+   wrong: two Revoke buttons stacked 8px apart, or View and Delete sitting over
+   an open file preview, and a 44px box reaches over the neighbour and takes
+   its taps, because the later element's ::after paints on top. This is the
+   same trick at the 32px a phone needs, which fits inside those gaps, and only
+   on a coarse pointer: a mouse is precise enough to hit the control itself.
+   Zero-specificity `position` for the same reason the kit gives. */
+@media (pointer: coarse) {
+  :where(.touch-target-32) { position: relative; }
+  .touch-target-32::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 32px);
+    height: max(100%, 32px);
+    transform: translate(-50%, -50%);
+  }
+}
+
 /* A held launcher tile can select nearby text (such as Discover) even when
    the tile itself is non-selectable. Protect the whole launcher content
    before the long-press timer fires. The search field is outside #home-body
@@ -3644,7 +3728,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   color: #eaeaea; /* zinc-100, the body's dark ink */
   --text-primary: #f5f5f7;
   --text-secondary: #e3e3e6;
-  --text-muted: #8e8e93;
+  --text-muted: #98989d;
   --text-faint: #8e8e93;
   --bg-primary: #0b0b0c;
   --bg-secondary: #1c1c1e;
@@ -3662,7 +3746,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   color: #1c1c1e; /* zinc-900, the body's light ink */
   --text-primary: #0a0a0a;
   --text-secondary: #3a3a3c;
-  --text-muted: #6c6c70;
+  --text-muted: #68686c;
   --text-faint: #8e8e93;
   --bg-primary: #ffffff;
   --bg-secondary: #f5f5f7;
@@ -4844,6 +4928,23 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
 }
 
+/* THE PARKED SEARCH BAR IS TRANSPARENT (QA 2026-09-24 Q30c). Parking the
+   scroller at the bar's height does not take the bar off the screen on a
+   phone: the platform header is translucent (rgba(255,255,255,.5) over a
+   blur) and overlays the top of the scroller, so the parked bar sat right
+   under it and "Search your apps…" read through the Homeroom logo on every
+   load. Home._searchReveal already stamps whether the bar is showing
+   (data-revealed, half the bar or more); the bar simply fades with it. A
+   focused bar is never transparent, whatever its scroll position, so a
+   keyboard focus can never leave the caret in an invisible field (the focus
+   handler in home.js also scrolls it out, see _searchReveal.reveal). */
+#home-search-bar {
+  transition: opacity 150ms ease;
+}
+#home-search-bar[data-revealed="false"]:not(:focus-within) {
+  opacity: 0;
+}
+
 /* NOTE: .home-bottom-anchor is gone with the two trailing sections it
    existed for ("Featured apps" and "Create an app", which pushed to the
    bottom of a short feed). Both are widgets in the grid now, so there is
@@ -4900,6 +5001,25 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   .browse-row .browse-row-meta { grid-column: 2; grid-row: 2; min-width: 0; }
   .browse-row > .browse-add-btn { grid-column: 3; grid-row: 2; min-height: 44px; }
   .browse-row .browse-row-title > span { align-items: baseline; }
+}
+
+/* QA 2026-09-24 Q10: from 640px up the name keeps its row beside the icon and
+   the Add pill, and it used to be one `truncate`d line there, which cut
+   "Staging demo Puzzle Chain" to "Staging de…" in a desktop box. It may take
+   TWO lines now before it ellipsises. The phone rule above already lets it wrap
+   freely on its own full-width row; this is the clamped version of the same
+   idea for the boxes. */
+@media (min-width: 640px) {
+  .browse-row .browse-row-title { white-space: normal; }
+  .browse-row .browse-row-title > span { align-items: baseline; }
+  .browse-row .browse-row-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* Phone: a single hairline BETWEEN consecutive rows, INSET to the text column.
@@ -6017,6 +6137,29 @@ body:has(#platform-header.hidden) #app-frame-host {
    list's own top margin, which would read as a gap the closed state
    doesn't have. */
 .dc-credits-dev .dc-credits-options { margin-top: 6px; }
+
+/* QA 2026-09-24 Q27: the credits banners fold to one line on a phone. The
+   lead stays; what follows it (`.dc-credits-banner-more`) and the button row
+   wait behind "Details" (dev-chat/banners.tsx), which is the whole strip's
+   height handed back to the conversation, and the banner's "Check API key"
+   no longer sits over the identical button on the transcript's card. The
+   toggle is phone-only: from 640px up the banner is the one-row strip it
+   always was. */
+.dc-credits-banner-toggle { display: none; }
+@media (max-width: 639.98px) {
+  #dc-credits-banner:not([data-credits-open]) :is(.dc-credits-banner-more, .dc-credits-banner-actions),
+  #dc-credits-low-banner:not([data-credits-open]) :is(.dc-credits-banner-more, .dc-credits-banner-actions) {
+    display: none;
+  }
+  .dc-credits-banner-toggle {
+    display: inline-flex; align-items: center; flex: none;
+    min-height: 28px; padding: 0 2px;
+    border: 0; background: none;
+    font: inherit; font-size: 12px; font-weight: 600;
+    text-decoration: underline; text-underline-offset: 2px;
+    cursor: pointer;
+  }
+}
 
 /* Banner variant: three small buttons inside the red exhausted banner.
    The row wraps onto its own line under the message on a phone (the
@@ -8814,6 +8957,26 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .gc-msg-system > .gc-msg-save svg,
 .gc-spec-card > .gc-msg-save svg { width: 11px; height: 11px; }
+/* A 32px hit area on a touch screen (QA 2026-09-24 Q19). The mark is 18-20px
+   and rides the END of a line, often straight after a vote row's Yes/No pair
+   with only its 4px margin between them — so the slop is lopsided rather than
+   centred: it reaches back no further than that margin and takes its width
+   from the free side after the mark (the react button beside it is hidden on
+   touch, and the reactions start a new line). It cannot sit under the row's
+   content instead: the resting `opacity` makes the button its own stacking
+   context, so a `z-index` on the slop would stay inside it. */
+@media (pointer: coarse) {
+  .gc-msg-save { position: relative; }
+  .gc-msg-save::after {
+    content: "";
+    position: absolute;
+    left: -4px;
+    width: calc(100% + 18px);
+    top: 50%;
+    height: max(100%, 32px);
+    transform: translateY(-50%);
+  }
+}
 
 /* Edit button inside the long-press reaction bar (touch). */
 .gc-react-bar-edit {
@@ -9154,6 +9317,15 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 32px tall on a touch screen (QA 2026-09-24 Q19). It was the height of its
+   13px line, 20px, and a <select> draws no ::after, so the `.un-touch-target`
+   slop has nothing to hang from; the control grows instead. It has no box of
+   its own to see (no fill, no border), so the only visible change is none:
+   the caret is centred on it by its inline-flex wrapper, and every row it sits
+   in is already taller than 32px. */
+@media (pointer: coarse) {
+  .dc-model-select { min-height: 32px; }
 }
 /* Shared with the proposal-workshop select, which uses this utility to keep
    a long model name from widening its control. */
@@ -9546,7 +9718,62 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .settings-sheet {
   margin-top: 12px;
   padding: 10px 20px 32px;
-  min-height: 60vh;
+}
+/* THE SHEET RUNS OFF THE BOTTOM, like every other sheet on the ladder
+   (QA 2026-09-24 Q24). It had a fixed `min-height: 60vh` under `.dc-lift`'s
+   top-only radius, a shape drawn for sheets that run to the screen's foot:
+   a short section (Theme, Username, Password) became a mostly empty box
+   that stopped mid-screen on a square edge. On a phone the strip behind it
+   stopped too, because browser-scroller mode sizes #settings-screen to its
+   content (`flex: none; height: auto`), leaving bare wallpaper above the
+   tab bar.
+
+   Now the screen, its root, the row and the content column are a column of
+   flex boxes that fill the height they are given, and the open sheet takes
+   whatever is left: a short section's sheet reaches the bottom edge, a long
+   one is as tall as its content, as before. On a phone the sheet also runs
+   UNDER the tab bar (the negative margin spends the screen's own
+   `.platform-safe-scroll` padding) and carries that padding itself, so its
+   last row still clears the bar. All of it is scoped to "a section is
+   open": the phone's level-1 menu keeps the layout it had. */
+#settings-screen:not(.hidden):has(#settings-section-content:not(.hidden)) {
+  display: flex;
+  flex-direction: column;
+}
+html[data-browser-scroller="settings-screen"] #settings-screen:has(#settings-section-content:not(.hidden)) {
+  flex: 1 0 auto;
+}
+#settings-root:has(#settings-section-content:not(.hidden)) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+#settings-root:has(#settings-section-content:not(.hidden)) > div {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+@media (min-width: 768px) {
+  #settings-root:has(#settings-section-content:not(.hidden)) > div {
+    flex-direction: row;
+    align-items: stretch;
+  }
+}
+#settings-content-col:has(> #settings-section-content:not(.hidden)) {
+  display: flex;
+  flex-direction: column;
+}
+#settings-content-col > .settings-sheet {
+  flex: 1 0 auto;
+  margin-bottom: calc(-1 * max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)));
+  padding-bottom: calc(32px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px)));
+}
+/* Keyboard up: the screen's safe-scroll padding is 0 (see
+   `html.un-kb .platform-safe-scroll`), so there is nothing to spend. */
+html.un-kb #settings-content-col > .settings-sheet {
+  margin-bottom: 0;
+  padding-bottom: 32px;
 }
 .settings-sheet > [data-settings-section] { max-width: 40rem; }
 .settings-sheet h3 {
@@ -11701,7 +11928,7 @@ a.drawer-ver--fork:hover {
   --un-modal-max-height: var(--create-modal-height);
   --un-modal-padding: var(--create-modal-padding);
   --un-modal-radius: var(--create-modal-radius);
-  background-color: var(--dc-strip-fill);
+  background-color: var(--create-modal-fill, var(--dc-strip-fill));
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .un-modal:has(> #create-card) { background-color: var(--dc-strip); }
@@ -11711,9 +11938,23 @@ a.drawer-ver--fork:hover {
    the native webview. These optional layout tokens affect only this dialog;
    on desktop the kit and the unadopted card keep their existing defaults.
    Reserve safe areas INSIDE the full-screen surface and leave the keyboard
-   strip outside it. The surface remains the scroller on every step. */
+   strip outside it. The surface remains the scroller on every step.
+
+   FULL SCREEN IS OPAQUE (QA 2026-09-24 Q8). The centred desktop card
+   floats over a dimmed page, so the pane glass above (`--dc-strip-fill`,
+   38%) is legible there. Filling the viewport, the same 38% let the header,
+   the bell, "Your apps" and the "Get the app" strip read through behind the
+   dialog's own title, and even #2887's 95% for floating surfaces still
+   ghosted the strip's logo there. A screen that IS the page has nothing
+   worth showing through it, so `--create-modal-fill` is the opaque grey
+   ground itself, `--dc-strip`: the same colour the no-backdrop-filter
+   fallback below already paints, so the white cards keep their contrast.
+   Being opaque and above the strip (z-45) is also why the top padding does
+   not add `--install-strip-h`: the strip is covered, not overlapped, which
+   is what that strip's own rule asks of a surface the person opened. */
 @media (max-width: 767px), (hover: none) and (pointer: coarse) {
   :root {
+    --create-modal-fill: var(--dc-strip);
     --create-modal-width: 100vw;
     --create-modal-height: calc(100dvh - var(--un-kb-inset, 0px));
     --create-modal-radius: 0px;
@@ -11725,6 +11966,7 @@ a.drawer-ver--fork:hover {
   }
 }
 html.in-native-webview {
+  --create-modal-fill: var(--dc-strip);
   --create-modal-width: 100vw;
   --create-modal-height: calc(100dvh - var(--un-kb-inset, 0px));
   --create-modal-radius: 0px;
@@ -11875,14 +12117,17 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
    CARD: the kit lifts it out of #create-modal while presented).
 
    The footer follows: Cancel always; Next until the last step has
-   unfolded, then Create / Import. */
+   unfolded, then Create / Import. Create is hidden on the details step
+   too (QA 2026-09-24 Q6): showing it beside Next put two equal accent
+   buttons on step 2, and Create there skipped "Who can use it". */
 #create-card[data-step="start"]   [data-create-step="details"],
 #create-card[data-step="start"]   [data-create-step="access"],
 #create-card[data-step="details"] [data-create-step="access"] {
   display: none;
 }
-#create-card[data-step="start"]  #create-submit,
-#create-card[data-step="access"] #create-next {
+#create-card[data-step="start"]   #create-submit,
+#create-card[data-step="details"] #create-submit,
+#create-card[data-step="access"]  #create-next {
   display: none;
 }
 
@@ -11998,6 +12243,29 @@ button.dev-badge { cursor: pointer; }
   background: none;
 }
 button.attr-chip { cursor: pointer; }
+/* A 32px-tall hit area on a touch screen (QA 2026-09-24 Q19). The chips are
+   19px on a card and 24px in a change's hero, and they wrap into rows only a
+   few px apart, so `.un-touch-target`'s 44px box would reach over the chip in
+   the next row and steal its taps (the later chip's ::after paints on top).
+   So the slop sits UNDER every chip: `z-index: -1` puts it in the row's own
+   stacking context, below the chips themselves, which are positioned, and
+   `isolation` makes the row that context. A chip's visible box always wins,
+   and the slop only answers taps that land in the gaps around it. Only the
+   height grows; a chip is never narrower than 32px. */
+@media (pointer: coarse) {
+  :is(.dev-card-meta, .dev-topic-hero-chips) { isolation: isolate; }
+  button.attr-chip { position: relative; }
+  button.attr-chip::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: max(100%, 32px);
+    transform: translateY(-50%);
+  }
+}
 
 /* #489: the assignee initial-avatar inside a chip — a tiny circle carrying
    the assignee's first letter. The tint (bg + text colour) comes from a
@@ -13205,11 +13473,28 @@ body.is-offline [data-offline-disabled] {
 .dev-feed-msg-mine .dev-feed-msg-bubble { background: var(--accent-tint); }
 .dev-feed-msg-head {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 0 6px;
   align-items: baseline;
+  min-width: 0;
   margin-bottom: 1px;
 }
-.dev-feed-msg-author { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+/* QA 2026-09-24 Q22: the head stays inside its bubble. A GitHub comment's
+   head is a name, a tag and a stamp that can carry a year ("Mar 5, 2024,
+   09:15 AM"), and on a 360px phone the three in one unbreakable row ran past
+   the bubble and widened the page. Now the name ends in an ellipsis before
+   the stamp is pushed out, and past the 6em basis the stamp takes a second
+   line of the head rather than leaving it. */
+.dev-feed-msg-author {
+  flex: 1 1 6em;
+  min-width: 0;
+  max-width: max-content;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
 .dev-feed-msg-time { color: var(--text-muted); white-space: nowrap; }
 .dev-feed-msg-text { color: var(--text-primary); }
 /* The reply box: a 36px white pill field and the dev session's send disc
@@ -13616,15 +13901,17 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-weight: 600;
   /* The Vote button's "Yes" state (.dev-vote-btn-yes): the accent on its
      tint. The band's pills were the neutral grey fill, which read as a
-     third colour beside the blue Vote and the blue Preview. */
+     third colour beside the blue Vote and the blue Preview.
+     The INK is --accent-tint-ink, the accent one step darker in light, since
+     the accent itself is 4.34:1 on its own tint (QA 2026-09-24 Q20). */
   background: var(--accent-tint);
-  color: var(--accent);
+  color: var(--accent-tint-ink);
   border-color: transparent;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn:hover {
   background: var(--accent-tint);
   border-color: var(--accent-light);
-  color: var(--accent);
+  color: var(--accent-tint-ink);
 }
 /* The menu trigger: a hamburger at the far right of the band, the row's own
    "more" — that is where the pills that do not fit the line go. Preview,
@@ -13643,7 +13930,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   margin-left: auto;
   gap: 5px;
   padding: 0 10px 0 9px;
-  color: var(--accent);
+  color: var(--accent-tint-ink);
   background: var(--accent-tint);
   border-color: transparent;
 }
@@ -13695,6 +13982,21 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   height: 24px;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-building + .dev-card-menu-btn { margin-left: 0; }
+/* ── On a touch screen the band is 32px (QA 2026-09-24 Q19) ──
+   The band's pills were 28px, under the 32px a phone needs, and this is the
+   one place the `.un-touch-target` hit-slop cannot fix it: the band clips at
+   one row (`overflow: hidden`, the reserve-and-clip contract above), so a
+   hit area hung off a pill would be cut at the band's edge. On a coarse
+   pointer the ROW is 32px instead and every pill in it fills the row — Start
+   work, Claim, Open card, Preview, ⋯, the kudos pill and the hero's Vote.
+   useFoldedActions reads the band's clientHeight, not a constant, so the
+   fold arithmetic is unchanged. A mouse keeps the 28px band. */
+@media (pointer: coarse) {
+  :is(.dev-card-dense, .dev-card-topic) .gc-card-actions { min-height: 32px; max-height: 32px; }
+  :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > :is(.gc-vote-btn, .dev-vote-btn),
+  :is(.dev-card-dense, .dev-card-topic) .gc-card-actions .kudos-wrap > .gc-vote-btn { height: 32px; }
+  :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn { width: 32px; }
+}
 
 /* Cards with 22px corners want a little more air between them than the
    column's space-y-2 gives. */
@@ -14394,7 +14696,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-muted);
-  background: var(--bg-tertiary);
+  /* A softer pill than --bg-tertiary itself (QA 2026-09-24 Q20): 10px muted
+     type on the full #e3e3e6 is 4.33:1; at 60% over the bubble it is ~4.8 in
+     light and ~5.6 in dark, and it still reads as a tag. */
+  background: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
   padding: 1px 6px;
   border-radius: 999px;
 }
@@ -14444,7 +14749,17 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-topic-hero > div.dev-topic-hero-actions.dev-card-topic {
   margin-top: 12px; padding: 0; border-radius: 0; box-shadow: none; background: none; --dev-edge-w: 0px;
 }
-.dev-topic-hero .gc-card-actions { margin-top: 0; }
+/* QA 2026-09-24 Q26: THE HERO'S BAND IS AS TALL AS ITS VOTE BUTTON. The band
+   reserves and clips one 28px row (the card rule above), which is right for
+   the 28px pills, but the hero also carries the Vote button, and that is
+   30px (`.dev-vote-btn`). So the row was 30px inside a 28px window: the Vote
+   pill lost its bottom 2px and the round menu button its last pixel, and on
+   a phone both read as cut flat along the bottom. 30px here fits the tallest
+   thing the hero's band holds; a wrapped second row still starts at 36px
+   (30 plus the 6px row gap) and stays clipped, and useFoldedActions' "off the
+   row" test reads the band's own height, so the fold is unchanged. Only the
+   hero: on a card the Vote button sits in the status row, not in this band. */
+.dev-topic-hero .gc-card-actions { margin-top: 0; min-height: 30px; max-height: 30px; }
 .dev-topic-hero .gc-card-actions > .dev-vote-btn { margin-right: 4px; }
 /* The summary at the item's reading size, the whole of it. */
 .dev-topic-hero-summary { margin: 14px 0 0; font-size: 17px; line-height: 1.45; color: var(--text-secondary); }
@@ -15395,9 +15710,20 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      its box and the air under it off by hand. It sits at the head of the page
      now (#2767), in flow INSIDE this box, so the flex chain accounts for it
      and the floor must not take it off a second time — the arithmetic the
-     wide layout has always used, at every width. */
+     wide layout has always used, at every width.
+
+     THE FIXED STRIPS ABOVE THE HEADER ARE CHROME TOO (QA 2026-09-24 Q8).
+     `--browser-banner-h` is the install strip plus the offline strip,
+     whichever are up. Body padding reserves them at the head of the page,
+     so the page starts that much lower and this floor has to give the same
+     length back. Without it a phone browser showing "Get the app" pushed
+     the foot of every Needs you card, its chips and the rail's More, under
+     the tab bar. The token is declared only in the browser-scroller layout,
+     the only layout that reads this number (the native layout's flex chain
+     already sits inside the padded body), hence the 0px fallback. */
   --ws-area: calc(
-    100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
+    100dvh - var(--browser-banner-h, 0px)
+    - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
     - var(--ws-gap) - max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px))
   );
   /* THE FITTED BOX Needs you takes as a definite height in the browser
@@ -15935,6 +16261,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
        top went to -890 on a 900px scroll. `top: 0` is the scroller's own top;
        there is no chrome inside it to clear. */
     top: 0;
+    /* QA 2026-09-24 Q7: ABOVE THE CARDS, BELOW THE HEAD. Pinned with no
+       z-index, the strip sat at the floor of the stacking order, and the
+       pane (`position: relative` from 768px, see the ear) and its cards come
+       later in the tree, so everything that scrolled up past it painted over
+       the tabs and took their clicks: the three tabs and the "+" went under
+       the list. 30 puts it over the list and under the pane head's 31, which
+       is what the ear needs: the ear lives in the head and hangs into this
+       band, and it has to stay on top of the nav's box to be clickable. The
+       open "+" menu still lifts the strip to 32 (above). */
+    z-index: 30;
     max-width: none;
     /* LEFT-ALIGNED, not centred. The pill is `.dev-ws-tabtrack` inside this
        nav and it is content-width, so whatever positions the pill is what
@@ -15978,6 +16314,63 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      strip no longer floats 8px up out of the air it was given, which is the
      "too little above, too much below" this pair always claimed to prevent. */
   #dev-body:has(> #dev-workshop) { padding-top: 10px; }
+  /* QA 2026-09-24 Q7: THE BAND BEHIND THE PINNED STRIP. With the strip on top
+     of the list, the pill itself is opaque, but the air around it was not:
+     the gap to the ear, the column gap down to the pane head and, on By
+     stage, the board columns either side of the reading column all showed
+     the cards scrolling underneath, between the controls. So once the strip
+     is pinned (`data-ws-pinned`, set by workshop.tsx's usePinnedStrip) a
+     band runs behind it, from the scroller's top down to where the head pins
+     (`--dev-ws-head-top`) and across the PANE's width (`--dev-ws-band-*`,
+     measured by useEarInset), and the strip, the ear and the head read as
+     one pinned header.
+
+     SOLID, NOT FROSTED. The frost cannot blur anything here: this whole
+     column sits inside the dev frame's `.dc-lift`, which has a
+     backdrop-filter of its own, and Chromium does not blur content through
+     a backdrop-filter nested inside another one. What was left was 50%
+     white, which is exactly the "cards showing through" this fixes (and
+     why the search row looked washed rather than frosted over the list).
+     So while pinned the band, and the head under it, take the sheet's
+     opaque colour, which is what the fallback below the frost rules already
+     uses where there is no backdrop-filter at all.
+
+     ONLY WHILE PINNED. At rest the pill sits on the page and the ear hangs
+     off the pane beside it; a band there would swallow the ear's shape.
+
+     Behind the nav's own content (`z-index: -1` inside the strip's stacking
+     context), so the pill and the "+" draw over it. Where there is an ear
+     the band STOPS at it (`--dev-ws-ear-left`, the ear's left edge measured
+     from the pane's) and the ear, pinned, takes the same solid fill and
+     drops its outline: the two tile the row. The band must not run under the
+     ear, because the open "+" menu lifts the strip above the head (32, above)
+     and a band there would then cover the ear's two tabs. The pinned ear's
+     rounded corner and the head's are squared: a curve there left a notch
+     the cards showed through. */
+  .dev-ws-tabs::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    top: 0;
+    height: var(--dev-ws-head-top, calc(100% + 10px));
+    left: var(--dev-ws-band-left, 0px);
+    right: var(--dev-ws-band-right, 0px);
+    background-color: var(--dc-sheet);
+    pointer-events: none;
+    visibility: hidden;
+  }
+  .dev-ws:has(.dev-ws-ear) > .dev-ws-tabs::before { right: auto; width: var(--dev-ws-ear-left, 100%); }
+  .dev-ws[data-ws-pinned] > .dev-ws-tabs::before { visibility: visible; }
+  .dev-ws[data-ws-pinned] .dev-ws-ear {
+    background-color: var(--dc-sheet);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    box-shadow: none;
+    border-top-left-radius: 0;
+  }
+  .dev-ws[data-ws-pinned] .dev-ws-pane-head {
+    background-color: var(--dc-sheet);
+    border-top-left-radius: 0;
+  }
   .dev-ws-tabtrack {
     display: inline-flex; align-items: center; gap: 2px;
     padding: 2px;
@@ -16701,6 +17094,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   background: var(--state-neutral-bg); font-size: 12px; color: var(--text-muted);
 }
 .dev-ws-cnt b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* The chip's label in dark (QA 2026-09-24 Q20). --state-neutral-bg over a
+   category card lands at #3e3f43, and the muted ink that reads fine on the
+   card itself is 3.66:1 on the chip. One step brighter clears 4.76, and the
+   bold count beside it is still the loudest thing in the chip. Light passes
+   as it is (4.72), so this is dark-only. */
+.dark .dev-ws-cnt { color: #aeaeb2; }
 .dev-ws-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--state-neutral); flex-shrink: 0; }
 .dev-ws-cnt-underway .dev-ws-dot, .dev-ws-lane-underway .dev-ws-dot { background: var(--accent); }
 .dev-ws-cnt-review .dev-ws-dot, .dev-ws-lane-review .dev-ws-dot { background: var(--state-attention); }
@@ -17749,10 +18148,15 @@ html.un-kb #platform-parked {
 
      #app-view is deliberately absent: an app covers the rail, which is what
      "the app is the whole window" means, and the rail is hidden there anyway
-     so the token would be 0 even if it were listed. */
+     so the token would be 0 even if it were listed.
+
+     #agent-session-screen was absent by omission (QA 2026-09-24 Q23): it
+     arrived after this list, drew from the window's left edge, and its app
+     and change chips, the reply suggestions and the start of the composer sat
+     under the rail where they could not be clicked. */
   :is(#home-screen, #browse-screen, #workshop-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
-      #global-chat-screen) {
+      #global-chat-screen, #agent-session-screen) {
     /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
        The rail's hairline was the content's left margin, so a card began
        where the rail ended and the page had air on the right and none on the

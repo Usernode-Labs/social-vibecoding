@@ -146,7 +146,13 @@ function menuHarness(touch) {
   const sandbox = {
     console, AbortController,
     addEventListener() {},
-    document: { getElementById: (id) => ({ 'dev-plus-btn': button, 'dev-plus-menu': menu })[id] || null },
+    document: {
+      getElementById: (id) => ({ 'dev-plus-btn': button, 'dev-plus-menu': menu })[id] || null,
+      // QA 2026-09-24 Q18: _wirePlusMenu now binds its outside-click and
+      // keyboard (Escape, arrows) dismissers on the document rather than on
+      // the content node. Neither is exercised here; the clicks below are.
+      addEventListener() {},
+    },
     PlatformUI: { isTouch: () => touch, actionSheet: (sheet) => sheets.push(sheet) },
     Secrets: { openForCurrentApp: () => calls.push('secrets') },
     // The issue row opens the shared feedback dialog by name, in its
@@ -155,7 +161,10 @@ function menuHarness(touch) {
     App: {
       openFeedbackModal: (opts) => {
         assert.equal(opts?.fromDev, true, 'the open app is preselected as the target');
-        assert.deepEqual(Object.keys(opts), ['fromDev']);
+        // QA 2026-09-24: and the dialog is told it was asked to file an issue,
+        // so it is headed "File an issue" rather than "Send feedback".
+        assert.equal(opts?.intent, 'issue', 'the dialog is headed with the row\'s own words');
+        assert.deepEqual(Object.keys(opts), ['fromDev', 'intent']);
         calls.push('issue');
       },
     },
@@ -259,7 +268,9 @@ test('File an issue is a real button[data-plus] row that leads the writeable men
   // its published name.
   assert.match(VIEW, /const issueBtn = menu\.querySelector\('\[data-plus="issue"\]'\);/);
   const wired = VIEW.slice(VIEW.indexOf('const issueBtn = '));
-  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true \}\)/);
+  // QA 2026-09-24: with `intent: 'issue'`, so the dialog is headed with the
+  // row's own words ("File an issue") rather than "Send feedback".
+  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, intent: 'issue' \}\)/);
 });
 
 for (const touch of [false, true]) {

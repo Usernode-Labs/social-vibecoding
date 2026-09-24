@@ -676,6 +676,31 @@ test('a governance topic renders the roster under its words, and nothing when th
   assert.doesNotMatch(empty, /dev-topic-sheet dev-topic-about/, 'no sheet with nothing to put in it');
 });
 
+test('a side nobody has taken is left out, not drawn as a bare dash (QA 2026-09-24)', () => {
+  // "Waiting for votes. Yes (0): — No (0): —" read as a glitch. The loaders
+  // send an empty string for an empty side and the line leaves it out.
+  const { renderComponent } = require('./lib/render-tsx');
+  const HEAD_TSX = 'frontend/src/features/dev-board/topic/topic-head.tsx';
+  const draw = (roster) => renderComponent(HEAD_TSX, 'TopicBodySections', { body: { note: 'x', roster } });
+  const nobody = draw({ phase: 'ready', yes: { label: 'Yes (0)', names: '' }, no: { label: 'No (0✓)', names: '' } });
+  assert.match(nobody, /class="dev-ledger-lead dev-ledger-lead-vote">Waiting for votes\.<\/span>/, 'the lead is the whole line');
+  assert.doesNotMatch(nobody, /dev-ledger-yes|dev-ledger-no|—|\(0/, 'no empty side, no dash, no zero count');
+  const oneSide = draw({ phase: 'ready', yes: { label: 'Yes (2)', names: '@alice, @bob' }, no: { label: 'No (0)', names: '' } });
+  assert.match(oneSide, /class="dev-ledger-yes">Yes \(2\):<\/span> @alice, @bob/);
+  assert.doesNotMatch(oneSide, /dev-ledger-no|—/, 'the empty No side is left out');
+  const both = draw({ phase: 'ready', yes: { label: 'Yes (1)', names: '@alice' }, no: { label: 'No (1)', names: '@carol' } });
+  assert.match(both, /@alice · <span class="dev-ledger-no">No \(1\):<\/span> @carol/, 'two sides are separated');
+  // The loaders' side of it.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const view = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
+  for (const fn of ['async _loadVoteRoster(', 'async _loadGovVoteRoster(']) {
+    const at = view.indexOf(fn);
+    const body = view.slice(at, view.indexOf('\n  },\n', at));
+    assert.doesNotMatch(body, /'—'/, `${fn} sends no placeholder dash`);
+  }
+});
+
 test('the browser sends the line, and re-reads the roster once the vote lands', () => {
   const fs = require('node:fs');
   const path = require('node:path');

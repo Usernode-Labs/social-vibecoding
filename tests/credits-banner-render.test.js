@@ -134,7 +134,9 @@ test('allowance spent + no key → banner offers the two ways out (#1348)', () =
   assert.match(html, /#settings\/api-key/, 'deep-links the API-key section');
   assert.match(html, /data-credits-venue="1"/, 'and opens the venue sheet in place');
   assert.match(html, /Change session type/);
-  assert.equal((html.match(/<button/g) || []).length, 2, 'exactly two buttons');
+  // QA 2026-09-24 Q27: the phone's "Details" toggle is a <button> too, but it
+  // is not a way out; the doors are the actions block's own buttons.
+  assert.equal((html.match(/<button[^>]*class="dc-credits-banner-btn/g) || []).length, 2, 'exactly two buttons');
 });
 
 test('exhausted meter keeps the $spent/$limit pair, styled red', () => {
@@ -177,7 +179,9 @@ test('global cap spent (user under) → banner with the shared-budget copy', () 
   // the venue one leads to all of them (#1348).
   assert.match(html, /dc-credits-add-key/, 'CTA still offered — BYOK bypasses the global cap');
   assert.match(html, /data-credits-venue="1"/, 'and the venues that bypass it too');
-  assert.equal((html.match(/<button/g) || []).length, 2, 'exactly two buttons');
+  // QA 2026-09-24 Q27: the phone's "Details" toggle is a <button> too, but it
+  // is not a way out; the doors are the actions block's own buttons.
+  assert.equal((html.match(/<button[^>]*class="dc-credits-banner-btn/g) || []).length, 2, 'exactly two buttons');
 });
 
 test('no budget fetched yet → stays quiet', () => {

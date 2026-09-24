@@ -96,3 +96,54 @@ export function ProgressRing({
     </svg>
   );
 }
+
+/**
+ * The same fraction as a thin ring AROUND a control, rather than a figure of
+ * its own: the agent-session composer draws what is left of the week's
+ * credits round Send (#2779 follow-up). 48px, for a 40px button inside it.
+ *
+ * It EMPTIES CLOCKWISE, like a timer: the arc starts at twelve o'clock
+ * (`rotate(-90)`) and the whole figure is mirrored (`-scale-x-100`), so what
+ * is left runs from twelve o'clock anticlockwise and the gap grows clockwise.
+ * The radius is 22, so the circumference is 2π × 22 = 138.23, written out for
+ * the reason RING_C is. Nothing is drawn for the arc at zero (see above), and
+ * it is decoration: the pill beside it says the amount in words.
+ */
+const HALO_R = 22;
+const HALO_C = 138.23;
+
+export interface ProgressHaloProps extends Omit<React.SVGProps<SVGSVGElement>, 'children'> {
+  /** 0-1: the fraction left. */
+  fraction: number;
+  /** The arc's colour, as Tailwind `stroke-*` classes. Complete literals only. */
+  arcClassName: string;
+}
+
+export function ProgressHalo({ fraction, arcClassName, className, ...props }: ProgressHaloProps) {
+  const filled = Math.max(0, Math.min(1, fraction)) * HALO_C;
+  return (
+    <svg
+      className={cn('pointer-events-none -scale-x-100', className)}
+      width="48"
+      height="48"
+      viewBox="0 0 48 48"
+      aria-hidden="true"
+      {...props}
+    >
+      <circle cx="24" cy="24" r={HALO_R} fill="none" strokeWidth="3" className="stroke-zinc-200 dark:stroke-zinc-700" />
+      {filled > 0 ? (
+        <circle
+          cx="24"
+          cy="24"
+          r={HALO_R}
+          fill="none"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={`${filled.toFixed(1)} ${HALO_C}`}
+          transform="rotate(-90 24 24)"
+          className={arcClassName}
+        />
+      ) : null}
+    </svg>
+  );
+}

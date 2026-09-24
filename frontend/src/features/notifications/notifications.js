@@ -1825,7 +1825,12 @@ function rowView(n) {
   }
 
   if (CONVERSATION_NOTIF_KINDS.has(n.kind)) {
-    const conversation = n.conversationTitle || 'Messages';
+    // QA 2026-09-24 Q33a: a direct conversation has no title of its own
+    // (the column is NULL), so a DM's row used to be headed "Messages" —
+    // the surface, not who wrote. The person on the other end of a DM is
+    // the sender, so it is headed with them.
+    const conversation = n.conversationTitle
+      || (n.conversationKind === 'direct' && n.sourceUsername ? `@${n.sourceUsername}` : 'Messages');
     const snippet = (n.messageContent || '').slice(0, 140);
     // The conversation is the SUBJECT of every one of these, so it leads —
     // and for a plain message the snippet follows it, which is the only part

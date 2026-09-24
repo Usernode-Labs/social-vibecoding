@@ -850,14 +850,24 @@ const HomePanels = {
   // both. It replaced a ring with a points lead and a count under it, which
   // took three lines to say what the segments say in one.
   //
-  // The scope is the season (the payload's own `done` of `total`), except
-  // while setup gates the rest: the block then holds only the setup
-  // challenges, so the progress is setup's ("done in Get started", the tab's
-  // words and its group heading), the
+  // The scope is the season, except while setup gates the rest: the block
+  // then holds only the setup challenges, so the progress is setup's ("done
+  // in Get started", the tab's words and its group heading), the
   // board's "progress has a scope" rule. Deadlines stay on the cards or their
   // group headers, and points on the cards.
+  //
+  // THE SEASON IS EVERY CHALLENGE IN IT (QA 2026-09-24 Q17): `all_done` of
+  // `all_total`, finished and out-of-window ones included, which is how the
+  // profile counts ("4 of 15 done") and how the Challenges tab counts its
+  // event. It was the payload's `done` of `total`, the OPEN challenges only,
+  // so Home said 2/6 where the profile said 4 of 15 for the same season, and
+  // the figure jumped to the other when "See all" expanded the block. An
+  // older payload without `all_done` keeps the open counts.
   seasonView(panel) {
-    const total = Number(panel && panel.total) || 0;
+    const open = Number(panel && panel.total) || 0;
+    const hasAll = panel && panel.all_done != null && Number.isFinite(Number(panel.all_done))
+      && Number(panel.all_total) > 0;
+    const total = hasAll ? Number(panel.all_total) : open;
     if (!total) return null;
     const gate = panel.onboarding;
     if (gate && !gate.unlocked && Number(gate.total) > 0) {
@@ -871,7 +881,7 @@ const HomePanels = {
     const name = panel.season && typeof panel.season.name === 'string'
       ? panel.season.name.trim() : '';
     return {
-      done: Math.max(0, Math.min(total, Number(panel.done) || 0)),
+      done: Math.max(0, Math.min(total, Number(hasAll ? panel.all_done : panel.done) || 0)),
       total,
       caption: name ? `done in ${name}` : 'done',
     };

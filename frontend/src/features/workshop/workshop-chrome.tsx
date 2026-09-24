@@ -42,13 +42,14 @@
  * renders only once somebody has tapped is a panel no prerender ever sees.
  */
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import {
   CheckIcon, ChevronDownIcon, Squares2X2Icon,
 } from '@/components/ui/icons';
 
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { focusFirstItem, roveMenuFocus } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { APP_SCOPE_PANEL_ID, appScopeStore } from './app-scope-store.js';
 
@@ -151,7 +152,7 @@ function PanelRow({ id, leading, title, detail, trailing, onClick }: {
   onClick: () => void;
 }) {
   return (
-    <button id={id} type="button" className={ROW} onClick={onClick}>
+    <button id={id} type="button" role="menuitem" className={ROW} onClick={onClick}>
       <span
         className="shrink-0 flex items-center justify-center w-8 h-8 text-zinc-500 dark:text-zinc-400"
         aria-hidden="true"
@@ -175,21 +176,29 @@ function PanelRow({ id, leading, title, detail, trailing, onClick }: {
  * All apps first — the way back up — then each of your apps, the one on
  * screen carrying the tick.
  */
-export function WorkshopPicker({ apps, id, scope, onClose }: {
+export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
   apps: PickerApp[] | null;
   id: string;
   /** The app this Workshop is showing. */
   scope: PickerApp;
   onClose: () => void;
+  /** The panel's root, for the keyboard handling in AppWorkshopScope. */
+  panelRef?: RefObject<HTMLDivElement | null>;
 }) {
   const rows = apps || [];
 
   return (
     <div
       id={id}
+      ref={panelRef}
       role="menu"
+      aria-label="Which workshop?"
       className={'mx-4 mb-3 rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 '
         + 'border border-zinc-200 dark:border-zinc-800'}
+      // The arrows, Home and End move between the rows (QA 2026-09-24 Q18).
+      // Tab is left alone: the panel expands in place, so Tab moving on
+      // through the page is where it should go.
+      onKeyDown={(event) => { roveMenuFocus(event, event.currentTarget); }}
     >
       <p className="px-4 pt-3 pb-2 flex flex-col">
         <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Which workshop?</span>
@@ -288,6 +297,50 @@ export function AppWorkshopScope({ slug, name, iconUrl, iconEmoji }: {
   const { open } = useStoreState(appScopeStore) as { open: boolean };
   const [apps, setApps] = useState<PickerApp[] | null>(null);
   const setOpen = (next: boolean) => appScopeStore.set({ open: next });
+  const panelRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  // ── Keyboard and outside presses (QA 2026-09-24 Q18) ────────────────
+  //
+  // The panel only closed through its own chip (or a row). Now opening
+  // moves focus to its first row, Escape closes it and puts focus back on
+  // whichever control opened it — the chip, or on a phone the header's
+  // title — and a press anywhere outside the panel and those controls
+  // closes it too. The controls are found by the `aria-controls` both carry,
+  // and are spared the outside press because their own click toggles.
+  useEffect(() => {
+    if (!open) return undefined;
+    const controlSel = `[aria-controls="${APP_SCOPE_PANEL_ID}"]`;
+    const focused = document.activeElement as HTMLElement | null;
+    openerRef.current = focused && focused.matches?.(controlSel) ? focused : null;
+    const opener = () => {
+      const was = openerRef.current;
+      if (was && was.isConnected && was.getClientRects().length) return was;
+      return Array.from(document.querySelectorAll<HTMLElement>(controlSel))
+        .find((el) => el.getClientRects().length > 0) || null;
+    };
+    focusFirstItem(panelRef.current);
+    const onDown = (event: Event) => {
+      const target = event.target as Element | null;
+      if (!target || panelRef.current?.contains(target)) return;
+      if (target.closest?.(controlSel)) return;
+      appScopeStore.set({ open: false });
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const back = opener();
+      appScopeStore.set({ open: false });
+      back?.focus({ preventScroll: true });
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
 
   // A panel left open does not outlive the app it was opened on, nor the
   // Workshop: the header's control would otherwise find it already open on
@@ -340,6 +393,7 @@ export function AppWorkshopScope({ slug, name, iconUrl, iconEmoji }: {
           apps={apps}
           scope={scope}
           onClose={() => setOpen(false)}
+          panelRef={panelRef}
         />
       ) : null}
     </div>

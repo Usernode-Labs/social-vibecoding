@@ -156,9 +156,11 @@ function shapeSession(row) {
       }
       : null,
     activeChange: shapeChangeRow(row),
-    busy: !!row.active_turn,
+    // A lease its turn stopped renewing is not work in progress: the
+    // process holding it died, and the next message takes it over.
+    busy: !!row.turn_live,
     // Finished something the owner has not seen yet: the green dot.
-    doneUnseen: !row.active_turn && !!row.last_done_at
+    doneUnseen: !row.turn_live && !!row.last_done_at
       && (!row.seen_at || new Date(row.last_done_at) > new Date(row.seen_at)),
     lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).toISOString() : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
@@ -200,6 +202,9 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
             s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
+            (s.active_turn IS NOT NULL
+             AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
+                 >= NOW() - make_interval(mins => $5)) AS turn_live,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
@@ -216,7 +221,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
         AND ($3::timestamptz IS NULL OR s.last_activity_at < $3::timestamptz)
       ORDER BY s.last_activity_at DESC, s.id DESC
       LIMIT $4`,
-    [userId, status, cursor, bounded + 1]
+    [userId, status, cursor, bounded + 1, TURN_LEASE_STALE_MINUTES]
   );
   const page = rows.slice(0, bounded).map(shapeSession);
   return {
@@ -233,6 +238,9 @@ async function getAgentSession(pool, { userId, id }) {
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
             s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
+            (s.active_turn IS NOT NULL
+             AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
+                 >= NOW() - make_interval(mins => $3)) AS turn_live,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
@@ -246,7 +254,7 @@ async function getAgentSession(pool, { userId, id }) {
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
        LEFT JOIN apps ca ON ca.id = c.app_id
       WHERE s.id = $1 AND s.user_id = $2`,
-    [sessionId, userId]
+    [sessionId, userId, TURN_LEASE_STALE_MINUTES]
   );
   if (!rows.length) return null;
   const session = shapeSession(rows[0]);
@@ -587,11 +595,12 @@ async function setFocusApp(pool, { agentSessionId, user, slug }) {
 //
 // One Mayor turn at a time per conversation. The lease is a row write, not a
 // process-local lock, so two tabs (or two pods) cannot both start a turn. A
-// running turn renews it every minute (a dispatch can run far longer than
-// the stale window), so a lease not renewed for TURN_LEASE_STALE_MINUTES
-// belongs to a turn whose process died without releasing it, and is taken
-// over.
-const TURN_LEASE_STALE_MINUTES = 20;
+// running turn renews it every half minute (a dispatch can run far longer
+// than the stale window), so a lease not renewed for TURN_LEASE_STALE_MINUTES
+// belongs to a turn whose process died without releasing it: it is not
+// busy, and it is taken over. A restart kills every turn in the process, so
+// this window is how long a conversation can look busy with nobody working.
+const TURN_LEASE_STALE_MINUTES = 3;
 
 async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
   const { rows } = await pool.query(
@@ -633,6 +642,34 @@ async function releaseTurnLease(pool, { agentSessionId, turnId, finished = false
   );
 }
 
+// Hand back a lease whose turn died, whoever held it. Only a stale one: a
+// live lease may belong to a turn on the other pod during a rollout. True
+// when there was one to clear.
+async function releaseStaleTurnLease(pool, { agentSessionId, userId, finished = false }) {
+  const { rows } = await pool.query(
+    `UPDATE agent_sessions
+        SET active_turn = NULL,
+            last_done_at = CASE WHEN $4::boolean THEN NOW() ELSE last_done_at END
+      WHERE id = $1 AND user_id = $2 AND active_turn IS NOT NULL
+        AND COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
+            < NOW() - make_interval(mins => $3)
+      RETURNING id`,
+    [agentSessionId, userId, TURN_LEASE_STALE_MINUTES, !!finished]
+  );
+  return rows.length > 0;
+}
+
+// The open conversations a change is the active change of: the ones whose
+// Mayor dispatched its current run.
+async function conversationsOfChange(pool, changeId) {
+  const { rows } = await pool.query(
+    `SELECT id, user_id FROM agent_sessions
+      WHERE active_change_id = $1 AND status = 'open'`,
+    [changeId]
+  );
+  return rows.map((r) => ({ agentSessionId: Number(r.id), userId: Number(r.user_id) }));
+}
+
 // The owner read the conversation: whatever it finished is seen. True when
 // that cleared a green dot, so the caller can tell the owner's other tabs.
 async function markSeen(pool, { userId, id }) {
@@ -647,9 +684,12 @@ async function markSeen(pool, { userId, id }) {
      UPDATE agent_sessions s SET seen_at = NOW()
        FROM prev
       WHERE s.id = prev.id
-     RETURNING (prev.active_turn IS NULL AND prev.last_done_at IS NOT NULL
+     RETURNING ((prev.active_turn IS NULL
+                 OR COALESCE(prev.active_turn->>'renewedAt', prev.active_turn->>'startedAt')::timestamptz
+                    < NOW() - make_interval(mins => $3))
+                AND prev.last_done_at IS NOT NULL
                 AND (prev.seen_at IS NULL OR prev.last_done_at > prev.seen_at)) AS cleared`,
-    [sessionId, userId]
+    [sessionId, userId, TURN_LEASE_STALE_MINUTES]
   );
   return !!(rows[0] && rows[0].cleared);
 }
@@ -684,5 +724,7 @@ module.exports = {
   acquireTurnLease,
   renewTurnLease,
   releaseTurnLease,
+  releaseStaleTurnLease,
+  conversationsOfChange,
   markSeen,
 };

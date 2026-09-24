@@ -1027,7 +1027,7 @@ function appRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
-      res.json(await appAllowance.read(pool, req.user));
+      res.json(await appAllowance.read(pool, req.user, { maxApps: config.maxApps }));
     } catch (err) {
       log.error('apps', 'App allowance lookup failed', { message: err.message });
       res.status(500).json({ error: 'Could not load your app allowance. Please try again.' });
@@ -1039,7 +1039,7 @@ function appRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
     try {
-      res.json(await appAllowance.requestMore(pool, req.user));
+      res.json(await appAllowance.requestMore(pool, req.user, { maxApps: config.maxApps }));
     } catch (err) {
       log.error('apps', 'App allowance request failed', { message: err.message });
       res.status(500).json({ error: 'Could not send your request. Please try again.' });

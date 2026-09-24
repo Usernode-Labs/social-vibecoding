@@ -473,27 +473,36 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
     'the model a conversation with no choice runs on is the one marked default');
 });
 
-test('the pickers read "Model: X" and "Thinking Level: X" closed, and mark the default only in the open list', () => {
+test('the model pill names the model; the sheet groups the models, marks the default, and ticks the one in use', () => {
   const { createElement, renderToHtml } = require('./lib/render-tsx');
-  const { LabeledSelect } = loadTsx('frontend/src/features/agent-session/index.tsx');
+  const parts = loadTsx('frontend/src/features/agent-session/composer-parts.tsx');
+  const pill = renderToHtml(createElement(parts.ModelPill, { label: 'Opus 5.5', disabled: false, open: false, onOpen() {}, pillRef: { current: null } }));
+  assert.match(pill, /aria-label="Model: Opus 5\.5"/, 'a screen reader hears what the pill is for');
+  assert.match(pill, /aria-haspopup="dialog"[^>]*aria-expanded="false"/);
+  assert.match(pill, /<span class="truncate">Opus 5\.5<\/span>/, 'closed: the model alone, no "(default)"');
+
   const options = [
-    { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5' },
+    { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5', detail: 'about $6.20 for a typical change' },
     { value: 'anthropic:claude-opus-5-5', label: 'Opus 5.5', isDefault: true },
+    { value: 'openrouter:z-ai/glm-5', label: 'GLM 5' },
   ];
-  const render = (value) => renderToHtml(createElement(LabeledSelect, {
-    label: 'Model', ariaLabel: 'Model', dataKey: 'model', value, options, disabled: false, onChange: () => {},
+  const groups = parts.modelGroups(options);
+  assert.deepEqual(groups.map((g) => [g.title, g.options.map((o) => o.label)]),
+    [['Claude Code', ['Sonnet 5', 'Opus 5.5']], ['Codex', ['GLM 5']]], 'under the agent that runs them; an empty group is left out');
+  const body = renderToHtml(createElement(parts.ModelSheetBody, {
+    groups, value: 'anthropic:claude-sonnet-5', onPick() {}, onClose() {}, credit: null,
+    effort: { value: 'high', options: [{ value: 'high', label: 'High', isDefault: true }, { value: 'xhigh', label: 'Extra high' }], onPick() {} },
   }));
-  const onDefault = render('anthropic:claude-opus-5-5');
-  assert.match(onDefault, /data-agent-session-picker-shown="true">Model: Opus 5\.5<\/span>/, 'closed: the label and the item, no "(default)"');
-  assert.match(onDefault, /<option value="anthropic:claude-opus-5-5"[^>]*>Opus 5\.5 \(default\)<\/option>/, 'open: "(default)" after the default');
-  assert.match(onDefault, /<option value="anthropic:claude-sonnet-5"[^>]*>Sonnet 5<\/option>/);
-  assert.match(onDefault, /<select class="absolute inset-0 h-full w-full cursor-pointer opacity-0[^"]*" aria-label="Model"/,
-    'the real control lies over the shown line and keeps the focus and the keyboard');
-  assert.match(render('anthropic:claude-sonnet-5'), />Model: Sonnet 5</);
+  assert.match(body, /data-agent-session-model-option="anthropic:claude-sonnet-5"[^>]*>[\s\S]*?Sonnet 5[\s\S]*?about \$6\.20 for a typical change/);
+  assert.match(body, /aria-pressed="true"[^>]*data-agent-session-model-option="anthropic:claude-sonnet-5"/, 'the model in use is ticked');
+  assert.equal((body.match(/aria-pressed="true"/g) || []).length, 1, 'and only it');
+  assert.match(body, /Opus 5\.5<span[^>]*>default<\/span>/, 'open: "default" after the default');
+  assert.match(body, /data-agent-session-effort[^>]*>[\s\S]*?Thinking level[\s\S]*?High</, 'the thinking level is one row, closed');
+  assert.doesNotMatch(body, /Extra high/, 'its choices open under it on a tap');
+  assert.doesNotMatch(body, /data-agent-session-sheet-credits/, 'no allowance, no credits card');
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /label="Thinking Level"\s+ariaLabel="Thinking level"/);
-  assert.match(panel, /value=\{effortValue\(current, catalog\)\}/);
+  assert.match(panel, /value: effortValue\(current, catalog\)/);
   assert.doesNotMatch(panel, /next message<\/span>|data-agent-session-model-note|`Thinking: /, 'no "applies from your next message", no "Thinking:"');
 });
 
@@ -585,5 +594,36 @@ test('"Open app" targets the conversation\u2019s app, hides for self-hosted and 
     }
   } finally {
     delete globalThis.window;
+  }
+});
+
+test('QA Q23: opened twice by a cold deep link, a missing session still says it is missing', async () => {
+  // `#agent/<id>` opens the session from the screen's own effect AND from
+  // app.js's router. The second call used to take a new load version and
+  // return, so the first call's 404 belonged to nobody: the full screen stayed
+  // blank while the Messages pane, opened once, said "Agent session not found".
+  globalThis.window = { location: { hash: '#agent/404' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
+  globalThis.EventSource = class { close() {} };
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(url);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return { ok: false, status: 404, json: async () => ({ error: 'Agent session not found' }) };
+  };
+  try {
+    const store = loadTsx('frontend/src/features/agent-session/store.ts');
+    const first = store.openAgentSession({ id: 404, host: 'screen' });
+    const second = store.openAgentSession({ id: 404, host: 'screen', drawer: true });
+    await Promise.all([first, second]);
+    const state = store.getAgentSessionState();
+    assert.equal(state.phase, 'error');
+    assert.equal(state.error, 'Agent session not found');
+    assert.equal(state.drawerOpen, true, 'the second call still carries what it asked for');
+    assert.equal(requests.filter((url) => url === '/api/agent-sessions/404').length, 1,
+      'and it is loaded once, not twice');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+    delete globalThis.EventSource;
   }
 });

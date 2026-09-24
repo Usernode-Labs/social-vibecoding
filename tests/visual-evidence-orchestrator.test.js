@@ -186,6 +186,43 @@ test('evidence context includes a relevant check beyond the first 80 manifest en
   }
 });
 
+test('recorded testing route guides a vague intent to the exact declared screen', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-testing-route-'));
+  const route = '/?demo=1&ws=status#app/demo/workshop';
+  try {
+    const tests = Array.from({ length: 100 }, (_, index) => ({
+      name: `Generic screen ${index}`, path: `/screen-${index}`,
+    }));
+    tests.push({ name: 'View strip', path: route, expectSelector: '.dev-ws-plus' });
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests }));
+    const context = orchestrator.evidenceContext({
+      run: { id: RUN_ID },
+      session: {
+        pr_title: 'Small spacing change', testing_path: route,
+        testing_paths: [{ path: route, viewport: 'desktop' },
+          { path: '/?token=secret.jwt#app/demo/workshop', viewport: 'phone' }],
+        testing_md: 'Open the Workshop and inspect the view strip.',
+      },
+      revision: { baseSha: BASE, headSha: HEAD, files: [], filesComplete: true },
+      pair: { fixtureFingerprint: 'fixture-1', sides: {
+        base: { imageDigest: 'sha256:base' },
+        head: { imageDigest: 'sha256:head', checkout },
+      } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: { stories: [{ claim: 'The control has a small gap.', intent: {
+        startPath: '/', steps: ['Open the changed page'], checkpoint: 'A gap is visible', focus: 'The control',
+      } }] },
+    });
+    assert.deepEqual(context.changeContext.testingPaths, [route]);
+    assert.equal(context.changeContext.testingSteps, 'Open the Workshop and inspect the view strip.');
+    assert.equal(context.declaredChecks[0].path, route);
+    assert.equal(context.acceptedIntent.stories[0].intent.startPath, '/',
+      'a testing hint must not rewrite the accepted claim');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
 test('platform waits for a background replay after the hosted planner receives its acknowledgement', async () => {
   let releaseReplay;
   const pendingReplay = new Promise((resolve) => { releaseReplay = resolve; });

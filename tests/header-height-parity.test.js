@@ -274,7 +274,7 @@ test('badges still overflow the row rather than being clipped', () => {
   const platform = BARS.find((b) => b.id === 'platform-header').slice;
   assert.match(platform, /id="notifications-badge"[^>]*-top-1/,
     'the bell badge still hangs off the top-right corner');
-  assert.match(platform, /id="improve-working-dot"[^>]*-top-1/,
+  assert.match(platform, /id="improve-working-dot"[^>]*-top-1\.5/,
     'and the work dot hangs off the same corner of the mark it moved to when '
     + '#2718 retired the Improve pill (#1610 had already retired the green '
     + 'count that used to sit there)');

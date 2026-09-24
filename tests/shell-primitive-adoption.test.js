@@ -1,3 +1,4 @@
+// test:changed: always (every feature file, for hand-written buttons and fields; scripts/test-changed.js)
 // The shadcn primitives are the only way to spell the shell's primary button
 // and its field box.
 //

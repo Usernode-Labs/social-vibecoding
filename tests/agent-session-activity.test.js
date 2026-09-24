@@ -64,6 +64,22 @@ test('Recents, the mark\'s Continue rows and Messages all draw it', () => {
   assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /<AgentActivityMark activity=\{row\.activity\} \/>/);
 });
 
+test('#3013: in Recents and the mark\'s Continue rows the mark leads the session\'s name', () => {
+  const row = read('frontend/src/features/nav/recents-list.tsx');
+  const body = row.slice(row.indexOf('function RecentRow('), row.indexOf('export function RecentsByDay('));
+  const mark = body.indexOf('<AgentActivityMark');
+  assert.ok(mark > body.indexOf('platform-recent-glyph') && mark < body.indexOf('platform-recent-label'),
+    'after the row\'s icon, before its name');
+
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /lead=\{<AgentActivityMark activity=\{row\.activity\} \/>\}/);
+  const rowBody = sheet.slice(sheet.indexOf('function RowBody('), sheet.indexOf('function MenuRow('));
+  assert.ok(rowBody.indexOf('{lead}') > rowBody.indexOf('{icon}') && rowBody.indexOf('{lead}') < rowBody.indexOf('{label}'),
+    'RowBody draws the lead between the icon and the label');
+  const trailing = sheet.slice(sheet.indexOf('trailing={(', sheet.indexOf('dataContextRow="continue-agent"')));
+  assert.doesNotMatch(trailing.slice(0, 200), /AgentActivityMark/, 'and no longer at the row\'s end');
+});
+
 test('a burst of pushes is one read of the list, and the open conversation keeps its list entry current', async () => {
   const requests = [];
   let listDone = true;
@@ -71,7 +87,9 @@ test('a burst of pushes is one read of the list, and the open conversation keeps
     id: 7, title: 'Dark mode', status: 'open', focusApp: null, focusContext: {}, activeChange: null,
     busy: false, doneUnseen: listDone, lastActivityAt: null, createdAt: null, ...over,
   });
-  globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {} };
+  // A signed-in member: the list waits for a viewer the endpoint will answer
+  // (QA 2026-09-24 Q35, lib/platform-viewer.ts), which is `App.user`.
+  globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {}, user: { id: 1 } }, UsernodeReact: {} };
   globalThis.EventSource = class { close() {} };
   globalThis.fetch = async (url) => {
     requests.push(url);

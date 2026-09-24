@@ -68,7 +68,8 @@ test('a conversation, a group and #general: at the right of the header, just bef
   assert.equal(header.indexOf('<FullWidthToggle />', at + 1), -1, 'once');
   assert.ok(at > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
   assert.ok(at > header.indexOf('aria-label="Group members"'), 'after a group\'s members disc');
-  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative"><button type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
+  // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
+  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
     'immediately before the ⋯ menu');
   assert.match(header, /<header className="messages-thread-header">\s*\{channel/, 'no longer leading the row');
 });
@@ -95,12 +96,12 @@ test('an agent chat and a Mayor session: handed to their panels, drawn at the en
   assert.match(CHAT, /<span>New<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
   assert.match(CHAT, /\{snapshot\.host === 'messages' \? null : <GlobalChatPanel \/>\}/);
 
-  // The Mayor: the session bar's `action`, after Changes. The bar carries one
-  // more control between the change pill and Changes — the "Open app" button
-  // (#2779 follow-up) — which is why this regex runs across it.
+  // The Mayor: the session bar's `action`, after Changes, the "Open app"
+  // button (#2779 follow-up), and just before the session's ⋯, as on the
+  // other panes.
   assert.match(SESSION, /export function AgentSessionPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
   assert.match(SESSION, /<SessionBar session=\{snapshot\.session\} about=\{about\} embedded=\{embedded\} action=\{headerAction\} \/>/);
-  assert.match(SESSION, /<OpenAppButton target=\{target\} \/>[\s\S]{0,600}Changes · \{count\}\s*<\/button>\s*\{action\}\s*<\/div>/);
+  assert.match(SESSION, /Changes · \{count\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
 });
 
 test('the list folds for an agent thread too; a reply thread still belongs to a chat', () => {

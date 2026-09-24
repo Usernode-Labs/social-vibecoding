@@ -597,7 +597,7 @@ test('the rebuilt frame keeps the sandbox/allow contract in one place', () => {
     'the app sandbox is installed immediately before its safe navigation');
   // #2219: the UNGATED BASE. `geolocation` left this constant when it became
   // a per-user, per-app grant; a frame with no grants delegates exactly this.
-  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock"/);
+  assert.match(content.innerHTML, /allow="clipboard-write"/);
 });
 
 test('a non-running render retires the launch generation', () => {
@@ -636,7 +636,7 @@ test('a granted capability reaches the frame allow attribute', async () => {
   AppView.renderAppTab();
   assert.equal(
     dom.els.get('app-iframe').getAttribute('allow'),
-    'clipboard-write; pointer-lock; geolocation; camera'
+    'clipboard-write; geolocation; camera'
   );
 });
 
@@ -647,7 +647,7 @@ test('an app with no grants gets the ungated base and nothing else', async () =>
   AppView.renderAppTab();
   assert.equal(
     dom.els.get('app-iframe').getAttribute('allow'),
-    'clipboard-write; pointer-lock'
+    'clipboard-write'
   );
 });
 
@@ -660,7 +660,7 @@ test('a mint that answers no permissions at all delegates only the base', async 
   AppView.renderAppTab();
   assert.equal(
     dom.els.get('app-iframe').getAttribute('allow'),
-    'clipboard-write; pointer-lock'
+    'clipboard-write'
   );
 });
 
@@ -677,7 +677,7 @@ test('one app’s grants never ride another app’s navigation', async () => {
   AppView.renderAppTab();
   assert.equal(
     dom.els.get('app-iframe').getAttribute('allow'),
-    'clipboard-write; pointer-lock',
+    'clipboard-write',
     'the other app navigates with the base only'
   );
 });
@@ -706,7 +706,7 @@ test('the eager launch path delegates the prewarmed grant set', async () => {
   AppView.beginLaunch('notes');
   assert.equal(
     dom.els.get('app-iframe').getAttribute('allow'),
-    'clipboard-write; pointer-lock; microphone'
+    'clipboard-write; microphone'
   );
 });
 
@@ -714,7 +714,7 @@ test('the pending source-less frame delegates the base before it navigates', () 
   const { AppView, dom, content } = launchThenRender();
   AppView.renderAppTab();
   AppView.renderAppTab();
-  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock"/);
+  assert.match(content.innerHTML, /allow="clipboard-write"/);
   assert.ok(dom.els.get('app-iframe'));
 });
 

@@ -91,6 +91,7 @@ function defaults(deps = {}) {
     mcpOauth: deps.mcpOauth || require('../mcp-oauth'),
     callPlatform: deps.callPlatform || require('../mcp-tools').callPlatform,
     loopbackBaseUrl: deps.loopbackBaseUrl || require('./mcp-shim').loopbackBaseUrl,
+    attachments: deps.attachments || require('../attachments'),
   };
 }
 
@@ -203,6 +204,12 @@ async function runDispatch({
   kind,
   prompt,
   userMessage,
+  // The files the user sent with the message this build is for
+  // (agent-turn.js dispatchAttachmentIds): named in the prompt as the dev
+  // chat names them, text inlined and the rest fetched with
+  // `usernode-attachments`, which reads a conversation's files through the
+  // change it builds (routes/internal.js).
+  attachmentIds = [],
   apiKey = null,
   sendAgent,
   res,
@@ -290,6 +297,14 @@ async function runDispatch({
   const heartbeatRes = {
     write: (chunk) => { try { if (res && typeof res.write === 'function') res.write(chunk); } catch { /* gone */ } },
   };
+  let attachmentsBlock = '';
+  if (Array.isArray(attachmentIds) && attachmentIds.length) {
+    try {
+      attachmentsBlock = d.attachments.buildDispatchBlock(await d.attachments.loadByIds(pool, attachmentIds));
+    } catch (err) {
+      log.warn('agent-dispatch', 'Attachments could not be read for the build', { agentSessionId, err: err.message });
+    }
+  }
   const args = {
     pool,
     config,
@@ -299,7 +314,7 @@ async function runDispatch({
     selectedModel: codingModelFor(change, d, choice),
     userMessage: userMessage || prompt,
     toolPromptArg: prompt || userMessage,
-    attachmentsBlock: '',
+    attachmentsBlock,
     discussionBlock: '',
     repoOwner,
     repoName,

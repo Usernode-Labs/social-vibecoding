@@ -55,6 +55,24 @@ export const GATED_CAPABILITIES = [
 ];
 
 /**
+ * Ungated capabilities that are NOT Permissions Policy features, and so are
+ * never written into `allow` (QA 2026-09-24 Q35).
+ *
+ * No browser recognises `pointer-lock` as a policy-controlled feature. Chrome
+ * parses every `allow` attribute it sees and logged "Unrecognized feature:
+ * 'pointer-lock'." on every page, because the staging frame is in the shell
+ * document, and it delegated nothing: pointer lock is governed by the
+ * `allow-pointer-lock` SANDBOX token, which APP_FRAME_SANDBOX above already
+ * carries for the App-tab frame, and the unsandboxed landing and staging
+ * frames never restricted it. So it stays in UNGATED_CAPABILITIES, which is
+ * what an app asking the shell about it is told ("granted"), and only leaves
+ * the attribute string.
+ */
+export const SANDBOX_DELEGATED = ['pointer-lock'];
+
+const ALLOW_BASE = UNGATED_CAPABILITIES.filter((c) => !SANDBOX_DELEGATED.includes(c));
+
+/**
  * What a frame with no grants at all gets, and the whole story for the
  * landing viewer and the staging preview.
  *
@@ -65,7 +83,7 @@ export const GATED_CAPABILITIES = [
  * relay the permission prompt (the shell answers them through
  * `ownedFrameFor`), so an app can tell WHY it was refused there.
  */
-export const BASE_ALLOW = UNGATED_CAPABILITIES.join('; ');
+export const BASE_ALLOW = ALLOW_BASE.join('; ');
 
 const GATED_SET = new Set(GATED_CAPABILITIES);
 
@@ -79,7 +97,7 @@ const GATED_SET = new Set(GATED_CAPABILITIES);
  */
 export function allowAttribute(granted) {
   const wanted = new Set(Array.isArray(granted) ? granted.filter((c) => GATED_SET.has(c)) : []);
-  return UNGATED_CAPABILITIES.concat(GATED_CAPABILITIES.filter((c) => wanted.has(c))).join('; ');
+  return ALLOW_BASE.concat(GATED_CAPABILITIES.filter((c) => wanted.has(c))).join('; ');
 }
 
 /**

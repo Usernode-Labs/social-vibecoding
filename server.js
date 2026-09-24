@@ -3637,7 +3637,7 @@ async function finalizeRecoveredTurn({
 // stopPolicy.killsWorkerInPhase true so the request drives the
 // in-container kill; it moves to 'mayor2' when the wrap-up starts, where
 // stopping is refused by design.
-function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadcastGlobal }) {
+function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadcastGlobal, relayTo = [] }) {
   // Recovery narration now fans out on BOTH channels. The global WS
   // broadcast reaches tabs listening for session_event; the per-session bus
   // is what a client reconnecting over GET /events replays from. The live
@@ -3654,6 +3654,17 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
       broadcastGlobal({ ...payload, sessionId, event, type: 'session_event' });
     } catch {}
     try { sessionBus.publish(sessionId, payload); } catch {}
+    // The conversations whose Mayor dispatched this run follow it on their
+    // own bus, as they follow a live dispatch. Its end is theirs to announce
+    // (handBackAfterRecovery), not the change's.
+    if (event === 'done' || event === 'stopped') return;
+    for (const agentSessionId of relayTo) {
+      try {
+        sessionBus.publish(require('./src/services/mayor/agent-turn').busKey(agentSessionId), {
+          ...payload, changeId: sessionId, agentSessionId,
+        });
+      } catch {}
+    }
   };
   const handle = stopRegistry.createHandle({
     sessionId,
@@ -3676,8 +3687,12 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
 
 async function resumeDetachedTurn(args) {
   const { pool, sessionId, containerName, activeTurn, broadcastGlobal } = args;
+  const relayTo = [];
+  require('./src/services/agent-sessions').conversationsOfChange(pool, sessionId)
+    .then((conversations) => { for (const c of conversations) relayTo.push(c.agentSessionId); })
+    .catch(() => {});
   const stopHandle = buildRecoveryStopHandle({
-    sessionId, containerName, activeTurn, broadcastGlobal,
+    sessionId, containerName, activeTurn, broadcastGlobal, relayTo,
   });
   stopRegistry.set(sessionId, stopHandle);
   // Register the whole recovery (journal tail + finalize's PR/staging
@@ -3713,6 +3728,14 @@ async function resumeDetachedTurn(args) {
     // this recovery unwinds, and clearing unconditionally would strand it.
     stopRegistry.deleteIf(sessionId, stopHandle);
     activeWorkersSvc.activeWorkers.delete(sessionId);
+    // The conversation whose Mayor dispatched this run is still leased to
+    // that Mayor's dead turn, and its screen follows the run. Whether the run
+    // finished, stopped or failed, it is over.
+    require('./src/services/mayor/agent-turn')
+      .handBackAfterRecovery({ pool, changeId: sessionId })
+      .catch((err) => log.warn('server', 'Recovered turn: conversation hand-back failed (non-fatal)', {
+        sessionId, err: err.message,
+      }));
     // Turn completion counts as activity: give the freshly recovered
     // session a full idle window instead of leaving last_activity_at at
     // the pre-restart user message (which made it instantly pause-

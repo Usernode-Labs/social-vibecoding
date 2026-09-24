@@ -66,6 +66,7 @@ import {
   blockedOffline,
   fetchSessionMint,
   finishLogin,
+  HANDLE_FIELD,
   hiddenFirst,
   hiddenLast,
   isNative,
@@ -74,13 +75,49 @@ import {
   type NativeLoginFailureDetails,
   sessionMintFailureMessage,
   useAuthScreensPatch,
+  USERNAME_RULE,
 } from './shared';
 
 /** Which of the four views on this screen is showing. */
 type LoginView = 'base' | 'otp' | 'recovery' | 'reset';
 
+/** The forgot-password view's own address (QA 2026-09-24 Q16). */
+const RECOVERY_ROUTE = 'login/forgot';
+/** Marks the history entry the card pushed for it. */
+const RECOVERY_ENTRY = 'loginRecovery';
+
 /** Step within `#otp-view`. */
 type OtpStep = 'email' | 'code' | 'password';
+
+/**
+ * What /api/auth/otp/verify said about the account behind a verified code,
+ * for the set-password step (QA 2026-09-24 Q12). Null until a code verifies,
+ * and for a server that predates the fields, which then reads exactly as it
+ * always did.
+ */
+interface OtpSignup {
+  /** The code just CREATED the account: no account used this address. */
+  created: boolean;
+  /** The account has never chosen its handle, so this step asks for it. */
+  needsUsername: boolean;
+  /** The prefill for that field; null when none could be derived. */
+  suggestedUsername: string | null;
+  /** It will land in the waiting room; null when the server could not tell. */
+  waitlisted: boolean | null;
+}
+
+// The set-password step's opening line, one per case. A brand-new account is
+// told that is what is happening: it used to read "Now choose a password for
+// your account" as if the account had been there all along.
+const OTP_PASSWORD_INTRO = 'Code verified. Now choose a password for your account.';
+const OTP_PASSWORD_INTRO_NEW =
+  "Code verified. No account uses this email yet, so we'll create one. Choose a username and a password.";
+const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a password for your account.';
+// Said BEFORE the waiting room rather than by it: the person is about to be
+// signed in to a queue, not to the platform.
+const OTP_WAITLIST_NOTE =
+  "New accounts join a short waitlist. After this step you'll wait in the queue, and you'll get in automatically when it's your turn.";
+const OTP_USERNAME_HINT = `Your @handle, the name other members see. ${USERNAME_RULE}`;
 
 /** Which reset path the recovery view offers. */
 type RecoveryPath = 'wallet' | 'email';
@@ -169,6 +206,11 @@ const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
  */
 const CODE_FIELD = 'font-mono text-[26px] leading-[28px] tracking-[8px]';
 const ERROR = 'text-red-400 text-sm';
+// The line under the set-password step's username field: its rule, or the
+// server's sentence about the name (QA 2026-09-24 Q12). Two whole literals.
+const FIELD_HINT = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
+const FIELD_HINT_ERROR = 'mt-1 text-sm text-red-600 dark:text-red-400';
+const WAITLIST_NOTE = 'rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-300';
 const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
 // The code and email steps' status line at the same 16/22 reading size as
 // their body copy — `#otp-status` is where CODE_SENT_MSG lands, so the
@@ -409,6 +451,8 @@ export function LoginScreen() {
   const [otpDetails, setOtpDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [otpStatus, setOtpStatus] = useState<string | null>(null);
   const [otpEmailEcho, setOtpEmailEcho] = useState('');
+  const [otpSignup, setOtpSignup] = useState<OtpSignup | null>(null);
+  const [otpUsernameError, setOtpUsernameError] = useState<string | null>(null);
   // The address a waitlist-release link carried, and the moment the resend
   // buttons come back. Both start empty, so the first render is still exactly
   // the markup the hand-written shell shipped.
@@ -454,6 +498,7 @@ export function LoginScreen() {
   const otpEmailInput = useRef<HTMLInputElement>(null);
   const otpCode = useRef<HTMLInputElement>(null);
   const otpNewPassword = useRef<HTMLInputElement>(null);
+  const otpUsername = useRef<HTMLInputElement>(null);
   const otpConfirmPassword = useRef<HTMLInputElement>(null);
   const recoveryNewPassword = useRef<HTMLInputElement>(null);
   const recoveryConfirmPassword = useRef<HTMLInputElement>(null);
@@ -473,6 +518,10 @@ export function LoginScreen() {
   const otpShowStep = useCallback((step: OtpStep) => {
     setOtpError(null);
     setOtpDetails(null);
+    setOtpUsernameError(null);
+    // What a verified code said belongs to the password step only; any
+    // other step is a new attempt, possibly for a different address.
+    if (step !== 'password') setOtpSignup(null);
     setOtpStep(step);
   }, []);
 
@@ -500,6 +549,35 @@ export function LoginScreen() {
     setRecoveryPath(isNative() && st.walletPubkey && st.walletLinked ? 'wallet' : 'email');
     setView('recovery');
   }, [ensureResetUi, st]);
+
+  /**
+   * "Forgot password?" is a PLACE, `#login/forgot` (QA 2026-09-24 Q16). It
+   * used to swap the card's view on the same `#login` entry, so the browser's
+   * Back had no Sign in to return to and skipped straight past it to the
+   * landing page. Pushed rather than routed: the card is already on screen,
+   * and the router only has to answer the address when it is loaded or
+   * traversed to (loginOnShow's `seg`). The state marks the entry as the one
+   * this card pushed, which is what lets "Back to login" undo it.
+   */
+  const openRecovery = useCallback(() => {
+    try {
+      history.pushState({ [RECOVERY_ENTRY]: true }, '', `#${RECOVERY_ROUTE}`);
+    } catch { /* an address that will not move still gets the view */ }
+    showRecovery();
+  }, [showRecovery]);
+
+  /** "Back to login": the entry openRecovery pushed, or the bare route. */
+  const leaveRecovery = useCallback(() => {
+    const state = history.state as Record<string, unknown> | null;
+    if (state && state[RECOVERY_ENTRY] && typeof history.back === 'function') {
+      history.back();
+      return;
+    }
+    if (window.location.hash === `#${RECOVERY_ROUTE}`) {
+      try { history.replaceState(null, '', '#login'); } catch { /* the view still changes */ }
+    }
+    showLoginBaseView();
+  }, [showLoginBaseView]);
 
   /**
    * Per-route side effect for `#reset-password/<token>`. The inputs it clears
@@ -590,6 +668,9 @@ export function LoginScreen() {
       // (issue #1158). Same idiom as ?shot=waitlist-joined; display-only,
       // no writes, so it works in every environment.
       const shot = currentShot();
+      // `#login/forgot`: the recovery view has its own address (see
+      // openRecovery), reached here by a reload or a Back / Forward to it.
+      if (!openSignup && seg === 'forgot') showRecovery();
       // The terminal state after the magic-link form succeeds. A real reset
       // reaches this through onResetConfirm; the shot paints the same state
       // without consuming a token, so proposal checks can see it.
@@ -828,6 +909,12 @@ export function LoginScreen() {
         return;
       }
       otpShowStep('password');
+      setOtpSignup({
+        created: data.created === true,
+        needsUsername: data.needsUsername === true,
+        suggestedUsername: typeof data.suggestedUsername === 'string' ? data.suggestedUsername : null,
+        waitlisted: typeof data.waitlisted === 'boolean' ? data.waitlisted : null,
+      });
       // Past the code: nothing left to resend, and setOtpStatus(null) above
       // has already taken the "we sent you a code" confirmation down.
       setCooldownUntil(0);
@@ -841,6 +928,15 @@ export function LoginScreen() {
   const onOtpSetPassword = useCallback(async () => {
     setOtpError(null);
     setOtpDetails(null);
+    setOtpUsernameError(null);
+    // The handle rides along only when this step asked for it; the server
+    // validates it exactly as the first-run "Choose your username" step does.
+    const handle = otpSignup?.needsUsername ? (otpUsername.current?.value || '').trim() : null;
+    if (handle === '') {
+      setOtpUsernameError('Enter a username.');
+      otpUsername.current?.focus();
+      return;
+    }
     const value = otpNewPassword.current?.value || '';
     const confirm = otpConfirmPassword.current?.value || '';
     if (value.length < 8) {
@@ -858,11 +954,22 @@ export function LoginScreen() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ password: value, passwordConfirmation: confirm }),
+        body: JSON.stringify({
+          password: value,
+          passwordConfirmation: confirm,
+          ...(handle ? { username: handle } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.user) {
         setOtpStatus(null);
+        // A refused name leaves the signup session unspent: fix the field,
+        // submit again.
+        if (data.field === 'username' && data.error) {
+          setOtpUsernameError(data.error);
+          otpUsername.current?.focus();
+          return;
+        }
         setOtpError(data.error || 'Could not set the password');
         return;
       }
@@ -873,7 +980,7 @@ export function LoginScreen() {
       setOtpError(sessionMintFailureMessage(error));
       setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, [st]);
+  }, [otpSignup, st]);
 
   // ── Wallet sign-in ───────────────────────────────────────────────────
 
@@ -1215,9 +1322,11 @@ export function LoginScreen() {
           rather than letting the anchor's own href do it: the href is '#' so
           the link is inert without JS, exactly as shipped. auth-screens.js
           delegates the same click for the screens it still owns; both do the
-          same thing, and this one outlives it.
+          same thing, and this one outlives it. It is `absolute` inside this
+          screen, so it moves down with the screen when the install strip is
+          up (QA 2026-09-24 Q8).
       */}
-      <AuthBackButton href="#" position="fixed" onClick={backToLanding} />
+      <AuthBackButton href="#" onClick={backToLanding} />
       {/*
           FOUR BANDS, TOP TO BOTTOM: the mark, the heading, the content, and
           the one tertiary line each step ends on, pinned to the foot.
@@ -1406,6 +1515,7 @@ export function LoginScreen() {
                 type="text"
                 required={true}
                 autoComplete="username"
+                {...HANDLE_FIELD}
                 {...AUTHFIELD}
               />
             </div>
@@ -1444,11 +1554,11 @@ export function LoginScreen() {
           <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
             <a
               id="forgot-password-link"
-              href="#"
+              href={`#${RECOVERY_ROUTE}`}
               className={PILL_LINK}
               onClick={(e) => {
                 e.preventDefault();
-                showRecovery();
+                openRecovery();
               }}
             >
               Forgot password?
@@ -1606,8 +1716,47 @@ export function LoginScreen() {
             </div>
             <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Code verified. Now choose a password for your account.
+                {otpSignup?.created
+                  ? OTP_PASSWORD_INTRO_NEW
+                  : otpSignup?.needsUsername
+                    ? OTP_PASSWORD_INTRO_HANDLE
+                    : OTP_PASSWORD_INTRO}
               </p>
+              {/*
+                  QA 2026-09-24 Q12: the handle, asked HERE. An account made by
+                  a code used to get a derived name and meet it for the first
+                  time in the waiting room ("Your account qaflowfive doesn't
+                  have platform access yet"); the first-run gate that asks for
+                  it only runs at release. Prefilled with the same suggestion
+                  that gate would offer, and keyed on it so a second verify
+                  starts from the new one. `data-username-suggested` mirrors
+                  the prefill for the declared check, as the gate's does.
+              */}
+              {otpSignup?.needsUsername ? (
+                <div key={otpSignup.suggestedUsername || ''}>
+                  <label htmlFor="otp-username" className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                    Username
+                  </label>
+                  <Input
+                    ref={otpUsername}
+                    id="otp-username"
+                    type="text"
+                    autoComplete="username"
+                    maxLength={32}
+                    {...HANDLE_FIELD}
+                    defaultValue={otpSignup.suggestedUsername || ''}
+                    data-username-suggested={otpSignup.suggestedUsername || undefined}
+                    aria-describedby="otp-username-hint"
+                    aria-invalid={otpUsernameError ? true : undefined}
+                    onInput={() => setOtpUsernameError(null)}
+                    {...FIELD}
+                    placeholder="yourname"
+                  />
+                  <p id="otp-username-hint" className={otpUsernameError ? FIELD_HINT_ERROR : FIELD_HINT}>
+                    {otpUsernameError || OTP_USERNAME_HINT}
+                  </p>
+                </div>
+              ) : null}
               <div>
                 <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
@@ -1632,6 +1781,11 @@ export function LoginScreen() {
                   placeholder="re-enter password"
                 />
               </div>
+              {otpSignup?.waitlisted ? (
+                <p id="otp-waitlist-note" className={WAITLIST_NOTE}>
+                  {OTP_WAITLIST_NOTE}
+                </p>
+              ) : null}
               <Button
                 id="btn-otp-set-password"
                 type="button"
@@ -1639,7 +1793,7 @@ export function LoginScreen() {
                 {...SOLID}
                 onClick={onOtpSetPassword}
               >
-                Set password &amp; sign in
+                {otpSignup?.created ? 'Create account & sign in' : 'Set password & sign in'}
               </Button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
@@ -1824,7 +1978,7 @@ export function LoginScreen() {
               id="btn-recovery-back"
               type="button"
               className="w-full text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300"
-              onClick={showLoginBaseView}
+              onClick={leaveRecovery}
             >
               Back to login
             </button>

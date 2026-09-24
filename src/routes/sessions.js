@@ -1237,8 +1237,12 @@ function agentSelectionErrorBody(err) {
 
 function automaticOpenRouterSetupError(err) {
   if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+    // QA 2026-09-24: no environment variable in the toast. The caller has
+    // already logged err.message, which names USERNODE_OPENROUTER_MANAGEMENT_API_KEY
+    // for whoever reads the server log; the person who pressed "Start work"
+    // is told what it means for them.
     const message = err.code === 'not_configured'
-      ? 'OpenRouter could not be set up automatically because managed key provisioning is not configured. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY.'
+      ? managedOpenRouter.NOT_CONFIGURED_USER_MESSAGE
       : `OpenRouter could not be set up automatically. ${err.message}`;
     return new AgentSelectionError(err.statusCode, message, err.code);
   }
@@ -2421,6 +2425,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         byId.set(row.id, {
           id: payload.sessionId,
           appSlug: payload.appSlug,
+          // Whose session it is, so the Homeroom mark's working indicator
+          // can count the viewer's own work only (SessionState.anyActiveFor).
+          userId: payload.userId,
           busy: payload.busy,
           phase: payload.phase,
           stopping: payload.stopping,
@@ -2441,7 +2448,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         sessions.push(
           {
-            id: 990102, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
+            // The viewer's own mock busy session, so the demo's Homeroom
+            // mark shows its working indicator (SessionState.anyActiveFor).
+            id: 990102, appSlug: config.selfAppSlug, userId: req.user.id, busy: true, phase: 'cc',
             stopping: false, status: 'active', headless: null,
           },
           {

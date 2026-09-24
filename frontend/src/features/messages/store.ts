@@ -46,6 +46,7 @@ let state: InternalState = {
   listLoaded: false,
   error: null,
   threadError: null,
+  threadGone: null,
   nextBefore: null,
   online: true,
   demo: false,
@@ -160,6 +161,7 @@ function sortConversations(items: ConversationSummary[]): ConversationSummary[] 
 }
 
 function upsertConversation(conversation: ConversationSummary): void {
+  leftConversations.delete(conversation.id);
   const items = state.conversations.filter((item) => item.id !== conversation.id);
   items.push(conversation);
   const active = state.active?.id === conversation.id
@@ -177,8 +179,17 @@ function currentUser(): { id: number; username: string; avatarUrl?: string | nul
   };
 }
 
+/**
+ * QA 2026-09-24 Q2: the server's answer to a second message into a direct
+ * request the other person has not accepted yet (409 `awaiting_acceptance`).
+ */
+function isAwaitingAcceptance(error: unknown): boolean {
+  return error instanceof api.MessagesApiError && error.status === 409 && error.message === 'awaiting_acceptance';
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof api.MessagesApiError) {
+    if (isAwaitingAcceptance(error)) return 'They need to accept your message request before you can send more.';
     if (error.status === 404) return 'This conversation is no longer available.';
     if (error.status === 429) return 'You’re doing that too quickly. Try again in a moment.';
     return error.message || fallback;
@@ -301,6 +312,7 @@ export async function loadConversations(force = false): Promise<void> {
   try {
     const conversations = await api.listConversations();
     if (request !== listRequest) return;
+    for (const item of conversations) leftConversations.delete(item.id);
     publish({
       conversations: sortConversations(conversations),
       loadingList: false,
@@ -349,8 +361,26 @@ function transcriptOrder(a: ConversationMessage, b: ConversationMessage): number
   return a.id < 0 || b.id < 0 ? Number(a.id < 0) - Number(b.id < 0) : a.id - b.id;
 }
 
+/**
+ * Conversations the viewer left in this tab (QA 2026-09-24 Q16). Their
+ * addresses are still in the history, so Back after Leave group opens one:
+ * it used to fetch, get the 404 that leaving is supposed to produce, and draw
+ * it in red beside a Try again that could never work. A left conversation is
+ * answered from here instead, and stops being one the moment it is listed
+ * again (invited back).
+ */
+const leftConversations = new Set<number>();
+
 export async function loadThread(conversationId: number, force = false): Promise<void> {
   if (!validId(conversationId)) return;
+  if (leftConversations.has(conversationId)) {
+    threadRequest += 1;
+    publish({
+      loadingThread: false, threadError: null, threadGone: 'left',
+      active: null, messages: [], nextBefore: null, nextAfter: null,
+    });
+    return;
+  }
   const linked = state.route.conversationId === conversationId ? state.route.focusMessageId : null;
   const focus = linked && linked !== focusLoaded ? linked : null;
   if (!force && !focus && state.active?.id === conversationId && state.messages.length) return;
@@ -363,6 +393,7 @@ export async function loadThread(conversationId: number, force = false): Promise
   publish({
     loadingThread: true,
     threadError: null,
+    threadGone: null,
     active: preserveVisibleThread ? state.active : null,
     messages: preserveVisibleThread ? state.messages : [],
     nextBefore: preserveVisibleThread ? state.nextBefore : null,
@@ -400,7 +431,12 @@ export async function loadThread(conversationId: number, force = false): Promise
     if (last && member && !page.nextAfter && unreadHold !== conversationId) void markRead(last);
   } catch (error) {
     if (request !== threadRequest) return;
-    publish({ loadingThread: false, threadError: errorMessage(error, 'Couldn’t load this conversation.') });
+    publish({
+      loadingThread: false,
+      threadError: errorMessage(error, 'Couldn’t load this conversation.'),
+      // A 404 is an answer, not a failure: trying again reads the same one.
+      threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
+    });
   }
 }
 
@@ -749,8 +785,22 @@ export function syncChrome(): void {
   app.setHeaderTitle?.(thread
     ? (state.route.appSlug
       ? state.discussionContext?.name || 'Discussion'
-      : state.route.agent ? 'Messages' : state.active?.title || 'Messages')
+      : state.route.agent ? 'Messages' : chromeTitle(state.active))
     : 'Messages');
+}
+
+/**
+ * The bar's name for an open conversation: its title — which for an
+ * accepted direct one is the other person's username. QA 2026-09-24 Q33a: an
+ * unanswered direct request has no peer yet and is titled "Direct message",
+ * so it takes its requester's name instead, as its header and row do.
+ */
+function chromeTitle(active: ConversationDetail | null): string {
+  if (!active) return 'Messages';
+  if (active.kind === 'direct' && active.membershipStatus === 'invited' && active.requester?.username) {
+    return active.requester.username;
+  }
+  return active.title || 'Messages';
 }
 
 /**
@@ -879,6 +929,26 @@ export async function inviteMembers(userIds: number[]): Promise<void> {
   upsertConversation(conversation);
 }
 
+/**
+ * QA 2026-09-24 Q14: rename the open group. The server keeps 1 to 80
+ * characters with the whitespace collapsed (normalizeTitle) and takes the
+ * change from the owner only; the bounds are checked here first so an empty
+ * or overlong name says why rather than coming back as a 404.
+ */
+export async function renameConversation(title: string): Promise<void> {
+  const id = state.route.conversationId;
+  if (!id) return;
+  const next = title.trim().replace(/\s+/g, ' ');
+  if (!next) throw new Error('A group needs a name.');
+  if (next.length > 80) throw new Error('Group names can be up to 80 characters.');
+  if (next === state.active?.title) return;
+  try {
+    upsertConversation(await api.updateConversation(id, { title: next }));
+  } catch (error) {
+    throw new Error(errorMessage(error, 'Couldn’t rename this group.'));
+  }
+}
+
 export async function removeMember(userId: number): Promise<void> {
   const id = state.route.conversationId;
   if (!id) return;
@@ -890,6 +960,7 @@ export async function leave(): Promise<void> {
   const id = state.route.conversationId;
   if (!id) return;
   await api.leaveConversation(id);
+  leftConversations.add(id);
   publish({ conversations: state.conversations.filter((item) => item.id !== id) });
   open(null);
 }
@@ -1038,6 +1109,19 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
     }
     await loadConversations(true);
   } catch (error) {
+    if (isAwaitingAcceptance(error)) {
+      // QA 2026-09-24 Q2: a send that cannot go through until the other
+      // person accepts is not a failed row — a Retry there could never
+      // succeed, and a reload dropped it. The words go back to the draft
+      // (unless a new one has been started) and the conversation is re-read,
+      // so the thread says who it is waiting for in place of the composer.
+      unsent.delete(key);
+      const scope = scopeKey(conversationId, null);
+      if (!draftFor(scope) && pending.content) setDraft(scope, pending.content);
+      publish({ messages: state.messages.filter((item) => item.clientKey !== key) });
+      if (state.route.conversationId === conversationId) void loadThread(conversationId, true);
+      return;
+    }
     const offline = typeof navigator !== 'undefined' && !navigator.onLine;
     if (offline) {
       const queue = pendingByConversation.get(conversationId) || [];
