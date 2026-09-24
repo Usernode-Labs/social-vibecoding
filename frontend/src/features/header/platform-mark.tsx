@@ -95,7 +95,7 @@ import { improveStore } from '../improve/improve-store.js';
  */
 const WORKING_DOT_CLS =
   'absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
-const WORKING_TITLE = 'Green dot: an agent is working on a change right now';
+const WORKING_TITLE = 'One of your changes is building';
 
 export function PlatformMark() {
   // The trigger reports its surface's state, read from the store rather than

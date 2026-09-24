@@ -19,7 +19,7 @@
 // draws as the dev chat's run card, captioned with the agent that actually
 // ran (its `agentBackend`). A drafted spec is its own item after it.
 
-import type { AgentAction, AgentActionStatus, AgentCard, AgentMessage } from './api';
+import type { AgentAction, AgentActionStatus, AgentAttachment, AgentCard, AgentMessage } from './api';
 
 export interface CardView {
   id: string;
@@ -31,7 +31,7 @@ export interface CardView {
 }
 
 export type TranscriptItem =
-  | { kind: 'user'; key: string; text: string }
+  | { kind: 'user'; key: string; text: string; attachments: AgentAttachment[] }
   | {
     kind: 'mayor';
     key: string;
@@ -176,6 +176,21 @@ export function cardView(card: AgentCard, actions: Map<string, AgentAction>, now
   };
 }
 
+// The server's stand-in for a message that was only files (attachments.js
+// ATTACHMENTS_ONLY_TEXT): the files say it, so the bubble shows no text.
+const ATTACHMENTS_ONLY_TEXT = '(attached files)';
+
+/** A user row's words and the files sent with it (routes/agent-sessions.js). */
+export function userMessage(content: string, listed: unknown): { text: string; attachments: AgentAttachment[] } {
+  const attachments = (Array.isArray(listed) ? listed : []).filter((att): att is AgentAttachment => (
+    !!att && typeof att === 'object'
+    && typeof (att as AgentAttachment).id === 'string' && /^[a-f0-9]{32}$/.test((att as AgentAttachment).id)
+    && typeof (att as AgentAttachment).filename === 'string'
+  ));
+  const text = attachments.length && content.trim() === ATTACHMENTS_ONLY_TEXT ? '' : content;
+  return { text, attachments };
+}
+
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string' && !!v.trim()) : [];
 }
@@ -267,7 +282,7 @@ export function buildTranscript(
     const meta = (row.metadata || {}) as Record<string, unknown>;
     const key = `m${row.id}`;
     if (row.role === 'user') {
-      items.push({ kind: 'user', key, text: row.content });
+      items.push({ kind: 'user', key, ...userMessage(row.content, meta.attachments) });
       continue;
     }
     if (row.role === 'assistant') {

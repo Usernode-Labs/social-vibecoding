@@ -104,6 +104,7 @@ function defaults(deps = {}) {
     sessionBus: deps.sessionBus || require('../session-bus'),
     getAgentMayorPrompt: deps.getAgentMayorPrompt || require('./agent-prompt').getAgentMayorPrompt,
     buildMayorMessages: deps.buildMayorMessages || require('./messages').buildMayorMessages,
+    attachments: deps.attachments || require('../attachments'),
     stripFakeCompletionMarker: deps.stripFakeCompletionMarker || require('./messages').stripFakeCompletionMarker,
     dispatch: deps.dispatch || require('./agent-dispatch'),
     dispatchDeps: deps.dispatchDeps || {},
@@ -250,7 +251,7 @@ async function loadSummary(pool, agentSessionId) {
 // happened without having been asked. A coding agent's result is labelled
 // with the change it ran on, because one conversation spans several. The
 // history must open with the user.
-function historyToMessages(rows, buildMayorMessages) {
+function historyToMessages(rows, buildMayorMessages, attachmentsByMessageId = new Map()) {
   const mapped = rows.map((row) => {
     const metadata = row.metadata || {};
     if (row.role === 'system' && metadata.agentSessionEvent) {
@@ -261,7 +262,10 @@ function historyToMessages(rows, buildMayorMessages) {
     }
     return row;
   });
-  const messages = buildMayorMessages(mapped);
+  // Files the user attached come back as the dev chat's Mayor reads them
+  // (messages.js / attachments.js): recent images as vision blocks, text
+  // files inlined, the rest named.
+  const messages = buildMayorMessages(mapped, attachmentsByMessageId);
   while (messages.length && messages[0].role !== 'user') messages.shift();
   return messages;
 }
@@ -281,7 +285,24 @@ function withTrailingUserText(messages, text) {
   if (last && last.role === 'user' && typeof last.content === 'string') {
     return [...messages.slice(0, -1), { role: 'user', content: `${last.content}\n\n${text}` }];
   }
+  // A user message with files is a list of blocks: the note joins it as one
+  // more, rather than following it as a second user message in a row.
+  if (last && last.role === 'user' && Array.isArray(last.content)) {
+    return [...messages.slice(0, -1), { role: 'user', content: [...last.content, { type: 'text', text }] }];
+  }
   return [...messages, { role: 'user', content: text }];
+}
+
+// The files the coding agent is handed: the ones sent with this turn's
+// message, or on a follow-up turn (which has none), the latest message's.
+function dispatchAttachmentIds(rows, attachments) {
+  if (Array.isArray(attachments) && attachments.length) return attachments.map((att) => att.id);
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (rows[i].role !== 'user') continue;
+    const listed = rows[i].metadata && Array.isArray(rows[i].metadata.attachments) ? rows[i].metadata.attachments : [];
+    return listed.map((att) => att && att.id).filter((attId) => typeof attId === 'string');
+  }
+  return [];
 }
 
 function lastUserText(rows) {
@@ -331,6 +352,9 @@ async function runAgentTurn({
   agentSessionId,
   turnId,
   messageText = null,
+  // The files sent with messageText, already checked as this user's own,
+  // unsent uploads to this conversation (routes/agent-sessions.js).
+  attachments = [],
   followUp = null,
   mayor,
   res,
@@ -558,6 +582,7 @@ async function runAgentTurn({
       kind,
       prompt: typeof input.prompt === 'string' ? input.prompt.trim() : '',
       userMessage: messageText || lastUserText(rows),
+      attachmentIds: dispatchAttachmentIds(rows, messageText ? attachments : []),
       apiKey: mayor.apiKey,
       sendAgent: send,
       res,
@@ -674,12 +699,22 @@ async function runAgentTurn({
       // The user's message: on the active change's slice when there is one,
       // so the change page reads the conversation that shaped it, and on the
       // conversation always.
-      await pool.query(
+      const { rows: inserted } = await pool.query(
         `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata)
-         VALUES ($1, $2, 'user', $3, $4::jsonb)`,
+         VALUES ($1, $2, 'user', $3, $4::jsonb)
+         RETURNING id`,
         [session.activeChange ? session.activeChange.id : null, agentSessionId, messageText,
-          JSON.stringify({ agentTurnId: turnId })]
+          JSON.stringify({ agentTurnId: turnId, ...(attachments.length ? { attachments } : {}) })]
       );
+      // The files belong to this message now: out of the orphan sweep's
+      // reach, and what the Mayor's history reads back.
+      if (attachments.length && inserted && inserted[0]) {
+        await pool.query(
+          `UPDATE chat_session_attachments SET message_id = $1
+            WHERE id = ANY($2) AND agent_session_id = $3 AND message_id IS NULL`,
+          [inserted[0].id, attachments.map((att) => att.id), agentSessionId]
+        );
+      }
       if (!session.title) {
         await pool.query(
           `UPDATE agent_sessions SET title = $1
@@ -693,7 +728,8 @@ async function runAgentTurn({
     summary = await loadSummary(pool, agentSessionId);
     const history = await loadHistory(pool, agentSessionId, summary.throughId);
     compactionPlan = d.compaction.planCompaction(history);
-    let convo = historyToMessages(history, d.buildMayorMessages);
+    const historyAttachments = await d.attachments.loadForHistory(pool, history);
+    let convo = historyToMessages(history, d.buildMayorMessages, historyAttachments);
     if (!messageText) convo = withTrailingUserText(convo, followUpNote(followUp));
     const systemPrompt = d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text });
     shim = await d.openMayorMcp({ pool, config, userId: user.id, agentSessionId });
@@ -941,6 +977,8 @@ module.exports = {
   loadHistory,
   loadSummary,
   historyToMessages,
+  withTrailingUserText,
+  dispatchAttachmentIds,
   followUpNote,
   titleFromMessage,
   fallbackWrapUp,

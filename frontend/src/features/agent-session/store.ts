@@ -20,6 +20,7 @@ import { useSyncExternalStore } from 'react';
 
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
+import { acceptFiles, pickedKind, type PendingFile } from './attachments';
 import type {
   AgentAction,
   AgentCard,
@@ -58,6 +59,12 @@ export interface LiveTurn {
   startedAt: number | null;
   cards: AgentCard[];
   pendingUserText: string | null;
+  /**
+   * The newest message id on screen when the pending text was sent. The
+   * saved row is the first user message after it; once a refresh brings it
+   * in, the pending bubble goes (settlePending).
+   */
+  pendingAfterId: number | null;
 }
 
 /** The spec viewer over the conversation: one change's spec, one version. */
@@ -146,6 +153,8 @@ export interface AgentSessionState {
    * the server holds them for every device.
    */
   drafts: SavedDraft[];
+  /** Files in the tray above the box, sent with the next message (./attachments.ts). */
+  attachments: PendingFile[];
 }
 
 const IDLE_TURN: LiveTurn = {
@@ -158,6 +167,7 @@ const IDLE_TURN: LiveTurn = {
   startedAt: null,
   cards: [],
   pendingUserText: null,
+  pendingAfterId: null,
 };
 
 export const INITIAL_STATE: AgentSessionState = {
@@ -183,6 +193,7 @@ export const INITIAL_STATE: AgentSessionState = {
   paneTab: 'spec',
   changeAction: null,
   drafts: [],
+  attachments: [],
   credits: null,
   handoff: null,
 };
@@ -287,7 +298,42 @@ async function refreshMessages(id: number) {
     after = nextAfter;
   }
   if (state.id !== id) return;
-  publish({ messages: all });
+  publish((current) => ({ messages: all, turn: settlePending(current.turn, all) }));
+}
+
+/**
+ * A progress line as the build card shows it. The runner's phase markers
+ * arrive as "[codex (resume <thread>, mode build)]"; the dev chat labels
+ * them through cc-progress-summary.js's ccPhaseLabel ("Coding agent is
+ * working"), and so does this, rather than printing the marker.
+ */
+export function progressLine(text: string): string {
+  const marker = /^\[([^\]]+)\]$/.exec(text);
+  if (!marker) return text;
+  const label = typeof window !== 'undefined'
+    && typeof (window as unknown as { ccPhaseLabel?: (phase: string) => string }).ccPhaseLabel === 'function'
+    ? (window as unknown as { ccPhaseLabel: (phase: string) => string }).ccPhaseLabel(marker[1])
+    : '';
+  return label && label !== marker[1].trim() ? label : 'The coding agent is working';
+}
+
+function newestMessageId(messages: AgentMessage[]): number {
+  return messages.reduce((max, message) => (message.id > max ? message.id : max), 0);
+}
+
+/**
+ * The pending bubble stands in for the message until its saved row is on
+ * screen, and not a moment longer. It used to wait for the Mayor's first
+ * reply, but a turn that goes straight to a build says nothing until the
+ * build's wrap-up: the refresh a build's progress triggers brought the saved
+ * row in above the run card while the bubble stayed under it, so the message
+ * showed twice until the turn ended or the page was reloaded.
+ */
+export function settlePending(turn: LiveTurn, messages: AgentMessage[]): LiveTurn {
+  if (!turn.pendingUserText) return turn;
+  const after = turn.pendingAfterId || 0;
+  const landed = messages.some((message) => message.role === 'user' && message.id > after);
+  return landed ? { ...turn, pendingUserText: null, pendingAfterId: null } : turn;
 }
 
 async function refreshActions(id: number) {
@@ -363,7 +409,7 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
       break;
     case 'status':
     case 'cc_progress':
-      if (typeof event.text === 'string' && event.text.trim()) patchTurn({ progress: event.text.trim() });
+      if (typeof event.text === 'string' && event.text.trim()) patchTurn({ progress: progressLine(event.text.trim()) });
       if (event.type === 'status' && fromChange) void refreshMessages(id).catch(() => {});
       break;
     case 'staging_ready':
@@ -449,7 +495,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     error: '',
     drawerOpen: drawer,
     session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
-    credits: null, handoff: null,
+    credits: null, handoff: null, attachments: dropAllAttachments(),
   });
   syncTitle();
   seen.clear();
@@ -517,6 +563,7 @@ function openDraft(host: AgentSessionHost) {
     specSheet: null,
     turn: IDLE_TURN,
     drafts: [],
+    attachments: dropAllAttachments(),
     credits: null,
     handoff: null,
   });
@@ -647,23 +694,142 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
   }
 }
 
+// ── Attachments (#2779 follow-up) ──────────────────────────────────────
+//
+// Files wait in a tray above the box and go with the next message. In a
+// conversation that exists each one uploads as it is picked, so a refusal
+// (too big, the wrong bytes) shows at once; an unsent conversation has
+// nowhere to upload to yet, so its files upload on send, after the
+// conversation is created — nothing is created before the first message.
+
+let attachmentSeq = 0;
+
+function revokeThumb(item: PendingFile) {
+  if (item.thumbUrl) {
+    try { URL.revokeObjectURL(item.thumbUrl); } catch { /* not ours to keep */ }
+  }
+}
+
+/** Empties the tray, letting its previews go; returns the empty tray for a publish. */
+function dropAllAttachments(): PendingFile[] {
+  for (const item of state.attachments || []) revokeThumb(item);
+  return [];
+}
+
+function patchAttachment(key: string, patch: Partial<PendingFile>) {
+  publish((current) => ({
+    attachments: current.attachments.map((item) => (item.key === key ? { ...item, ...patch } : item)),
+  }));
+}
+
+function dropAttachments(keys: string[]) {
+  const gone = state.attachments.filter((item) => keys.includes(item.key));
+  gone.forEach(revokeThumb);
+  publish((current) => ({ attachments: current.attachments.filter((item) => !keys.includes(item.key)) }));
+}
+
+async function uploadPending(id: number, key: string): Promise<boolean> {
+  const item = state.attachments.find((entry) => entry.key === key);
+  if (!item) return false;
+  if (item.status === 'ready' && item.id) return true;
+  patchAttachment(key, { status: 'uploading' });
+  try {
+    const uploaded = await api.uploadAttachment(id, item.file, item.name);
+    if (state.id !== id) return false;
+    patchAttachment(key, { status: 'ready', id: uploaded.id, kind: uploaded.kind });
+    return true;
+  } catch (error) {
+    if (state.id === id) {
+      dropAttachments([key]);
+      toast(errorText(error, `Could not attach ${item.name}.`));
+    }
+    return false;
+  }
+}
+
+/** Put picked, pasted or dropped files in the tray; the first refusal is said once. */
+export function addAttachments(files: Array<{ name: string; size: number; type?: string } & Blob>) {
+  if (state.session?.status === 'archived') return;
+  const { accepted, error } = acceptFiles(state.attachments.length, files);
+  if (error) toast(error);
+  if (!accepted.length) return;
+  const id = state.id;
+  const added: PendingFile[] = accepted.map((file) => {
+    const kind = pickedKind(file.name);
+    let thumbUrl: string | null = null;
+    if (kind === 'image' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+      try { thumbUrl = URL.createObjectURL(file); } catch { thumbUrl = null; }
+    }
+    attachmentSeq += 1;
+    return {
+      key: `att${attachmentSeq}`,
+      file,
+      name: file.name,
+      kind,
+      size: file.size,
+      thumbUrl,
+      status: id ? 'uploading' : 'local',
+      id: null,
+    };
+  });
+  publish((current) => ({ attachments: [...current.attachments, ...added] }));
+  if (id) for (const item of added) void uploadPending(id, item.key);
+}
+
+/** The tray's remove control; an upload in flight has none (pending-strip.tsx). */
+export function removeAttachment(index: number) {
+  const item = state.attachments[index];
+  if (!item || item.status === 'uploading') return;
+  dropAttachments([item.key]);
+}
+
 export async function sendAgentMessage(text: string) {
   const draft = state.id ? null : state.draft;
   const message = text.trim();
-  if ((!state.id && !draft) || !message || state.turn.running) return;
+  const files = state.attachments;
+  if ((!state.id && !draft) || (!message && !files.length) || state.turn.running) return;
+  // The button waits for uploads in flight; Enter must too.
+  if (files.some((item) => item.status === 'uploading')) return;
   publish({ error: '', credits: null });
-  patchTurn({ running: true, phase: 'mayor', pendingUserText: message, startedAt: Date.now(), streamText: '', cards: [] });
+  const shown = message || (files.length === 1 ? `Attached ${files[0].name}` : `Attached ${files.length} files`);
+  patchTurn({
+    running: true, phase: 'mayor', pendingUserText: shown, pendingAfterId: newestMessageId(state.messages),
+    startedAt: Date.now(), streamText: '', cards: [],
+  });
   const id = draft ? await createFromDraft(draft) : state.id;
   if (!id) {
     if (draft && state.draft === draft) publish({ turn: IDLE_TURN, returnedText: message });
     return;
   }
+  // The files an unsent conversation held: they upload now that it exists.
+  for (const item of state.attachments.filter((entry) => entry.status === 'local')) {
+    // eslint-disable-next-line no-await-in-loop
+    if (!await uploadPending(id, item.key)) {
+      if (state.id === id) publish({ turn: IDLE_TURN, returnedText: message });
+      return;
+    }
+  }
+  const sending = state.attachments.filter((item) => item.status === 'ready' && item.id);
+  const attachmentIds = sending.map((item) => item.id as string);
+  // The tray empties once the server has taken the message (its first
+  // event), not before: a refused message keeps its files for the retry.
+  let accepted = false;
   const abort = new AbortController();
   // A conversation the viewer left while it was being created still gets its
   // message, but its stream is not this screen's to stop.
   if (state.id === id) turnAbort = abort;
   try {
-    await api.sendTurn(id, message, { signal: abort.signal, onEvent: (event) => handleEvent(id, event) });
+    await api.sendTurn(id, message, {
+      signal: abort.signal,
+      attachmentIds,
+      onEvent: (event) => {
+        if (!accepted) {
+          accepted = true;
+          if (sending.length && state.id === id) dropAttachments(sending.map((item) => item.key));
+        }
+        handleEvent(id, event);
+      },
+    });
   } catch (error) {
     if (abort.signal.aborted) return;
     const refused = creditsRefusal(error);

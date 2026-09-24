@@ -588,3 +588,52 @@ test('the sweeper drops delegations a week after they ended, with their tokens',
     await done(client, pool);
   }
 });
+
+// Files sent in a conversation (#2779 follow-up) reuse the dev chat's table:
+// a row names a change (session_id) or a conversation (agent_session_id),
+// never neither, and goes with whichever it names.
+function attachmentsMigration() {
+  const table = SCHEMA.slice(SCHEMA.indexOf('CREATE TABLE IF NOT EXISTS chat_session_attachments ('));
+  const create = table.slice(0, table.indexOf(');') + 2);
+  const start = SCHEMA.indexOf('-- Files attached to an agent-session message (#2779 follow-up)');
+  assert.ok(start > 0, 'the attachments block must be findable in schema.sql');
+  const marker = 'ON chat_session_attachments(agent_session_id) WHERE agent_session_id IS NOT NULL;';
+  const end = SCHEMA.indexOf(marker, start);
+  assert.ok(end > start, 'and its end');
+  return { create, block: SCHEMA.slice(start, end + marker.length) };
+}
+
+test('a conversation\'s files name it, not a change, and go with it', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const { create, block } = attachmentsMigration();
+    await client.query(create);
+    const { rows: [change] } = await client.query('INSERT INTO chat_sessions (app_id, user_id) VALUES (3, 7) RETURNING id');
+    await client.query(
+      `INSERT INTO chat_session_attachments (id, session_id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ('dev', $1, 7, 'text', 'a.txt', 'text/plain', 1, 'x')`, [change.id]
+    );
+    await client.query(block);
+    await client.query(block);
+    const { rows: checks } = await client.query(
+      "SELECT COUNT(*)::int AS n FROM pg_constraint WHERE conname = 'chat_session_attachments_owner_chk'"
+    );
+    assert.equal(checks[0].n, 1, 'idempotent, and a dev-chat row from before it still satisfies it');
+
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    await client.query(
+      `INSERT INTO chat_session_attachments (id, agent_session_id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ('conv', $1, 7, 'image', 'b.png', 'image/png', 1, 'x')`, [session.id]
+    );
+    await assert.rejects(client.query(
+      `INSERT INTO chat_session_attachments (id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ('none', 7, 'text', 'c.txt', 'text/plain', 1, 'x')`
+    ), /chat_session_attachments_owner_chk/, 'a row must name one or the other');
+    await client.query('DELETE FROM agent_sessions WHERE id = $1', [session.id]);
+    const { rows: left } = await client.query('SELECT id FROM chat_session_attachments ORDER BY id');
+    assert.deepEqual(left.map((r) => r.id), ['dev'], 'the conversation\'s files go with it');
+  } finally {
+    await done(client);
+  }
+});

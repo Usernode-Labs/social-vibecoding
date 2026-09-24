@@ -106,11 +106,12 @@ export function ImproveQuickActions(): ReactNode {
  *     This app's OWN build landing is the same kind of thing with its own
  *     row: the frame is still showing the build before it, and what the row
  *     offers is a reload of the frame, not of the tab (Improve.reloadApp).
- *   - WORKING. Nothing is being built, but an agent is mid-turn on a change
- *     the viewer can see: what the pulsing green dot on the Homeroom mark
- *     means, which the dot cannot say itself (#3015). A note, and the lowest
- *     priority of the four, because the other three are about what the
- *     viewer is running.
+ *   - WORKING. Nothing is being deployed, but one of the viewer's own
+ *     changes is mid-turn: what the working indicator on the Homeroom mark
+ *     means, which the mark cannot say itself (#3015; own work only since the
+ *     follow-up, SessionState.anyActiveFor). A note, and the lowest priority
+ *     of the four, because the other three are about what the viewer is
+ *     running.
  *   - IDLE. Nothing. A row saying "up to date" is a row that is right almost
  *     always and therefore never read.
  *
@@ -120,7 +121,7 @@ export function ImproveQuickActions(): ReactNode {
  * built" is what the viewer is asking, and which of the two it is shows in
  * the wording.
  */
-export const WORKING_NOTE = 'An agent is working on a change right now. That is the green dot on the Homeroom mark.';
+export const WORKING_NOTE = 'One of your changes is building right now. The Homeroom mark shows it until it finishes.';
 
 function UpdateStatus(): ReactNode {
   const { versionState, deploying, appUpdateReady, working } = useStoreState(improveStore);

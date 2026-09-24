@@ -13,10 +13,12 @@
 // resumable event stream, stop, and the confirmation cards the Mayor's
 // writes wait on.
 
+const crypto = require('node:crypto');
 const express = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { agentSessionCreateLimiter, chatLimiter } = require('../middleware/rate-limits');
+const { agentSessionCreateLimiter, attachmentUploadLimiter, chatLimiter } = require('../middleware/rate-limits');
+const attachmentsSvc = require('../services/attachments');
 const { drainGuard } = require('../services/lifecycle');
 const agentSessions = require('../services/agent-sessions');
 const actions = require('../services/agent-session-actions');
@@ -306,6 +308,94 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
 
   // ── The Mayor (#2779 step 3b) ─────────────────────────────────────────
 
+  // ── Attachments (#2779 follow-up) ───────────────────────────────────
+  //
+  // The dev chat's (routes/sessions.js, #450), on the conversation: the
+  // client uploads each file's raw bytes here before sending, gets an id
+  // back, and names the ids on the turn, which links them to the message.
+  // The same validation (magic bytes, per-kind caps), the same rate limit,
+  // the same 50 MB cap per conversation; the rows live in
+  // chat_session_attachments with agent_session_id set, so the 24h orphan
+  // sweep, account deletion and the coding agent's download path apply.
+  router.post(
+    '/api/agent-sessions/:id/attachments',
+    requireUser,
+    attachmentUploadLimiter,
+    // Above the largest single-file cap (20 MB zips).
+    express.raw({ type: 'application/octet-stream', limit: '21mb' }),
+    async (req, res) => {
+      const id = positiveId(req.params.id);
+      try {
+        const { rows: owned } = id
+          ? await pool.query(
+            `SELECT id FROM agent_sessions WHERE id = $1 AND user_id = $2 AND status = 'open'`,
+            [id, req.user.id]
+          )
+          : { rows: [] };
+        if (!owned.length) return res.status(404).json({ error: 'Agent session not found' });
+
+        const filename = String(req.query.filename || '').trim();
+        const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const verdict = attachmentsSvc.validateUpload({ filename, data });
+        if (!verdict.ok) return res.status(400).json({ error: verdict.error });
+
+        const { rows: sum } = await pool.query(
+          `SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total
+             FROM chat_session_attachments WHERE agent_session_id = $1`,
+          [id]
+        );
+        if (Number(sum[0].total) + data.length > attachmentsSvc.MAX_SESSION_BYTES) {
+          return res.status(400).json({
+            error: `This conversation's attachment storage is full (${Math.round(attachmentsSvc.MAX_SESSION_BYTES / 1024 / 1024)} MB max)`,
+          });
+        }
+
+        const attId = crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `INSERT INTO chat_session_attachments
+             (id, session_id, agent_session_id, user_id, kind, filename, content_type, size_bytes, meta, data)
+           VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [attId, id, req.user.id, verdict.kind, filename, verdict.contentType, data.length,
+            verdict.meta ? JSON.stringify(verdict.meta) : null, data]
+        );
+        return res.json({
+          id: attId, kind: verdict.kind, filename,
+          contentType: verdict.contentType, sizeBytes: data.length, meta: verdict.meta || null,
+        });
+      } catch (err) {
+        log.error('agent-sessions', 'Attachment upload failed', { agentSessionId: id, err: err.message });
+        return res.status(500).json({ error: 'Upload failed' });
+      }
+    }
+  );
+
+  // The bytes, to the conversation's owner only. Images render inline,
+  // everything else downloads; nosniff either way (the dev chat's rule).
+  router.get('/api/agent-sessions/:id/attachments/:attId', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    const attId = String(req.params.attId || '');
+    if (!id || !/^[a-f0-9]{32}$/.test(attId)) return res.status(404).end();
+    try {
+      const { rows } = await pool.query(
+        `SELECT att.kind, att.filename, att.content_type, att.data
+           FROM chat_session_attachments att
+           JOIN agent_sessions s ON s.id = att.agent_session_id
+          WHERE att.id = $1 AND att.agent_session_id = $2 AND s.user_id = $3`,
+        [attId, id, req.user.id]
+      );
+      if (!rows.length) return res.status(404).end();
+      const att = rows[0];
+      res.set('Content-Type', att.content_type || 'application/octet-stream');
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Content-Disposition', attachmentsSvc.attachmentDisposition(att.kind === 'image' ? 'inline' : 'attachment', att.filename));
+      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      return res.send(att.data);
+    } catch (err) {
+      log.error('agent-sessions', 'Attachment serve failed', { attId, err: err.message });
+      return res.status(500).end();
+    }
+  });
+
   // POST /api/agent-sessions/:id/turns { message, model? } — one Mayor turn,
   // streamed as server-sent events. One turn at a time per conversation: a
   // second one answers 409 while the first holds the lease. Everything that
@@ -314,9 +404,15 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   router.post('/api/agent-sessions/:id/turns', requireUser, chatLimiter, drainGuard, async (req, res) => {
     const id = positiveId(req.params.id);
     const body = req.body || {};
-    const unknown = Object.keys(body).filter((key) => !['message', 'model'].includes(key));
+    const unknown = Object.keys(body).filter((key) => !['message', 'model', 'attachmentIds'].includes(key));
     if (unknown.length) return res.status(400).json({ error: `Unsupported field: ${unknown[0]}` });
-    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    const attachmentIds = attachmentsSvc.sanitizeAttachmentIds(body.attachmentIds);
+    if (attachmentIds === null) {
+      return res.status(400).json({ error: `attachmentIds must be up to ${attachmentsSvc.MAX_PER_MESSAGE} attachment ids` });
+    }
+    // Files alone are a message, as in the dev chat.
+    const typed = typeof body.message === 'string' ? body.message.trim() : '';
+    const message = typed || (attachmentIds.length ? attachmentsSvc.ATTACHMENTS_ONLY_TEXT : '');
     if (!message) return res.status(400).json({ error: 'Message required' });
     if (message.length > MAX_MESSAGE_CHARS) {
       return res.status(400).json({ error: `Message too long (max ${MAX_MESSAGE_CHARS} characters)` });
@@ -326,6 +422,29 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       const session = id ? await agentSessions.getAgentSession(pool, { userId: req.user.id, id }) : null;
       if (!session) return res.status(404).json({ error: 'Agent session not found' });
       if (session.status !== 'open') return res.status(409).json({ error: 'This agent session is archived.' });
+      // Every id must be this user's own upload to this conversation, not
+      // yet sent. Checked before the stream opens, so a refusal is a plain
+      // 400 and nothing is recorded.
+      let attachments = [];
+      if (attachmentIds.length) {
+        const { rows } = await pool.query(
+          `SELECT id, kind, filename, content_type, size_bytes, meta
+             FROM chat_session_attachments
+            WHERE id = ANY($1) AND agent_session_id = $2 AND user_id = $3 AND message_id IS NULL`,
+          [attachmentIds, id, req.user.id]
+        );
+        if (rows.length !== attachmentIds.length) {
+          return res.status(400).json({ error: 'One or more attachments are missing or already sent. Attach them again.' });
+        }
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        attachments = attachmentIds.map((attId) => {
+          const row = byId.get(attId);
+          return {
+            id: row.id, kind: row.kind, filename: row.filename, contentType: row.content_type,
+            sizeBytes: row.size_bytes, ...(row.meta ? { meta: row.meta } : {}),
+          };
+        });
+      }
       const leased = await agentSessions.acquireTurnLease(pool, { agentSessionId: id, userId: req.user.id, turnId });
       if (!leased) {
         return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
@@ -355,7 +474,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         'X-Accel-Buffering': 'no',
       });
       await agentTurn.runAgentTurn({
-        pool, config, user: req.user, agentSessionId: id, turnId, messageText: message, mayor, res,
+        pool, config, user: req.user, agentSessionId: id, turnId, messageText: message, attachments, mayor, res,
         scheduleInteractiveRecovery,
       });
       return undefined;

@@ -2425,6 +2425,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         byId.set(row.id, {
           id: payload.sessionId,
           appSlug: payload.appSlug,
+          // Whose session it is, so the Homeroom mark's working indicator
+          // can count the viewer's own work only (SessionState.anyActiveFor).
+          userId: payload.userId,
           busy: payload.busy,
           phase: payload.phase,
           stopping: payload.stopping,
@@ -2445,7 +2448,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         sessions.push(
           {
-            id: 990102, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
+            // The viewer's own mock busy session, so the demo's Homeroom
+            // mark shows its working indicator (SessionState.anyActiveFor).
+            id: 990102, appSlug: config.selfAppSlug, userId: req.user.id, busy: true, phase: 'cc',
             stopping: false, status: 'active', headless: null,
           },
           {
