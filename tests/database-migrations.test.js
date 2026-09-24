@@ -96,3 +96,11 @@ test('Kubernetes runtime contains the executables used by the migration worker',
   assert.match(dockerfile, /RUN apk add --no-cache[^\n]*python3[^\n]*kubectl/);
   assert.match(fs.readFileSync('src/workers/database-migrations.js', 'utf8'), /run\('python3'/);
 });
+
+test('accepted recovery becomes pending and cannot be submitted twice before execution', async () => {
+  const f = fixture(); await f.service.submit(request, 7);
+  f.objects[0].status = { phase: 'NeedsAttention', observedAttempt: 1 };
+  const accepted = await f.service.action(request.id, { action: 'resume', attempt: 1 });
+  assert.equal(accepted.phase, 'Pending');
+  await assert.rejects(f.service.action(request.id, { action: 'abort', attempt: 2 }), /changed/);
+});
