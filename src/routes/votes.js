@@ -5349,11 +5349,21 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // merge, or a read that failed — the line reads as it did.
     const credits = mergedCredits;
     const creditLine = credits ? creditsSentence(credits) : 'Thanks to everyone who voted';
+    // Follow-up to #2897: a child app's merge rebuilt production above, so
+    // "is live" is true when this posts. The platform's own app
+    // (self_hosted) releases AFTER the merge and outside this process
+    // (GitHub Actions builds the image, Argo CD rolls it out,
+    // services/release-watch.js reports a stall), so its line says the
+    // change merged and will be live in a few minutes. group-chat.js
+    // _proposalEvent recognises both wordings (older rows keep "is live"
+    // forever) and reads `liveSoon` from the metadata where it rides.
+    const liveSoon = !!(app && app.self_hosted);
+    const liveClause = liveSoon
+      ? (session.pr_title ? `merged (${prRef}) and will be live in a few minutes` : 'merged and will be live in a few minutes')
+      : (session.pr_title ? `is live (${prRef})` : 'is live');
     const mergedLine = force && forceBy
       ? `${mergedLabel} force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
-      : session.pr_title
-        ? `${session.pr_title} is live (${prRef}). ${creditLine} (${yesCount}/${activeCount} votes)`
-        : `${prRef} is live. ${creditLine} (${yesCount}/${activeCount} votes)`;
+      : `${session.pr_title || prRef} ${liveClause}. ${creditLine} (${yesCount}/${activeCount} votes)`;
     // The names ride as metadata too, so the general chat's event row draws
     // from data rather than from the wording.
     const mergedMeta = credits ? {
@@ -5365,6 +5375,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         backers: credits.backers,
         shapers: credits.shapers,
         votes: `${yesCount}/${activeCount}`,
+        ...(liveSoon ? { liveSoon: true } : {}),
       },
     } : null;
     await sendSystemMessage(pool, session.app_id, mergedLine, 'system', mergedMeta);
