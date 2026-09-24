@@ -230,18 +230,27 @@ function buildCopy(kind, context, now) {
           : 'Open the proposal to review their vote',
       };
     }
-    case 'pr_merged':
+    case 'pr_merged': {
       // #1688: `detail` names the people on a merge the vote carried
       // ("Backed by alice and bob, shaped by carol."); an admin override
       // keeps its marker and its own line.
+      // #2897: a child app's merge rebuilds production before this row is
+      // written, so "live" is true when it arrives. The platform's own merge
+      // is released afterwards, outside this process (GitHub Actions, then
+      // Argo CD; services/release-watch.js), so at merge time it is only on
+      // its way. Say so rather than claim a deploy that has not happened.
+      const outcome = context.appSelfHosted === true
+        ? 'Your change will be live in a few minutes'
+        : 'Your change is live';
       return {
         title: withApp(quotedTitle ? `${quotedTitle} merged` : 'Your proposal merged'),
         body: detail === 'forced'
-          ? 'An admin merged it. Your change is live'
+          ? `An admin merged it. ${outcome}`
           : detail
             ? `The vote carried. ${truncate(detail, 120)}`
-            : 'The vote carried. Your change is live',
+            : `The vote carried. ${outcome}`,
       };
+    }
     // #1688: the author pushed a new version of a proposal this person had
     // backed. Their yes no longer counts until they look again; the row in
     // the app carries the one tap that keeps it.
