@@ -45,7 +45,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const SRC = fs.readFileSync(path.join(root, 'src', 'routes', 'sessions.js'), 'utf8');
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+const SRC = [['src', 'services', 'mayor', 'turn.js'], ['src', 'routes', 'sessions.js']]
+  .map((p) => fs.readFileSync(path.join(root, ...p), 'utf8')).join('\n');
 
 test('the bound is a named constant, not a number sprinkled through the file', () => {
   assert.match(SRC, /const MAYOR_TOOL_RESULT_CHAR_MAX = 4000;/);
@@ -73,9 +75,11 @@ test('the bound is lifted for the whole direct path, not only a chat answer', ()
   assert.doesNotMatch(decision, /directChatReply/,
     'the cap decision must not be keyed on whether files changed');
 
-  // And the reason it is safe: this path has no Mayor to protect.
-  assert.match(SRC, /no Anthropic\n\s*\/\/ Mayor, wrap-up, or quick-reply generation runs around it/,
-    'the single-provider contract is what makes this not a prompt');
+  // And the reason it is safe: this path has no Mayor to protect. Since
+  // #2809 an OpenRouter session's chat normally runs through its own Mayor,
+  // and the direct turn is the fallback that still has none around it.
+  assert.match(SRC, /The DIRECT turn below[\s\S]{0,300}?with no Mayor around it/,
+    'the direct turn is what makes this not a prompt');
 });
 
 test('the Mayor tool result and the scout summary keep the bound', () => {

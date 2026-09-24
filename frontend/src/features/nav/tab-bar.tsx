@@ -63,7 +63,7 @@
  * the next render. The class string below is a constant prop.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
   BoardIcon,
@@ -78,6 +78,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
+import { RecentsList } from './recents-list';
 
 /**
  * The five tabs, in order.
@@ -158,7 +159,10 @@ function onHomeClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
   if (nav?.isNativeClick?.(event)) return;
   event.preventDefault();
-  (window as unknown as { App?: { navigateHome?: () => void } }).App?.navigateHome?.();
+  // `viaTab`: a press on a tab swaps like one, even out of an app's Workshop,
+  // where navigateHome otherwise shrinks the page into the app's tile (#2881).
+  (window as unknown as { App?: { navigateHome?: (opts?: { viaTab?: boolean }) => void } })
+    .App?.navigateHome?.({ viaTab: true });
 }
 
 /**
@@ -250,13 +254,97 @@ function useRailPeek(peek: boolean) {
   return { enter: enterPeek, leave: peek ? leavePeek : clearPeekTimer };
 }
 
+/**
+ * The lit tab's marker on the phone's bar (#2824): a blue pill behind the
+ * tab you are on that SLIDES to the next one, borrowed from the Workshop's
+ * own tab strip (`useTabMarker` in ../dev-board/workshop/workshop.tsx, and
+ * `.dev-ws-tab-marker` in app.css). Colour alone was the only mark the bar
+ * had, and at 11px on a phone that is easy to miss.
+ *
+ * THE SAME THREE RULES as the Workshop's, for the same reasons:
+ *   - `null` until the first measurement, so the prerender and the first
+ *     client render agree on a bare, unstyled span (nothing is lit until the
+ *     router has spoken — see the hydration test in tests/nav-tab-bar.test.js);
+ *   - only a SELECTION CHANGE slides. The first placement, and a re-measure
+ *     of the tab you are already on (a rotation, the bar coming back from
+ *     hidden, a desktop window narrowed to a phone), land instantly;
+ *   - unchanged geometry keeps the previous box, so the ResizeObserver's
+ *     delivery on `observe()` cannot cancel a slide that is still running.
+ *
+ * One addition: with nothing lit (the tab is `null`) the box goes back to
+ * null and the marker hides, so the next tab to light lands rather than
+ * sliding in from wherever the last one was.
+ *
+ * The box is an INSET of the lit tab, not the tab itself: the tab is the
+ * full 56px cell edge to edge, and a fill that met its neighbour's would read
+ * as the bar being split into panels. The desktop rail does not use it at
+ * all — its rows already carry a `--brand-tint` fill of their own, and
+ * app.css hides the marker there.
+ */
+interface TabMarkerBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  slide: boolean;
+}
+
+const MARKER_INSET = 4;
+
+export function markerBoxFor(
+  el: { offsetLeft: number; offsetTop: number; offsetWidth: number; offsetHeight: number },
+): Omit<TabMarkerBox, 'slide'> | null {
+  // A bar that is not laid out (hidden, or the keyboard is up) has nothing to
+  // say about where the tab is; keep the last box rather than collapse it.
+  if (!(el.offsetWidth > 0) || !(el.offsetHeight > 0)) return null;
+  return {
+    x: el.offsetLeft + MARKER_INSET,
+    y: el.offsetTop + MARKER_INSET,
+    w: Math.max(0, el.offsetWidth - MARKER_INSET * 2),
+    h: Math.max(0, el.offsetHeight - MARKER_INSET * 2),
+  };
+}
+
+function useTabMarker(
+  barRef: React.RefObject<HTMLElement | null>,
+  tab: string | null,
+): TabMarkerBox | null {
+  const [box, setBox] = useState<TabMarkerBox | null>(null);
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    if (!tab) {
+      setBox(null);
+      return;
+    }
+    const measure = (selectionChanged: boolean) => {
+      const el = bar.querySelector<HTMLElement>('.platform-tab[aria-current="page"]');
+      if (!el) return;
+      const next = markerBoxFor(el);
+      if (!next) return;
+      setBox((prev) => {
+        if (prev && prev.x === next.x && prev.y === next.y
+          && prev.w === next.w && prev.h === next.h) return prev;
+        return { ...next, slide: !!prev && selectionChanged };
+      });
+    };
+    // This run is the tab having changed; the observer's are layout moving.
+    measure(true);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => measure(false));
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [barRef, tab]);
+  return box;
+}
+
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  const { tab, messages, screen, peek, railOpen, viewer } = useStoreState(navStore);
+  const { tab, messages, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -266,7 +354,18 @@ export function PlatformTabs() {
   // the class it renders is the OR of the two and the overlay treatment is a
   // second class app.css keys the peeking case off.
   useHiddenClass(barRef, !visible && !peek);
+  // …AND THE ROUTE'S OWN ANSWER RIDES BESIDE IT, because `hidden` alone can
+  // no longer carry it. app.css decides whether the header's sidebar toggle
+  // exists from `#platform-tabs:not(.hidden)`, and a peek over a running app
+  // takes `hidden` off: pointing at the window's edge inside an app drew the
+  // toggle into the app's strip, shoved ✕, the tile and the name 34px right,
+  // and a press on it folded the docked rail behind the app. A rail that only
+  // the peek is showing is not the route's, so there is nothing to fold.
+  useClassToggle(barRef, 'platform-tabs-route-hidden', !visible);
   useClassToggle(barRef, 'platform-tabs-peek', collapsed && peek);
+  // THE FADE OUT (#2795). The peek stays up for the length of the fade and
+  // this class is what app.css turns into it; ./rail-peek.ts times both.
+  useClassToggle(barRef, 'platform-tabs-peek-out', collapsed && peek && peekOut);
   // FOLDED IS A CLASS, NOT A `hidden`, and that is the whole safety of it: a
   // phone's bar is at the FOOT of the screen and is the only navigation there
   // is, so folding must never reach it. app.css acts on this class inside
@@ -275,6 +374,7 @@ export function PlatformTabs() {
   // watch the viewport.
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
+  const marker = useTabMarker(barRef, tab);
 
   return (
     <>
@@ -318,7 +418,29 @@ export function PlatformTabs() {
         onMouseEnter={enter}
         onMouseLeave={leave}
       >
-      {TABS.map(({ key, label, href, Icon }) => (
+      {/*
+          THE LIT TAB'S MARKER (#2824). Before the tabs so it paints behind
+          them (app.css raises each tab one step), `aria-hidden` because
+          `aria-current` already says which tab is lit, and bare until
+          measured — see useTabMarker. `data-marker-at` is what makes it
+          visible; `data-marker-slide` is what app.css hangs the slide on.
+      */}
+      <span
+        className="platform-tabs-marker"
+        aria-hidden="true"
+        {...(marker ? { 'data-marker-at': '' } : {})}
+        {...(marker && marker.slide ? { 'data-marker-slide': '' } : {})}
+        style={marker ? {
+          transform: `translate(${marker.x}px, ${marker.y}px)`,
+          width: `${marker.w}px`,
+          height: `${marker.h}px`,
+        } : undefined}
+      />
+      {TABS.flatMap(({ key, label, href, Icon }) => [
+        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after Workshop,
+        // before Me at the rail's foot, which is where the Resume strip it
+        // replaces sat. Desktop only; app.css keeps it off the phone's bar.
+        key === 'me' ? <RecentsList key="recents" /> : null,
         <a
           key={key}
           id={`platform-tab-${key}`}
@@ -351,12 +473,20 @@ export function PlatformTabs() {
                 because the number has to mean "how many things to open".
                 Rendered only above zero, so the prerender (INITIAL is 0)
                 and the first client render agree with no badge at all.
+
+                AND IT IS THE QUIET ONE (#2912). Unread messages are counted
+                in the bell too, so this one is grey rather than the bell's
+                red: on the phone's bar a grey disc on the glyph's corner, on
+                the desktop rail a grey pill at the row's far end. It stays
+                HERE in the markup for both; app.css moves it on the rail by
+                dissolving this wrapper, so the phone keeps its anchor and a
+                declared check keeps finding it inside the Messages tab.
             */}
             {key === 'messages' ? <TabBadge count={messages} /> : null}
           </span>
           <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
-        </a>
-      ))}
+        </a>,
+      ])}
       </nav>
     </>
   );

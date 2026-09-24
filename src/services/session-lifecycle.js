@@ -281,6 +281,16 @@ async function finalizeArchivedSession({
   const session = sessionRows[0];
   const appSlug = session?.app_slug;
 
+  // #2779: a change an agent session started tells that conversation it is
+  // closed, and stops being its active change. Best-effort, like everything
+  // else here: the note never holds up the archive.
+  if (session) {
+    await require('./agent-sessions').noteChangeClosed(pool, {
+      change: session,
+      outcome: require('./agent-sessions').outcomeForArchiveReason(reason),
+    });
+  }
+
   if (session?.staging_runtime_name || session?.staging_container_id) {
     // Same contract as teardownStagingForSession above (#851): the chokepoint
     // nulls the columns itself once removal is CONFIRMED, and a leak keeps

@@ -39,10 +39,13 @@ const {
   turnFallbackQuickReplies,
 } = recoveryPills;
 
-const SESSIONS_SRC = fs.readFileSync(
+// #2779: the Mayor's tools, pill ladder and system prompt moved out of the
+// route into services/mayor/*, so "the Mayor's source" is all of them.
+const SESSIONS_SRC = [
   path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-  'utf8'
-);
+  ...['turn', 'tools', 'pills', 'replies', 'data-tools', 'messages', 'prompt']
+    .map((name) => path.join(__dirname, '..', 'src', 'services', 'mayor', `${name}.js`)),
+].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const DEVCHAT_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
@@ -193,7 +196,9 @@ test('every status-only turn end carries pills on its status row', () => {
   const sites = [
     [/\$\{busyAgent\.agentName\} is already running for this session[\s\S]{0,300}?turnPills\('worker_busy'\)/,
       'worker-busy race'],
-    [/refusalText\(selectedModel, refusalCategory\)[\s\S]{0,300}?turnPills\('failed'\)/,
+    // #2809: named by the Mayor's own model, which is the session's
+    // OpenRouter model on an OpenRouter session and selectedModel otherwise.
+    [/refusalText\(mayorModel, refusalCategory\)[\s\S]{0,300}?turnPills\('failed'\)/,
       'whole-chain model refusal'],
     [/This turn failed: \$\{friendly\}[\s\S]{0,300}?turnPills\('failed'\)/,
       'provider/turn error catch'],

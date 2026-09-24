@@ -18,7 +18,7 @@ const {
 
 // #2600: the default reasoning effort for an OpenRouter CODING turn when the
 // user has not picked one in Settings. It is 'xhigh' — the top of the scale
-// above, the Opus 5 "max" equivalent — because the models the platform
+// above, the Opus 5.5 "max" equivalent — because the models the platform
 // recommends for coding (GLM 5.3 Flash, DeepSeek v4.1 Flash) are cheap enough
 // per token that thinking longer is the better trade on repository work: a
 // change that lands first time costs less than a cheap one that has to be
@@ -338,6 +338,19 @@ function load() {
     // user has a usable key; Claude remains the safe fallback for accounts
     // that have not configured or claimed one.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
+    // #2809/#2810: an OpenRouter session's chat runs through the Mayor, on the
+    // session's own OpenRouter model and key (services/openrouter-mayor.js),
+    // so it gets the same plan, spec and wrap-up flow as a Claude session.
+    // False restores the direct path, where the coding agent answers alone.
+    openrouterSessionMayorEnabled:
+      String(process.env.OPENROUTER_SESSION_MAYOR_ENABLED || 'true') === 'true',
+    // #2779: agent sessions (docs/agent-sessions.md), behind an experimental
+    // per-user flag. The default applies to a user who has not chosen (a
+    // choice either way wins, so an opt-out survives the day this flips);
+    // the opt-in audience says who may make that choice at all: 'admins'
+    // while the feature ships dark, then 'all'.
+    agentSessionsDefault: String(process.env.AGENT_SESSIONS_DEFAULT || 'false') === 'true',
+    agentSessionsOptIn: process.env.AGENT_SESSIONS_OPT_IN === 'all' ? 'all' : 'admins',
     // #717: collection-only emergency switch. Reporting remains readable so
     // operators can inspect already-recorded aggregates after disabling new
     // writes. This never changes provider/model/routing behaviour.
@@ -349,6 +362,9 @@ function load() {
     // one emergency switch. The deploy workflow still writes the verified-
     // identity variable; nothing reads it, exactly as with
     // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
+    // #2819 reviewed MiMo-V2.6-Pro as a replacement on 2026-09-23 and kept
+    // GLM 5.3 Flash; docs/coding-agent-defaults.md has the evidence and
+    // what would change the answer.
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
     // The effort a coding turn runs at when the session carries no explicit
     // choice. A user's Settings choice is stored on the session and still
@@ -526,8 +542,9 @@ function load() {
         execute: enabled,
         present: enabled,
         enforce: false,
-        maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 720_000, 60_000),
-        maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 240_000, 30_000),
+        maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 1_440_000, 60_000),
+        maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 480_000, 30_000),
+        maxRepairAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_REPAIR_AGENT_MS', 240_000, 30_000),
         failedMetadataRetentionDays: boundedInt('VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),
         failedArtifactRetentionHours: boundedInt('VISUAL_EVIDENCE_FAILED_ARTIFACT_RETENTION_HOURS', 24, 1),
       };

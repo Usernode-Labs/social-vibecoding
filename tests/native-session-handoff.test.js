@@ -490,8 +490,18 @@ test('session mint reports native preparation separately from network failure',
     let fetches = 0;
     const nativeFailure = new Error('The native credential could not be validated yet.');
     nativeFailure.usernodeCode = 'native_session_recovery_uncertain';
+    const bridgeSnapshot = {
+      origin: 'https://app.onhomeroom.com',
+      bridgeVersion: 5,
+      appVersion: '1.0.0',
+      buildNumber: '1223',
+      privileged: { state: 'blocked-frame', kind: 'privileged-unavailable' },
+    };
     const native = loadAuthShared({
-      usernode: { isNative: true },
+      usernode: {
+        isNative: true,
+        getBridgeDiagnostics() { return bridgeSnapshot; },
+      },
       NativeChrome: {
         async prepareForLogin() { throw nativeFailure; },
         lastSessionFailure() {
@@ -513,14 +523,38 @@ test('session mint reports native preparation separately from network failure',
     assert.equal(
       native.sessionMintFailureMessage(preparationError),
       'Secure app session could not be prepared. Force-quit and reopen Homeroom, ' +
-        'then try again. Diagnostic: native_session_recovery_uncertain'
+        'then try again.'
     );
+    assert.equal(preparationError.diagnostic, 'native_session_recovery_uncertain');
+    assert.deepEqual(JSON.parse(JSON.stringify(preparationError.details)), {
+      stage: 'prepare-login',
+      code: 'native_session_recovery_uncertain',
+      kind: 'privileged-unavailable',
+      nativeMessage: nativeFailure.message,
+      bridgeState: 'blocked-frame',
+      pageOrigin: 'https://app.onhomeroom.com',
+      appVersion: '1.0.0',
+      buildNumber: '1223',
+      bridgeVersion: 5,
+    });
+    bridgeSnapshot.appVersion = 'changed-later';
+    assert.equal(preparationError.details.appVersion, '1.0.0',
+      'the report is captured when preparation fails');
 
     const bridgeFailure = new Error(
-      'prepareForLogin was cancelled because the page changed'
+      'Privileged bridge is unavailable for this main frame'
     );
+    bridgeFailure.usernodeKind = 'privileged-unavailable';
     const untypedNative = loadAuthShared({
-      usernode: { isNative: true },
+      usernode: {
+        isNative: true,
+        getBridgeDiagnostics() {
+          return {
+            origin: 'https://app.onhomeroom.com',
+            privileged: { state: 'blocked-frame', kind: bridgeFailure.usernodeKind },
+          };
+        },
+      },
       NativeChrome: {
         async prepareForLogin() { throw bridgeFailure; },
         lastSessionFailure() {
@@ -528,7 +562,7 @@ test('session mint reports native preparation separately from network failure',
             stage: 'prepare-login',
             message: bridgeFailure.message,
             code: null,
-            kind: null,
+            kind: bridgeFailure.usernodeKind,
           };
         },
       },
@@ -538,8 +572,11 @@ test('session mint reports native preparation separately from network failure',
     assert.equal(
       untypedNative.sessionMintFailureMessage(untypedError),
       'Secure app session could not be prepared. Force-quit and reopen Homeroom, ' +
-        'then try again. Reason: prepareForLogin was cancelled because the page changed'
+        'then try again.'
     );
+    assert.equal(untypedError.details.nativeMessage, bridgeFailure.message);
+    assert.equal(untypedError.details.kind, 'privileged-unavailable');
+    assert.equal(untypedError.details.bridgeState, 'blocked-frame');
 
     const web = loadAuthShared({ usernode: { isNative: false } }, async () => {
       throw new TypeError('Failed to fetch');
@@ -548,6 +585,37 @@ test('session mint reports native preparation separately from network failure',
       .then(() => null, (error) => error);
     assert.equal(web.sessionMintFailureMessage(networkError), 'Network error');
   });
+
+test('login diagnostics discard unexpected text and full URLs', async () => {
+  const failure = new Error('Authorization token at https://example.test/private?secret=value');
+  failure.usernodeKind = 'privileged-unavailable';
+  const native = loadAuthShared({
+    usernode: {
+      isNative: true,
+      getBridgeDiagnostics() {
+        return {
+          origin: 'https://app.onhomeroom.com/path?token=secret',
+          appVersion: '1.0.0',
+          privileged: { state: 'blocked-frame', message: failure.message },
+        };
+      },
+    },
+    NativeChrome: {
+      async prepareForLogin() { throw failure; },
+      lastSessionFailure() {
+        return { stage: 'prepare-login', kind: failure.usernodeKind,
+          message: failure.message };
+      },
+    },
+  }, async () => { throw new Error('fetch must not run'); });
+
+  const error = await native.fetchSessionMint('/api/auth/login')
+    .then(() => null, (caught) => caught);
+  assert.equal(error.details.nativeMessage, null);
+  assert.equal(error.details.pageOrigin, null);
+  assert.equal(error.details.kind, 'privileged-unavailable');
+  assert.equal(JSON.stringify(error.details).includes('secret=value'), false);
+});
 
 test('a late A result cannot admit or overwrite successor B', async () => {
   const a = deferred();

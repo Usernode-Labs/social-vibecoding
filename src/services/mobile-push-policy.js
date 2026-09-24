@@ -432,6 +432,35 @@ function buildMessage({
   return message;
 }
 
+// #2904: a badge-only APNs push. iOS keeps the icon at whatever the LAST
+// push's `aps.badge` said until something sets it again, and the app is
+// the only other thing that can — so notifications read on another device
+// (or while the WebView was suspended) left the icon on a stale count with
+// nothing in-app to explain it. This carries the fresh total and nothing
+// else: no `notification` block, no `data`, so iOS updates the icon without
+// presenting a banner and the native shell has no social payload to route.
+// `alert` is still the right push type — Apple files badge changes under it
+// — and priority 5 keeps it off the immediate-delivery budget.
+const BADGE_TTL_MS = 60 * 60 * 1000;
+
+function buildBadgeMessage({ token, unreadCount, now = new Date() }) {
+  if (typeof token !== 'string' || !token) throw new Error('mobile_push_registration_missing');
+  if (!Number.isSafeInteger(unreadCount) || unreadCount < 0) {
+    throw new Error('mobile_push_badge_count_invalid');
+  }
+  return {
+    token,
+    apns: {
+      headers: {
+        'apns-push-type': 'alert',
+        'apns-priority': '5',
+        'apns-expiration': String(Math.floor((new Date(now).getTime() + BADGE_TTL_MS) / 1000)),
+      },
+      payload: { aps: { badge: unreadCount } },
+    },
+  };
+}
+
 module.exports = {
   ALLOWED_KINDS,
   MAX_TTL_MS,
@@ -440,4 +469,6 @@ module.exports = {
   isPushEnvironment,
   recipientBinding,
   buildMessage,
+  buildBadgeMessage,
+  BADGE_TTL_MS,
 };

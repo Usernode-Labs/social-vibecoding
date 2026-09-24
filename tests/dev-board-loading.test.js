@@ -362,5 +362,6 @@ test('one skeleton module renders both the components and the HTML strings', () 
   assert.equal(widths.length, 2, 'both width tables found');
   for (const w of widths) assert.ok(!w.includes('${'), 'no computed class names');
   const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
-  assert.match(FRAME, /skeletonListHtml\(3\)/, '#dev-body\'s initial content uses it too');
+  // Four rows, the Workshop's own loading count, so the hand-off is unseen (#2880).
+  assert.match(FRAME, /skeletonListHtml\(4\)/, '#dev-body\'s initial content uses it too');
 });

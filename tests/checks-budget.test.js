@@ -65,7 +65,7 @@ test('the whole suite fits inside the container run timeout', () => {
 
 test('the budget is big enough for a full manifest at measured speed', () => {
   // Production timing: ~3.9s marginal per check. A FULL manifest at the
-  // ceiling — 770 now (750, 730, 710, 690, 660, 630, 600, 580, 560, 530, 480 since #1417, 430, 400 since #1125)
+  // ceiling — 810 now (790, 770, 750, 730, 710, 690, 660, 630, 600, 580, 560, 530, 480 since #1417, 430, 400 since #1125)
   // — is ~293s of ideal work over a pool of 8; at the 55-70% efficiency a
   // shared preview actually delivers, ~370-470s. The budget has to clear that
   // with room, or the tail of a real manifest gets cut every single build and

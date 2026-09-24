@@ -45,7 +45,7 @@ test('Dockerfile smoke-tests a headless Chromium launch at image build time, as 
   // degrading every build turn
   const smokeIdx = df.search(/RUN cd \/usr\/local\/lib\/node_modules\/@playwright\/mcp[\s\S]{0,80}chromium\.launch/);
   assert.ok(smokeIdx !== -1, 'smoke-test RUN present');
-  assert.match(df, /chromium\.launch\(\{channel:'chromium',headless:true/);
+  assert.match(df, /chromium\.launch\(\{channel:'chromium',headless:true,chromiumSandbox:false/);
   assert.match(df, /--enable-unsafe-swiftshader/);
   // runs after the final USER node switch (browsers are node-owned by then)
   const userNodeIdx = df.lastIndexOf('USER node');
@@ -65,6 +65,7 @@ test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json r
   assert.match(wr, /"--browser", "chromium"/);
   assert.match(wr, /--headless/);
   assert.match(wr, /--isolated/);
+  assert.match(wr, /--no-sandbox/);
 });
 
 // ── run-cc.sh: purpose-bound MCP flags, strict config, scout/sync untouched ─

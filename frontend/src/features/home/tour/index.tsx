@@ -17,11 +17,13 @@
  * (`Home.publishImproveTarget`, #1367). So steps 3 to 6 are one interaction
  * rather than four descriptions:
  *
- *   * step 3 spotlights the MARK that opens that menu
- *     inside it, asking the viewer to press it. It has no Next. The click is
- *     NOT intercepted: the tour subscribes to `appContextStore` and advances when
- *     `open` goes true, so what opens the panel is the product's own handler
- *     and the tour is only watching;
+ *   * step 3 spotlights the MARK that opens that menu, asking the viewer to
+ *     press it. The click is NOT intercepted: the tour subscribes to
+ *     `appContextStore` and advances when `open` goes true, so what opens the
+ *     panel is the product's own handler and the tour is only watching. Its
+ *     Next opens the menu through `AppContext.open()` — the same path — and
+ *     the same watcher advances it, so Next never lands on step 4 with the
+ *     menu shut;
  *   * steps 4 and 5 spotlight `#improve-row-feedback` and
  *     `#improve-row-new-session` INSIDE the panel the viewer just opened, and
  *     Next moves between them. Both are DESCRIBED, not driven: the cut-out
@@ -154,6 +156,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
+import { isEmbeddedPanel } from '../../../lib/side-panel-mode';
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
 import { AppContext } from '../../app-context/app-context-controller.js';
 import { appContextStore } from '../../app-context/app-context-store.js';
@@ -164,7 +167,7 @@ import {
 } from './spotlight';
 import { useTourRequest } from './tour-request';
 import {
-  clampIndex, hasNext, IMPROVE_STEP_INDEX, isLastStep, resumeIndex, stepAt, stepCounter,
+  clampIndex, IMPROVE_STEP_INDEX, isLastStep, nextOpensMenu, resumeIndex, stepAt, stepCounter,
   TOUR_LENGTH,
 } from './tour-steps';
 import {
@@ -222,8 +225,13 @@ const CARD = 'absolute w-[340px] max-w-[calc(100vw-1.5rem)] rounded-2xl border b
   + 'dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xl focus:outline-none '
   + 'pointer-events-auto motion-safe:transition-[top,left] motion-safe:duration-200';
 
-/** True on the routes that must render the same way every single time. */
+/**
+ * True on the routes that must render the same way every single time — and in
+ * the side panel's document (`?panel=1`, beside a running app), which never
+ * shows Home and whose top window runs the tour.
+ */
 function isDeterministicRoute(): boolean {
+  if (isEmbeddedPanel()) return true;
   try {
     const params = new URLSearchParams(location.search);
     return !!(params.get('shot') || params.get('demo') || params.get('token'));
@@ -301,7 +309,6 @@ export function OnboardingTour() {
   const spotRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const nextRef = useRef<HTMLButtonElement | null>(null);
   const confirmRef = useRef<HTMLDivElement | null>(null);
 
   const [open, setOpen] = useState(false);
@@ -313,7 +320,6 @@ export function OnboardingTour() {
 
   const step = stepAt(index);
   const last = isLastStep(index);
-  const showsNext = hasNext(index);
 
   // Home's visibility, as a subscription. `true` is the shipped value, which
   // is also what the DOM fallback answers before the router has published.
@@ -333,7 +339,6 @@ export function OnboardingTour() {
   useHiddenClass(rootRef, !live);
   useHiddenClass(bodyRef, confirming);
   useHiddenClass(confirmRef, !confirming);
-  useHiddenClass(nextRef, !showsNext);
   useClassToggle(spotRef, 'pointer-events-auto', !step.interactive);
 
   // ── The viewer ───────────────────────────────────────────────────────
@@ -628,8 +633,14 @@ export function OnboardingTour() {
 
   const goBack = useCallback(() => setIndex(clampIndex(indexRef.current - 1)), []);
   const goNext = useCallback(() => {
-    if (isLastStep(indexRef.current)) finish();
-    else setIndex(clampIndex(indexRef.current + 1));
+    const at = indexRef.current;
+    // The menu step's Next does what the mark does rather than moving the
+    // counter itself: the store subscription above sees `open` go true and
+    // advances from there, so step 4 always arrives with the menu it points
+    // into.
+    if (nextOpensMenu(at)) void AppContext.open();
+    else if (isLastStep(at)) finish();
+    else setIndex(clampIndex(at + 1));
   }, [finish]);
 
   useEffect(() => {
@@ -738,12 +749,11 @@ export function OnboardingTour() {
                 Back
               </Button>
               {/*
-                  Hidden on the step that ends when the panel opens: there is
-                  nothing for Next to do there, and a live one would let the
-                  viewer past the only step that asks them to press something.
+                  On every step. On the menu step it opens the menu rather
+                  than skipping it (goNext), so it cannot carry the viewer
+                  past the step that asks them to press something.
               */}
               <Button
-                ref={nextRef}
                 id="home-tour-next"
                 type="button"
                 size="sm"

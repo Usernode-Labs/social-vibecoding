@@ -47,6 +47,7 @@ const adminCache = new Map(); // appId -> { at, ids: number[] }
 
 function invalidateAppAdmins(appId) {
   if (appId != null) adminCache.delete(Number(appId));
+  else adminCache.clear();
 }
 
 // Resolved app-admin user ids for one app. TTL-cached.

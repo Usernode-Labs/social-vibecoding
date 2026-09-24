@@ -38,7 +38,7 @@ require.cache[conversationsId].exports = {
   ...realConversations,
   strictId: realConversations.strictId,
   loadMembership: async () => membership,
-  canDirectInteract: async () => canInteract,
+  canReadConversation: async () => canInteract,
   getMessage: async () => (messageInConversation ? { id: 31 } : null),
 };
 

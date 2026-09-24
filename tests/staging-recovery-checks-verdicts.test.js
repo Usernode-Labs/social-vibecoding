@@ -513,9 +513,9 @@ test('an imported row with no recorded head sha records a terminal skip', () => 
     'nothing to pin → an explicit gate-passing verdict, not a NULL that the sweeper re-picks forever');
 });
 
-test('the heal never opens a PR for an imported proposal', () => {
-  assert.match(RECOVERY_SRC, /if \(!session\.pr_number && !imported\)/,
-    "the PR already exists on GitHub and belongs to its author — creating one would fork the discussion");
+test('the heal never opens a PR for an imported or unattended headless proposal', () => {
+  assert.match(RECOVERY_SRC, /if \(!session\.pr_number && !imported && !session\.is_headless\)/,
+    'only a human-owned native session may gain a draft PR during recovery');
 });
 
 test('the rebuilt-preview breadcrumb goes to the surface the proposal can show', () => {

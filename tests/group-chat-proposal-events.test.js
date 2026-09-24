@@ -149,75 +149,57 @@ test('the box is the Current status tab\'s surface: frosted fill, hairline, bare
   assert.doesNotMatch(read('public/js/app-view.js'), /activity-open/, 'with its capture deep link');
 });
 
-test('the viewer\'s own event sits on the right: the row runs right to left, no avatar, the box against the right edge', () => {
+test('the viewer\'s own event is the same left-hand named row as anybody\'s, marked rather than moved (#2783)', () => {
   const msg = submitted('open', { event: { ...submitted().event, mine: true } });
   const html = renderComponent(EVENT, 'EventRow', { msg });
-  assert.match(html, new RegExp(`^<div class="flex gap-3 px-4 py-2 flex-row-reverse gc-event gc-event-self" data-msg-id="${msg.id}"`));
-  assert.doesNotMatch(html, /rounded-xl h-11 w-11/, 'no avatar beside your own event');
-  assert.match(html, /<div class="min-w-0 flex-1"><div class="flex items-baseline gap-2 justify-end"><span class="truncate [^"]*"><span data-event-sender="">evan<\/span><\/span><span class="shrink-0 [^"]*"><span class="gc-msg-time"/, 'the header is pushed to the right edge but still reads name then time (#2392)');
-  assert.match(html, /<div class="text-\[1\.0625rem\] leading-snug text-zinc-900 dark:text-zinc-100 flex flex-col items-end"><a class="gc-event-box"/, 'the box column stacks against the right edge');
+  assert.match(html, new RegExp(`^<div class="flex gap-3 px-4 py-2 gc-event gc-event-self" data-msg-id="${msg.id}"`));
+  assert.doesNotMatch(html, /flex-row-reverse|justify-end|items-end/, 'no side of its own any more');
+  assert.match(html, /rounded-xl h-11 w-11/, 'and the avatar, like every row');
   const theirs = renderComponent(EVENT, 'EventRow', { msg: submitted('open') });
-  assert.match(theirs, /^<div class="flex gap-3 px-4 py-2 gc-event" /, 'somebody else\'s stays on the left, with the avatar');
+  assert.match(theirs, /^<div class="flex gap-3 px-4 py-2 gc-event" /, 'somebody else\'s is the same row, unmarked');
   assert.match(theirs, /rounded-xl h-11 w-11/);
 });
 
-test('in the general chat a person\'s message is a bubble under their name; yours is the accent tint on the right, with no avatar', () => {
+test('every chat draws a person\'s message as a named row — no bubble, and your own on the left too (#2783)', () => {
   const { MessageRow } = loadTsx(TRANSCRIPT);
-  const theirs = renderToHtml(createElement(MessageRow, { msg: human('hello there'), bubbled: true }));
+  const theirs = renderToHtml(createElement(MessageRow, { msg: human('hello there') }));
   assert.match(theirs, /^<div class="flex gap-3 px-4 py-2 gc-msg" data-msg-id="\d+" data-username="alice">/);
   assert.match(theirs, /rounded-xl h-11 w-11[^>]*>A<\/span>/, 'the avatar');
   assert.match(theirs, /<span>alice<\/span>/);
-  assert.match(theirs, /<div class="gc-bubble"><div class="gc-msg-content"><p>hello there<\/p><\/div><\/div><div class="gc-reactions"/, 'the body in a bubble, the reactions under it');
+  assert.match(theirs, /<div class="gc-msg-content"><p>hello there<\/p><\/div><div class="gc-reactions"/, 'the body flat, the reactions under it');
+  assert.doesNotMatch(theirs, /gc-bubble/);
 
-  const mine = renderToHtml(createElement(MessageRow, { msg: human('mine'), bubbled: true }).type === undefined ? null : createElement(MessageRow, { msg: { ...human('mine'), username: 'evan', mine: true }, bubbled: true }));
-  assert.match(mine, /^<div class="flex gap-3 px-4 py-2 flex-row-reverse gc-msg gc-msg-self" data-msg-id="\d+" data-username="evan">/, 'the row runs right to left, and keeps gc-msg-self for the reaction bar');
-  assert.doesNotMatch(mine, /rounded-xl h-11 w-11/, 'no avatar beside your own words');
-  assert.match(mine, /<div class="flex items-baseline gap-2 justify-end"><span class="truncate [^"]*"><span class="gc-msg-username-self">evan<\/span>/, 'name then time, not reversed (#2392)');
-  assert.match(mine, /flex flex-col items-end"><div class="gc-bubble gc-bubble-self"><div class="gc-msg-content"><p>mine<\/p><\/div><\/div>/);
-
-  // A quoted reply and files ride inside the bubble.
-  const quoted = renderToHtml(createElement(MessageRow, {
-    msg: { ...human('reply'), quote: { icon: '\u21A9', username: 'bob', excerpt: 'earlier', source: 'message', href: null, targetId: 3 } }, bubbled: true,
-  }));
-  assert.match(quoted, /<div class="gc-bubble"><div class="gc-quoted" [^>]*>[\s\S]*?<\/div><div class="gc-msg-content">/);
-
-  // Without `bubbled` — the topic thread — the row is exactly what it was.
-  const flat = renderToHtml(createElement(MessageRow, { msg: { ...human('flat'), mine: true } }));
-  assert.match(flat, /^<div class="flex gap-3 px-4 py-2 gc-msg gc-msg-self" /, 'left, flat, with the avatar');
-  assert.doesNotMatch(flat, /gc-bubble|flex-row-reverse/);
-  assert.match(flat, /rounded-xl h-11 w-11/);
+  const mine = renderToHtml(createElement(MessageRow, { msg: { ...human('mine'), username: 'evan', mine: true } }));
+  assert.match(mine, /^<div class="flex gap-3 px-4 py-2 gc-msg gc-msg-self" data-msg-id="\d+" data-username="evan">/,
+    'left, like everybody\'s, and still gc-msg-self for the reaction bar');
+  assert.doesNotMatch(mine, /gc-bubble|flex-row-reverse|justify-end/);
+  assert.match(mine, /rounded-xl h-11 w-11/, 'your own face beside your own words, as Discord draws it');
+  assert.match(mine, /<span class="gc-msg-username-self">evan<\/span>/);
 });
 
-test('the bubble is the Messages screen\'s shape on the raised surface, and the react disc crosses to the empty side of your row', () => {
-  const css = read('public/css/app.css');
-  const bubble = css.match(/\.gc-bubble \{([\s\S]*?)\}/);
-  assert.ok(bubble, 'the bubble rule');
-  assert.match(bubble[1], /border-radius: 20px;/);
-  // Not the Messages screen's white: on the frosted sheet that is the
-  // sheet's own colour. The raised neutral surface the dev chat's PR card
-  // and the dark-mode Messages bubble already use.
-  assert.match(bubble[1], /background: var\(--dc-raised\);/);
-  assert.match(bubble[1], /max-width: min\(78%, 640px\);/);
-  // Yours in the tint the dev chat and the Messages screen give your turns —
-  // but composited over the same raised surface the other bubbles sit on,
-  // rather than standing alone. `--accent-tint` is translucent, so a tint-only
-  // bubble rendered whatever the ROW was painted, and the row's hover/tap
-  // highlight arrived inside the message box with it (#2464). Pinned in full,
-  // colour resolution and all, by tests/group-chat-row-highlight.test.js.
-  const self = css.match(/\.gc-bubble-self \{([\s\S]*?)\}/);
-  assert.ok(self, 'the self-bubble rule');
-  assert.match(self[1], /background-color: var\(--dc-raised\);/, 'yours sits on the same surface as everyone else\'s');
-  assert.match(
-    self[1],
-    /background-image: linear-gradient\(var\(--accent-tint\), var\(--accent-tint\)\);/,
-    'yours in the tint the dev chat and the Messages screen give your turns'
-  );
-  assert.match(css, /#gc-messages \.gc-msg-self \.gc-react-add \{ right: auto; left: 6px; \}/);
-  assert.match(css, /\.messages-message-self \.messages-bubble \{ background: var\(--accent-tint\); \}/, 'the same tint the Messages screen uses');
-  assert.match(css, /#dev-topic-thread \.gc-msg-self > \.min-w-0 \{ background: var\(--accent-tint\); \}/, 'and the thread keeps its own in-place tint');
+test('a continuation line drops the avatar and the name, and keeps its time in the gutter (#2783)', () => {
+  const { MessageRow } = loadTsx(TRANSCRIPT);
+  const html = renderToHtml(createElement(MessageRow, { msg: { ...human('again'), at: '2026-09-16T09:05:00Z' }, grouped: true }));
+  assert.match(html, /^<div class="flex gap-3 px-4 py-0\.5 gc-msg" data-grouped="" data-msg-id="\d+" data-username="alice">/);
+  assert.doesNotMatch(html, /rounded-xl h-11 w-11/, 'no avatar');
+  assert.doesNotMatch(html, /<span>alice<\/span>/, 'no name');
+  assert.match(html, /<span class="gc-msg-gutter-time" title="[^"]+">[^<]+<\/span>/, 'the time where the avatar would be');
+  assert.match(html, /<p>again<\/p>/);
 });
 
-// ── The quiet card ────────────────────────────────────────────────────
+test('consecutive messages from one person group; a gap, another person or a quote breaks the run (#2783)', () => {
+  const at = (min) => `2026-09-16T09:${String(min).padStart(2, '0')}:00Z`;
+  const row = (id, username, min, extra = {}) => ({ ...human(`m${id}`), id, username, at: at(min), ...extra });
+  const messages = [
+    row(1, 'alice', 0), row(2, 'alice', 1), row(3, 'alice', 3),
+    row(4, 'bob', 4),
+    row(5, 'bob', 30),
+    row(6, 'bob', 31, { quote: { icon: '\u21A9', username: 'alice', excerpt: 'm1', source: 'message', href: null, targetId: 1 } }),
+  ];
+  const html = renderRows({ messages, lead: quietLead }, 'main');
+  const grouped = [...html.matchAll(/data-grouped="" data-msg-id="(\d+)"/g)].map((m) => Number(m[1]));
+  assert.deepEqual(grouped, [2, 3], 'alice\'s second and third group under her first; bob after 26 minutes and a quoted reply do not');
+});
 
 test('the quiet card says "yet" only once history is exhausted, and asks only those who can post', () => {
   const html = renderComponent(QUIET, 'QuietCard', { exhausted: true, canPost: true, appName: 'Recipe App' });
@@ -271,10 +253,10 @@ test('a message from a person sits among the events in the same grid, and dismis
   assert.match(html, /hello there/);
   assert.equal((html.match(/data-event="merged"/g) || []).length, 2);
   // Both the person and the event are the named row: the same avatar box,
-  // the same header line — and the person's words sit in a bubble.
+  // the same header line, the words flat under the name (#2783).
   assert.equal((html.match(/class="flex gap-3 px-4 py-2 gc-msg/g) || []).length, 1);
   assert.equal((html.match(/rounded-xl h-11 w-11 text-\[1\.0625rem\]" style="background-color:/g) || []).length, 3);
-  assert.match(html, /<div class="gc-bubble"><div class="gc-msg-content"><p>hello there<\/p>/);
+  assert.match(html, /<div class="gc-msg-content"><p>hello there<\/p>/);
   assert.doesNotMatch(html, /gc-quiet/, 'somebody has spoken');
 });
 

@@ -83,7 +83,9 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
 import { ParkedStrip, PlatformTabs } from './features/nav';
+import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
+import { AgentSessionScreen } from './features/agent-session';
 import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
@@ -278,6 +280,15 @@ export function Shell() {
       */}
       <Island name="GlobalChatScreen"><GlobalChatScreen /></Island>
       {/*
+          Agent sessions (#2779): one conversation with the Mayor that works
+          on any app. A React-owned sibling screen like Global Chat above,
+          shipped hidden and empty, revealed by the hash router at #agent/<id>
+          (a phone's surface; a desktop draws the same panel in the Messages
+          pane). Listed in App.REACT_SCREEN_IDS, so React alone writes its
+          `hidden`.
+      */}
+      <Island name="AgentSessionScreen"><AgentSessionScreen /></Island>
+      {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
           merged it into the Leaderboard screen above, where it is now the
@@ -388,6 +399,22 @@ export function Shell() {
           #app-content write — see features/app-frame/app-frame.tsx.
       */}
       <Island name="AppViewIsland"><AppViewIsland /></Island>
+      {/*
+          #platform-side-panel — the panel BESIDE a running app, on a
+          desktop-width window (features/side-panel/). While an app runs on
+          its App tab, its Workshop, its discussion, a proposal, an issue, a
+          change and a conversation open here instead of replacing it, and the
+          app keeps running beside them.
+
+          Directly after #app-view because that is the one screen it belongs
+          to, and OUTSIDE it because #app-view is a column whose frame must
+          never be re-parented: the panel is `position: fixed` down the right
+          edge, and the app's box narrows by a margin keyed off
+          `<html data-side-panel>` (public/css/app.css) — a size change, never
+          a reload. Ships hidden and empty; the frame inside it exists only
+          while a panel is open.
+      */}
+      <Island name="SidePanel"><SidePanel /></Island>
       {/*
           #platform-tabs — the shell's five sections, as a permanent bar at
           the foot of the screen. New in this change; features/nav/tab-bar.tsx

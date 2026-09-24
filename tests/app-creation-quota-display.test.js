@@ -135,8 +135,10 @@ test('the create dialog loads and renders the quota without reset copy', () => {
 });
 
 test('locked create entries still open the dialog so the quota is reachable', () => {
-  const panel = read('frontend/src/features/home/panels/create.tsx');
-  const click = panel.slice(panel.indexOf('onClick={(e) =>'));
+  // Home's Create entry is the launcher grid's trailing tile now (it was a
+  // section below Challenges); one button, both quota states.
+  const panel = read('frontend/src/features/home/create-tile.tsx');
+  const click = panel.slice(panel.indexOf('onClick={() =>'));
   assert.match(click, /App\?\.showCreateModal\?\.\(\)/);
   assert.doesNotMatch(click, /PlatformUI\?\.toast/,
     'a generic toast would hide the exact quota at the moment it matters');

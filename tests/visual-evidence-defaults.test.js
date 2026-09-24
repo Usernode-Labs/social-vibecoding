@@ -13,6 +13,11 @@ const VISUAL_FLAGS = [
   'VISUAL_EVIDENCE_V2_ENFORCE',
   'VISUAL_EVIDENCE_V2_LEGACY_CAPTURE',
 ];
+const VISUAL_BUDGETS = [
+  'VISUAL_EVIDENCE_MAX_RUN_MS',
+  'VISUAL_EVIDENCE_MAX_AGENT_MS',
+  'VISUAL_EVIDENCE_MAX_REPAIR_AGENT_MS',
+];
 
 function loadVisualConfig(overrides = {}) {
   const required = {
@@ -22,9 +27,9 @@ function loadVisualConfig(overrides = {}) {
     ADMIN_USERNAME: 'admin',
     ADMIN_PASSWORD: 'admin-pass',
   };
-  const keys = new Set([...Object.keys(required), ...VISUAL_FLAGS]);
+  const keys = new Set([...Object.keys(required), ...VISUAL_FLAGS, ...VISUAL_BUDGETS]);
   const saved = new Map([...keys].map((key) => [key, process.env[key]]));
-  for (const key of VISUAL_FLAGS) delete process.env[key];
+  for (const key of [...VISUAL_FLAGS, ...VISUAL_BUDGETS]) delete process.env[key];
   Object.assign(process.env, required, overrides);
   const realLog = console.log;
   console.log = () => {};
@@ -54,6 +59,15 @@ test('visual evidence collection, execution, and presentation are advisory and o
     present: true,
     enforce: false,
   });
+});
+
+test('the diagnostic window gives the planner eight minutes and keeps run/recovery budgets aligned', () => {
+  const visual = loadVisualConfig();
+  assert.equal(visual.maxAgentMs, 480_000);
+  assert.equal(visual.maxRepairAgentMs, 240_000);
+  assert.equal(visual.maxRunMs, 1_440_000);
+  const override = loadVisualConfig({ VISUAL_EVIDENCE_MAX_AGENT_MS: '300000' });
+  assert.equal(override.maxAgentMs, 300_000);
 });
 
 test('one emergency switch disables the mechanism and legacy activation flags are ignored', () => {

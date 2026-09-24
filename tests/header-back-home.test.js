@@ -172,29 +172,42 @@ test('the route decides where UP is, inside an app', () => {
   const body = HEADER.slice(at, HEADER.indexOf('\n}', at));
   assert.match(body, /if \(!slug \|\| tab !== 'dev'\) return null;/,
     'the app tab itself has no level above it inside the app — it gets the '
-    + 'house, like every other root');
-  assert.match(body, /const board = boardHref\(slug, boardView\);/,
-    '"the board" is TWO screens — Workshop and Board are one screen in two '
-    + 'layouts and the layout IS the route — so the destination is resolved '
-    + 'from the layout that was on screen, never spelled as a literal');
+    + '✕, which leaves to the page the app was opened from');
   // #2770 REVERSED THE FALLBACK: a change is an agent conversation, a thread
   // of Messages, so a session with no captured origin goes up to that inbox
   // rather than to the board it used to fall back to.
   assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| '#messages';/,
     'a session goes where it was opened from, falling back to Messages');
-  assert.match(body, /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
-    'the general chat and a topic card are reached FROM the board');
+  // THE DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763). The old
+  // full-screen route still resolves for a legacy link, and its ‹ climbed to
+  // the board — so a bell mention's Back landed on a Workshop the reader had
+  // never been on. It agrees with App._backSlotFor now.
+  assert.match(body, /subTab === 'chat'\) return '#messages';/,
+    'the general chat goes up to the inbox it is a thread of');
+  // #2916: A TOPIC IS NOT THIS BAR'S ANY MORE. Its level up is still the
+  // board it was opened from, but the control is the "‹ Workshop" chip at the
+  // top of the pane, and the bar draws nothing there. So the ladder must not
+  // answer for a topic (it would put a chevron back beside the chip); the
+  // board it goes to is pinned on `topicBackHref` in section 5b below.
+  assert.doesNotMatch(body, /return boardHref\(/,
+    'the ladder no longer climbs from a topic: the in-pane chip does');
+  assert.match(body, /subTab 'topic'\) falls through on purpose \(#2916\)/,
+    'and says so where the row used to be, so it is not "fixed" back in');
   // THE REGRESSION. `#app/${slug}/board` sent a viewer who had opened an
   // issue from the Workshop to the Kanban board — and that route APPLIES its
   // layout (AppView._setViewMode in restoreFromHash's alias block), so the
   // back arrow also rewrote their stored preference on the way.
   assert.ok(!/`#app\/\$\{slug\}\/board`/.test(body),
     'and no literal /board survives in the derivation');
-  assert.match(body, /subTab === 'forum'\) return selfHosted \? null : `#app\/\$\{slug\}\/app`/,
-    'and the Board/Activity go up to the app itself — except on the '
-    + "platform's own app, which HAS no app tab (App.switchTab coerces a "
-    + 'request for one back to the dev forum), so up there would bounce '
-    + 'straight back to the board it just left');
+  // AN APP'S WORKSHOP HAS NO BACK CONTROL (#2740 review), any app's — the
+  // platform's own (#2843) was the exception this used to carry. It went up
+  // to `#app/<slug>/app`: a ‹ from the mark's "Go to workshop" or Expand,
+  // and both it and the ✕ the Workshop tab's arrival wore OPENED the app.
+  assert.ok(!/`#app\/\$\{slug\}\/app`/.test(body),
+    'nothing in the ladder climbs from the Workshop into the running app');
+  assert.doesNotMatch(body, /subTab === 'forum'/,
+    'the Workshop itself falls through to null: nowhere up to go');
+  assert.match(body, /\n  return null;\s*$/, 'and null is the last answer');
 });
 
 test('the derived answer outranks the imperative one, and only inside an app', () => {
@@ -204,9 +217,16 @@ test('the derived answer outranks the imperative one, and only inside an app', (
   // a sub-route that used to earn an arrow gets the ✕ instead. The
   // DESTINATION is untouched: resolvedBackHref still prefers the route's
   // up-level href, so ✕ from a session lands on that app's Workshop as ← did.
-  assert.match(HEADER, /const mode = backMode === 'close' \? 'close' : \(routeUp \? 'arrow' : backMode\);/,
-    'an app view wins outright; an app route with a level above it wins over '
-    + 'the imperative call; everything else keeps what setBackIcon published'); 
+  // #2916 put one answer between the two: a Workshop topic draws its back
+  // in the pane, so the bar's slot is 'none' there whatever setBackIcon last
+  // published. It is derived from the same function the chip renders from,
+  // which is what keeps the page at exactly one back control.
+  assert.match(HEADER, /const mode = backMode === 'close' \? 'close'\n\s+: paneBack \? 'none'\n\s+: \(routeUp \? 'arrow' : backMode\);/,
+    'an app view wins outright; a Workshop topic hides the bar\'s slot for the '
+    + 'in-pane chip; an app route with a level above it wins over the '
+    + 'imperative call; everything else keeps what setBackIcon published');
+  assert.match(HEADER, /const paneBack = topicBackHref\(\{\n\s+slug: backSlug, tab: backTab, subTab: backSubTab, boardView,\n\s+\}\);/,
+    'and that topic answer is topicBackHref\'s, the chip\'s own');
   assert.match(HEADER, /const resolvedBackHref = routeUp\n\s+\|\| \(mode === 'home' \? homeHref\(\) : backHref\);/,
     "and 'home' resolves its own href rather than relying on a caller to "
     + 'pass one');
@@ -234,7 +254,7 @@ function loadImprove(initial) {
   // then writes into — one store, reached two ways, as in the bundle.
   runModules(sandbox, [['improve-store.js', IMPROVE_STORE]], {
     imports: { '../../lib/plain-store.js': { createStore: () => store } },
-    tail: 'window.__improveStore = { improveStore, boardHref };',
+    tail: 'window.__improveStore = { improveStore, boardHref, topicBackHref };',
   });
   // The one surface still listing these sessions. Flip `sheet.open` in a
   // test that needs the reload gate open; it is the notifications sheet's
@@ -260,6 +280,7 @@ function loadImprove(initial) {
   return {
     Improve: sandbox.__improve, store, sandbox,
     boardHref: sandbox.__improveStore.boardHref,
+    topicBackHref: sandbox.__improveStore.topicBackHref,
   };
 }
 
@@ -417,9 +438,31 @@ test('with no AppView at all the layout is the Workshop', () => {
   assert.equal(store.state.boardView, 'workshop');
 });
 
-test('a session origin and the topic arrow answer with the same board', () => {
-  // One expression, imported by both (features/improve/improve-store.js), so
-  // the captured origin and the derived arrow cannot name different screens.
+test('a topic route, and only a topic route, has an in-pane back to its board (#2916)', () => {
+  // `topicBackHref` is what the chip renders from AND what the header hides
+  // its own slot on, so this table is the whole of "which pages carry the
+  // chip instead of the arrow".
+  const { topicBackHref } = loadImprove({ slug: 'demo-app' });
+  const at = (subTab, extra = {}) => topicBackHref({
+    slug: 'demo-app', tab: 'dev', subTab, boardView: 'workshop', ...extra,
+  });
+  assert.equal(at('topic'), '#app/demo-app/workshop',
+    'an issue / proposal / governance vote / shared session goes to its board');
+  assert.equal(at('topic', { boardView: 'kanban' }), '#app/demo-app/board',
+    '…in the layout it was opened from, never a literal');
+  for (const subTab of ['sessions', 'chat', 'forum', null]) {
+    assert.equal(at(subTab), null,
+      `subTab ${subTab}: no chip (a dev session and the discussion are Messages `
+      + 'threads and keep the header arrow; the Workshop has nowhere up to go)');
+  }
+  assert.equal(at('topic', { tab: 'app' }), null, 'never on the running app');
+  assert.equal(at('topic', { slug: null }), null, 'and never without an app');
+});
+
+test('a session origin and the topic chip answer with the same board', () => {
+  // One expression, used by both (features/improve/improve-store.js), so the
+  // captured origin and the in-pane chip (#2916; the header's arrow before
+  // it) cannot name different screens.
   const { Improve, store, sandbox, boardHref } = loadImprove({ slug: 'demo-app' });
   sandbox.AppView = { _getViewMode: () => 'workshop' };
   Improve.setTab('dev', 'forum');

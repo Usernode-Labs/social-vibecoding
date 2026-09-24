@@ -92,7 +92,7 @@ interface LegacyWindow {
   AuthScreens?: Record<string, unknown>;
   // The native bridge (usernode-native). Absent in a regular browser, which is
   // the NORMAL state for the wallet fast path — see LoginScreen's walletDetect.
-  usernode?: { isNative?: boolean };
+  usernode?: { isNative?: boolean; getBridgeDiagnostics?(): unknown };
   getNodeAddress?(): Promise<string | null>;
   signMessage?(message: string): Promise<{ publicKey: string; signature: string }>;
 }
@@ -197,6 +197,22 @@ export function isNative(): boolean {
 const NATIVE_LOGIN_PREPARATION_MESSAGE =
   'Secure app session could not be prepared. Force-quit and reopen Homeroom, then try again.';
 const NATIVE_DIAGNOSTIC_RE = /^[a-z][a-z0-9_-]{0,95}$/;
+const BRIDGE_STATES = new Set([
+  'ready', 'blocked-frame', 'unsupported', 'inconclusive', 'unattached', 'unknown',
+]);
+
+/** A bounded snapshot of public bridge diagnostics, captured at failure time. */
+export interface NativeLoginFailureDetails {
+  stage: 'prepare-login';
+  code: string | null;
+  kind: string | null;
+  nativeMessage: string | null;
+  bridgeState: string | null;
+  pageOrigin: string | null;
+  appVersion: string | null;
+  buildNumber: string | null;
+  bridgeVersion: number | null;
+}
 
 function diagnosticValue(value: unknown): string | null {
   return typeof value === 'string' && NATIVE_DIAGNOSTIC_RE.test(value) ? value : null;
@@ -208,10 +224,36 @@ function errorField(error: unknown, key: string): unknown {
     : null;
 }
 
+function safeNativeMessage(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const message = value.trim();
+  // Native messages should contain no secrets; discard unexpected text rather
+  // than placing a URL, credential or unbounded string in a copyable report.
+  return message.length > 0 && message.length <= 240 &&
+    !/[\u0000-\u001f\u007f@]/.test(message) &&
+    !/https?:\/\/|\b(?:password|token|cookie|secret|authorization)\b/i.test(message)
+    ? message : null;
+}
+
+function safeBuildLabel(value: unknown): string | null {
+  return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9.+_-]{0,39}$/.test(value)
+    ? value : null;
+}
+
+function bridgeDiagnostics(w: LegacyWindow): Record<string, unknown> | null {
+  try {
+    const value = w.usernode?.getBridgeDiagnostics?.();
+    return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 function nativePreparationDetails(
+  w: LegacyWindow,
   chrome: LegacyWindow['NativeChrome'],
   error: unknown,
-): { diagnostic: string | null; reason: string | null } {
+): { diagnostic: string | null; details: NativeLoginFailureDetails } {
   let failure: NativeSessionFailureRecord | null = null;
   try {
     const recorded = chrome?.lastSessionFailure?.();
@@ -219,18 +261,33 @@ function nativePreparationDetails(
   } catch {
     /* use the rejection itself */
   }
-  const diagnostic =
-    diagnosticValue(failure?.code) ||
-    diagnosticValue(failure?.kind) ||
+  const snapshot = bridgeDiagnostics(w);
+  const privileged = snapshot && errorField(snapshot, 'privileged');
+  const code = diagnosticValue(failure?.code) ||
     diagnosticValue(errorField(error, 'usernodeCode')) ||
-    diagnosticValue(errorField(error, 'usernodeKind'));
-  const rawReason = failure?.message ?? errorField(error, 'message');
-  const reason = typeof rawReason === 'string' ? rawReason.trim() : '';
+    diagnosticValue(errorField(privileged, 'code'));
+  const kind = diagnosticValue(failure?.kind) ||
+    diagnosticValue(errorField(error, 'usernodeKind')) ||
+    diagnosticValue(errorField(privileged, 'kind'));
+  const state = errorField(privileged, 'state');
+  const origin = snapshot?.origin;
+  const version = snapshot?.bridgeVersion;
   return {
-    diagnostic,
-    reason: !diagnostic && reason.length <= 240 && !/[\u0000-\u001f\u007f]/.test(reason)
-      ? reason || null
-      : null,
+    diagnostic: code || kind,
+    details: {
+      stage: 'prepare-login',
+      code,
+      kind,
+      nativeMessage: safeNativeMessage(failure?.message ?? errorField(error, 'message')) ||
+        safeNativeMessage(errorField(privileged, 'message')),
+      bridgeState: typeof state === 'string' && BRIDGE_STATES.has(state) ? state : null,
+      pageOrigin: typeof origin === 'string' && origin.length <= 200 &&
+        /^https?:\/\/[a-zA-Z0-9.-]+(?::\d{1,5})?$/.test(origin) ? origin : null,
+      appVersion: safeBuildLabel(snapshot?.appVersion),
+      buildNumber: safeBuildLabel(snapshot?.buildNumber),
+      bridgeVersion: typeof version === 'number' && Number.isInteger(version) &&
+        version >= 0 && version <= 9999 ? version : null,
+    },
   };
 }
 
@@ -238,8 +295,9 @@ export class NativeLoginPreparationError extends Error {
   constructor(
     readonly diagnostic: string | null,
     message = NATIVE_LOGIN_PREPARATION_MESSAGE,
+    readonly details: NativeLoginFailureDetails | null = null,
   ) {
-    super(diagnostic ? `${message} Diagnostic: ${diagnostic}` : message);
+    super(message);
     this.name = 'NativeLoginPreparationError';
   }
 }
@@ -266,15 +324,12 @@ async function prepareNativeMint(w: LegacyWindow): Promise<void> {
   try {
     await chrome.prepareForLogin();
   } catch (error) {
-    const { diagnostic, reason } = nativePreparationDetails(chrome, error);
+    const { diagnostic, details } = nativePreparationDetails(w, chrome, error);
     console.warn('[auth] native login preparation failed', {
       stage: 'prepare-login',
       diagnostic: diagnostic || 'unclassified',
     });
-    throw new NativeLoginPreparationError(
-      diagnostic,
-      reason ? `${NATIVE_LOGIN_PREPARATION_MESSAGE} Reason: ${reason}` : undefined,
-    );
+    throw new NativeLoginPreparationError(diagnostic, undefined, details);
   }
 }
 

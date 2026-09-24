@@ -321,7 +321,43 @@
         if (opts && typeof opts.after === 'function') opts.after();
         return;
       }
-      un.transition(fn, opts || { type: 'none' });
+      un.transition(fn, PlatformUI.phoneMotion(opts || { type: 'none' }));
+    },
+
+    /** NO PAGE SLIDES ON THE PHONE (#2896, #2775). The kit's push and pop
+        slide the whole page sideways, and on the phone which way a change
+        slid was never consistent: the same tab slid in from the right one
+        time and from the left the next, depending on which caller asked
+        and what it guessed about depth. They are gone rather than fixed —
+        on the phone a page change swaps in place, the way the desktop rail
+        has swapped since #2843/#2900. So every push or pop asked for below
+        the 768px layout breakpoint (the one app.css turns the bar into a
+        rail at) runs as 'none', and so does a zoom's push/pop FALLBACK (a
+        zoom with no tile to grow from). The zooms themselves stay: opening
+        an app from its tile is not a page sliding anywhere. The tab bar's
+        sliding marker (#2849) is the bar's own and is not a page motion.
+
+        One place, so no caller can bring a slide back by asking for one;
+        App._entryTransition applies the same rule first only so that the
+        `data-entered` it stamps names what actually runs. */
+    phoneMotion(opts) {
+      if (!opts || !PlatformUI.isPhoneLayout()) return opts;
+      const slide = (t) => t === 'push' || t === 'pop';
+      if (slide(opts.type)) return { ...opts, type: 'none' };
+      if (opts.type === 'zoom-in' || opts.type === 'zoom-out') {
+        if (!opts.fallback || slide(opts.fallback)) return { ...opts, fallback: 'none' };
+      }
+      return opts;
+    },
+
+    /** Below the 768px breakpoint. Unreadable answers false — the desktop's
+        motion, which is what ran before this existed. */
+    isPhoneLayout() {
+      try {
+        return !!(window.matchMedia && !window.matchMedia('(min-width: 768px)').matches);
+      } catch (_) {
+        return false;
+      }
     },
   };
 

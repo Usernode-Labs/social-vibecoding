@@ -18,8 +18,9 @@
 // every grep still green.
 //
 // So this suite renders the real component and runs the real selectors over
-// the real output, with a tiny descendant matcher (the four selectors are
-// plain descendant chains of tag / #id / .class / [attr="value"] — nothing
+// the real output, with a tiny descendant matcher (the selectors are plain
+// descendant chains of tag / #id / .class / [attr="value"], plus the one
+// structural pseudo-class the Share check needs, `:first-child` — nothing
 // here invents support for combinators the manifest does not use on this
 // page; an unsupported selector THROWS rather than silently passing).
 
@@ -39,10 +40,11 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'
 
 // ── the fixture ────────────────────────────────────────────────────────
 //
-// One ready descriptor that satisfies all four declared checks at once: the
-// Open button, an action row labelled "View on GitHub", a second labelled
-// "Fork this app", the fork-lineage anchor, and a contributor row for the
-// demo seed the contributors check quotes.
+// One ready descriptor that satisfies every declared check at once: the
+// Open button, the Share row leading the action card, an action row labelled
+// "View on GitHub", a second labelled "Fork this app", the fork-lineage
+// anchor, and a contributor row for the demo seed the contributors check
+// quotes.
 const DETAIL = {
   state: 'ready',
   app: { slug: 'staging-demo-fork', name: 'Staging demo fork' },
@@ -55,6 +57,9 @@ const DETAIL = {
   openLabel: 'Open',
   isAdded: false,
   favLabel: 'Add to Your apps',
+  // A running app with a public link (Browse.shareUrlFor), so the Share row
+  // draws — the declared Share check selects it as the card's first child.
+  canShare: true,
   actions: [
     { index: 0, label: 'View on GitHub', title: 'See the source', danger: false, disabled: false },
     { index: 1, label: 'Fork this app', title: null, danger: false, disabled: false },
@@ -135,7 +140,7 @@ function all(node) {
 // value carries arbitrary text, and `a[href="#app/x"]` read by a loose /#(…)/
 // yields the id "app". That was a real false negative while writing this.
 function parseCompound(part) {
-  const out = { tag: null, id: null, classes: [], attrs: [] };
+  const out = { tag: null, id: null, classes: [], attrs: [], firstChild: false };
   let i = 0;
   const tag = /^(?:[a-z][a-z0-9-]*|\*)/.exec(part);
   if (tag) { out.tag = tag[0] === '*' ? null : tag[0]; i = tag[0].length; }
@@ -146,6 +151,11 @@ function parseCompound(part) {
     else if ((m = /^\.([\w-]+)/.exec(rest))) { out.classes.push(m[1]); }
     else if ((m = /^\[([\w-]+)(?:="([^"]*)")?\]/.exec(rest))) {
       out.attrs.push({ name: m[1].toLowerCase(), value: m[2] === undefined ? null : m[2] });
+    } else if ((m = /^:first-child\b/.exec(rest))) {
+      // The Share check's claim is POSITIONAL (Share leads the action card,
+      // as in the prototype's More list), so the matcher learned exactly this
+      // pseudo-class — element children only, as in CSS.
+      out.firstChild = true;
     } else {
       throw new Error(`browse-detail-rows.test.js: unsupported selector part "${part}" — `
         + 'this matcher covers only descendant chains of tag / #id / .class / [attr="value"]. '
@@ -159,6 +169,7 @@ function parseCompound(part) {
 function matchesCompound(node, c) {
   if (c.tag && node.tag !== c.tag) return false;
   if (c.id && node.attrs.id !== c.id) return false;
+  if (c.firstChild && (!node.parent || node.parent.children[0] !== node)) return false;
   const classList = (node.attrs.class || '').split(/\s+/);
   if (c.classes.some((cls) => !classList.includes(cls))) return false;
   return c.attrs.every(({ name, value }) => {
@@ -206,7 +217,7 @@ test('every declared #browse-detail selector matches the RENDERED detail page', 
 
 test('the text each declared check quotes is still rendered', () => {
   const text = treeOf(renderDetail()).text;
-  for (const phrase of ['Fork this app', 'View on GitHub', 'staging-demo-lead']) {
+  for (const phrase of ['Share', 'Fork this app', 'View on GitHub', 'staging-demo-lead']) {
     assert.ok(text.includes(phrase), `the detail page stopped rendering "${phrase}"`);
   }
 });
@@ -284,4 +295,28 @@ test('the hand-copied row rule is gone from the source, left-3 and all', () => {
     'a left-3 hairline is 4px off the rows GroupedList draws');
   assert.match(source, /from '@\/components\/ui\/grouped-list'/,
     'the page must build its cards from the primitive, not a copy of it');
+});
+
+test('Share is a <button> leading the action card, only when there is a link to share', () => {
+  const root = treeOf(renderDetail());
+  const share = queryAll(root, '#browse-detail #browse-detail-share');
+  assert.equal(share.length, 1);
+  assert.equal(share[0].tag, 'button', 'a row that DOES something is a button (ListRow as="button")');
+  assert.equal(share[0].attrs.type, 'button');
+  const card = share[0].parent;
+  assert.equal(card.children[0], share[0], 'it leads the card, as Share leads the prototype\'s More list');
+  assert.ok(card.children.slice(1).every((n) => /\bbrowse-detail-action\b/.test(n.attrs.class || '')),
+    'and the menu-derived action rows follow it in the same card');
+  assert.doesNotMatch(share[0].attrs.class || '', /\bbrowse-detail-action\b/,
+    'it is not one of Home.menuItemsFor\'s rows, so it carries no action index');
+  assert.equal(share[0].attrs.title, 'Share a link to this app');
+
+  // No link, no row — and a page with no actions and no link draws no card.
+  const unshared = treeOf(renderDetail({ ...DETAIL, canShare: false }));
+  assert.equal(queryAll(unshared, '#browse-detail #browse-detail-share').length, 0);
+  const bare = treeOf(renderDetail({ ...DETAIL, canShare: false, actions: [] }));
+  assert.equal(queryAll(bare, '#browse-detail .browse-detail-action').length, 0);
+  const shareOnly = treeOf(renderDetail({ ...DETAIL, canShare: true, actions: [] }));
+  assert.equal(queryAll(shareOnly, '#browse-detail #browse-detail-share').length, 1,
+    'a link alone still gets its card');
 });

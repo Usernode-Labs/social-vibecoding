@@ -135,7 +135,7 @@ test('the console island imports every admin module, console first', () => {
     // estimates are kept honest against what changes actually cost.
     'admin-model-costs',
     'admin-node',
-    'admin-overview', 'admin-push', 'admin-rollover', 'admin-staging-reap',
+    'admin-overview', 'admin-push', 'admin-reports', 'admin-rollover', 'admin-staging-reap',
     // #2253: App storage, the per-app database cap's console section.
     'admin-status', 'admin-storage', 'admin-topochain', 'admin-users',
   ], 'every section module is imported by the island');

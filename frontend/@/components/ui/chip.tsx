@@ -25,15 +25,16 @@ import { cn } from '@/lib/utils';
  * first, a rail wider than the viewport compresses its chips into ellipses
  * instead of scrolling.
  *
- * ── No consumers yet, and that is the deferral ────────────────────────
+ * ── Its first consumer: Discover's filter chips ────────────────────────
  *
- * Nothing in the shell imports this. The deck leads its Changes screen with a
- * filter rail, and the platform's nearest equivalent — the Dev screen's
- * proposal and issue list — has no filter at all today. ADDING one is a
- * navigation change, which this reskin deliberately does not make; the two
- * places that needed the language's SELECTION idiom without a new control
- * (features/improve/view-toggle.tsx and the Leaderboard's section strip)
- * state it themselves, for the reason immediately below.
+ * For a while nothing in the shell imported this: the deck leads its Changes
+ * screen with a filter rail, and adding one was a navigation change the
+ * reskin deliberately did not make. The navigation prototype then gave the
+ * app directory one — All / Featured / Your apps / New above the list — and
+ * features/apps/browse-screen.tsx draws it with this primitive at its `bar`
+ * size. The two places that needed the language's SELECTION idiom without a
+ * filter (features/improve/view-toggle.tsx and the Leaderboard's section
+ * strip) still state it themselves, for the reason immediately below.
  *
  * ── What this is NOT for ──────────────────────────────────────────────
  *

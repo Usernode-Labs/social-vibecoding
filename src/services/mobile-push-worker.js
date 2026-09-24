@@ -242,7 +242,7 @@ class MobilePushWorker {
       `SELECT d.id, d.attempts, d.expires_at,
               d.created_at AS delivery_created_at,
               n.id AS notification_id, n.user_id AS notification_user_id,
-              n.kind, n.read_at, n.detail, n.conversation_id,
+              n.kind, n.read_at, n.detail, n.conversation_id, n.chat_message_id,
               a.name AS app_name,
               c.title AS conversation_title,
               c.status AS conversation_status,
@@ -261,6 +261,11 @@ class MobilePushWorker {
                  WHERE direct_pair.conversation_id = n.conversation_id
                    AND c.kind = 'direct'
               ) AS conversation_direct_blocked,
+              EXISTS (
+                SELECT 1 FROM user_blocks sender_block
+                 WHERE sender_block.blocker_id = n.user_id
+                   AND sender_block.blocked_user_id = n.source_user_id
+              ) AS conversation_sender_blocked,
               cs.session_title, cs.pr_title, cs.branch_name, cs.promoted_at,
               pv.reason AS vote_reason,
               policy.category AS push_category,
@@ -313,12 +318,14 @@ class MobilePushWorker {
     if (isConversationKind) {
       if (row.conversation_status !== 'active') return 'conversation_access_revoked';
       if (row.conversation_direct_blocked) return 'conversation_access_revoked';
+      if (row.conversation_sender_blocked) return 'conversation_access_revoked';
       const allowedStatuses = row.kind === 'conversation_invite'
         ? ['invited', 'member'] : ['member'];
       if (!allowedStatuses.includes(row.conversation_member_status)) {
         return 'conversation_access_revoked';
       }
     }
+    if (row.chat_message_id != null && row.conversation_sender_blocked) return 'sender_blocked';
     if (!ALLOWED_KINDS.has(row.kind) || !row.push_category) return 'kind_not_allowed';
     if (row.push_enabled !== true) return 'preference_disabled';
     if (!row.registration_id) return 'registration_missing';

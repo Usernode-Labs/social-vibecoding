@@ -6,6 +6,7 @@ const limits = require('./limits');
 const github = require('./github');
 const turnEffects = require('./turn-effects');
 const sessionTitles = require('./session-title');
+const proposalDescription = require('./proposal-description');
 const { visualHeadForSession } = require('./pr-vote-revision');
 
 // Coerce an arbitrary array of "issue numbers" into a clean, deduped,
@@ -407,6 +408,37 @@ function cumulativeDeterministicSummary(summaries, ccSummary) {
   return parts.join('\n\n');
 }
 
+// An OpenRouter session's proposal text (#2820). The agent is asked to end
+// every turn with a "==== DESCRIPTION ====" block describing the WHOLE change
+// so far (proposal-description.js), so the newest block REPLACES the previous
+// one: there is no stacked per-turn log to read through.
+//
+// `descriptions` runs parallel to `summaries` (null for a turn with no block).
+// When the latest turn skipped its block, the most recent earlier description
+// still describes most of the change, so it leads and the latest turn's own
+// message follows it, cleaned up. With no description at all, the latest
+// turn's cleaned message stands alone.
+function latestDescriptionSummary(summaries, descriptions, ccSummary) {
+  const list = (Array.isArray(summaries) ? summaries : []).map((s) => String(s || '').trim());
+  const descs = Array.isArray(descriptions) ? descriptions : [];
+  const cur = String(ccSummary || '').trim();
+  if (cur && list[list.length - 1] !== cur) list.push(cur);
+  if (!list.length) return '';
+
+  const described = (i) => String(descs[i] || '').trim();
+  const last = list.length - 1;
+  if (described(last)) return described(last);
+
+  const latestMessage = proposalDescription.cleanTurnMessage(list[last]);
+  for (let i = last - 1; i >= 0; i--) {
+    if (!described(i)) continue;
+    return latestMessage
+      ? `${described(i)}\n\n**Latest update:** ${latestMessage}`
+      : described(i);
+  }
+  return latestMessage;
+}
+
 // OpenRouter sessions must not buy a hidden Anthropic call just to name a
 // pull request after their selected model has finished. Build stable metadata
 // from the session's own requests and model-authored summaries instead. The
@@ -414,8 +446,12 @@ function cumulativeDeterministicSummary(summaries, ccSummary) {
 // body without renaming the change after whichever follow-up happened last.
 // This is also the over-budget path for a Claude session (applyPrMetadata's
 // `allowModelGeneration` is false when no payer resolves), so the cumulative
-// summary is not an OpenRouter-only concern.
-function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summaries, username }) {
+// summary is not an OpenRouter-only concern: an OpenRouter session
+// (`latestDescription`) uses its agent's latest whole-change description,
+// while a Claude session keeps the cumulative per-update record above.
+function deterministicPrMetadataDraft({
+  userMessage, ccSummary, requests, summaries, descriptions, latestDescription = false, username,
+}) {
   const titleSource = (Array.isArray(requests) && requests.find((item) => typeof item === 'string' && item.trim()))
     || userMessage
     || ccSummary
@@ -430,7 +466,9 @@ function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summar
   return {
     title,
     body: '',
-    summary: cumulativeDeterministicSummary(summaries, ccSummary),
+    summary: latestDescription
+      ? latestDescriptionSummary(summaries, descriptions, ccSummary)
+      : cumulativeDeterministicSummary(summaries, ccSummary),
     fallback: false,
   };
 }
@@ -534,9 +572,9 @@ async function generatePrMetadata(args) {
 //                 Used as a THEME signal: it describes intended scope (which
 //                 may run ahead of what's actually built), so the prompt
 //                 leans on requests/summaries for the concrete changes.
-async function gatherSessionContext(pool, sessionId, currentCcSummary) {
+async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDescription = null) {
   const ctx = {
-    requests: [], summaries: [], specs: [], linkedIssues: [], appliedIssues: [],
+    requests: [], summaries: [], descriptions: [], specs: [], linkedIssues: [], appliedIssues: [],
     testingMd: null, testingPath: null, appliedTesting: null,
     visuals: null, appliedVisuals: null,
     visualEvidenceDetail: null, appSlug: null, currentPrBody: null,
@@ -558,12 +596,17 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
           ctx.requests.push(row.content);
         } else if (row.role === 'system' && row.metadata && row.metadata.ccOutput) {
           ctx.summaries.push(String(row.metadata.ccOutput));
+          // #2820: the turn's "==== DESCRIPTION ====" block, kept aligned
+          // with its summary so the latest one can replace the rest.
+          ctx.descriptions.push(row.metadata.proposalDescription
+            ? String(row.metadata.proposalDescription) : null);
         } else if (row.role === 'assistant' && row.metadata && row.metadata.handoffSummary && row.content) {
           // Native CLI handoffs upload durable, user-visible summaries —
           // never hidden reasoning or raw tool logs. Treat them exactly like
           // the coding-agent summaries produced by a web Dev session so lazy
           // PR creation has the full cross-surface implementation history.
           ctx.summaries.push(String(row.content));
+          ctx.descriptions.push(null);
         }
       }
     } catch (err) {
@@ -646,8 +689,12 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
   // Append the in-flight turn's summary (not yet persisted). Skip if it's
   // already the last entry (e.g. orphan-recovery may re-read a row).
   const cur = (currentCcSummary || '').trim();
+  const curDescription = String(currentDescription || '').trim() || null;
   if (cur && ctx.summaries[ctx.summaries.length - 1] !== cur) {
     ctx.summaries.push(cur);
+    ctx.descriptions.push(curDescription);
+  } else if (cur && curDescription) {
+    ctx.descriptions[ctx.descriptions.length - 1] = curDescription;
   }
   return ctx;
 }
@@ -665,6 +712,9 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
 async function applyPrMetadata({
   pool, session, repoOwner, repoName,
   userMessage, ccSummary, username,
+  // The in-flight turn's "==== DESCRIPTION ====" block (#2820), which is not
+  // persisted yet — the same reason ccSummary is passed separately.
+  proposalDescription: currentDescription = null,
   broadcast, apiKey, userId,
   effectTurnId = null,
   effectSessionId = null,
@@ -686,11 +736,11 @@ async function applyPrMetadata({
   // Build cumulative context across all of this PR's turns. Falls back to
   // the single current turn when no history is available.
   const {
-    requests, summaries, specs, linkedIssues, appliedIssues,
+    requests, summaries, descriptions, specs, linkedIssues, appliedIssues,
     testingMd, testingPath, appliedTesting,
     visuals, appliedVisuals, appliedSummary,
     visualEvidenceDetail, appSlug, currentPrBody,
-  } = await gatherSessionContext(pool, session && session.id, ccSummary);
+  } = await gatherSessionContext(pool, session && session.id, ccSummary, currentDescription);
 
   // Deterministic `Closes #N` block (#75), regenerated from the linked set
   // on every turn so it's always current and never doubled.
@@ -721,7 +771,8 @@ async function applyPrMetadata({
     : buildVisualsBlock(visuals, require('./caddy').USERNODE_DOMAIN);
 
   const generationArgs = {
-    userMessage, ccSummary, requests, summaries, specs, username, apiKey,
+    userMessage, ccSummary, requests, summaries, descriptions, specs, username, apiKey,
+    latestDescription: session?.agent_backend === 'codex_openrouter',
     telemetryContext: {
       pool,
       appId: session && session.app_id,
@@ -848,6 +899,7 @@ async function applyPrMetadata({
         branch: session.branch_name,
         title: prTitle,
         body: prBody,
+        draft: session.status === 'active' || session.status === 'paused',
       });
       session.pr_number = pr.number;
       session.pr_url = pr.html_url;
@@ -993,5 +1045,5 @@ module.exports = {
   buildClosingBlock, buildTestingBlock, parseClosingKeywords,
   buildVisualsBlock, upsertVisualsBlock, extractVisualsBlock,
   buildEvidenceBlock, upsertEvidenceBlock, extractEvidenceBlock, syncEvidencePrBlock,
-  applyIssueDeclarations, stripClosingLines, sameIssueSet,
+  applyIssueDeclarations, stripClosingLines, sameIssueSet, gatherSessionContext,
 };

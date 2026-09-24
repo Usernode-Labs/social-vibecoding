@@ -64,6 +64,8 @@ const state = {
   walletLinkEnabled: false,
   aiProgressEstimate: false,
   sessionBridgeEnabled: false,
+  agentSessionsEnabled: false,
+  agentSessionsChoosable: false,
   locale: null,
   devFlowPreference: null,
   externalFlowsAvailable: false,
@@ -247,6 +249,8 @@ const Facade = {
       state.walletLinkEnabled = !!u.walletLinkEnabled;
       state.aiProgressEstimate = !!u.aiProgressEstimate;
       state.sessionBridgeEnabled = !!u.sessionBridgeEnabled;
+      state.agentSessionsEnabled = !!u.agentSessionsEnabled;
+      state.agentSessionsChoosable = !!u.agentSessionsChoosable;
       state.locale = u.locale || null;
       state.devFlowPreference = u.devFlowPreference || null;
       state.externalFlowsAvailable = !!u.externalFlowsAvailable;
@@ -286,8 +290,8 @@ const Facade = {
     return whenLoaded((real) => real.showTermsSheet(onAccepted, opts));
   },
 
-  async logout() {
-    return whenLoaded((real) => real.logout());
+  async logout(options) {
+    return whenLoaded((real) => real.logout(options));
   },
 };
 

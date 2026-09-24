@@ -252,6 +252,21 @@ test('an imported PR detail header shows all three editable attribute slots', ()
   assert.doesNotMatch(html, />Yes \(|>No \(/);
 });
 
+test('a new draft PR is reachable from both the owner and group Underway cards', () => {
+  const AppView = makeAppView();
+  const pr_url = 'https://github.com/acme/app/pull/2866';
+  const own = mySessionCardHtml(AppView, mySess({ pr_number: 2866, pr_url }));
+  const shared = sharedSessionCardHtml(AppView, sharedSess({ pr_number: 2866, pr_url }));
+  assert.match(own, /href="https:\/\/github\.com\/acme\/app\/pull\/2866"[^>]*>PR#2866<\/a>/);
+  assert.match(shared, /href="https:\/\/github\.com\/acme\/app\/pull\/2866"[^>]*>PR#2866<\/a>/);
+  assert.ok(menuHas(AppView, own, /View PR on GitHub/));
+  assert.ok(menuHas(AppView, shared, /View PR on GitHub/));
+  const ownAction = AppView._cardMenus[menuKeyOf(own)].find((a) => a.label === 'View PR on GitHub');
+  const sharedAction = AppView._cardMenus[menuKeyOf(shared)].find((a) => a.label === 'View PR on GitHub');
+  assert.equal(ownAction.title, pr_url);
+  assert.equal(sharedAction.title, pr_url);
+});
+
 // ── Preview pill gating (#689) ──────────────────────────────────────────────
 
 test('shared card: can_preview without a live staging_url still gets the icon (empty fallback)', () => {

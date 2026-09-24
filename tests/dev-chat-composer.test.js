@@ -208,16 +208,16 @@ test('the four strips inside it lost their hosts, not their stores', () => {
 
 test('both in-chat venues share one flat selector, and off-platform venues get none', () => {
   const { DevChat, view } = makeDevChat();
-  DevChat.MODELS = { 'claude-opus-5': { label: 'Opus 5' } };
-  DevChat.selectedModel = 'claude-opus-5';
+  DevChat.MODELS = { 'claude-opus-5-5': { label: 'Opus 5.5' } };
+  DevChat.selectedModel = 'claude-opus-5-5';
   // No catalog has landed in this harness, so the list is the Anthropic
   // models plus the door to the full OpenRouter catalog. No headings, and
   // no key source in any label.
   assert.deepEqual(view().models, {
     options: [
       {
-        value: 'anthropic:claude-opus-5',
-        label: 'Opus 5',
+        value: 'anthropic:claude-opus-5-5',
+        label: 'Opus 5.5',
         title: 'Runs on the platform Claude allowance, or your own Anthropic key',
       },
       {
@@ -226,11 +226,9 @@ test('both in-chat venues share one flat selector, and off-platform venues get n
         title: 'Browse every model your OpenRouter key can reach',
       },
     ],
-    selected: 'anthropic:claude-opus-5',
-    // #2570: the selected model's note. Empty here because this harness
-    // never answers GET /api/model-notes, which is exactly the degraded
-    // state the composer has to paint — the pre-#2570 picker.
-    note: '',
+    selected: 'anthropic:claude-opus-5-5',
+    // #2807: no caption under the picker, so no `note` in its view.
+    pendingNextTurn: false,
     changeDisabled: false,
   });
 

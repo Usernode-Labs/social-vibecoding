@@ -40,6 +40,10 @@ const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
 const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
 const sessionHeaderTsx = read('frontend/src/features/dev-chat/session-header.tsx');
+const topicBackTsx = read('frontend/src/features/dev-board/topic/topic-back.tsx');
+const topicHeadTsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+const headerTsx = read('frontend/src/features/header/platform-header.tsx');
+const improveStoreJs = read('frontend/src/features/improve/improve-store.js');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
 const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
 const kudosPaneTsx = read('frontend/src/features/leaderboard/kudos-pane.tsx');
@@ -374,18 +378,21 @@ test('"back out of a dev session" rides the header back anchor, with a real targ
   assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,2400}?location\.hash = '#messages'/);
 });
 
-// The topic page's back bar is retired too, and it was the LAST one. It was a
+// The topic page's back bar is retired, and it stays retired. It was a
 // full-width bar with a hairline whose entire content was `← Back`, sitting
-// directly under a platform header that — since the back/home rule — carries a
-// chevron to the same Board on this very route. Two back controls one row
-// apart, and the page opened with a strip of chrome instead of the proposal
-// you came to read.
+// directly under a platform header that carried a chevron to the same Board on
+// this very route. Two back controls one row apart, and the page opened with a
+// strip of chrome instead of the proposal you came to read.
 //
-// Nothing #1036 bought that anchor is lost: the header's chevron is a real
-// `<a href>` with the same NavLink guard, provided once instead of twice.
-test('"back out of an issue / proposal / governance topic" rides the header anchor', () => {
+// #2916 MOVED THE ONE THAT WAS LEFT. The header's chevron was asked to sit
+// "inside" the Workshop pane, and it does: the "‹ Workshop" chip at the top of
+// the topic head, with the header drawing NO back control on these routes. The
+// rule this block has always enforced is unchanged: one back control per page,
+// and a pinned bar above the thread is not coming back to be the second.
+test('"back out of an issue / proposal / governance topic" is the in-pane Workshop chip (#2916)', () => {
   assert.ok(!/dev-topic-back/.test(topicFrameTsx),
-    'topic-frame.tsx: the back anchor is retired');
+    'topic-frame.tsx: the pinned back bar is retired, and the chip is not the '
+    + "frame's either: it scrolls with the card, so it lives in the topic head");
   // Code only: the file's header explains what was removed and names both
   // props while doing it, which is prose worth keeping.
   const topicCode = topicFrameTsx.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -396,24 +403,65 @@ test('"back out of an issue / proposal / governance topic" rides the header anch
     'app-view.js hands the host over and nothing else, exactly as the general '
     + 'chat mount already did');
 
-  // The header IS the back control on this route, by route derivation rather
-  // than by an imperative call — pinned properly in tests/header-back-home.js;
-  // named here so this file's map of "who owns back" stays complete.
-  assert.match(read('frontend/src/features/header/platform-header.tsx'),
-    /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
-    'the header points a topic page at its board — `board` and not a literal '
-    + '`/board`, because Workshop and Board are one screen in two layouts and '
-    + 'the arrow has to name the one the reader came from');
+  // THE CHIP: a real anchor with a real target, guarded before it
+  // preventDefaults, exactly what #1036 bought the header's chevron.
+  assert.match(topicBackTsx, /<a\n\s+className="dev-topic-back un-touch-target"\n\s+href=\{href\}/,
+    'topic-back.tsx: the control is an <a> with an href');
+  assert.ok(!/target=/.test(topicBackTsx.replace(/\/\*[\s\S]*?\*\//g, '')),
+    'and no target=_blank, which the native WebView would push out to the system browser');
+  const click = topicBackTsx.slice(topicBackTsx.indexOf('function onBackClick('));
+  const guard = click.indexOf('isNativeClick?.(event)');
+  const prevent = click.indexOf('event.preventDefault()');
+  assert.ok(guard !== -1 && prevent !== -1, 'the modified-click guard and the plain-click claim');
+  assert.ok(guard < prevent, 'the guard must come FIRST, or cmd-click is swallowed');
+  assert.match(click, /window\.location\.hash = href;/,
+    'a plain click follows the href, as the header listener did on this route');
+  // Its destination is the one the header's chevron carried: `boardHref`,
+  // never a literal `/board`, because Workshop and Board are one screen in
+  // two layouts and back has to name the one the reader came from.
+  assert.match(improveStoreJs,
+    /export function topicBackHref\(\{ slug, tab, subTab, boardView \}\) \{\n\s+return slug && tab === 'dev' && subTab === 'topic' \? boardHref\(slug, boardView\) : null;/,
+    'the chip resolves a topic route to its board through boardHref');
+  assert.match(topicBackTsx, /const href = topicBackHref\(\{ slug, tab, subTab, boardView \}\);\n\s+if \(!href\) return null;/,
+    'and renders only when that answer exists');
+  // First in `.dev-topic`, so it sits above the hero or the card and scrolls
+  // with them, on every kind of topic (TopicHead is the head of all of them).
+  assert.match(topicHeadTsx, /<div ref=\{root\} className="dev-topic">\n\s+\{back \? <TopicBack \/> : null\}/,
+    'topic-head.tsx: the chip is the first child of .dev-topic');
+  assert.match(topicHeadTsx, /conversation=\{conversation\} back \/>;/,
+    'and TopicHead, the topic page, is what asks for it');
 });
 
-test('no in-page back control is left anywhere in the Dev area', () => {
+test('a topic page has exactly one back control: the chip, and no header arrow (#2916)', () => {
+  // The header reads the SAME function the chip renders from and forces its
+  // slot to 'none' on that answer, so "chip shown" and "arrow hidden" are one
+  // fact. Two call sites agreeing by convention is how a page grows zero or
+  // two back controls; this is agreement by construction.
+  assert.match(headerTsx, /const paneBack = topicBackHref\(\{/,
+    'platform-header.tsx derives the topic from topicBackHref');
+  assert.match(headerTsx, /const mode = backMode === 'close' \? 'close'\n\s+: paneBack \? 'none'/,
+    "and draws no back control where the chip is the page's back");
+  // …and no longer maps a topic to the board itself: that answer is the chip's.
+  assert.doesNotMatch(headerTsx, /subTab === 'topic'\) return boardHref/,
+    "the header's ladder no longer sends a topic anywhere");
+  // Dev SESSIONS are Messages threads, not topics (#2770): they keep the
+  // header arrow and never get the chip.
+  assert.match(headerTsx, /subTab === 'sessions'\) return sessionOrigin \|\| '#messages';/,
+    'a dev session still climbs by the header arrow');
+});
+
+test('no other in-page back control is left anywhere in the Dev area', () => {
   // The three retired one at a time and each left the others in place, so the
-  // count is the assertion: a fourth surface growing its own is the shape of
-  // this regression, not any single id coming back.
+  // count is the assertion: a surface growing its own is the shape of this
+  // regression, not any single id coming back. The topic chip (#2916) is the
+  // one in-page back the Dev area has, it lives in topic/topic-back.tsx, and
+  // it replaced the header's arrow on those routes rather than joining it.
   for (const [name, src] of [['chat-frame.tsx', chatFrameTsx],
     ['topic-frame.tsx', topicFrameTsx], ['session-header.tsx', sessionHeaderTsx]]) {
     assert.ok(!/id="d(c|ev)-[a-z-]*back"/.test(src),
-      `${name} must carry no in-page back control — the header has it`);
+      `${name} must carry no in-page back control — the header, or on a topic the chip, has it`);
+    assert.ok(!/dev-topic-back/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')),
+      `${name} must not render the topic chip — it belongs to the topic head alone`);
   }
 });
 

@@ -437,12 +437,25 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
   //    leak the row's existence to non-admins the API hides it from.
   const pubStart = home.indexOf('  publishImproveTarget() {');
   const publish = home.slice(pubStart, home.indexOf('\n  },', pubStart));
+  // The target's SHAPE is one builder now, shared with the row
+  // ../app-context/platform-target.js fetches on a cold load of another tab —
+  // two copies of it would be two descriptions of one row that drift.
+  const fnBody = (name) => {
+    const at = home.indexOf(`  ${name}(`);
+    return at < 0 ? '' : home.slice(at, home.indexOf('\n  },', at));
+  };
+  const builder = fnBody('_platformTargetFrom');
+  const platformFallback = fnBody('_publishPlatformFallback');
   assert.ok(/self_hosted/.test(publish),
     'the target is found by the self_hosted flag on the served apps list');
-  assert.ok(publish.includes("kind: 'platform'"),
+  assert.ok(publish.includes('Home._platformTargetFrom(self)'),
+    'and built by the one builder');
+  assert.ok(builder.includes("kind: 'platform'"),
     'and published as the platform kind, not as an ordinary app');
-  assert.ok(!/slug:\s*['"]usernode/.test(publish),
-    'never a hardcoded platform slug');
+  for (const [name, body] of [['publishImproveTarget', publish], ['_platformTargetFrom', builder],
+    ['_publishPlatformFallback', platformFallback]]) {
+    assert.ok(!/slug:\s*['"]usernode/.test(body), `never a hardcoded platform slug (${name})`);
+  }
 
   // 3. Both gates, and what #1406 changed about the second one.
   //
@@ -464,7 +477,7 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
   // 4. navigateHome still CLEARS the app's target first, then republishes
   //    home's — in that order, so nothing inherits the closed app's facts.
-  const navStart = src.indexOf('navigateHome() {');
+  const navStart = src.indexOf('navigateHome(opts) {');
   const nav = src.slice(navStart, src.indexOf('after: () => {', navStart));
   assert.ok(/App\.ImproveStatus\.setAppOpen\(false\);[\s\S]{0,900}Home\.publishImproveTarget\(\)/.test(nav),
     'navigateHome must clear the app target before republishing home\'s');
@@ -497,12 +510,37 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
   // hides it from), and it is only READ while `_appsLoaded` is false (so once
   // the list is here, the list is the truth — including the truth that this
   // viewer gets no row).
-  assert.ok(publish.includes('Home._cachedImproveTarget()'),
+  assert.ok(publish.includes('Home._publishPlatformFallback()'),
+    'no row in the list: the fallback decides');
+  assert.ok(platformFallback.includes('Home._cachedImproveTarget()'),
     'a cold boot publishes the remembered target rather than nothing');
-  assert.ok(/if \(Home\._appsLoaded\) return;[\s\S]{0,200}_cachedImproveTarget/.test(publish),
+  assert.ok(/if \(Home\._appsLoaded\) \{[\s\S]*?return;\s*\}\s*const cached = Home\._cachedImproveTarget\(\);/.test(platformFallback),
     'and only while the apps payload has not arrived');
   assert.ok(publish.includes('Home._rememberImproveTarget(target)'),
     'the cache is written from the real publish, not from the cache read');
+  assert.ok(!/_rememberImproveTarget\(Home\._restrictedPlatformTarget/.test(platformFallback),
+    'and never from the restricted target, which is no row at all');
+
+  // 6. …AND HOME IS NOT THE ONLY DOOR (bug: an untargeted menu on a cold
+  //    load of any tab but Home). A first visit that lands on #messages,
+  //    #workshop, #profile or #settings never loads the list and has no
+  //    remembered copy, so the menu said "THIS APP" over a Go to workshop to
+  //    `#`. The fallback now asks ../app-context/platform-target.js to find
+  //    the row on its own, and publishes what it found through the same
+  //    gates. Through `window.PlatformTarget`, because a dozen tests run this
+  //    file as a classic script where an import line is stripped.
+  assert.match(platformFallback, /const resolver = window\.PlatformTarget;/);
+  assert.match(platformFallback, /const known = resolver\?\.known\?\.\(\);[\s\S]{0,160}window\.Improve\.setTarget\(known\)/,
+    'a target the resolver already found is published');
+  assert.match(platformFallback, /resolver\?\.resolve\?\.\(\);\s*$/,
+    'and with neither list, cache nor answer, it is asked for');
+  // 7. A LOADED LIST WITHOUT THE ROW is a viewer not served it
+  //    (SELF_APP_PUBLIC_VOTING off, not an admin). That used to publish
+  //    nothing, for good; it publishes Homeroom's restricted target now, so
+  //    the menu is Homeroom's with the rows that would 404 hidden.
+  assert.match(platformFallback,
+    /if \(Home\._appsLoaded\) \{[\s\S]{0,400}Home\._restrictedPlatformTarget\(slug\)/,
+    'not served: the restricted Homeroom target, not no target');
   const loadStart = home.indexOf('  async load() {');
   const load = home.slice(loadStart, home.indexOf('\n  },', loadStart));
   assert.ok(load.includes('Home.publishImproveTarget();'),
@@ -590,9 +628,13 @@ test('the two actions lead the menu, shaped like the pill that used to open them
   const aboutPane = read('frontend/src/features/app-context/about-pane.tsx');
   assert.match(aboutPane, /id="improve-row-share"/, 'Share survives');
   assert.match(aboutPane, /Improve\?\.share\?\.\(\)/, 'with the same handler');
-  assert.ok(aboutPane.indexOf('id="improve-row-github"') < aboutPane.indexOf('id="improve-row-share"'),
-    'and sits next to View on GitHub, in that order');
-  assert.match(aboutPane, /\{canShare \? \(/, 'still gated on canShare');
+  // THE DESIGN'S ORDER NOW (nav-prototype.html, About's MORE): Share leads,
+  // and View on GitHub — the design's "Source code" — follows it.
+  assert.ok(aboutPane.indexOf('id="improve-row-share"') < aboutPane.indexOf('id="improve-row-github"'),
+    'Share leads, View on GitHub follows, in the design\'s order');
+  // An app's Share is still gated on canShare — a live address to hand over;
+  // Homeroom always has one, so its Share always shows (./about-pane.tsx).
+  assert.match(aboutPane, /const showShare = platform \|\| canShare;/, 'still gated on canShare for an app');
   assert.doesNotMatch(panel, /id="improve-row-share"/, 'and not in two places');
 
   // Everything else left: the view toggle is the view STRIP now.

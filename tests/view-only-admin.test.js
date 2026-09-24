@@ -24,9 +24,9 @@ const assert = require('node:assert');
 const poolMod = require('../src/db/pool');
 let handler = async () => ({ rows: [] });
 const sharedPool = {
-  query: (sql, params) => handler(sql, params),
+  query: async (sql, params) => handler(sql, params),
   async connect() {
-    return { query: (sql, params) => handler(sql, params), release() {} };
+    return { query: async (sql, params) => handler(sql, params), release() {} };
   },
 };
 poolMod.getPool = () => sharedPool;
@@ -51,6 +51,8 @@ function defaultHandler(sql, params = []) {
   if (/^\s*(BEGIN|COMMIT|ROLLBACK)/.test(sql) || /pg_advisory_xact_lock/.test(sql)) {
     return { rows: [] };
   }
+  if (/SELECT is_admin, admin_readonly FROM users/.test(sql)) return { rows: [{ is_admin: currentUser.isAdmin, admin_readonly: currentUser.adminReadonly }] };
+  if (/SELECT \* FROM users WHERE id = \$1 FOR UPDATE/.test(sql)) return { rows: scenario.targetRow ? [scenario.targetRow] : [] };
   // App-delete authorization now has a per-app sole-contributor path, so
   // this test supplies a real non-owned app for the view-only admin rather
   // than relying on the old global pre-gate.

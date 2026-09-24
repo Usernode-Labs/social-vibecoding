@@ -9,6 +9,14 @@
 > now means only that replay and artifact integrity checks passed. The older
 > agent verdict, fallback vision reviewer, and semantic repair loop in this
 > historical plan are no longer part of the active flow.
+>
+> **Replay submission update (2026-09-23):** `evidence_run_plan` validates and
+> accepts the frozen replay plan immediately. Its response is an acknowledgement,
+> not a replay verdict. Homeroom continues both clean replay passes after the
+> planning model finishes, records any browser failure, and starts a bounded
+> correction turn only for a repairable locator error. This prevents a long
+> browser replay from holding one model-tool HTTP request open until a proxy
+> drops the connection. People still judge the captured media.
 
 Original #2380 status: implemented, merged, and deployed. Collection, execution, and
 presentation are default-on and advisory; one emergency kill switch can stop
@@ -189,8 +197,9 @@ uses ephemeral accessibility references, and exploration naturally contains
 dead ends. Instead:
 
 1. The model explores base and head with ordinary browser tools.
-2. It submits a clean plan to a strongly typed `evidence_run_plan` tool.
-3. The tool validates the plan and executes it with platform-owned Playwright.
+2. It submits one executable replay per accepted story to `evidence_run_plan`.
+3. The platform attaches the accepted intent, validates the complete plan,
+   and executes it with platform-owned Playwright.
 4. The model receives the replayed checkpoint images and diagnostics.
 5. It accepts the evidence or asks for one corrected plan.
 
@@ -318,9 +327,10 @@ unbounded tool logs.
 ### 5. Explore, then submit the clean replay plan
 
 The agent may inspect both versions and try interactions. Once it understands
-the flow, it calls `evidence_run_plan` with a complete structured plan. The
-runner resets both browser contexts before execution, so exploratory state
-cannot leak into the result.
+the flow, it calls `evidence_run_plan` with one `{id, replay}` entry for each
+accepted story. The platform attaches the frozen semantic intent fields and
+validates the resulting complete plan. The runner resets both browser contexts
+before execution, so exploratory state cannot leak into the result.
 
 Base and head actions may differ when the change introduces or removes the
 control used to reach the state. Comparability is defined by the semantic
@@ -545,8 +555,13 @@ clean replays and are labelled `relative-pointer` in provenance.
 - `clickPoint` / `dragPoints` relative to one bounded surface;
 - `scrollIntoView`;
 - `scrollBy` with bounded distance;
-- `waitFor` a locator, text, URL pattern, or quiet network;
+- `waitFor` a locator, visible text substring, URL pattern, or quiet network;
 - `assert` through the checkpoint assertion collection.
+
+Each story and viewport replays against a fresh copy of the same paired app
+fixture. Changes made while capturing one viewport cannot change the starting
+state of another. Plans should still use `check` or `uncheck` when setting a
+checkbox to a known state.
 
 Every state-changing action has a stable `stage` name. Matching stage names
 align base/head animation frames even when the underlying locators differ.
@@ -591,8 +606,11 @@ models can inspect them.
 
 ### `evidence_run_plan`
 
-Accepts the complete versioned plan, validates it, executes two clean replays,
-and returns:
+Accepts only `{replays: [{id, replay}, ...]}`. The platform attaches the
+accepted version, impact, rationale, claim, persona, viewports, and semantic
+flow for each story. It rejects unknown, duplicate, or missing story ids and
+validates the assembled versioned plan before executing two clean replays and
+returning:
 
 - assertion results;
 - action/stage timings;

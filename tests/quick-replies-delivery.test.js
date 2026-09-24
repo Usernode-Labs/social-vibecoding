@@ -37,10 +37,9 @@ const DEVCHAT_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
-const SESSIONS_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-  'utf8'
-);
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+const SESSIONS_SRC = [['src', 'services', 'mayor', 'turn.js'], ['src', 'routes', 'sessions.js']]
+  .map((p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')).join('\n');
 
 // Slice a method body out of an object-literal source by its header and the
 // header of the next member. Cruder than parsing, but stable: both markers

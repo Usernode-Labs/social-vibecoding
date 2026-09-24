@@ -12,6 +12,11 @@
 // the platform (or the reverse) without ever making that choice — and the
 // mistake is invisible to the person who made it, so nobody reports it.
 //
+// #2888 changed how the unanswered question is enforced: Submit is no
+// longer disabled while it waits. It stays pressable, and pressing it with
+// no destination sends nothing, turns the row and the hint red, announces
+// the hint and puts focus on the row.
+//
 // The asymmetric half matters just as much and is easy to lose in a later
 // refactor: when only ONE destination is reachable there is nothing to
 // disambiguate, so it stays selected and Submit is live on open. A tap with
@@ -118,7 +123,21 @@ test('?shot=feedback-choose is a recognised deep link', () => {
   );
 });
 
-test('all three declared checks exist and match the shipped ids and copy', () => {
+test('?shot=feedback-choose-missed presses the real Submit through the controller', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
+  const start = app.indexOf('_applyFeedbackShot() {');
+  const shot = app.slice(start, app.indexOf('renderAdminButton()', start));
+  assert.match(shot, /'feedback-choose-missed'/, 'the shot name is accepted');
+  assert.match(shot, /App\._simulateFeedbackTargetMissed/, 'through the controller hook');
+  assert.match(shot, /getAttribute\('aria-invalid'\) === 'true'/, 'and it waits for the red row');
+  assert.match(
+    CONTROLLER_TEXT,
+    /App\._simulateFeedbackTargetMissed = \(name\) => \{\s*applyTargetAvailability\(true, \{ name \}\);\s*feedbackBtn\.click\(\);/,
+    'the hook poses the shipped branch and clicks the real button'
+  );
+});
+
+test('all four declared checks exist and match the shipped ids and copy', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'));
   const declared = manifest.tests || [];
 
@@ -131,9 +150,26 @@ test('all three declared checks exist and match the shipped ids and copy', () =>
     'the check\'s expectText is a prefix of the copy the controller writes'
   );
 
-  const dead = declared.find((t) => t.path === '/?shot=feedback-choose'
-    && /#feedback-submit:disabled/.test(t.expectSelector));
-  assert.ok(dead, 'the disabled Submit is covered');
+  // #2888: Submit is live while the question waits — never disabled for it.
+  assert.ok(
+    !declared.some((t) => t.path === '/?shot=feedback-choose'
+      && /#feedback-submit:disabled/.test(t.expectSelector)),
+    'no check still asserts the retired disabled Submit'
+  );
+  const live = declared.find((t) => t.path === '/?shot=feedback-choose'
+    && /#feedback-submit:not\(:disabled\)/.test(t.expectSelector));
+  assert.ok(live, 'the pressable Submit is covered');
+  assert.match(live.expectSelector, /#feedback-target:not\(\[aria-invalid\]\)/,
+    'and the row is not red before anybody presses it');
+
+  const missed = declared.find((t) => t.id === 'feedback.destination-missed');
+  assert.ok(missed, 'the pressed-without-a-destination state is covered');
+  assert.equal(missed.path, '/?shot=feedback-choose-missed');
+  assert.match(missed.expectSelector, /#feedback-target\[aria-invalid=\\?"true\\?"\]/);
+  assert.match(missed.expectSelector, /#feedback-target-app\.\\!border-red-600/);
+  assert.match(missed.expectSelector, /#feedback-target-hint\[role=\\?"alert\\?"\]/);
+  assert.ok(HINT.startsWith(missed.expectText));
+  assert.ok(CONTROLLER_TEXT.includes("'!border-red-600'"), 'the class the check selects is the one the controller writes');
 
   const single = declared.find((t) => /#feedback-target-hint\.hidden/.test(t.expectSelector || ''));
   assert.ok(single, 'the ONE-destination case is covered too');
@@ -148,7 +184,7 @@ test('all three declared checks exist and match the shipped ids and copy', () =>
   // DESCENDANT of #feedback-modal: useStaticModal lifts the card out of that
   // root into the kit's own shell when the dialog opens, so a descendant
   // selector matches nothing precisely when the dialog IS open.
-  for (const t of [choice, dead, single]) {
+  for (const t of [choice, live, missed, single]) {
     assert.match(
       t.expectSelector,
       /^body:has\(#feedback-modal:not\(\.hidden\)\)/,
@@ -319,12 +355,14 @@ test('with two destinations, the dialog opens with neither chosen', () => {
   assert.equal(h.el('feedback-target-platform').disabled, false);
 });
 
-test('and Submit is dead until one is tapped, with the reason on screen', () => {
+test('Submit stays pressable while the question waits, which is asked quietly', () => {
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
 
-  assert.equal(h.el('feedback-submit').disabled, true, 'Submit is disabled');
-  assert.ok(h.hintShown(), 'and the row says why');
+  assert.equal(h.el('feedback-submit').disabled, false, 'Submit is live (#2888)');
+  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null, 'nothing is red yet');
+  assert.equal(h.el('feedback-target-hint').getAttribute('role'), null, 'nor announced');
+  assert.ok(h.hintShown(), 'and the row says what it is asking');
   assert.equal(h.el('feedback-target-hint').textContent, HINT);
   assert.equal(
     h.el('feedback-target').getAttribute('aria-describedby'),
@@ -366,6 +404,71 @@ test('a submit with no destination files NOTHING and re-asks', async () => {
 
   assert.equal(h.filed().length, 0, 'nothing was sent against a destination nobody picked');
   assert.ok(h.hintShown(), 'the question is still on screen');
+});
+
+test('#2888: that submit turns the row red, announces why and focuses the row', async () => {
+  const h = makeHarness({ appData: OPEN_APP });
+  h.open();
+  h.type('Dragging a card scrolls the board back to the top.');
+  const focusedBefore = h.el('feedback-target-app').focused;
+
+  await h.submit();
+
+  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), 'true', 'the row is marked invalid');
+  for (const which of ['app', 'platform']) {
+    assert.ok(h.el(`feedback-target-${which}`).classes.has('!border-red-600'), `${which} is outlined red`);
+  }
+  const hint = h.el('feedback-target-hint');
+  assert.equal(hint.textContent, HINT);
+  assert.ok(hint.classes.has('!text-red-700'), 'the hint is red');
+  assert.equal(hint.getAttribute('role'), 'alert', 'and announced');
+  assert.equal(h.el('feedback-target-app').focused, focusedBefore + 1, 'focus moves to the row');
+  assert.equal(h.el('feedback-submit').disabled, false, 'Submit is still live for the retry');
+  assert.equal(h.el('feedback-text-error').classes.has('hidden'), true, 'the description was fine');
+});
+
+test('#2888: an empty description and no destination are both reported at once', async () => {
+  const h = makeHarness({ appData: OPEN_APP });
+  h.open();
+
+  await h.submit();
+
+  assert.equal(h.filed().length, 0);
+  assert.equal(h.el('feedback-text-error').classes.has('hidden'), false, 'the description error shows');
+  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), 'true', 'and so does the row');
+});
+
+test('#2888: choosing a destination clears the red, and the retry is filed there', async () => {
+  const h = makeHarness({ appData: OPEN_APP });
+  h.open();
+  h.type('Dragging a card scrolls the board back to the top.');
+  await h.submit();
+  assert.equal(h.filed().length, 0);
+
+  h.el('feedback-target-platform').fire('click');
+  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null);
+  assert.equal(h.el('feedback-target-app').classes.has('!border-red-600'), false);
+  assert.equal(h.el('feedback-target-hint').getAttribute('role'), null);
+  assert.equal(h.hintShown(), false);
+
+  await h.submit();
+  const [call] = h.filed();
+  assert.ok(call, 'it was sent');
+  assert.equal(JSON.parse(call.opts.body).target, 'platform');
+});
+
+test('#2888: a reopen asks again quietly, without the previous red', async () => {
+  const h = makeHarness({ appData: OPEN_APP });
+  h.open();
+  h.type('x');
+  await h.submit();
+  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), 'true');
+
+  h.sandbox.Feedback._reset();
+  h.open();
+  assert.ok(h.hintShown());
+  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null);
+  assert.equal(h.el('feedback-target-hint').classes.has('!text-red-700'), false);
 });
 
 test('the destination that was tapped is the one submitted', async () => {
@@ -446,15 +549,15 @@ test('reopening after a choice asks again', () => {
   assert.equal(h.checked('app'), 'false', 'the previous answer is not a new default');
   assert.equal(h.checked('platform'), 'false');
   assert.ok(h.hintShown());
-  assert.equal(h.el('feedback-submit').disabled, true);
+  assert.equal(h.el('feedback-submit').disabled, false, 'still pressable (#2888)');
 });
 
-test('closing the dialog does not leave a dead Submit behind for the next open', () => {
-  // _open clears the gate before enableSubmit(), so the one-destination
-  // case that follows a two-destination one is not poisoned by it.
+test('closing the dialog does not leave the question behind for the next open', () => {
+  // _open clears the question first, so the one-destination case that
+  // follows a two-destination one is not poisoned by it.
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
-  assert.equal(h.el('feedback-submit').disabled, true);
+  assert.ok(h.hintShown());
 
   h.sandbox.Feedback._reset();
   h.sandbox.AppView.appData = null;

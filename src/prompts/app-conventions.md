@@ -2030,6 +2030,22 @@ Notes:
   the forwarded properties to work (it is still required for bare `env()`
   to work standalone).
 
+## Staying loaded in the background
+
+The shell keeps the last few apps a viewer opened **loaded but hidden**, so
+coming back to yours shows it exactly as they left it — no reload. While
+hidden your document keeps running, but it cannot be seen, focused or
+clicked. The bridge handles the common case for you: on hide it pauses any
+playing `<audio>`/`<video>`, and on show it resumes what it paused. For
+anything else that should stop while nobody is looking (Web Audio, timers
+that animate, polling), listen for:
+
+- **`usernode:visibility-changed`** — a `CustomEvent` on `window` whose
+  `detail` is `{ hidden: boolean }`.
+
+An app that is not reopened soon is dropped and loads fresh next time, so
+keep durable state server-side (or in `localStorage`) as you already should.
+
 ## Browser capabilities in the app frame
 
 Apps run in a cross-origin iframe, and the powerful browser capabilities

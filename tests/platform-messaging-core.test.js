@@ -118,7 +118,7 @@ test('invitation serialization cannot hydrate private conversation content', () 
   assert.match(serviceSource, /const members = accepted && includeMembers/);
   assert.match(serviceSource, /const latest = accepted && row\.latest_message_id/);
   assert.match(serviceSource, /const peer = accepted && row\.peer_id/);
-  assert.match(serviceSource, /listMessages[\s\S]*loadMembership\(pool, conversationId, user\.id\)/);
+  assert.match(serviceSource, /listMessages[\s\S]*loadMembership\(pool, conversationId, user\.id, \{ allowDeletedPeer: true \}\)/);
   assert.doesNotMatch(serviceSource, /allowInvited:\s*true[\s\S]{0,200}listMessages/);
 });
 
@@ -233,9 +233,9 @@ test('block revocation closes every private direct-message read channel', () => 
   assert.match(serviceSource, /DELETE FROM notifications n[\s\S]*conversation_direct_pairs p/);
 });
 
-test('archived conversations are absent from REST, notifications, and mobile push', () => {
-  assert.match(serviceSource, /WHERE c\.id = \$1 AND c\.status = 'active'/);
-  assert.match(serviceSource, /WHERE me\.user_id = \$1 AND c\.status = 'active'/);
+test('only deletion archives are readable; archives stay absent from notifications and mobile push', () => {
+  assert.match(serviceSource, /WHERE c\.id = \$1 AND \(c\.status = 'active' OR \(c\.status = 'archived' AND c\.deleted_peer\)\)/);
+  assert.match(serviceSource, /WHERE me\.user_id = \$1 AND \(c\.status = 'active' OR \(c\.status = 'archived' AND c\.deleted_peer\)\)/);
   assert.match(notificationsSource, /notification_conversation\.status = 'active'/);
   assert.match(pushWorkerSource, /row\.conversation_status !== 'active'/);
   assert.match(serviceSource,

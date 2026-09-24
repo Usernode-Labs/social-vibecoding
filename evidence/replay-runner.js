@@ -121,6 +121,18 @@ function validateInput(raw) {
   const plan = planContract.parseReplayPlan(raw.plan);
   const pass = Number(raw.pass);
   if (![1, 2].includes(pass)) throw new ReplayFailure('invalid_pass', 'Replay pass must be 1 or 2.');
+  let selection = null;
+  if (raw.selection != null) {
+    if (!raw.selection || typeof raw.selection !== 'object'
+        || Object.keys(raw.selection).sort().join(',') !== 'storyId,viewport') {
+      throw new ReplayFailure('invalid_selection', 'Replay selection must name one declared story and viewport.');
+    }
+    const story = plan.stories.find((item) => item.id === raw.selection.storyId);
+    if (!story?.viewports.some((item) => item.name === raw.selection.viewport)) {
+      throw new ReplayFailure('invalid_selection', 'Replay selection must name one declared story and viewport.');
+    }
+    selection = { storyId: raw.selection.storyId, viewport: raw.selection.viewport };
+  }
   const baseOrigin = parseOrigin(raw.origins?.base, 'Base');
   const headOrigin = parseOrigin(raw.origins?.head, 'Head');
   if (baseOrigin === headOrigin) throw new ReplayFailure('identical_origins', 'Base and head origins must be distinct.');
@@ -147,6 +159,7 @@ function validateInput(raw) {
     publishArtifacts: raw.publishArtifacts === true && pass === 2,
     plan,
     planHash: planContract.planHash(plan),
+    selection,
     origins: { base: baseOrigin, head: headOrigin },
     cookies: raw.cookies && typeof raw.cookies === 'object' ? raw.cookies : {},
     authTokens,
@@ -284,6 +297,35 @@ async function resolveOne(page, spec, description, {
     );
   }
   return locator;
+}
+
+// A readiness wait only asks whether any matching element is visible. Keep
+// interactions and checkpoint assertions strict, but do not reject a page
+// because it has two headings or controls with the same accessible name.
+async function waitForAnyVisible(page, spec, description, timeoutMs) {
+  const locator = locatorFor(page, spec).filter({ visible: true });
+  try {
+    await locator.first().waitFor({ state: 'visible', timeout: timeoutMs });
+  } catch (error) {
+    // The element may have appeared between Playwright's timeout and this
+    // diagnostic read. A visible match satisfies the wait even in that race.
+    if (await locator.count().catch(() => 0)) return;
+    const snapshot = await locatorSnapshot(page, spec, { includeCandidates: true });
+    if (!Number.isInteger(snapshot.attachedCount)
+        && !Number.isInteger(snapshot.matchedCount)) throw error;
+    const present = Number(snapshot.attachedCount) > 0;
+    throw new ReplayFailure(
+      present ? 'locator_not_visible' : 'locator_not_found',
+      present
+        ? `${description} did not become visible within ${timeoutMs} ms.`
+        : `${description} did not match an element within ${timeoutMs} ms.`,
+      { ...snapshot, waitState: 'visible', timeoutMs }
+    );
+  }
+}
+
+async function waitForVisibleText(page, text, description, timeoutMs) {
+  return waitForAnyVisible(page, { by: 'text', value: text, exact: false }, description, timeoutMs);
 }
 
 function joinedUrl(origin, relativePath) {
@@ -503,8 +545,8 @@ async function executeAction(page, action, origin, network, authToken = '') {
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
     case 'waitFor':
-      if (action.target) await resolveOne(page, action.target, action.id, { state: 'visible', timeoutMs: action.timeoutMs });
-      else if (action.text) await page.getByText(action.text, { exact: true }).first().waitFor({ state: 'visible', timeout: action.timeoutMs });
+      if (action.target) await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
+      else if (action.text) await waitForVisibleText(page, action.text, action.id, action.timeoutMs);
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
       break;
@@ -1155,6 +1197,8 @@ async function runReplay(browser, input) {
   try {
     for (const story of input.plan.stories) {
       for (const viewport of story.viewports) {
+        if (input.selection && (input.selection.storyId !== story.id
+            || input.selection.viewport !== viewport.name)) continue;
         emitEvent({ type: 'viewport_started', runId: input.runId, pass: input.pass, storyId: story.id, viewport: viewport.name });
         let phase = 'base';
         try {
@@ -1275,6 +1319,8 @@ module.exports = {
   locatorFor,
   locatorSnapshot,
   resolveOne,
+  waitForAnyVisible,
+  waitForVisibleText,
   authorizedUrl,
   publicRelativePath,
   redactedUrl,
