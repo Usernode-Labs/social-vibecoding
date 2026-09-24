@@ -14,12 +14,13 @@ import { useSyncExternalStore } from 'react';
  * the bar's three does NOT: reordering the bar under the pointer that just
  * used it would move the next emoji out from under a second tap.
  *
- * ── Rendered after mount only ─────────────────────────────────────────
+ * ── Never read during hydration ───────────────────────────────────────
  *
- * The bar exists only once a row is hovered or pressed, so it never renders
- * into the prerendered shell — reading storage here cannot cause a hydration
- * mismatch. The server snapshot is the defaults all the same, so a caller
- * that does render early gets the markup the prerender would have.
+ * Message rows only exist once their transcript has loaded, which is after
+ * mount, so no bar is in the prerendered shell. The server snapshot is the
+ * defaults all the same: a caller that does render during hydration gets the
+ * prerender's markup first and the stored list on the next render, rather
+ * than a mismatch.
  */
 
 export const DEFAULT_RECENTS: readonly string[] = ['👍', '❤️', '🙏'];
