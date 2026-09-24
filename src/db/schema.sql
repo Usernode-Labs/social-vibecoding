@@ -9206,6 +9206,13 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     CHECK ((status = 'archived') = (archived_at IS NOT NULL))
 );
 ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS agent_reasoning_effort VARCHAR(16);
+-- What the lists' status marks read (#2779 follow-up). last_done_at is when a
+-- turn that ran last finished (its lease released at the end); seen_at is
+-- when the owner last read the conversation. Finished after it was last seen,
+-- and not working now, is the green dot beside it in Recents, the mark's menu
+-- and Messages; a held lease is the spinner.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS last_done_at TIMESTAMPTZ;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS agent_sessions_user_activity
   ON agent_sessions (user_id, last_activity_at DESC);
 COMMENT ON TABLE agent_sessions IS 'staging:private';

@@ -112,6 +112,11 @@ function shapeChangeRow(row) {
     // For the changes drawer: the owner's own preview and checks verdict.
     stagingUrl: row.change_staging_url || null,
     checkState: row.change_check_state || null,
+    // The staging card (#2779 follow-up): how many checks failed on the last
+    // run, and whether the preview is the platform's own (its preview is
+    // signed into as the self-hosted app, with its review fixtures on).
+    checkFailing: Number(row.change_check_failing) || 0,
+    appSelfHosted: !!row.change_app_self_hosted,
   };
 }
 
@@ -135,6 +140,9 @@ function shapeSession(row) {
       : null,
     activeChange: shapeChangeRow(row),
     busy: !!row.active_turn,
+    // Finished something the owner has not seen yet: the green dot.
+    doneUnseen: !row.active_turn && !!row.last_done_at
+      && (!row.seen_at || new Date(row.last_done_at) > new Date(row.seen_at)),
     lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).toISOString() : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
@@ -174,12 +182,13 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
-            s.last_activity_at, s.created_at, s.archived_at,
+            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
-            ca.slug AS change_app_slug, ca.name AS change_app_name
+            ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
@@ -204,12 +213,13 @@ async function getAgentSession(pool, { userId, id }) {
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
-            s.last_activity_at, s.created_at, s.archived_at,
+            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
-            ca.slug AS change_app_slug, ca.name AS change_app_name
+            ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
@@ -225,7 +235,8 @@ async function getAgentSession(pool, { userId, id }) {
     `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
-            a.slug AS change_app_slug, a.name AS change_app_name
+            a.slug AS change_app_slug, a.name AS change_app_name, a.self_hosted AS change_app_self_hosted,
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM chat_sessions c JOIN apps a ON a.id = c.app_id
       WHERE c.agent_session_id = $1 AND c.user_id = $2
       ORDER BY c.id DESC
@@ -588,12 +599,38 @@ async function renewTurnLease(pool, { agentSessionId, turnId }) {
   return rows.length > 0;
 }
 
-async function releaseTurnLease(pool, { agentSessionId, turnId }) {
+// `finished` is a turn that ran, ending: it stamps last_done_at, which the
+// lists read as "finished something". A lease handed back before the turn
+// started (no Mayor, no payer) is not one.
+async function releaseTurnLease(pool, { agentSessionId, turnId, finished = false }) {
   await pool.query(
-    `UPDATE agent_sessions SET active_turn = NULL
+    `UPDATE agent_sessions
+        SET active_turn = NULL,
+            last_done_at = CASE WHEN $3::boolean THEN NOW() ELSE last_done_at END
       WHERE id = $1 AND active_turn->>'id' = $2`,
-    [agentSessionId, turnId]
+    [agentSessionId, turnId, !!finished]
   );
+}
+
+// The owner read the conversation: whatever it finished is seen. True when
+// that cleared a green dot, so the caller can tell the owner's other tabs.
+async function markSeen(pool, { userId, id }) {
+  const sessionId = positiveInt(Number(id));
+  if (!sessionId) return false;
+  const { rows } = await pool.query(
+    `WITH prev AS (
+       SELECT id, seen_at, last_done_at, active_turn
+         FROM agent_sessions
+        WHERE id = $1 AND user_id = $2
+     )
+     UPDATE agent_sessions s SET seen_at = NOW()
+       FROM prev
+      WHERE s.id = prev.id
+     RETURNING (prev.active_turn IS NULL AND prev.last_done_at IS NOT NULL
+                AND (prev.seen_at IS NULL OR prev.last_done_at > prev.seen_at)) AS cleared`,
+    [sessionId, userId]
+  );
+  return !!(rows[0] && rows[0].cleared);
 }
 
 module.exports = {
@@ -626,4 +663,5 @@ module.exports = {
   acquireTurnLease,
   renewTurnLease,
   releaseTurnLease,
+  markSeen,
 };

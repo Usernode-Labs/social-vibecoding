@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 
 import { groupsWithPrevious } from '@/components/ui/chat';
 import {
-  ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SidebarIcon, SparklesIcon,
-  UserGroupIcon, XIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
+  SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
@@ -13,7 +13,7 @@ import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
-import { agoStamp } from '../../lib/timestamp';
+import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
@@ -21,7 +21,7 @@ import { AgentAppDialog } from './agent-dialog';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { UserAvatar } from './format';
+import { fullTime, UserAvatar } from './format';
 import { MessageRow } from './message-row';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
@@ -41,6 +41,7 @@ import {
   open as openConversation,
   openAgentThread,
   renameConversation,
+  openThread,
   respond,
   setUserBlocked,
   selectConversation,
@@ -53,8 +54,12 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
+import { useSidePaneBeside } from '../agent-session/spec-layout';
+import { agentActivity } from '../agent-session/activity';
+import { AgentActivityMark } from '../agent-session/activity-mark';
 import {
   agentSessionsEnabled,
   deactivateAgentSession,
@@ -739,6 +744,12 @@ function ConversationList() {
   const mayor = useAgentSessionState();
   useEffect(() => { void loadAgentSessions(); }, []);
   const mayors: MayorSession[] = mounted ? mayor.sessions : [];
+  // The side pane open BESIDE an agent session's chat (#2779 follow-up), a
+  // spec or a preview, takes this column's width while it is open: at 1280
+  // the thread pane alone is too narrow for two readable columns. Closing it
+  // brings the list back. False until mounted, like everything above
+  // (../agent-session/spec-layout).
+  const specBeside = useSidePaneBeside('messages');
   const inbox = buildInbox({
     conversations: snap.conversations,
     discussions: snap.discussions,
@@ -808,7 +819,7 @@ function ConversationList() {
   ) : null;
 
   return (
-    <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+    <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -963,16 +974,32 @@ function InvitationBanner() {
 }
 
 /**
- * #2387: SINGLE-PANEL MODE. On a desktop the list and the open chat sit side
- * by side; this folds the list away so the chat (and a thread beside it) has
- * the whole width, and brings it back. It leads the chat's own title row,
- * next to the pane it changes, and is remembered on this device. A phone
- * shows one pane at a time already, so there it is not drawn (app.css).
+ * #2387: FULL WIDTH. On a desktop the list and the open discussion sit side
+ * by side; this folds the list away so the discussion (and a thread beside
+ * it) has the whole width, and brings it back. Only the list: the platform's
+ * own sidebar is navigation and stays. It is remembered on this device.
+ *
+ * ONE CONTROL, ONE PLACE, EVERY PANE. It sits at the right of the header,
+ * just before ⋯ where a pane has one — where a video player or a document
+ * editor puts its full-screen control — on a conversation, #general, an
+ * app's channel, an agent chat and both kinds of session alike. The agent
+ * panels are drawn by their own features, so they take it as `headerAction`
+ * rather than importing this store.
+ *
+ * The glyph is the verb a press performs: arrows out while the list is
+ * shown, arrows in once it is hidden. A phone shows one pane at a time
+ * already, so there it is not drawn (app.css).
  */
-function ListToggle() {
+function FullWidthToggle() {
   const snap = useMessagesSnapshot();
+  // A Mayor session's side pane (its spec or a preview) open beside its chat
+  // has already moved the list aside (ConversationList), so here the control
+  // would do nothing. It is not drawn, as app.css does for an open reply
+  // thread below 1600px.
+  const specBeside = useSidePaneBeside('messages');
   const collapsed = snap.listCollapsed;
-  const label = collapsed ? 'Show conversation list' : 'Hide conversation list';
+  if (specBeside) return null;
+  const label = collapsed ? 'Show the conversation list' : 'Full width';
   return (
     <button
       type="button"
@@ -982,7 +1009,7 @@ function ListToggle() {
       title={label}
       onClick={() => setListCollapsed(!collapsed)}
     >
-      <SidebarIcon aria-hidden="true" />
+      {collapsed ? <ArrowsPointingInIcon aria-hidden="true" /> : <ArrowsPointingOutIcon aria-hidden="true" />}
     </button>
   );
 }
@@ -1070,7 +1097,6 @@ function ThreadHeader() {
         : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
-      <ListToggle />
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
@@ -1079,6 +1105,7 @@ function ThreadHeader() {
         <div className="messages-thread-sub">{subtitle}</div>
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
+      <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
         <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
         {menu ? (
@@ -1232,7 +1259,6 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           once per browser and then never again. The conversation pane beside
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
-        <ListToggle />
         <span
           data-icon={appIconKind(iconRecord as never)}
           className="app-icon-tile messages-inbox-tile"
@@ -1244,6 +1270,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           <span className="messages-thread-name block">{name}</span>
           <span className="messages-thread-sub block">{handle ? `#${handle} · ` : ''}Everyone building this app</span>
         </span>
+        <FullWidthToggle />
       </header>
       {/* NO `dc-lift dc-lift-session` HERE, unlike the conversation pane
           beside it: features/group-chat/general-chat.tsx opens with exactly
@@ -1305,7 +1332,7 @@ function MayorSessionThread({ id }: { id: number | 'new' }) {
       aria-label="Agent session"
       data-agent-session-thread={id}
     >
-      <AgentSessionPanel embedded />
+      <AgentSessionPanel embedded headerAction={<FullWidthToggle />} />
     </section>
   );
 }
@@ -1350,6 +1377,9 @@ function MayorSessionRow({ session, active }: { session: MayorSession; active: b
           <span className="messages-row-preview">
             {session.busy ? 'Working…' : `${session.focusApp?.name ? `${session.focusApp.name} · ` : ''}${status}`}
           </span>
+          {/* #2779: where a conversation's unread count goes, the lists' mark:
+              a spinner while it works, a green dot once it finished unseen. */}
+          <AgentActivityMark activity={agentActivity(session)} />
         </div>
       </div>
     </a>
@@ -1370,7 +1400,7 @@ function AgentChatThread({ id }: { id: string }) {
       aria-label="Agent chat"
       data-agent-chat={id}
     >
-      <GlobalChatPanel embedded />
+      <GlobalChatPanel embedded headerAction={<FullWidthToggle />} />
     </section>
   );
 }
@@ -1440,6 +1470,7 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
     >
       <div className="messages-session-bar">
         <a className="messages-session-full" href={full}>Open full view</a>
+        <FullWidthToggle />
       </div>
       {phase === 'unavailable' ? (
         <div className="messages-state messages-state-error">
@@ -1539,6 +1570,25 @@ function ConversationThread() {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
     }
+    // #2387 follow-up: a thread's reply, drawn where it landed — one card for
+    // the run of replies to that thread with nothing else said between them
+    // on the same day. A deleted reply is gone from the run; the next message
+    // after the card carries its own name.
+    if (message.threadRootId) {
+      const run = [message];
+      while (index + 1 < snap.messages.length) {
+        const next = snap.messages[index + 1];
+        if (next.threadRootId !== message.threadRootId || dayKey(next) !== day) break;
+        run.push(next);
+        index += 1;
+      }
+      const live = run.filter((item) => !item.deleted);
+      if (live.length) {
+        rows.push(<ThreadActivityRow key={`thread-activity-${live[0].clientKey || live[0].id}`} replies={live} />);
+      }
+      previous = null;
+      continue;
+    }
     // A failed or unsent row is its own line: it carries a status of its own.
     const grouped = !!previous && !previous.failed && !message.failed
       && groupsWithPrevious(
@@ -1614,6 +1664,34 @@ function ConversationThread() {
       <div className="messages-typing" aria-live="polite">{typing.length === 1 ? `${typing[0]} is typing…` : typing.length > 1 ? `${typing.slice(0, 2).join(', ')} are typing…` : ''}</div>
       <MessageComposer />
     </section>
+  );
+}
+
+/**
+ * A run of one thread's replies in the main transcript (#2387 follow-up):
+ * the shared card, told who replied and what, and to open that thread.
+ */
+function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
+  const first = replies[0];
+  const last = replies[replies.length - 1];
+  const rootId = first.threadRootId as number;
+  const root = first.threadRoot;
+  const start = timeOfDay(first.createdAt);
+  const end = timeOfDay(last.createdAt);
+  return (
+    <ThreadActivityCard
+      rootText={root?.content || ''}
+      rootDeleted={!!root?.deleted}
+      time={start === end ? start : `${start} – ${end}`}
+      timeTitle={fullTime(last.createdAt)}
+      replies={replies.map((reply) => ({
+        key: reply.clientKey || reply.id,
+        face: <span className="msgx-thread-face"><UserAvatar user={reply.sender} size="sm" shape="square" /></span>,
+        name: reply.sender.username,
+        text: reply.content,
+      }))}
+      onOpen={() => openThread(rootId)}
+    />
   );
 }
 
@@ -1802,10 +1880,13 @@ export function MessagesScreen() {
     // discussion kept the previous thread's name.
     [snap.active?.title, snap.route.open, snap.route.conversationId,
       snap.route.appSlug, snap.route.agent, snap.discussionContext?.name, snap.route.threadRootId]);
-  // #2387: single-panel mode applies to an open chat — a conversation or an
-  // app channel. With nothing open, or an agent thread, the list is there.
+  // #2387: full width applies to any open discussion — a conversation, an
+  // app channel, or an agent thread (every one carries the toggle). With
+  // nothing open the list is there: it is the only thing to show. Reply
+  // threads hang off conversations and channels alone.
   const chatOpen = !!(snap.route.conversationId || snap.route.appSlug);
-  const layout = `messages-layout dc-lift dc-lift-strip${snap.listCollapsed && chatOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
+  const discussionOpen = chatOpen || !!snap.route.agent;
+  const layout = `messages-layout dc-lift dc-lift-strip${snap.listCollapsed && discussionOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.

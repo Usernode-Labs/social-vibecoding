@@ -594,7 +594,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 
 - **Nothing is created until the first message.** New change (every entry point) opens an unsent conversation at `#messages/agent/new`, which is `#agent/new` on a phone and `agent/new` in the side panel. The store holds it as a `draft`: the hint, and the model picked meanwhile. `GET /api/agent-sessions/draft` resolves what the hint names (the app, with the same view rule `POST` applies) and writes nothing, so the bar can say "started from Notes". The first send creates the session with `POST /api/agent-sessions {hint, agent}`, swaps the address for the session's own with `replaceState` (the router's same-id checks keep the store as it is), then posts the message. Opening New change and leaving writes no row, so no empty conversation appears in Messages. In the side panel, the hint travels as `PanelHint.agentHint`, on the frame's boot or on its `go`, and the panel's own document creates the session. The panel's route updates in place, so Expand reaches the session and not a fresh draft. A reload of `#agent/new` opens an empty draft: the hint is not in the address.
 - **One model choice per conversation, changeable at any time.** The composer has a picker in the dev chat's style. It offers Claude Code on an Anthropic model, or Codex on an OpenRouter model, with a reasoning-effort control when that model offers one. The options are the platform's recommended OpenRouter models, the Anthropic models, the saved default and starred favourites. The full catalog stays in the dev chat. The choice is stored on `agent_sessions` (`agent_backend`, `agent_model`, and the new `agent_reasoning_effort`) through `PATCH /api/agent-sessions/:id/agent`. It is validated as the dev chat validates a pick: an allowed Anthropic model, or `resolveExplicitAgentPreference` for OpenRouter. It is also remembered as the user's default, as a dev chat pick is (#1348). A conversation with no choice follows that default.
-  - The **Mayor** reads the choice when each turn starts, so a pick made mid-turn applies from the next message. The composer says so while a turn runs.
+  - The **Mayor** reads the choice when each turn starts, so a pick made mid-turn applies from the next message. (The composer said so while a turn ran; that line was later removed.)
   - A **change the conversation starts** (`start_change`) is created on the conversation's choice, with a browser pick's exact-or-refuse rule.
   - The **active change** takes the choice at its next build. A different backend, OpenRouter model or effort switches the change first, through the dev chat's own reset (`switchSessionAgent`, extracted from `POST /api/sessions/:id/reset-agent-context`). The change keeps its branch and conversation, starts a fresh agent context, and its transcript says so. A Claude model is chosen per run instead, as the dev chat chooses it per turn, so it needs no reset. A build already running finishes on the model it started with. A switch refused because the change is busy is logged, and the build runs on what the change has.
   - `mayor_model` stays unused: one choice drives both the Mayor and the coding agent, as in a classic session. That settles the open question under *Cost and models* for now.
@@ -620,9 +620,64 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - The Mayor's prompt and the MCP tools say "idle" or "keeps its progress" instead.
   - The one refusal left is "Your other sessions are all busy finishing turns".
 - **A conversation stands for the changes it started.** Messages already listed the conversation rather than its changes. The bell's session rows and the Continue rows now open the conversation too.
-- **Continue under the platform mark.** Up to three of your in-progress items on the menu's app sit directly under Go to workshop, conversations first, then "See all your work", which opens Messages filtered to Agents. Go to workshop still opens the list, as #2761 decided and a declared check pins. The rows are drawn after mount only, so the prerender and the hydrating render match. A conversation nothing was said in yet (no title, since the first message titles it, and no change) is not work in progress and is left out.
+- **Continue under the platform mark.** Up to three of your in-progress items on the menu's app sit directly under Go to workshop, conversations first, then "See all your work", which opens Messages filtered to Agents. Go to workshop still opens the list, as #2761 decided and a declared check pins. (Since reordered: see *what each conversation is doing* below.) The rows are drawn after mount only, so the prerender and the hydrating render match. A conversation nothing was said in yet (no title, since the first message titles it, and no change) is not work in progress and is left out.
 - **The bell.** A scout or build that finishes while nobody is watching creates the dev chat's own `session_done` notification on the change: one unread per change. Watching means the turn's stream is still open, or the conversation screen follows its events (`session-bus.subscriberCount`). The notification carries `agentSessionId`, so it opens the conversation and reads "The coding agent finished". Reading the conversation (`GET /api/agent-sessions/:id`) marks its changes' rows read, however the user got there, as opening a dev session does for its own.
 - **Recents** lists open agent sessions by their last activity, next to your conversations. Like Messages, Recents and Continue read them for any signed-in viewer, whether or not agent sessions are turned on: the flag gates starting one, and turning it off never hides a conversation that already exists. Empty ones are left out of both.
+
+*Follow-up: the spec beside the chat, in two tabs.* The spec viewer covered the whole conversation, even on a desktop, and showed a spec as one document. Both now follow the dev chat's own viewer (`agent-session/spec-layout.ts`).
+
+- **Beside the chat from 1024px up.** The spec is a right-hand pane next to the conversation, with a divider between them.
+  - The divider drags, and moves with the arrow keys.
+  - The width is the dev chat viewer's remembered one: the same `localStorage` key, a 480px default and a 280px floor. The chat always keeps at least 320px, and CSS holds the same bounds when the window narrows.
+  - The width is read after mount, and the layout is decided after mount, so the first render matches the prerender.
+- **Messages makes the room.** While a spec is open beside an agent session, the conversation list steps aside. At 1280px the thread pane alone is about 680px, too narrow for two readable columns. Closing the spec brings the list back.
+- **Narrower windows keep the sheet.** Below 1024px the spec is still a sheet over the conversation. That includes the side panel beside a running app, which is a document of its own at the panel's width.
+- **Two tabs when the spec has two halves.** A spec under "## User-facing changes" and "## Technical implementation" (the scout's required structure) shows as the dev chat viewer's User-facing and Technical tabs, with the same classes.
+  - The title and summary sit above the tabs.
+  - The plain-language half shows first.
+  - The tab is kept across a version switch and reset for another change.
+  - The split is the page's own `splitSpecSections`, so a spec without both headings shows whole, as before.
+- **Staging** writes the seeded conversation's spec in the two halves, so the tabs can be seen there. A preview seeded before this picks up the new text.
+
+*Follow-up: what each conversation is doing, in every list, and the mark's menu reordered.*
+
+- **One mark, three lists.** Beside an agent session in Recents, the platform mark's Continue rows and Messages (where a conversation's unread count goes):
+  - a spinner while it is working, meaning its turn lease is held, which covers a scout or build the turn dispatched;
+  - a green dot (the live-app dot's `green-500`) once it has finished something you have not read yet;
+  - nothing otherwise.
+
+  `agent-session/activity.ts` decides it from the session's `busy` and `doneUnseen`, and `activity-mark.tsx` draws it.
+- **Finished, and seen.** Two columns on `agent_sessions` hold it.
+  - `last_done_at` is stamped when a turn that ran releases its lease (`releaseTurnLease(..., { finished: true })`). A lease handed back before its turn started (no Mayor, no payer) stamps nothing.
+  - `seen_at` is stamped by `GET /api/agent-sessions/:id` before it reads, so the answer already carries no dot.
+  - `doneUnseen` means not working, and finished after it was last seen.
+  - Reading the conversation clears the dot. The store keeps the list's entry equal to the conversation on screen, so the lists follow at once.
+- **Live.** The owner gets `agent_session_changed` over the per-user socket (`pushToUser`, which reaches every pod) when a turn starts, when it ends (after the lease is back), and when a read clears a dot in another tab. `app.js` hands it to the store, which reads the list once per burst.
+- **The mark's menu.** Go to workshop, the app's (or platform's) discussion and About are the app's own section. Continue sits below them and lists agent sessions only: classic changes are the Workshop's, one row up. Its last row reads "See all sessions".
+- **The composer's pickers say what they are.** Closed, they read "Model: Opus 5.5" and "Thinking Level: High". Open, the list marks the default "(default)": the model a conversation with no choice of its own runs on, and the deployment's default effort.
+  - A native select shows the chosen option's own text when closed, so the shown line is drawn beside a transparent select, which keeps the focus, the keyboard and the platform's own list (`LabeledSelect`).
+  - The default effort is the follow-the-default option itself (`''`), not a second "Default (High)" entry beside "High". A conversation that names the default effort shows as following it (`effortValue`).
+  - The "applies from your next message" line beside them is gone: the next message simply runs on the new pick.
+
+*Follow-up: staging builds as cards, with the preview beside the chat.* A build used to say "Staging deployed!" with a link that opened a new tab.
+
+- **Every build is a card** (`PreviewCard`, from `transcript.ts`'s `PreviewItem`):
+  - **Deployed:** Open preview, View change (the change's card, `#app/<slug>/dev/proposals/<id>`), and Propose to group while it is active or paused. Once proposed it reads "In vote", with View proposal.
+  - **Failed** (the `stagingFailed` row the build writes, previously folded into the run's steps): the error, Retry, and Propose to group. Proposing rebuilds the preview itself, as in the dev chat.
+  - **Checks:** the card says where the change's checks stand ("Checks running", "Checks passing", "2 checks failing"), because they gate merge. The failing count comes from the change's `test_results`.
+  - **Superseded:** only a change's newest card is live. Older ones read "Superseded by a newer preview" and offer nothing.
+- **The preview in the side pane.** On a wide screen Open preview shows the preview beside the chat. With a spec open too, the pane has Spec and Preview tabs.
+  - It is the platform's own preview (`AppView.ensureStaging`), docked over the pane's slot the way it docks beside the dev chat, so sign-in, Full screen and the dev console are the same.
+  - `app-view.js` gained a dock host (`setStagingDockHost`): the slot, whether the host is still on screen, and what Full screen, re-docking and closing do. The dev chat's is the default, and it takes the dock back when it opens its own.
+  - It also gained an explicit app (`opts.app`), so the preview signs in to the change's app rather than whatever app is on screen, and `opts.readOnly`.
+  - The slot stays mounted, hidden, while the Spec tab shows, so the preview keeps its state.
+  - While a preview is open the divider's floor is the staging panel's 320px. The preview's iframe ignores the pointer during a drag.
+  - A narrow screen opens the preview in a new tab, as before.
+- **Propose and Retry.**
+  - Propose confirms ("Put this up for the group's vote?", naming the change and its PR), then calls the owner's `POST /api/sessions/:id/promote`.
+  - Retry calls the owner's `POST /api/sessions/:id/ensure-staging`. The build's `staging_ready` or `staging_failed` reaches the conversation, writes the next card, and ends "Retrying…". A build whose answer never lands (a restart, a lost event) gives up after the dev chat preview's three minutes, and says the result will still appear.
+  - A preview waiting on a rebuild hears the same events (`AppView.onStagingRebuildResult`), which this conversation may not otherwise receive: the app-room socket only reaches people on that app's screen.
+- **Staging** gives the seeded conversation's change two build rows, written as a real build writes them: a failed build, then a deployed one at a fixture address (`.invalid`). So the conversation shows a superseded card and a live one. A declared check pins them. Open preview there reports honestly that the fixture's preview is not running.
 
 **Process.** Each proposal:
 

@@ -108,7 +108,7 @@ test('the router opens agent threads in the pane on a desktop and swaps them on 
 });
 
 test('the global chat is one panel on two surfaces, told which one is drawing it', () => {
-  assert.match(CHAT_SCREEN, /export function GlobalChatPanel\(\{ embedded = false \}/);
+  assert.match(CHAT_SCREEN, /export function GlobalChatPanel\(\{ embedded = false, headerAction = null \}/);
   assert.match(CHAT_SCREEN, /\{snapshot\.host === 'messages' \? null : <GlobalChatPanel \/>\}/);
   assert.match(CHAT_SCREEN, /<Composer id=\{globalChatComposerId\(embedded \? 'messages' : 'screen'\)\} \/>/);
   // The prerendered screen is exactly what it was: the store starts on it.
@@ -122,7 +122,7 @@ test('the global chat is one panel on two surfaces, told which one is drawing it
   assert.match(SCREEN, /openGlobalChat\(\{ threadId: id, host: 'messages' \}\)/);
   // Leaving the pane only undoes the pane's own open.
   assert.match(SCREEN, /if \(current\.open && current\.host === 'messages'\) deactivateGlobalChat\(\);/);
-  assert.match(SCREEN, /<GlobalChatPanel embedded \/>/);
+  assert.match(SCREEN, /<GlobalChatPanel embedded headerAction=\{<FullWidthToggle \/>\} \/>/);
 });
 
 test('the dev session is mounted into a host, like a discussion', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
@@ -7,6 +7,8 @@ import type { MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
+import { wantsKeyboardFocus } from '../message-actions/focus';
+import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShortcodeToken } from '../message-actions/emoji-shortcodes';
 
 const MAX_ATTACHMENTS = 4;
 
@@ -64,6 +66,13 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   useEffect(() => {
     setValue(draftFor(scope)); setAttachments([]); setObject(null); setError('');
   }, [scope]);
+
+  // Reply puts the caret here where there is a hardware keyboard, so the
+  // next keystroke is the reply (message-actions/focus.ts).
+  const replyId = reply?.id ?? null;
+  useEffect(() => {
+    if (replyId && wantsKeyboardFocus()) inputRef.current?.focus({ preventScroll: true });
+  }, [replyId]);
 
   useEffect(() => {
     if (inThread) return undefined;
@@ -172,6 +181,81 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       return true;
     }
     return false;
+  }
+
+  // `:th` offers emoji by shortcode, Discord's way, and a complete `:tada:`
+  // becomes 🎉 as its closing colon is typed. The token rules and the ranking
+  // are features/message-actions/emoji-shortcodes.ts, which the app chat's
+  // composer shares. ↑/↓ move the highlight, Enter or Tab inserts it, Escape
+  // closes the menu until the token changes.
+  const [emojiPick, setEmojiPick] = useState({ key: '', index: 0 });
+  const [emojiDismissed, setEmojiDismissed] = useState('');
+  const emojiListRef = useRef<HTMLDivElement>(null);
+  // Where the caret goes once a swap has rendered. A layout effect, not a
+  // frame later: a key typed inside that frame would land before the caret
+  // moved and end up on the wrong side of the emoji.
+  const emojiCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const at = emojiCaret.current;
+    if (at === null) return;
+    emojiCaret.current = null;
+    inputRef.current?.setSelectionRange(at, at);
+  }, [value]);
+  const emoji = useMemo(() => {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? value.length;
+    const token = findShortcodeToken(value, cursor, input?.selectionEnd ?? cursor);
+    const items = token ? matchShortcodes(token.query, 8) : [];
+    return token && items.length ? { ...token, key: `${token.start}:${token.query}`, items } : null;
+  }, [value]);
+  const emojiOpen = !!emoji && emoji.key !== emojiDismissed && !mention?.length && !channelMatches?.length;
+  const emojiActive = emoji && emojiPick.key === emoji.key ? emojiPick.index : 0;
+  useEffect(() => {
+    emojiListRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [emojiOpen, emojiActive]);
+
+  function insertEmoji(glyph: string) {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? value.length;
+    const token = findShortcodeToken(value, cursor, input?.selectionEnd ?? cursor);
+    if (!token) return;
+    const next = replaceShortcodeToken(value, token.start, cursor, glyph);
+    emojiCaret.current = next.caret;
+    input?.focus();
+    updateValue(next.value);
+  }
+
+  /** The menu's keys, ahead of Enter-to-send. True when the key was the menu's. */
+  function onEmojiKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
+    if (!emojiOpen || !emoji || event.nativeEvent.isComposing) return false;
+    // The caret can have moved off the token since the last keystroke (the
+    // menu follows the text, not the caret); then the key is not the menu's.
+    const input = event.currentTarget;
+    const live = findShortcodeToken(input.value, input.selectionStart, input.selectionEnd);
+    if (!live || `${live.start}:${live.query}` !== emoji.key) return false;
+    const count = emoji.items.length;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      setEmojiPick({ key: emoji.key, index: (emojiActive + step + count) % count });
+    } else if (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey)) {
+      insertEmoji(emoji.items[emojiActive].emoji);
+    } else if (event.key === 'Escape') {
+      setEmojiDismissed(emoji.key);
+    } else {
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
+  function onComposerChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    const input = event.target;
+    const done = (event.nativeEvent as InputEvent).data === ':' ? completedShortcodeAt(input.value, input.selectionStart) : null;
+    if (!done) { updateValue(input.value); return; }
+    const next = replaceShortcodeToken(input.value, done.start, done.end, done.emoji, '');
+    emojiCaret.current = next.caret;
+    updateValue(next.value);
   }
 
   function insertChannel(handle: string) {
@@ -295,6 +379,19 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
       {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="Channels">{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
       {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="People">{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
+      {emojiOpen && emoji ? (
+        <div className="messages-mention-menu messages-emoji-menu">
+          <div className="messages-emoji-menu-heading">Emoji matching <span className="messages-emoji-menu-query">:{emoji.query}</span></div>
+          <div ref={emojiListRef} className="messages-emoji-menu-list" role="listbox" aria-label="Emoji">
+            {emoji.items.map((item, i) => (
+              <button key={item.emoji} type="button" role="option" aria-selected={i === emojiActive} data-emoji-option={item.shortcode} onMouseDown={(event) => event.preventDefault()} onClick={() => insertEmoji(item.emoji)}>
+                <span className="messages-emoji-option-glyph" aria-hidden="true">{item.emoji}</span>
+                <span className="messages-emoji-option-code">:{item.shortcode}:</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
         <div className="messages-composer-add" ref={addRef}>
@@ -317,11 +414,13 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
-      <div className="mt-1 px-1 flex justify-end"><span className={`text-[10px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
+      {/* The count's line is always laid out, empty or not: it appearing
+          with the first keystroke pushed the whole composer up by a line. */}
+      <div className="mt-1 px-1 flex justify-end h-[15px]" aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
       {dragging ? <div className="messages-drop-overlay">Drop files to attach</div> : null}
     </div>

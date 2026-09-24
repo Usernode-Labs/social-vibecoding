@@ -62,7 +62,7 @@ async function connect(t, { beforeMigration = null } = {}) {
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
       status VARCHAR(32) NOT NULL DEFAULT 'active', source TEXT,
       pr_number INTEGER, pr_title VARCHAR(256), session_title TEXT,
-      staging_url TEXT, check_state VARCHAR(32));
+      staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]');
     CREATE TABLE chat_session_messages (
       id SERIAL PRIMARY KEY,
       session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -422,6 +422,43 @@ test('one Mayor turn at a time, and a dead turn\'s lease is taken over', async (
 
     await agentSessions.archiveAgentSession(client, { userId: 7, id: session.id });
     assert.equal(await acquire('turn-e'), false, 'an archived conversation takes no turns');
+  } finally {
+    await done(client);
+  }
+});
+
+test('the lists\' marks: working while a turn runs, finished until the owner reads it', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const listed = async () => (await agentSessions.listAgentSessions(client, { userId: 7 })).sessions.find((s) => s.id === session.id);
+    const read = () => agentSessions.markSeen(client, { userId: 7, id: session.id });
+
+    assert.deepEqual([(await listed()).busy, (await listed()).doneUnseen], [false, false], 'a new conversation has no mark');
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'turn-a' }), true);
+    assert.deepEqual([(await listed()).busy, (await listed()).doneUnseen], [true, false], 'working');
+    await agentSessions.releaseTurnLease(client, { agentSessionId: session.id, turnId: 'turn-a', finished: true });
+    assert.deepEqual([(await listed()).busy, (await listed()).doneUnseen], [false, true], 'finished, and not read since');
+
+    assert.equal(await agentSessions.markSeen(client, { userId: 8, id: session.id }), false, 'another user reads nothing of it');
+    assert.equal((await listed()).doneUnseen, true);
+    assert.equal(await read(), true, 'reading it clears the dot, and says so');
+    assert.equal((await listed()).doneUnseen, false);
+    assert.equal(await read(), false, 'a second read clears nothing');
+
+    // A lease handed back before its turn ran (no Mayor, no payer) finished nothing.
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'turn-b' }), true);
+    await agentSessions.releaseTurnLease(client, { agentSessionId: session.id, turnId: 'turn-b' });
+    assert.equal((await listed()).doneUnseen, false, 'a refused turn leaves no dot');
+
+    // Read mid-turn, finished after: the dot is the turn's.
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'turn-c' }), true);
+    await read();
+    await client.query("UPDATE agent_sessions SET seen_at = NOW() - interval '1 second' WHERE id = $1", [session.id]);
+    await agentSessions.releaseTurnLease(client, { agentSessionId: session.id, turnId: 'turn-c', finished: true });
+    const got = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    assert.deepEqual([got.busy, got.doneUnseen], [false, true], 'the detail read says the same as the list');
   } finally {
     await done(client);
   }

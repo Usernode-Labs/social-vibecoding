@@ -342,6 +342,20 @@ export async function loadConversations(force = false): Promise<void> {
  */
 let focusLoaded: number | null = null;
 
+/**
+ * The newest message of the conversation itself on screen — the read cursor's
+ * position. Since the #2387 follow-up the main stream also carries its
+ * threads' replies as lines, and a reply is no position in it: the server
+ * reads a thread when handed one, and leaves the cursor where it was.
+ */
+function newestMainId(messages: ConversationMessage[]): number | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const item = messages[i];
+    if (item.id > 0 && !item.threadRootId) return item.id;
+  }
+  return null;
+}
+
 /** Server rows by id; local rows (negative ids) after them, in the order sent. */
 function transcriptOrder(a: ConversationMessage, b: ConversationMessage): number {
   return a.id < 0 || b.id < 0 ? Number(a.id < 0) - Number(b.id < 0) : a.id - b.id;
@@ -409,12 +423,12 @@ export async function loadThread(conversationId: number, force = false): Promise
       publish({ route: { ...state.route, threadRootId: page.threadRootId } });
     }
     if (state.route.threadRootId) void loadReplyThread(conversationId, state.route.threadRootId);
-    const last = messages.at(-1);
+    const last = newestMainId(messages);
     // Read up to the newest message DRAWN — and only once the transcript
     // reaches the present, or a message link would mark everything after it
     // read. Never straight after "Mark unread" (#2387): the reader asked for
     // this conversation to stay unread, and it is still open.
-    if (last && member && !page.nextAfter && unreadHold !== conversationId) void markRead(last.id);
+    if (last && member && !page.nextAfter && unreadHold !== conversationId) void markRead(last);
   } catch (error) {
     if (request !== threadRequest) return;
     publish({
@@ -480,8 +494,8 @@ export async function loadNewer(): Promise<void> {
     const newer = page.messages.filter((message) => !known.has(message.id));
     const messages = [...state.messages, ...newer].sort(transcriptOrder);
     publish({ messages, nextAfter: page.nextAfter, loadingOlder: false });
-    const last = messages.at(-1);
-    if (!page.nextAfter && last && unreadHold !== conversationId) void markRead(last.id);
+    const last = newestMainId(messages);
+    if (!page.nextAfter && last && unreadHold !== conversationId) void markRead(last);
   } catch (error) {
     publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load newer messages.') });
   }

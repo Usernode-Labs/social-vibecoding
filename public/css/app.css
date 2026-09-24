@@ -1575,6 +1575,17 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    keyboard's choice still reads when the pointer is resting on another row. */
 .messages-mention-menu button[aria-selected="true"] { background: var(--accent-tint); box-shadow: inset 3px 0 0 var(--accent); }
 .messages-mention-menu .messages-channel-option-name { color: var(--text-muted); font-size: 13px; }
+/* `:th` — the emoji shortcode menu (features/messages/composer.tsx). The
+   mention menu's box; the heading stays put while the rows scroll, a row is
+   the glyph beside its `:code:`, and the keyboard's row wears the hover. */
+.messages-emoji-menu { max-height: none; overflow: visible; }
+.messages-emoji-menu-heading { padding: 4px 12px 6px; color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.messages-emoji-menu-query { color: var(--text-primary); }
+.messages-emoji-menu-list { max-height: min(288px, 38vh); overflow-y: auto; overscroll-behavior: contain; }
+.messages-emoji-menu .messages-emoji-menu-list button { display: flex; align-items: center; gap: 10px; padding: 6px 12px; }
+.messages-emoji-menu .messages-emoji-menu-list button[aria-selected="true"] { background: var(--messages-surface-2); }
+.messages-emoji-option-glyph { flex: none; width: 24px; font-size: 20px; line-height: 24px; text-align: center; }
+.messages-emoji-option-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay {
   position: absolute;
@@ -1611,16 +1622,17 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   .messages-thread-pane.messages-no-selection { margin: 0; }
 }
 
-/* ── Single-panel mode (#2387) ──────────────────────────────────────────
-   The list folds away on a desktop so the open chat — and a thread beside
-   it — has the whole strip. The toggle leads the chat's title row, and is
-   not drawn below 768px, where one pane is shown at a time anyway. */
+/* ── Full width (#2387) ─────────────────────────────────────────────────
+   The list folds away on a desktop so the open discussion — and a thread
+   beside it — has the whole strip. The toggle ends every discussion pane's
+   header, just before ⋯ where there is one, and is not drawn below 768px,
+   where one pane is shown at a time anyway. Its glyph says the state (arrows
+   out, arrows in), so it keeps the disc's ink rather than turning accent. */
 .messages-list-toggle { display: none; }
 @media (min-width: 768px) {
   .messages-list-toggle { display: inline-flex; }
   .messages-layout.messages-list-collapsed > .messages-list-pane { display: none; }
   .messages-layout.messages-list-collapsed > .messages-thread-pane { margin-left: 12px; }
-  .messages-list-toggle[aria-pressed="true"] { color: var(--accent); }
 }
 
 /* ── A reply thread beside its chat (#2387) ─────────────────────────────
@@ -1691,6 +1703,71 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .msgx-thread-chevron { flex: 0 0 auto; width: 14px; height: 14px; opacity: 0; transition: opacity 120ms; }
 .msgx-thread-chip:hover .msgx-thread-chevron,
 .msgx-thread-chip:focus-visible .msgx-thread-chevron { opacity: 1; }
+
+/* The thread card (#2387 follow-up, Discord's layout): "3 replies ›" over
+   the newest reply, in a white box under the message. `.msgx-thread-chip`
+   stays on it for the selectors that find a thread by it; this block
+   restyles it as the card. */
+.msgx-thread-chip.msgx-thread-card,
+.msgx-thread-activity-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  max-width: 460px;
+  min-width: 0;
+  box-sizing: border-box;
+  margin-top: 8px;
+  padding: 9px 12px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  background: var(--dc-sheet-raise);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.msgx-thread-chip.msgx-thread-card:hover,
+.msgx-thread-chip.msgx-thread-card:focus-visible,
+.msgx-thread-activity-card:hover,
+.msgx-thread-activity-card:focus-visible {
+  border-color: var(--accent-wash);
+  background: var(--dc-sheet-raise);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  outline: none;
+}
+.msgx-thread-activity-card:focus-visible,
+.msgx-thread-chip.msgx-thread-card:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.msgx-thread-chip.msgx-thread-card.msgx-thread-chip-active { border-color: var(--accent); }
+.msgx-thread-card-head { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.msgx-thread-card-glyph { flex: 0 0 auto; width: 16px; height: 16px; color: var(--accent); }
+.msgx-thread-card-chevron { flex: 0 0 auto; width: 14px; height: 14px; color: var(--text-muted); }
+.msgx-thread-line { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; }
+.msgx-thread-line > :first-child { flex: 0 0 auto; }
+.msgx-thread-line-name { flex: 0 0 auto; font-weight: 700; }
+.msgx-thread-line-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.msgx-thread-line-time { flex: 0 0 auto; color: var(--text-muted); font-size: 13px; }
+
+/* A thread's replies where they landed in the main transcript (#2387
+   follow-up): the thread glyph in the column the faces use, then the card. */
+.msgx-thread-activity { display: flex; align-items: flex-start; gap: 12px; padding: 2px 16px 6px; }
+.msgx-thread-activity-glyph { flex: 0 0 36px; display: inline-flex; justify-content: center; padding-top: 18px; color: var(--text-muted); }
+.msgx-thread-activity-glyph svg { width: 18px; height: 18px; }
+.msgx-thread-activity-card { margin-top: 0; max-width: 520px; }
+/* The app chat's faces are 44px wide: the glyph takes the same column, so
+   the card lines up with the messages' text. */
+#gc-messages .msgx-thread-activity-glyph { flex-basis: 44px; }
+.msgx-thread-activity-head { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.msgx-thread-activity-what { flex: 0 0 auto; }
+.msgx-thread-activity-root { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--accent); font-weight: 600; }
+.msgx-thread-activity-root-deleted { color: var(--text-muted); font-style: italic; font-weight: 400; }
+.msgx-thread-activity-time { flex: 0 0 auto; }
+.msgx-thread-activity-head .msgx-thread-card-chevron { margin-left: auto; }
+/* A reply line's face, whichever surface drew it, at the card's 22px. */
+.msgx-thread-face { display: inline-flex; flex: 0 0 auto; }
+.msgx-thread-face > * { width: 22px !important; height: 22px !important; border-radius: 6px !important; font-size: 10px !important; }
 
 /* A deleted message keeps its place and says so (#2387). */
 .messages-deleted { color: var(--text-muted); font-size: 15px; font-style: italic; }
@@ -1798,16 +1875,24 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    pane's sheet, so the panel adds no plane of its own. A dev session is
    DevChat's whole session view in a host, which draws its own sheet — the
    same arrangement as a discussion above, so the host only has to fill the
-   pane. The bar above it carries the one link the pane adds: the session's
-   own full-window address, for the spec and preview at full width. */
+   pane. The bar above it carries what the pane adds: the session's own
+   full-window address, for the spec and preview at full width, and the
+   full-width toggle every discussion pane ends its header with. */
 .messages-thread-agent { overflow: hidden; }
 .global-chat-embedded { flex: 1 1 auto; }
+/* In the pane the toolbar spans the sheet, as every discussion's header
+   does, and only the transcript and composer keep their reading column —
+   so the full-width toggle at its end stays under the pointer when the
+   pane widens, rather than moving in with a centred column. */
+.global-chat-embedded > .global-chat-toolbar { width: 100%; }
 .messages-session-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-session-host > * { flex: 1 1 auto; min-height: 0; }
 .messages-session-host[hidden] { display: none; }
 .messages-session-bar {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 12px;
   flex: 0 0 auto;
   padding: 0 4px 6px;
 }
@@ -8993,6 +9078,31 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* `:th` — the emoji shortcode menu (#gc-emoji-menu). Same box and rows as
+   the mention menu; a heading repeats the query, and each row is the glyph
+   beside its `:code:`. Tall enough for its eight rows without scrolling. */
+.gc-mention-menu.gc-emoji-menu { max-height: min(320px, 50vh); }
+.gc-emoji-menu-heading {
+  padding: 4px 10px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.gc-emoji-menu-query { color: var(--text-primary, inherit); }
+.gc-emoji-option { gap: 10px; padding: 5px 10px; }
+.gc-emoji-option-glyph {
+  flex: none;
+  width: 24px;
+  font-size: 20px;
+  line-height: 24px;
+  text-align: center;
+}
+.gc-emoji-option-code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Streaming spinner (bouncing dots) ─────────────────── */

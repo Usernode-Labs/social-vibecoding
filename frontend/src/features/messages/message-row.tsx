@@ -238,6 +238,11 @@ export function MessageRow({
           lastReplyAt={message.thread.lastReplyAt}
           active={threadOpen}
           avatars={message.thread.participants.map((person) => <UserAvatar key={person.id} user={person} size="sm" shape="square" />)}
+          lastReply={message.thread.lastReply ? {
+            face: <span className="msgx-thread-face"><UserAvatar user={message.thread.lastReply.sender} size="sm" shape="square" /></span>,
+            name: message.thread.lastReply.sender.username,
+            text: message.thread.lastReply.content,
+          } : null}
           onOpen={() => openThread(message.id)}
         />
       ) : null}

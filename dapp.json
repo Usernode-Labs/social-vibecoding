@@ -5109,6 +5109,12 @@
       ]
     },
     {
+      "name": "#2779: an agent session's staging builds are cards: an older build is superseded, the newest offers Open preview and View change",
+      "path": "/#messages/agent/990801",
+      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"] [data-agent-session-preview-open] + [data-agent-session-preview-change]",
+      "expectText": "Superseded by a newer preview"
+    },
+    {
       "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, \u22ef), and a threaded one its reply count",
       "path": "/?demo=1#messages/910004",
       "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100404:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more[aria-haspopup=\"menu\"]",
@@ -5121,10 +5127,20 @@
       "expectText": "Threads keep the room readable"
     },
     {
-      "name": "#2387: a deleted message leaves a placeholder, a message link lands on it, and the list beside it can be hidden",
+      "name": "#2387: a deleted message leaves a placeholder, a message link lands on it, and Full width, just before ⋯ in the header, can hide the list beside it",
       "path": "/?demo=1#messages/910002/m/9100202",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout:has(.messages-list-toggle[aria-pressed=\"false\"]) #messages-message-9100202 .messages-deleted",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout:has(.messages-thread-header > .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"] + .relative) #messages-message-9100202 .messages-deleted",
       "expectText": "Message deleted"
+    },
+    {
+      "name": "#2387 follow-up: an app's channel ends its header with the same Full width control",
+      "path": "/?demo=1#messages/app/staging-demo-app",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-discussion[data-discussion-app=\"staging-demo-app\"] > .messages-thread-header > .messages-list-toggle:last-child[aria-label=\"Full width\"][aria-pressed=\"false\"]"
+    },
+    {
+      "name": "#2387 follow-up: a dev session's pane carries Full width too, after Open full view",
+      "path": "/?demo=1#messages/session/usernode-2d5619/990002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-session .messages-session-bar > a.messages-session-full + .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"]"
     },
     {
       "name": "#2387: an app channel's messages carry the same hover bar, a threaded one its reply count, a deleted one its placeholder",
@@ -5137,6 +5153,18 @@
       "path": "/?demo=1#messages/app/staging-demo-app/m/9902022",
       "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane-app[data-reply-thread=\"9902003\"] .messages-reply-host",
       "expectText": "Replies stay in here"
+    },
+    {
+      "name": "#2387 follow-up: a thread's replies show in #general where they landed, one card for the run, and the card under the first message shows the newest reply",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": ".messages-thread-channel:has(#messages-message-9100404 .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card .msgx-thread-line",
+      "expectText": "3 replies in thread"
+    },
+    {
+      "name": "#2387 follow-up: an app channel draws its reply thread's replies where they landed, and the thread card shows the newest reply",
+      "path": "/?demo=1#messages/app/staging-demo-app",
+      "expectSelector": "#gc-messages:has([data-msg-id=\"9902003\"] .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card",
+      "expectText": "3 replies in thread"
     },
     {
       "name": "#2967: the channels you are not in fold under \u201cShow N more\u201d",

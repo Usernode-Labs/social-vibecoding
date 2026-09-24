@@ -2546,6 +2546,12 @@ const App = {
           case 'user_blocks_changed':
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
             break;
+          case 'agent_session_changed':
+            // #2779: one of this user's agent sessions started or finished
+            // a turn, or was read in another tab. Recents, the mark's menu
+            // and Messages redraw its spinner or green dot from the list.
+            window.UsernodeReact?.agentSession?.listChanged?.(data);
+            break;
           case 'conversation_message_created':
           case 'conversation_message_updated':
           case 'conversation_reaction_updated':

@@ -114,6 +114,10 @@ function defaults(deps = {}) {
     // The dev chat's own "Session finished" (routes/sessions.js), read at
     // call time: that module requires this one at load.
     notifyDone: deps.notifyDone || ((pool, changeId) => require('../../routes/sessions').notifySessionDone(pool, changeId)),
+    // The owner's lists (Recents, the mark's menu, Messages) show a spinner
+    // while a turn runs and a dot once it has finished: tell every tab, on
+    // every pod, when either happens.
+    notifyUser: deps.notifyUser || ((userId, payload) => require('../ws').pushToUser(userId, payload)),
   };
 }
 
@@ -334,6 +338,10 @@ async function runAgentTurn({
   deps = {},
 }) {
   const d = defaults(deps);
+  const listChanged = (busy) => {
+    try { d.notifyUser(user.id, { type: 'agent_session_changed', agentSessionId, busy }); } catch { /* the lists catch up on their next read */ }
+  };
+  listChanged(true);
   const seqPrefix = String(turnId).slice(0, 8);
   let eventSeq = 0;
   const send = (type, data = {}) => {
@@ -798,9 +806,10 @@ async function runAgentTurn({
     clearInterval(leaseTimer);
     if (shim) await shim.close('turn_finished');
     if (stopRegistry.get(agentSessionId) === stop) stopRegistry.delete(agentSessionId);
-    await d.agentSessions.releaseTurnLease(pool, { agentSessionId, turnId }).catch((err) => {
+    await d.agentSessions.releaseTurnLease(pool, { agentSessionId, turnId, finished: true }).catch((err) => {
       log.warn('agent-mayor', 'Could not release the turn lease', { agentSessionId, err: err.message });
     });
+    listChanged(false);
     send('done', {});
     try { if (res) res.end(); } catch { /* already closed */ }
     setTimeout(() => d.sessionBus.clearSession(busKey(agentSessionId)), 30_000).unref?.();

@@ -9,6 +9,7 @@ import type {
   MessageThreadSummary,
   SharedObjectCard,
   SharedObjectReference,
+  ThreadRootRef,
   UserSearchResult,
 } from './types';
 
@@ -142,10 +143,35 @@ export function normalizeThreadSummary(input: unknown): MessageThreadSummary | n
   const row = record(input);
   const replyCount = Number(pick(row, 'replyCount', 'reply_count')) || 0;
   if (replyCount < 1) return null;
+  const last = pick(row, 'lastReply', 'last_reply');
+  const lastRow = last && typeof last === 'object' ? record(last) : null;
+  const lastId = lastRow ? strictId(pick(lastRow, 'id')) : null;
   return {
     replyCount,
     lastReplyAt: dateText(pick(row, 'lastReplyAt', 'last_reply_at')),
     participants: array(pick(row, 'participants')).map(normalizeUser).filter((user) => user.id).slice(0, 3),
+    lastReply: lastRow && lastId ? {
+      id: lastId,
+      sender: normalizeUser(pick(lastRow, 'sender') ?? {
+        id: pick(lastRow, 'userId', 'user_id'), username: pick(lastRow, 'username'),
+      }),
+      content: text(pick(lastRow, 'content')),
+      createdAt: dateText(pick(lastRow, 'createdAt', 'created_at')),
+    } : null,
+  };
+}
+
+/** A reply's thread root, as the main stream's line names it (#2387 follow-up). */
+export function normalizeThreadRoot(input: unknown): ThreadRootRef | null {
+  if (!input || typeof input !== 'object') return null;
+  const row = record(input);
+  const id = strictId(pick(row, 'id'));
+  if (!id) return null;
+  return {
+    id,
+    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || 'Deleted user',
+    content: text(pick(row, 'content')),
+    deleted: pick(row, 'deleted') === true,
   };
 }
 
@@ -174,6 +200,7 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
     } : null,
     deleted: pick(row, 'deleted') === true,
     threadRootId: strictId(pick(row, 'threadRootId', 'thread_root_id')),
+    threadRoot: normalizeThreadRoot(pick(row, 'threadRoot', 'thread_root')),
     thread: normalizeThreadSummary(pick(row, 'thread')),
     reactions: array(pick(row, 'reactions')).map(normalizeReaction).filter((reaction) => reaction.emoji),
     attachments: array(pick(row, 'attachments')).map((attachment) => normalizeAttachment(attachment, conversationId)),

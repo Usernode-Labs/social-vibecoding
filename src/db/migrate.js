@@ -2830,13 +2830,18 @@ async function seedStagingStartScreenSession(pool, config) {
 const STAGING_AGENT_SESSION_ID = 990801;
 const STAGING_AGENT_CHANGE_ID = 990802;
 const STAGING_AGENT_CARD_ID = '99080100-0000-4000-8000-000000000001';
+// In the two halves every scout spec is written in (routes/sessions.js), so
+// the viewer shows its User-facing and Technical tabs.
 const STAGING_AGENT_SPEC = [
   '# Dark mode for the dev board',
   '',
-  '## Goal',
   'A toggle in the dev board header switches the board between light and dark.',
   '',
-  '## Approach',
+  '## User-facing changes',
+  '- A sun and moon toggle sits beside the view switcher at the top of the dev board.',
+  '- Tapping it switches the board between light and dark, and the board remembers your choice.',
+  '',
+  '## Technical implementation',
   '- Add the toggle beside the view switcher.',
   '- Keep the choice per viewer.',
   '- Reuse the platform theme tokens; no new colours.',
@@ -2867,7 +2872,7 @@ async function seedStagingAgentRuns(pool) {
   await pool.query(
     `INSERT INTO chat_session_specs (session_id, version, content, built_at)
      VALUES ($1, 1, $2, NOW() - INTERVAL '4 minutes'), ($1, 2, $3, NOW() - INTERVAL '3 minutes')
-     ON CONFLICT (session_id, version) DO NOTHING`,
+     ON CONFLICT (session_id, version) DO UPDATE SET content = EXCLUDED.content`,
     [STAGING_AGENT_CHANGE_ID, '# Dark mode for the dev board\n\nFirst draft: a toggle in the header.', STAGING_AGENT_SPEC]
   );
   await pool.query('UPDATE chat_sessions SET spec_md = $2 WHERE id = $1', [STAGING_AGENT_CHANGE_ID, STAGING_AGENT_SPEC]);
@@ -2962,9 +2967,39 @@ async function seedStagingAgentSession(pool, config) {
       [STAGING_AGENT_SESSION_ID, JSON.stringify({ confirmations: [card] })]
     );
   }
+  await seedStagingAgentBuilds(pool);
   log.info('db', 'Staging agent-session fixture seeded', {
     owner: owner.username, agentSessionId: STAGING_AGENT_SESSION_ID, changeId: STAGING_AGENT_CHANGE_ID,
   });
+}
+
+// The change's staging builds, as cards (#2779 follow-up): one that failed,
+// then one that deployed, written as a real build writes them, so the
+// conversation shows a superseded card and a live one. The address is a
+// fixture's (.invalid never resolves): Open preview asks the platform for
+// this change's preview, which says it is not running. Added once, and to a
+// preview seeded before this.
+const STAGING_AGENT_PREVIEW_URL = 'https://staging-fixture-preview.invalid';
+
+async function seedStagingAgentBuilds(pool) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM chat_session_messages
+      WHERE session_id = $1 AND (metadata ? 'stagingUrl' OR metadata ? 'stagingFailed')
+      LIMIT 1`,
+    [STAGING_AGENT_CHANGE_ID]
+  );
+  if (rows.length) return;
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+     VALUES ($1, $2, 'system', 'Staging build failed', $3::jsonb, NOW() - INTERVAL '170 seconds'),
+            ($1, $2, 'system', 'Staging deployed!', $4::jsonb, NOW() - INTERVAL '165 seconds')`,
+    [
+      STAGING_AGENT_CHANGE_ID,
+      STAGING_AGENT_SESSION_ID,
+      JSON.stringify({ stagingFailed: true, changesReady: true, error: 'npm ci exited with code 1 (staging fixture)', prNumber: null }),
+      JSON.stringify({ stagingUrl: STAGING_AGENT_PREVIEW_URL, prNumber: null }),
+    ]
+  );
 }
 
 // #1350: a session with NO BRANCH at all.

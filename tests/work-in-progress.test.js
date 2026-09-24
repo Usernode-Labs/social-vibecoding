@@ -36,44 +36,41 @@ const conversation = (over = {}) => ({
   focusApp: { slug: 'notes' }, activeChange: { appSlug: 'notes', status: 'paused', title: 'Dark mode toggle' },
   ...over,
 });
-const change = (over = {}) => ({
-  key: 's41', kind: 'session', title: 'Export as PNG', href: '#app/notes/dev/proposals/41',
-  status: null, busy: false, sortAt: Date.parse('2026-09-24T09:00:00Z'), agentSessionId: null, ...over,
-});
-
-test('the mark\'s Continue rows: conversations first, the changes they started not repeated, paused like any other', () => {
+test('the mark\'s Continue rows: agent sessions only, newest first, paused like any other', () => {
   const rows = model.continueRows('notes', [
     conversation(),
-    conversation({ id: 8, title: null, lastActivityAt: '2026-09-24T11:00:00Z', activeChange: { appSlug: 'notes', status: 'active', title: null } }),
+    conversation({ id: 8, title: null, lastActivityAt: '2026-09-24T11:00:00Z', activeChange: { appSlug: 'notes', status: 'active', title: null }, busy: true }),
     conversation({ id: 11, title: null, lastActivityAt: '2026-09-24T12:00:00Z', activeChange: null }),
     conversation({ id: 9, activeChange: { appSlug: 'recipes', status: 'active', title: 'x' } }),
     conversation({ id: 10, status: 'archived' }),
-  ], [
-    change(),
-    change({ key: 's50', title: 'Dark mode toggle', agentSessionId: 7 }),
-    change({ key: 's42', title: 'Busy one', busy: true, status: 'Working…', sortAt: 1 }),
+    conversation({ id: 12, lastActivityAt: '2026-09-24T09:00:00Z', activeChange: null, doneUnseen: true }),
   ], 5);
-  assert.deepEqual(rows.map((r) => r.key), ['agent:8', 'agent:7', 'change:s42', 'change:s41']);
-  assert.deepEqual(rows.slice(0, 2).map((r) => r.href), ['#messages/agent/8', '#messages/agent/7'],
+  assert.deepEqual(rows.map((r) => r.key), ['agent:8', 'agent:7', 'agent:12']);
+  assert.deepEqual(rows.map((r) => r.href), ['#messages/agent/8', '#messages/agent/7', '#messages/agent/12'],
     'a conversation opens itself');
   assert.equal(rows[0].title, 'Agent session', 'an untitled conversation still says what it is');
   assert.ok(!rows.some((r) => r.key === 'agent:11'), 'one nothing was said in yet is not work in progress');
   assert.equal(rows[1].detail, 'In progress', 'a paused change reads as the work in progress it is');
-  assert.equal(rows[2].detail, 'Working…');
-  assert.equal(model.continueRows('notes', [conversation()], [change(), change({ key: 's2' }), change({ key: 's3' })]).length, 3,
+  assert.deepEqual(rows.map((r) => r.activity), ['working', null, 'done'], 'each with the lists\' mark');
+  assert.equal(model.continueRows('notes', [conversation(), conversation({ id: 2 }), conversation({ id: 3 }), conversation({ id: 4 })]).length, 3,
     'three at most by default');
-  assert.deepEqual(model.continueRows(null, [conversation()], [change()]), [], 'no app, no rows');
+  assert.deepEqual(model.continueRows(null, [conversation()]), [], 'no app, no rows');
+  assert.doesNotMatch(read('frontend/src/features/app-context/continue-model.ts'), /improve/i, 'classic changes are the Workshop\'s, one row up');
 });
 
-test('the mark\'s menu draws them after mount only, under Go to workshop, with a way to all of it', () => {
+test('the mark\'s menu: the app\'s own rows first, then Continue, after mount only, with "See all sessions"', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /const continuing = mounted && view !== 'about'/, 'never in the prerender: the hydrating render matches it');
   assert.match(sheet, /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
     'for any signed-in viewer: the flag never hides a conversation that exists');
-  const continueAt = sheet.indexOf('id="app-menu-continue"');
-  assert.ok(continueAt > sheet.indexOf('id="app-menu-row-workshop"') && continueAt < sheet.indexOf('id="app-menu-row-discussion"'),
-    'right under Go to workshop, which still opens the list (#2761\'s declared check)');
-  assert.match(sheet, /id="app-menu-continue-all"[\s\S]{0,200}label="See all your work"[\s\S]{0,200}setMessagesFilter\('agents'\)/);
+  const at = (id) => sheet.indexOf(`id="${id}"`);
+  assert.ok(at('app-menu-row-workshop') < at('app-menu-row-discussion')
+    && at('app-menu-row-discussion') < at('app-menu-row-about')
+    && at('app-menu-row-about') < at('app-menu-continue'),
+    'Go to workshop, the discussion and About are the app\'s section; Continue follows them');
+  assert.match(sheet, /id="app-menu-continue-all"[\s\S]{0,200}label="See all sessions"[\s\S]{0,200}setMessagesFilter\('agents'\)/);
+  assert.match(sheet, /<AgentActivityMark activity=\{row\.activity\} \/>/);
+  assert.doesNotMatch(sheet, /See all your work|continue-change/);
 });
 
 test('Recents lists open agent sessions on its one clock', () => {
@@ -189,5 +186,5 @@ test('opening the conversation answers its changes\' finished rows, however the 
   assert.equal(await markReadForAgentSession(pool, 4, null), 0, 'nothing to answer without a conversation');
   const route = read('src/routes/agent-sessions.js');
   const get = route.slice(route.indexOf("router.get('/api/agent-sessions/:id'"));
-  assert.match(get.slice(0, 1200), /notifications\.markReadForAgentSession\(pool, req\.user\.id, session\.id\)/);
+  assert.match(get.slice(0, 2400), /notifications\.markReadForAgentSession\(pool, req\.user\.id, session\.id\)/);
 });

@@ -1227,14 +1227,31 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // link to an app-channel reply opening its thread; and #2967's "Show N
   // more". Ten were folded into six with :has(). 32 slots left under 830.
   //
-  // 798 → 805: +7 (QA 2026-09-24): the sweep's user-visible fixes. The
-  // Messages "Add" pill and the thread ⋯ menu button (Q10, Q18), the skip
-  // link (Q18), sign-in's Back disc and the username rule under the field
-  // (Q8, Q11), the Workshop's "Needs you" tab (Q29) and a pending group
-  // invitation's "Invitation pending" row (Q14). Six more were drafted and
-  // left to unit tests to keep the 20 free slots the proposal suites
-  // require. 25 slots left under 830.
-  assert.equal(DAPP.tests.length, 805);
+  // 798 → 800: +2 (#2387 follow-up): a thread's replies drawn in the main
+  // transcript where they landed, one card for a run, with the thread card
+  // showing the newest reply — in #general and in an app channel. 30 slots
+  // left under 830.
+  //
+  // 800 → 802: +2 (#2387 follow-up): Full width moved to the right of every
+  // discussion pane's header — an app's channel ends its header with it, and
+  // a dev session's bar carries it after Open full view. The conversation
+  // header's place (just before ⋯) rides on the deleted-message check that
+  // already found the toggle. 28 slots left under 830.
+  //
+  // 802 → 803: +1 (#2779): an agent session's staging builds are cards: an
+  // older build superseded and the newest offering Open preview and View
+  // change, one selector over the staging conversation 990801's two build
+  // rows. 27 slots left under 830.
+  //
+  // 803 → 810: +7 (QA 2026-09-24): the sweep's user-visible fixes.
+  // Discover's compact "Add" pill (Q10), the conversation ⋯ as a menu button
+  // and the Skip to navigation link (Q18), sign-in's Back disc and the
+  // username rule under the register field (Q8, Q11), "Needs you" in a
+  // Messages row (Q29) and a group invitation's "Invitation pending" header
+  // (Q14). Six more were drafted and left to unit tests to keep the 20 free
+  // slots the proposal suites require. 20 slots left under 830, the floor
+  // those suites allow.
+  assert.equal(DAPP.tests.length, 810);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -461,9 +461,40 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
   assert.equal(choice.choiceFromValue('bogus', catalog, null), null);
   assert.equal(choice.offersReasoning(onKimi, catalog), true);
   assert.equal(choice.offersReasoning({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null }, catalog), false);
-  assert.equal(choice.effortOptions(catalog)[0].label, 'Default (Medium)');
-  assert.deepEqual(choice.effortOptions(catalog).slice(1).map((o) => o.value), ['minimal', 'low', 'medium', 'high', 'xhigh'],
-    'the server\'s own effort list');
+  assert.deepEqual(choice.effortOptions(catalog).map((o) => [o.value, o.label, !!o.isDefault]), [
+    ['minimal', 'Minimal', false], ['low', 'Low', false], ['', 'Medium', true], ['high', 'High', false], ['xhigh', 'Extra high', false],
+  ], 'the server\'s own effort list; the default effort IS the follow-the-default option, not a second entry');
+  assert.deepEqual(choice.effortOptions({ ...catalog, defaultReasoningEffort: null }).map((o) => [o.value, o.label, !!o.isDefault])[0],
+    ['', 'Default', true], 'with no default known, a plain Default');
+  assert.equal(choice.effortValue({ ...onKimi, reasoningEffort: 'medium' }, catalog), '', 'naming the default is following it');
+  assert.equal(choice.effortValue(onKimi, catalog), 'high');
+  assert.equal(choice.effortValue({ ...onKimi, reasoningEffort: null }, catalog), '');
+  assert.deepEqual(choice.pickerOptions(catalog, null).filter((o) => o.isDefault).map((o) => o.value), ['anthropic:claude-opus-5-5'],
+    'the model a conversation with no choice runs on is the one marked default');
+});
+
+test('the pickers read "Model: X" and "Thinking Level: X" closed, and mark the default only in the open list', () => {
+  const { createElement, renderToHtml } = require('./lib/render-tsx');
+  const { LabeledSelect } = loadTsx('frontend/src/features/agent-session/index.tsx');
+  const options = [
+    { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5' },
+    { value: 'anthropic:claude-opus-5-5', label: 'Opus 5.5', isDefault: true },
+  ];
+  const render = (value) => renderToHtml(createElement(LabeledSelect, {
+    label: 'Model', ariaLabel: 'Model', dataKey: 'model', value, options, disabled: false, onChange: () => {},
+  }));
+  const onDefault = render('anthropic:claude-opus-5-5');
+  assert.match(onDefault, /data-agent-session-picker-shown="true">Model: Opus 5\.5<\/span>/, 'closed: the label and the item, no "(default)"');
+  assert.match(onDefault, /<option value="anthropic:claude-opus-5-5"[^>]*>Opus 5\.5 \(default\)<\/option>/, 'open: "(default)" after the default');
+  assert.match(onDefault, /<option value="anthropic:claude-sonnet-5"[^>]*>Sonnet 5<\/option>/);
+  assert.match(onDefault, /<select class="absolute inset-0 h-full w-full cursor-pointer opacity-0[^"]*" aria-label="Model"/,
+    'the real control lies over the shown line and keeps the focus and the keyboard');
+  assert.match(render('anthropic:claude-sonnet-5'), />Model: Sonnet 5</);
+
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /label="Thinking Level"\s+ariaLabel="Thinking level"/);
+  assert.match(panel, /value=\{effortValue\(current, catalog\)\}/);
+  assert.doesNotMatch(panel, /next message<\/span>|data-agent-session-model-note|`Thinking: /, 'no "applies from your next message", no "Thinking:"');
 });
 
 test('the unsent address is routed on every surface', () => {

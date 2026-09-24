@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -19,17 +28,21 @@ import {
   choiceValue,
   effectiveChoice,
   effortOptions,
+  effortValue,
   offersReasoning,
   pickerOptions,
+  type PickerOption,
 } from './model-choice';
 import {
   buildTranscript,
+  checksSummary,
   cardView,
   changeStatusLabel,
   durationLabel,
   latestReplies,
   runHeading,
   type CardView,
+  type PreviewItem,
   type RunItem,
   type TranscriptItem,
 } from './transcript';
@@ -44,10 +57,34 @@ import {
   openSpec,
   sendAgentMessage,
   setDrawerOpen,
+  setSpecTab,
+  setPaneTab,
+  dockPreview,
+  openPreview,
+  proposeChange,
+  retryStaging,
+  PREVIEW_SLOT_ID,
   stopAgentTurn,
   switchActiveChange,
   useAgentSessionState,
+  type PaneTab,
+  type PreviewPaneState,
+  type SpecSheetState,
+  type SpecTab,
 } from './store';
+import {
+  PREVIEW_MIN_WIDTH,
+  SPEC_DEFAULT_WIDTH,
+  SPEC_MIN_WIDTH,
+  SPEC_WIDTH_STEP,
+  clampSpecWidth,
+  readSpecWidth,
+  splitSpec,
+  useSidePaneBeside,
+  useWideEnoughForSpec,
+  writeSpecWidth,
+  type SpecSplit,
+} from './spec-layout';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -62,7 +99,7 @@ import {
 // ships, and everything loads in effects.
 
 function markdown(text: string, breaks = true): string | null {
-  const render = window.DevChat?.renderMarkdown;
+  const render = typeof window === 'undefined' ? null : window.DevChat?.renderMarkdown;
   if (typeof render !== 'function') return null;
   try { return render(text, { breaks }); } catch { return null; }
 }
@@ -109,7 +146,13 @@ function changeRef(change: AgentChange) {
 /** What the conversation is about: the session's, or the unsent draft's. */
 type About = Pick<AgentSession, 'focusApp' | 'focusContext'> | null;
 
-function SessionBar({ session, about, embedded }: { session: AgentSession | null; about: About; embedded: boolean }) {
+function SessionBar({ session, about, embedded, action }: {
+  session: AgentSession | null;
+  about: About;
+  embedded: boolean;
+  /** The pane's own control at the bar's end — Messages' full-width toggle. */
+  action?: ReactNode;
+}) {
   const snapshot = useAgentSessionState();
   const active = session?.activeChange || null;
   const building = snapshot.turn.running && snapshot.turn.phase === 'cc';
@@ -148,6 +191,7 @@ function SessionBar({ session, about, embedded }: { session: AgentSession | null
       >
         Changes · {count}
       </button>
+      {action}
     </div>
   );
 }
@@ -259,19 +303,7 @@ function Item({ item }: { item: TranscriptItem }) {
     case 'spec':
       return <SpecCard item={item} />;
     case 'preview':
-      return (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900" data-agent-session-preview>
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">{item.text}</p>
-          <a
-            className="mt-2 inline-flex rounded-full border border-violet-300 px-3 py-1 text-sm font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40"
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Open preview{item.prNumber ? ` · PR #${item.prNumber}` : ''}
-          </a>
-        </section>
-      );
+      return <PreviewCard item={item} />;
     default:
       return null;
   }
@@ -314,6 +346,131 @@ export function RunCard({ run }: { run: RunItem }) {
   );
 }
 
+const CARD_BUTTON = 'inline-flex rounded-full border border-violet-300 px-3 py-1 text-sm font-semibold text-violet-700 '
+  + 'hover:bg-violet-50 disabled:opacity-60 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40';
+const CARD_PRIMARY = 'inline-flex rounded-full bg-violet-600 px-3 py-1 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-60';
+const CHECK_TONE: Record<string, string> = {
+  passing: 'text-green-700 dark:text-green-400',
+  failing: 'text-red-700 dark:text-red-300',
+  running: 'text-zinc-500 dark:text-zinc-400',
+  error: 'text-amber-700 dark:text-amber-300',
+};
+
+function findChange(session: AgentSession | null, changeId: number | null): AgentChange | null {
+  if (!session || changeId == null) return null;
+  return [session.activeChange, ...(session.changes || [])].find((change) => change && change.id === changeId) || null;
+}
+
+/**
+ * A change's staging build, as a card (#2779 follow-up). The newest one of a
+ * change is live:
+ *   - deployed: Open preview (in the side pane on a wide screen, a new tab
+ *     otherwise), View change (its card), and Propose to group while it has
+ *     not been proposed; then "In vote" with the proposal.
+ *   - failed: why, and Retry (a rebuild; its result writes the next card).
+ * It says where the change's checks stand, because they gate merge. An older
+ * card is "Superseded by a newer preview" and offers nothing: its build is
+ * gone or stale.
+ */
+export function PreviewCard({ item }: { item: PreviewItem }) {
+  const snapshot = useAgentSessionState();
+  const wide = useWideEnoughForSpec();
+  const action = snapshot.changeAction && snapshot.changeAction.changeId === item.changeId ? snapshot.changeAction.kind : null;
+  return (
+    <PreviewCardView
+      item={item}
+      change={findChange(snapshot.session, item.changeId)}
+      wide={wide}
+      action={action}
+      busy={!!snapshot.changeAction}
+    />
+  );
+}
+
+/** The card itself, from plain props (a test renders it without a store). */
+export function PreviewCardView({ item, change, wide, action, busy }: {
+  item: PreviewItem;
+  change: AgentChange | null;
+  wide: boolean;
+  action: 'propose' | 'retry' | null;
+  busy: boolean;
+}) {
+  const prNumber = item.prNumber || change?.prNumber || null;
+  const heading = `${item.failed ? 'Staging build failed' : 'Staging deployed'}${prNumber ? ` · PR #${prNumber}` : ''}`;
+  if (item.superseded) {
+    return (
+      <section className="rounded-2xl border border-zinc-200 px-3 py-2 dark:border-zinc-800" data-agent-session-preview="superseded">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">{heading} · Superseded by a newer preview</p>
+      </section>
+    );
+  }
+  const checks = checksSummary(change?.checkState, change?.checkFailing);
+  const changeHref = change && change.appSlug && item.changeId != null
+    ? `#app/${encodeURIComponent(change.appSlug)}/dev/proposals/${item.changeId}`
+    : null;
+  const inVote = change && (change.status === 'promoted' || change.status === 'merging');
+  const merged = change && change.status === 'merged';
+  const proposable = change && (change.status === 'active' || change.status === 'paused');
+  return (
+    <section
+      className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900"
+      data-agent-session-preview={item.failed ? 'failed' : 'deployed'}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p className={`text-sm font-medium ${item.failed ? 'text-red-700 dark:text-red-300' : 'text-zinc-800 dark:text-zinc-100'}`}>{heading}</p>
+        {inVote || merged ? (
+          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300" data-agent-session-preview-status>
+            {merged ? 'Merged' : 'In vote'}
+          </span>
+        ) : null}
+        {checks ? (
+          <span className={`ml-auto inline-flex items-center gap-1 text-xs ${CHECK_TONE[checks.key]}`} data-agent-session-checks={checks.key}>
+            {checks.key === 'running'
+              ? <SpinnerArcIcon className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              : checks.key === 'passing' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+            {checks.text}
+          </span>
+        ) : null}
+      </div>
+      {item.failed && item.error ? <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{item.error}</p> : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {item.failed ? (
+          item.changeId != null ? (
+            <button type="button" className={CARD_BUTTON} disabled={busy} onClick={() => void retryStaging(item.changeId as number)} data-agent-session-preview-retry>
+              {action === 'retry' ? 'Retrying…' : 'Retry'}
+            </button>
+          ) : null
+        ) : item.url ? (
+          wide && item.changeId != null ? (
+            <button
+              type="button"
+              className={CARD_BUTTON}
+              onClick={() => openPreview({ changeId: item.changeId as number, url: item.url as string, prNumber })}
+              data-agent-session-preview-open
+            >
+              Open preview
+            </button>
+          ) : (
+            <a className={CARD_BUTTON} href={item.url} target="_blank" rel="noopener noreferrer" data-agent-session-preview-open>
+              Open preview
+            </a>
+          )
+        ) : null}
+        {changeHref ? (
+          <a className={CARD_BUTTON} href={changeHref} data-agent-session-preview-change>
+            {inVote ? 'View proposal' : 'View change'}
+          </a>
+        ) : null}
+        {proposable && item.changeId != null ? (
+          <button type="button" className={CARD_PRIMARY} disabled={busy} onClick={() => void proposeChange(item.changeId as number)} data-agent-session-preview-propose>
+            {action === 'propose' ? 'Proposing…' : 'Propose to group'}
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 /** A spec the scout drafted: the dev chat's spec card, opening the viewer over the conversation. */
 export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec' }> }) {
   const snippet = useMemo(() => (item.preview ? markdown(item.preview, false) : null), [item.preview]);
@@ -346,17 +503,113 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
 }
 
 /**
- * A change's spec over the conversation, read-only, any saved version. The
- * change page's own viewer keeps sharing and mentions; this is for reading
- * what the scout wrote without leaving the conversation.
+ * A change's spec, read-only, any saved version. The change page's own
+ * viewer keeps sharing and mentions; this is for reading what the scout wrote
+ * without leaving the conversation.
+ *
+ * ONE VIEW, TWO FRAMES (./spec-layout.ts): beside the conversation from
+ * 1024px up, with a divider that drags; a sheet over it below that. Both show
+ * the same header and body, so the frame is the only thing the window width
+ * decides.
  */
-function SpecSheet() {
+function SpecMarkdown({ text, tagged = false }: { text: string; tagged?: boolean }) {
+  const html = useMemo(() => markdown(text, false), [text]);
+  const tag = tagged ? { 'data-agent-session-spec-text': '' } : {};
+  return html
+    ? <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" {...tag} dangerouslySetInnerHTML={{ __html: html }} />
+    : <pre className="whitespace-pre-wrap text-sm text-zinc-900 dark:text-zinc-100" {...tag}>{text}</pre>;
+}
+
+function SpecTabButton({ tab, active, label, onTab }: {
+  tab: SpecTab;
+  active: SpecTab;
+  label: string;
+  onTab: (tab: SpecTab) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active === tab}
+      className={active === tab ? 'dc-spec-viewer-tab dc-spec-viewer-tab-active' : 'dc-spec-viewer-tab'}
+      data-spec-tab={tab}
+      onClick={() => onTab(tab)}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * The spec's text: the dev chat viewer's two tabs when it has both halves —
+ * the title and summary above them, the plain-language half first — and the
+ * whole document otherwise. Same classes as that viewer, so the two read alike.
+ */
+export function SpecBody({ text, tab, split, onTab }: {
+  text: string;
+  tab: SpecTab;
+  split: SpecSplit | null;
+  onTab: (tab: SpecTab) => void;
+}) {
+  if (!split) return <SpecMarkdown text={text} tagged />;
+  const half = tab === 'tech' ? split.technical : split.userFacing;
+  return (
+    <>
+      {split.preamble ? <div className="dc-spec-viewer-preamble"><SpecMarkdown text={split.preamble} /></div> : null}
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+        <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
+        <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
+      </div>
+      <div role="tabpanel" data-agent-session-spec-half={tab}>
+        {half ? <SpecMarkdown text={half} tagged /> : <p className="dc-spec-tab-empty">Nothing in this section.</p>}
+      </div>
+    </>
+  );
+}
+
+function SpecContent({ sheet }: { sheet: SpecSheetState }) {
   const snapshot = useAgentSessionState();
-  const sheet = snapshot.specSheet;
-  const html = useMemo(() => (sheet && sheet.text ? markdown(sheet.text, false) : null), [sheet?.text]);
-  if (!sheet) return null;
+  const split = useMemo(() => (sheet.text ? splitSpec(sheet.text) : null), [sheet.text]);
   const change = [snapshot.session?.activeChange, ...(snapshot.session?.changes || [])]
     .find((c) => c && c.id === sheet.changeId) || null;
+  return (
+    <>
+      <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
+          {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
+        </div>
+        {sheet.versions.length > 1 ? (
+          <span className="dc-venue-detail-inline">
+            <select
+              className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
+              aria-label="Spec version"
+              value={sheet.version ?? ''}
+              onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
+            >
+              {sheet.versions.map((v) => <option key={v} value={v}>{`v${v}`}</option>)}
+            </select>
+            <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
+          </span>
+        ) : sheet.version ? <span className="text-xs font-semibold text-zinc-500">{`v${sheet.version}`}</span> : null}
+        <button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close" onClick={closeSpec}>
+          <XIcon className="h-5 w-5" aria-hidden="true" />
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        {sheet.phase === 'loading' ? (
+          <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+        ) : null}
+        {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
+        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
+        {sheet.phase === 'ready' && sheet.text ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
+      </div>
+    </>
+  );
+}
+
+/** Below 1024px, and in the side panel: the spec over the conversation, as a sheet. */
+function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
   return (
     <div
       className="absolute inset-0 z-30 flex flex-col bg-zinc-950/30"
@@ -368,42 +621,158 @@ function SpecSheet() {
         aria-label="Spec"
         className="platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none"
       >
-        <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
-            {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
-          </div>
-          {sheet.versions.length > 1 ? (
-            <span className="dc-venue-detail-inline">
-              <select
-                className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
-                aria-label="Spec version"
-                value={sheet.version ?? ''}
-                onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
-              >
-                {sheet.versions.map((v) => <option key={v} value={v}>{`v${v}`}</option>)}
-              </select>
-              <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
-            </span>
-          ) : sheet.version ? <span className="text-xs font-semibold text-zinc-500">{`v${sheet.version}`}</span> : null}
-          <button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close" onClick={closeSpec}>
-            <XIcon className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          {sheet.phase === 'loading' ? (
-            <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
-          ) : null}
-          {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
-          {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
-          {sheet.phase === 'ready' && sheet.text ? (
-            html
-              ? <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" data-agent-session-spec-text dangerouslySetInnerHTML={{ __html: html }} />
-              : <pre className="whitespace-pre-wrap text-sm text-zinc-900 dark:text-zinc-100" data-agent-session-spec-text>{sheet.text}</pre>
-          ) : null}
-        </div>
+        <SpecContent sheet={sheet} />
       </section>
     </div>
+  );
+}
+
+/** Spec | Preview, when the side pane holds both. */
+function PaneTabs({ tab }: { tab: PaneTab }) {
+  const button = (key: PaneTab, label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === key}
+      data-agent-session-pane-tab={key}
+      className={tab === key
+        ? 'border-b-2 border-violet-600 px-3 py-2 text-sm font-semibold text-zinc-900 dark:border-violet-400 dark:text-zinc-100'
+        : 'border-b-2 border-transparent px-3 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'}
+      onClick={() => setPaneTab(key)}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div role="tablist" aria-label="Side pane" className="flex shrink-0 gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
+      {button('spec', 'Spec')}
+      {button('preview', 'Preview')}
+    </div>
+  );
+}
+
+/**
+ * From 1024px up: the side pane beside the conversation, behind a divider
+ * that drags (and moves with the arrow keys). It holds the spec, a change's
+ * staging preview, or both as tabs.
+ *
+ * THE WIDTH is the dev chat viewer's remembered one, clamped so the chat keeps
+ * 320px beside the 4px divider; `max-w` holds the same ceiling when the window
+ * narrows after the drag. A preview renders a real app's screen, so while one
+ * is open the floor is the dev chat staging panel's 320px, not the spec's 280.
+ *
+ * THE PREVIEW is the platform's own (AppView.ensureStaging): its fixed
+ * overlay is pinned over this pane's slot, the way it is pinned beside the
+ * dev chat, so sign-in, Full screen and the dev console are the same ones. The
+ * slot stays mounted while the Spec tab shows (hidden, so the overlay shrinks
+ * to nothing and the preview keeps its state).
+ */
+function SidePane({ sheet, preview, tab, containerRef }: {
+  sheet: SpecSheetState | null;
+  preview: PreviewPaneState | null;
+  tab: PaneTab;
+  containerRef: { current: HTMLDivElement | null };
+}) {
+  const floor = preview ? PREVIEW_MIN_WIDTH : SPEC_MIN_WIDTH;
+  const [width, setWidth] = useState(SPEC_DEFAULT_WIDTH);
+  const paneRef = useRef<HTMLElement | null>(null);
+  const containerWidth = () => containerRef.current?.getBoundingClientRect().width ?? null;
+  useEffect(() => { setWidth(clampSpecWidth(readSpecWidth(), containerWidth(), floor)); }, [floor]);
+  const showing: PaneTab = sheet && preview ? tab : (preview ? 'preview' : 'spec');
+
+  // The platform's preview opens over the slot once the slot is on screen,
+  // and again only for another preview.
+  const previewKey = preview ? `${preview.changeId}:${preview.url}` : null;
+  useEffect(() => {
+    if (preview) dockPreview(preview);
+  }, [previewKey]);
+  // The overlay follows the slot's size on its own; a move without a resize
+  // (the tab strip appearing, the list stepping aside) needs a nudge.
+  useEffect(() => {
+    if (preview) window.AppView?._syncStagingDockGeometry?.();
+  }, [width, showing, !!sheet, previewKey]);
+
+  const commit = (next: number) => {
+    const clamped = clampSpecWidth(next, containerWidth(), floor);
+    setWidth(clamped);
+    return clamped;
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    const startWidth = paneRef.current?.getBoundingClientRect().width ?? width;
+    let latest = startWidth;
+    event.preventDefault();
+    try { handle.setPointerCapture(event.pointerId); } catch { /* moves still arrive on the handle */ }
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    // An iframe swallows pointer moves: the preview's, while the drag runs.
+    const frame = document.getElementById('staging-iframe');
+    if (frame) frame.style.pointerEvents = 'none';
+    // Dragging right narrows the pane: its left edge is the divider.
+    const onMove = (move: PointerEvent) => { latest = commit(startWidth - (move.clientX - startX)); };
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      try { handle.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      if (frame) frame.style.pointerEvents = '';
+      writeSpecWidth(latest);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    writeSpecWidth(commit(width + (event.key === 'ArrowLeft' ? SPEC_WIDTH_STEP : -SPEC_WIDTH_STEP)));
+  };
+
+  return (
+    <>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the spec'}
+        aria-valuenow={width}
+        aria-valuemin={floor}
+        tabIndex={0}
+        className="w-1 shrink-0 cursor-col-resize touch-none bg-zinc-200 transition-colors hover:bg-violet-500 focus-visible:bg-violet-500 focus-visible:outline-none dark:bg-zinc-800"
+        data-agent-session-spec-resizer
+        onPointerDown={onPointerDown}
+        onKeyDown={onKeyDown}
+      />
+      <aside
+        ref={paneRef}
+        aria-label={showing === 'preview' ? 'Preview' : 'Spec'}
+        className={`flex min-h-0 ${preview ? 'min-w-[320px]' : 'min-w-[280px]'} max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900`}
+        style={{ width }}
+        data-agent-session-side-pane={showing}
+      >
+        {sheet && preview ? <PaneTabs tab={showing} /> : null}
+        {sheet && showing === 'spec' ? (
+          <div
+            className="flex min-h-0 flex-1 flex-col"
+            data-agent-session-spec-sheet={sheet.changeId}
+            data-agent-session-spec-beside=""
+          >
+            <SpecContent sheet={sheet} />
+          </div>
+        ) : null}
+        {preview ? (
+          <div
+            id={PREVIEW_SLOT_ID}
+            className={showing === 'preview' ? 'min-h-0 flex-1' : 'hidden'}
+            data-agent-session-preview-slot={preview.changeId}
+          />
+        ) : null}
+      </aside>
+    </>
   );
 }
 
@@ -504,11 +873,53 @@ function Replies({ replies }: { replies: string[] }) {
 }
 
 /**
+ * A picker control that reads "Label: Item" while closed and lists the items
+ * with "(default)" after the default one while open. A native select shows
+ * the chosen option's own text when closed, so that text is drawn beside it
+ * instead: the select lies transparent over the shown line and keeps the
+ * focus, the keyboard and the platform's own list. The shown line is the dev
+ * chat picker's (`dc-model-select`).
+ */
+export function LabeledSelect({ label, ariaLabel, value, options, disabled, muted = false, onChange, dataKey }: {
+  label: string;
+  ariaLabel: string;
+  value: string;
+  options: PickerOption[];
+  disabled: boolean;
+  muted?: boolean;
+  onChange: (value: string) => void;
+  dataKey: string;
+}) {
+  const selected = options.find((option) => option.value === value) || null;
+  const tone = muted ? 'text-zinc-600 dark:text-zinc-300' : 'text-zinc-900 dark:text-zinc-100';
+  return (
+    <span className="dc-venue-detail-inline rounded focus-within:ring-2 focus-within:ring-violet-500" data-agent-session-picker={dataKey}>
+      <span className={`dc-model-select text-[13px] ${tone}`} aria-hidden="true" data-agent-session-picker-shown>
+        {`${label}: ${selected ? selected.label : ''}`}
+      </span>
+      <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
+      <select
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
+        aria-label={ariaLabel}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value} title={option.title || undefined}>
+            {option.isDefault ? `${option.label} (default)` : option.label}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
+/**
  * The conversation's model (./model-choice.ts): Claude Code on an Anthropic
- * model, or Codex on an OpenRouter model with its reasoning effort where the
- * model offers one. The dev chat picker's look (`dc-model-select`). Usable at
- * any time: what is running finishes on the model it started with, and the
- * line beside the control says so while a turn runs.
+ * model, or Codex on an OpenRouter model with its thinking level where the
+ * model offers one. Usable at any time: what is running finishes on the model
+ * it started with, and the next message runs on the new one.
  */
 function ModelPicker() {
   const snapshot = useAgentSessionState();
@@ -521,46 +932,31 @@ function ModelPicker() {
   const archived = snapshot.session?.status === 'archived';
   const disabled = archived || snapshot.choosing || snapshot.phase === 'loading';
   const reasoning = offersReasoning(current, catalog);
-  const running = snapshot.turn.running && !!snapshot.session;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1" data-agent-session-model>
-      <span className="dc-venue-detail-inline">
-        <select
-          className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
-          aria-label="Model"
-          value={choiceValue(current)}
-          disabled={disabled}
-          onChange={(event) => {
-            const next = choiceFromValue(event.currentTarget.value, catalog, current);
-            if (next) void chooseAgent(next);
-          }}
-        >
-          {options.map((option) => (
-            <option key={option.value} value={option.value} title={option.title || undefined}>{option.label}</option>
-          ))}
-        </select>
-        <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
-      </span>
+      <LabeledSelect
+        label="Model"
+        ariaLabel="Model"
+        dataKey="model"
+        value={choiceValue(current)}
+        options={options}
+        disabled={disabled}
+        onChange={(value) => {
+          const next = choiceFromValue(value, catalog, current);
+          if (next) void chooseAgent(next);
+        }}
+      />
       {reasoning ? (
-        <span className="dc-venue-detail-inline">
-          <select
-            className="dc-model-select rounded text-[13px] text-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-300"
-            aria-label="Reasoning effort"
-            value={current.reasoningEffort || ''}
-            disabled={disabled}
-            onChange={(event) => void chooseAgent({ ...current, reasoningEffort: event.currentTarget.value || null })}
-          >
-            {effortOptions(catalog).map((option) => (
-              <option key={option.value} value={option.value}>{`Thinking: ${option.label}`}</option>
-            ))}
-          </select>
-          <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
-        </span>
-      ) : null}
-      {running ? (
-        <span className="whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-400" data-agent-session-model-note>
-          applies from your next message
-        </span>
+        <LabeledSelect
+          label="Thinking Level"
+          ariaLabel="Thinking level"
+          dataKey="thinking"
+          muted
+          value={effortValue(current, catalog)}
+          options={effortOptions(catalog)}
+          disabled={disabled}
+          onChange={(value) => void chooseAgent({ ...current, reasoningEffort: value || null })}
+        />
       ) : null}
     </div>
   );
@@ -731,9 +1127,19 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
 
 // ── The panel and the screen ───────────────────────────────────────────
 
-export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) {
+/**
+ * `headerAction` is a surface's addition to the session bar, drawn at its
+ * end: the Messages pane passes its full-width toggle, which every
+ * discussion pane carries in that place.
+ */
+export function AgentSessionPanel({ embedded = false, headerAction = null }: { embedded?: boolean; headerAction?: ReactNode }) {
   const snapshot = useAgentSessionState();
   const scroll = useRef<HTMLDivElement | null>(null);
+  const root = useRef<HTMLDivElement | null>(null);
+  // The side pane beside the chat (the spec, a preview, or both), or the
+  // spec over it (./spec-layout.ts). False until mounted, so the first
+  // render is the one the prerender printed.
+  const beside = useSidePaneBeside(embedded ? 'messages' : 'screen');
   const liveRun = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const items = useMemo(
     () => buildTranscript(snapshot.messages, snapshot.actions, Date.now(), { liveRun }),
@@ -761,23 +1167,27 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
   }, [items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length]);
 
   return (
-    <div className={`relative flex min-h-0 flex-1 flex-col ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
-      <SessionBar session={snapshot.session} about={about} embedded={embedded} />
-      <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
-        {snapshot.phase === 'loading' ? (
-          <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
-        ) : null}
-        {empty ? <EmptyState about={about} /> : null}
-        {items.map((item) => <Item key={item.key} item={item} />)}
-        <LiveTurn runShown={runShown} />
-        {snapshot.error ? (
-          <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
-        ) : null}
+    <div ref={root} className={`relative flex min-h-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
+        <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
+          {snapshot.phase === 'loading' ? (
+            <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+          ) : null}
+          {empty ? <EmptyState about={about} /> : null}
+          {items.map((item) => <Item key={item.key} item={item} />)}
+          <LiveTurn runShown={runShown} />
+          {snapshot.error ? (
+            <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
+          ) : null}
+        </div>
+        <Replies replies={empty ? starters(about) : replies} />
+        <Composer id={composerId(embedded ? 'messages' : 'screen')} />
+        {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
       </div>
-      <Replies replies={empty ? starters(about) : replies} />
-      <Composer id={composerId(embedded ? 'messages' : 'screen')} />
-      {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
-      <SpecSheet />
+      {beside ? (
+        <SidePane sheet={snapshot.specSheet} preview={snapshot.preview} tab={snapshot.paneTab} containerRef={root} />
+      ) : snapshot.specSheet ? <SpecSheet sheet={snapshot.specSheet} /> : null}
     </div>
   );
 }

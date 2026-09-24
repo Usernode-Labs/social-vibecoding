@@ -75,6 +75,7 @@ import { MessageActionSheet, useLongPress } from '../message-actions/action-shee
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
 import { EmojiPicker } from '../message-actions/emoji-picker';
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
+import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
 import {
@@ -735,6 +736,11 @@ export function MessageRow({ msg, grouped = false, surface = 'main' }: {
           avatars={msg.thread.participants.slice(0, 3).map((name) => (
             <Avatar key={name} shape="square" size="sm" color={swatchFor(name)} aria-hidden="true">{name.charAt(0).toUpperCase()}</Avatar>
           ))}
+          lastReply={msg.thread.lastReply ? {
+            face: <ReplyFace name={msg.thread.lastReply.name} />,
+            name: msg.thread.lastReply.name,
+            text: msg.thread.lastReply.text,
+          } : null}
           onOpen={() => chat?.openReplyThread?.(msg.id)}
         />
       ) : null}
@@ -825,6 +831,38 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
   return <SystemRow key={key} msg={msg} />;
 }
 
+/** A reply's face on a thread card: the chat's letter swatch at 22px. */
+function ReplyFace({ name }: { name: string }) {
+  return (
+    <span className="msgx-thread-face">
+      <Avatar shape="square" size="sm" color={swatchFor(name)} aria-hidden="true">{name.charAt(0).toUpperCase()}</Avatar>
+    </span>
+  );
+}
+
+/** A run of one reply thread's replies in the general chat (#2387 follow-up). */
+function ThreadActivityRun({ run }: { run: TranscriptMessage[] }) {
+  const first = run[0];
+  const last = run[run.length - 1];
+  const replyOf = first.replyOf as NonNullable<TranscriptMessage['replyOf']>;
+  const time = first.time === last.time ? last.time : `${first.time} – ${last.time}`;
+  return (
+    <ThreadActivityCard
+      rootText={replyOf.rootText}
+      rootDeleted={replyOf.rootDeleted}
+      time={time}
+      timeTitle={last.timeTitle}
+      replies={run.map((m, index) => ({
+        key: m.id ?? `r${index}`,
+        face: <ReplyFace name={m.username} />,
+        name: m.username,
+        text: m.text || '',
+      }))}
+      onOpen={() => controller()?.openReplyThread?.(replyOf.rootId)}
+    />
+  );
+}
+
 /**
  * What the general chat draws: people, shared specs, and the two proposal
  * events. Every other notice the platform posts into the stream — a request
@@ -910,8 +948,27 @@ export function TranscriptRows({ view, source, foldCards = false }: {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const runs = main && foldCards ? cardRunStarts(rows, isCardRow) : new Map<number, number>();
   const drawn: ReactNode[] = [];
+  // The row the next one groups under; a thread-activity card resets it, so
+  // the message after a card always carries its own name.
+  let previous: TranscriptMessage | null = null;
   for (let i = 0; i < rows.length; i += 1) {
-    drawn.push(renderRow(rows[i], `i${i}`, main, chat, i > 0 ? rows[i - 1] : null));
+    // #2387 follow-up: in the general chat a reply-thread reply is drawn
+    // where it landed — one card for a run of replies to one thread with
+    // nothing else said between them. A deleted reply leaves the run.
+    const replyOf = main ? rows[i].replyOf : null;
+    if (replyOf) {
+      const run = [rows[i]];
+      while (i + 1 < rows.length && rows[i + 1].replyOf?.rootId === replyOf.rootId) {
+        run.push(rows[i + 1]);
+        i += 1;
+      }
+      const live = run.filter((m) => !m.deleted);
+      if (live.length) drawn.push(<ThreadActivityRun key={`thread-activity-${live[0].id ?? i}`} run={live} />);
+      previous = null;
+      continue;
+    }
+    drawn.push(renderRow(rows[i], `i${i}`, main, chat, previous));
+    previous = rows[i];
     // #2387: under a reply thread's first message, how many replies follow —
     // the line Slack draws between a thread's head and its replies.
     if (rows[i].threadRoot) {
@@ -934,6 +991,7 @@ export function TranscriptRows({ view, source, foldCards = false }: {
       />,
     );
     i += length - 1;
+    previous = rows[i];
   }
   return (
     <>

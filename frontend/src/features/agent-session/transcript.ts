@@ -45,7 +45,24 @@ export type TranscriptItem =
     preview: string;
     text: string;
   }
-  | { kind: 'preview'; key: string; text: string; url: string; prNumber: number | null; changeId: number | null };
+  | PreviewItem;
+
+/**
+ * A change's staging build, as a card (#2779 follow-up): deployed (with its
+ * preview's address) or failed (with why). Only the newest card of a change
+ * is live; the ones before it are `superseded` and lose their actions.
+ */
+export interface PreviewItem {
+  kind: 'preview';
+  key: string;
+  text: string;
+  url: string | null;
+  prNumber: number | null;
+  changeId: number | null;
+  failed: boolean;
+  error: string | null;
+  superseded: boolean;
+}
 
 export type RunMode = 'scout' | 'build' | 'sync';
 export type RunStatus = 'running' | 'done' | 'no_changes' | 'failed' | 'stopped' | 'ended';
@@ -327,7 +344,7 @@ export function buildTranscript(
       // The end of the run; the sentence itself is still said below it.
       run.status = meta.turnError ? 'failed' : 'stopped';
       run.durationMs = duration;
-    } else if (run && text && !(typeof meta.stagingUrl === 'string')) {
+    } else if (run && text && !(typeof meta.stagingUrl === 'string') && !meta.stagingFailed) {
       // A step the run took on its way (a retry, the PR, the preview build).
       run.steps.push(text);
       continue;
@@ -340,6 +357,23 @@ export function buildTranscript(
         url: meta.stagingUrl,
         prNumber: typeof meta.prNumber === 'number' ? meta.prNumber : null,
         changeId: row.changeId,
+        failed: false,
+        error: null,
+        superseded: false,
+      });
+      continue;
+    }
+    if (meta.stagingFailed) {
+      items.push({
+        kind: 'preview',
+        key,
+        text: row.content,
+        url: null,
+        prNumber: typeof meta.prNumber === 'number' ? meta.prNumber : null,
+        changeId: row.changeId,
+        failed: true,
+        error: typeof meta.error === 'string' && meta.error.trim() ? meta.error.trim() : null,
+        superseded: false,
       });
       continue;
     }
@@ -347,12 +381,35 @@ export function buildTranscript(
       items.push({ kind: 'note', key, text: row.content, tone: meta.turnError ? 'error' : 'muted' });
     }
   }
+  // Only a change's newest staging card is live: an older build's preview is
+  // gone or stale, and proposing from it would propose something else.
+  const newestPreview = new Map<number | null, PreviewItem>();
+  for (const item of items) if (item.kind === 'preview') newestPreview.set(item.changeId, item);
+  for (const item of items) {
+    if (item.kind === 'preview' && newestPreview.get(item.changeId) !== item) item.superseded = true;
+  }
   // Only the newest unfinished run can be the one running now.
   const unfinished = items.filter((item): item is RunItem => item.kind === 'run' && item.status === 'running');
   unfinished.forEach((run, index) => {
     if (!liveRun || index !== unfinished.length - 1) run.status = 'ended';
   });
   return items;
+}
+
+/**
+ * A change's checks, as its staging card says them (#2779 follow-up). They
+ * gate merge, so the card says where they stand before you propose.
+ */
+export function checksSummary(checkState: string | null | undefined, checkFailing: number | null | undefined):
+  { key: 'passing' | 'failing' | 'running' | 'error'; text: string } | null {
+  if (!checkState) return null;
+  if (checkState === 'passing' || checkState === 'skipped') return { key: 'passing', text: 'Checks passing' };
+  if (checkState === 'failing') {
+    const n = Number(checkFailing) || 0;
+    return { key: 'failing', text: n > 0 ? `${n} check${n === 1 ? '' : 's'} failing` : 'Checks failing' };
+  }
+  if (checkState === 'pending' || checkState === 'running') return { key: 'running', text: 'Checks running' };
+  return { key: 'error', text: 'Checks couldn\u2019t run' };
 }
 
 /** A run's heading, in words. */

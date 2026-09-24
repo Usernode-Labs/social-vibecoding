@@ -6261,6 +6261,13 @@ const AppView = {
       RefAutocomplete.attach(gcInput, slugForDraft);
     }
 
+    // `:th` emoji shortcode autocomplete, and `:tada:` → 🎉 as the closing
+    // colon is typed. Same capture-phase lifecycle; a `:` token never shares
+    // a caret with an `@` or `#` one, so the three menus never fight.
+    if (typeof EmojiAutocomplete !== 'undefined') {
+      EmojiAutocomplete.attach(gcInput);
+    }
+
     // #15: Escape clears a staged reply quote (when the input is empty so
     // we don't fight other Escape semantics mid-typing).
     gcInput.addEventListener('keydown', (e) => {
@@ -19723,10 +19730,17 @@ const AppView = {
   //   opts.jump  — open the deep link directly (the "Test this change" btn).
   //   opts.dock  — #771: open as the docked side panel beside the dev chat
   //                (the caller must have mounted #dc-staging-panel first —
-  //                see DevChat.previewStaging / openStagingPanel).
+  //                see DevChat.previewStaging / openStagingPanel), or beside
+  //                whichever dock host registered (setStagingDockHost).
+  //   opts.app   — #2779: the app the preview is of ({ slug, self_hosted }),
+  //                for a caller that is not on that app's screen (an agent
+  //                session in Messages). Defaults to the app on screen.
+  //   opts.readOnly — overrides AppView.readOnly for that caller.
   async ensureStaging(sessionId, fallbackUrl, testing, opts) {
     const staging = AppView._staging();
-    const slug = AppView.appData?.slug;
+    const app = AppView._stagingApp(opts);
+    const slug = app?.slug;
+    const readOnly = AppView._stagingReadOnly(opts);
     const jump = !!(opts && opts.jump);
     const dock = !!(opts && opts.dock);
     // Streamlined Concept: every preview open funnels through here (#439),
@@ -19741,7 +19755,7 @@ const AppView = {
     // #771: apply the requested mode before anything paints, so the loader
     // shows inside the side panel on a docked open (and a stale docked
     // class can't leak into a fullscreen open from the vote panel).
-    if (dock && document.getElementById('dc-staging-panel')) {
+    if (dock && AppView._stagingDockSlot()) {
       AppView._stagingDockable = true;
       AppView._setStagingMode('docked');
     } else {
@@ -19767,10 +19781,10 @@ const AppView = {
       // reclaimed/stale preview. Read-only reviewers use its GET twin: it
       // performs the same revision, health and edge verification but never
       // repairs or rebuilds. Neither path trusts a stored URL on its own.
-      const endpoint = AppView.readOnly
+      const endpoint = readOnly
         ? `/api/sessions/${sessionId}/preview-status`
         : `/api/sessions/${sessionId}/ensure-staging`;
-      const res = await fetch(endpoint, AppView.readOnly ? undefined : { method: 'POST' });
+      const res = await fetch(endpoint, readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
       if (!res.ok) {
         AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.');
@@ -19781,7 +19795,7 @@ const AppView = {
       return;
     }
     // Backed out while we waited on the POST.
-    if (loadId !== AppView._stagingLoadId || slug !== AppView.appData?.slug) return;
+    if (loadId !== AppView._stagingLoadId || !AppView._stagingSameApp(opts, slug)) return;
 
     if (data.status === 'ready') {
       // #816: `verified` means the server just watched the container answer
@@ -19794,6 +19808,7 @@ const AppView = {
         jump,
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
+        ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
     if (data.status === 'unavailable') {
@@ -19801,7 +19816,7 @@ const AppView = {
         demo: 'Live previews can’t be rebuilt in this demo environment.',
         unhealthy: 'The submitted preview is running but is not answering its health check. Try again in a moment.',
         edge: 'The submitted preview is not reachable through its public address. Try again in a moment.',
-        missing: AppView.readOnly
+        missing: readOnly
           ? 'This preview is no longer running. A collaborator can rebuild it.'
           : 'This preview isn’t available right now.',
       };
@@ -19822,7 +19837,11 @@ const AppView = {
       sub: 'The preview was paused after a while of inactivity. Rebuilding it '
         + 'from the session’s latest changes. This usually takes 20–60 seconds.',
     });
-    AppView._pendingStagingPreview = { sessionId, slug, jump, testing, dock, loadId };
+    AppView._pendingStagingPreview = {
+      sessionId, slug, jump, testing, dock, loadId,
+      app: opts && opts.app ? opts.app : null,
+      readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
+    };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
     AppView._stagingRebuildTimer = setTimeout(() => {
       if (loadId !== AppView._stagingLoadId) return;
@@ -19853,7 +19872,11 @@ const AppView = {
   onStagingRebuildResult(sessionId, { url, failed, error } = {}) {
     const pending = AppView._pendingStagingPreview;
     if (!pending || pending.sessionId !== sessionId) return;
-    if (pending.loadId !== AppView._stagingLoadId || pending.slug !== AppView.appData?.slug) { AppView._pendingStagingPreview = null; return; }
+    if (pending.loadId !== AppView._stagingLoadId
+        || !AppView._stagingSameApp(pending.app ? { app: pending.app } : null, pending.slug)) {
+      AppView._pendingStagingPreview = null;
+      return;
+    }
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
     AppView._pendingStagingPreview = null;
     if (failed) {
@@ -19869,7 +19892,10 @@ const AppView = {
       // receives the event. Re-enter ensure-staging so the exact same
       // revision/health/edge gate runs before iframe navigation (#2328).
       return AppView.ensureStaging(sessionId, url, pending.testing, {
-        jump: pending.jump, dock: pending.dock,
+        jump: pending.jump,
+        dock: pending.dock,
+        ...(pending.app ? { app: pending.app } : {}),
+        ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
       });
     }
   },
@@ -19896,11 +19922,12 @@ const AppView = {
   // first load while the post-build checks pass runs.
   async swapToStaging(stagingUrl, testing, opts) {
     const staging = AppView._staging();
-    const slug = AppView.appData?.slug;
-    const selfHosted = !!(AppView.appData && AppView.appData.self_hosted);
+    const app = AppView._stagingApp(opts);
+    const slug = app?.slug;
+    const selfHosted = !!(app && app.self_hosted);
 
     if (opts && typeof opts.dock === 'boolean') {
-      if (opts.dock && document.getElementById('dc-staging-panel')) {
+      if (opts.dock && AppView._stagingDockSlot()) {
         AppView._stagingDockable = true;
         if (AppView._stagingMode !== 'docked') AppView._setStagingMode('docked');
       } else {
@@ -19929,7 +19956,7 @@ const AppView = {
     staging.setTestPanelHidden(true);
     staging.clearSrc();
     const loadId = ++AppView._stagingLoadId;
-    const current = () => loadId === AppView._stagingLoadId && slug === AppView.appData?.slug;
+    const current = () => loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug);
     AppView._setStagingLoader(true, { title: 'Signing in to the preview…', sub: '' });
 
     // Join the app's in-flight mint (or its fresh cache entry). Capture this
@@ -20107,6 +20134,63 @@ const AppView = {
   _stagingDockMql: null,        // matchMedia('(min-width: 1024px)') (bound once)
   _STAGING_DOCK_MEDIA: '(min-width: 1024px)',
 
+  // #2779: WHO the docked preview belongs to. The dev chat's own slot by
+  // default; an agent session registers its side pane's slot (and how to
+  // collapse, re-dock and hear about a close) while it shows a preview there,
+  // so the same overlay, sign-in and iframe serve both.
+  //   slotId   — the placeholder element the overlay is pinned over
+  //   live()   — is the host still on screen (gates "Exit full screen")
+  //   collapse() — the preview left the slot (full screen, or closed)
+  //   redock() — "Exit full screen": make the slot ready again
+  //   closed() — the preview was closed (once; the host is then dropped)
+  _stagingDockHost: null,
+
+  _devChatDockHost() {
+    return {
+      slotId: 'dc-staging-panel',
+      live: () => typeof DevChat !== 'undefined' && !!DevChat.currentSession,
+      collapse: () => {
+        if (typeof DevChat !== 'undefined' && DevChat.stagingPanel && DevChat.stagingPanel.open) {
+          DevChat.stagingPanel.open = false;
+          DevChat.renderChatView();
+        }
+      },
+      redock: () => {
+        if (typeof DevChat !== 'undefined' && DevChat.openStagingPanel) DevChat.openStagingPanel();
+      },
+      closed: null,
+    };
+  },
+
+  _currentDockHost() {
+    return AppView._stagingDockHost || AppView._devChatDockHost();
+  },
+
+  setStagingDockHost(host) {
+    AppView._stagingDockHost = host || null;
+  },
+
+  _stagingDockSlot() {
+    try { return document.getElementById(AppView._currentDockHost().slotId); } catch { return null; }
+  },
+
+  // #2779: the app a preview is of: the caller's (opts.app), else the one on
+  // screen. And whether a preview load is still for that app — for a caller
+  // that named its app, the screen changing under it does not matter.
+  _stagingApp(opts) {
+    if (opts && opts.app && opts.app.slug) return opts.app;
+    return AppView.appData || null;
+  },
+
+  _stagingSameApp(opts, slug) {
+    if (opts && opts.app && opts.app.slug) return true;
+    return slug === AppView.appData?.slug;
+  },
+
+  _stagingReadOnly(opts) {
+    return opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : !!AppView.readOnly;
+  },
+
   // Same breakpoint as the spec viewer's side-panel layout.
   _stagingDockViewport() {
     try { return !!(window.matchMedia && window.matchMedia(AppView._STAGING_DOCK_MEDIA).matches); }
@@ -20162,7 +20246,7 @@ const AppView = {
   // unmounted under us — close rather than float over a dead rect.
   rebindStagingDock() {
     if (AppView._stagingMode !== 'docked') return;
-    const slot = document.getElementById('dc-staging-panel');
+    const slot = AppView._stagingDockSlot();
     if (!slot) { AppView.closeStagingOverlay(); return; }
     if (!AppView._stagingDockObserver && typeof ResizeObserver !== 'undefined') {
       AppView._stagingDockObserver = new ResizeObserver(() => AppView._syncStagingDockGeometry());
@@ -20177,7 +20261,7 @@ const AppView = {
   // Pin the overlay over the slot's current bounding rect.
   _syncStagingDockGeometry() {
     if (AppView._stagingMode !== 'docked') return;
-    const slot = document.getElementById('dc-staging-panel');
+    const slot = AppView._stagingDockSlot();
     if (!slot) { AppView.closeStagingOverlay(); return; }
     const r = slot.getBoundingClientRect();
     AppView._staging().setDockRect({ top: r.top, left: r.left, width: r.width, height: r.height });
@@ -20189,10 +20273,7 @@ const AppView = {
   expandStagingFullscreen() {
     if (AppView._stagingMode !== 'docked') return;
     AppView._setStagingMode('fullscreen');
-    if (typeof DevChat !== 'undefined' && DevChat.stagingPanel && DevChat.stagingPanel.open) {
-      DevChat.stagingPanel.open = false;
-      DevChat.renderChatView();
-    }
+    AppView._currentDockHost().collapse();
   },
 
   // "Exit full screen": re-dock the live preview beside the chat. Only
@@ -20200,9 +20281,10 @@ const AppView = {
   // session view is still mounted, and the viewport is wide enough.
   dockStagingPanel() {
     if (AppView._stagingMode === 'docked' || !AppView._stagingDockable) return;
-    if (typeof DevChat === 'undefined' || !DevChat.currentSession) return;
+    const host = AppView._currentDockHost();
+    if (!host.live()) return;
     if (!AppView._stagingDockViewport()) return;
-    if (DevChat.openStagingPanel) DevChat.openStagingPanel();
+    host.redock();
     AppView._setStagingMode('docked');
   },
 
@@ -20223,7 +20305,7 @@ const AppView = {
     const docked = AppView._stagingMode === 'docked';
     const overlayOpen = staging.isOpen();
     const canRedock = AppView._stagingDockable
-      && typeof DevChat !== 'undefined' && !!DevChat.currentSession
+      && AppView._currentDockHost().live()
       && AppView._stagingDockViewport();
     staging.setFullscreenBtn({
       hidden: !overlayOpen || (!docked && !canRedock),
@@ -20635,10 +20717,13 @@ const AppView = {
     const wasDocked = AppView._stagingMode === 'docked';
     AppView._stagingDockable = false;
     if (wasDocked) AppView._setStagingMode('fullscreen');
-    if (wasDocked && typeof DevChat !== 'undefined'
-        && DevChat.stagingPanel && DevChat.stagingPanel.open) {
-      DevChat.stagingPanel.open = false;
-      DevChat.renderChatView();
+    // #2779: the host this preview was docked in (or opened for) hears it
+    // close once, and the next preview starts from the dev chat's default.
+    const host = AppView._currentDockHost();
+    AppView._stagingDockHost = null;
+    if (wasDocked) host.collapse();
+    if (typeof host.closed === 'function') {
+      try { host.closed(); } catch { /* the host's own bookkeeping */ }
     }
     staging.setFullscreenBtn({ hidden: true });
     // Invalidate any in-flight readiness poll and hide the loader.

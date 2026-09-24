@@ -275,16 +275,24 @@ function attachmentGroups(rows, conversationId) {
   return map;
 }
 
+// A line's worth of a message, for a thread's lines in the main stream and
+// its card: whitespace collapsed, cut at 140 characters.
+function snippet(text, max = 140) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
 // #2387: the thread line under a main-stream message — how many replies the
-// viewer can see, when the last one landed, and the (up to three) people who
-// replied most recently. A reply the viewer cannot see (its sender is one
-// they blocked) or one its author deleted is not counted, so a thread whose
-// every visible reply is gone has no summary at all rather than "0 replies".
+// viewer can see, when the last one landed, the (up to three) people who
+// replied most recently, and (the follow-up's card) the newest reply itself.
+// A reply the viewer cannot see (its sender is one they blocked) or one its
+// author deleted is not counted, so a thread whose every visible reply is
+// gone has no summary at all rather than "0 replies".
 async function threadSummaries(db, user, rootIds) {
   if (!rootIds.length) return new Map();
   const { rows } = await db.query(
     `WITH replies AS (
-       SELECT r.id, r.thread_root_id, r.sender_id, r.created_at
+       SELECT r.id, r.thread_root_id, r.sender_id, r.created_at, r.content
          FROM conversation_messages r
         WHERE r.thread_root_id = ANY($1::int[]) AND r.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM user_blocks b
@@ -297,16 +305,30 @@ async function threadSummaries(db, user, rootIds) {
               ROW_NUMBER() OVER (PARTITION BY thread_root_id ORDER BY MAX(id) DESC) AS rank
          FROM replies WHERE sender_id IS NOT NULL
         GROUP BY thread_root_id, sender_id
+     ), people AS (
+       SELECT p.thread_root_id,
+              jsonb_agg(jsonb_build_object('id', u.id, 'username', u.username, 'avatarId', ua.id)
+                        ORDER BY p.rank) AS participants
+         FROM repliers p
+         JOIN users u ON u.id = p.sender_id
+         LEFT JOIN user_avatars ua ON ua.user_id = u.id
+        WHERE p.rank <= 3
+        GROUP BY p.thread_root_id
+     ), newest AS (
+       SELECT DISTINCT ON (thread_root_id) thread_root_id, id, sender_id, content, created_at
+         FROM replies
+        ORDER BY thread_root_id, id DESC
      )
      SELECT s.thread_root_id AS root_id, s.reply_count, s.last_reply_at,
-            COALESCE(jsonb_agg(jsonb_build_object(
-              'id', u.id, 'username', u.username, 'avatarId', ua.id
-            ) ORDER BY p.rank) FILTER (WHERE u.id IS NOT NULL), '[]'::jsonb) AS participants
+            COALESCE(pp.participants, '[]'::jsonb) AS participants,
+            n.id AS last_reply_id, n.content AS last_reply_content, n.created_at AS last_reply_created_at,
+            n.sender_id AS last_reply_sender_id, lu.username AS last_reply_username,
+            lua.id AS last_reply_avatar_id
        FROM summary s
-       LEFT JOIN repliers p ON p.thread_root_id = s.thread_root_id AND p.rank <= 3
-       LEFT JOIN users u ON u.id = p.sender_id
-       LEFT JOIN user_avatars ua ON ua.user_id = u.id
-      GROUP BY s.thread_root_id, s.reply_count, s.last_reply_at`,
+       LEFT JOIN people pp ON pp.thread_root_id = s.thread_root_id
+       LEFT JOIN newest n ON n.thread_root_id = s.thread_root_id
+       LEFT JOIN users lu ON lu.id = n.sender_id
+       LEFT JOIN user_avatars lua ON lua.user_id = lu.id`,
     [rootIds, user.id]
   );
   return new Map(rows.map((row) => [row.root_id, {
@@ -317,6 +339,16 @@ async function threadSummaries(db, user, rootIds) {
       username: person.username,
       avatarUrl: person.avatarId ? `/avatars/${person.avatarId}` : null,
     })),
+    lastReply: row.last_reply_id ? {
+      id: row.last_reply_id,
+      sender: {
+        id: row.last_reply_sender_id || 0,
+        username: row.last_reply_username || 'Deleted user',
+        avatarUrl: row.last_reply_avatar_id ? `/avatars/${row.last_reply_avatar_id}` : null,
+      },
+      content: snippet(row.last_reply_content),
+      createdAt: row.last_reply_created_at,
+    } : null,
   }]));
 }
 
@@ -396,6 +428,14 @@ async function hydrateMessages(db, user, rows) {
       deleted,
       threadRootId: row.thread_root_id ?? null,
       thread: row.thread_root_id == null ? (threads.get(row.id) || null) : null,
+      // #2387 follow-up: what a reply's entry in the main stream names — the
+      // start of the message its thread hangs off.
+      threadRoot: row.thread_root_id == null ? null : {
+        id: row.thread_root_id,
+        senderUsername: row.thread_root_sender_username || 'Deleted user',
+        content: row.thread_root_deleted_at ? '' : snippet(row.thread_root_content),
+        deleted: !!row.thread_root_deleted_at,
+      },
     };
   });
 }
@@ -406,13 +446,17 @@ const MESSAGE_SELECT = `
          su.username AS sender_username, sua.id AS sender_avatar_id,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
          rm.deleted_at AS reply_deleted_at,
-         ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id
+         ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id,
+         tr.content AS thread_root_content, tr.deleted_at AS thread_root_deleted_at,
+         tru.username AS thread_root_sender_username
     FROM conversation_messages m
     LEFT JOIN users su ON su.id = m.sender_id
     LEFT JOIN user_avatars sua ON sua.user_id = su.id
     LEFT JOIN conversation_messages rm ON rm.id = m.reply_to_id
     LEFT JOIN users ru ON ru.id = rm.sender_id
-    LEFT JOIN user_avatars rua ON rua.user_id = ru.id`;
+    LEFT JOIN user_avatars rua ON rua.user_id = ru.id
+    LEFT JOIN conversation_messages tr ON tr.id = m.thread_root_id
+    LEFT JOIN users tru ON tru.id = tr.sender_id`;
 
 async function getMessage(db, user, conversationId, messageId) {
   const { rows } = await db.query(
@@ -429,16 +473,24 @@ function pageLimit(limit) {
   return Math.min(Math.max(Number(limit) || 50, 1), 100);
 }
 
-// The main stream (#2387): every page below reads `thread_root_id IS NULL`,
-// so a thread reply never appears in the transcript — it is reached through
-// its root's `thread` summary and listThread() instead. Each direction is its
-// own fully static statement rather than one with an optional bound, so the
-// SQL linter validates all three and each keeps its index-ordered plan.
+// The main stream (#2387): the conversation's own messages, and — since the
+// follow-up — its threads' live replies too, each drawn there as a line
+// saying who replied in which thread, so the transcript keeps the order
+// things happened in. A deleted reply leaves no line, and neither does a
+// reply in a thread whose first message the viewer cannot see. Each
+// direction is its own fully static statement rather than one with an
+// optional bound, so the SQL linter validates all three and each keeps its
+// index-ordered plan.
+const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
+          m.deleted_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden_root
+                            JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.sender_id
+                           WHERE hidden_root.id = m.thread_root_id AND hb.blocker_id = $2)))`;
 async function mainStreamBefore(db, user, conversationId, before, count) {
   if (before) {
     return (await db.query(
       `${MESSAGE_SELECT}
-        WHERE m.conversation_id = $1 AND m.thread_root_id IS NULL AND m.id < $3
+        WHERE m.conversation_id = $1 AND ${MAIN_STREAM_ROW} AND m.id < $3
           AND NOT EXISTS (SELECT 1 FROM user_blocks b
                            WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
         ORDER BY m.id DESC LIMIT $4`,
@@ -447,7 +499,7 @@ async function mainStreamBefore(db, user, conversationId, before, count) {
   }
   return (await db.query(
     `${MESSAGE_SELECT}
-      WHERE m.conversation_id = $1 AND m.thread_root_id IS NULL
+      WHERE m.conversation_id = $1 AND ${MAIN_STREAM_ROW}
         AND NOT EXISTS (SELECT 1 FROM user_blocks b
                          WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
       ORDER BY m.id DESC LIMIT $3`,
@@ -458,7 +510,7 @@ async function mainStreamBefore(db, user, conversationId, before, count) {
 async function mainStreamAfter(db, user, conversationId, after, count) {
   return (await db.query(
     `${MESSAGE_SELECT}
-      WHERE m.conversation_id = $1 AND m.thread_root_id IS NULL AND m.id > $3
+      WHERE m.conversation_id = $1 AND ${MAIN_STREAM_ROW} AND m.id > $3
         AND NOT EXISTS (SELECT 1 FROM user_blocks b
                          WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
       ORDER BY m.id ASC LIMIT $4`,

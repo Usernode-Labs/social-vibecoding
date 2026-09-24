@@ -114,10 +114,15 @@ function stagingMockThreadSummary(appId) {
     seen.add(r.user_id);
     participants.push({ id: r.user_id, username: r.username });
   }
+  const last = replies[replies.length - 1];
   return {
     reply_count: replies.length,
-    last_reply_at: replies[replies.length - 1].created_at,
+    last_reply_at: last.created_at,
     participants: participants.slice(0, appChat.MAX_PARTICIPANTS),
+    last_reply: {
+      id: last.id, user_id: last.user_id, username: last.username,
+      content: appChat.snippet(last.content), created_at: last.created_at,
+    },
   };
 }
 
@@ -176,6 +181,22 @@ function stagingMockGroupChat(appId, thread) {
   ];
 }
 
+// #2387 follow-up: the general stream draws a reply thread's replies too, as
+// a line each where they landed. The mock's three came after this morning's
+// root and before the rows of the last few minutes, so they go straight after
+// it — one run of consecutive replies, which the transcript merges into one
+// card. Their ids sit above the rest of the mock's; order is the array's.
+function stagingMockGeneralStream(appId) {
+  const rows = stagingMockGroupChat(appId, null);
+  const at = rows.findIndex((m) => m.id === DEMO_THREAD_ROOT_ID);
+  const root = rows[at];
+  const threadRoot = {
+    id: DEMO_THREAD_ROOT_ID, username: root.username, content: appChat.snippet(root.content), deleted: false,
+  };
+  const replies = stagingMockReplies(appId).map((m) => ({ ...m, thread_root: threadRoot }));
+  return [...rows.slice(0, at + 1), ...replies, ...rows.slice(at + 1)];
+}
+
 // The demo topics whose mock transcript IS the fixture: the declared checks
 // read these rows (#1926's folded conflict notices, #2236's via-agent chip on
 // issue 900008's Discussion), so they must not depend on nobody having typed
@@ -208,7 +229,8 @@ function stagingDemoTranscript(appId, thread, realRows) {
     // (history is merged by id); keep the fixture row, which the checks read.
     return [...mock, ...realRows.filter((m) => !mockIds.has(m.id))];
   }
-  return realRows.length === 0 ? stagingMockGroupChat(appId, thread) : null;
+  if (realRows.length) return null;
+  return thread ? stagingMockGroupChat(appId, thread) : stagingMockGeneralStream(appId);
 }
 
 // #2387: the mock reply thread, as `thread_type=message&thread_ref=<root>`
@@ -229,8 +251,8 @@ function stagingMockReplyThread(appId, rootId) {
 // mock transcript with its focus; `after` answers what follows. Null when
 // the id is not a mock one, so the real read runs.
 function stagingMockStreamPage(appId, { around = null, after = null } = {}) {
-  const rows = stagingMockGroupChat(appId, null);
-  const ids = new Set(rows.map((m) => m.id));
+  const rows = stagingMockGeneralStream(appId);
+  const ids = new Set(rows.filter((m) => !m.thread_type).map((m) => m.id));
   if (around != null) {
     if (ids.has(around)) {
       return {
@@ -358,9 +380,10 @@ function chatRoutes(config) {
   router.get('/api/apps/:slug/messages', async (req, res) => {
     const limit = pageLimit(req.query.limit);
 
-    // #194: optional thread scoping. Absent → general chat only
-    // (thread_type IS NULL) — this is what keeps thread messages out of
-    // the general stream, reply threads (#2387) included. Both params must
+    // #194: optional thread scoping. Absent → the general chat: its own
+    // messages (thread_type IS NULL), which keeps topic threads out of it,
+    // plus — since the #2387 follow-up — the live replies of its reply
+    // threads, which the transcript draws as a line each (selectStream). Both params must
     // be present and valid to select a thread; a malformed pair is a 400
     // rather than silently falling back to general chat.
     const threadType = req.query.thread_type || null;
@@ -496,8 +519,6 @@ function chatRoutes(config) {
     if (thread) {
       params.push(thread.type, thread.ref);
       where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
-    } else {
-      where += ' AND m.thread_type IS NULL';
     }
     if (op) {
       params.push(pivot);
@@ -505,6 +526,19 @@ function chatRoutes(config) {
     }
     params.push(viewerId);
     const viewerIndex = params.length;
+    // The general stream (#2387 follow-up): its own messages, and the live
+    // replies of its reply threads, which the transcript draws as a line each
+    // where they landed. A deleted reply leaves no line; neither does a reply
+    // under a root by somebody the viewer blocked.
+    if (!thread) {
+      where += ` AND (m.thread_type IS NULL OR (
+        m.thread_type = 'message' AND m.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_messages hidden_root
+            JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.user_id
+           WHERE hidden_root.id = m.thread_ref AND hb.blocker_id = $${viewerIndex}
+        )))`;
+    }
     params.push(limit);
     const { rows } = await db.query(
       `SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
@@ -634,6 +668,31 @@ function chatRoutes(config) {
       for (const m of live) m.has_unread_notification = unreadIds.has(m.id);
     } catch (err) {
       log.warn('chat', 'unread-dot hydrate failed', { message: err.message });
+    }
+
+    // #2387 follow-up: a reply drawn in the general stream names the message
+    // its thread hangs off — the start of it, as the line reads it out.
+    const rootIds = [...new Set(messages
+      .filter((m) => m.thread_type === appChat.MESSAGE_THREAD).map((m) => Number(m.thread_ref)))];
+    if (general && rootIds.length) {
+      try {
+        const { rows: roots } = await pool.query(
+          `SELECT r.id, r.content, r.deleted_at, u.username
+             FROM chat_messages r
+             LEFT JOIN users u ON u.id = r.user_id
+            WHERE r.id = ANY($1::int[]) AND r.app_id = $2`,
+          [rootIds, appId]
+        );
+        const byId = new Map(roots.map((r) => [Number(r.id), {
+          id: Number(r.id), username: r.username || null,
+          content: r.deleted_at ? '' : appChat.snippet(r.content), deleted: !!r.deleted_at,
+        }]));
+        for (const m of messages) {
+          if (m.thread_type === appChat.MESSAGE_THREAD) m.thread_root = byId.get(Number(m.thread_ref)) || null;
+        }
+      } catch (err) {
+        log.warn('chat', 'thread root hydrate failed', { message: err.message });
+      }
     }
 
     // #2387: a general-stream row with visible replies says how many, when
@@ -1149,6 +1208,7 @@ module.exports = {
   chatRoutes,
   postedViaFor,
   stagingMockGroupChat,
+  stagingMockGeneralStream,
   stagingDemoTranscript,
   stagingMockReplyThread,
   stagingMockStreamPage,

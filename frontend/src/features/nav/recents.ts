@@ -16,6 +16,7 @@
  * whole argument, and a test should drive them with plain arrays.
  */
 
+import { agentActivity, type AgentActivity } from '../agent-session/activity';
 import type { AgentChat, AppDiscussion } from '../messages/inbox';
 
 /** An app you left, as ./recent-apps-store.js keeps it. */
@@ -40,6 +41,8 @@ export interface RecentItem {
   /** ISO, or null when the source has no clock. */
   at: string | null;
   unread: boolean;
+  /** Only for `agent` sessions: working (a spinner) or finished unseen (a green dot). */
+  activity?: AgentActivity;
   /** Only for `app`: what the tile draws and what resuming opens. */
   app?: { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
 }
@@ -68,6 +71,8 @@ export interface RecentAgentSession {
   lastActivityAt: string | null;
   createdAt?: string | null;
   activeChange?: unknown;
+  busy?: boolean;
+  doneUnseen?: boolean;
 }
 
 /** How many rows the list holds (#2878). NOT how many the rail shows: the
@@ -168,6 +173,7 @@ export function buildRecents(input: {
       href: `#messages/agent/${item.id}`,
       at: item.lastActivityAt || item.createdAt || null,
       unread: false,
+      activity: agentActivity(item),
     });
   }
   return pick(items, input.limit);
