@@ -70,9 +70,15 @@ export type CardRow = Extract<ListRow, { t: 'card' }>;
  */
 export type DetailPlacement = 'actions' | false;
 
-export function callAppView(fn: string, ...args: unknown[]): void {
+/**
+ * Call an AppView method by name. Returns whatever it returned (undefined
+ * when there is no such method), so a caller that needs the outcome, such as
+ * the Needs-you deck waiting on `castVote`, can have it.
+ */
+export function callAppView(fn: string, ...args: unknown[]): unknown {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  if (av && typeof av[fn] === 'function') av[fn](...args);
+  if (av && typeof av[fn] === 'function') return av[fn](...args);
+  return undefined;
 }
 
 /**

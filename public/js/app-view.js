@@ -4429,7 +4429,15 @@ const AppView = {
     }
     if (mine && !AppView.readOnly && open && AppView._headHome(item) === 'app_repo' && item.source !== 'imported') {
       main.actions = [...(main.actions || []), { key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main', disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] } }];
-    } else if (AppView._headHome(item) === 'user_fork') {
+    } else if (AppView._headHome(item) === 'user_fork'
+      // QA 2026-09-24: only when there is something to update. This went
+      // under every fork proposal's row, so a branch that was "Up to date
+      // with main." was told in the next line that its author had to update
+      // it. A quiet row (mute, or ok) needs nothing; a conflict already
+      // carries the fork's own remedy in its foot, which says the same thing
+      // with the reason, so it is not said twice either.
+      && main.tone !== 'mute' && main.tone !== 'ok'
+      && !(main.foot && main.foot.length)) {
       main.foot = [...(main.foot || []), ['The author must update this branch in their fork, then push the changes.']];
     }
     const votes = rows.find((r) => r.key === 'votes');
@@ -5709,8 +5717,9 @@ const AppView = {
         // preselected as the target (Platform for the self-hosted app, or
         // while the repo does not exist yet) — #226. The same call
         // Improve.giveFeedback() makes when the panel's app is the open one,
-        // so the two entry points cannot drift.
-        App.openFeedbackModal({ fromDev: true });
+        // so the two entry points cannot drift. QA 2026-09-24: plus
+        // `intent`, so the dialog is headed "File an issue".
+        App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
@@ -12162,7 +12171,11 @@ const AppView = {
     // it names the person and the exact action — or says that nobody need
     // act, and how the author can hurry it. The rest restated the row's own
     // text. The file list keeps its lead-in and sits under it.
-    const remedyParts = remedy ? remedy.parts : null;
+    // QA 2026-09-24: the rest of it, not the lead. `sync.text` above has
+    // just said what the platform does with the conflict, and the remedy's
+    // own lead said it again underneath ("... resolves it automatically,
+    // then tries the merge again. The platform resolves it automatically.").
+    const remedyParts = remedy ? (remedy.followUp || remedy.parts) : null;
     // The file list does NOT survive into the step. It was the bulkiest
     // thing on the panel and the least actionable: both-sides-changed is an
     // upper bound on the conflict rather than the conflict (two edits at
@@ -12530,31 +12543,45 @@ const AppView = {
     const served = (pr.integration && Array.isArray(pr.integration.blockReasons))
       ? pr.integration.blockReasons : [];
     const sync = ': open the session’s dev-chat and run "Sync with main".';
-    let parts;
+    // QA 2026-09-24: `lead` is the sentence about what the PLATFORM does and
+    // `rest` is what a person can do. `parts` is both, as before. The
+    // proposal's "Sync with main" step already opens with its own sentence
+    // about the platform ("Homeroom resolves it automatically, then tries the
+    // merge again."), so it takes `followUp` (the rest alone) rather than
+    // saying the same thing twice in a row.
+    let lead = null;
+    let rest;
     if (pr.source !== 'imported') {
       if (mode === 'failed') {
-        parts = [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.'];
+        rest = [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.'];
       } else if (mode === 'conflict') {
-        parts = ['Automatic resolution may not run for this proposal. ', { b: creator },
-          ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".'];
+        lead = 'Automatic resolution may not run for this proposal. ';
+        rest = [{ b: creator }, ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".'];
       } else if (served.includes('integrating')) {
-        parts = ['The platform is resolving it now. Nobody needs to do anything.'];
+        lead = 'The platform is resolving it now. ';
+        rest = ['Nobody needs to do anything.'];
       } else if (served.includes('unresolvable')) {
-        parts = ['The platform tried to resolve it and could not. ', { b: creator }, ` needs to bring it up to date${sync}`];
+        lead = 'The platform tried to resolve it and could not. ';
+        rest = [{ b: creator }, ` needs to bring it up to date${sync}`];
       } else if (served.includes('awaiting_approval')) {
-        parts = ['The platform resolves it once the vote passes. ', { b: creator }, ` can bring it up to date sooner${sync}`];
+        lead = 'The platform resolves it once the vote passes. ';
+        rest = [{ b: creator }, ` can bring it up to date sooner${sync}`];
       } else {
-        parts = ['The platform resolves it automatically. ', { b: creator }, ` can also bring it up to date sooner${sync}`];
+        lead = 'The platform resolves it automatically. ';
+        rest = [{ b: creator }, ` can also bring it up to date sooner${sync}`];
       }
     } else if (home === 'app_repo') {
-      parts = mode === 'failed'
-        ? [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.']
-        : ['Homeroom keeps this branch itself and will try to resolve it automatically at the next merge attempt. If that fails, ',
-          { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
+      if (mode === 'failed') {
+        rest = [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.'];
+      } else {
+        lead = 'Homeroom keeps this branch itself and will try to resolve it automatically at the next merge attempt. ';
+        rest = ['If that fails, ', { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
+      }
     } else {
-      parts = ['This branch lives in ', { b: creator }, '’s own fork, which Homeroom cannot write to, so it cannot sync it itself. ',
+      rest = ['This branch lives in ', { b: creator }, '’s own fork, which Homeroom cannot write to, so it cannot sync it itself. ',
         { b: creator }, ' needs to merge main into the branch and push it; the proposal follows the push.'];
     }
+    const parts = lead ? [lead, ...rest] : rest;
     // The pill's plain-text detail. A native row keeps the sentence the pill
     // has always carried; an imported one gets the note's sentence, since
     // that is the first time the pill has had anything true to say about it.
@@ -12584,6 +12611,7 @@ const AppView = {
     const tone = authorActs ? 'blocking' : (laneWorking ? 'running' : 'soft');
     return {
       parts,
+      followUp: rest,
       tone,
       // The short form the tag wears. Null leaves the caller's own label
       // alone, which is what an auto-resolving conflict wants: the file
@@ -14007,9 +14035,12 @@ const AppView = {
       const approverSet = new Set(data.approvers || []);
       // A non-breaking space, not `&nbsp;` — the head renders this as a
       // text child, so the entity would show up literally.
+      // QA 2026-09-24: an empty side is an empty string, not a bare dash.
+      // The head leaves that side out (topic-head.tsx's Roster), so the line
+      // reads "Yes (2): @a, @b" rather than "Yes (2): @a, @b No (0): —".
       const fmt = (arr) => (arr && arr.length
         ? arr.map((u) => '@' + u + (approverSet.has(u) ? '\u00a0✓' : '')).join(', ')
-        : '—');
+        : '');
       // #695: on invited apps the headline count splits into approver
       // votes (✓, the ones that count) + the advisory surplus; under the
       // default policy it stays the plain total.
@@ -14087,8 +14118,8 @@ const AppView = {
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       // A non-breaking space is not needed here (no approver ticks on a
-      // governance roster), but the em dash placeholder is the same.
-      const fmt = (arr) => (arr && arr.length ? arr.map((u) => '@' + u).join(', ') : '—');
+      // governance roster), and an empty side is left out the same way.
+      const fmt = (arr) => (arr && arr.length ? arr.map((u) => '@' + u).join(', ') : '');
       const yes = Array.isArray(data.yes) ? data.yes : [];
       const no = Array.isArray(data.no) ? data.no : [];
       const reasons = (Array.isArray(data.reasons) ? data.reasons : [])
@@ -18747,12 +18778,22 @@ const AppView = {
     }
     return AppView._askVoteReason(vote);
   },
+  // QA 2026-09-24 Q3: resolves TRUE only when the server took the vote, and
+  // false for everything else — a cancelled No, a refusal, a network
+  // failure, or a second press while the first is still in flight. The
+  // Workshop's Needs-you deck marked its card "Voted no" before this ran,
+  // so cancelling the "What's not working for you?" prompt left a card
+  // saying you had voted when nothing was sent. It waits for this answer
+  // now. `opts.onSend` is called at the moment the vote is committed to
+  // (the line is in hand and the optimistic paint is about to happen), so
+  // a caller can show that it is on its way without claiming it landed.
+  // The onclick callers ignore the value, as they always have.
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
     // avoids pointless round-trips and keeps the UI responsive.
     const key = `${sessionId}:${vote}`;
-    if (AppView._voteInFlight.has(key)) return;
+    if (AppView._voteInFlight.has(key)) return false;
     AppView._voteInFlight.add(key);
     // #1688: the line, before anything is painted — a cancelled No must
     // leave the card exactly as it was.
@@ -18764,7 +18805,11 @@ const AppView = {
     }
     if (reason === false) {
       AppView._voteInFlight.delete(key);
-      return;
+      return false;
+    }
+    const onSend = opts && typeof opts.onSend === 'function' ? opts.onSend : null;
+    if (onSend) {
+      try { onSend(vote); } catch { /* the caller's paint, never the vote's */ }
     }
     // #1924: the card leaves "Needs your vote" on the click, not after the
     // 1–2 s round-trip. The lane (and the Board's needs-vote filter, and the
@@ -18821,7 +18866,7 @@ const AppView = {
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
           || data.error || `Vote failed (HTTP ${res.status}).`);
-        return;
+        return false;
       }
       AppView._seenEpoch.delete(sessionId);
       // The overlay stays until the post-vote read has landed: a load queued
@@ -18831,8 +18876,14 @@ const AppView = {
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
       window.Notifications?.refresh?.();
+      return true;
     } catch {
       rollback();
+      // QA 2026-09-24 Q3: a vote that never reached the server used to put
+      // the card back without a word, which read as the button doing
+      // nothing. Say so, in the same place a refusal is said.
+      window.PlatformUI?.toast?.('Your vote did not go through. Check your connection and try again.');
+      return false;
     }
     finally {
       AppView._voteInFlight.delete(key);
