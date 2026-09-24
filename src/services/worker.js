@@ -1234,6 +1234,10 @@ function newWatchState() {
     // Last HTTP request observed by the worker-local OpenRouter adapter.
     // Only content-free fields are accepted by the Codex normalizer.
     providerRequest: null,
+    // #3038: the per-turn sum of each model request's usage as the adapter
+    // saw it finish. Survives a stop, unlike the agent's own totals, which
+    // arrive only at turn.completed. A floor: an in-flight request is missing.
+    relayUsage: null,
     // The output-token budget OpenRouter said the key could afford, when it
     // said so. Drives the one clamped retry in the sessions attempt loop.
     affordableOutputTokens: null,

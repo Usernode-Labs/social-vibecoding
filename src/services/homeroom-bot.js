@@ -867,6 +867,24 @@ function wasStoppedRecently(sessionId, now = Date.now()) {
 }
 
 /**
+ * What a turn used, from the relay's per-request sum, and what that costs
+ * at the turn's catalog price (#3038). Null when the relay saw no request
+ * finish; `costUsd` is null when the turn had no pricing snapshot.
+ */
+function relaySpend(relayUsage, pricing, agentTurn) {
+  const count = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
+  const requests = count(relayUsage?.requests);
+  if (!requests) return null;
+  const inputTokens = count(relayUsage.inputTokens) ?? 0;
+  const outputTokens = count(relayUsage.outputTokens) ?? 0;
+  const { estimatedCostUsd } = agentTurn.estimateRequestedModelCost({ inputTokens, outputTokens }, pricing);
+  return {
+    requests, inputTokens, outputTokens,
+    costUsd: Number.isFinite(estimatedCostUsd) ? estimatedCostUsd : null,
+  };
+}
+
+/**
  * Why a turn came back with nothing (#2870).
  *
  * The worker's watch state is what `execInWorker` returns, and it already
@@ -1088,6 +1106,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   if (typeof budgetTimer.unref === 'function') budgetTimer.unref();
 
   let routed;
+  // The turn's pricing snapshot, as the runtime resolved it, so a turn the
+  // ledger could not price is priced from the same catalog (#3038).
+  let pricing = null;
   try {
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
@@ -1096,7 +1117,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
-      dispatchOnce: (ctx) => worker.execInWorker(session.id, {
+      dispatchOnce: (ctx) => { pricing = ctx?.pricingSnapshot || pricing; return worker.execInWorker(session.id, {
         mode: 'scout',
         // No `onUsage` here, deliberately (#3035). Neither agent the bot can
         // run reports usage until its turn is over, so a token check wired
@@ -1112,7 +1133,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
         ...(ctx || {}),
         telemetryComponent: 'homeroom_bot_triage',
         onProgress: () => {},
-      }),
+      }); },
       retryPredicate: () => null,
       sendStatus: async () => {},
       waitForStopped: async () => {},
@@ -1138,13 +1159,35 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   // branch took first, so the turns that wasted the most were the only ones
   // the weekly cap never saw.
   const result = (routed && routed.result) || {};
-  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd)
+  const ledgerCostUsd = Number.isFinite(routed && routed.estimatedCostUsd)
     ? routed.estimatedCostUsd
     : null;
+  // When the ledger has no figure — always, for a turn stopped before
+  // turn.completed — fall back to what the relay saw each model request use
+  // (#3038), priced by the same estimator the ledger uses for a finished
+  // turn, so a stopped turn and a finished one are measured alike. It is a
+  // floor: the request in flight at the stop never reports.
+  const relay = relaySpend(result.relayUsage, pricing, agentTurn);
+  const costUsd = ledgerCostUsd ?? relay?.costUsd ?? null;
   const usage = {
-    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : null,
-    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : null,
+    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
+    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : (relay?.outputTokens ?? null),
   };
+  if (ledgerCostUsd == null && relay) {
+    log.info('homeroom-bot', 'Turn priced from the relay: the agent reported no usage', {
+      app: app.slug, issueNumber, stopped: budgetHit || null, costUsd: relay.costUsd,
+      requests: relay.requests, inputTokens: relay.inputTokens, outputTokens: relay.outputTokens,
+    });
+  } else if (relay && Number.isFinite(result.inputTokens)) {
+    // Both figures exist on a finished turn. With a fresh thread per issue
+    // they should agree; this is how production confirms the relay figure
+    // before anything relies on it for a turn that did not finish.
+    log.info('homeroom-bot', 'Turn usage: agent total vs relay sum', {
+      app: app.slug, issueNumber, agentInputTokens: result.inputTokens, relayInputTokens: relay.inputTokens,
+      agentOutputTokens: result.outputTokens ?? null, relayOutputTokens: relay.outputTokens,
+      requests: relay.requests,
+    });
+  }
 
   // #2571: an included (company-funded) key's spend joins the shared weekly
   // pool the budget gate above measures; a personal key would be nobody's
@@ -1733,6 +1776,7 @@ module.exports = {
   noteStopped,
   wasStoppedRecently,
   describeStop,
+  relaySpend,
   STOP_SETTLE_MS,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,
