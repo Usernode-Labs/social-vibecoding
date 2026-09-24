@@ -3869,6 +3869,11 @@ test('#2767/#2769: the phone rail sits at the HEAD of the page, in flow, and lea
   assert.ok(area, 'the floor exists');
   assert.match(area[1], /var\(--ws-gap\)/);
   assert.match(area[1], /max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)/);
+  // QA 2026-09-24 Q8: and the fixed strips above the header ("Get the app",
+  // offline), which body padding reserves at the head of the page. Without
+  // this a phone browser with the install strip up pushed the foot of every
+  // Needs you card under the tab bar.
+  assert.match(area[1], /100dvh - var\(--browser-banner-h, 0px\)/);
   // The fitted box is the same length, since nothing floats over its foot.
   assert.match(CSS, /--ws-fit: var\(--ws-area\);/);
   // And the wide block no longer needs its own floor: the base one is the

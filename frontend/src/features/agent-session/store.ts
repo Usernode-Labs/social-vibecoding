@@ -18,6 +18,7 @@
 
 import { useSyncExternalStore } from 'react';
 
+import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
 import type {
   AgentAction,
@@ -662,9 +663,23 @@ export function closeSpec() {
 
 // ── The model ──────────────────────────────────────────────────────────
 
-/** Read the picker's options once per page; a failed read is retried on the next open. */
+/**
+ * Read the picker's options once per page; a failed read is retried on the next open.
+ *
+ * Member-only, so it waits for a viewer the endpoint answers (QA 2026-09-24
+ * Q35, ../../lib/platform-viewer.ts) instead of spending a 401 or 403 on a
+ * signed-out or waitlisted document; `sv:authed` asks again.
+ */
+let catalogDeferred = false;
 export function loadModelCatalog(): Promise<void> {
   if (state.catalog) return Promise.resolve();
+  if (!hasPlatformViewer()) {
+    if (!catalogDeferred) {
+      catalogDeferred = true;
+      whenPlatformViewer(() => { catalogDeferred = false; void loadModelCatalog(); });
+    }
+    return Promise.resolve();
+  }
   if (!catalogRequest) {
     catalogRequest = api.loadModelCatalog()
       .then((catalog) => { publish({ catalog }); })
@@ -700,7 +715,22 @@ export async function chooseAgent(choice: AgentChoice) {
 
 // ── The list, for Messages ─────────────────────────────────────────────
 
+/**
+ * The list is per-user, and this is called at mount by Messages, the nav's
+ * recents and the app sheet, all of which are mounted on every document. So
+ * it waits for a viewer `/api/agent-sessions` answers (QA 2026-09-24 Q35,
+ * ../../lib/platform-viewer.ts) rather than logging a 401 on the signed-out
+ * landing or a 403 in the waiting room, and loads on `sv:authed` instead.
+ */
+let sessionsDeferred = false;
 export async function loadAgentSessions() {
+  if (!hasPlatformViewer()) {
+    if (!sessionsDeferred) {
+      sessionsDeferred = true;
+      whenPlatformViewer(() => { sessionsDeferred = false; void loadAgentSessions(); });
+    }
+    return;
+  }
   try {
     const sessions = await api.listSessions();
     publish({ sessions, sessionsLoaded: true });

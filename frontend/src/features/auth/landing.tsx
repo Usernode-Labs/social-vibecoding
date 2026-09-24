@@ -188,13 +188,15 @@ const ViewerRegion = memo(function ViewerRegion() {
           "geolocation", delegated to every public app a visitor opened here.
           A gated capability needs a per-user grant, and this viewer serves
           signed-out visitors, so there is nobody to hold one — see
-          ../app-frame/app-frame-policy.js.
+          ../app-frame/app-frame-policy.js, and BASE_ALLOW there for why
+          `pointer-lock` is not written (QA 2026-09-24 Q35): this frame has
+          no sandbox, so pointer lock was never restricted in the first place.
       */}
       <iframe
         id="app-viewer-frame"
         className="flex-1 w-full border-0"
         title="App"
-        allow="clipboard-write; pointer-lock"
+        allow="clipboard-write"
       ></iframe>
     </div>
   );

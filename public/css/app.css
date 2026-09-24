@@ -11545,7 +11545,7 @@ a.drawer-ver--fork:hover {
   --un-modal-max-height: var(--create-modal-height);
   --un-modal-padding: var(--create-modal-padding);
   --un-modal-radius: var(--create-modal-radius);
-  background-color: var(--dc-strip-fill);
+  background-color: var(--create-modal-fill, var(--dc-strip-fill));
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .un-modal:has(> #create-card) { background-color: var(--dc-strip); }
@@ -11555,9 +11555,23 @@ a.drawer-ver--fork:hover {
    the native webview. These optional layout tokens affect only this dialog;
    on desktop the kit and the unadopted card keep their existing defaults.
    Reserve safe areas INSIDE the full-screen surface and leave the keyboard
-   strip outside it. The surface remains the scroller on every step. */
+   strip outside it. The surface remains the scroller on every step.
+
+   FULL SCREEN IS OPAQUE (QA 2026-09-24 Q8). The centred desktop card
+   floats over a dimmed page, so the pane glass above (`--dc-strip-fill`,
+   38%) is legible there. Filling the viewport, the same 38% let the header,
+   the bell, "Your apps" and the "Get the app" strip read through behind the
+   dialog's own title, and even #2887's 95% for floating surfaces still
+   ghosted the strip's logo there. A screen that IS the page has nothing
+   worth showing through it, so `--create-modal-fill` is the opaque grey
+   ground itself, `--dc-strip`: the same colour the no-backdrop-filter
+   fallback below already paints, so the white cards keep their contrast.
+   Being opaque and above the strip (z-45) is also why the top padding does
+   not add `--install-strip-h`: the strip is covered, not overlapped, which
+   is what that strip's own rule asks of a surface the person opened. */
 @media (max-width: 767px), (hover: none) and (pointer: coarse) {
   :root {
+    --create-modal-fill: var(--dc-strip);
     --create-modal-width: 100vw;
     --create-modal-height: calc(100dvh - var(--un-kb-inset, 0px));
     --create-modal-radius: 0px;
@@ -11569,6 +11583,7 @@ a.drawer-ver--fork:hover {
   }
 }
 html.in-native-webview {
+  --create-modal-fill: var(--dc-strip);
   --create-modal-width: 100vw;
   --create-modal-height: calc(100dvh - var(--un-kb-inset, 0px));
   --create-modal-radius: 0px;
@@ -15239,9 +15254,20 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      its box and the air under it off by hand. It sits at the head of the page
      now (#2767), in flow INSIDE this box, so the flex chain accounts for it
      and the floor must not take it off a second time — the arithmetic the
-     wide layout has always used, at every width. */
+     wide layout has always used, at every width.
+
+     THE FIXED STRIPS ABOVE THE HEADER ARE CHROME TOO (QA 2026-09-24 Q8).
+     `--browser-banner-h` is the install strip plus the offline strip,
+     whichever are up. Body padding reserves them at the head of the page,
+     so the page starts that much lower and this floor has to give the same
+     length back. Without it a phone browser showing "Get the app" pushed
+     the foot of every Needs you card, its chips and the rail's More, under
+     the tab bar. The token is declared only in the browser-scroller layout,
+     the only layout that reads this number (the native layout's flex chain
+     already sits inside the padded body), hence the 0px fallback. */
   --ws-area: calc(
-    100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
+    100dvh - var(--browser-banner-h, 0px)
+    - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
     - var(--ws-gap) - max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom, 0px))
   );
   /* THE FITTED BOX Needs you takes as a definite height in the browser
