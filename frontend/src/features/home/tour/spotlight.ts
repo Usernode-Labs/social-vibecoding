@@ -84,13 +84,17 @@ export function placeCard(
   viewport: { width: number; height: number },
   card: { width: number; height: number },
   hole: Box | null,
+  safeTop = 0,
 ): { top: number; left: number } {
-  const maxTop = Math.max(VIEWPORT_MARGIN, viewport.height - card.height - VIEWPORT_MARGIN);
+  // The status bar is drawn over the page in the app, so the card's top
+  // edge keeps clear of it as well as of the viewport's own edge.
+  const minTop = VIEWPORT_MARGIN + Math.max(0, safeTop);
+  const maxTop = Math.max(minTop, viewport.height - card.height - VIEWPORT_MARGIN);
   const maxLeft = Math.max(VIEWPORT_MARGIN, viewport.width - card.width - VIEWPORT_MARGIN);
 
   if (!hole) {
     return {
-      top: Math.max(VIEWPORT_MARGIN, Math.round((viewport.height - card.height) / 2)),
+      top: Math.max(minTop, Math.round((viewport.height - card.height) / 2)),
       left: Math.max(VIEWPORT_MARGIN, Math.round((viewport.width - card.width) / 2)),
     };
   }
@@ -99,14 +103,14 @@ export function placeCard(
   const above = hole.top - CARD_GAP - card.height;
   let top: number;
   if (below + card.height + VIEWPORT_MARGIN <= viewport.height) top = below;
-  else if (above >= VIEWPORT_MARGIN) top = above;
+  else if (above >= minTop) top = above;
   // Neither side has room: the hole is taller than the space around it, so
   // the card takes the larger gap and the clamp below does the rest.
-  else top = hole.top > viewport.height - (hole.top + hole.height) ? VIEWPORT_MARGIN : below;
+  else top = hole.top > viewport.height - (hole.top + hole.height) ? minTop : below;
 
   const centred = hole.left + hole.width / 2 - card.width / 2;
   return {
-    top: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(top, maxTop))),
+    top: Math.round(Math.max(minTop, Math.min(top, maxTop))),
     left: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxLeft))),
   };
 }
@@ -196,14 +200,16 @@ export function placeCardForPanel(
   card: { width: number; height: number },
   hole: Box | null,
   panel: Box | null,
+  safeTop = 0,
 ): { top: number; left: number } {
   if (!hole || !panel || !roomLeftOfPanel(card, panel)) {
-    return placeCard(viewport, card, hole);
+    return placeCard(viewport, card, hole, safeTop);
   }
-  const maxTop = Math.max(VIEWPORT_MARGIN, viewport.height - card.height - VIEWPORT_MARGIN);
+  const minTop = VIEWPORT_MARGIN + Math.max(0, safeTop);
+  const maxTop = Math.max(minTop, viewport.height - card.height - VIEWPORT_MARGIN);
   const centred = hole.top + hole.height / 2 - card.height / 2;
   return {
-    top: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxTop))),
+    top: Math.round(Math.max(minTop, Math.min(centred, maxTop))),
     left: Math.round(Math.max(VIEWPORT_MARGIN, panel.left - CARD_GAP - card.width)),
   };
 }

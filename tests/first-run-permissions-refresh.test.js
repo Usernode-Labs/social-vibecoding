@@ -1,7 +1,6 @@
 // The first-run "Set up your device" sheet must never ask for a permission
-// the device already has. Its first snapshot can be stale: the Android app
-// covers SV with its own permission gate, and "Open battery settings" hands
-// the grant to the OS settings app. So while the sheet is open it re-reads
+// the device already has. Its first snapshot can be stale: every Android
+// grant happens on a system settings page or dialog. So while the sheet is open it re-reads
 // getSettingsState when the page becomes visible again or the app reports
 // `usernode:permissions-changed`, and closes itself once nothing is left.
 //
@@ -165,9 +164,9 @@ test('returning from battery settings re-reads the state before asking again', a
 
   assert.equal(h.dismissed.length, 0, 'exact alarms are still missing');
   const text = allText(h.sheet.contentEl);
-  assert.doesNotMatch(text, /Open battery settings/,
+  assert.doesNotMatch(text, /Allow background use/,
     'a granted battery exemption is no longer asked for');
-  assert.match(text, /Grant permissions/);
+  assert.match(text, /Allow exact alarms/);
 });
 
 test('a dismissed sheet stops listening', async () => {

@@ -768,6 +768,42 @@
       return caps.indexOf(method) !== -1;
     },
 
+    // ── Who needs the block-production permissions ──────────────────
+    //
+    // 'producing'  the phone produces blocks (staking.delegate is null)
+    // 'delegated'  the stake is delegated to the server
+    // 'none'       no wallet on this device yet
+    // 'unknown'    the build or the wallet could not say in time
+    //
+    // Pure, so the tests can pin the table without a WebView. `unknown`
+    // still asks: the sheet itself offers "Delegate instead", which is the
+    // safer miss than a producer who never hears why their slots are late.
+    producerNeedsDevicePermissions(producer) {
+      return producer !== 'delegated' && producer !== 'none';
+    },
+
+    _PRODUCER_STATUS_TRIES: 4,
+    _PRODUCER_STATUS_WAIT_MS: 1500,
+
+    // Reads the wallet's staking snapshot. `staking == null` means wallet
+    // setup is still running (NATIVE-BRIDGE.md), which is common on a
+    // fresh sign-in, so it is re-read a few times before giving up.
+    async _producerStatus() {
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getWalletState !== 'function') return 'unknown';
+      if ((await NativeChrome.supports('getWalletState')) === false) return 'unknown';
+      for (let i = 0; i < NativeChrome._PRODUCER_STATUS_TRIES; i++) {
+        let wallet = null;
+        try { wallet = await bridge.getWalletState(); } catch (_) {}
+        if (wallet && !wallet.address) return 'none';
+        const staking = wallet && wallet.staking;
+        if (staking) return staking.delegate == null ? 'producing' : 'delegated';
+        await new Promise((resolve) => setTimeout(
+          resolve, NativeChrome._PRODUCER_STATUS_WAIT_MS));
+      }
+      return 'unknown';
+    },
+
     // What the first-run trigger does once the permission snapshot is in.
     // Pure, for the same reason decideNotificationTap is. Returns:
     //   "done"     nothing left to ask; record the one-shot marker
@@ -873,6 +909,14 @@
       } else {
         pushStatus = null;
       }
+      // Android asks only people whose phone produces blocks. A delegated
+      // account or a device with no wallet has no slots to wake for, so it
+      // is not asked at all — and nothing is recorded, so switching back
+      // to producing later still gets the sheet.
+      if (isAndroid) {
+        const producer = await NativeChrome._producerStatus();
+        if (!NativeChrome.producerNeedsDevicePermissions(producer)) return;
+      }
       // Battery optimization is Android-only; iOS never shows that row.
       const needsBattery = isAndroid && perms.batteryOptDisabled !== true;
       // The block-production read only happens when it can change the
@@ -958,9 +1002,11 @@
       // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
         isAndroid
-          ? 'Your node can produce blocks while the app is in the ' +
-            'background. That needs permission to wake your device at ' +
-            'exact slot times and freedom from battery optimization.'
+          ? 'Your phone helps run Homeroom: your node can produce blocks ' +
+            'while the app is in the background. For that, Android needs ' +
+            'to wake it at exact slot times and leave it free of battery ' +
+            'optimization. These settings only schedule wake-ups. They ' +
+            'give Homeroom no access to your data.'
           : 'Allow notifications so Homeroom can alert you about node ' +
             'and account activity.'));
 
@@ -983,6 +1029,10 @@
       let interacted = false;
       const render = (p) => {
         body.textContent = '';
+        if (isAndroid) {
+          renderAndroid(p);
+          return;
+        }
         // iOS row truth: prefer the push permission status over the
         // alarm boolean whenever the build reports one (see above).
         const alarmOk = !isAndroid && pushStatus != null
@@ -1056,12 +1106,101 @@
         body.appendChild(btns);
       };
 
+      const hint = (text) => el('p',
+        'text-xs text-zinc-500 dark:text-zinc-400 mt-1 mb-2', text);
+      const primaryButton = (label) => el('button', 'w-full rounded-lg ' +
+        'bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium ' +
+        'text-white', label);
+
+      // Android asks one thing at a time, in order: each step opens a
+      // system surface, and the copy under its button says what that
+      // surface will show BEFORE it shows it, so its battery warning reads
+      // as expected rather than alarming.
+      const renderAndroid = (p) => {
+        const alarmOk = !!p.exactAlarmGranted;
+        const batteryOk = p.batteryOptDisabled === true;
+        body.appendChild(statusRow('Exact alarms', alarmOk));
+        body.appendChild(statusRow('Battery optimization', batteryOk));
+
+        const btns = el('div', 'mt-4 space-y-2');
+        if (!alarmOk) {
+          const b = primaryButton('Allow exact alarms');
+          b.addEventListener('click', async () => {
+            interacted = true;
+            b.disabled = true;
+            try {
+              const bridge = window.usernode;
+              const granular = typeof bridge.requestAlarmPermissions === 'function' &&
+                (await NativeChrome.supports('requestAlarmPermissions')) !== false;
+              await (granular
+                ? bridge.requestAlarmPermissions()
+                : bridge.requestPermissions());
+            } catch (e) {
+              console.warn('[native-chrome] requestAlarmPermissions failed:', e);
+            } finally { b.disabled = false; }
+            // The grant happens on a settings page; refresh() re-reads it
+            // when the page is visible again.
+          });
+          btns.appendChild(b);
+          btns.appendChild(hint('Android opens the "Alarms & reminders" ' +
+            'page. Turn on Allow for Homeroom, then come back here. Your ' +
+            'node only wakes a few minutes before each of its slots.'));
+        } else if (!batteryOk) {
+          const b = primaryButton('Allow background use');
+          b.addEventListener('click', () => {
+            interacted = true;
+            window.usernode.openBatterySettings().catch(() => {});
+          });
+          btns.appendChild(b);
+          btns.appendChild(hint('Android will ask whether Homeroom may ' +
+            'always run in the background, and warn that this can use more ' +
+            'battery. Tap Allow. Your node still sleeps between slots, so ' +
+            'the real impact is small, and you can change it any time in ' +
+            'Settings.'));
+        }
+
+        if ((!alarmOk || !batteryOk) &&
+            typeof window.usernode.manageStaking === 'function') {
+          const delegate = el('button', 'w-full rounded-lg border ' +
+            'border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm ' +
+            'font-medium text-zinc-700 dark:text-zinc-200', 'Delegate instead');
+          delegate.addEventListener('click', async () => {
+            interacted = true;
+            delegate.disabled = true;
+            try {
+              // The native screen owns the delegation target and its
+              // confirmation (NATIVE-BRIDGE.md, manageStaking).
+              const staking = await window.usernode.manageStaking();
+              if (staking && staking.delegate != null) {
+                if (sheet && sheet.dismiss) sheet.dismiss();
+                return;
+              }
+            } catch (e) {
+              console.warn('[native-chrome] manageStaking failed:', e);
+            } finally { delegate.disabled = false; }
+          });
+          btns.appendChild(hint('Prefer not to change these settings? ' +
+            'Delegate your stake to the server instead. You still earn ' +
+            'half the block-production points, and you can switch back any ' +
+            'time.'));
+          btns.appendChild(delegate);
+        }
+
+        const done = el('button', 'w-full px-4 py-2 text-sm ' +
+          'text-zinc-500 dark:text-zinc-400',
+        alarmOk && batteryOk ? 'Done' : 'Skip for now');
+        done.addEventListener('click', () => {
+          interacted = true;
+          if (sheet && sheet.dismiss) sheet.dismiss();
+        });
+        btns.appendChild(done);
+        body.appendChild(btns);
+      };
+
       render(perms);
 
-      // The snapshot this sheet opened with can be stale: the Android app
-      // may cover SV with its own permission gate while the user grants
-      // there, and the battery exemption is granted in the OS settings
-      // app. Re-read whenever the page is visible again or the app reports
+      // The snapshot this sheet opened with can be stale: every Android
+      // grant happens on a system settings page or dialog. Re-read whenever the page is visible again or the app reports
       // a change, and never keep asking for what the device already has.
       let closed = false;
       const refresh = async () => {
