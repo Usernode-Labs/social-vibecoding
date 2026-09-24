@@ -296,6 +296,47 @@ test('internal HTTP replay bootstraps the clone-local platform session cookie', 
   assert.equal(calls.some(([name]) => name === 'dispose'), true);
 });
 
+test('initial navigation retries one transport failure and keeps the same route', async () => {
+  const route = 'http://base-evidence:3000/?demo=1&ws=status&token=member.jwt#app/demo/workshop';
+  const calls = [];
+  const retries = [];
+  const waits = [];
+  const response = { status: () => 200 };
+  const page = { goto: async (url, options) => {
+    calls.push({ url, options });
+    if (calls.length === 1) throw new Error('page.goto: net::ERR_NETWORK_CHANGED at ' + url);
+    return response;
+  } };
+  assert.equal(await replay.navigateStart(page, route,
+    (event) => retries.push(event), async (ms) => waits.push(ms)), response);
+  assert.deepEqual(calls, [
+    { url: route, options: { waitUntil: 'domcontentloaded', timeout: 10000 } },
+    { url: route, options: { waitUntil: 'domcontentloaded', timeout: 10000 } },
+  ]);
+  assert.deepEqual(retries, [{ attempt: 2, code: 'network_changed' }]);
+  assert.deepEqual(waits, [500]);
+  assert.doesNotMatch(JSON.stringify(retries), /member\.jwt/);
+});
+
+test('initial navigation never retries application failures or a second transport failure', async () => {
+  const appError = new Error('page.goto: HTTP 500');
+  let calls = 0;
+  await assert.rejects(replay.navigateStart({ goto: async () => {
+    calls += 1;
+    throw appError;
+  } }, 'http://base-evidence:3000/', () => { throw new Error('unexpected retry'); }), appError);
+  assert.equal(calls, 1);
+
+  const networkError = new Error('page.goto: net::ERR_NETWORK_CHANGED');
+  const retries = [];
+  await assert.rejects(replay.navigateStart({ goto: async () => {
+    calls += 1;
+    throw networkError;
+  } }, 'http://base-evidence:3000/', (event) => retries.push(event), async () => {}), networkError);
+  assert.equal(calls, 3, 'one application attempt plus two bounded transport attempts');
+  assert.deepEqual(retries, [{ attempt: 2, code: 'network_changed' }]);
+});
+
 test('session bootstrap accepts only a bounded session cookie value', () => {
   assert.equal(replay.sessionCookieValue([
     { name: 'set-cookie', value: 'theme=light; Path=/' },

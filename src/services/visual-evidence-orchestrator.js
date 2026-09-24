@@ -121,7 +121,8 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
       // pod exits, this identifies the exact unfinished step. Less important
       // progress is throttled to avoid one database write per emitted event.
       if (event.type === 'action_started' || event.type === 'side_failed'
-          || event.type === 'animation_started' || event.type === 'result'
+          || event.type === 'animation_started' || event.type === 'navigation_retry'
+          || event.type === 'result'
           || Date.now() - lastReplayFlushAt >= 5000) {
         lastReplayFlushAt = Date.now();
         flush();
@@ -264,7 +265,15 @@ function evidenceWords(value) {
     .match(/[a-z0-9]{4,}/g) || []);
 }
 
-function declaredCheckSummary(checkout, intent = null) {
+function testingPathsForSession(session) {
+  const candidates = [session?.testing_path,
+    ...(Array.isArray(session?.testing_paths) ? session.testing_paths.map((entry) =>
+      typeof entry === 'string' ? entry : entry?.path) : [])];
+  return [...new Set(candidates.filter((value) =>
+    planContract.validRelativePath(value) && !planContract.credentialLike(value)))].slice(0, 8);
+}
+
+function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
   try {
     const checks = appManifest.readTests(appManifest.read(checkout));
     // A large manifest's first 80 checks can omit the changed screen
@@ -278,6 +287,9 @@ function declaredCheckSummary(checkout, intent = null) {
     const navigationWords = evidenceWords((intent?.stories || []).map((story) => [
       story.intent?.startPath, ...(story.intent?.steps || []),
     ].join(' ')).join(' '));
+    const intentPaths = new Set((intent?.stories || []).map((story) => story.intent?.startPath)
+      .filter((value) => value && value !== '/'));
+    const knownTestingPaths = new Set(testingPaths);
     const frequencies = new Map();
     const indexed = checks.map((test, index) => {
       const nameWords = evidenceWords(test.name);
@@ -289,7 +301,11 @@ function declaredCheckSummary(checkout, intent = null) {
       return { test, index, nameWords, pathWords, selectorWords };
     });
     const ranked = indexed.map(({ test, index, nameWords, pathWords, selectorWords }) => {
-      let score = 0;
+      // The proposal's recorded manual test route is already a concrete
+      // navigation clue. Prefer its exact declared check over a word match
+      // to a generic screen, while leaving the browser agent to verify it.
+      let score = intentPaths.has(test.path) ? 1_000_000
+        : knownTestingPaths.has(test.path) ? 500_000 : 0;
       for (const word of words) {
         const weight = Math.log2(1 + checks.length / (frequencies.get(word) || 1))
           * (navigationWords.has(word) ? 3 : 1);
@@ -310,6 +326,7 @@ function declaredCheckSummary(checkout, intent = null) {
 }
 
 function evidenceContext({ run, session, revision, pair, deployment, intent }) {
+  const testingPaths = testingPathsForSession(session);
   return {
     version: 1,
     runId: run.id,
@@ -333,10 +350,12 @@ function evidenceContext({ run, session, revision, pair, deployment, intent }) {
     changeContext: {
       title: String(session.pr_title || '').trim().slice(0, 256) || null,
       specification: String(session.spec_md || '').trim().slice(0, 4_000) || null,
+      testingPaths,
+      testingSteps: String(session.testing_md || '').trim().slice(0, 2_000) || null,
       diff: revision.diffSummary,
       untrusted: true,
     },
-    declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent),
+    declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     provenance: {
       fixtureFingerprint: pair.fixtureFingerprint,
       baseImageDigest: pair.sides.base.imageDigest,
@@ -513,6 +532,7 @@ function replayProgressEvent(event, pass) {
     ...(/^[a-zA-Z][a-zA-Z0-9]{0,31}$/.test(assertionType) ? { assertionType } : {}),
     ...(Number.isInteger(event?.durationMs) && event.durationMs >= 0
       ? { durationMs: event.durationMs } : {}),
+    ...(type === 'navigation_retry' && event?.attempt === 2 ? { attempt: 2 } : {}),
     ...(['actionCount', 'assertionCount', 'recordedFrameCount', 'httpErrorCount', 'baseFrames', 'headFrames', 'bytes'].reduce((counts, key) => {
       if (Number.isInteger(event?.[key]) && event[key] >= 0) counts[key] = event[key];
       return counts;
@@ -936,6 +956,7 @@ async function executeRun(config, options, injected = {}) {
     const context = evidenceContext({ run, session, revision, pair, deployment: exploration, intent });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),
+      testingPaths: context.changeContext.testingPaths,
       declaredPaths: context.declaredChecks.map((check) => check.path),
     };
     failurePhase = 'register_control';
