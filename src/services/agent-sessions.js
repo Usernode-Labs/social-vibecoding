@@ -135,6 +135,9 @@ function shapeSession(row) {
       : null,
     activeChange: shapeChangeRow(row),
     busy: !!row.active_turn,
+    // Finished something the owner has not seen yet: the green dot.
+    doneUnseen: !row.active_turn && !!row.last_done_at
+      && (!row.seen_at || new Date(row.last_done_at) > new Date(row.seen_at)),
     lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).toISOString() : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
@@ -174,7 +177,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
-            s.last_activity_at, s.created_at, s.archived_at,
+            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
@@ -204,7 +207,7 @@ async function getAgentSession(pool, { userId, id }) {
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
-            s.last_activity_at, s.created_at, s.archived_at,
+            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
@@ -588,12 +591,38 @@ async function renewTurnLease(pool, { agentSessionId, turnId }) {
   return rows.length > 0;
 }
 
-async function releaseTurnLease(pool, { agentSessionId, turnId }) {
+// `finished` is a turn that ran, ending: it stamps last_done_at, which the
+// lists read as "finished something". A lease handed back before the turn
+// started (no Mayor, no payer) is not one.
+async function releaseTurnLease(pool, { agentSessionId, turnId, finished = false }) {
   await pool.query(
-    `UPDATE agent_sessions SET active_turn = NULL
+    `UPDATE agent_sessions
+        SET active_turn = NULL,
+            last_done_at = CASE WHEN $3::boolean THEN NOW() ELSE last_done_at END
       WHERE id = $1 AND active_turn->>'id' = $2`,
-    [agentSessionId, turnId]
+    [agentSessionId, turnId, !!finished]
   );
+}
+
+// The owner read the conversation: whatever it finished is seen. True when
+// that cleared a green dot, so the caller can tell the owner's other tabs.
+async function markSeen(pool, { userId, id }) {
+  const sessionId = positiveInt(Number(id));
+  if (!sessionId) return false;
+  const { rows } = await pool.query(
+    `WITH prev AS (
+       SELECT id, seen_at, last_done_at, active_turn
+         FROM agent_sessions
+        WHERE id = $1 AND user_id = $2
+     )
+     UPDATE agent_sessions s SET seen_at = NOW()
+       FROM prev
+      WHERE s.id = prev.id
+     RETURNING (prev.active_turn IS NULL AND prev.last_done_at IS NOT NULL
+                AND (prev.seen_at IS NULL OR prev.last_done_at > prev.seen_at)) AS cleared`,
+    [sessionId, userId]
+  );
+  return !!(rows[0] && rows[0].cleared);
 }
 
 module.exports = {
@@ -626,4 +655,5 @@ module.exports = {
   acquireTurnLease,
   renewTurnLease,
   releaseTurnLease,
+  markSeen,
 };

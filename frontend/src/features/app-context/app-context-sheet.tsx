@@ -122,7 +122,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   InfoCircleIcon,
-  PencilSquareIcon,
   PlusWideIcon,
   SparklesIcon,
   TerminalIcon,
@@ -137,6 +136,7 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { continueRows } from './continue-model';
+import { AgentActivityMark } from '../agent-session/activity-mark';
 import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
 
@@ -237,7 +237,7 @@ export function AppsSwitcherSheet(): ReactNode {
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
   const {
-    slug, name, showTerminal, target, restricted, sessions: improveRows,
+    slug, name, showTerminal, target, restricted,
   } = useStoreState(improveStore);
   const { sessions: agentSessions } = useAgentSessionState();
   // Votes this viewer owes on the app in context — the badge on the
@@ -284,16 +284,15 @@ export function AppsSwitcherSheet(): ReactNode {
   const close = useCallback(() => AppContext.close(), []);
 
   /*
-      CONTINUE (#2779 follow-up): up to three of your in-progress items on
-      this app, under Go to workshop, so going back to what you were doing
-      is one tap from anywhere — then "See all your work", Messages' Agents
-      list. The rules are ./continue-model.ts's: a conversation stands for
-      the changes it started, and a paused session is listed like any other.
+      CONTINUE (#2779 follow-up): up to three of your agent sessions on this
+      app, below its own rows, so going back to one is a tap from anywhere,
+      each with the lists' mark (a spinner while it works, a green dot once
+      it finished unseen); then "See all sessions", Messages' Agents list.
+      The rules are ./continue-model.ts's.
 
-      AFTER MOUNT and after the lists load, never in the prerender: the rows
+      AFTER MOUNT and after the list loads, never in the prerender: the rows
       are the viewer's own data, and the hydrating render has to print what
-      the prerender printed. The Improve store's rows are already loaded by
-      the time a target exists; the conversations are read on open, for any
+      the prerender printed. The conversations are read on open, for any
       signed-in viewer, the flag or not — Messages' rule: turning agent
       sessions off never hides a conversation that already exists.
   */
@@ -301,7 +300,7 @@ export function AppsSwitcherSheet(): ReactNode {
     if (open && window.App?.user) void loadAgentSessions();
   }, [open]);
   const continuing = mounted && view !== 'about'
-    ? continueRows(slug || null, agentSessions || [], improveRows || [])
+    ? continueRows(slug || null, agentSessions || [])
     : [];
 
 
@@ -600,38 +599,6 @@ export function AppsSwitcherSheet(): ReactNode {
             ) : null}
           />
           {/*
-              CONTINUE (#2779 follow-up), directly under Go to workshop: the
-              list still opens on that row (#2761, the owner's call, and a
-              declared check), and your own work on this app is the next
-              thing in it. See the comment on `continuing` above.
-          */}
-          {continuing.length ? (
-            <div id="app-menu-continue" data-app-menu-continue={continuing.length}>
-              <div className={SECTION}>Continue</div>
-              {continuing.map((row, index) => (
-                <MenuRow
-                  key={row.key}
-                  id={`app-menu-continue-${index}`}
-                  dataContextRow={row.kind === 'agent' ? 'continue-agent' : 'continue-change'}
-                  href={row.href}
-                  icon={row.kind === 'agent' ? <SparklesIcon /> : <PencilSquareIcon />}
-                  label={row.title}
-                  trailing={<span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{row.detail}</span>}
-                />
-              ))}
-              <MenuRow
-                id="app-menu-continue-all"
-                href="#messages"
-                icon={<ChatIcon />}
-                label="See all your work"
-                onClick={() => {
-                  setMessagesFilter('agents');
-                  AppContext.dismissForNav();
-                }}
-              />
-            </div>
-          ) : null}
-          {/*
               #2763: the TWO-PANE route. `#app/<slug>/dev/chat` was the old
               full-screen discussion; `#messages/app/<slug>` opens the same
               thread in the Messages screen's right pane with the
@@ -695,6 +662,43 @@ export function AppsSwitcherSheet(): ReactNode {
           >
             <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
           </button>
+          {/*
+              CONTINUE (#2779 follow-up), BELOW the app's own rows: Go to
+              workshop, the discussion and About are this app's section, and
+              your agent sessions on it follow under their own heading. See
+              the comment on `continuing` above.
+          */}
+          {continuing.length ? (
+            <div id="app-menu-continue" data-app-menu-continue={continuing.length}>
+              <div className={SECTION}>Continue</div>
+              {continuing.map((row, index) => (
+                <MenuRow
+                  key={row.key}
+                  id={`app-menu-continue-${index}`}
+                  dataContextRow="continue-agent"
+                  href={row.href}
+                  icon={<SparklesIcon />}
+                  label={row.title}
+                  trailing={(
+                    <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      <AgentActivityMark activity={row.activity} />
+                      {row.detail}
+                    </span>
+                  )}
+                />
+              ))}
+              <MenuRow
+                id="app-menu-continue-all"
+                href="#messages"
+                icon={<ChatIcon />}
+                label="See all sessions"
+                onClick={() => {
+                  setMessagesFilter('agents');
+                  AppContext.dismissForNav();
+                }}
+              />
+            </div>
+          ) : null}
           </>
           )}
         </nav>

@@ -203,6 +203,33 @@ test('a dispatch runs on the active change, then the Mayor wraps up from its res
   assert.deepEqual(spend.map((s) => s[2]), [4, 4], 'each Mayor call is billed as it happens');
 });
 
+test('the owner\'s lists hear when a turn starts and ends, and the end stamps "finished"', async () => {
+  const pushed = [];
+  const released = [];
+  await runTurn({
+    steps: [{ text: 'Hello.' }],
+    extra: {
+      notifyUser: (userId, payload) => { pushed.push([userId, payload]); },
+      agentSessions: {
+        getAgentSession: async () => SESSION,
+        appendConversationEvent: async () => {},
+        releaseTurnLease: async (_pool, args) => { released.push(args); pushed.push(['released']); },
+        renewTurnLease: async () => true,
+      },
+    },
+  });
+  assert.deepEqual(pushed, [
+    [USER.id, { type: 'agent_session_changed', agentSessionId: 5, busy: true }],
+    ['released'],
+    [USER.id, { type: 'agent_session_changed', agentSessionId: 5, busy: false }],
+  ], 'working when it starts; finished only once the lease is back, so a re-read sees it');
+  assert.deepEqual(released, [{ agentSessionId: 5, turnId: 'turn-0002-bbbb', finished: true }]);
+
+  // A push that throws never costs the turn.
+  const { model } = await runTurn({ steps: [{ text: 'Still here.' }], extra: { notifyUser: () => { throw new Error('socket down'); } } });
+  assert.equal(model.requests.length, 1, "the turn ran to its answer");
+});
+
 test('a run that finishes while nobody is watching lands in the bell, once per change', async () => {
   const steps = [
     { text: 'Building it.', toolUses: [{ id: 'd1', name: 'dispatch_coding_agent', input: { prompt: 'Add the toggle' } }] },

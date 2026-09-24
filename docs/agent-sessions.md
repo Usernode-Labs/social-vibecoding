@@ -620,7 +620,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - The Mayor's prompt and the MCP tools say "idle" or "keeps its progress" instead.
   - The one refusal left is "Your other sessions are all busy finishing turns".
 - **A conversation stands for the changes it started.** Messages already listed the conversation rather than its changes. The bell's session rows and the Continue rows now open the conversation too.
-- **Continue under the platform mark.** Up to three of your in-progress items on the menu's app sit directly under Go to workshop, conversations first, then "See all your work", which opens Messages filtered to Agents. Go to workshop still opens the list, as #2761 decided and a declared check pins. The rows are drawn after mount only, so the prerender and the hydrating render match. A conversation nothing was said in yet (no title, since the first message titles it, and no change) is not work in progress and is left out.
+- **Continue under the platform mark.** Up to three of your in-progress items on the menu's app sit directly under Go to workshop, conversations first, then "See all your work", which opens Messages filtered to Agents. Go to workshop still opens the list, as #2761 decided and a declared check pins. (Since reordered: see *what each conversation is doing* below.) The rows are drawn after mount only, so the prerender and the hydrating render match. A conversation nothing was said in yet (no title, since the first message titles it, and no change) is not work in progress and is left out.
 - **The bell.** A scout or build that finishes while nobody is watching creates the dev chat's own `session_done` notification on the change: one unread per change. Watching means the turn's stream is still open, or the conversation screen follows its events (`session-bus.subscriberCount`). The notification carries `agentSessionId`, so it opens the conversation and reads "The coding agent finished". Reading the conversation (`GET /api/agent-sessions/:id`) marks its changes' rows read, however the user got there, as opening a dev session does for its own.
 - **Recents** lists open agent sessions by their last activity, next to your conversations. Like Messages, Recents and Continue read them for any signed-in viewer, whether or not agent sessions are turned on: the flag gates starting one, and turning it off never hides a conversation that already exists. Empty ones are left out of both.
 
@@ -638,6 +638,22 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - The tab is kept across a version switch and reset for another change.
   - The split is the page's own `splitSpecSections`, so a spec without both headings shows whole, as before.
 - **Staging** writes the seeded conversation's spec in the two halves, so the tabs can be seen there. A preview seeded before this picks up the new text.
+
+*Follow-up: what each conversation is doing, in every list, and the mark's menu reordered.*
+
+- **One mark, three lists.** Beside an agent session in Recents, the platform mark's Continue rows and Messages (where a conversation's unread count goes):
+  - a spinner while it is working, meaning its turn lease is held, which covers a scout or build the turn dispatched;
+  - a green dot (the live-app dot's `green-500`) once it has finished something you have not read yet;
+  - nothing otherwise.
+
+  `agent-session/activity.ts` decides it from the session's `busy` and `doneUnseen`, and `activity-mark.tsx` draws it.
+- **Finished, and seen.** Two columns on `agent_sessions` hold it.
+  - `last_done_at` is stamped when a turn that ran releases its lease (`releaseTurnLease(..., { finished: true })`). A lease handed back before its turn started (no Mayor, no payer) stamps nothing.
+  - `seen_at` is stamped by `GET /api/agent-sessions/:id` before it reads, so the answer already carries no dot.
+  - `doneUnseen` means not working, and finished after it was last seen.
+  - Reading the conversation clears the dot. The store keeps the list's entry equal to the conversation on screen, so the lists follow at once.
+- **Live.** The owner gets `agent_session_changed` over the per-user socket (`pushToUser`, which reaches every pod) when a turn starts, when it ends (after the lease is back), and when a read clears a dot in another tab. `app.js` hands it to the store, which reads the list once per burst.
+- **The mark's menu.** Go to workshop, the app's (or platform's) discussion and About are the app's own section. Continue sits below them and lists agent sessions only: classic changes are the Workshop's, one row up. Its last row reads "See all sessions".
 
 **Process.** Each proposal:
 

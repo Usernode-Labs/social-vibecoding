@@ -61,6 +61,8 @@ import { useStoreState } from '../../lib/use-store-state';
 import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
+import { ACTIVITY_LABEL } from '../agent-session/activity';
+import { AgentActivityMark } from '../agent-session/activity-mark';
 import { useGlobalChatState } from '../global-chat/store';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
@@ -116,13 +118,14 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
   const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
+  const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
   return (
     <a
       className="platform-recent"
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${unread}`}
+      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
       {...(live ? { 'data-live': 'true' } : null)}
       onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
     >
@@ -130,6 +133,9 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       <span className="platform-recent-label">{item.label}</span>
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
+      {/* #2779: an agent session working (a spinner) or finished unseen (a
+          green dot). The row's accessible name says it too (`doing`). */}
+      {item.activity ? <AgentActivityMark activity={item.activity} className="platform-recent-activity" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
   );
