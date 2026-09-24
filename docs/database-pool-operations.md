@@ -188,3 +188,30 @@ can archive and clean it through the same identity checks. Keep one executor
 replica with `Recreate`; concurrent operator execution is unsupported. A platform
 release or pool identity change invalidates a reviewed plan and requires a fresh
 review before any new child is started.
+
+### Staging validation, 2026-09-24
+
+Release `0.0.951001-feat-k8s` pins source
+`c06a1ba8dea45bebd76f7fd4aae3333bf48d7e7f`.
+
+- Batch `sv-batch-20260924-16a1b6a7` was reviewed and started through the live UI;
+  it kept app 17 in place and moved app 18 to the other shared pool.
+- Batch `sv-batch-20260924-1a0341d9` moved both test apps back. An operator fault
+  checkpoint stopped after the first child's cleanup. Restarting the executor
+  produced `NeedsAttention`; the live maintenance UI resumed attempt 2 and skipped
+  the completed child without changing its database or role OIDs.
+- Batch `sv-batch-20260924-67d81067` allowed both pools. Capacity-aware planning kept
+  app 18 on `staging-apps` and moved app 17 to `staging-apps-b`. Both finish at
+  allocation revision 2, with their original allocation UUIDs and credentials.
+- Public/private fixture rows, sequence values, owner writes and idempotent
+  provisioning retries passed. Old source databases and roles are absent. The
+  platform DB and all CNPG UIDs are unchanged; Stockroom remains revision 7 and
+  passes a real app-pod write/read/sequence check.
+- Final mapped SV checks: 2,477 passed, 31 skipped. The disposable PostgreSQL
+  integration test, 2,275-statement SQL validation, frontend build, 57 infra tests,
+  Helm checks and live UI confirmation/recovery checks passed. Cancellation and
+  interruption between database/role deletion are covered by local tests, not a
+  live destructive fault test. The full SV suite and backup/restore were not run.
+
+All 16 staging Argo applications are Healthy/Synced. These results do not authorize
+or certify a production migration.
