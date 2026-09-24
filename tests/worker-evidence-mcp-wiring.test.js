@@ -19,6 +19,7 @@ test('both evidence backends launch Playwright through the content-free timing o
   assert.match(dockerfile, /npm install -g @playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
   assert.match(dockerfile, /command -v mcp-server-playwright/);
   assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-evidence-browser-mcp\.js/);
+  assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-evidence-browser-auth\.js/);
   assert.match(claudeRunner, /command -v mcp-server-playwright[^\n]*\n\s*\|\| die/);
   assert.match(codexRunner, /command -v mcp-server-playwright[^\n]*\n\s*\|\| die/);
   assert.match(dockerfile, /COPY evidence-browser-observer\.js \/usr\/local\/bin\/evidence-browser-observer\.js/);

@@ -119,15 +119,17 @@ test('warm promoted session renders both Free worker and Archive', () => {
   assert.ok(!h.keys().includes('pause'));
 });
 
-test('active and paused sessions render Archive, beside their own action', () => {
-  for (const [status, first] of [['active', 'pause'], ['paused', 'resume']]) {
+test('active and paused sessions render Archive alone: pausing is the platform\'s, never a button', () => {
+  // #2779 follow-up: the platform pauses an idle session by itself and
+  // resumes it when it is opened or messaged, so neither is offered.
+  for (const status of ['active', 'paused']) {
     const h = makeHarness();
     h.DevChat.sessions = [
       { id: 3, status, warm: false, session_title: `${status} session`,
         created_at: '2026-06-01T00:00:00Z' },
     ];
     h.DevChat.renderSessionList();
-    assert.deepEqual(h.keys(), [first, 'archive'], `${status} should be archivable`);
+    assert.deepEqual(h.keys(), ['archive'], `${status} should be archivable`);
   }
 });
 
@@ -170,7 +172,8 @@ test('the rows the model describes are what the list draws', () => {
   assert.match(html, /class="dc-session-item[^"]*" data-id="7"/);
   assert.match(html, /dc-pause-btn[^>]*>Free worker</);
   assert.match(html, /dc-archive-btn[^>]*>Archive</);
-  assert.match(html, /dc-pause-btn[^>]*>Resume</);
+  assert.doesNotMatch(html, />Resume</, 'no Resume: opening the session resumes it');
+  assert.match(html, /data-id="8"><span class="[^"]*">active</, 'a paused session reads as the active one it is');
   assert.match(html, /title="feat\/warm"/, 'the branch is the row tooltip');
   assert.match(html, /PR#9/);
   assert.match(html, /title="Frees the AI worker\. The PR stays up for voting\."/);

@@ -19,7 +19,7 @@ const REQUIRED_TOOLS = [
   'browser_close',
 ];
 
-function verifyBrowser(server) {
+function verifyBrowser(server, navigationChecks = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(server.command, server.args, {
       env: { ...process.env, ...server.env }, stdio: ['pipe', 'pipe', 'pipe'],
@@ -37,7 +37,7 @@ function verifyBrowser(server) {
       if (error) reject(error);
       else resolve(tools);
     };
-    const timeout = setTimeout(() => finish(new Error(`Browser MCP ${phase} timed out after 30 seconds: ${errors.slice(-500)}`)), 30_000);
+    const timeout = setTimeout(() => finish(new Error(`Browser MCP ${phase} timed out after 60 seconds: ${errors.slice(-500)}`)), 60_000);
     child.on('error', (error) => finish(error));
     child.on('exit', (code, signal) => finish(new Error(`Browser MCP exited during ${phase} (${code ?? signal}): ${errors.slice(-1000)}`)));
     child.stdin.on('error', (error) => finish(error));
@@ -69,7 +69,23 @@ function verifyBrowser(server) {
           if (!response.includes('Open tabs')) {
             return finish(new Error(`Browser MCP browser_tabs returned no tab listing: ${response.slice(0, 500)}`));
           }
-          return finish(null, tools);
+          if (navigationChecks.length) {
+            phase = 'browser_navigate';
+            child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: {
+              name: 'browser_navigate', arguments: { url: navigationChecks[0].url },
+            } })}\n`);
+          } else return finish(null, tools);
+        } else if (message.id >= 4 && message.id < 4 + navigationChecks.length) {
+          const index = message.id - 4;
+          const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+          if (message.error || message.result?.isError || !response.includes(navigationChecks[index].expectedText)) {
+            return finish(new Error(`Browser MCP ${phase} did not load its authenticated state: ${response.slice(0, 500)}`));
+          }
+          const next = navigationChecks[index + 1];
+          if (!next) return finish(null, tools);
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id + 1, method: 'tools/call', params: {
+            name: 'browser_navigate', arguments: { url: next.url },
+          } })}\n`);
         }
       }
     });
@@ -127,7 +143,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { verifyBrowser };

@@ -80,8 +80,9 @@ export type SessionRowView = {
  * THE STATE, as a word rather than as a colour alone.
  *
  * The dot said all of this already, and said it only to someone who had
- * learned the code. Three states, because with paused rows filtered out of
- * these lists (see isParked in ./improve-controller.js) three is all there is:
+ * learned the code. Three states, because a paused session reads like any
+ * other waiting one (it resumes by itself when opened), so three is all there
+ * is:
  *
  *   - WORKING, amber, with the platform's arc spinner in the pill while an AI
  *     turn is in flight. The amber is the platform's own "something is

@@ -22,6 +22,7 @@ const execFileAsync = promisify(execFile);
 let planContract;
 try { planContract = require('../src/services/visual-evidence-plan'); }
 catch (_) { planContract = require('./visual-evidence-plan'); }
+const sessionBootstrap = require('../worker/session-bootstrap');
 
 const ARTIFACT_PREFIX = '__USERNODE_EVIDENCE_ARTIFACT__ ';
 const EVENT_PREFIX = '__USERNODE_EVIDENCE__ ';
@@ -765,70 +766,13 @@ async function addCookies(context, origin, values) {
   if (cookies.length) await context.addCookies(cookies);
 }
 
-function sessionCookieValue(headers) {
-  for (const header of headers || []) {
-    if (String(header?.name || '').toLowerCase() !== 'set-cookie') continue;
-    const first = String(header.value || '').split(';', 1)[0];
-    const separator = first.indexOf('=');
-    if (separator < 0 || first.slice(0, separator).trim() !== 'session') continue;
-    const value = first.slice(separator + 1).trim();
-    // RFC 6265 cookie-octet, bounded before the value ever reaches
-    // Playwright. Never include the rejected value in an error.
-    if (!value || value.length > 4096
-        || !/^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value)) {
-      throw new ReplayFailure('invalid_session_cookie', 'The evidence origin returned an invalid session cookie.');
-    }
-    return value;
-  }
-  return null;
-}
+const sessionCookieValue = sessionBootstrap.sessionCookieValue;
 
 async function bootstrapInternalSession(context, origin, startPath, authToken, diagnostic = null) {
-  if (diagnostic) diagnostic.attempted = origin.startsWith('http:');
-  if (!origin.startsWith('http:')) return false;
-  const existing = await context.cookies(origin);
-  if (existing.some((cookie) => cookie.name === 'session')) {
-    if (diagnostic) diagnostic.cookieAlreadyPresent = true;
-    return false;
-  }
-
-  let response;
-  try {
-    // The request cannot follow a redirect to another origin. Its only job
-    // is to let a staging self-app exchange the short-lived, app-scoped JWT
-    // for a local session row before page JavaScript starts cookie-only API
-    // calls. Ordinary apps that do not set a session cookie remain on the
-    // x-usernode-token path below.
-    response = await context.request.get(authorizedUrl(origin, startPath, authToken), {
-      headers: { 'x-usernode-token': authToken },
-      failOnStatusCode: false,
-      maxRedirects: 0,
-      timeout: planContract.MAX_WAIT_MS,
-    });
-    if (diagnostic) diagnostic.responseStatus = response.status();
-    const value = sessionCookieValue(await Promise.resolve(response.headersArray()));
-    if (!value) return false;
-    try {
-      // The app deliberately emitted Secure because it runs in production
-      // mode. Evidence reaches the same private service directly over HTTP,
-      // so install the already-authenticated clone-local session with the
-      // transport bit adjusted only for this isolated browser context.
-      await context.addCookies([{
-        name: 'session', value, url: origin, httpOnly: true,
-        secure: false, sameSite: 'Lax',
-      }]);
-    } catch (_) {
-      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser could not install its private session cookie.');
-    }
-    const installed = await context.cookies(origin);
-    if (!installed.some((cookie) => cookie.name === 'session')) {
-      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser did not retain its private session cookie.');
-    }
-    if (diagnostic) diagnostic.sessionCookieInstalled = true;
-    return true;
-  } finally {
-    await response?.dispose?.().catch(() => {});
-  }
+  return sessionBootstrap.bootstrapInternalSession(
+    context, origin, authorizedUrl(origin, startPath, authToken), authToken,
+    diagnostic, planContract.MAX_WAIT_MS
+  );
 }
 
 async function startMotionCapture(page) {

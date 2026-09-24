@@ -170,7 +170,7 @@ test('_issueWorkState names each of the seven states with its own tone', () => {
 
   const paused = st({ in_progress: ip({ sessions: [sess({ status: 'paused' })] }) });
   assert.equal(paused.key, 'paused');
-  assert.equal(paused.label, 'Paused · maya');
+  assert.equal(paused.label, 'Started · maya', 'the word "paused" is never shown');
   assert.equal(paused.tone, 'zinc');
 
   const question = st({ headless: { status: 'ready', outcome: 'question' } });
@@ -448,7 +448,7 @@ test('the topic head prints a plain dated work note; the feed card does not', ()
   const topic = cardHtml(topicModel);
   const note = topic.match(/data-work-note="paused"[^>]*>([^<]*)</);
   assert.ok(note, 'the head carries a [data-work-note]');
-  assert.match(note[1], /maya started work on this and paused it 5 days ago/);
+  assert.match(note[1], /maya started work on this and last worked on it 5 days ago/);
   assert.match(note[1], /clears itself on/);
   // The self-clear date is the paused window past the last activity, not today.
   const clears = new Date(Date.now() + 2 * 86400000).toLocaleDateString();
@@ -457,7 +457,7 @@ test('the topic head prints a plain dated work note; the feed card does not', ()
   const feedModel = AppView._issueCardModel(issue);
   const feed = cardHtml(feedModel);
   assert.ok(!feed.includes('data-work-note'));
-  assert.match(feed, /title="[^"]*paused it 5 days ago/);
+  assert.match(feed, /title="[^"]*last worked on it 5 days ago/);
 });
 
 test('the work note adds an "Also:" clause when more than one thing applies', () => {

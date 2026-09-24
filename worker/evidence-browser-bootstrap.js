@@ -10,6 +10,20 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { chromium } = require('/usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright');
+const { SessionBootstrapError, bootstrapInternalSession } = require('./session-bootstrap');
+
+function reportAuth(persona, side, bootstrap, sessionCookiePresent) {
+  // Only fixed booleans and status cross the worker boundary. The token,
+  // session cookie, URLs, and response body stay inside this process.
+  process.stdout.write(`__USERNODE_EVIDENCE_BROWSER__ ${JSON.stringify({
+    kind: 'auth_bootstrap', persona: persona === 'member' ? 'member' : 'admin', side,
+    attempted: bootstrap.attempted === true,
+    cookieAlreadyPresent: bootstrap.cookieAlreadyPresent === true,
+    sessionCookieInstalled: bootstrap.sessionCookieInstalled === true,
+    sessionCookiePresent,
+    ...(Number.isInteger(bootstrap.responseStatus) ? { responseStatus: bootstrap.responseStatus } : {}),
+  })}\n`);
+}
 
 async function main() {
   const origins = JSON.parse(process.env.EVIDENCE_ALLOWED_ORIGINS || '[]').map((value) => new URL(value).origin);
@@ -31,14 +45,25 @@ async function main() {
     for (const [persona, token] of Object.entries(personas)) {
       const context = await browser.newContext({ serviceWorkers: 'block' });
       try {
-        for (const origin of origins) {
+        for (const [index, origin] of origins.entries()) {
           const url = new URL('/', origin);
           url.searchParams.set('token', token);
+          const bootstrap = {};
+          // Use the same token-to-session exchange as deterministic replay.
+          // Navigating alone loses a Secure session cookie on private HTTP.
+          await bootstrapInternalSession(context, origin, url.href, token, bootstrap);
           const page = await context.newPage();
           await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
           const final = new URL(page.url());
-          if (final.origin !== origin) throw new Error(`Evidence auth for ${persona} left its allowed origin.`);
+          if (final.origin !== origin) {
+            throw new SessionBootstrapError('cross_origin_navigation', 'Evidence authentication left its private origin.');
+          }
           await page.close();
+          const sessionCookiePresent = (await context.cookies(origin)).some((cookie) => cookie.name === 'session');
+          reportAuth(persona, index === 0 ? 'base' : 'head', bootstrap, sessionCookiePresent);
+          if (bootstrap.sessionCookieInstalled && !sessionCookiePresent) {
+            throw new SessionBootstrapError('session_bootstrap_failed', 'The evidence browser did not retain its private session cookie.');
+          }
         }
         const target = path.join(outputDir, `${persona}.json`);
         await context.storageState({ path: target });
@@ -49,6 +74,9 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${String(error?.message || error).slice(0, 1000)}\n`);
+  // Playwright errors may include a token-bearing navigation URL. Only our
+  // controlled, credential-free messages are safe for the worker result.
+  process.stderr.write(`${error instanceof SessionBootstrapError
+    ? error.message : 'Evidence browser authentication failed.'}\n`);
   process.exit(1);
 });

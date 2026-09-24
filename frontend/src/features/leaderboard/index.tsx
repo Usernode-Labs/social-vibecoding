@@ -141,13 +141,18 @@ export function LeaderboardScreen() {
       style={{ position: "relative" }}
     >
       {/*
-          max-w-5xl for the Topochain table's sake; the Kudos pane keeps its
-          narrower max-w-3xl reading column below — centered with its own
-          `mx-auto` (#2921) rather than left-pinned inside this wider frame,
-          the way Profile's own `mx-auto` column is (max-w-2xl since #2832,
-          Workshop's width).
+          max-w-5xl for the Topochain table's sake (and the challenge grid's);
+          the Kudos pane narrows to the Me/Workshop reading column below.
+
+          `pt-5`, not `p-4`'s 16px (#2832's rule, applied here for Kudos): the
+          platform bar is `rounded-b-2xl -mb-2`, so every screen root starts
+          8px UNDER it; `pt-5` is those 8 plus the 12px of air Workshop, Me
+          and Messages leave above their first element. `p-4` left the tab
+          strip 8px from the bar. It is the frame's, so all four tabs step
+          down together and the strip never jumps between them. `px-4`/`pb-4`
+          are the 16px gutter and foot this frame always had.
       */}
-      <div className="max-w-5xl mx-auto p-4 w-full">
+      <div className="max-w-5xl mx-auto px-4 pt-5 pb-4 w-full">
         <div className={detailOpen ? 'hidden' : undefined}>
           {/*
               No <h2> here any more. The screen said "Leaderboard" twice — once
@@ -213,8 +218,18 @@ export function LeaderboardScreen() {
             The root's own `className` is a CONSTANT for the same reason the
             standings root's is — `_applySection()` still toggles `hidden` on
             it, per the note above.
+
+            THE COLUMN IS ME'S (#2832 follow-up). Me's Kudos row opens this
+            pane, so it takes Me's column — Workshop's — rather than one of
+            its own: it was `max-w-3xl`, 96px wider than the page it opens
+            from. Me is `max-w-2xl px-4`: a 672px box whose content (its
+            cards) is 640px. This root sits INSIDE the frame's `px-4`, which
+            already supplies that gutter, so the same content edge is
+            `max-w-[40rem]` (672 − 2×16): at every viewport width the rows
+            here span exactly the x-range Me's cards do, centered with its
+            own `mx-auto` (#2921) as before.
         */}
-        <div id="leaderboard-root" className="hidden max-w-3xl mx-auto">
+        <div id="leaderboard-root" className="hidden max-w-[40rem] mx-auto">
           <KudosPane />
         </div>
         {/*

@@ -107,7 +107,16 @@ async function openAndroidSheet(initialPermissions) {
     },
     clearTimeout,
     setInterval() {},
-    fetch() { return Promise.reject(new Error('unexpected fetch')); },
+    fetch(url) {
+      // #2960: the Android sheet waits for block production; these
+      // devices have asked for it.
+      if (url === '/challenges-api/bp/state') {
+        return Promise.resolve({ ok: true, async json() {
+          return { success: true, data: { bp_requested: true, bp_released: false } };
+        } });
+      }
+      return Promise.reject(new Error('unexpected fetch'));
+    },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;

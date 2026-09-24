@@ -114,7 +114,17 @@ function boot(opts) {
     // — cancelling every later test in the file with it.
     setTimeout, clearTimeout,
     setInterval() {},
-    fetch() { return Promise.reject(new Error('unexpected fetch')); },
+    // #2960: the Android sheet waits for block production. `opts.bp` is the
+    // /challenges-api/bp/state payload; Android cases here have asked.
+    fetch(url) {
+      if (url === '/challenges-api/bp/state') {
+        return Promise.resolve({ ok: true, async json() {
+          return { success: true,
+            data: opts.bp || { bp_requested: true, bp_released: false } };
+        } });
+      }
+      return Promise.reject(new Error('unexpected fetch'));
+    },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
