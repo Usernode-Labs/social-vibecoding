@@ -27,8 +27,10 @@ import {
   choiceValue,
   effectiveChoice,
   effortOptions,
+  effortValue,
   offersReasoning,
   pickerOptions,
+  type PickerOption,
 } from './model-choice';
 import {
   buildTranscript,
@@ -669,11 +671,53 @@ function Replies({ replies }: { replies: string[] }) {
 }
 
 /**
+ * A picker control that reads "Label: Item" while closed and lists the items
+ * with "(default)" after the default one while open. A native select shows
+ * the chosen option's own text when closed, so that text is drawn beside it
+ * instead: the select lies transparent over the shown line and keeps the
+ * focus, the keyboard and the platform's own list. The shown line is the dev
+ * chat picker's (`dc-model-select`).
+ */
+export function LabeledSelect({ label, ariaLabel, value, options, disabled, muted = false, onChange, dataKey }: {
+  label: string;
+  ariaLabel: string;
+  value: string;
+  options: PickerOption[];
+  disabled: boolean;
+  muted?: boolean;
+  onChange: (value: string) => void;
+  dataKey: string;
+}) {
+  const selected = options.find((option) => option.value === value) || null;
+  const tone = muted ? 'text-zinc-600 dark:text-zinc-300' : 'text-zinc-900 dark:text-zinc-100';
+  return (
+    <span className="dc-venue-detail-inline rounded focus-within:ring-2 focus-within:ring-violet-500" data-agent-session-picker={dataKey}>
+      <span className={`dc-model-select text-[13px] ${tone}`} aria-hidden="true" data-agent-session-picker-shown>
+        {`${label}: ${selected ? selected.label : ''}`}
+      </span>
+      <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
+      <select
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
+        aria-label={ariaLabel}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value} title={option.title || undefined}>
+            {option.isDefault ? `${option.label} (default)` : option.label}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
+/**
  * The conversation's model (./model-choice.ts): Claude Code on an Anthropic
- * model, or Codex on an OpenRouter model with its reasoning effort where the
- * model offers one. The dev chat picker's look (`dc-model-select`). Usable at
- * any time: what is running finishes on the model it started with, and the
- * line beside the control says so while a turn runs.
+ * model, or Codex on an OpenRouter model with its thinking level where the
+ * model offers one. Usable at any time: what is running finishes on the model
+ * it started with, and the next message runs on the new one.
  */
 function ModelPicker() {
   const snapshot = useAgentSessionState();
@@ -686,46 +730,31 @@ function ModelPicker() {
   const archived = snapshot.session?.status === 'archived';
   const disabled = archived || snapshot.choosing || snapshot.phase === 'loading';
   const reasoning = offersReasoning(current, catalog);
-  const running = snapshot.turn.running && !!snapshot.session;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1" data-agent-session-model>
-      <span className="dc-venue-detail-inline">
-        <select
-          className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
-          aria-label="Model"
-          value={choiceValue(current)}
-          disabled={disabled}
-          onChange={(event) => {
-            const next = choiceFromValue(event.currentTarget.value, catalog, current);
-            if (next) void chooseAgent(next);
-          }}
-        >
-          {options.map((option) => (
-            <option key={option.value} value={option.value} title={option.title || undefined}>{option.label}</option>
-          ))}
-        </select>
-        <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
-      </span>
+      <LabeledSelect
+        label="Model"
+        ariaLabel="Model"
+        dataKey="model"
+        value={choiceValue(current)}
+        options={options}
+        disabled={disabled}
+        onChange={(value) => {
+          const next = choiceFromValue(value, catalog, current);
+          if (next) void chooseAgent(next);
+        }}
+      />
       {reasoning ? (
-        <span className="dc-venue-detail-inline">
-          <select
-            className="dc-model-select rounded text-[13px] text-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-300"
-            aria-label="Reasoning effort"
-            value={current.reasoningEffort || ''}
-            disabled={disabled}
-            onChange={(event) => void chooseAgent({ ...current, reasoningEffort: event.currentTarget.value || null })}
-          >
-            {effortOptions(catalog).map((option) => (
-              <option key={option.value} value={option.value}>{`Thinking: ${option.label}`}</option>
-            ))}
-          </select>
-          <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
-        </span>
-      ) : null}
-      {running ? (
-        <span className="whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-400" data-agent-session-model-note>
-          applies from your next message
-        </span>
+        <LabeledSelect
+          label="Thinking Level"
+          ariaLabel="Thinking level"
+          dataKey="thinking"
+          muted
+          value={effortValue(current, catalog)}
+          options={effortOptions(catalog)}
+          disabled={disabled}
+          onChange={(value) => void chooseAgent({ ...current, reasoningEffort: value || null })}
+        />
       ) : null}
     </div>
   );
