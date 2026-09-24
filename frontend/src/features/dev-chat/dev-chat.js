@@ -12175,7 +12175,22 @@ if (typeof window !== 'undefined') {
   // Fire-and-forget: refreshes MODELS from the server's allowlist. If
   // the page rendered the dropdown before this resolves, the next
   // renderChatView() pass will pick up the new entries.
-  DevChat.loadModels();
+  //
+  // Only for a viewer the endpoint answers (QA 2026-09-24 Q35). This runs
+  // at module load on EVERY document, the signed-out landing and the
+  // waiting room included, where /api/models is a guaranteed 401 or 403
+  // and a red console line. Otherwise it waits for the authed boot's
+  // once-per-document `sv:authed`, the same test as
+  // frontend/src/lib/platform-viewer.ts (not imported: the vm-based suites
+  // evaluate this file as a classic script).
+  const hasPlatformViewer = () => !!(window.App && window.App.user
+    && window.App.user.hasPlatformAccess !== false);
+  if (hasPlatformViewer()) DevChat.loadModels();
+  else if (typeof document !== 'undefined') {
+    document.addEventListener('sv:authed', () => {
+      if (hasPlatformViewer()) DevChat.loadModels();
+    }, { once: true });
+  }
 }
 
 // Combined away/return handler (#142, #161). On leaving (tab hidden or

@@ -4637,6 +4637,32 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "The sign-in Back disc moves with its screen, so the phone install strip cannot cover it (QA Q8)",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) > a[data-auth-back].absolute[aria-label=\"Back\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The sign-in username field is not capitalised or autocorrected on a phone (QA Q11)",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #login-username[autocapitalize=\"none\"][autocorrect=\"off\"][spellcheck=\"false\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The register form states the username rule under the username field (QA Q11)",
+      "path": "/?shot=anon#register",
+      "expectSelector": "#auth-register-screen:not(.hidden) #reg-username[autocapitalize=\"none\"][aria-describedby=\"reg-username-hint\"] + #reg-username-hint",
+      "expectText": "Letters, numbers and underscores, 3 to 32 characters.",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The register form states the password rule under the password field (QA Q11)",
+      "path": "/?shot=anon#register",
+      "expectSelector": "#auth-register-screen:not(.hidden) #reg-password-hint",
+      "expectText": "At least 8 characters.",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "#1808: an issue's GitHub comments carry a day and a time, and the year once it is not this one",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "#dev-issue-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-head time.dev-feed-msg-time[title]",

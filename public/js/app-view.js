@@ -1823,6 +1823,11 @@ const AppView = {
   // below is what every frame still gets; the nine gated capabilities are
   // delegated only where this user has granted them to this app.
   _appIframeUngated: ['clipboard-write', 'pointer-lock'],
+  // Ungated, but delegated by the `allow-pointer-lock` sandbox token above
+  // rather than by `allow`: no browser recognises `pointer-lock` as a policy
+  // feature, and Chrome logged "Unrecognized feature" for it on every page
+  // (QA 2026-09-24 Q35). Same list as SANDBOX_DELEGATED in app-frame-policy.js.
+  _appIframeSandboxDelegated: ['pointer-lock'],
   _appIframeGated: [
     'geolocation', 'microphone', 'camera', 'display-capture',
     'usb', 'serial', 'hid', 'bluetooth', 'midi',
@@ -1834,6 +1839,7 @@ const AppView = {
   _allowAttribute(granted) {
     const wanted = new Set(Array.isArray(granted) ? granted : []);
     return AppView._appIframeUngated
+      .filter((c) => !AppView._appIframeSandboxDelegated.includes(c))
       .concat(AppView._appIframeGated.filter((c) => wanted.has(c)))
       .join('; ');
   },
