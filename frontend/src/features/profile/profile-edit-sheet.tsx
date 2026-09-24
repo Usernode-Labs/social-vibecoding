@@ -252,8 +252,8 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
           <ChevronDownIcon
             aria-hidden="true"
             className={previewOpen
-              ? 'w-4 h-4 shrink-0 text-zinc-400 rotate-180 transition-transform'
-              : 'w-4 h-4 shrink-0 text-zinc-400 transition-transform'}
+              ? 'w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400 rotate-180 transition-transform'
+              : 'w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400 transition-transform'}
           />
         </button>
       </Group>
