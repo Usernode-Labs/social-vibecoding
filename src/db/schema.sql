@@ -2310,6 +2310,9 @@ END $$;
 -- spec | code | spec_code | question | failed) and 'spec_shared' (#86 —
 -- someone privately shared a spec version with you; session_id points
 -- to the dev session, `detail` holds the version number as a string).
+-- #2387 adds 'thread_reply': somebody replied in an app-chat reply thread
+-- you started or replied in; chat_message_id is the new reply, whose
+-- thread_ref is the thread's root message.
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -4899,6 +4902,9 @@ END $$;
 INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('mention', 'direct_interactions', TRUE),
   ('reply', 'direct_interactions', TRUE),
+  -- #2387: a reply in an app-chat reply thread you started or joined. A
+  -- direct interaction like a reply to your message, so the same category.
+  ('thread_reply', 'direct_interactions', TRUE),
   ('collab_invite', 'invitations', TRUE),
   ('collab_invite_accepted', 'invitations', TRUE),
   ('approver_invite', 'invitations', TRUE),
@@ -4940,7 +4946,7 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',

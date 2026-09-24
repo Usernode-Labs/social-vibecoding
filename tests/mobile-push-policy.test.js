@@ -137,6 +137,10 @@ test('each kind renders its own title and body from send-time context', () => {
     ['reply', CONTEXT,
       '@alice replied in "Fix login redirect loop" · MyPage',
       'hey can you look at the header'],
+    // #2387: a reply in an app-chat reply thread you are in.
+    ['thread_reply', CONTEXT,
+      '@alice replied in a thread · MyPage',
+      'hey can you look at the header'],
     ['reaction', { ...CONTEXT, detail: '👍' },
       '@alice reacted 👍 to your message · MyPage',
       'You said: hey can you look at the header'],
